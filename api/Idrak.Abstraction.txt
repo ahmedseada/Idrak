@@ -1484,6 +1484,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public Idrak.Abstraction.Devices.IMemoryOffload? Offload { get; }
   public Idrak.Abstraction.Devices.Storage Allocate(Idrak.Abstraction.ElementType type, int count, bool zeroed)
   public Idrak.Abstraction.ElementType IndexTypeOf(Idrak.Abstraction.Operations.Operation operation)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> ValueTypesOf(Idrak.Abstraction.Operations.Operation operation)
   public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> OwnKernels { get; }
   public System.IDisposable? LongLivedAllocations()
   public abstract Idrak.Abstraction.Devices.BackendCapabilities Capabilities { get; }

@@ -53,6 +53,16 @@ INDICES = {
     "ExpertGatedPair": {"offsets": "in"},
     "ExpertMatMul": {"offsets": "in"},
 }
+# The storages whose element type is the kernel's own contract, by operation: every type is read as it is stored (a weight
+# kept in its file's format, a conversion's source and destination), so the dispatcher never converts them. Every other
+# storage that is not an index (INDICES) holds values: one of a type the device's kernel does not take
+# (BackendCapabilities.ValueTypes, or a type whose ElementType.Kernels names the operation) is converted for the call
+# (Backend's ValueConversions, counted) before the kernel runs, and converted back when the kernel changed it.
+TYPED_AS_STORED = {
+    "ConvertElements": {"source", "destination"},
+    "StoredMatMul": {"weight"},
+    "ExpandStored": {"weight"},
+}
 OPERATIONS = ROOT / "src/Idrak.Abstraction/Operations/Operations.g.cs"
 DISPATCH = ROOT / "src/Idrak.Abstraction/Devices/Backend.Operations.g.cs"
 CALLS = ROOT / "src/Idrak.Abstraction.Testing/Devices/OperationCalls.g.cs"
@@ -260,6 +270,36 @@ def choose(d, returns, guarded, own, indent, last=False):
         d.append(f"{indent}return RefusedKernelsFallBack ? {guarded} : {own};")
 
 
+def value_storages(op, parameters):
+    """(name, optional) of each storage of `op` holding values: not an index (INDICES), not typed as stored."""
+    skip = set(INDICES.get(op, {})) | TYPED_AS_STORED.get(op, set())
+    found = []
+    for q in split_top(parameters):
+        modifier, declared, name = parts(q)
+        if modifier is None and declared in ("Storage", "Storage?") and name not in skip:
+            found.append((name, declared == "Storage?"))
+    return found
+
+
+def dispatch_body(d, returns, own, guarded, registered):
+    """The three ways a call runs: the device's own kernel, its guarded call, or the registered path."""
+    if returns == "void":
+        d.append("        if (_kernels is null && _moves is null)")
+        d.append("        {")
+        d.append(f"            {own};")
+        d.append("        }")
+        d.append("        else if (ReferenceEquals(_kernels, s_guardedKernels))")
+        d.append("        {")
+        d.append(f"            {guarded};")
+        d.append("        }")
+        d.append("        else")
+        d.append("        {")
+        d.append(f"            {registered};")
+        d.append("        }")
+    else:
+        d.append(f"        return _kernels is null && _moves is null ? {own} : ReferenceEquals(_kernels, s_guardedKernels) ? {guarded} : {registered};")
+
+
 def generate():
     # One text for every source, in order: positions stay within a file (each ends with a newline), so a declaration's
     # documentation and body are read as in its own file.
@@ -279,6 +319,10 @@ def generate():
         bodies[op] = text
         fields[op] = field
     overloaded = {name for name, count in seen.items() if count > 1}
+    for op, kept in TYPED_AS_STORED.items():
+        found = next((p for name, o, r, p, *_ in named if o == op), None)
+        if found is None or any(n not in [parts(q)[2] for q in split_top(found)] for n in kept):
+            sys.exit(f"TYPED_AS_STORED names {op} or a parameter of it that Backend does not declare")
     for op, uses in INDICES.items():
         found = next((p for name, o, r, p, *_ in named if o == op), None)
         if found is None:
@@ -390,6 +434,7 @@ def generate():
         d.append(f"    public {returns} {method}({parameters})")
         d.append("    {")
         uses = INDICES.get(op)
+        values = value_storages(op, parameters)
         if uses:
             # An index storage of another type than this device's kernel takes: converted once for the call (plan 37, T1).
             check = " || ".join(f"!ReferenceEquals({n}.ElementType, indexType)" for n in uses)
@@ -400,22 +445,46 @@ def generate():
             d.append("            return;")
             d.append("        }")
             d.append("")
-        if returns == "void":
-            d.append("        if (_kernels is null && _moves is null)")
+        if values:
+            # A value storage of a type other than float32 (one field read each): the dispatcher checks it against the
+            # kernel's value types and converts it for the call where the kernel does not take it (decision 8).
+            check = " || ".join(f"({n} is not null && {n}.Typed)" if optional else f"{n}.Typed" for n, optional in values)
+            d.append(f"        if ({check})")
             d.append("        {")
-            d.append(f"            {own};")
+            if returns == "void":
+                d.append(f"            {op}Values({arguments});")
+                d.append("            return;")
+            else:
+                d.append(f"            return {op}Values({arguments});")
             d.append("        }")
-            d.append("        else if (ReferenceEquals(_kernels, s_guardedKernels))")
-            d.append("        {")
-            d.append(f"            {guarded};")
-            d.append("        }")
-            d.append("        else")
-            d.append("        {")
-            d.append(f"            {registered};")
-            d.append("        }")
-        else:
-            d.append(f"        return _kernels is null && _moves is null ? {own} : ReferenceEquals(_kernels, s_guardedKernels) ? {guarded} : {registered};")
+            d.append("")
+        dispatch_body(d, returns, own, guarded, registered)
         d.append("    }")
+        if values:
+            mapped = ", ".join(f"{argument(q)}Value" if parts(q)[2] in [n for n, _ in values] else argument(q) for q in split_top(parameters))
+            d.append("")
+            d.append(f"    // {op} with a value storage of another type than float32: each one the kernel does not take converted once for the")
+            d.append("    // call, counted, and converted back when the kernel changed it.")
+            d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
+            d.append(f"    private {returns} {op}Values({plain})")
+            d.append("    {")
+            d.append(f"        using var valueConversions = new ValueConversions(this, Ops.{op}, OperationIndex.{op});")
+            for n, optional in values:
+                d.append(f"        var {n}Value = valueConversions.{'Maybe' if optional else 'In'}({n});")
+            if returns == "void":
+                d.append(f"        {op}Run({mapped});")
+                d.append("        valueConversions.Done();")
+            else:
+                d.append(f"        var returned = {op}Run({mapped});")
+                d.append("        valueConversions.Done();")
+                d.append("        return returned;")
+            d.append("    }")
+            d.append("")
+            d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
+            d.append(f"    private {returns} {op}Run({plain})")
+            d.append("    {")
+            dispatch_body(d, returns, own, guarded, registered)
+            d.append("    }")
         if uses:
             # Each index storage in the kernel's type (converted in when read), the call, then each written one converted back.
             converted = [(n, f"{n}As", use) for n, use in uses.items()]

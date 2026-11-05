@@ -10,6 +10,66 @@ using Idrak.Abstraction.Operations;
 // sum type chosen per device, checked typed reads, and tensors made in a chosen type.
 internal abstract partial class DesktopTests : Tests
 {
+    // The dispatcher's value conversions (decision 8): a value storage of a type the device's kernel does not take is
+    // converted once for the call, counted, and converted back only when the kernel changed it.
+    private static void ValueConversionsOfCalls(Device device)
+    {
+        var backend = device.Backend;
+        float[] values = [0.5f, -1.25f, 3f, 100f, -0.0078125f, 2f];
+        var accepted = backend.ValueTypesOf(Ops.Unary);
+        if (accepted.Contains(ElementType.BFloat16))
+        {
+            return;                                                        // the device's kernel takes bfloat16: nothing to convert
+        }
+
+        // A bfloat16 input and output: the kernel computes in its type, the result stored in bfloat16 (rounded to nearest even).
+        using var x = Tensor.FromValues(values, [values.Length], ElementType.BFloat16, device);
+        using var y = Tensor.FromValues(new float[values.Length], [values.Length], ElementType.BFloat16, device);
+        long before = ElementTypes.Conversions;
+        var unary = ElementTypes.ConversionsByOperation.GetValueOrDefault(Ops.Unary.Name);
+        backend.Unary(UnaryOp.Tanh, x.Storage, y.Storage, values.Length);
+        var expected = new byte[ElementType.BFloat16.ByteCount(values.Length)];
+        using (var reference = Tensor.From(values, [values.Length], device))
+        using (var wide = Tensor.Empty([values.Length], device))
+        {
+            backend.Unary(UnaryOp.Tanh, reference.Storage, wide.Storage, values.Length);
+            ElementType.BFloat16.Encode(wide.ToArray(), expected);
+        }
+
+        Check(y.ToBytes().AsSpan().SequenceEqual(expected) && x.ToArray().SequenceEqual(values.Select(Bf16)),
+            $"bfloat16 in and out through the {accepted[0]} kernel: the float32 result rounded to bfloat16; the input unchanged: {string.Join(", ", y.ToArray())}");
+        Check(ElementTypes.Conversions - before == 3 && ElementTypes.ConversionsByOperation[Ops.Unary.Name] - unary == 3,
+            $"the input and the output converted in, the output back (the input the kernel only read is not): {ElementTypes.Conversions - before}");
+
+        // In place (one storage given twice): converted once, written back once.
+        before = ElementTypes.Conversions;
+        backend.Affine(x.Storage, x.Storage, values.Length, 2f, 1f);
+        Check(x.ToArray().SequenceEqual(values.Select(v => Bf16(2f * Bf16(v) + 1f))) && ElementTypes.Conversions - before == 2,
+            $"in place: one conversion in, one back: {ElementTypes.Conversions - before}; {string.Join(", ", x.ToArray())}");
+
+        // A float16 input with a float32 output: only the input is converted.
+        using var h = Tensor.FromValues(values, [values.Length], ElementType.Float16, device);
+        using var f = Tensor.Empty([values.Length], device);
+        before = ElementTypes.Conversions;
+        backend.Affine(h.Storage, f.Storage, values.Length, 1f, 0f);
+        Check(f.ToArray().SequenceEqual(values.Select(v => (float)(Half)v)) && ElementTypes.Conversions - before == 1, $"float16 to float32: one conversion: {ElementTypes.Conversions - before}");
+
+        // A float32 call takes no conversion.
+        before = ElementTypes.Conversions;
+        backend.Affine(f.Storage, f.Storage, values.Length, 1f, 0f);
+        Check(ElementTypes.Conversions == before, "float32 storages: no conversion");
+    }
+
+    // v stored in bfloat16 and read back.
+    private static float Bf16(float v)
+    {
+        var bytes = new byte[2];
+        ElementType.BFloat16.Encode([v], bytes);
+        var back = new float[1];
+        ElementType.BFloat16.Decode(bytes, back);
+        return back[0];
+    }
+
     private static void UnsignedTypes(Device device)
     {
         var expected = new[] { ("uint32", 32, 0L, (long)uint.MaxValue), ("uint64", 64, 0L, long.MaxValue), ("uint2", 2, 0L, 3L) };

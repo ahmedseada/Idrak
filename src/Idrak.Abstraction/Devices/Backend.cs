@@ -232,6 +232,9 @@ public abstract class Storage
     /// </summary>
     public ElementType ElementType => _type ?? ElementType.Float32;
 
+    // Whether its elements are of another type than float32 (one field read: the dispatcher's check for value conversions).
+    internal bool Typed => _type is not null;
+
     /// <summary>The number of elements of <see cref="ElementType"/> it holds (<see cref="Length"/> for float32).</summary>
     public long ElementCount => _elements >= 0 ? _elements : Length;
 

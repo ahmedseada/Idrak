@@ -35,6 +35,40 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Fill(Storage y, int n, float value)
     {
+        if (y.Typed)
+        {
+            FillValues(y, n, value);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            FillKernel(y, n, value);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            FillGuarded(y, n, value);
+        }
+        else
+        {
+            FillRegistered(y, n, value);
+        }
+    }
+
+    // Fill with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void FillValues(Storage y, int n, float value)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Fill, OperationIndex.Fill);
+        var yValue = valueConversions.In(y);
+        FillRun(yValue, n, value);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void FillRun(Storage y, int n, float value)
+    {
         if (_kernels is null && _moves is null)
         {
             FillKernel(y, n, value);
@@ -121,6 +155,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Unary"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>UnaryKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unary(UnaryOp op, Storage x, Storage y, int n)
+    {
+        if (x.Typed || y.Typed)
+        {
+            UnaryValues(op, x, y, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            UnaryKernel(op, x, y, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            UnaryGuarded(op, x, y, n);
+        }
+        else
+        {
+            UnaryRegistered(op, x, y, n);
+        }
+    }
+
+    // Unary with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryValues(UnaryOp op, Storage x, Storage y, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Unary, OperationIndex.Unary);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        UnaryRun(op, xValue, yValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryRun(UnaryOp op, Storage x, Storage y, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -209,6 +278,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UnaryBackward(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
+        if (x.Typed || y.Typed || dy.Typed || dx.Typed)
+        {
+            UnaryBackwardValues(op, x, y, dy, dx, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            UnaryBackwardKernel(op, x, y, dy, dx, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            UnaryBackwardGuarded(op, x, y, dy, dx, n);
+        }
+        else
+        {
+            UnaryBackwardRegistered(op, x, y, dy, dx, n);
+        }
+    }
+
+    // UnaryBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryBackwardValues(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.UnaryBackward, OperationIndex.UnaryBackward);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        UnaryBackwardRun(op, xValue, yValue, dyValue, dxValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryBackwardRun(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
         if (_kernels is null && _moves is null)
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
@@ -295,6 +401,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Binary"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BinaryKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Binary(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        if (a.Typed || b.Typed || c.Typed)
+        {
+            BinaryValues(op, a, b, c, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BinaryKernel(op, a, b, c, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BinaryGuarded(op, a, b, c, n);
+        }
+        else
+        {
+            BinaryRegistered(op, a, b, c, n);
+        }
+    }
+
+    // Binary with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BinaryValues(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Binary, OperationIndex.Binary);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        BinaryRun(op, aValue, bValue, cValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BinaryRun(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -386,6 +528,44 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExtremumBackward(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
+        if (a.Typed || b.Typed || dy.Typed || (da is not null && da.Typed) || (db is not null && db.Typed))
+        {
+            ExtremumBackwardValues(op, a, b, dy, da, db, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ExtremumBackwardGuarded(op, a, b, dy, da, db, n);
+        }
+        else
+        {
+            ExtremumBackwardRegistered(op, a, b, dy, da, db, n);
+        }
+    }
+
+    // ExtremumBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExtremumBackwardValues(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ExtremumBackward, OperationIndex.ExtremumBackward);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var dyValue = valueConversions.In(dy);
+        var daValue = valueConversions.Maybe(da);
+        var dbValue = valueConversions.Maybe(db);
+        ExtremumBackwardRun(op, aValue, bValue, dyValue, daValue, dbValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExtremumBackwardRun(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
         if (_kernels is null && _moves is null)
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
@@ -472,6 +652,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Pow"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PowKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Pow(Storage x, Storage y, int n, float exponent)
+    {
+        if (x.Typed || y.Typed)
+        {
+            PowValues(x, y, n, exponent);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PowKernel(x, y, n, exponent);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PowGuarded(x, y, n, exponent);
+        }
+        else
+        {
+            PowRegistered(x, y, n, exponent);
+        }
+    }
+
+    // Pow with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowValues(Storage x, Storage y, int n, float exponent)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Pow, OperationIndex.Pow);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        PowRun(xValue, yValue, n, exponent);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowRun(Storage x, Storage y, int n, float exponent)
     {
         if (_kernels is null && _moves is null)
         {
@@ -560,6 +775,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PowBackward(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
+        if (x.Typed || dy.Typed || dx.Typed)
+        {
+            PowBackwardValues(x, dy, dx, n, exponent);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PowBackwardKernel(x, dy, dx, n, exponent);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PowBackwardGuarded(x, dy, dx, n, exponent);
+        }
+        else
+        {
+            PowBackwardRegistered(x, dy, dx, n, exponent);
+        }
+    }
+
+    // PowBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowBackwardValues(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PowBackward, OperationIndex.PowBackward);
+        var xValue = valueConversions.In(x);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        PowBackwardRun(xValue, dyValue, dxValue, n, exponent);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowBackwardRun(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
         if (_kernels is null && _moves is null)
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
@@ -646,6 +897,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Clamp"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ClampKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Clamp(Storage x, Storage y, int n, float min, float max)
+    {
+        if (x.Typed || y.Typed)
+        {
+            ClampValues(x, y, n, min, max);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ClampKernel(x, y, n, min, max);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClampGuarded(x, y, n, min, max);
+        }
+        else
+        {
+            ClampRegistered(x, y, n, min, max);
+        }
+    }
+
+    // Clamp with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampValues(Storage x, Storage y, int n, float min, float max)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Clamp, OperationIndex.Clamp);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        ClampRun(xValue, yValue, n, min, max);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampRun(Storage x, Storage y, int n, float min, float max)
     {
         if (_kernels is null && _moves is null)
         {
@@ -734,6 +1020,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClampBackward(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
+        if (x.Typed || dy.Typed || dx.Typed)
+        {
+            ClampBackwardValues(x, dy, dx, n, min, max);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ClampBackwardKernel(x, dy, dx, n, min, max);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClampBackwardGuarded(x, dy, dx, n, min, max);
+        }
+        else
+        {
+            ClampBackwardRegistered(x, dy, dx, n, min, max);
+        }
+    }
+
+    // ClampBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampBackwardValues(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ClampBackward, OperationIndex.ClampBackward);
+        var xValue = valueConversions.In(x);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        ClampBackwardRun(xValue, dyValue, dxValue, n, min, max);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampBackwardRun(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
         if (_kernels is null && _moves is null)
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
@@ -820,6 +1142,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.LeakyRelu"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LeakyReluKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LeakyRelu(Storage x, Storage y, int n, float slope)
+    {
+        if (x.Typed || y.Typed)
+        {
+            LeakyReluValues(x, y, n, slope);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LeakyReluKernel(x, y, n, slope);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LeakyReluGuarded(x, y, n, slope);
+        }
+        else
+        {
+            LeakyReluRegistered(x, y, n, slope);
+        }
+    }
+
+    // LeakyRelu with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluValues(Storage x, Storage y, int n, float slope)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LeakyRelu, OperationIndex.LeakyRelu);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        LeakyReluRun(xValue, yValue, n, slope);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluRun(Storage x, Storage y, int n, float slope)
     {
         if (_kernels is null && _moves is null)
         {
@@ -908,6 +1265,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LeakyReluBackward(Storage x, Storage dy, Storage dx, int n, float slope)
     {
+        if (x.Typed || dy.Typed || dx.Typed)
+        {
+            LeakyReluBackwardValues(x, dy, dx, n, slope);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LeakyReluBackwardGuarded(x, dy, dx, n, slope);
+        }
+        else
+        {
+            LeakyReluBackwardRegistered(x, dy, dx, n, slope);
+        }
+    }
+
+    // LeakyReluBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluBackwardValues(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LeakyReluBackward, OperationIndex.LeakyReluBackward);
+        var xValue = valueConversions.In(x);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        LeakyReluBackwardRun(xValue, dyValue, dxValue, n, slope);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluBackwardRun(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
         if (_kernels is null && _moves is null)
         {
             LeakyReluBackwardKernel(x, dy, dx, n, slope);
@@ -994,6 +1387,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Where"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>WhereKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Where(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        if (condition.Typed || a.Typed || b.Typed || y.Typed)
+        {
+            WhereValues(condition, a, b, y, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            WhereKernel(condition, a, b, y, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WhereGuarded(condition, a, b, y, n);
+        }
+        else
+        {
+            WhereRegistered(condition, a, b, y, n);
+        }
+    }
+
+    // Where with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereValues(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Where, OperationIndex.Where);
+        var conditionValue = valueConversions.In(condition);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var yValue = valueConversions.In(y);
+        WhereRun(conditionValue, aValue, bValue, yValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereRun(Storage condition, Storage a, Storage b, Storage y, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -1082,6 +1512,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WhereBackward(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
+        if (condition.Typed || dy.Typed || (da is not null && da.Typed) || (db is not null && db.Typed))
+        {
+            WhereBackwardValues(condition, dy, da, db, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            WhereBackwardKernel(condition, dy, da, db, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WhereBackwardGuarded(condition, dy, da, db, n);
+        }
+        else
+        {
+            WhereBackwardRegistered(condition, dy, da, db, n);
+        }
+    }
+
+    // WhereBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereBackwardValues(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.WhereBackward, OperationIndex.WhereBackward);
+        var conditionValue = valueConversions.In(condition);
+        var dyValue = valueConversions.In(dy);
+        var daValue = valueConversions.Maybe(da);
+        var dbValue = valueConversions.Maybe(db);
+        WhereBackwardRun(conditionValue, dyValue, daValue, dbValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereBackwardRun(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
         if (_kernels is null && _moves is null)
         {
             WhereBackwardKernel(condition, dy, da, db, n);
@@ -1168,6 +1635,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Affine"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AffineKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Affine(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        if (x.Typed || y.Typed)
+        {
+            AffineValues(x, y, n, alpha, beta);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AffineKernel(x, y, n, alpha, beta);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AffineGuarded(x, y, n, alpha, beta);
+        }
+        else
+        {
+            AffineRegistered(x, y, n, alpha, beta);
+        }
+    }
+
+    // Affine with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AffineValues(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Affine, OperationIndex.Affine);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        AffineRun(xValue, yValue, n, alpha, beta);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AffineRun(Storage x, Storage y, int n, float alpha, float beta)
     {
         if (_kernels is null && _moves is null)
         {
@@ -1256,6 +1758,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Axpy(Storage x, Storage y, int n, float alpha)
     {
+        if (x.Typed || y.Typed)
+        {
+            AxpyValues(x, y, n, alpha);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AxpyKernel(x, y, n, alpha);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AxpyGuarded(x, y, n, alpha);
+        }
+        else
+        {
+            AxpyRegistered(x, y, n, alpha);
+        }
+    }
+
+    // Axpy with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyValues(Storage x, Storage y, int n, float alpha)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Axpy, OperationIndex.Axpy);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        AxpyRun(xValue, yValue, n, alpha);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyRun(Storage x, Storage y, int n, float alpha)
+    {
         if (_kernels is null && _moves is null)
         {
             AxpyKernel(x, y, n, alpha);
@@ -1342,6 +1879,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.MulAdd"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MulAddKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MulAdd(Storage a, Storage b, Storage c, int n)
+    {
+        if (a.Typed || b.Typed || c.Typed)
+        {
+            MulAddValues(a, b, c, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            MulAddKernel(a, b, c, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MulAddGuarded(a, b, c, n);
+        }
+        else
+        {
+            MulAddRegistered(a, b, c, n);
+        }
+    }
+
+    // MulAdd with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MulAddValues(Storage a, Storage b, Storage c, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MulAdd, OperationIndex.MulAdd);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        MulAddRun(aValue, bValue, cValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MulAddRun(Storage a, Storage b, Storage c, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -1430,6 +2003,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRowVector(Storage a, Storage v, Storage c, int rows, int cols)
     {
+        if (a.Typed || v.Typed || c.Typed)
+        {
+            AddRowVectorValues(a, v, c, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AddRowVectorKernel(a, v, c, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddRowVectorGuarded(a, v, c, rows, cols);
+        }
+        else
+        {
+            AddRowVectorRegistered(a, v, c, rows, cols);
+        }
+    }
+
+    // AddRowVector with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRowVectorValues(Storage a, Storage v, Storage c, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AddRowVector, OperationIndex.AddRowVector);
+        var aValue = valueConversions.In(a);
+        var vValue = valueConversions.In(v);
+        var cValue = valueConversions.In(c);
+        AddRowVectorRun(aValue, vValue, cValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRowVectorRun(Storage a, Storage v, Storage c, int rows, int cols)
+    {
         if (_kernels is null && _moves is null)
         {
             AddRowVectorKernel(a, v, c, rows, cols);
@@ -1516,6 +2125,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SumRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumRows(Storage x, Storage y, int rows, int cols)
+    {
+        if (x.Typed || y.Typed)
+        {
+            SumRowsValues(x, y, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SumRowsKernel(x, y, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumRowsGuarded(x, y, rows, cols);
+        }
+        else
+        {
+            SumRowsRegistered(x, y, rows, cols);
+        }
+    }
+
+    // SumRows with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumRowsValues(Storage x, Storage y, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SumRows, OperationIndex.SumRows);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        SumRowsRun(xValue, yValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumRowsRun(Storage x, Storage y, int rows, int cols)
     {
         if (_kernels is null && _moves is null)
         {
@@ -1604,6 +2248,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Sum(Storage x, Storage result, int n, float scale)
     {
+        if (x.Typed || result.Typed)
+        {
+            SumValues(x, result, n, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SumKernel(x, result, n, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumGuarded(x, result, n, scale);
+        }
+        else
+        {
+            SumRegistered(x, result, n, scale);
+        }
+    }
+
+    // Sum with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumValues(Storage x, Storage result, int n, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Sum, OperationIndex.Sum);
+        var xValue = valueConversions.In(x);
+        var resultValue = valueConversions.In(result);
+        SumRun(xValue, resultValue, n, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumRun(Storage x, Storage result, int n, float scale)
+    {
         if (_kernels is null && _moves is null)
         {
             SumKernel(x, result, n, scale);
@@ -1691,6 +2370,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AxpyAt(Storage x, Storage y, int offset, float alpha)
     {
+        if (x.Typed || y.Typed)
+        {
+            AxpyAtValues(x, y, offset, alpha);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AxpyAtKernel(x, y, offset, alpha);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AxpyAtGuarded(x, y, offset, alpha);
+        }
+        else
+        {
+            AxpyAtRegistered(x, y, offset, alpha);
+        }
+    }
+
+    // AxpyAt with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyAtValues(Storage x, Storage y, int offset, float alpha)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AxpyAt, OperationIndex.AxpyAt);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        AxpyAtRun(xValue, yValue, offset, alpha);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyAtRun(Storage x, Storage y, int offset, float alpha)
+    {
         if (_kernels is null && _moves is null)
         {
             AxpyAtKernel(x, y, offset, alpha);
@@ -1777,6 +2491,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AddBroadcastScalar"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddBroadcastScalarKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddBroadcastScalar(Storage s, Storage y, int n, float scale)
+    {
+        if (s.Typed || y.Typed)
+        {
+            AddBroadcastScalarValues(s, y, n, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AddBroadcastScalarKernel(s, y, n, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddBroadcastScalarGuarded(s, y, n, scale);
+        }
+        else
+        {
+            AddBroadcastScalarRegistered(s, y, n, scale);
+        }
+    }
+
+    // AddBroadcastScalar with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddBroadcastScalarValues(Storage s, Storage y, int n, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AddBroadcastScalar, OperationIndex.AddBroadcastScalar);
+        var sValue = valueConversions.In(s);
+        var yValue = valueConversions.In(y);
+        AddBroadcastScalarRun(sValue, yValue, n, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddBroadcastScalarRun(Storage s, Storage y, int n, float scale)
     {
         if (_kernels is null && _moves is null)
         {
@@ -1868,6 +2617,32 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
+        if (x.Typed || packed.Typed || (scales is not null && scales.Typed) || y.Typed)
+        {
+            return PackedMatMulLargeValues(format, x, packed, scales, y, m, n, k);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLargeGuarded(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
+    }
+
+    // PackedMatMulLarge with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLargeValues(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulLarge, OperationIndex.PackedMatMulLarge);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var returned = PackedMatMulLargeRun(format, xValue, packedValue, scalesValue, yValue, m, n, k);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLargeRun(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
         return _kernels is null && _moves is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLargeGuarded(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
     }
 
@@ -1910,6 +2685,45 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.PackedMatMulEpilogue"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulEpilogueKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PackedMatMulEpilogue(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        if (x.Typed || packed.Typed || (scales is not null && scales.Typed) || y.Typed || (bias is not null && bias.Typed) || (residual is not null && residual.Typed))
+        {
+            PackedMatMulEpilogueValues(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PackedMatMulEpilogueGuarded(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
+        {
+            PackedMatMulEpilogueRegistered(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+    }
+
+    // PackedMatMulEpilogue with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackedMatMulEpilogueValues(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulEpilogue, OperationIndex.PackedMatMulEpilogue);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var biasValue = valueConversions.Maybe(bias);
+        var residualValue = valueConversions.Maybe(residual);
+        PackedMatMulEpilogueRun(format, xValue, packedValue, scalesValue, yValue, m, n, k, biasValue, residualValue, gelu);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackedMatMulEpilogueRun(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
     {
         if (_kernels is null && _moves is null)
         {
@@ -2020,6 +2834,33 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
+        if (gate.Typed || up.Typed || packed.Typed || (scales is not null && scales.Typed) || y.Typed)
+        {
+            return PackedMatMulGatedValues(format, activation, gate, up, packed, scales, y, m, n, k);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedGuarded(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
+    }
+
+    // PackedMatMulGated with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedValues(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulGated, OperationIndex.PackedMatMulGated);
+        var gateValue = valueConversions.In(gate);
+        var upValue = valueConversions.In(up);
+        var packedValue = valueConversions.In(packed);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var returned = PackedMatMulGatedRun(format, activation, gateValue, upValue, packedValue, scalesValue, yValue, m, n, k);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedRun(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
         return _kernels is null && _moves is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedGuarded(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
     }
 
@@ -2058,6 +2899,36 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.PackedMatMulAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulAddRmsNormKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        if (x.Typed || packed.Typed || (scales is not null && scales.Typed) || y.Typed || residual.Typed || sum.Typed || gain.Typed || normalized.Typed)
+        {
+            return PackedMatMulAddRmsNormValues(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+    }
+
+    // PackedMatMulAddRmsNorm with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulAddRmsNormValues(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulAddRmsNorm, OperationIndex.PackedMatMulAddRmsNorm);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var residualValue = valueConversions.In(residual);
+        var sumValue = valueConversions.In(sum);
+        var gainValue = valueConversions.In(gain);
+        var normalizedValue = valueConversions.In(normalized);
+        var returned = PackedMatMulAddRmsNormRun(format, xValue, packedValue, scalesValue, yValue, m, n, k, residualValue, sumValue, gainValue, normalizedValue, eps, offset);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulAddRmsNormRun(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         return _kernels is null && _moves is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
@@ -2101,6 +2972,37 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.PackedMatMulNormAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulNormAddRmsNormKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulNormAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        if (x.Typed || packed.Typed || (scales is not null && scales.Typed) || y.Typed || yGain.Typed || residual.Typed || sum.Typed || gain.Typed || normalized.Typed)
+        {
+            return PackedMatMulNormAddRmsNormValues(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulNormAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+    }
+
+    // PackedMatMulNormAddRmsNorm with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulNormAddRmsNormValues(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulNormAddRmsNorm, OperationIndex.PackedMatMulNormAddRmsNorm);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var yGainValue = valueConversions.In(yGain);
+        var residualValue = valueConversions.In(residual);
+        var sumValue = valueConversions.In(sum);
+        var gainValue = valueConversions.In(gain);
+        var normalizedValue = valueConversions.In(normalized);
+        var returned = PackedMatMulNormAddRmsNormRun(format, xValue, packedValue, scalesValue, yValue, m, n, k, yGainValue, yEps, yOffset, residualValue, sumValue, gainValue, normalizedValue, eps, offset);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulNormAddRmsNormRun(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         return _kernels is null && _moves is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulNormAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
     }
@@ -2170,6 +3072,29 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
+        if (x.Typed)
+        {
+            return PackedMatMulManyValues(format, x, m, k, products);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulManyKernel(format, x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulManyGuarded(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
+    }
+
+    // PackedMatMulMany with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulManyValues(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulMany, OperationIndex.PackedMatMulMany);
+        var xValue = valueConversions.In(x);
+        var returned = PackedMatMulManyRun(format, xValue, m, k, products);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulManyRun(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
+    {
         return _kernels is null && _moves is null ? PackedMatMulManyKernel(format, x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulManyGuarded(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
     }
 
@@ -2209,6 +3134,30 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
+        if (x.Typed || hidden.Typed)
+        {
+            return PackedMatMulGatedPairValues(format, activation, x, m, k, products, hidden);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedPairGuarded(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
+    }
+
+    // PackedMatMulGatedPair with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedPairValues(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulGatedPair, OperationIndex.PackedMatMulGatedPair);
+        var xValue = valueConversions.In(x);
+        var hiddenValue = valueConversions.In(hidden);
+        var returned = PackedMatMulGatedPairRun(format, activation, xValue, m, k, products, hiddenValue);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedPairRun(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
+    {
         return _kernels is null && _moves is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedPairGuarded(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
     }
 
@@ -2246,6 +3195,40 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.MatMulMany"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulManyKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MatMulMany(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    {
+        if (a.Typed)
+        {
+            MatMulManyValues(a, m, k, products);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            MatMulManyKernel(a, m, k, products);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MatMulManyGuarded(a, m, k, products);
+        }
+        else
+        {
+            MatMulManyRegistered(a, m, k, products);
+        }
+    }
+
+    // MatMulMany with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MatMulManyValues(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MatMulMany, OperationIndex.MatMulMany);
+        var aValue = valueConversions.In(a);
+        MatMulManyRun(aValue, m, k, products);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MatMulManyRun(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
     {
         if (_kernels is null && _moves is null)
         {
@@ -2317,6 +3300,32 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
+        if (a.Typed || b.Typed || bias.Typed || c.Typed)
+        {
+            return MatMulBiasValues(a, b, bias, c, m, n, k);
+        }
+
+        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
+    }
+
+    // MatMulBias with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulBiasValues(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MatMulBias, OperationIndex.MatMulBias);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var biasValue = valueConversions.In(bias);
+        var cValue = valueConversions.In(c);
+        var returned = MatMulBiasRun(aValue, bValue, biasValue, cValue, m, n, k);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulBiasRun(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    {
         return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
     }
 
@@ -2355,6 +3364,33 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.MatMulLowRank"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MatMulLowRankKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
+    {
+        if (a.Typed || b.Typed || c.Typed || u.Typed || v.Typed)
+        {
+            return MatMulLowRankValues(a, b, c, m, n, k, transB, beta, u, v, rank);
+        }
+
+        return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
+    }
+
+    // MatMulLowRank with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulLowRankValues(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MatMulLowRank, OperationIndex.MatMulLowRank);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        var uValue = valueConversions.In(u);
+        var vValue = valueConversions.In(v);
+        var returned = MatMulLowRankRun(aValue, bValue, cValue, m, n, k, transB, beta, uValue, vValue, rank);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulLowRankRun(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
         return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
     }
@@ -2395,6 +3431,33 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.BFloat16TransposedMatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BFloat16TransposedMatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
+    {
+        if (a.Typed || packed.Typed || c.Typed || (u is not null && u.Typed) || (v is not null && v.Typed))
+        {
+            return BFloat16TransposedMatMulValues(a, packed, c, m, n, k, beta, u, v, rank);
+        }
+
+        return _kernels is null && _moves is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? BFloat16TransposedMatMulGuarded(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
+    }
+
+    // BFloat16TransposedMatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool BFloat16TransposedMatMulValues(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BFloat16TransposedMatMul, OperationIndex.BFloat16TransposedMatMul);
+        var aValue = valueConversions.In(a);
+        var packedValue = valueConversions.In(packed);
+        var cValue = valueConversions.In(c);
+        var uValue = valueConversions.Maybe(u);
+        var vValue = valueConversions.Maybe(v);
+        var returned = BFloat16TransposedMatMulRun(aValue, packedValue, cValue, m, n, k, beta, uValue, vValue, rank);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool BFloat16TransposedMatMulRun(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
         return _kernels is null && _moves is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? BFloat16TransposedMatMulGuarded(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
     }
@@ -2440,6 +3503,31 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
     {
+        if (w.Typed || values.Typed || scales.Typed)
+        {
+            return Float8QuantizeWeightValues(w, k, n, values, scales);
+        }
+
+        return _kernels is null && _moves is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8QuantizeWeightGuarded(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
+    }
+
+    // Float8QuantizeWeight with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8QuantizeWeightValues(Storage w, int k, int n, Storage values, Storage scales)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Float8QuantizeWeight, OperationIndex.Float8QuantizeWeight);
+        var wValue = valueConversions.In(w);
+        var valuesValue = valueConversions.In(values);
+        var scalesValue = valueConversions.In(scales);
+        var returned = Float8QuantizeWeightRun(wValue, k, n, valuesValue, scalesValue);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8QuantizeWeightRun(Storage w, int k, int n, Storage values, Storage scales)
+    {
         return _kernels is null && _moves is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8QuantizeWeightGuarded(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
     }
 
@@ -2481,6 +3569,32 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
+        if (x.Typed || values.Typed || scales.Typed || y.Typed)
+        {
+            return Float8MatMulValues(x, m, k, values, scales, n, y, beta);
+        }
+
+        return _kernels is null && _moves is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8MatMulGuarded(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
+    }
+
+    // Float8MatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8MatMulValues(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Float8MatMul, OperationIndex.Float8MatMul);
+        var xValue = valueConversions.In(x);
+        var valuesValue = valueConversions.In(values);
+        var scalesValue = valueConversions.In(scales);
+        var yValue = valueConversions.In(y);
+        var returned = Float8MatMulRun(xValue, m, k, valuesValue, scalesValue, n, yValue, beta);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8MatMulRun(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
+    {
         return _kernels is null && _moves is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8MatMulGuarded(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
     }
 
@@ -2519,6 +3633,29 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.PackedMatMulLowRank"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>PackedMatMulLowRankKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
+    {
+        if (x.Typed)
+        {
+            return PackedMatMulLowRankValues(format, x, m, k, products, rank);
+        }
+
+        return _kernels is null && _moves is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLowRankGuarded(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
+    }
+
+    // PackedMatMulLowRank with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLowRankValues(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackedMatMulLowRank, OperationIndex.PackedMatMulLowRank);
+        var xValue = valueConversions.In(x);
+        var returned = PackedMatMulLowRankRun(format, xValue, m, k, products, rank);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLowRankRun(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
         return _kernels is null && _moves is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLowRankGuarded(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
     }
@@ -2561,6 +3698,33 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GemmStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GemmStridedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None, Storage? aux = null, long auxOffset = 0)
+    {
+        if (a.Typed || b.Typed || c.Typed || (bias is not null && bias.Typed) || (aux is not null && aux.Typed))
+        {
+            return GemmStridedValues(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
+        }
+
+        return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : ReferenceEquals(_kernels, s_guardedKernels) ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
+    }
+
+    // GemmStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GemmStridedValues(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GemmStrided, OperationIndex.GemmStrided);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        var biasValue = valueConversions.Maybe(bias);
+        var auxValue = valueConversions.Maybe(aux);
+        var returned = GemmStridedRun(aValue, aOffset, lda, transA, bValue, bOffset, ldb, transB, cValue, cOffset, ldc, m, n, k, beta, biasValue, epilogue, auxValue, auxOffset);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GemmStridedRun(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
     {
         return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : ReferenceEquals(_kernels, s_guardedKernels) ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
     }
@@ -2607,6 +3771,33 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
+        if (q.Typed || k.Typed || v.Typed || y.Typed || (logSumExp is not null && logSumExp.Typed))
+        {
+            return AttentionStridedValues(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
+        }
+
+        return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
+    }
+
+    // AttentionStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedValues(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionStrided, OperationIndex.AttentionStrided);
+        var qValue = valueConversions.In(q);
+        var kValue = valueConversions.In(k);
+        var vValue = valueConversions.In(v);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.Maybe(logSumExp);
+        var returned = AttentionStridedRun(qValue, qOffset, kValue, kOffset, vValue, vOffset, qRow, kRow, yValue, logSumExpValue, batch, kvHeads, group, steps, dim, scale);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedRun(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
         return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
     }
 
@@ -2649,6 +3840,37 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
+        if (q.Typed || k.Typed || v.Typed || y.Typed || logSumExp.Typed || dOutput.Typed || dq.Typed || dk.Typed || dv.Typed)
+        {
+            return AttentionStridedBackwardValues(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
+        }
+
+        return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
+    }
+
+    // AttentionStridedBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedBackwardValues(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionStridedBackward, OperationIndex.AttentionStridedBackward);
+        var qValue = valueConversions.In(q);
+        var kValue = valueConversions.In(k);
+        var vValue = valueConversions.In(v);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.In(logSumExp);
+        var dOutputValue = valueConversions.In(dOutput);
+        var dqValue = valueConversions.In(dq);
+        var dkValue = valueConversions.In(dk);
+        var dvValue = valueConversions.In(dv);
+        var returned = AttentionStridedBackwardRun(qValue, qOffset, kValue, kOffset, vValue, vOffset, qRow, kRow, yValue, logSumExpValue, dOutputValue, dqValue, dqOffset, dkValue, dkOffset, dvValue, dvOffset, batch, kvHeads, group, steps, dim, scale);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedBackwardRun(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
         return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
     }
 
@@ -2683,6 +3905,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SumColumns"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumColumnsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumColumns(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        if (x.Typed || y.Typed)
+        {
+            SumColumnsValues(x, offset, ld, y, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SumColumnsKernel(x, offset, ld, y, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumColumnsGuarded(x, offset, ld, y, rows, cols);
+        }
+        else
+        {
+            SumColumnsRegistered(x, offset, ld, y, rows, cols);
+        }
+    }
+
+    // SumColumns with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumColumnsValues(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SumColumns, OperationIndex.SumColumns);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        SumColumnsRun(xValue, offset, ld, yValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumColumnsRun(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
         if (_kernels is null && _moves is null)
         {
@@ -2771,6 +4028,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddDropout(Storage residual, Storage x, Storage output, int n, float p, uint seed)
     {
+        if (residual.Typed || x.Typed || output.Typed)
+        {
+            AddDropoutValues(residual, x, output, n, p, seed);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AddDropoutKernel(residual, x, output, n, p, seed);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddDropoutGuarded(residual, x, output, n, p, seed);
+        }
+        else
+        {
+            AddDropoutRegistered(residual, x, output, n, p, seed);
+        }
+    }
+
+    // AddDropout with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddDropoutValues(Storage residual, Storage x, Storage output, int n, float p, uint seed)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AddDropout, OperationIndex.AddDropout);
+        var residualValue = valueConversions.In(residual);
+        var xValue = valueConversions.In(x);
+        var outputValue = valueConversions.In(output);
+        AddDropoutRun(residualValue, xValue, outputValue, n, p, seed);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddDropoutRun(Storage residual, Storage x, Storage output, int n, float p, uint seed)
+    {
         if (_kernels is null && _moves is null)
         {
             AddDropoutKernel(residual, x, output, n, p, seed);
@@ -2831,6 +4124,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.BatchedMatMul"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BatchedMatMulKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BatchedMatMul(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        if (a.Typed || b.Typed || c.Typed)
+        {
+            BatchedMatMulValues(a, b, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BatchedMatMulGuarded(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+        else
+        {
+            BatchedMatMulRegistered(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    // BatchedMatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulValues(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BatchedMatMul, OperationIndex.BatchedMatMul);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        BatchedMatMulRun(aValue, bValue, cValue, batch, m, n, k, transA, transB, beta);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulRun(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         if (_kernels is null && _moves is null)
         {
@@ -2918,6 +4247,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Softmax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SoftmaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Softmax(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        if (x.Typed || y.Typed)
+        {
+            SoftmaxValues(x, y, rows, cols, log);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SoftmaxKernel(x, y, rows, cols, log);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxGuarded(x, y, rows, cols, log);
+        }
+        else
+        {
+            SoftmaxRegistered(x, y, rows, cols, log);
+        }
+    }
+
+    // Softmax with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxValues(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Softmax, OperationIndex.Softmax);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        SoftmaxRun(xValue, yValue, rows, cols, log);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxRun(Storage x, Storage y, int rows, int cols, bool log)
     {
         if (_kernels is null && _moves is null)
         {
@@ -3008,6 +4372,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxBackward(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
+        if (y.Typed || dy.Typed || dx.Typed)
+        {
+            SoftmaxBackwardValues(y, dy, dx, rows, cols, log);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxBackwardGuarded(y, dy, dx, rows, cols, log);
+        }
+        else
+        {
+            SoftmaxBackwardRegistered(y, dy, dx, rows, cols, log);
+        }
+    }
+
+    // SoftmaxBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxBackwardValues(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SoftmaxBackward, OperationIndex.SoftmaxBackward);
+        var yValue = valueConversions.In(y);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        SoftmaxBackwardRun(yValue, dyValue, dxValue, rows, cols, log);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxBackwardRun(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
         if (_kernels is null && _moves is null)
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
@@ -3094,6 +4494,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.ArgMax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ArgMaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ArgMax(Storage x, Storage y, int rows, int cols)
+    {
+        if (x.Typed || y.Typed)
+        {
+            ArgMaxValues(x, y, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ArgMaxKernel(x, y, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ArgMaxGuarded(x, y, rows, cols);
+        }
+        else
+        {
+            ArgMaxRegistered(x, y, rows, cols);
+        }
+    }
+
+    // ArgMax with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ArgMaxValues(Storage x, Storage y, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ArgMax, OperationIndex.ArgMax);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        ArgMaxRun(xValue, yValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ArgMaxRun(Storage x, Storage y, int rows, int cols)
     {
         if (_kernels is null && _moves is null)
         {
@@ -3197,6 +4632,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (x.Typed || values.Typed)
+        {
+            LogSoftmaxTopKValues(x, values, indices, rows, cols, k);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LogSoftmaxTopKGuarded(x, values, indices, rows, cols, k);
+        }
+        else
+        {
+            LogSoftmaxTopKRegistered(x, values, indices, rows, cols, k);
+        }
+    }
+
+    // LogSoftmaxTopK with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LogSoftmaxTopKValues(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LogSoftmaxTopK, OperationIndex.LogSoftmaxTopK);
+        var xValue = valueConversions.In(x);
+        var valuesValue = valueConversions.In(values);
+        LogSoftmaxTopKRun(xValue, valuesValue, indices, rows, cols, k);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LogSoftmaxTopKRun(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
         if (_kernels is null && _moves is null)
         {
             LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
@@ -3304,6 +4774,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClassMatch(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
+        if (predictions.Typed || targets.Typed || y.Typed)
+        {
+            ClassMatchValues(predictions, targets, y, rows, cols, threshold);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClassMatchGuarded(predictions, targets, y, rows, cols, threshold);
+        }
+        else
+        {
+            ClassMatchRegistered(predictions, targets, y, rows, cols, threshold);
+        }
+    }
+
+    // ClassMatch with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClassMatchValues(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ClassMatch, OperationIndex.ClassMatch);
+        var predictionsValue = valueConversions.In(predictions);
+        var targetsValue = valueConversions.In(targets);
+        var yValue = valueConversions.In(y);
+        ClassMatchRun(predictionsValue, targetsValue, yValue, rows, cols, threshold);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClassMatchRun(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
         if (_kernels is null && _moves is null)
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
@@ -3390,6 +4896,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.NormStats"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormStatsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormStats(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        if (x.Typed || mean.Typed || variance.Typed || invStd.Typed)
+        {
+            NormStatsValues(x, mean, variance, invStd, outer, groups, inner, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormStatsGuarded(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+        else
+        {
+            NormStatsRegistered(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+    }
+
+    // NormStats with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormStatsValues(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.NormStats, OperationIndex.NormStats);
+        var xValue = valueConversions.In(x);
+        var meanValue = valueConversions.In(mean);
+        var varianceValue = valueConversions.In(variance);
+        var invStdValue = valueConversions.In(invStd);
+        NormStatsRun(xValue, meanValue, varianceValue, invStdValue, outer, groups, inner, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormStatsRun(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
         if (_kernels is null && _moves is null)
         {
@@ -3478,6 +5021,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormApply(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
+        if (x.Typed || mean.Typed || invStd.Typed || y.Typed)
+        {
+            NormApplyValues(x, mean, invStd, y, outer, groups, inner);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormApplyGuarded(x, mean, invStd, y, outer, groups, inner);
+        }
+        else
+        {
+            NormApplyRegistered(x, mean, invStd, y, outer, groups, inner);
+        }
+    }
+
+    // NormApply with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormApplyValues(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.NormApply, OperationIndex.NormApply);
+        var xValue = valueConversions.In(x);
+        var meanValue = valueConversions.In(mean);
+        var invStdValue = valueConversions.In(invStd);
+        var yValue = valueConversions.In(y);
+        NormApplyRun(xValue, meanValue, invStdValue, yValue, outer, groups, inner);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormApplyRun(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
         if (_kernels is null && _moves is null)
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
@@ -3564,6 +5144,45 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.NormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>NormBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void NormBackward(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        if (dxhat.Typed || xhat.Typed || sum1.Typed || sum2.Typed || invStd.Typed || dx.Typed)
+        {
+            NormBackwardValues(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormBackwardGuarded(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+        else
+        {
+            NormBackwardRegistered(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+    }
+
+    // NormBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormBackwardValues(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.NormBackward, OperationIndex.NormBackward);
+        var dxhatValue = valueConversions.In(dxhat);
+        var xhatValue = valueConversions.In(xhat);
+        var sum1Value = valueConversions.In(sum1);
+        var sum2Value = valueConversions.In(sum2);
+        var invStdValue = valueConversions.In(invStd);
+        var dxValue = valueConversions.In(dx);
+        NormBackwardRun(dxhatValue, xhatValue, sum1Value, sum2Value, invStdValue, dxValue, outer, groups, inner);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormBackwardRun(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
         if (_kernels is null && _moves is null)
         {
@@ -3654,6 +5273,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupScaleShift(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
+        if (x.Typed || (scale is not null && scale.Typed) || (shift is not null && shift.Typed) || y.Typed)
+        {
+            GroupScaleShiftValues(x, scale, shift, y, n, groups, inner, accumulate);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GroupScaleShiftGuarded(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+        else
+        {
+            GroupScaleShiftRegistered(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+    }
+
+    // GroupScaleShift with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupScaleShiftValues(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GroupScaleShift, OperationIndex.GroupScaleShift);
+        var xValue = valueConversions.In(x);
+        var scaleValue = valueConversions.Maybe(scale);
+        var shiftValue = valueConversions.Maybe(shift);
+        var yValue = valueConversions.In(y);
+        GroupScaleShiftRun(xValue, scaleValue, shiftValue, yValue, n, groups, inner, accumulate);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupScaleShiftRun(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
         if (_kernels is null && _moves is null)
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
@@ -3740,6 +5396,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GroupReduce"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GroupReduceKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GroupReduce(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        if (a.Typed || (b is not null && b.Typed) || sumA.Typed || (sumAB is not null && sumAB.Typed))
+        {
+            GroupReduceValues(a, b, sumA, sumAB, outer, groups, inner);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GroupReduceGuarded(a, b, sumA, sumAB, outer, groups, inner);
+        }
+        else
+        {
+            GroupReduceRegistered(a, b, sumA, sumAB, outer, groups, inner);
+        }
+    }
+
+    // GroupReduce with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupReduceValues(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GroupReduce, OperationIndex.GroupReduce);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.Maybe(b);
+        var sumAValue = valueConversions.In(sumA);
+        var sumABValue = valueConversions.Maybe(sumAB);
+        GroupReduceRun(aValue, bValue, sumAValue, sumABValue, outer, groups, inner);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupReduceRun(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
         if (_kernels is null && _moves is null)
         {
@@ -3831,6 +5524,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WeightNorm(Storage gain, Storage direction, Storage weight, int rows, int columns)
     {
+        if (gain.Typed || direction.Typed || weight.Typed)
+        {
+            WeightNormValues(gain, direction, weight, rows, columns);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WeightNormGuarded(gain, direction, weight, rows, columns);
+        }
+        else
+        {
+            WeightNormRegistered(gain, direction, weight, rows, columns);
+        }
+    }
+
+    // WeightNorm with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormValues(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.WeightNorm, OperationIndex.WeightNorm);
+        var gainValue = valueConversions.In(gain);
+        var directionValue = valueConversions.In(direction);
+        var weightValue = valueConversions.In(weight);
+        WeightNormRun(gainValue, directionValue, weightValue, rows, columns);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormRun(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
         if (_kernels is null && _moves is null)
         {
             WeightNormKernel(gain, direction, weight, rows, columns);
@@ -3921,6 +5650,44 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void WeightNormBackward(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
     {
+        if (gain.Typed || direction.Typed || dweight.Typed || (dgain is not null && dgain.Typed) || (ddirection is not null && ddirection.Typed))
+        {
+            WeightNormBackwardValues(gain, direction, dweight, dgain, ddirection, rows, columns);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WeightNormBackwardGuarded(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        else
+        {
+            WeightNormBackwardRegistered(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+    }
+
+    // WeightNormBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormBackwardValues(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.WeightNormBackward, OperationIndex.WeightNormBackward);
+        var gainValue = valueConversions.In(gain);
+        var directionValue = valueConversions.In(direction);
+        var dweightValue = valueConversions.In(dweight);
+        var dgainValue = valueConversions.Maybe(dgain);
+        var ddirectionValue = valueConversions.Maybe(ddirection);
+        WeightNormBackwardRun(gainValue, directionValue, dweightValue, dgainValue, ddirectionValue, rows, columns);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormBackwardRun(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
         if (_kernels is null && _moves is null)
         {
             WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
@@ -4007,6 +5774,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.InvSqrt"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>InvSqrtKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void InvSqrt(Storage x, Storage y, int n, float eps)
+    {
+        if (x.Typed || y.Typed)
+        {
+            InvSqrtValues(x, y, n, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            InvSqrtKernel(x, y, n, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            InvSqrtGuarded(x, y, n, eps);
+        }
+        else
+        {
+            InvSqrtRegistered(x, y, n, eps);
+        }
+    }
+
+    // InvSqrt with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InvSqrtValues(Storage x, Storage y, int n, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.InvSqrt, OperationIndex.InvSqrt);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        InvSqrtRun(xValue, yValue, n, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InvSqrtRun(Storage x, Storage y, int n, float eps)
     {
         if (_kernels is null && _moves is null)
         {
@@ -4102,6 +5904,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (table.Typed || y.Typed)
+        {
+            GatherValues(table, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatherKernel(table, indices, y, count, dim, vocabulary);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherGuarded(table, indices, y, count, dim, vocabulary);
+        }
+        else
+        {
+            GatherRegistered(table, indices, y, count, dim, vocabulary);
+        }
+    }
+
+    // Gather with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherValues(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Gather, OperationIndex.Gather);
+        var tableValue = valueConversions.In(table);
+        var yValue = valueConversions.In(y);
+        GatherRun(tableValue, indices, yValue, count, dim, vocabulary);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherRun(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
         if (_kernels is null && _moves is null)
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
@@ -4211,6 +6048,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (packed.Typed || y.Typed)
+        {
+            GatherBFloat16Values(packed, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherBFloat16Guarded(packed, indices, y, count, dim, vocabulary);
+        }
+        else
+        {
+            GatherBFloat16Registered(packed, indices, y, count, dim, vocabulary);
+        }
+    }
+
+    // GatherBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16Values(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatherBFloat16, OperationIndex.GatherBFloat16);
+        var packedValue = valueConversions.In(packed);
+        var yValue = valueConversions.In(y);
+        GatherBFloat16Run(packedValue, indices, yValue, count, dim, vocabulary);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16Run(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
         if (_kernels is null && _moves is null)
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
@@ -4324,6 +6196,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (packed.Typed || y.Typed)
+        {
+            GatherBFloat16ColumnsValues(packed, indices, y, count, dim, vocabulary);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherBFloat16ColumnsGuarded(packed, indices, y, count, dim, vocabulary);
+        }
+        else
+        {
+            GatherBFloat16ColumnsRegistered(packed, indices, y, count, dim, vocabulary);
+        }
+    }
+
+    // GatherBFloat16Columns with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16ColumnsValues(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatherBFloat16Columns, OperationIndex.GatherBFloat16Columns);
+        var packedValue = valueConversions.In(packed);
+        var yValue = valueConversions.In(y);
+        GatherBFloat16ColumnsRun(packedValue, indices, yValue, count, dim, vocabulary);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16ColumnsRun(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
         if (_kernels is null && _moves is null)
         {
             GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
@@ -4433,6 +6340,40 @@ public abstract partial class Backend
             return;
         }
 
+        if (y.Typed)
+        {
+            OneHotValues(indices, y, count, classes);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            OneHotKernel(indices, y, count, classes);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            OneHotGuarded(indices, y, count, classes);
+        }
+        else
+        {
+            OneHotRegistered(indices, y, count, classes);
+        }
+    }
+
+    // OneHot with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void OneHotValues(Storage indices, Storage y, int count, int classes)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.OneHot, OperationIndex.OneHot);
+        var yValue = valueConversions.In(y);
+        OneHotRun(indices, yValue, count, classes);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void OneHotRun(Storage indices, Storage y, int count, int classes)
+    {
         if (_kernels is null && _moves is null)
         {
             OneHotKernel(indices, y, count, classes);
@@ -4542,6 +6483,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (dy.Typed || dtable.Typed)
+        {
+            ScatterAddValues(dy, indices, dtable, count, dim, vocabulary);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ScatterAddGuarded(dy, indices, dtable, count, dim, vocabulary);
+        }
+        else
+        {
+            ScatterAddRegistered(dy, indices, dtable, count, dim, vocabulary);
+        }
+    }
+
+    // ScatterAdd with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScatterAddValues(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ScatterAdd, OperationIndex.ScatterAdd);
+        var dyValue = valueConversions.In(dy);
+        var dtableValue = valueConversions.In(dtable);
+        ScatterAddRun(dyValue, indices, dtableValue, count, dim, vocabulary);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScatterAddRun(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
         if (_kernels is null && _moves is null)
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
@@ -4644,6 +6620,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Im2Col(Storage x, Storage cols, in ConvGeometry g)
     {
+        if (x.Typed || cols.Typed)
+        {
+            Im2ColValues(x, cols, in g);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Im2ColKernel(x, cols, in g);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Im2ColGuarded(x, cols, in g);
+        }
+        else
+        {
+            Im2ColRegistered(x, cols, in g);
+        }
+    }
+
+    // Im2Col with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Im2ColValues(Storage x, Storage cols, in ConvGeometry g)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Im2Col, OperationIndex.Im2Col);
+        var xValue = valueConversions.In(x);
+        var colsValue = valueConversions.In(cols);
+        Im2ColRun(xValue, colsValue, in g);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Im2ColRun(Storage x, Storage cols, in ConvGeometry g)
+    {
         if (_kernels is null && _moves is null)
         {
             Im2ColKernel(x, cols, in g);
@@ -4730,6 +6741,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Col2Im"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Col2ImKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Col2Im(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        if (dcols.Typed || dx.Typed)
+        {
+            Col2ImValues(dcols, dx, in g);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Col2ImKernel(dcols, dx, in g);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Col2ImGuarded(dcols, dx, in g);
+        }
+        else
+        {
+            Col2ImRegistered(dcols, dx, in g);
+        }
+    }
+
+    // Col2Im with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Col2ImValues(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Col2Im, OperationIndex.Col2Im);
+        var dcolsValue = valueConversions.In(dcols);
+        var dxValue = valueConversions.In(dx);
+        Col2ImRun(dcolsValue, dxValue, in g);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Col2ImRun(Storage dcols, Storage dx, in ConvGeometry g)
     {
         if (_kernels is null && _moves is null)
         {
@@ -4818,6 +6864,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPool(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
+        if (x.Typed || y.Typed || argmax.Typed)
+        {
+            MaxPoolValues(x, y, argmax, in g);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            MaxPoolKernel(x, y, argmax, in g);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolGuarded(x, y, argmax, in g);
+        }
+        else
+        {
+            MaxPoolRegistered(x, y, argmax, in g);
+        }
+    }
+
+    // MaxPool with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolValues(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MaxPool, OperationIndex.MaxPool);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        var argmaxValue = valueConversions.In(argmax);
+        MaxPoolRun(xValue, yValue, argmaxValue, in g);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolRun(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
         if (_kernels is null && _moves is null)
         {
             MaxPoolKernel(x, y, argmax, in g);
@@ -4904,6 +6986,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.MaxPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>MaxPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        if (dy.Typed || argmax.Typed || dx.Typed)
+        {
+            MaxPoolBackwardValues(dy, argmax, dx, count);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            MaxPoolBackwardKernel(dy, argmax, dx, count);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolBackwardGuarded(dy, argmax, dx, count);
+        }
+        else
+        {
+            MaxPoolBackwardRegistered(dy, argmax, dx, count);
+        }
+    }
+
+    // MaxPoolBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackwardValues(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MaxPoolBackward, OperationIndex.MaxPoolBackward);
+        var dyValue = valueConversions.In(dy);
+        var argmaxValue = valueConversions.In(argmax);
+        var dxValue = valueConversions.In(dx);
+        MaxPoolBackwardRun(dyValue, argmaxValue, dxValue, count);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackwardRun(Storage dy, Storage argmax, Storage dx, int count)
     {
         if (_kernels is null && _moves is null)
         {
@@ -4995,6 +7113,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MaxPoolBackward(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
     {
+        if (dy.Typed || argmax.Typed || dx.Typed)
+        {
+            MaxPoolBackward2Values(dy, argmax, dx, in g);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            MaxPoolBackwardKernel(dy, argmax, dx, in g);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolBackward2Guarded(dy, argmax, dx, in g);
+        }
+        else
+        {
+            MaxPoolBackward2Registered(dy, argmax, dx, in g);
+        }
+    }
+
+    // MaxPoolBackward2 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackward2Values(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.MaxPoolBackward2, OperationIndex.MaxPoolBackward2);
+        var dyValue = valueConversions.In(dy);
+        var argmaxValue = valueConversions.In(argmax);
+        var dxValue = valueConversions.In(dx);
+        MaxPoolBackward2Run(dyValue, argmaxValue, dxValue, in g);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackward2Run(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    {
         if (_kernels is null && _moves is null)
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
@@ -5060,6 +7214,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Convolution(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
+        if (x.Typed || weight.Typed || (bias is not null && bias.Typed) || y.Typed)
+        {
+            ConvolutionValues(x, weight, bias, y, in g, filters, groups, activation);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionGuarded(x, weight, bias, y, in g, filters, groups, activation);
+        }
+        else
+        {
+            ConvolutionRegistered(x, weight, bias, y, in g, filters, groups, activation);
+        }
+    }
+
+    // Convolution with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionValues(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Convolution, OperationIndex.Convolution);
+        var xValue = valueConversions.In(x);
+        var weightValue = valueConversions.In(weight);
+        var biasValue = valueConversions.Maybe(bias);
+        var yValue = valueConversions.In(y);
+        ConvolutionRun(xValue, weightValue, biasValue, yValue, in g, filters, groups, activation);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionRun(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    {
         if (_kernels is null && _moves is null)
         {
             ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
@@ -5123,6 +7314,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ConvolutionBackwardInput(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
     {
+        if (dy.Typed || weight.Typed || dx.Typed)
+        {
+            ConvolutionBackwardInputValues(dy, weight, dx, in g, filters, groups);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionBackwardInputGuarded(dy, weight, dx, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardInputRegistered(dy, weight, dx, in g, filters, groups);
+        }
+    }
+
+    // ConvolutionBackwardInput with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardInputValues(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ConvolutionBackwardInput, OperationIndex.ConvolutionBackwardInput);
+        var dyValue = valueConversions.In(dy);
+        var weightValue = valueConversions.In(weight);
+        var dxValue = valueConversions.In(dx);
+        ConvolutionBackwardInputRun(dyValue, weightValue, dxValue, in g, filters, groups);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardInputRun(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    {
         if (_kernels is null && _moves is null)
         {
             ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
@@ -5184,6 +7411,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.ConvolutionBackwardWeight"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ConvolutionBackwardWeightKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ConvolutionBackwardWeight(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
+        if (x.Typed || dy.Typed || dweight.Typed)
+        {
+            ConvolutionBackwardWeightValues(x, dy, dweight, in g, filters, groups);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionBackwardWeightGuarded(x, dy, dweight, in g, filters, groups);
+        }
+        else
+        {
+            ConvolutionBackwardWeightRegistered(x, dy, dweight, in g, filters, groups);
+        }
+    }
+
+    // ConvolutionBackwardWeight with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardWeightValues(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ConvolutionBackwardWeight, OperationIndex.ConvolutionBackwardWeight);
+        var xValue = valueConversions.In(x);
+        var dyValue = valueConversions.In(dy);
+        var dweightValue = valueConversions.In(dweight);
+        ConvolutionBackwardWeightRun(xValue, dyValue, dweightValue, in g, filters, groups);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardWeightRun(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5249,6 +7512,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AvgPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AvgPool(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (x.Typed || y.Typed)
+        {
+            AvgPoolValues(x, y, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AvgPoolGuarded(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        else
+        {
+            AvgPoolRegistered(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    // AvgPool with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolValues(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AvgPool, OperationIndex.AvgPool);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        AvgPoolRun(xValue, yValue, in g, countIncludePad, padBottom, padRight);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolRun(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5339,6 +7637,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AvgPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AvgPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AvgPoolBackward(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        if (dy.Typed || dx.Typed)
+        {
+            AvgPoolBackwardValues(dy, dx, in g, countIncludePad, padBottom, padRight);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AvgPoolBackwardGuarded(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        else
+        {
+            AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    // AvgPoolBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolBackwardValues(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AvgPoolBackward, OperationIndex.AvgPoolBackward);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        AvgPoolBackwardRun(dyValue, dxValue, in g, countIncludePad, padBottom, padRight);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolBackwardRun(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5438,6 +7771,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ResizeNormalize(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
+        if (x.Typed || coefficients.Typed || values.Typed || y.Typed)
+        {
+            ResizeNormalizeValues(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ResizeNormalizeGuarded(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        else
+        {
+            ResizeNormalizeRegistered(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+    }
+
+    // ResizeNormalize with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ResizeNormalizeValues(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ResizeNormalize, OperationIndex.ResizeNormalize);
+        var xValue = valueConversions.In(x);
+        var coefficientsValue = valueConversions.In(coefficients);
+        var valuesValue = valueConversions.In(values);
+        var yValue = valueConversions.In(y);
+        ResizeNormalizeRun(xValue, coefficientsValue, valuesValue, yValue, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ResizeNormalizeRun(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
         if (_kernels is null && _moves is null)
         {
             ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
@@ -5531,6 +7901,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Interpolate2d(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
+        if (x.Typed || y.Typed)
+        {
+            Interpolate2dValues(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Interpolate2dGuarded(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else
+        {
+            Interpolate2dRegistered(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    // Interpolate2d with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dValues(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Interpolate2d, OperationIndex.Interpolate2d);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        Interpolate2dRun(xValue, yValue, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dRun(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
         if (_kernels is null && _moves is null)
         {
             Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -5617,6 +8022,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Interpolate2dBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Interpolate2dBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Interpolate2dBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        if (dy.Typed || dx.Typed)
+        {
+            Interpolate2dBackwardValues(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Interpolate2dBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        else
+        {
+            Interpolate2dBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    // Interpolate2dBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dBackwardValues(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Interpolate2dBackward, OperationIndex.Interpolate2dBackward);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        Interpolate2dBackwardRun(dyValue, dxValue, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dBackwardRun(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5709,6 +8149,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveAvgPool(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
+        if (x.Typed || y.Typed)
+        {
+            AdaptiveAvgPoolValues(x, y, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveAvgPoolGuarded(x, y, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveAvgPoolRegistered(x, y, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // AdaptiveAvgPool with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolValues(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdaptiveAvgPool, OperationIndex.AdaptiveAvgPool);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        AdaptiveAvgPoolRun(xValue, yValue, planes, height, width, outHeight, outWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolRun(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
         if (_kernels is null && _moves is null)
         {
             AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
@@ -5795,6 +8270,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AdaptiveAvgPoolBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveAvgPoolBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveAvgPoolBackward(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (dy.Typed || dx.Typed)
+        {
+            AdaptiveAvgPoolBackwardValues(dy, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveAvgPoolBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveAvgPoolBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // AdaptiveAvgPoolBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolBackwardValues(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdaptiveAvgPoolBackward, OperationIndex.AdaptiveAvgPoolBackward);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        AdaptiveAvgPoolBackwardRun(dyValue, dxValue, planes, height, width, outHeight, outWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolBackwardRun(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5885,6 +8395,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AdaptiveMaxPool"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdaptiveMaxPoolKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveMaxPool(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        if (x.Typed || y.Typed || argmax.Typed)
+        {
+            AdaptiveMaxPoolValues(x, y, argmax, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveMaxPoolGuarded(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolRegistered(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // AdaptiveMaxPool with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolValues(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdaptiveMaxPool, OperationIndex.AdaptiveMaxPool);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        var argmaxValue = valueConversions.In(argmax);
+        AdaptiveMaxPoolRun(xValue, yValue, argmaxValue, planes, height, width, outHeight, outWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolRun(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
         if (_kernels is null && _moves is null)
         {
@@ -5977,6 +8523,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdaptiveMaxPoolBackward(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
+        if (dy.Typed || argmax.Typed || dx.Typed)
+        {
+            AdaptiveMaxPoolBackwardValues(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveMaxPoolBackwardGuarded(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
+        {
+            AdaptiveMaxPoolBackwardRegistered(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // AdaptiveMaxPoolBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolBackwardValues(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdaptiveMaxPoolBackward, OperationIndex.AdaptiveMaxPoolBackward);
+        var dyValue = valueConversions.In(dy);
+        var argmaxValue = valueConversions.In(argmax);
+        var dxValue = valueConversions.In(dx);
+        AdaptiveMaxPoolBackwardRun(dyValue, argmaxValue, dxValue, planes, height, width, outHeight, outWidth);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolBackwardRun(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
         if (_kernels is null && _moves is null)
         {
             AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
@@ -6042,6 +8624,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.CtcLoss"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>CtcLossKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CtcLoss(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (logProbs.Typed || targets.Typed || losses.Typed)
+        {
+            CtcLossValues(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            CtcLossGuarded(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else
+        {
+            CtcLossRegistered(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    // CtcLoss with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossValues(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.CtcLoss, OperationIndex.CtcLoss);
+        var logProbsValue = valueConversions.In(logProbs);
+        var targetsValue = valueConversions.In(targets);
+        var lossesValue = valueConversions.In(losses);
+        CtcLossRun(logProbsValue, targetsValue, lossesValue, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossRun(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
         if (_kernels is null && _moves is null)
         {
@@ -6133,6 +8751,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.CtcLossBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>CtcLossBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void CtcLossBackward(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        if (logProbs.Typed || targets.Typed || lossGrads.Typed || dLogProbs.Typed)
+        {
+            CtcLossBackwardValues(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            CtcLossBackwardGuarded(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        else
+        {
+            CtcLossBackwardRegistered(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    // CtcLossBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossBackwardValues(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.CtcLossBackward, OperationIndex.CtcLossBackward);
+        var logProbsValue = valueConversions.In(logProbs);
+        var targetsValue = valueConversions.In(targets);
+        var lossGradsValue = valueConversions.In(lossGrads);
+        var dLogProbsValue = valueConversions.In(dLogProbs);
+        CtcLossBackwardRun(logProbsValue, targetsValue, lossGradsValue, dLogProbsValue, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossBackwardRun(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
         if (_kernels is null && _moves is null)
         {
@@ -6233,6 +8888,35 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
+        if (projected.Typed || recurrent.Typed || cell.Typed || hidden.Typed || output.Typed || (gates is not null && gates.Typed) || (cells is not null && cells.Typed))
+        {
+            return LstmCellValues(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+    }
+
+    // LstmCell with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellValues(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmCell, OperationIndex.LstmCell);
+        var projectedValue = valueConversions.In(projected);
+        var recurrentValue = valueConversions.In(recurrent);
+        var cellValue = valueConversions.In(cell);
+        var hiddenValue = valueConversions.In(hidden);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var cellsValue = valueConversions.Maybe(cells);
+        var returned = LstmCellRun(projectedValue, recurrentValue, cellValue, hiddenValue, outputValue, gatesValue, cellsValue, step, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellRun(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    {
         return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
@@ -6276,6 +8960,35 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.LstmCellBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmCellBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        if (gates.Typed || cells.Typed || (dOutput is not null && dOutput.Typed) || dHidden.Typed || dCell.Typed || dGates.Typed || dStep.Typed)
+        {
+            return LstmCellBackwardValues(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    // LstmCellBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellBackwardValues(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmCellBackward, OperationIndex.LstmCellBackward);
+        var gatesValue = valueConversions.In(gates);
+        var cellsValue = valueConversions.In(cells);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var dHiddenValue = valueConversions.In(dHidden);
+        var dCellValue = valueConversions.In(dCell);
+        var dGatesValue = valueConversions.In(dGates);
+        var dStepValue = valueConversions.In(dStep);
+        var returned = LstmCellBackwardRun(gatesValue, cellsValue, dOutputValue, dHiddenValue, dCellValue, dGatesValue, dStepValue, step, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellBackwardRun(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
         return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
@@ -6321,6 +9034,34 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
+        if (projected.Typed || recurrent.Typed || (hiddenBias is not null && hiddenBias.Typed) || hidden.Typed || output.Typed || (gates is not null && gates.Typed))
+        {
+            return GruCellValues(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+    }
+
+    // GruCell with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellValues(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruCell, OperationIndex.GruCell);
+        var projectedValue = valueConversions.In(projected);
+        var recurrentValue = valueConversions.In(recurrent);
+        var hiddenBiasValue = valueConversions.Maybe(hiddenBias);
+        var hiddenValue = valueConversions.In(hidden);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var returned = GruCellRun(projectedValue, recurrentValue, hiddenBiasValue, hiddenValue, outputValue, gatesValue, step, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellRun(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    {
         return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
@@ -6364,6 +9105,35 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GruCellBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruCellBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        if (gates.Typed || output.Typed || (dOutput is not null && dOutput.Typed) || dHidden.Typed || dGates.Typed || dRecurrent.Typed || dStep.Typed)
+        {
+            return GruCellBackwardValues(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+    }
+
+    // GruCellBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellBackwardValues(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruCellBackward, OperationIndex.GruCellBackward);
+        var gatesValue = valueConversions.In(gates);
+        var outputValue = valueConversions.In(output);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var dHiddenValue = valueConversions.In(dHidden);
+        var dGatesValue = valueConversions.In(dGates);
+        var dRecurrentValue = valueConversions.In(dRecurrent);
+        var dStepValue = valueConversions.In(dStep);
+        var returned = GruCellBackwardRun(gatesValue, outputValue, dOutputValue, dHiddenValue, dGatesValue, dRecurrentValue, dStepValue, step, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellBackwardRun(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
         return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
@@ -6409,6 +9179,34 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
+        if (projected.Typed || weights.Typed || cell.Typed || output.Typed || (gates is not null && gates.Typed) || (cells is not null && cells.Typed))
+        {
+            return LstmStepValues(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+    }
+
+    // LstmStep with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepValues(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmStep, OperationIndex.LstmStep);
+        var projectedValue = valueConversions.In(projected);
+        var weightsValue = valueConversions.In(weights);
+        var cellValue = valueConversions.In(cell);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var cellsValue = valueConversions.Maybe(cells);
+        var returned = LstmStepRun(projectedValue, weightsValue, cellValue, outputValue, gatesValue, cellsValue, step, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepRun(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    {
         return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
@@ -6451,6 +9249,34 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
+        if (gates.Typed || cells.Typed || (dOutput is not null && dOutput.Typed) || weightsT.Typed || dCell.Typed || dGates.Typed)
+        {
+            return LstmStepBackwardValues(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    // LstmStepBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepBackwardValues(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmStepBackward, OperationIndex.LstmStepBackward);
+        var gatesValue = valueConversions.In(gates);
+        var cellsValue = valueConversions.In(cells);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var weightsTValue = valueConversions.In(weightsT);
+        var dCellValue = valueConversions.In(dCell);
+        var dGatesValue = valueConversions.In(dGates);
+        var returned = LstmStepBackwardRun(gatesValue, cellsValue, dOutputValue, weightsTValue, dCellValue, dGatesValue, step, next, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepBackwardRun(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
         return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -6490,6 +9316,33 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GruStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruStepKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        if (projected.Typed || weights.Typed || (hiddenBias is not null && hiddenBias.Typed) || output.Typed || (gates is not null && gates.Typed))
+        {
+            return GruStepValues(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+    }
+
+    // GruStep with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepValues(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruStep, OperationIndex.GruStep);
+        var projectedValue = valueConversions.In(projected);
+        var weightsValue = valueConversions.In(weights);
+        var hiddenBiasValue = valueConversions.Maybe(hiddenBias);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var returned = GruStepRun(projectedValue, weightsValue, hiddenBiasValue, outputValue, gatesValue, step, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepRun(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
         return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
@@ -6533,6 +9386,35 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
+        if (gates.Typed || output.Typed || (dOutput is not null && dOutput.Typed) || weightsT.Typed || dHidden.Typed || dGates.Typed || dRecurrent.Typed)
+        {
+            return GruStepBackwardValues(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+        }
+
+        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+    }
+
+    // GruStepBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepBackwardValues(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruStepBackward, OperationIndex.GruStepBackward);
+        var gatesValue = valueConversions.In(gates);
+        var outputValue = valueConversions.In(output);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var weightsTValue = valueConversions.In(weightsT);
+        var dHiddenValue = valueConversions.In(dHidden);
+        var dGatesValue = valueConversions.In(dGates);
+        var dRecurrentValue = valueConversions.In(dRecurrent);
+        var returned = GruStepBackwardRun(gatesValue, outputValue, dOutputValue, weightsTValue, dHiddenValue, dGatesValue, dRecurrentValue, step, next, previous, steps, batch, hiddenSize);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepBackwardRun(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
         return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
@@ -6573,6 +9455,34 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.LstmSequence"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LstmSequenceKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        if (projected.Typed || weights.Typed || cell.Typed || output.Typed || (gates is not null && gates.Typed) || (cells is not null && cells.Typed))
+        {
+            return LstmSequenceValues(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+        }
+
+        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+    }
+
+    // LstmSequence with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceValues(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmSequence, OperationIndex.LstmSequence);
+        var projectedValue = valueConversions.In(projected);
+        var weightsValue = valueConversions.In(weights);
+        var cellValue = valueConversions.In(cell);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var cellsValue = valueConversions.Maybe(cells);
+        var returned = LstmSequenceRun(projectedValue, weightsValue, cellValue, outputValue, gatesValue, cellsValue, steps, batch, hiddenSize, reverse);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceRun(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
         return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
@@ -6615,6 +9525,34 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
+        if (gates.Typed || cells.Typed || (dOutput is not null && dOutput.Typed) || weightsT.Typed || dCell.Typed || dGates.Typed)
+        {
+            return LstmSequenceBackwardValues(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+        }
+
+        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+    }
+
+    // LstmSequenceBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceBackwardValues(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LstmSequenceBackward, OperationIndex.LstmSequenceBackward);
+        var gatesValue = valueConversions.In(gates);
+        var cellsValue = valueConversions.In(cells);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var weightsTValue = valueConversions.In(weightsT);
+        var dCellValue = valueConversions.In(dCell);
+        var dGatesValue = valueConversions.In(dGates);
+        var returned = LstmSequenceBackwardRun(gatesValue, cellsValue, dOutputValue, weightsTValue, dCellValue, dGatesValue, steps, batch, hiddenSize, reverse);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceBackwardRun(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    {
         return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
@@ -6653,6 +9591,33 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GruSequence"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GruSequenceKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        if (projected.Typed || weights.Typed || (hiddenBias is not null && hiddenBias.Typed) || output.Typed || (gates is not null && gates.Typed))
+        {
+            return GruSequenceValues(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+        }
+
+        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+    }
+
+    // GruSequence with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceValues(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruSequence, OperationIndex.GruSequence);
+        var projectedValue = valueConversions.In(projected);
+        var weightsValue = valueConversions.In(weights);
+        var hiddenBiasValue = valueConversions.Maybe(hiddenBias);
+        var outputValue = valueConversions.In(output);
+        var gatesValue = valueConversions.Maybe(gates);
+        var returned = GruSequenceRun(projectedValue, weightsValue, hiddenBiasValue, outputValue, gatesValue, steps, batch, hiddenSize, reverse);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceRun(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
         return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
@@ -6694,6 +9659,35 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
+        if (gates.Typed || output.Typed || (dOutput is not null && dOutput.Typed) || weightsT.Typed || dHidden.Typed || dGates.Typed || dRecurrent.Typed)
+        {
+            return GruSequenceBackwardValues(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+        }
+
+        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+    }
+
+    // GruSequenceBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceBackwardValues(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GruSequenceBackward, OperationIndex.GruSequenceBackward);
+        var gatesValue = valueConversions.In(gates);
+        var outputValue = valueConversions.In(output);
+        var dOutputValue = valueConversions.Maybe(dOutput);
+        var weightsTValue = valueConversions.In(weightsT);
+        var dHiddenValue = valueConversions.In(dHidden);
+        var dGatesValue = valueConversions.In(dGates);
+        var dRecurrentValue = valueConversions.In(dRecurrent);
+        var returned = GruSequenceBackwardRun(gatesValue, outputValue, dOutputValue, weightsTValue, dHiddenValue, dGatesValue, dRecurrentValue, steps, batch, hiddenSize, reverse);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceBackwardRun(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
         return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
@@ -6734,6 +9728,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.BoxIouLoss"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BoxIouLossKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BoxIouLoss(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        if (predicted.Typed || target.Typed || losses.Typed)
+        {
+            BoxIouLossValues(predicted, target, losses, count, overlap, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BoxIouLossGuarded(predicted, target, losses, count, overlap, eps);
+        }
+        else
+        {
+            BoxIouLossRegistered(predicted, target, losses, count, overlap, eps);
+        }
+    }
+
+    // BoxIouLoss with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossValues(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BoxIouLoss, OperationIndex.BoxIouLoss);
+        var predictedValue = valueConversions.In(predicted);
+        var targetValue = valueConversions.In(target);
+        var lossesValue = valueConversions.In(losses);
+        BoxIouLossRun(predictedValue, targetValue, lossesValue, count, overlap, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossRun(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
         if (_kernels is null && _moves is null)
         {
@@ -6826,6 +9856,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BoxIouLossBackward(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
+        if (predicted.Typed || target.Typed || lossGrads.Typed || dPredicted.Typed)
+        {
+            BoxIouLossBackwardValues(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BoxIouLossBackwardGuarded(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        else
+        {
+            BoxIouLossBackwardRegistered(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+    }
+
+    // BoxIouLossBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossBackwardValues(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BoxIouLossBackward, OperationIndex.BoxIouLossBackward);
+        var predictedValue = valueConversions.In(predicted);
+        var targetValue = valueConversions.In(target);
+        var lossGradsValue = valueConversions.In(lossGrads);
+        var dPredictedValue = valueConversions.In(dPredicted);
+        BoxIouLossBackwardRun(predictedValue, targetValue, lossGradsValue, dPredictedValue, count, overlap, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossBackwardRun(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
         if (_kernels is null && _moves is null)
         {
             BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
@@ -6917,6 +9984,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SigmoidFocalLoss(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
+        if (logits.Typed || targets.Typed || losses.Typed)
+        {
+            SigmoidFocalLossValues(logits, targets, losses, count, alpha, gamma);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SigmoidFocalLossGuarded(logits, targets, losses, count, alpha, gamma);
+        }
+        else
+        {
+            SigmoidFocalLossRegistered(logits, targets, losses, count, alpha, gamma);
+        }
+    }
+
+    // SigmoidFocalLoss with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossValues(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SigmoidFocalLoss, OperationIndex.SigmoidFocalLoss);
+        var logitsValue = valueConversions.In(logits);
+        var targetsValue = valueConversions.In(targets);
+        var lossesValue = valueConversions.In(losses);
+        SigmoidFocalLossRun(logitsValue, targetsValue, lossesValue, count, alpha, gamma);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossRun(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
         if (_kernels is null && _moves is null)
         {
             SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
@@ -7003,6 +10106,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SigmoidFocalLossBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SigmoidFocalLossBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SigmoidFocalLossBackward(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        if (logits.Typed || targets.Typed || lossGrads.Typed || dLogits.Typed)
+        {
+            SigmoidFocalLossBackwardValues(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SigmoidFocalLossBackwardGuarded(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        else
+        {
+            SigmoidFocalLossBackwardRegistered(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+    }
+
+    // SigmoidFocalLossBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossBackwardValues(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SigmoidFocalLossBackward, OperationIndex.SigmoidFocalLossBackward);
+        var logitsValue = valueConversions.In(logits);
+        var targetsValue = valueConversions.In(targets);
+        var lossGradsValue = valueConversions.In(lossGrads);
+        var dLogitsValue = valueConversions.In(dLogits);
+        SigmoidFocalLossBackwardRun(logitsValue, targetsValue, lossGradsValue, dLogitsValue, count, alpha, gamma);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossBackwardRun(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
         if (_kernels is null && _moves is null)
         {
@@ -7094,6 +10234,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Permute(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
+        if (x.Typed || y.Typed)
+        {
+            PermuteValues(x, y, outShape, inStrides, accumulate);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PermuteKernel(x, y, outShape, inStrides, accumulate);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PermuteGuarded(x, y, outShape, inStrides, accumulate);
+        }
+        else
+        {
+            PermuteRegistered(x, y, outShape, inStrides, accumulate);
+        }
+    }
+
+    // Permute with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PermuteValues(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Permute, OperationIndex.Permute);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        PermuteRun(xValue, yValue, outShape, inStrides, accumulate);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PermuteRun(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
         if (_kernels is null && _moves is null)
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
@@ -7180,6 +10355,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SumAxis"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumAxisKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumAxis(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        if (x.Typed || y.Typed)
+        {
+            SumAxisValues(x, y, outer, dim, inner, scale, accumulate);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumAxisGuarded(x, y, outer, dim, inner, scale, accumulate);
+        }
+        else
+        {
+            SumAxisRegistered(x, y, outer, dim, inner, scale, accumulate);
+        }
+    }
+
+    // SumAxis with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumAxisValues(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SumAxis, OperationIndex.SumAxis);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        SumAxisRun(xValue, yValue, outer, dim, inner, scale, accumulate);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumAxisRun(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
         if (_kernels is null && _moves is null)
         {
@@ -7268,6 +10478,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BroadcastAxis(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
+        if (dy.Typed || dx.Typed)
+        {
+            BroadcastAxisValues(dy, dx, outer, dim, inner, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BroadcastAxisGuarded(dy, dx, outer, dim, inner, scale);
+        }
+        else
+        {
+            BroadcastAxisRegistered(dy, dx, outer, dim, inner, scale);
+        }
+    }
+
+    // BroadcastAxis with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BroadcastAxisValues(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BroadcastAxis, OperationIndex.BroadcastAxis);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        BroadcastAxisRun(dyValue, dxValue, outer, dim, inner, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BroadcastAxisRun(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
         if (_kernels is null && _moves is null)
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
@@ -7355,6 +10600,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SgdStep(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
+        if (p.Typed || g.Typed || (v is not null && v.Typed))
+        {
+            SgdStepValues(p, g, v, n, lr, momentum);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SgdStepKernel(p, g, v, n, lr, momentum);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SgdStepGuarded(p, g, v, n, lr, momentum);
+        }
+        else
+        {
+            SgdStepRegistered(p, g, v, n, lr, momentum);
+        }
+    }
+
+    // SgdStep with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SgdStepValues(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SgdStep, OperationIndex.SgdStep);
+        var pValue = valueConversions.In(p);
+        var gValue = valueConversions.In(g);
+        var vValue = valueConversions.Maybe(v);
+        SgdStepRun(pValue, gValue, vValue, n, lr, momentum);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SgdStepRun(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
         if (_kernels is null && _moves is null)
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
@@ -7441,6 +10722,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AdamStep"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AdamStepKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        if (p.Typed || g.Typed || m.Typed || v.Typed)
+        {
+            AdamStepValues(p, g, m, v, n, lr, beta1, beta2, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdamStepGuarded(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+        else
+        {
+            AdamStepRegistered(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+    }
+
+    // AdamStep with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStepValues(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdamStep, OperationIndex.AdamStep);
+        var pValue = valueConversions.In(p);
+        var gValue = valueConversions.In(g);
+        var mValue = valueConversions.In(m);
+        var vValue = valueConversions.In(v);
+        AdamStepRun(pValue, gValue, mValue, vValue, n, lr, beta1, beta2, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStepRun(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
         if (_kernels is null && _moves is null)
         {
@@ -7536,6 +10854,45 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AdamStep8Bit(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
     {
+        if (p.Typed || g.Typed || m.Typed || v.Typed || absMax.Typed || map.Typed)
+        {
+            AdamStep8BitValues(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdamStep8BitGuarded(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
+        else
+        {
+            AdamStep8BitRegistered(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
+    }
+
+    // AdamStep8Bit with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStep8BitValues(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AdamStep8Bit, OperationIndex.AdamStep8Bit);
+        var pValue = valueConversions.In(p);
+        var gValue = valueConversions.In(g);
+        var mValue = valueConversions.In(m);
+        var vValue = valueConversions.In(v);
+        var absMaxValue = valueConversions.In(absMax);
+        var mapValue = valueConversions.In(map);
+        AdamStep8BitRun(pValue, gValue, mValue, vValue, absMaxValue, mapValue, n, lr, beta1, beta2, eps, gradientScale, decay);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStep8BitRun(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+    {
         if (_kernels is null && _moves is null)
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
@@ -7622,6 +10979,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SumSquares"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SumSquaresKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SumSquares(Storage x, Storage total, int n)
+    {
+        if (x.Typed || total.Typed)
+        {
+            SumSquaresValues(x, total, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SumSquaresKernel(x, total, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumSquaresGuarded(x, total, n);
+        }
+        else
+        {
+            SumSquaresRegistered(x, total, n);
+        }
+    }
+
+    // SumSquares with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumSquaresValues(Storage x, Storage total, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SumSquares, OperationIndex.SumSquares);
+        var xValue = valueConversions.In(x);
+        var totalValue = valueConversions.In(total);
+        SumSquaresRun(xValue, totalValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumSquaresRun(Storage x, Storage total, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -7792,6 +11184,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClipFactor(Storage sumSquares, Storage factor, float maxNorm)
     {
+        if (sumSquares.Typed || factor.Typed)
+        {
+            ClipFactorValues(sumSquares, factor, maxNorm);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ClipFactorKernel(sumSquares, factor, maxNorm);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClipFactorGuarded(sumSquares, factor, maxNorm);
+        }
+        else
+        {
+            ClipFactorRegistered(sumSquares, factor, maxNorm);
+        }
+    }
+
+    // ClipFactor with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClipFactorValues(Storage sumSquares, Storage factor, float maxNorm)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ClipFactor, OperationIndex.ClipFactor);
+        var sumSquaresValue = valueConversions.In(sumSquares);
+        var factorValue = valueConversions.In(factor);
+        ClipFactorRun(sumSquaresValue, factorValue, maxNorm);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClipFactorRun(Storage sumSquares, Storage factor, float maxNorm)
+    {
         if (_kernels is null && _moves is null)
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
@@ -7878,6 +11305,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Dropout"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>DropoutKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Dropout(Storage x, Storage y, int n, float p, uint seed)
+    {
+        if (x.Typed || y.Typed)
+        {
+            DropoutValues(x, y, n, p, seed);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            DropoutKernel(x, y, n, p, seed);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DropoutGuarded(x, y, n, p, seed);
+        }
+        else
+        {
+            DropoutRegistered(x, y, n, p, seed);
+        }
+    }
+
+    // Dropout with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutValues(Storage x, Storage y, int n, float p, uint seed)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Dropout, OperationIndex.Dropout);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        DropoutRun(xValue, yValue, n, p, seed);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutRun(Storage x, Storage y, int n, float p, uint seed)
     {
         if (_kernels is null && _moves is null)
         {
@@ -7966,6 +11428,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DropoutBackward(Storage dy, Storage dx, int n, float p, uint seed)
     {
+        if (dy.Typed || dx.Typed)
+        {
+            DropoutBackwardValues(dy, dx, n, p, seed);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            DropoutBackwardKernel(dy, dx, n, p, seed);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DropoutBackwardGuarded(dy, dx, n, p, seed);
+        }
+        else
+        {
+            DropoutBackwardRegistered(dy, dx, n, p, seed);
+        }
+    }
+
+    // DropoutBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutBackwardValues(Storage dy, Storage dx, int n, float p, uint seed)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.DropoutBackward, OperationIndex.DropoutBackward);
+        var dyValue = valueConversions.In(dy);
+        var dxValue = valueConversions.In(dx);
+        DropoutBackwardRun(dyValue, dxValue, n, p, seed);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutBackwardRun(Storage dy, Storage dx, int n, float p, uint seed)
+    {
         if (_kernels is null && _moves is null)
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
@@ -8052,6 +11549,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.ScaleMaskSoftmax"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ScaleMaskSoftmaxKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ScaleMaskSoftmax(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        if (x.Typed || (mask is not null && mask.Typed) || y.Typed)
+        {
+            ScaleMaskSoftmaxValues(x, mask, y, rows, cols, maskRows, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ScaleMaskSoftmaxGuarded(x, mask, y, rows, cols, maskRows, scale);
+        }
+        else
+        {
+            ScaleMaskSoftmaxRegistered(x, mask, y, rows, cols, maskRows, scale);
+        }
+    }
+
+    // ScaleMaskSoftmax with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScaleMaskSoftmaxValues(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ScaleMaskSoftmax, OperationIndex.ScaleMaskSoftmax);
+        var xValue = valueConversions.In(x);
+        var maskValue = valueConversions.Maybe(mask);
+        var yValue = valueConversions.In(y);
+        ScaleMaskSoftmaxRun(xValue, maskValue, yValue, rows, cols, maskRows, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScaleMaskSoftmaxRun(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
         if (_kernels is null && _moves is null)
         {
@@ -8140,6 +11673,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormFused(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
+        if (x.Typed || gamma.Typed || beta.Typed || y.Typed)
+        {
+            LayerNormFusedValues(x, gamma, beta, y, rows, cols, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormFusedGuarded(x, gamma, beta, y, rows, cols, eps);
+        }
+        else
+        {
+            LayerNormFusedRegistered(x, gamma, beta, y, rows, cols, eps);
+        }
+    }
+
+    // LayerNormFused with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormFusedValues(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LayerNormFused, OperationIndex.LayerNormFused);
+        var xValue = valueConversions.In(x);
+        var gammaValue = valueConversions.In(gamma);
+        var betaValue = valueConversions.In(beta);
+        var yValue = valueConversions.In(y);
+        LayerNormFusedRun(xValue, gammaValue, betaValue, yValue, rows, cols, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormFusedRun(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
         if (_kernels is null && _moves is null)
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
@@ -8226,6 +11796,44 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.LayerNormTrain"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>LayerNormTrainKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormTrain(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        if (x.Typed || gamma.Typed || beta.Typed || y.Typed || stats.Typed)
+        {
+            LayerNormTrainValues(x, gamma, beta, y, stats, rows, cols, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormTrainGuarded(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+        else
+        {
+            LayerNormTrainRegistered(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+    }
+
+    // LayerNormTrain with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormTrainValues(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LayerNormTrain, OperationIndex.LayerNormTrain);
+        var xValue = valueConversions.In(x);
+        var gammaValue = valueConversions.In(gamma);
+        var betaValue = valueConversions.In(beta);
+        var yValue = valueConversions.In(y);
+        var statsValue = valueConversions.In(stats);
+        LayerNormTrainRun(xValue, gammaValue, betaValue, yValue, statsValue, rows, cols, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormTrainRun(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
         if (_kernels is null && _moves is null)
         {
@@ -8316,6 +11924,46 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void LayerNormBackward(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
+        if (x.Typed || gamma.Typed || dy.Typed || stats.Typed || (dx is not null && dx.Typed) || (dgamma is not null && dgamma.Typed) || (dbeta is not null && dbeta.Typed))
+        {
+            LayerNormBackwardValues(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormBackwardGuarded(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+        else
+        {
+            LayerNormBackwardRegistered(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+    }
+
+    // LayerNormBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormBackwardValues(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.LayerNormBackward, OperationIndex.LayerNormBackward);
+        var xValue = valueConversions.In(x);
+        var gammaValue = valueConversions.In(gamma);
+        var dyValue = valueConversions.In(dy);
+        var statsValue = valueConversions.In(stats);
+        var dxValue = valueConversions.Maybe(dx);
+        var dgammaValue = valueConversions.Maybe(dgamma);
+        var dbetaValue = valueConversions.Maybe(dbeta);
+        LayerNormBackwardRun(xValue, gammaValue, dyValue, statsValue, dxValue, dgammaValue, dbetaValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormBackwardRun(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
         if (_kernels is null && _moves is null)
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
@@ -8402,6 +12050,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.BiasGelu"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BiasGeluKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BiasGelu(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        if (x.Typed || bias.Typed || y.Typed)
+        {
+            BiasGeluValues(x, bias, y, n, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BiasGeluKernel(x, bias, y, n, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BiasGeluGuarded(x, bias, y, n, cols);
+        }
+        else
+        {
+            BiasGeluRegistered(x, bias, y, n, cols);
+        }
+    }
+
+    // BiasGelu with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BiasGeluValues(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BiasGelu, OperationIndex.BiasGelu);
+        var xValue = valueConversions.In(x);
+        var biasValue = valueConversions.In(bias);
+        var yValue = valueConversions.In(y);
+        BiasGeluRun(xValue, biasValue, yValue, n, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BiasGeluRun(Storage x, Storage bias, Storage y, int n, int cols)
     {
         if (_kernels is null && _moves is null)
         {
@@ -8493,6 +12177,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
+        if (x.Typed || q.Typed || scales.Typed || y.Typed)
+        {
+            Int8MatMulValues(x, q, scales, y, m, n, k);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Int8MatMulKernel(x, q, scales, y, m, n, k);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int8MatMulGuarded(x, q, scales, y, m, n, k);
+        }
+        else
+        {
+            Int8MatMulRegistered(x, q, scales, y, m, n, k);
+        }
+    }
+
+    // Int8MatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8MatMulValues(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Int8MatMul, OperationIndex.Int8MatMul);
+        var xValue = valueConversions.In(x);
+        var qValue = valueConversions.In(q);
+        var scalesValue = valueConversions.In(scales);
+        var yValue = valueConversions.In(y);
+        Int8MatMulRun(xValue, qValue, scalesValue, yValue, m, n, k);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8MatMulRun(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
         if (_kernels is null && _moves is null)
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
@@ -8583,6 +12304,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
+        if (x.Typed || packed.Typed || y.Typed)
+        {
+            BFloat16MatMulValues(x, packed, y, m, n, k);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BFloat16MatMulKernel(x, packed, y, m, n, k);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BFloat16MatMulGuarded(x, packed, y, m, n, k);
+        }
+        else
+        {
+            BFloat16MatMulRegistered(x, packed, y, m, n, k);
+        }
+    }
+
+    // BFloat16MatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16MatMulValues(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BFloat16MatMul, OperationIndex.BFloat16MatMul);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var yValue = valueConversions.In(y);
+        BFloat16MatMulRun(xValue, packedValue, yValue, m, n, k);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16MatMulRun(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
         if (_kernels is null && _moves is null)
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
@@ -8669,6 +12426,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.BFloat16Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BFloat16DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BFloat16Dequantize(Storage packed, Storage w, int k, int n)
+    {
+        if (packed.Typed || w.Typed)
+        {
+            BFloat16DequantizeValues(packed, w, k, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BFloat16DequantizeKernel(packed, w, k, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BFloat16DequantizeGuarded(packed, w, k, n);
+        }
+        else
+        {
+            BFloat16DequantizeRegistered(packed, w, k, n);
+        }
+    }
+
+    // BFloat16Dequantize with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16DequantizeValues(Storage packed, Storage w, int k, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BFloat16Dequantize, OperationIndex.BFloat16Dequantize);
+        var packedValue = valueConversions.In(packed);
+        var wValue = valueConversions.In(w);
+        BFloat16DequantizeRun(packedValue, wValue, k, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16DequantizeRun(Storage packed, Storage w, int k, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -8762,6 +12554,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Float16MatMul(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
+        if (x.Typed || packed.Typed || y.Typed)
+        {
+            Float16MatMulValues(x, packed, y, m, n, k);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Float16MatMulKernel(x, packed, y, m, n, k);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Float16MatMulGuarded(x, packed, y, m, n, k);
+        }
+        else
+        {
+            Float16MatMulRegistered(x, packed, y, m, n, k);
+        }
+    }
+
+    // Float16MatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16MatMulValues(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Float16MatMul, OperationIndex.Float16MatMul);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        var yValue = valueConversions.In(y);
+        Float16MatMulRun(xValue, packedValue, yValue, m, n, k);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16MatMulRun(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
         if (_kernels is null && _moves is null)
         {
             Float16MatMulKernel(x, packed, y, m, n, k);
@@ -8833,6 +12661,41 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Float16Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Float16DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Float16Dequantize(Storage packed, Storage w, int k, int n)
+    {
+        if (packed.Typed || w.Typed)
+        {
+            Float16DequantizeValues(packed, w, k, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Float16DequantizeKernel(packed, w, k, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Float16DequantizeGuarded(packed, w, k, n);
+        }
+        else
+        {
+            Float16DequantizeRegistered(packed, w, k, n);
+        }
+    }
+
+    // Float16Dequantize with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16DequantizeValues(Storage packed, Storage w, int k, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Float16Dequantize, OperationIndex.Float16Dequantize);
+        var packedValue = valueConversions.In(packed);
+        var wValue = valueConversions.In(w);
+        Float16DequantizeRun(packedValue, wValue, k, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16DequantizeRun(Storage packed, Storage w, int k, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -8924,6 +12787,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void PackBFloat16(Storage x, Storage packed, int n)
     {
+        if (x.Typed || packed.Typed)
+        {
+            PackBFloat16Values(x, packed, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PackBFloat16Kernel(x, packed, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PackBFloat16Guarded(x, packed, n);
+        }
+        else
+        {
+            PackBFloat16Registered(x, packed, n);
+        }
+    }
+
+    // PackBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackBFloat16Values(Storage x, Storage packed, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PackBFloat16, OperationIndex.PackBFloat16);
+        var xValue = valueConversions.In(x);
+        var packedValue = valueConversions.In(packed);
+        PackBFloat16Run(xValue, packedValue, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackBFloat16Run(Storage x, Storage packed, int n)
+    {
         if (_kernels is null && _moves is null)
         {
             PackBFloat16Kernel(x, packed, n);
@@ -9010,6 +12908,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Int8Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int8DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int8Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        if (q.Typed || scales.Typed || w.Typed)
+        {
+            Int8DequantizeValues(q, scales, w, k, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Int8DequantizeKernel(q, scales, w, k, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int8DequantizeGuarded(q, scales, w, k, n);
+        }
+        else
+        {
+            Int8DequantizeRegistered(q, scales, w, k, n);
+        }
+    }
+
+    // Int8Dequantize with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8DequantizeValues(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Int8Dequantize, OperationIndex.Int8Dequantize);
+        var qValue = valueConversions.In(q);
+        var scalesValue = valueConversions.In(scales);
+        var wValue = valueConversions.In(w);
+        Int8DequantizeRun(qValue, scalesValue, wValue, k, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8DequantizeRun(Storage q, Storage scales, Storage w, int k, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -9102,6 +13036,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4MatMul(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
+        if (x.Typed || q.Typed || scales.Typed || y.Typed)
+        {
+            Int4MatMulValues(x, q, scales, y, m, n, k);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Int4MatMulKernel(x, q, scales, y, m, n, k);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int4MatMulGuarded(x, q, scales, y, m, n, k);
+        }
+        else
+        {
+            Int4MatMulRegistered(x, q, scales, y, m, n, k);
+        }
+    }
+
+    // Int4MatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4MatMulValues(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Int4MatMul, OperationIndex.Int4MatMul);
+        var xValue = valueConversions.In(x);
+        var qValue = valueConversions.In(q);
+        var scalesValue = valueConversions.In(scales);
+        var yValue = valueConversions.In(y);
+        Int4MatMulRun(xValue, qValue, scalesValue, yValue, m, n, k);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4MatMulRun(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
         if (_kernels is null && _moves is null)
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
@@ -9188,6 +13159,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.Int4Dequantize"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>Int4DequantizeKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Int4Dequantize(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        if (q.Typed || scales.Typed || w.Typed)
+        {
+            Int4DequantizeValues(q, scales, w, k, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            Int4DequantizeKernel(q, scales, w, k, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int4DequantizeGuarded(q, scales, w, k, n);
+        }
+        else
+        {
+            Int4DequantizeRegistered(q, scales, w, k, n);
+        }
+    }
+
+    // Int4Dequantize with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4DequantizeValues(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Int4Dequantize, OperationIndex.Int4Dequantize);
+        var qValue = valueConversions.In(q);
+        var scalesValue = valueConversions.In(scales);
+        var wValue = valueConversions.In(w);
+        Int4DequantizeRun(qValue, scalesValue, wValue, k, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4DequantizeRun(Storage q, Storage scales, Storage w, int k, int n)
     {
         if (_kernels is null && _moves is null)
         {
@@ -9276,6 +13283,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNorm(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
+        if (x.Typed || y.Typed || inv.Typed)
+        {
+            RmsNormValues(x, y, inv, rows, cols, eps);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RmsNormKernel(x, y, inv, rows, cols, eps);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormGuarded(x, y, inv, rows, cols, eps);
+        }
+        else
+        {
+            RmsNormRegistered(x, y, inv, rows, cols, eps);
+        }
+    }
+
+    // RmsNorm with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormValues(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RmsNorm, OperationIndex.RmsNorm);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        var invValue = valueConversions.In(inv);
+        RmsNormRun(xValue, yValue, invValue, rows, cols, eps);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRun(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
         if (_kernels is null && _moves is null)
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
@@ -9362,6 +13405,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.RmsNormBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>RmsNormBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormBackward(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        if (dy.Typed || y.Typed || inv.Typed || dx.Typed)
+        {
+            RmsNormBackwardValues(dy, y, inv, dx, rows, cols);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormBackwardGuarded(dy, y, inv, dx, rows, cols);
+        }
+        else
+        {
+            RmsNormBackwardRegistered(dy, y, inv, dx, rows, cols);
+        }
+    }
+
+    // RmsNormBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormBackwardValues(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RmsNormBackward, OperationIndex.RmsNormBackward);
+        var dyValue = valueConversions.In(dy);
+        var yValue = valueConversions.In(y);
+        var invValue = valueConversions.In(inv);
+        var dxValue = valueConversions.In(dx);
+        RmsNormBackwardRun(dyValue, yValue, invValue, dxValue, rows, cols);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormBackwardRun(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
         if (_kernels is null && _moves is null)
         {
@@ -9454,6 +13534,44 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Rope(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
+        if (x.Typed || y.Typed || cos.Typed || sin.Typed || positions.Typed)
+        {
+            RopeValues(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RopeGuarded(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+        else
+        {
+            RopeRegistered(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+    }
+
+    // Rope with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RopeValues(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.Rope, OperationIndex.Rope);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        var cosValue = valueConversions.In(cos);
+        var sinValue = valueConversions.In(sin);
+        var positionsValue = valueConversions.In(positions);
+        RopeRun(xValue, yValue, cosValue, sinValue, positionsValue, rows, heads, steps, dim, half, interleaved, sign);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RopeRun(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
         if (_kernels is null && _moves is null)
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
@@ -9541,6 +13659,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormAffine(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
+        if (x.Typed || gain.Typed || y.Typed)
+        {
+            RmsNormAffineValues(x, gain, y, rows, cols, eps, offset);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormAffineGuarded(x, gain, y, rows, cols, eps, offset);
+        }
+        else
+        {
+            RmsNormAffineRegistered(x, gain, y, rows, cols, eps, offset);
+        }
+    }
+
+    // RmsNormAffine with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormAffineValues(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RmsNormAffine, OperationIndex.RmsNormAffine);
+        var xValue = valueConversions.In(x);
+        var gainValue = valueConversions.In(gain);
+        var yValue = valueConversions.In(y);
+        RmsNormAffineRun(xValue, gainValue, yValue, rows, cols, eps, offset);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormAffineRun(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
         if (_kernels is null && _moves is null)
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
@@ -9627,6 +13781,44 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AddRmsNormAffine"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AddRmsNormAffineKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AddRmsNormAffine(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        if (a.Typed || b.Typed || sum.Typed || gain.Typed || y.Typed)
+        {
+            AddRmsNormAffineValues(a, b, sum, gain, y, rows, cols, eps, offset);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddRmsNormAffineGuarded(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+        else
+        {
+            AddRmsNormAffineRegistered(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+    }
+
+    // AddRmsNormAffine with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRmsNormAffineValues(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AddRmsNormAffine, OperationIndex.AddRmsNormAffine);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var sumValue = valueConversions.In(sum);
+        var gainValue = valueConversions.In(gain);
+        var yValue = valueConversions.In(y);
+        AddRmsNormAffineRun(aValue, bValue, sumValue, gainValue, yValue, rows, cols, eps, offset);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRmsNormAffineRun(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
         if (_kernels is null && _moves is null)
         {
@@ -9718,6 +13910,45 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRope(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
+        if (x.Typed || gain.Typed || cos.Typed || sin.Typed || positions.Typed || y.Typed)
+        {
+            RmsNormRopeValues(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormRopeGuarded(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+        else
+        {
+            RmsNormRopeRegistered(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+    }
+
+    // RmsNormRope with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopeValues(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RmsNormRope, OperationIndex.RmsNormRope);
+        var xValue = valueConversions.In(x);
+        var gainValue = valueConversions.In(gain);
+        var cosValue = valueConversions.In(cos);
+        var sinValue = valueConversions.In(sin);
+        var positionsValue = valueConversions.In(positions);
+        var yValue = valueConversions.In(y);
+        RmsNormRopeRun(xValue, gainValue, cosValue, sinValue, positionsValue, yValue, rows, cols, eps, offset, heads, steps, half, interleaved);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopeRun(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
         if (_kernels is null && _moves is null)
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
@@ -9808,6 +14039,48 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void RmsNormRopePair(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
     {
+        if (x.Typed || gain.Typed || y.Typed || x2.Typed || gain2.Typed || y2.Typed || cos.Typed || sin.Typed || positions.Typed)
+        {
+            RmsNormRopePairValues(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormRopePairGuarded(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+        }
+        else
+        {
+            RmsNormRopePairRegistered(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+        }
+    }
+
+    // RmsNormRopePair with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopePairValues(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RmsNormRopePair, OperationIndex.RmsNormRopePair);
+        var xValue = valueConversions.In(x);
+        var gainValue = valueConversions.In(gain);
+        var yValue = valueConversions.In(y);
+        var x2Value = valueConversions.In(x2);
+        var gain2Value = valueConversions.In(gain2);
+        var y2Value = valueConversions.In(y2);
+        var cosValue = valueConversions.In(cos);
+        var sinValue = valueConversions.In(sin);
+        var positionsValue = valueConversions.In(positions);
+        RmsNormRopePairRun(xValue, gainValue, yValue, rows1, eps, offset, heads, x2Value, gain2Value, y2Value, rows2, eps2, offset2, heads2, cosValue, sinValue, positionsValue, cols, steps, half, interleaved);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopePairRun(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
+    {
         if (_kernels is null && _moves is null)
         {
             RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
@@ -9876,6 +14149,40 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {
+        if (q.Typed || k.Typed || v.Typed || (gainQ is not null && gainQ.Typed) || (gainK is not null && gainK.Typed) || (cos is not null && cos.Typed) || (sin is not null && sin.Typed) || (positions is not null && positions.Typed) || yq.Typed || yk.Typed || yv.Typed || (position is not null && position.Typed))
+        {
+            return NormRopeHeadsValues(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+        }
+
+        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+    }
+
+    // NormRopeHeads with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool NormRopeHeadsValues(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.NormRopeHeads, OperationIndex.NormRopeHeads);
+        var qValue = valueConversions.In(q);
+        var kValue = valueConversions.In(k);
+        var vValue = valueConversions.In(v);
+        var gainQValue = valueConversions.Maybe(gainQ);
+        var gainKValue = valueConversions.Maybe(gainK);
+        var cosValue = valueConversions.Maybe(cos);
+        var sinValue = valueConversions.Maybe(sin);
+        var positionsValue = valueConversions.Maybe(positions);
+        var yqValue = valueConversions.In(yq);
+        var ykValue = valueConversions.In(yk);
+        var yvValue = valueConversions.In(yv);
+        var positionValue = valueConversions.Maybe(position);
+        var returned = NormRopeHeadsRun(qValue, kValue, vValue, batch, steps, heads, kvHeads, cols, gainQValue, epsQ, offsetQ, gainKValue, epsK, offsetK, cosValue, sinValue, positionsValue, half, interleaved, yqValue, ykValue, yvValue, positionValue, capacity, stride, bfloat16);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool NormRopeHeadsRun(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    {
         return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
     }
 
@@ -9914,6 +14221,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.SoftmaxCrossEntropyRows"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>SoftmaxCrossEntropyRowsKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void SoftmaxCrossEntropyRows(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        if (logits.Typed || targets.Typed || weights.Typed || losses.Typed)
+        {
+            SoftmaxCrossEntropyRowsValues(logits, targets, weights, losses, rows, vocabulary, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxCrossEntropyRowsGuarded(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+        else
+        {
+            SoftmaxCrossEntropyRowsRegistered(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+    }
+
+    // SoftmaxCrossEntropyRows with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxCrossEntropyRowsValues(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SoftmaxCrossEntropyRows, OperationIndex.SoftmaxCrossEntropyRows);
+        var logitsValue = valueConversions.In(logits);
+        var targetsValue = valueConversions.In(targets);
+        var weightsValue = valueConversions.In(weights);
+        var lossesValue = valueConversions.In(losses);
+        SoftmaxCrossEntropyRowsRun(logitsValue, targetsValue, weightsValue, lossesValue, rows, vocabulary, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxCrossEntropyRowsRun(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
         if (_kernels is null && _moves is null)
         {
@@ -10002,6 +14346,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivation(Storage gate, Storage up, Storage y, int n, int kind)
     {
+        if (gate.Typed || up.Typed || y.Typed)
+        {
+            GatedActivationValues(gate, up, y, n, kind);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatedActivationKernel(gate, up, y, n, kind);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationGuarded(gate, up, y, n, kind);
+        }
+        else
+        {
+            GatedActivationRegistered(gate, up, y, n, kind);
+        }
+    }
+
+    // GatedActivation with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationValues(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatedActivation, OperationIndex.GatedActivation);
+        var gateValue = valueConversions.In(gate);
+        var upValue = valueConversions.In(up);
+        var yValue = valueConversions.In(y);
+        GatedActivationRun(gateValue, upValue, yValue, n, kind);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationRun(Storage gate, Storage up, Storage y, int n, int kind)
+    {
         if (_kernels is null && _moves is null)
         {
             GatedActivationKernel(gate, up, y, n, kind);
@@ -10088,6 +14468,44 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GatedActivationBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackward(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        if (gate.Typed || up.Typed || dy.Typed || dgate.Typed || dup.Typed)
+        {
+            GatedActivationBackwardValues(gate, up, dy, dgate, dup, n, kind, flags);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationBackwardGuarded(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+        else
+        {
+            GatedActivationBackwardRegistered(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+    }
+
+    // GatedActivationBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardValues(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatedActivationBackward, OperationIndex.GatedActivationBackward);
+        var gateValue = valueConversions.In(gate);
+        var upValue = valueConversions.In(up);
+        var dyValue = valueConversions.In(dy);
+        var dgateValue = valueConversions.In(dgate);
+        var dupValue = valueConversions.In(dup);
+        GatedActivationBackwardRun(gateValue, upValue, dyValue, dgateValue, dupValue, n, kind, flags);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardRun(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         if (_kernels is null && _moves is null)
         {
@@ -10181,6 +14599,45 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationPacked(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
+        if (gate.Typed || up.Typed || packedGate.Typed || packedUp.Typed || y.Typed || packedY.Typed)
+        {
+            GatedActivationPackedValues(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationPackedGuarded(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
+        else
+        {
+            GatedActivationPackedRegistered(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
+    }
+
+    // GatedActivationPacked with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationPackedValues(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatedActivationPacked, OperationIndex.GatedActivationPacked);
+        var gateValue = valueConversions.In(gate);
+        var upValue = valueConversions.In(up);
+        var packedGateValue = valueConversions.In(packedGate);
+        var packedUpValue = valueConversions.In(packedUp);
+        var yValue = valueConversions.In(y);
+        var packedYValue = valueConversions.In(packedY);
+        GatedActivationPackedRun(gateValue, upValue, packedGateValue, packedUpValue, yValue, packedYValue, n, kind, flags);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationPackedRun(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    {
         if (_kernels is null && _moves is null)
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
@@ -10267,6 +14724,44 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.GatedActivationBackwardPacked"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>GatedActivationBackwardPackedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void GatedActivationBackwardPacked(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        if (packedGate.Typed || packedUp.Typed || dy.Typed || dgate.Typed || dup.Typed)
+        {
+            GatedActivationBackwardPackedValues(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationBackwardPackedGuarded(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
+        else
+        {
+            GatedActivationBackwardPackedRegistered(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
+    }
+
+    // GatedActivationBackwardPacked with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardPackedValues(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.GatedActivationBackwardPacked, OperationIndex.GatedActivationBackwardPacked);
+        var packedGateValue = valueConversions.In(packedGate);
+        var packedUpValue = valueConversions.In(packedUp);
+        var dyValue = valueConversions.In(dy);
+        var dgateValue = valueConversions.In(dgate);
+        var dupValue = valueConversions.In(dup);
+        GatedActivationBackwardPackedRun(packedGateValue, packedUpValue, dyValue, dgateValue, dupValue, n, kind, flags);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardPackedRun(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
         if (_kernels is null && _moves is null)
         {
@@ -10355,6 +14850,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteInt8(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
+        if (source.Typed || cache.Typed || scales.Typed || position.Typed)
+        {
+            KeyValueWriteInt8Values(source, cache, scales, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteInt8Guarded(source, cache, scales, position, heads, steps, capacity, dim);
+        }
+        else
+        {
+            KeyValueWriteInt8Registered(source, cache, scales, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // KeyValueWriteInt8 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteInt8Values(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.KeyValueWriteInt8, OperationIndex.KeyValueWriteInt8);
+        var sourceValue = valueConversions.In(source);
+        var cacheValue = valueConversions.In(cache);
+        var scalesValue = valueConversions.In(scales);
+        var positionValue = valueConversions.In(position);
+        KeyValueWriteInt8Run(sourceValue, cacheValue, scalesValue, positionValue, heads, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteInt8Run(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    {
         if (_kernels is null && _moves is null)
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
@@ -10442,6 +14974,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionScoresInt8(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
+        if (q.Typed || cache.Typed || scales.Typed || y.Typed)
+        {
+            AttentionScoresInt8Values(q, cache, scales, y, rows, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionScoresInt8Guarded(q, cache, scales, y, rows, steps, capacity, dim);
+        }
+        else
+        {
+            AttentionScoresInt8Registered(q, cache, scales, y, rows, steps, capacity, dim);
+        }
+    }
+
+    // AttentionScoresInt8 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionScoresInt8Values(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionScoresInt8, OperationIndex.AttentionScoresInt8);
+        var qValue = valueConversions.In(q);
+        var cacheValue = valueConversions.In(cache);
+        var scalesValue = valueConversions.In(scales);
+        var yValue = valueConversions.In(y);
+        AttentionScoresInt8Run(qValue, cacheValue, scalesValue, yValue, rows, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionScoresInt8Run(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
@@ -10528,6 +15097,43 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionContextInt8"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionContextInt8Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionContextInt8(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        if (weights.Typed || cache.Typed || scales.Typed || y.Typed)
+        {
+            AttentionContextInt8Values(weights, cache, scales, y, rows, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionContextInt8Guarded(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
+        else
+        {
+            AttentionContextInt8Registered(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
+    }
+
+    // AttentionContextInt8 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionContextInt8Values(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionContextInt8, OperationIndex.AttentionContextInt8);
+        var weightsValue = valueConversions.In(weights);
+        var cacheValue = valueConversions.In(cache);
+        var scalesValue = valueConversions.In(scales);
+        var yValue = valueConversions.In(y);
+        AttentionContextInt8Run(weightsValue, cacheValue, scalesValue, yValue, rows, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionContextInt8Run(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         if (_kernels is null && _moves is null)
         {
@@ -10623,6 +15229,44 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionDecode(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed)
+        {
+            AttentionDecodeValues(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionDecodeGuarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionDecodeRegistered(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // AttentionDecode with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionDecodeValues(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionDecode, OperationIndex.AttentionDecode);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        AttentionDecodeRun(qValue, keysValue, valuesValue, positionValue, yValue, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionDecodeRun(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -10714,6 +15358,46 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionInt8(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || keyScales.Typed || valueScales.Typed || position.Typed || y.Typed)
+        {
+            AttentionInt8Values(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionInt8Guarded(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        else
+        {
+            AttentionInt8Registered(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+    }
+
+    // AttentionInt8 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionInt8Values(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionInt8, OperationIndex.AttentionInt8);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var keyScalesValue = valueConversions.In(keyScales);
+        var valueScalesValue = valueConversions.In(valueScales);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        AttentionInt8Run(qValue, keysValue, valuesValue, keyScalesValue, valueScalesValue, positionValue, yValue, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionInt8Run(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -10804,6 +15488,44 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed)
+        {
+            AttentionBFloat16Values(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionBFloat16Guarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        else
+        {
+            AttentionBFloat16Registered(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+    }
+
+    // AttentionBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionBFloat16Values(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionBFloat16, OperationIndex.AttentionBFloat16);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        AttentionBFloat16Run(qValue, keysValue, valuesValue, positionValue, yValue, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionBFloat16Run(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -10890,6 +15612,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.KeyValueWriteBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWriteBFloat16(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        if (source.Typed || cache.Typed || position.Typed)
+        {
+            KeyValueWriteBFloat16Values(source, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteBFloat16Guarded(source, cache, position, heads, steps, capacity, dim);
+        }
+        else
+        {
+            KeyValueWriteBFloat16Registered(source, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // KeyValueWriteBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteBFloat16Values(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.KeyValueWriteBFloat16, OperationIndex.KeyValueWriteBFloat16);
+        var sourceValue = valueConversions.In(source);
+        var cacheValue = valueConversions.In(cache);
+        var positionValue = valueConversions.In(position);
+        KeyValueWriteBFloat16Run(sourceValue, cacheValue, positionValue, heads, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteBFloat16Run(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (_kernels is null && _moves is null)
         {
@@ -10981,6 +15739,48 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionTiledBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (q.Typed || keys.Typed || values.Typed || output.Typed || logSumExp.Typed || dOutput.Typed || dq.Typed || dkeys.Typed || dvalues.Typed)
+        {
+            AttentionTiledBackwardValues(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // AttentionTiledBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledBackwardValues(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionTiledBackward, OperationIndex.AttentionTiledBackward);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var outputValue = valueConversions.In(output);
+        var logSumExpValue = valueConversions.In(logSumExp);
+        var dOutputValue = valueConversions.In(dOutput);
+        var dqValue = valueConversions.In(dq);
+        var dkeysValue = valueConversions.In(dkeys);
+        var dvaluesValue = valueConversions.In(dvalues);
+        AttentionTiledBackwardRun(qValue, keysValue, valuesValue, outputValue, logSumExpValue, dOutputValue, dqValue, dkeysValue, dvaluesValue, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledBackwardRun(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (_kernels is null && _moves is null)
         {
@@ -11075,6 +15875,35 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || y.Typed || (logSumExp is not null && logSumExp.Typed) || starts.Typed || ends.Typed)
+        {
+            return AttentionSegmentedValues(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+    }
+
+    // AttentionSegmented with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedValues(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionSegmented, OperationIndex.AttentionSegmented);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.Maybe(logSumExp);
+        var startsValue = valueConversions.In(starts);
+        var endsValue = valueConversions.In(ends);
+        var returned = AttentionSegmentedRun(qValue, keysValue, valuesValue, yValue, logSumExpValue, startsValue, endsValue, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedRun(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
         return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
@@ -11147,6 +15976,34 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed || starts.Typed)
+        {
+            return AttentionRowsValues(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
+    // AttentionRows with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsValues(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionRows, OperationIndex.AttentionRows);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        var startsValue = valueConversions.In(starts);
+        var returned = AttentionRowsRun(qValue, keysValue, valuesValue, positionValue, yValue, startsValue, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsRun(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
         return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -11218,6 +16075,34 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionRowsBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionRowsBFloat16Kernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed || starts.Typed)
+        {
+            return AttentionRowsBFloat16Values(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        return _kernels is null && _moves is null ? AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsBFloat16Guarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Registered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
+    // AttentionRowsBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsBFloat16Values(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionRowsBFloat16, OperationIndex.AttentionRowsBFloat16);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        var startsValue = valueConversions.In(starts);
+        var returned = AttentionRowsBFloat16Run(qValue, keysValue, valuesValue, positionValue, yValue, startsValue, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsBFloat16Run(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         return _kernels is null && _moves is null ? AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsBFloat16Guarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Registered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
@@ -11295,6 +16180,33 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionMaskedBFloat16(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
     {
+        if (q.Typed || keys.Typed || values.Typed || (mask is not null && mask.Typed) || y.Typed)
+        {
+            return AttentionMaskedBFloat16Values(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+        }
+
+        return _kernels is null && _moves is null ? AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionMaskedBFloat16Guarded(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Registered(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+    }
+
+    // AttentionMaskedBFloat16 with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionMaskedBFloat16Values(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionMaskedBFloat16, OperationIndex.AttentionMaskedBFloat16);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var maskValue = valueConversions.Maybe(mask);
+        var yValue = valueConversions.In(y);
+        var returned = AttentionMaskedBFloat16Run(qValue, keysValue, valuesValue, maskValue, yValue, heads, rowsPerHead, maskRows, capacity, dim, scale);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionMaskedBFloat16Run(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+    {
         return _kernels is null && _moves is null ? AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionMaskedBFloat16Guarded(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Registered(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
     }
 
@@ -11329,6 +16241,39 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionSegmentedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSegmentedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (q.Typed || keys.Typed || values.Typed || output.Typed || logSumExp.Typed || dOutput.Typed || dq.Typed || dkeys.Typed || dvalues.Typed || starts.Typed || ends.Typed)
+        {
+            return AttentionSegmentedBackwardValues(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+    }
+
+    // AttentionSegmentedBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedBackwardValues(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionSegmentedBackward, OperationIndex.AttentionSegmentedBackward);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var outputValue = valueConversions.In(output);
+        var logSumExpValue = valueConversions.In(logSumExp);
+        var dOutputValue = valueConversions.In(dOutput);
+        var dqValue = valueConversions.In(dq);
+        var dkeysValue = valueConversions.In(dkeys);
+        var dvaluesValue = valueConversions.In(dvalues);
+        var startsValue = valueConversions.In(starts);
+        var endsValue = valueConversions.In(ends);
+        var returned = AttentionSegmentedBackwardRun(qValue, keysValue, valuesValue, outputValue, logSumExpValue, dOutputValue, dqValue, dkeysValue, dvaluesValue, startsValue, endsValue, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedBackwardRun(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
         return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
@@ -11403,6 +16348,45 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionTiled"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiled(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed || (logSumExp is not null && logSumExp.Typed))
+        {
+            AttentionTiledValues(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledGuarded(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledRegistered(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // AttentionTiled with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledValues(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionTiled, OperationIndex.AttentionTiled);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.Maybe(logSumExp);
+        AttentionTiledRun(qValue, keysValue, valuesValue, positionValue, yValue, logSumExpValue, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledRun(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (_kernels is null && _moves is null)
         {
@@ -11509,6 +16493,46 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpans(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || starts.Typed || ends.Typed || y.Typed || (logSumExp is not null && logSumExp.Typed))
+        {
+            AttentionSpansValues(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansGuarded(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else
+        {
+            AttentionSpansRegistered(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    // AttentionSpans with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansValues(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionSpans, OperationIndex.AttentionSpans);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var startsValue = valueConversions.In(starts);
+        var endsValue = valueConversions.In(ends);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.Maybe(logSumExp);
+        AttentionSpansRun(qValue, keysValue, valuesValue, startsValue, endsValue, yValue, logSumExpValue, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansRun(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -11605,6 +16629,45 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionSpansStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSpansStridedKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpansStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        if (q.Typed || k.Typed || v.Typed || starts.Typed || ends.Typed || y.Typed)
+        {
+            AttentionSpansStridedValues(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+        else
+        {
+            AttentionSpansStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+    }
+
+    // AttentionSpansStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansStridedValues(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionSpansStrided, OperationIndex.AttentionSpansStrided);
+        var qValue = valueConversions.In(q);
+        var kValue = valueConversions.In(k);
+        var vValue = valueConversions.In(v);
+        var startsValue = valueConversions.In(starts);
+        var endsValue = valueConversions.In(ends);
+        var yValue = valueConversions.In(y);
+        AttentionSpansStridedRun(qValue, qOffset, kValue, kOffset, vValue, vOffset, qRow, kRow, startsValue, endsValue, yValue, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansStridedRun(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
     {
         if (_kernels is null && _moves is null)
         {
@@ -11716,6 +16779,50 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionSpansBackward(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || starts.Typed || ends.Typed || output.Typed || logSumExp.Typed || dOutput.Typed || dq.Typed || dkeys.Typed || dvalues.Typed)
+        {
+            AttentionSpansBackwardValues(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansBackwardGuarded(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        else
+        {
+            AttentionSpansBackwardRegistered(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    // AttentionSpansBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansBackwardValues(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionSpansBackward, OperationIndex.AttentionSpansBackward);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var startsValue = valueConversions.In(starts);
+        var endsValue = valueConversions.In(ends);
+        var outputValue = valueConversions.In(output);
+        var logSumExpValue = valueConversions.In(logSumExp);
+        var dOutputValue = valueConversions.In(dOutput);
+        var dqValue = valueConversions.In(dq);
+        var dkeysValue = valueConversions.In(dkeys);
+        var dvaluesValue = valueConversions.In(dvalues);
+        AttentionSpansBackwardRun(qValue, keysValue, valuesValue, startsValue, endsValue, outputValue, logSumExpValue, dOutputValue, dqValue, dkeysValue, dvaluesValue, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansBackwardRun(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -11804,6 +16911,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void DecoderMask(Storage position, Storage mask, int rows, int capacity)
     {
+        if (position.Typed || mask.Typed)
+        {
+            DecoderMaskValues(position, mask, rows, capacity);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            DecoderMaskKernel(position, mask, rows, capacity);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DecoderMaskGuarded(position, mask, rows, capacity);
+        }
+        else
+        {
+            DecoderMaskRegistered(position, mask, rows, capacity);
+        }
+    }
+
+    // DecoderMask with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DecoderMaskValues(Storage position, Storage mask, int rows, int capacity)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.DecoderMask, OperationIndex.DecoderMask);
+        var positionValue = valueConversions.In(position);
+        var maskValue = valueConversions.In(mask);
+        DecoderMaskRun(positionValue, maskValue, rows, capacity);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DecoderMaskRun(Storage position, Storage mask, int rows, int capacity)
+    {
         if (_kernels is null && _moves is null)
         {
             DecoderMaskKernel(position, mask, rows, capacity);
@@ -11890,6 +17032,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.KeyValueWrite"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void KeyValueWrite(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        if (source.Typed || cache.Typed || position.Typed)
+        {
+            KeyValueWriteValues(source, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteGuarded(source, cache, position, heads, steps, capacity, dim);
+        }
+        else
+        {
+            KeyValueWriteRegistered(source, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // KeyValueWrite with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteValues(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.KeyValueWrite, OperationIndex.KeyValueWrite);
+        var sourceValue = valueConversions.In(source);
+        var cacheValue = valueConversions.In(cache);
+        var positionValue = valueConversions.In(position);
+        KeyValueWriteRun(sourceValue, cacheValue, positionValue, heads, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteRun(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (_kernels is null && _moves is null)
         {
@@ -11999,6 +17177,42 @@ public abstract partial class Backend
             return;
         }
 
+        if (logits.Typed || stats.Typed || step.Typed)
+        {
+            SampleRowsValues(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SampleRowsGuarded(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+        else
+        {
+            SampleRowsRegistered(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+    }
+
+    // SampleRows with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SampleRowsValues(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.SampleRows, OperationIndex.SampleRows);
+        var logitsValue = valueConversions.In(logits);
+        var statsValue = valueConversions.In(stats);
+        var stepValue = valueConversions.In(step);
+        SampleRowsRun(logitsValue, ids, statsValue, stepValue, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SampleRowsRun(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
         if (_kernels is null && _moves is null)
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
@@ -12115,6 +17329,42 @@ public abstract partial class Backend
             return;
         }
 
+        if (logits.Typed || work.Typed || length.Typed)
+        {
+            PenalizeRowsValues(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PenalizeRowsGuarded(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+        else
+        {
+            PenalizeRowsRegistered(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+    }
+
+    // PenalizeRows with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PenalizeRowsValues(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.PenalizeRows, OperationIndex.PenalizeRows);
+        var logitsValue = valueConversions.In(logits);
+        var workValue = valueConversions.In(work);
+        var lengthValue = valueConversions.In(length);
+        PenalizeRowsRun(logitsValue, workValue, history, lengthValue, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PenalizeRowsRun(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
         if (_kernels is null && _moves is null)
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
@@ -12224,6 +17474,40 @@ public abstract partial class Backend
             return;
         }
 
+        if (length.Typed)
+        {
+            HistoryPushValues(ids, history, length, rows, capacity);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            HistoryPushKernel(ids, history, length, rows, capacity);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            HistoryPushGuarded(ids, history, length, rows, capacity);
+        }
+        else
+        {
+            HistoryPushRegistered(ids, history, length, rows, capacity);
+        }
+    }
+
+    // HistoryPush with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void HistoryPushValues(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.HistoryPush, OperationIndex.HistoryPush);
+        var lengthValue = valueConversions.In(length);
+        HistoryPushRun(ids, history, lengthValue, rows, capacity);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void HistoryPushRun(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
         if (_kernels is null && _moves is null)
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
@@ -12346,6 +17630,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (probabilities.Typed || weights.Typed)
+        {
+            RouteTopKValues(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            RouteTopKKernel(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RouteTopKGuarded(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        }
+        else
+        {
+            RouteTopKRegistered(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        }
+    }
+
+    // RouteTopK with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RouteTopKValues(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.RouteTopK, OperationIndex.RouteTopK);
+        var probabilitiesValue = valueConversions.In(probabilities);
+        var weightsValue = valueConversions.In(weights);
+        RouteTopKRun(probabilitiesValue, weightsValue, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RouteTopKRun(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
+    {
         if (_kernels is null && _moves is null)
         {
             RouteTopKKernel(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
@@ -12468,6 +17787,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (x.Typed || hidden.Typed)
+        {
+            ExpertGatedPairValues(x, offsets, experts, hidden, rows, k, n, activation);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ExpertGatedPairKernel(x, offsets, experts, hidden, rows, k, n, activation);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ExpertGatedPairGuarded(x, offsets, experts, hidden, rows, k, n, activation);
+        }
+        else
+        {
+            ExpertGatedPairRegistered(x, offsets, experts, hidden, rows, k, n, activation);
+        }
+    }
+
+    // ExpertGatedPair with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpertGatedPairValues(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ExpertGatedPair, OperationIndex.ExpertGatedPair);
+        var xValue = valueConversions.In(x);
+        var hiddenValue = valueConversions.In(hidden);
+        ExpertGatedPairRun(xValue, offsets, experts, hiddenValue, rows, k, n, activation);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpertGatedPairRun(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
+    {
         if (_kernels is null && _moves is null)
         {
             ExpertGatedPairKernel(x, offsets, experts, hidden, rows, k, n, activation);
@@ -12589,6 +17943,41 @@ public abstract partial class Backend
             return;
         }
 
+        if (x.Typed || y.Typed)
+        {
+            ExpertMatMulValues(x, offsets, experts, y, rows, k, n);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ExpertMatMulGuarded(x, offsets, experts, y, rows, k, n);
+        }
+        else
+        {
+            ExpertMatMulRegistered(x, offsets, experts, y, rows, k, n);
+        }
+    }
+
+    // ExpertMatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpertMatMulValues(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ExpertMatMul, OperationIndex.ExpertMatMul);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        ExpertMatMulRun(xValue, offsets, experts, yValue, rows, k, n);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpertMatMulRun(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
+    {
         if (_kernels is null && _moves is null)
         {
             ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
@@ -12702,6 +18091,41 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void StridedCopy(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
     {
+        if (x.Typed || y.Typed)
+        {
+            StridedCopyValues(x, offset, shape, strides, y);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            StridedCopyKernel(x, offset, shape, strides, y);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            StridedCopyGuarded(x, offset, shape, strides, y);
+        }
+        else
+        {
+            StridedCopyRegistered(x, offset, shape, strides, y);
+        }
+    }
+
+    // StridedCopy with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void StridedCopyValues(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.StridedCopy, OperationIndex.StridedCopy);
+        var xValue = valueConversions.In(x);
+        var yValue = valueConversions.In(y);
+        StridedCopyRun(xValue, offset, shape, strides, yValue);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void StridedCopyRun(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
+    {
         if (_kernels is null && _moves is null)
         {
             StridedCopyKernel(x, offset, shape, strides, y);
@@ -12796,6 +18220,42 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void BatchedMatMulStrided(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
+        if (a.Typed || b.Typed || c.Typed)
+        {
+            BatchedMatMulStridedValues(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BatchedMatMulStridedGuarded(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        else
+        {
+            BatchedMatMulStridedRegistered(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    // BatchedMatMulStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulStridedValues(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.BatchedMatMulStrided, OperationIndex.BatchedMatMulStrided);
+        var aValue = valueConversions.In(a);
+        var bValue = valueConversions.In(b);
+        var cValue = valueConversions.In(c);
+        BatchedMatMulStridedRun(aValue, aLayout, bValue, bLayout, cValue, batch, m, n, k, transA, transB, beta);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulStridedRun(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
         if (_kernels is null && _moves is null)
         {
             BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
@@ -12889,6 +18349,45 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiledStrided(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
+        if (q.Typed || keys.Typed || values.Typed || position.Typed || y.Typed || (logSumExp is not null && logSumExp.Typed))
+        {
+            AttentionTiledStridedValues(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledStridedGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledStridedRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // AttentionTiledStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedValues(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionTiledStrided, OperationIndex.AttentionTiledStrided);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var positionValue = valueConversions.In(position);
+        var yValue = valueConversions.In(y);
+        var logSumExpValue = valueConversions.Maybe(logSumExp);
+        AttentionTiledStridedRun(qValue, qLayout, keysValue, keysLayout, valuesValue, valuesLayout, positionValue, yValue, logSumExpValue, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedRun(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
         if (_kernels is null && _moves is null)
         {
             AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -12980,6 +18479,48 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.AttentionTiledStridedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledStridedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AttentionTiledStridedBackward(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (q.Typed || keys.Typed || values.Typed || output.Typed || logSumExp.Typed || dOutput.Typed || dq.Typed || dkeys.Typed || dvalues.Typed)
+        {
+            AttentionTiledStridedBackwardValues(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledStridedBackwardGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledStridedBackwardRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // AttentionTiledStridedBackward with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedBackwardValues(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.AttentionTiledStridedBackward, OperationIndex.AttentionTiledStridedBackward);
+        var qValue = valueConversions.In(q);
+        var keysValue = valueConversions.In(keys);
+        var valuesValue = valueConversions.In(values);
+        var outputValue = valueConversions.In(output);
+        var logSumExpValue = valueConversions.In(logSumExp);
+        var dOutputValue = valueConversions.In(dOutput);
+        var dqValue = valueConversions.In(dq);
+        var dkeysValue = valueConversions.In(dkeys);
+        var dvaluesValue = valueConversions.In(dvalues);
+        AttentionTiledStridedBackwardRun(qValue, qLayout, keysValue, keysLayout, valuesValue, valuesLayout, outputValue, logSumExpValue, dOutputValue, dqValue, dkeysValue, dvaluesValue, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedBackwardRun(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (_kernels is null && _moves is null)
         {
@@ -13169,6 +18710,43 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void StoredMatMul(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
     {
+        if (x.Typed || (scales is not null && scales.Typed) || (zeros is not null && zeros.Typed) || y.Typed)
+        {
+            StoredMatMulValues(x, weight, scales, zeros, y, m, n, k, layout);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            StoredMatMulGuarded(x, weight, scales, zeros, y, m, n, k, layout);
+        }
+        else
+        {
+            StoredMatMulRegistered(x, weight, scales, zeros, y, m, n, k, layout);
+        }
+    }
+
+    // StoredMatMul with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void StoredMatMulValues(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.StoredMatMul, OperationIndex.StoredMatMul);
+        var xValue = valueConversions.In(x);
+        var scalesValue = valueConversions.Maybe(scales);
+        var zerosValue = valueConversions.Maybe(zeros);
+        var yValue = valueConversions.In(y);
+        StoredMatMulRun(xValue, weight, scalesValue, zerosValue, yValue, m, n, k, layout);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void StoredMatMulRun(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
+    {
         if (_kernels is null && _moves is null)
         {
             StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
@@ -13260,6 +18838,42 @@ public abstract partial class Backend
     /// <remarks>Runs <see cref="Ops.ExpandStored"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>ExpandStoredKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExpandStored(Storage weight, Storage? scales, Storage? zeros, Storage w, int n, int k, StoredScales layout)
+    {
+        if ((scales is not null && scales.Typed) || (zeros is not null && zeros.Typed) || w.Typed)
+        {
+            ExpandStoredValues(weight, scales, zeros, w, n, k, layout);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            ExpandStoredKernel(weight, scales, zeros, w, n, k, layout);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ExpandStoredGuarded(weight, scales, zeros, w, n, k, layout);
+        }
+        else
+        {
+            ExpandStoredRegistered(weight, scales, zeros, w, n, k, layout);
+        }
+    }
+
+    // ExpandStored with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpandStoredValues(Storage weight, Storage? scales, Storage? zeros, Storage w, int n, int k, StoredScales layout)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.ExpandStored, OperationIndex.ExpandStored);
+        var scalesValue = valueConversions.Maybe(scales);
+        var zerosValue = valueConversions.Maybe(zeros);
+        var wValue = valueConversions.In(w);
+        ExpandStoredRun(weight, scalesValue, zerosValue, wValue, n, k, layout);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExpandStoredRun(Storage weight, Storage? scales, Storage? zeros, Storage w, int n, int k, StoredScales layout)
     {
         if (_kernels is null && _moves is null)
         {
