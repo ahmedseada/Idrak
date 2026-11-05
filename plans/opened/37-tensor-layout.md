@@ -17,7 +17,8 @@ and `--profile`; the run's products, weights chosen by memory and key/value cach
 and kept weights in place from the checkpoint's copy-on-write file mapping, `WeightMappings` map and copy, every copy
 counted in `MappedWeights`; the speed bench not yet run) built 2026-11-05; Q1 (packed products on CUDA, HIP and
 Vulkan's other formats) and T4 (any type everywhere, unsigned and short integers, no type fixed in code) added by the
-owner 2026-11-05; the rest (T3, N1, V2, N3, S0) planned, released by the owner 2026-11-05. Q0, K0, W3 and the wider T0, T2, T3 added
+owner 2026-11-05; the rest (T3, N1, V2, S0) planned, released by the owner 2026-11-05; N3 held by the owner until the
+T stages are done. Q0, K0, W3 and the wider T0, T2, T3 added
 2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`
@@ -180,12 +181,19 @@ follows Q0 and T2; N3 after them, the largest of the network stages. Q1 takes th
    signature; block formats (q4_k, IQ2, ternary, MXFP4) have fractional bits and no C# struct; GPU kernels are per type
    either way; rule 89 forbids the type tests generic hot paths need; a registered type plugs in without recompiling.
    Generics stay inside single CPU kernels, where the JIT specializes them.
-7. **Accumulation (T4). Open.** Whether "no fixed type" covers the sums too, or they stay float32 (today's plan).
-8. **16-bit activations (T2b). Open.** (a) Activations stored in bf16/f16 between every operation, with native 16-bit
-   element-wise, norm and attention kernels on CUDA, Vulkan and HIP (about 150 operations on each, several commits);
-   or (b, recommended by T2a's agent) 16-bit storage where the memory is (weights, the key/value cache, training's
-   recorded activations), the products in the type with float32 sums, element-wise math in float32, and float16 weight
-   and cache formats with kernels on the CPU, Vulkan and CUDA so float16 runs save as much as bfloat16 ones.
+7. **Accumulation (T2b, T4). Decided (the owner, 2026-11-05): no fixed sum type either.** Each backend reports, per
+   operation, the sum types its device supports (from what the device reports at run time, never a card list); `auto`
+   measures them per device and per operation at load or in `idrak tune` (the time, and the error against a wider sum on
+   the run's own data, within a tolerance that is a setting) and picks the fastest within it; a setting and an option
+   select one instead; the telemetry says per device and operation which sum type is used and whether it was "picked by
+   auto" (with the measurement) or "selected by the user". float32 is chosen only when measured or selected, never as a
+   constant (the earlier "float32 accumulation" of the T2 row reads this way).
+8. **Activations in the run's type (T2b). Decided (the owner, 2026-11-05): everywhere (option a).** Activations stay in
+   the run's type between every operation, and every operation computes in it on every device; where a device has no
+   kernel for a type yet, the dispatcher converts once, counts it and says so in the telemetry, so each gap is visible
+   until its kernel lands. Built in steps by payoff: the products (T2a), then attention and softmax, norms, element-wise
+   operations, reductions; CUDA and Vulkan first, then HIP; float16 formats beside bfloat16 so float16-only devices save
+   as much. Option (b), float32 kept for element-wise math, was set aside: it is a fixed type (T4, decision 6).
 9. **The int8 cache's scales (T2c). Open.** Today one scale per head per position; "per head and block" may instead
    mean one scale per head per block of positions, requantized as a block fills.
 
