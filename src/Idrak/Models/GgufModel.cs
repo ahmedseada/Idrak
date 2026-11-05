@@ -300,7 +300,7 @@ public static class GgufModel
     }
 
     // The GGUF file's tensors under Hugging Face names, in Hugging Face layouts.
-    private sealed class GgufTensors : ITensorStore
+    private sealed class GgufTensors : IStoredWeightStore
     {
         // A Hugging Face tensor: the GGUF tensor holding it, which expert of a tensor of all the experts (-1 for the whole
         // tensor), its shape, and what llama.cpp added to its values (subtracted on reading).
@@ -499,6 +499,58 @@ public static class GgufModel
 
             Subtract(values, source.Offset);
             return values;
+        }
+
+        // A matrix in one of ggml's block formats, read with nothing added to its values, is kept as stored (plan 37, Q0):
+        // its registered block format (GgufElementTypes registers each GGUF block type under its lower-case name).
+        public ElementType? StoredTypeOf(string name)
+        {
+            if (!_names.TryGetValue(name, out var source) || source.Offset != 0 || source.Shape.Length != 2
+                || GgufTypes.Find(_file.Tensors[source.Gguf].Type) is not { BlockValues: > 1 } type)
+            {
+                return null;
+            }
+
+            return ElementTypes.Find(type.Name.ToLowerInvariant()) is { } stored && stored.BlockSize == type.BlockValues && stored.BlockBits == type.BlockBytes * 8
+                ? stored
+                : null;
+        }
+
+        // The matrix's stored rows (an expert's of a tensor of all the experts), Llama's q / k rows put back in order as Read
+        // puts the values back: whole rows of blocks moved.
+        public bool ReadStored(string name, Span<byte> destination)
+        {
+            if (StoredTypeOf(name) is null)
+            {
+                return false;
+            }
+
+            var source = _names[name];
+            string gguf = source.Gguf;
+            int rows = source.Shape[0];
+            long rowBytes = _file.RowBytes(gguf);
+            if (destination.Length != rows * rowBytes)
+            {
+                return false;
+            }
+
+            long first = (long)Math.Max(0, source.Expert) * rows;
+            if (Permuted(gguf) is not { } heads)
+            {
+                _file.ReadStoredRows(gguf, first, destination);
+                return true;
+            }
+
+            var stored = GC.AllocateUninitializedArray<byte>(destination.Length);
+            _file.ReadStoredRows(gguf, first, stored);
+            int headDim = rows / heads, half = headDim / 2, width = checked((int)rowBytes);
+            for (int from = 0; from < rows; from++)
+            {
+                int to = from - from % headDim + from % headDim % 2 * half + from % headDim / 2;
+                stored.AsSpan(from * width, width).CopyTo(destination.Slice(to * width, width));
+            }
+
+            return true;
         }
 
         // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (families that store them so), else null.

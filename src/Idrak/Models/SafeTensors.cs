@@ -64,9 +64,50 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
 /// DeepSeek's), else rows / scale rows when they divide. The scales, and the activation scales such a checkpoint carries
 /// (<c>input_scale</c>, <c>k_scale</c>, …), are not among <see cref="Tensors"/>: see <see cref="QuantizationScales"/>.
 /// </remarks>
-public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
+public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore, IStoredWeightStore
 {
     IEnumerable<string> ITensorStore.Names => _tensors.Keys;
+
+    // An F8 matrix, or an I8 one with its scale, is kept as stored (plan 37, Q0): its codes as one byte each, read with the
+    // same table and the same (value − zero point) · scale as Read. A stacked weight's matrices take their own grids: read.
+    ElementType? IStoredWeightStore.StoredTypeOf(string name)
+    {
+        if (!_tensors.TryGetValue(name, out var info) || info.Shape.Length != 2 || _scalings.TryGetValue(name, out var scaling) && scaling.PerMatrix)
+        {
+            return null;
+        }
+
+        return info.Type switch
+        {
+            SafeTensorType.F8_E4M3 => ElementType.Float8E4M3,
+            SafeTensorType.F8_E5M2 => ElementType.Float8E5M2,
+            SafeTensorType.I8 when _scalings.ContainsKey(name) => ElementType.Int8,
+            _ => null,
+        };
+    }
+
+    bool IStoredWeightStore.ReadStored(string name, Span<byte> destination)
+    {
+        if (((IStoredWeightStore)this).StoredTypeOf(name) is null || _tensors[name] is not { } info || destination.Length != info.Length)
+        {
+            return false;
+        }
+
+        ReadTimed(_files[info.File].SafeFileHandle, destination, info.Offset);
+        return true;
+    }
+
+    Idrak.Abstraction.Formats.StoredScaling? IStoredWeightStore.ScalingOf(string name)
+    {
+        if (!_scalings.TryGetValue(name, out var scaling) || scaling.PerMatrix)
+        {
+            return null;
+        }
+
+        var scales = scaling.ScaleValues ??= ReadSmall(scaling.Scale);
+        var zeros = scaling.Zero is null ? null : scaling.ZeroValues ??= ReadSmall(scaling.Zero);
+        return new Idrak.Abstraction.Formats.StoredScaling(scales, zeros, scaling.Layout);
+    }
 
     int[] ITensorStore.ShapeOf(string name) => _tensors[name].Shape;
 
@@ -616,6 +657,11 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
     // matrix of `rows` × `columns` (perMatrix: the scale has a grid per matrix of a stacked weight). Values read on first use.
     private sealed class Scaling(Entry scale, Entry? zero, int rows, int columns, int a, int b, int blockRows, int blockColumns, bool perMatrix)
     {
+        // Which scale each value of one matrix takes, as Apply finds it (plan 37, Q0); a stacked weight's are per matrix.
+        public StoredScales Layout => new(blockRows, blockColumns, b);
+
+        public bool PerMatrix => perMatrix;
+
         public Entry Scale => scale;
 
         public Entry? Zero => zero;

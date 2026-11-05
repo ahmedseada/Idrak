@@ -146,6 +146,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnElementTypeChosen(in ElementTypeChosen e) => _out.WriteLine($"Device {e.Device} element type: {e.ElementType} ({e.How})");
 
     /// <inheritdoc />
+    public void OnWeightsKept(in WeightsKept e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Device {e.Device} weights: {e.Kept} kept packed ({e.Formats}, {e.KeptBytes} bytes), {e.Expanded} expanded to float32 ({e.ExpandedBytes} bytes){(e.Why is null ? "" : ": " + e.Why)}"));
+
+    /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) =>
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class{(e.Nested ? ", inside another tuning" : "")})"));
 
@@ -514,6 +519,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnElementTypeChosen(in ElementTypeChosen e) => Write(e);
 
     /// <inheritdoc />
+    public void OnWeightsKept(in WeightsKept e) => Write(e);
+
+    /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => Write(e);
 
     /// <inheritdoc />
@@ -639,6 +647,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnElementTypeChosen(in ElementTypeChosen e) => _channel.OnElementTypeChosen(in e);
+
+    /// <inheritdoc />
+    public void OnWeightsKept(in WeightsKept e) => _channel.OnWeightsKept(in e);
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => _channel.OnTuning(in e);
@@ -890,6 +901,16 @@ public static class TelemetryJson
                 w.WriteString("from", e.From);
                 w.WriteString("to", e.To);
                 w.WriteNumber("elements", e.Elements);
+                break;
+            case WeightsKept e:
+                w.WriteString("event", "weights_kept");
+                w.WriteString("device", e.Device);
+                w.WriteNumber("kept", e.Kept);
+                w.WriteNumber("kept_bytes", e.KeptBytes);
+                w.WriteNumber("expanded", e.Expanded);
+                w.WriteNumber("expanded_bytes", e.ExpandedBytes);
+                w.WriteString("formats", e.Formats);
+                if (e.Why is { } because) w.WriteString("why", because);
                 break;
             case ElementTypeChosen e:
                 w.WriteString("event", "element_type");

@@ -306,6 +306,10 @@ internal static class ModelChoices
         }
 
         context.Error(model.ElementType.ToString());                   // "element type: float32 (picked by auto)", always shown (plan 37, T0)
+        if (model.KeptWeights is { } kept)
+        {
+            context.Error(kept.ToString());                             // "weights kept packed: 14 matrices (q8_0), 1.2 MB; ..." (plan 37, Q0)
+        }
         if (model.Placement is { } placed)
         {
             // A model split with the CPU or streamed from system memory is said on the error output (it is slower for it).

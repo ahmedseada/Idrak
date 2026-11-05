@@ -276,6 +276,15 @@ public sealed record PretrainedOptions
     public string ElementTypeSource { get; init; } = "--dtype";
 
     /// <summary>
+    /// Keep weights stored in a format of their own (a GGUF block format such as q4_k, F8 or I8 with scales) in that format
+    /// in memory (plan 37, Q0), where the device multiplies it: about the file's size instead of float32's, the same
+    /// products bit for bit. False expands them to float32 at load, as before; null takes
+    /// <see cref="WeightStorage.EnvironmentVariable"/> (IDRAK_KEEP_PACKED), on unless it says off.
+    /// <see cref="PretrainedModel.KeptWeights"/> says what the load did.
+    /// </summary>
+    public bool? KeepPacked { get; init; }
+
+    /// <summary>
     /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
     /// device's measured free memory changes (more on the device when memory frees, fewer under pressure; plan 37 W2):
     /// null takes <see cref="WeightPlacements.DefaultGrow"/> (IDRAK_WEIGHT_GROW; on).
@@ -521,7 +530,7 @@ public sealed class PretrainedModel : IDisposable
         var lazyReader = lazy ? format.Open(folder) : null;
         var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
-            LazyLayers = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
+            LazyLayers = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -617,6 +626,11 @@ public sealed class PretrainedModel : IDisposable
         model.Weights = weightsChoice;
         model.Placement = plan;
         model.ElementType = elementType;
+        model.KeptWeights = buildWeights.StoredSummary;                      // weights kept as stored or expanded (plan 37, Q0)
+        if (model.KeptWeights is { } keptWeights)
+        {
+            WeightStorage.Report(keptWeights, options.Device ?? Abstraction.Device.Default);
+        }
         model._lazyReader = lazyReader;
         try
         {
@@ -849,6 +863,13 @@ public sealed class PretrainedModel : IDisposable
     /// float32 (picked by auto)", or "(selected by the user (IDRAK_DEFAULT_DTYPE))". Published to telemetry when chosen.
     /// </summary>
     public ElementTypeChoice ElementType { get; private set; } = ElementTypes.Choose(ElementTypes.Auto);
+
+    /// <summary>
+    /// What the load did with the weights stored in a format of their own (plan 37, Q0, <see cref="PretrainedOptions.KeepPacked"/>):
+    /// "weights kept packed: 14 matrices (q8_0), 1.2 MB; 0 expanded to float32 (0 MB)"; null when the checkpoint has none.
+    /// Published to telemetry when the load ends.
+    /// </summary>
+    public StoredWeightsSummary? KeptWeights { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

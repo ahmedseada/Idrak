@@ -114,6 +114,13 @@ public static class DecoderBuilder
 
                 if (packed is null && factory is null)
                 {
+                    // A weight the source stores in a format of its own stays in it where the device multiplies it (plan 37,
+                    // Q0): the float32 product's bits, about the file's size in memory. The source counts it either way.
+                    if (weights is not null && tiedTable is null && weights.ReadStored($"{name}.weight", shape, device, options.KeepPacked) is { } kept)
+                    {
+                        return Linear.FromPacked(kept, b);
+                    }
+
                     return Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
                 }
 

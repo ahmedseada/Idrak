@@ -176,6 +176,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A load kept weights in their file's format or expanded them, with their bytes (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnWeightsKept(in WeightsKept e)
+    {
+    }
+
     /// <summary>A device measured an operation's candidates at a new shape class and kept the fastest (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnTuning(in TuningCompleted e)
     {
@@ -657,6 +662,17 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnElementsConverted(in e);
+            }
+        }
+    }
+
+    internal static void WeightsKept(in WeightsKept e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnWeightsKept(in e);
             }
         }
     }

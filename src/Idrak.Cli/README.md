@@ -746,6 +746,8 @@ stored by `idrak login`, not here. The most used:
 |---|---|
 | `IDRAK_CACHE` | The cache folder (`--cache` wins) |
 | `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR` | Whether int8 and int4 weights are kept between loads (default on; `0` or `off`: quantized on every load) and their folder (default `packed` in the cache folder); `--packed-cache` wins |
+| `IDRAK_KEEP_PACKED` | Whether weights stored in a format of their own (GGUF block formats such as q4_k, F8 or I8 with scales) stay in it in memory, about the file's size, where the device multiplies it (default on; `0` or `off`: expanded to float32 at load; the same results either way). The load says `weights kept packed: …` or `weights expanded: …` |
+| `IDRAK_DEFAULT_DTYPE` | The element type a run computes in: `auto` (default, float32 until plan 37's T2) or `float32`; `--dtype` wins |
 | `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |

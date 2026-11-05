@@ -140,6 +140,22 @@ public sealed partial class GgufFile : IDisposable
         Dequantize(info.Type, raw.AsSpan(0, bytes), values);
     }
 
+    /// <summary>
+    /// The stored bytes of rows [<paramref name="firstRow"/>, + n) of the 2-D tensor <paramref name="name"/> into
+    /// <paramref name="destination"/> (n whole rows of <see cref="RowBytes"/>), as the file holds them (plan 37, Q0).
+    /// </summary>
+    internal void ReadStoredRows(string name, long firstRow, Span<byte> destination)
+    {
+        var info = _tensors[name];
+        long rowBytes = RowBytes(name);
+        if (rowBytes == 0 || destination.Length % rowBytes != 0)
+        {
+            throw new InvalidDataException($"{name}: {destination.Length} bytes are not whole rows of {rowBytes}.");
+        }
+
+        ReadAt(destination, info.Offset + firstRow * rowBytes);
+    }
+
     /// <summary>Stored bytes per row (innermost dimension) of the tensor <paramref name="name"/>.</summary>
     internal long RowBytes(string name)
     {

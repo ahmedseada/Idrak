@@ -965,7 +965,7 @@ public static class ProfileProbes
     {
         public string Name => "types";
 
-        public string Summary => "the element type a load chose and how (picked by auto or selected by the user), and the conversions made for kernels that take another type";
+        public string Summary => "the element type a load chose and how (picked by auto or selected by the user), the weights it kept packed or expanded, and the conversions made for kernels that take another type";
 
         public bool Intrusive => false;
 
@@ -987,6 +987,12 @@ public static class ProfileProbes
                         run.Add(new ProfileTable("element types", ["device", "type", "how"], [.. hook.Chosen.Select(c => (IReadOnlyList<string>)[c.Device, c.ElementType, c.How])]));
                     }
 
+                    if (hook.Kept.Count > 0)
+                    {
+                        run.Add(new ProfileTable("weights kept packed", ["device", "kept", "kept bytes", "expanded", "expanded bytes", "formats", "why"],
+                            [.. hook.Kept.Select(w => (IReadOnlyList<string>)[w.Device, Text(w.Kept), Text(w.KeptBytes), Text(w.Expanded), Text(w.ExpandedBytes), w.Formats, w.Why ?? ""])]));
+                    }
+
                     if (hook.Conversions.Count > 0)
                     {
                         run.Add(new ProfileTable("element conversions", ["device", "operation", "from", "to", "calls", "elements"],
@@ -1002,6 +1008,16 @@ public static class ProfileProbes
             public TelemetryLevel Levels => TelemetryLevel.Devices;
 
             public List<ElementTypeChosen> Chosen { get; } = [];
+
+            public List<WeightsKept> Kept { get; } = [];
+
+            public void OnWeightsKept(in WeightsKept e)
+            {
+                lock (this)
+                {
+                    Kept.Add(e);
+                }
+            }
 
             public Dictionary<(string Device, string Operation, string From, string To), (long Calls, long Elements)> Conversions { get; } = [];
 

@@ -420,6 +420,20 @@ public readonly record struct ElementsConverted(string Device, string Operation,
 public readonly record struct ElementTypeChosen(string Device, string ElementType, string How);
 
 /// <summary>
+/// Published when a load has placed weights stored in a format of their own (plan 37, Q0): how many matrices it kept as
+/// stored and their bytes, how many it expanded to float32 and their bytes, the formats and why it expanded, at
+/// <c>TelemetryLevel.Devices</c>.
+/// </summary>
+/// <param name="Device">The device the weights are on.</param>
+/// <param name="Kept">Matrices kept as stored.</param>
+/// <param name="KeptBytes">Their bytes in memory.</param>
+/// <param name="Expanded">Matrices expanded to float32.</param>
+/// <param name="ExpandedBytes">Their bytes in memory.</param>
+/// <param name="Formats">The stored formats, comma-separated.</param>
+/// <param name="Why">Why some were expanded, or null.</param>
+public readonly record struct WeightsKept(string Device, int Kept, long KeptBytes, int Expanded, long ExpandedBytes, string Formats, string? Why);
+
+/// <summary>
 /// A device measured the candidates of an operation at a shape class it had not seen and kept the fastest
 /// (<c>TelemetryLevel.Devices</c>). The choice is kept for the class (and in the device's tuning cache file), so the time
 /// is paid once per class and device: a run whose batches keep landing in new classes (a new batch count or padded length

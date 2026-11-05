@@ -451,6 +451,62 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             ? $"{identity}|{(architecture.Transposed(name) ? "transposed" : "as stored")}"
             : null;
 
+    // What the stored matrices became (plan 37, Q0): kept as stored, or expanded to float32 and why.
+    private int _kept, _expanded;
+    private long _keptBytes, _expandedBytes;
+    private readonly SortedSet<string> _storedFormats = new(StringComparer.Ordinal);
+    private string? _expandedWhy;
+
+    /// <summary>What the build did with the matrices stored in a format of their own: kept or expanded; null when there were none.</summary>
+    public Abstraction.Generation.StoredWeightsSummary? StoredSummary => _kept + _expanded == 0 ? null
+        : new(_kept, _keptBytes, _expanded, _expandedBytes, [.. _storedFormats], _expandedWhy);
+
+    public Abstraction.Generation.IPackedWeight? ReadStored(string name, IReadOnlyList<int> shape, Device device, bool keep)
+    {
+        // As stored only: [outputs, inputs] in the file (blocks along the inputs), nothing added on reading (an adapter).
+        if (Deferred || shape.Count != 2 || reader is not IStoredWeightStore store || !architecture.Transposed(name)
+            || architecture.TensorName(name) is not { } storedName || !reader.Contains(storedName) || store.StoredTypeOf(storedName) is not { } type
+            || Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]))
+        {
+            return null;
+        }
+
+        int k = shape[0], n = shape[1];
+        string? why = !keep ? $"kept packed off ({Abstraction.Generation.WeightStorage.EnvironmentVariable}, PretrainedOptions.KeepPacked)"
+            : !Abstraction.Generation.WeightStorage.Multiplies(device.Backend, type) ? $"{device} has no {type.Name} product of its own"
+            : k % type.BlockSize != 0 ? $"rows of {k} are not whole {type.Name} blocks"
+            : null;
+        _storedFormats.Add(type.Name);
+        if (why is not null)
+        {
+            _expanded++;
+            _expandedBytes += (long)k * n * sizeof(float);
+            _expandedWhy ??= why;
+            return null;
+        }
+
+        if (Stored(name, shape) is not { } stored)
+        {
+            return null;
+        }
+
+        var bytes = GC.AllocateUninitializedArray<byte>(checked((int)type.ByteCount((long)k * n)));
+        long start = Stopwatch.GetTimestamp();
+        bool read = store.ReadStored(stored, bytes);
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        if (!read)
+        {
+            return null;
+        }
+
+        long begun = Stopwatch.GetTimestamp();
+        var weight = Abstraction.Generation.StoredWeight.FromStored(type, bytes, k, n, store.ScalingOf(stored), device);
+        _uploadTicks += Stopwatch.GetTimestamp() - begun;
+        _kept++;
+        _keptBytes += weight.Bytes;
+        return weight;
+    }
+
     public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
     {
         if (Stored(name, shape) is not { } stored)

@@ -187,6 +187,14 @@ public sealed record DecoderBuildOptions
     /// </summary>
     public bool LazyLayers { get; init; }
 
+    /// <summary>
+    /// Keep float projections whose weights the source stores in a format of their own (a GGUF block format, F8 or I8 with
+    /// scales) in that format (plan 37, Q0: <see cref="IWeightSource.ReadStored"/>, frozen <c>StoredWeight</c>s whose
+    /// products equal the float32 weights' bit for bit), where the device multiplies it; off, they are expanded to float32
+    /// as before. Default: <see cref="WeightStorage.DefaultKeep"/> (IDRAK_KEEP_PACKED, on).
+    /// </summary>
+    public bool KeepPacked { get; init; } = WeightStorage.DefaultKeep;
+
     // The placement the layers follow the memory with at step boundaries, with its request at load (PretrainedModel.Load
     // sets it when the placement may move layers), or null: they stay where they are built.
     internal (IWeightPlacement Placement, WeightPlacementRequest Request)? FollowMemory { get; init; }

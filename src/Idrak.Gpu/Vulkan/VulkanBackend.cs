@@ -325,6 +325,8 @@ internal sealed unsafe partial class VulkanBackend : Backend
         DecodeAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         TiledAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs: larger heads take the host fallback
+        StoresAnyFormat = false,                                           // weights kept as stored: the types it expands itself (plan 37, Q0)
+        StoredFormats = StoredTypes,
     };
 
     /// <summary>The number of usable Vulkan devices (0 when there is no loader or driver).</summary>

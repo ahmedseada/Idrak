@@ -1638,6 +1638,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public virtual void DecoderMaskKernel(Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)
   public virtual void DropoutBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
   public virtual void DropoutKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
+  public virtual void ExpandStoredKernel(Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage w, int n, int k, Idrak.Abstraction.StoredScales layout)
   public virtual void ExpertGatedPairKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage offsets, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?)> experts, Idrak.Abstraction.Devices.Storage hidden, int rows, int k, int n, int activation)
   public virtual void ExpertMatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage offsets, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?)> experts, Idrak.Abstraction.Devices.Storage y, int rows, int k, int n)
   public virtual void ExtremumBackwardKernel(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
@@ -1704,6 +1705,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public virtual void SoftmaxBackwardKernel(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public virtual void SoftmaxCrossEntropyRowsKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
   public virtual void SoftmaxKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
+  public virtual void StoredMatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.StoredScales layout)
   public virtual void StridedCopyKernel(Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
   public virtual void SumAxisKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int outer, int dim, int inner, float scale, bool accumulate)
   public virtual void SumColumnsKernel(Idrak.Abstraction.Devices.Storage x, long offset, int ld, Idrak.Abstraction.Devices.Storage y, int rows, int cols)
@@ -1772,6 +1774,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void Dropout(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
   public void DropoutBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
   public void Evict(Idrak.Abstraction.Devices.Storage storage, System.Action<Idrak.Abstraction.Devices.Storage>? recompute)
+  public void ExpandStored(Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage w, int n, int k, Idrak.Abstraction.StoredScales layout)
   public void ExpertGatedPair(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage offsets, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?)> experts, Idrak.Abstraction.Devices.Storage hidden, int rows, int k, int n, int activation)
   public void ExpertMatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage offsets, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?)> experts, Idrak.Abstraction.Devices.Storage y, int rows, int k, int n)
   public void ExtremumBackward(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage? da, Idrak.Abstraction.Devices.Storage? db, int n)
@@ -1839,6 +1842,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void Softmax(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
   public void SoftmaxBackward(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public void SoftmaxCrossEntropyRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
+  public void StoredMatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.StoredScales layout)
   public void StridedCopy(Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
   public void Sum(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage result, int n, float scale)
   public void SumAxis(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int outer, int dim, int inner, float scale, bool accumulate)
@@ -1857,6 +1861,8 @@ public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEqu
   public Idrak.Abstraction.ElementType IndexType { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Operations.Operation, Idrak.Abstraction.ElementType> IndexTypes { get; init; }
   public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> StridedInputs { get; init; }
+  public System.Collections.Generic.IReadOnlySet<string> StoredFormats { get; init; }
+  public bool StoresAnyFormat { get; init; }
   public int SpanAttentionHeadDim { get; init; }
   public required int DecodeAttentionHeadDim { get; init; }
   public required int FewRows { get; init; }
@@ -2331,6 +2337,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
   public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
+  public void OnWeightsKept(in Idrak.Abstraction.Diagnostics.WeightsKept e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.CollectiveCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.CollectiveCompleted>
   public CollectiveCompleted(string Collective, string Operation, int Rank, int WorldSize, long BytesSent, long BytesReceived, System.TimeSpan Wall, System.TimeSpan Simulated, System.TimeSpan Blocked, int SlowestRank, string? Staging = null)
@@ -2383,6 +2390,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
   public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
+  public void OnWeightsKept(in Idrak.Abstraction.Diagnostics.WeightsKept e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.DeviceFailed : System.IEquatable<Idrak.Abstraction.Diagnostics.DeviceFailed>
   public DeviceFailed(string Device, string? Operation, string Message, bool RetriedOnHost, string? Hint)
@@ -2552,6 +2560,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
   public (default) void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public (default) void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
+  public (default) void OnWeightsKept(in Idrak.Abstraction.Diagnostics.WeightsKept e)
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.InferenceCompleted : System.IEquatable<Idrak.Abstraction.Diagnostics.InferenceCompleted>
@@ -2629,6 +2638,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnTransfer(in Idrak.Abstraction.Diagnostics.TransferCompleted e)
   public void OnTransportChosen(in Idrak.Abstraction.Diagnostics.TransportChosen e)
   public void OnTuning(in Idrak.Abstraction.Diagnostics.TuningCompleted e)
+  public void OnWeightsKept(in Idrak.Abstraction.Diagnostics.WeightsKept e)
 
 public readonly record struct Idrak.Abstraction.Diagnostics.KernelsLoaded : System.IEquatable<Idrak.Abstraction.Diagnostics.KernelsLoaded>
   public KernelsLoaded(string Device, string Backend, int Kernels, bool FromCache, System.TimeSpan Duration, long Bytes, string? Detail = null)
@@ -3124,6 +3134,16 @@ public readonly record struct Idrak.Abstraction.Diagnostics.TuningCompleted : Sy
   public string Device { get; init; }
   public string Operation { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.WeightsKept : System.IEquatable<Idrak.Abstraction.Diagnostics.WeightsKept>
+  public WeightsKept(string Device, int Kept, long KeptBytes, int Expanded, long ExpandedBytes, string Formats, string? Why)
+  public int Expanded { get; init; }
+  public int Kept { get; init; }
+  public long ExpandedBytes { get; init; }
+  public long KeptBytes { get; init; }
+  public string Device { get; init; }
+  public string Formats { get; init; }
+  public string? Why { get; init; }
+
 public sealed class Idrak.Abstraction.DifferentiableFunction
   public Idrak.Abstraction.Tensor Apply(scoped params System.ReadOnlySpan<Idrak.Abstraction.Tensor> inputs)
   public string Name { get; }
@@ -3310,6 +3330,12 @@ public static class Idrak.Abstraction.Formats.OnnxRuntimeLoaders
   public static string Describe()
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Formats.IOnnxRuntimeLoader loader)
+
+public sealed record Idrak.Abstraction.Formats.StoredScaling : System.IEquatable<Idrak.Abstraction.Formats.StoredScaling>
+  public Idrak.Abstraction.StoredScales Layout { get; init; }
+  public StoredScaling(float[] Scales, float[]? Zeros, Idrak.Abstraction.StoredScales Layout)
+  public float[] Scales { get; init; }
+  public float[]? Zeros { get; init; }
 
 public sealed class Idrak.Abstraction.Formats.TensorDictionary : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.IEnumerable<string> Names { get; }
@@ -4664,6 +4690,36 @@ public static class Idrak.Abstraction.Generation.SpeculativeDecoding
   public static int NextRound(int current, int proposed, int accepted, Idrak.Abstraction.Generation.GenerationOptions options)
   public static string? Refusal(Idrak.Abstraction.Generation.ITokenizer target, Idrak.Abstraction.Generation.IDraftModel draft)
 
+public sealed class Idrak.Abstraction.Generation.StoredWeight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.IRecordable
+  public Idrak.Abstraction.ElementType Type { get; }
+  public Idrak.Abstraction.StoredScales Layout { get; }
+  public Idrak.Abstraction.Tensor StoredValues { get; }
+  public Idrak.Abstraction.Tensor? Scales { get; }
+  public Idrak.Abstraction.Tensor? Zeros { get; }
+  public override Idrak.Abstraction.Device Device { get; }
+  public override Idrak.Abstraction.Tensor Dequantize()
+  public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
+  public override int Columns { get; }
+  public override int Rows { get; }
+  public override long Bytes { get; }
+  public override string Description { get; }
+  public override string Name { get; }
+  public override string ShortName { get; }
+  public override void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
+  public override void Dispose()
+  public static Idrak.Abstraction.Generation.StoredWeight FromStored(Idrak.Abstraction.ElementType type, System.ReadOnlySpan<byte> stored, int rows, int columns, Idrak.Abstraction.Formats.StoredScaling? scaling, Idrak.Abstraction.Device device)
+
+public sealed record Idrak.Abstraction.Generation.StoredWeightsSummary : System.IEquatable<Idrak.Abstraction.Generation.StoredWeightsSummary>
+  public StoredWeightsSummary(int Kept, long KeptBytes, int Expanded, long ExpandedBytes, System.Collections.Generic.IReadOnlyList<string> Formats, string? Why)
+  public System.Collections.Generic.IReadOnlyList<string> Formats { get; init; }
+  public int Expanded { get; init; }
+  public int Kept { get; init; }
+  public long ExpandedBytes { get; init; }
+  public long KeptBytes { get; init; }
+  public override string ToString()
+  public string? Why { get; init; }
+
 public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstraction.Generation.ITokenSampler, System.IDisposable
   public Idrak.Abstraction.Generation.SampledToken[][] Read(int fromStep, int toStep)
   public Idrak.Abstraction.Tensor Ids { get; }
@@ -4926,6 +4982,12 @@ public static class Idrak.Abstraction.Generation.VisionTuningParts
   public static Idrak.Abstraction.Generation.IVisionTuningPart? For(Idrak.Abstraction.Generation.IPretrainedVision vision, System.Collections.Generic.IEnumerable<string> parts)
   public static Idrak.Abstraction.Tensor? FrozenTower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public static System.Collections.Generic.IReadOnlyList<string> Offered(Idrak.Abstraction.Generation.IPretrainedVision vision)
+
+public static class Idrak.Abstraction.Generation.WeightStorage
+  public const string EnvironmentVariable = "IDRAK_KEEP_PACKED"
+  public static bool DefaultKeep { get; }
+  public static bool Multiplies(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.ElementType type)
+  public static void Report(Idrak.Abstraction.Generation.StoredWeightsSummary summary, Idrak.Abstraction.Device device)
 
 public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstraction.Generation.ISavableTokenizer, Idrak.Abstraction.Generation.ITokenizer
   nested Idrak.Abstraction.Generation.WordTokenizer.Units (below)
@@ -5263,6 +5325,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.DecoderMask (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Dropout (below)
   nested Idrak.Abstraction.Operations.OperationKernels.DropoutBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.ExpandStored (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ExpertGatedPair (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ExpertMatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.ExtremumBackward (below)
@@ -5354,6 +5417,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.Softmax (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.StoredMatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.StridedCopy (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Sum (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SumAxis (below)
@@ -5484,6 +5548,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.DecoderMask(I
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Dropout(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.DropoutBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.ExpandStored(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage w, int n, int k, Idrak.Abstraction.StoredScales layout)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.ExpertGatedPair(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage offsets, System.ReadOnlySpan<(Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?, Idrak.Abstraction.Devices.Storage, Idrak.Abstraction.Devices.Storage?)> experts, Idrak.Abstraction.Devices.Storage hidden, int rows, int k, int n, int activation)
 
@@ -5667,6 +5733,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackwa
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.StoredMatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? scales, Idrak.Abstraction.Devices.Storage? zeros, Idrak.Abstraction.Devices.Storage y, int m, int n, int k, Idrak.Abstraction.StoredScales layout)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.StridedCopy(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Sum(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage result, int n, float scale)
@@ -5755,6 +5823,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.DecoderMask> DecoderMask
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Dropout> Dropout
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.DropoutBackward> DropoutBackward
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.ExpandStored> ExpandStored
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.ExpertGatedPair> ExpertGatedPair
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.ExpertMatMul> ExpertMatMul
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.ExtremumBackward> ExtremumBackward
@@ -5846,6 +5915,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Softmax> Softmax
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward> SoftmaxBackward
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows> SoftmaxCrossEntropyRows
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.StoredMatMul> StoredMatMul
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.StridedCopy> StridedCopy
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Sum> Sum
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SumAxis> SumAxis
@@ -6554,6 +6624,14 @@ public sealed class Idrak.Abstraction.SlotTable<TKey, TValue> where TKey : notnu
   public void Register(TKey key, TValue value, System.Reflection.Assembly? registeredBy = null, object? implementation = null)
   public void RegisterDefault(TKey key, TValue value, int version = 1, string? since = null)
   public void SetPolicy(TKey key, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.StoredScales : System.IEquatable<Idrak.Abstraction.StoredScales>
+  public StoredScales(int BlockRows, int BlockColumns, int ScaleColumns)
+  public bool HasScales { get; }
+  public int BlockColumns { get; init; }
+  public int BlockRows { get; init; }
+  public int IndexOf(int row, int column)
+  public int ScaleColumns { get; init; }
 
 public sealed class Idrak.Abstraction.SyncProgress<T> : System.IProgress<T>
   public SyncProgress(System.Action<T> report)

@@ -61,4 +61,17 @@ public sealed record BackendCapabilities
     /// kernels cover some operations so far). Default: none.
     /// </summary>
     public IReadOnlyDictionary<Operations.Operation, ElementType> IndexTypes { get; init; } = new Dictionary<Operations.Operation, ElementType>();
+
+    /// <summary>
+    /// Whether this device multiplies weights kept in their file's format (plan 37, Q0: <c>StoredWeight</c>) of every
+    /// registered element type that widens to float32, with kernels of its own (<c>Backend.StoredMatMul</c>,
+    /// <c>Backend.ExpandStored</c>). Default: false.
+    /// </summary>
+    public bool StoresAnyFormat { get; init; }
+
+    /// <summary>
+    /// The element types (by name) whose stored weights this device multiplies with kernels of its own when it does not all
+    /// (<see cref="StoresAnyFormat"/>); a load expands weights of any other type to float32 for it. Default: none.
+    /// </summary>
+    public IReadOnlySet<string> StoredFormats { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }

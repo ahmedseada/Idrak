@@ -38,6 +38,19 @@ public interface IWeightSource
     string? IdentityOf(string name, IReadOnlyList<int> shape) => null;
 
     /// <summary>
+    /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>) kept in its file's format on
+    /// <paramref name="device"/> (plan 37, Q0: a <see cref="Abstraction.Generation.StoredWeight"/>, whose products equal the
+    /// float32 weights' bit for bit), when the source stores it so, <paramref name="keep"/> allows it and the device
+    /// multiplies that format; null otherwise (the default), and the caller reads float32 values. A source that tallies
+    /// what it kept and expanded counts the weight either way.
+    /// </summary>
+    /// <param name="name">The tensor's name.</param>
+    /// <param name="shape">Its shape, [rows, columns] (inputs, outputs).</param>
+    /// <param name="device">Where the weights are created.</param>
+    /// <param name="keep">Whether weights may be kept as stored (<c>DecoderBuildOptions.KeepPacked</c>).</param>
+    Abstraction.Generation.IPackedWeight? ReadStored(string name, IReadOnlyList<int> shape, Device device, bool keep) => null;
+
+    /// <summary>
     /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it), or its
     /// transpose [columns, rows] when <paramref name="transposed"/>, as bfloat16 weights on <paramref name="device"/>; null
     /// when the source does not have it. Always the weights <see cref="BFloat16Weight.FromValues(ReadOnlySpan{float}, int, int, Device)"/>
