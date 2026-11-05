@@ -56,7 +56,9 @@ These are the owner's standing rules. They hold in every session, after every co
   also runs its own test groups once with `IDRAK_DEVICES=vulkan`, through Mesa's software driver (llvmpipe) where the container has it;
   global checks (the public API, the inventory, the environment table, help text and every other device-independent
   group) never run on Vulkan, and Vulkan is never used as a general test runner. llvmpipe proves results only, never speed or real device memory; speed is measured only
-  on the owner's devices, and the owner tests `cuda` and `hip`.
+  on the owner's devices, and the owner tests `cuda` and `hip`. Sessions run `idrak bench` (with the library's settings
+  as variables, `--save` and `--compare`) only when a piece is about speed or memory and needs it, for example after
+  the element types and the automatic type detection change, never on every piece or every run.
 - **The fix workflow (the owner's, in this order).** 1. Fix every error of the task first; never run tests between
   fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
   operation took a host fallback). 3. Build once, only the projects that changed, and only after all the work is
