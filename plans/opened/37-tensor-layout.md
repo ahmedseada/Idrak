@@ -1,7 +1,8 @@
 # Plan 37: tensor layout, views, element types and 64-bit sizes (memory first)
 
 **Status (2026-11-05):** W0-W2 (weight placement) and V0, V1, V1b (layouts, CPU views read in place) built, `main`
-6eff13c; N0 (int8 and fp8 gradient compression with error feedback) built 2026-11-05; the rest planned; work stopped by the owner until resumed. Q0, K0, W3 and the wider T0, T2, T3 added
+6eff13c; N0 (int8 and fp8 gradient compression with error feedback), N2 (pipeline stages sized by measured memory) and
+T0, T1 (element and block types, integer indices on CPU and Vulkan) built 2026-11-05, `main` 2e8a3f5; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
 2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`
@@ -116,6 +117,7 @@ on the benches, with the device's own reported limits (rule 84), never one card'
 | N1 | **Sharded weights sent smaller** (after Q0 and T2): with `IDRAK_CLUSTER_SHARD=parameters`, a layer's weights are gathered in their stored type (bf16, fp8) or, for a frozen packed base (QLoRA-style fine-tuning across machines), in their packed format, expanded on the receiving rank; activations between pipeline stages in bf16 where the run computes in it | Results equal the float32 gather where the stored type is float32, and within the type's reference tolerance otherwise; gather bytes measured 2-8× fewer | `cluster` sharding and pipeline groups on `cpu` |
 | N2 | **Pipeline stages sized by each machine's measured memory, and each rank mapping only its shard** (W1's `auto` and W2/W3 across machines): a rank reports its measured free memory; the stages are cut so each fits (a user's per-rank count overrides); each rank maps the checkpoint and touches only its shard's or stage's pages (the existing per-shard reads, through W3's mapping), so a rank starts fast and holds only its part | A cluster of unequal simulated ranks places stages that fit each; results equal the even split; each rank's memory measured at its part's size | `cluster` pipeline and topology groups on `cpu` |
 | N3 | **Tensor parallelism**: a layer's matrix products split across devices or machines (column-split then row-split, as Megatron does for attention and the MLP), with the all-gather and reduce-scatter through `Idrak.Network`'s collectives, so a layer too large for one device trains and runs; a placement `tensor` beside `single` and `pipeline`, combinable with data parallelism. Card-agnostic: the split count from the measured devices or a user setting | Results equal the single-device run within the fixed-order sum (rule 86); the simulated cluster and the owner's multi-GPU runs | `cluster` groups on `cpu` (simulated ranks), across `vulkan` for the device path; `cuda`/`hip` multi-GPU by the owner |
+| P0 | **One result on every CPU** (the owner, 2026-11-05, rule 70): the CPU backend's `MathF.Exp` / `MathF.Log` (the C runtime's, which differ between platforms) replaced by Idrak's own vectorized exp and log, the same bits on every machine and no slower; every vectorized sum keeps a fixed number of float accumulators (one vector on AVX-512, two on AVX2, four on NEON, the scalar path the same lanes), so the summation order no longer depends on the vector width the machine has. Settings: none needed (one order everywhere); the scalar and vector paths proven to give the same bits | The same output bits with `DOTNET_EnableAVX512F=0`, `DOTNET_EnableAVX2=0` and the default on one machine; the GCN pinned bits and every CPU group unchanged against the new pinned values; the kernel benches not slower | the CPU kernel, attention, decoding and `gcn kernels` groups on `cpu` |
 | S0 | 64-bit lengths: `Storage` and `Tensor.Size` as `long`; index math 64-bit where it can overflow, 32-bit where the size is proven small (measured: no slowdown on the benches) | A tensor above 2^31 elements on CPU; the benches unchanged in speed | `large tensors` (new; CPU, memory permitting, skipped with the reason otherwise) |
 
 **Where each device is tested (the owner, 2026-11-04):** the sessions test on `cpu` and on `vulkan` through Mesa's
@@ -127,13 +129,13 @@ W comes first: it turns today's failure or crawl on a model larger than the devi
 V: views pay off with float32 alone. Then T0, T1 (exact indices are a correctness fix), then Q0 (the largest memory
 gain for low-bit models, built on T0's block formats), then T2 with the KV cache types, T3 with int2 and the other
 packed formats, K0 and W3. N0 and N2 need neither types nor packing and may run as soon as the owner resumes; N1
-follows Q0 and T2; N3 after them, the largest of the network stages. S0 last: it touches every kernel's index math and gains only for the largest tensors.
+follows Q0 and T2; N3 after them, the largest of the network stages. P0 runs whenever a slot is free (it touches only the CPU kernels' arithmetic). S0 last: it touches every kernel's index math and gains only for the largest tensors.
 
 ## Decisions for the owner
 
-1. **Public API breadth.** `Tensor.Size` and `Storage.Length` becoming `long` (S0) is a breaking change for apps that
-   read them. Recommended: add `LongSize` / `LongLength` in S0 and keep the `int` ones (checked, failing past 2^31)
-   until the owner removes them.
+1. **Public API breadth. Decided (the owner, 2026-11-05): 64-bit sizes are needed, added beside the 32-bit ones.**
+   S0 adds `LongSize` / `LongLength` and keeps `Tensor.Size` and `Storage.Length` as `int` (checked, failing past 2^31
+   with a message naming the long member) until the owner removes them, so existing apps keep compiling.
 2. **The default type. Decided (the owner, 2026-11-05): automatic type selection is the default.** Each device reports
    the types it supports natively, and `auto` picks the best match (T2); `--dtype` / `IDRAK_DEFAULT_DTYPE` overrides it,
    and `float32` keeps today's results.
