@@ -23,7 +23,7 @@ internal abstract partial class Tests
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC, recurrent, parity and routing kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
         ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS; IDRAK_HIP_FINISH chooses the last block's finish or a second launch; IDRAK_HIP_ATTENTION_ROWS and the device's LDS the tiled attention's rows a block", HipKernelSettings),
         ("hip measured choices (G7a): the packed few-row products' candidates (each depth with each k split count and the formula's; a setting leaves only its value); a made-up timer's clear winner is kept and a gain within the margin keeps the default; choices kept per device, driver and build in tuning/hip/, read back only for that identity and only when still a candidate; rank 0's choices taken but never written; HipMeasuredChoices registered for HIP backends alone", HipMeasuredChoicesWithoutDevice),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
@@ -339,8 +339,9 @@ internal abstract partial class Tests
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count
               && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
                  + GcnKernels.Decoding.Count + GcnKernels.Training.Count + GcnKernels.Convolution.Count + GcnKernels.Ctc.Count + GcnKernels.Recurrent.Count + GcnKernels.Parity.Count
+                 + GcnKernels.Routing.Count
               && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding, training, convolution, CTC, recurrent and parity kernels, each once ({all.Count})");
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding, training, convolution, CTC, recurrent, parity and routing kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);

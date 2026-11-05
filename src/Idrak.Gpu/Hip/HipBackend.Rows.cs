@@ -59,7 +59,7 @@ internal sealed unsafe partial class HipBackend
         "softmax_ce_rows_f32" => (8, 12),                                       // per logit (GcnKernels.Parity.cs)
         "gated_act_bf16_f32" => (30, 16),                                       // per element
         "int8_gemv_finish_f32" => (k, 4.0 * (k + 1)),                            // per output; k: the splits
-        _ => AttentionShapeCost(kernel, variant) is { Bytes: > 0 } cost ? cost : DecodingCost(kernel, k),
+        _ => AttentionShapeCost(kernel, variant) is { Bytes: > 0 } cost ? cost : RoutingCost(kernel) is { Bytes: > 0 } routing ? routing : DecodingCost(kernel, k),
     };
 
     // A row kernel for `rows` × `cols`, or null: the kernels unavailable, or rows of no columns.

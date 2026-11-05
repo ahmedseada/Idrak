@@ -173,8 +173,8 @@ internal abstract partial class Tests
             ("tanh · sigmoid, every expert a token", 7, 5, 3, 3, true, 0, FeedForwardActivation.TanhSigmoid, false, 11),
         };
         bool own = backend.RoutesExperts;
-        bool expected = device.Type == DeviceType.Cpu || device.Kind == "vulkan";
-        Check(own == expected, $"{backend.Name}: RoutesExperts {own}, expected {expected} (the CPU and Vulkan have the kernels, plan 37 R0a; CUDA and HIP fall back until R0c and R0b)");
+        bool expected = device.Type == DeviceType.Cpu || device.Kind is "vulkan" or "hip";
+        Check(own == expected, $"{backend.Name}: RoutesExperts {own}, expected {expected} (the CPU, Vulkan and HIP have the kernels, plan 37 R0a and R0b; CUDA falls back until R0c)");
         bool before = MixtureOfExperts.RoutesOnDevice;
         try
         {

@@ -641,7 +641,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 139 of 155 |
 | `CudaBackend` | 138 of 155 |
 | `DeferredBackend` | 11 of 155 |
-| `HipBackend` | 139 of 155 |
+| `HipBackend` | 142 of 155 |
 | `VulkanBackend` | 131 of 155 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -707,8 +707,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ExpandStoredKernel(7)` | virtual | ✓ |  |  |  | ✓ |
-| `ExpertGatedPairKernel(8)` | virtual | ✓ |  |  |  | ✓ |
-| `ExpertMatMulKernel(7)` | virtual | ✓ |  |  |  | ✓ |
+| `ExpertGatedPairKernel(8)` | virtual | ✓ |  |  | ✓ | ✓ |
+| `ExpertMatMulKernel(7)` | virtual | ✓ |  |  | ✓ | ✓ |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -774,7 +774,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `RouteTopKKernel(9)` | virtual | ✓ |  |  |  | ✓ |
+| `RouteTopKKernel(9)` | virtual | ✓ |  |  | ✓ | ✓ |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
