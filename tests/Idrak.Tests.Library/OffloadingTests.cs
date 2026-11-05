@@ -25,7 +25,79 @@ internal abstract partial class Tests
         ("move gate: a move waits for other threads' operations and holds new ones back until it ends; one that may not wait, or is asked from inside an operation, runs only while no other thread is inside one; the mover's own operations and nested moves go through; a placement of lookup tables from inside an operation waits for the others, another inside one steps aside for it (counted again before it ends), and a general move still waiting gives way to it", MoveGateOrder),
         ("offloading: a lookup table placed while other threads keep reading it: an allocation at the limit outside any operation waits for their operations, moves the table and succeeds; their reads give the same sums before and after", LookupTablesUnderReaders),
         ("offloading: a frozen decoder's separate token table by LookupTables: host (system memory from the build), automatic (moved for good when an allocation finds the device at its limit, which then succeeds) and device (the allocation fails as before) give the same logits bit for bit; the table never counts as offloaded; auto, host and device parse", LookupTablePlacements),
+        ("offloading: a device that can offload (IOffloadingBackend, as CUDA always is) with offloading off runs a transformer block's fused inference passes, giving the CPU's bits; with offloading on (ComputeResources.OffloadToHostMemory, or a storage offloaded) it runs the layers' own forwards, which stage offloaded weights", FusedPassesWithOffloadSupport),
     ];
+
+    internal static void FusedPassesWithOffloadSupport(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(FusedPassesWithOffloadSupport)))
+        {
+            return;
+        }
+
+        if (DeviceProviders.Find("moe-offload-test") is null)
+        {
+            DeviceProviders.Register(new OffloadCapableProvider());
+        }
+
+        var capable = Device.Get("moe-offload-test");
+        var backend = OffloadCapableBackend.Instance;
+        bool before = ComputeResources.OffloadToHostMemory;
+        var random = new Random(31);
+        float[] x = [.. Enumerable.Range(0, 2 * 5 * 16).Select(_ => random.NextSingle() * 2 - 1)];
+
+        // The block's output on `d`, and how many times its attention's own forward ran (none where the fused pass is taken:
+        // it calls the attention's products directly).
+        float[] Run(Device d, out int attentionForwards)
+        {
+            using var block = new TransformerEncoderLayer(16, 2, ffDim: 32, dropout: 0f, device: d, random: new Random(32));
+            using var input = Tensor.From(x, [2, 5, 16], d);
+            int entered = 0;
+            using var scope = new TensorScope();
+            using (Autograd.NoGrad())
+            using (ForwardHooks.OnEnter(m =>
+            {
+                if (m is MultiHeadAttention)
+                {
+                    entered++;
+                }
+
+                return null;
+            }))
+            {
+                var y = block.Forward(input).ToArray();
+                attentionForwards = entered;
+                return y;
+            }
+        }
+
+        try
+        {
+            ComputeResources.OffloadToHostMemory = false;
+            backend.Offloaded = 0;
+            var cpu = Run(Device.Cpu, out int cpuForwards);
+            var off = Run(capable, out int offForwards);
+            Check(cpuForwards == 0 && offForwards == 0, $"offloading off: the fused passes run (the attention's own forward ran {cpuForwards} times on the CPU, {offForwards} on {backend.Name})");
+            Check(cpu.Select(BitConverter.SingleToInt32Bits).SequenceEqual(off.Select(BitConverter.SingleToInt32Bits)),
+                $"offloading off: the CPU's bits (largest difference {cpu.Zip(off, (a, b) => MathF.Abs(a - b)).Max()})");
+
+            ComputeResources.OffloadToHostMemory = true;
+            var on = Run(capable, out int onForwards);
+            ComputeResources.OffloadToHostMemory = false;
+            backend.Offloaded = 1;
+            var offloaded = Run(capable, out int offloadedForwards);
+            Check(onForwards == 1 && offloadedForwards == 1,
+                $"offloading on: the layers' own forwards run (the attention's {onForwards} times with OffloadToHostMemory, {offloadedForwards} with a storage offloaded)");
+            float worst = cpu.Zip(on, (a, b) => MathF.Abs(a - b)).Concat(cpu.Zip(offloaded, (a, b) => MathF.Abs(a - b))).Max();
+            Check(worst <= 1e-5f, $"the passes one by one give the fused passes' values (largest difference {worst})");
+        }
+        finally
+        {
+            ComputeResources.OffloadToHostMemory = before;
+            backend.Offloaded = 0;
+        }
+    }
 
     internal static Sequential OffloadModel(Device device, int seed) => new(
         new Linear(16, 96, device: device, random: new Random(seed)), new ReLU(),

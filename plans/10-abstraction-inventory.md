@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 187 | 19 | 61 | 267 | 0 |
+| `Idrak.Abstraction` | 190 | 19 | 61 | 270 | 0 |
 | `Idrak` | 56 | 5 | 21 | 82 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -112,6 +112,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.TextShapers` | registry | public | — |  | — | Imaging | Abstraction |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, DeferredBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +35 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.Cpu.CpuMath.ILaneDoubleSum` | interface | internal | — | CpuMath.DotDoubleTerms, CpuMath.SquaresDoubleTerms |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.Cpu.CpuMath.ILanePair` | interface | internal | — | CpuBackend.LayerNormGradientTerms, CpuMath.SumAndDotTerms |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.Cpu.CpuMath.ILaneSum` | interface | internal | — | CpuMath.DotBFloat16Terms, CpuMath.DotSByteTerms, CpuMath.DotTerms, CpuMath.ExpShiftedTerms, CpuMath.FusedDotBFloat16Terms, CpuMath.FusedDotTerms, +2 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.Cpu.StoredRows` | abstract class | internal | Storage | StoredRows.Bytes |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |

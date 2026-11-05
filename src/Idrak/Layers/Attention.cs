@@ -178,8 +178,8 @@ public sealed class MultiHeadAttention : Module, ICachedModule, IAttentionCacheI
     /// <summary>
     /// residual + this layer's output, for inference: the projections' biases and the residual in their products'
     /// epilogues where the layers can (<see cref="Linear.ProjectBiased"/>, <see cref="Linear.ProjectAdding"/>; the same
-    /// values). The caller has checked that nothing is recorded, offloaded or traced per layer: the inner layers' products
-    /// are called directly.
+    /// values). The caller has checked that nothing is recorded or traced per layer and that offloading is off: the inner
+    /// layers' products are called directly.
     /// </summary>
     internal Tensor ForwardAdding(Tensor input, Tensor residual) => Attend(input, residual, fused: true);
 
@@ -740,9 +740,13 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
     private Tensor Fed(Tensor x) => _feedForward?.Forward(x) ?? _feedForward2!.Forward(FeedForwardHidden(x));
 
     // The fused inference passes: no gradient, not a checkpointed pass's first run (its values must be the recompute's),
-    // nothing offloaded and no per-layer telemetry (they call the inner layers' products, not their Forward).
+    // offloading off and no per-layer telemetry. They call the inner layers' products, not their Forward, so no staging hook
+    // would bring an offloaded weight to the device. Offloading counts as on as TensorOffloading.Active says
+    // (ComputeResources.OffloadToHostMemory, or anything offloaded already), not merely where a device can offload: CUDA
+    // always can.
     private static bool FusedPasses(Tensor input) =>
-        !Autograd.IsEnabled && !Checkpointing.FirstPass && input.Device.Backend.Offload is null && !Telemetry.IsEnabled(TelemetryLevel.Layers);
+        !Autograd.IsEnabled && !Checkpointing.FirstPass && !(input.Device.Backend.Offload is { } offload && TensorOffloading.Active(offload))
+        && !Telemetry.IsEnabled(TelemetryLevel.Layers);
 
     /// <summary>
     /// GELU(x·W1 + b1) (fused into one kernel, plus the product, during inference; not in a checkpointed pass, whose values

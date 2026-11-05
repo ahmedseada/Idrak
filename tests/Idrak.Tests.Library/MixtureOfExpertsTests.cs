@@ -242,7 +242,7 @@ internal abstract partial class Tests
     // A device that can offload (IOffloadingBackend) with the routing operations as kernels of its own: plain arrays for its
     // memory, every operation through the host fallback (the routing's too, so its results are the CPU's), and the number
     // of storages it counts as offloaded set by the test (none at first). CUDA is such a device: it always implements
-    // IOffloadingBackend, whether or not anything is offloaded.
+    // IOffloadingBackend, whether or not anything is offloaded. The offloading tests use it too (FusedPassesWithOffloadSupport).
     internal sealed class OffloadCapableBackend : Backend, IOffloadingBackend, IMemoryOffload
     {
         public static readonly OffloadCapableBackend Instance = new();
