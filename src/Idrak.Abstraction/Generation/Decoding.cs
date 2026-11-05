@@ -240,7 +240,7 @@ public sealed class KeyValueCache : IDisposable
 /// }
 /// </code>
 /// </example>
-public sealed class DecodingContext : IDisposable
+public sealed partial class DecodingContext : IDisposable
 {
     private readonly Dictionary<object, KeyValueCache> _caches = new(ReferenceEqualityComparer.Instance);
 
@@ -305,6 +305,7 @@ public sealed class DecodingContext : IDisposable
             return this;
         }
 
+        RefusePaged($"Layers on {device} beside {Device}");
         if (_mirrors is not null)
         {
             foreach (var (on, context) in _mirrors)
@@ -643,6 +644,7 @@ public sealed class DecodingContext : IDisposable
     public void ReorderRows(IReadOnlyList<int> sources)
     {
         ArgumentNullException.ThrowIfNull(sources);
+        RefusePaged("Reordering rows");
         if (sources.Count != Batch)
         {
             throw new ArgumentException($"One source row per row ({Batch}), got {sources.Count}.", nameof(sources));
@@ -960,7 +962,7 @@ public sealed class DecodingContext : IDisposable
     /// positions and starts on the device), except with rotary offsets: their per-token rotary positions are computed on
     /// the host each step.
     /// </summary>
-    public bool Recordable => _recordableLayout && _mirrors is null && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
+    public bool Recordable => _recordableLayout && _mirrors is null && _pagePool is null && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
 
     /// <summary>
     /// Opens a step of <paramref name="steps"/> new positions, or joins the step already open (a module inside a network
@@ -1127,6 +1129,7 @@ public sealed class DecodingContext : IDisposable
     /// </summary>
     public void CancelStep()
     {
+        DropWorkingCaches();
         ClearStep();
         if (_mirrors is { } mirrors)
         {
@@ -1140,6 +1143,7 @@ public sealed class DecodingContext : IDisposable
     /// <summary>Marks <paramref name="steps"/> positions as processed (device counter and host mirror).</summary>
     public void EndStep(int steps)
     {
+        FlushPages(steps);                                                // a paged context's step rows to its pages
         Position.AddInPlace(steps);
         foreach (var window in _windows)
         {
@@ -1245,6 +1249,7 @@ public sealed class DecodingContext : IDisposable
     /// <summary>Forgets all positions (and the <see cref="RotaryOffsets"/>); caches are overwritten from position 0.</summary>
     public void Reset()
     {
+        ReleasePagesFrom(0);
         Position.FillInPlace(0f);
         _rotaryPasses.Clear();
         ApplyRotary(null);
@@ -1289,6 +1294,7 @@ public sealed class DecodingContext : IDisposable
             ApplyRotary(pass.Before);
         }
 
+        ReleasePagesFrom(length);
         Position.FillInPlace(length);
         foreach (var window in _windows)
         {
@@ -1408,6 +1414,11 @@ public sealed class DecodingContext : IDisposable
     /// <summary>The cache for <paramref name="owner"/> (one per attention layer), created on first use.</summary>
     public KeyValueCache CacheFor(object owner, int rows, int headDim)
     {
+        if (_pagePool is not null)
+        {
+            return PagedCacheFor(owner, rows, headDim);
+        }
+
         if (!_caches.TryGetValue(owner, out var cache))
         {
             long start = Telemetry.StartStage();
@@ -1436,6 +1447,11 @@ public sealed class DecodingContext : IDisposable
     /// </summary>
     public KeyValueCache CacheFor(object owner, int rows, int headDim, int window)
     {
+        if (_pagePool is not null)
+        {
+            return PagedCacheFor(owner, rows, headDim);                  // every position kept: a window reads its part
+        }
+
         if (_caches.TryGetValue(owner, out var cache))
         {
             return cache;
@@ -1467,6 +1483,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         _caches.Clear();
+        ReleasePagesFrom(0);
         ClearMemory();
         foreach (var window in _windows)
         {

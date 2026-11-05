@@ -2314,6 +2314,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public void OnKeyValuePages(in Idrak.Abstraction.Diagnostics.KeyValuePagesReported e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -2365,6 +2366,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public void OnKeyValuePages(in Idrak.Abstraction.Diagnostics.KeyValuePagesReported e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -2533,6 +2535,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public (default) void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public (default) void OnKeyValuePages(in Idrak.Abstraction.Diagnostics.KeyValuePagesReported e)
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public (default) void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -2609,6 +2612,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public void OnKeyValuePages(in Idrak.Abstraction.Diagnostics.KeyValuePagesReported e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
@@ -2635,6 +2639,18 @@ public readonly record struct Idrak.Abstraction.Diagnostics.KernelsLoaded : Syst
   public string Backend { get; init; }
   public string Device { get; init; }
   public string? Detail { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.KeyValuePagesReported : System.IEquatable<Idrak.Abstraction.Diagnostics.KeyValuePagesReported>
+  public KeyValuePagesReported(string Device, int PageTokens, int Pages, int InUse, int Shared, int Idle, long Bytes, long SavedBytes, int MappedTokens)
+  public int Idle { get; init; }
+  public int InUse { get; init; }
+  public int MappedTokens { get; init; }
+  public int PageTokens { get; init; }
+  public int Pages { get; init; }
+  public int Shared { get; init; }
+  public long Bytes { get; init; }
+  public long SavedBytes { get; init; }
+  public string Device { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.LayerForward : System.IEquatable<Idrak.Abstraction.Diagnostics.LayerForward>
   public Idrak.Abstraction.Device Device { get; init; }
@@ -2998,6 +3014,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void GraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
   public static void KernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public static void KeyValuePages(in Idrak.Abstraction.Diagnostics.KeyValuePagesReported e)
   public static void Mcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public static void OutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public static void PipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
@@ -3656,6 +3673,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Generation.KeyValueCache? FindCache(Idrak.Abstraction.Module layer)
   public Idrak.Abstraction.Generation.KeyValueCache? this[Idrak.Abstraction.Module layer] { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
+  public Idrak.Abstraction.Generation.KeyValuePages? Pages { get; }
   public Idrak.Abstraction.Tensor Position { get; }
   public Idrak.Abstraction.Tensor PositionOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Mask { get; }
@@ -3683,11 +3701,13 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public int GrowthStart { get; set; }
   public int Length { get; }
   public int LengthOf(Idrak.Abstraction.Generation.KeyValueCache cache)
+  public int PageCount { get; }
   public int SlidingWindowSteps { get; set; }
   public int SlotsFor(int positions)
   public long CacheBytes { get; }
   public long MemoryBytes { get; }
   public long MoveCache(Idrak.Abstraction.Module layer, Idrak.Abstraction.Device device)
+  public long PageBytes { get; }
   public static bool DefaultGrowCaches { get; set; }
   public static int DefaultGrowthStart { get; set; }
   public void BeginStep(int steps)
@@ -4373,6 +4393,34 @@ public static class Idrak.Abstraction.Generation.KeyValueLayouts
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Generation.IKeyValueLayout layout)
+
+public readonly record struct Idrak.Abstraction.Generation.KeyValuePageStats : System.IEquatable<Idrak.Abstraction.Generation.KeyValuePageStats>
+  public KeyValuePageStats(int PageTokens, int Pages, int InUse, int Shared, int Idle, long Bytes, long SavedBytes)
+  public int Idle { get; init; }
+  public int InUse { get; init; }
+  public int PageTokens { get; init; }
+  public int Pages { get; init; }
+  public int Shared { get; init; }
+  public long Bytes { get; init; }
+  public long SavedBytes { get; init; }
+
+public sealed class Idrak.Abstraction.Generation.KeyValuePages : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.DecodingContext Open(int capacity, System.Collections.Generic.IReadOnlyList<int> ids, int limit)
+  public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; }
+  public Idrak.Abstraction.Generation.KeyValuePageStats Stats { get; }
+  public KeyValuePages(Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.IKeyValueLayout layout, int? pageTokens = null)
+  public const int StandardPageTokens = 64
+  public const string PageTokensVariable = "IDRAK_KV_PAGE_TOKENS"
+  public const string SharePrefixVariable = "IDRAK_KV_SHARE_PREFIX"
+  public int PageTokens { get; }
+  public int? IdlePageLimit { get; set; }
+  public static bool DefaultSharePrefix { get; }
+  public static int DefaultPageTokens { get; }
+  public static int? ParsePageTokens(string? value, string where)
+  public void Dispose()
+  public void Publish(Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int> ids)
+  public void ReleaseIdle()
 
 public sealed record Idrak.Abstraction.Generation.MalformedToolCall : System.IEquatable<Idrak.Abstraction.Generation.MalformedToolCall>
   public MalformedToolCall(string? Name, int Position, string Error, string Hint)

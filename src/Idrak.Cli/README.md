@@ -196,6 +196,15 @@ as long as no other server uses that port. Checked with an API client's AI reque
 client that appends its own route to the address it was given (`.../api/chat/chat/completions`) is answered too, and
 any 404 prints the right addresses in the server's window.
 
+Concurrent requests that start alike (one system prompt, one tool list, the earlier turns of a conversation) can share
+their key/value caches: with `IDRAK_KV_SHARE_PREFIX=1` a model's generations keep their caches in pages of
+`IDRAK_KV_PAGE_TOKENS` positions (64 by default), and a prompt reads the whole pages of a prompt that starts as it
+does, running now or earlier, instead of computing and holding its own copy; a shared page is copied before a request
+writes to it. The replies are the same as without sharing; N requests with one prompt hold about one prompt's cache
+and their own tokens. The pages each request reads, those shared and the memory saved are in the telemetry
+(`--verbose`, `kv_pages` in the JSON log). Off by default: a shared cache's decoding steps are not recorded as a graph,
+and each layer's pages are copied to a working cache as it attends, which costs time against holding the cache whole.
+
 | Command | What it does |
 |---|---|
 | `idrak serve` (`s`) | Serve models over the chat API and the OpenAI-style API on one port; with `--mcp`, over MCP (standard input/output) as the tools generate and chat, with `--tools` assemblies |

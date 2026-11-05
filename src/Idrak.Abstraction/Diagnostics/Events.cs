@@ -332,6 +332,21 @@ public enum InferenceStageKind
 public readonly record struct InferenceStage(InferenceStageKind Stage, string Device, TimeSpan Duration, long Count, long Bytes, int Rows = 1, int Pieces = 1, int PieceSize = 0);
 
 /// <summary>
+/// Published at <c>TelemetryLevel.Inference</c> when a context opens from a paged key/value cache (plan 37, K0,
+/// <c>KeyValuePages</c>): the pool's pages in use, those shared by several contexts and the bytes sharing saves.
+/// </summary>
+/// <param name="Device">The pool's device.</param>
+/// <param name="PageTokens">The positions a page holds.</param>
+/// <param name="Pages">The pages alive (in use or idle).</param>
+/// <param name="InUse">The pages one or more contexts read.</param>
+/// <param name="Shared">The pages two or more contexts read at once.</param>
+/// <param name="Idle">The published pages no context reads, kept for a later prompt.</param>
+/// <param name="Bytes">The device memory of every page alive.</param>
+/// <param name="SavedBytes">What the shared pages would take again in contexts of their own.</param>
+/// <param name="MappedTokens">The prompt positions the context just opened reads from pages already there.</param>
+public readonly record struct KeyValuePagesReported(string Device, int PageTokens, int Pages, int InUse, int Shared, int Idle, long Bytes, long SavedBytes, int MappedTokens);
+
+/// <summary>
 /// Published at <c>TelemetryLevel.Suggestions</c>: a setting worth changing, computed from what the device reports (its
 /// memory, its matrix units) and what a run measured; nothing is suggested where a figure is missing.
 /// </summary>

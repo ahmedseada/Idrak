@@ -12,6 +12,9 @@ internal abstract partial class Tests
     [
         ("fused kernels match their unfused equivalents", FusedKernels),
         ("KV-cache decoding matches the full forward pass at every position", CachedDecodingMatchesFull),
+        ("KV-cache decoding: paged (a shared pool's pages): a paged context gives the unpaged cache's logits bit for bit in float32, int8 and bfloat16; a context reading another's whole pages gives an unpaged context's fed alike; truncated into a shared page it copies the page and the other's steps are unchanged; settings and refusals by name", PagedCacheMatchesUnpaged),
+        ("KV-cache decoding: paged: 4 requests sharing a 48-position prompt hold its pages once and one page each (measured in use against 4 unpaged caches), each with its own cache's logits bit for bit; closed, the pages stay idle up to one context's worth and ReleaseIdle frees them", PagedCacheSharedMemory),
+        ("KV-cache decoding: paged generations (TextGenerator.SharePrefix): two interleaved generations share the system prompt's pages and give the kept cache's replies; the telemetry reports pages in use, shared and bytes saved; ReleaseCache frees the idle pages", PagedCacheGenerator),
         ("batched cached decoding matches sequences decoded one by one", BatchedDecoding),
         ("graph replay gives the same tokens as direct execution", GraphReplay),
         ("sampler: distribution, top-k, temperature, determinism, CPU parity", SamplerBehaviour),

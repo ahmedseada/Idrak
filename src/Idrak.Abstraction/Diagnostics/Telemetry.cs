@@ -146,6 +146,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A context opened from a paged key/value cache: the pages in use, shared and the bytes saved (<see cref="TelemetryLevel.Inference"/>).</summary>
+    void OnKeyValuePages(in KeyValuePagesReported e)
+    {
+    }
+
     /// <summary>The inference engine loaded or unloaded a model, or completed or rejected a request (<see cref="TelemetryLevel.Engine"/>).</summary>
     void OnEngine(in EngineEvent e)
     {
@@ -414,6 +419,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Tools) != 0)
             {
                 h.OnToolCall(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports what a paged key/value cache holds as a context opens from it, to the hooks listening at <see cref="TelemetryLevel.Inference"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void KeyValuePages(in KeyValuePagesReported e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Inference) != 0)
+            {
+                h.OnKeyValuePages(in e);
             }
         }
     }

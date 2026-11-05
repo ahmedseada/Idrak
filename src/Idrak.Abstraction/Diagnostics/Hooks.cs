@@ -109,6 +109,12 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             $"Read {e.Stage} on {e.Device}: {e.Duration.TotalMilliseconds:F2} ms ({e.Count:N0}{(e.Bytes > 0 ? $", {e.Bytes / 1048576.0:F1} MB" : "")})"));
 
     /// <inheritdoc />
+    public void OnKeyValuePages(in KeyValuePagesReported e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Key/value pages on {e.Device}: {e.InUse:N0} in use, {e.Shared:N0} shared, {e.Idle:N0} idle of {e.Pages:N0} ({e.PageTokens} positions each), {e.Bytes / 1048576.0:F1} MB, "
+            + $"{e.SavedBytes / 1048576.0:F1} MB saved by sharing; {e.MappedTokens:N0} prompt positions read from shared pages"));
+
+    /// <inheritdoc />
     public void OnMcp(in McpEvent e) => _out.WriteLine("MCP: " + e.Describe());
 
     /// <inheritdoc />
@@ -487,6 +493,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnInferenceStage(in InferenceStage e) => Write(e);
 
     /// <inheritdoc />
+    public void OnKeyValuePages(in KeyValuePagesReported e) => Write(e);
+
+    /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => Write(e);
 
     /// <inheritdoc />
@@ -609,6 +618,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnInferenceStage(in InferenceStage e) => _channel.OnInferenceStage(in e);
+
+    /// <inheritdoc />
+    public void OnKeyValuePages(in KeyValuePagesReported e) => _channel.OnKeyValuePages(in e);
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _channel.OnEngine(in e);
@@ -820,6 +832,18 @@ public static class TelemetryJson
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 w.WriteNumber("count", e.Count);
                 w.WriteNumber("bytes", e.Bytes);
+                break;
+            case KeyValuePagesReported e:
+                w.WriteString("event", "kv_pages");
+                w.WriteString("device", e.Device);
+                w.WriteNumber("page_tokens", e.PageTokens);
+                w.WriteNumber("pages", e.Pages);
+                w.WriteNumber("in_use", e.InUse);
+                w.WriteNumber("shared", e.Shared);
+                w.WriteNumber("idle", e.Idle);
+                w.WriteNumber("bytes", e.Bytes);
+                w.WriteNumber("saved_bytes", e.SavedBytes);
+                w.WriteNumber("mapped_tokens", e.MappedTokens);
                 break;
             case McpEvent e:
                 w.WriteString("event", "mcp");

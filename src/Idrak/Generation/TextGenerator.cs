@@ -106,6 +106,73 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
     public bool KeepCache { get; set; } = true;
 
     /// <summary>
+    /// Keep the KV cache in pages shared by this generator's generations (plan 37, K0, <see cref="KeyValuePages"/>): a
+    /// prompt that starts as another's, earlier or running now (a system prompt, a tool list, an earlier turn), reads that
+    /// prompt's pages instead of computing and holding its own copy, and only computes what follows; a page several
+    /// generations read is copied before one of them writes to it. The replies are the same, bit for bit, as with an unpaged
+    /// cache fed alike; the memory of N generations sharing a prompt is about one prompt's cache and their own tokens.
+    /// With <see cref="KeepCache"/>, a model on one device and prompts without images; the decoding steps then are not
+    /// recorded as a graph. Default <see cref="KeyValuePages.DefaultSharePrefix"/> (IDRAK_KV_SHARE_PREFIX; off).
+    /// </summary>
+    public bool SharePrefix { get; set; } = KeyValuePages.DefaultSharePrefix;
+
+    /// <summary>
+    /// The positions a page of the shared cache holds (<see cref="SharePrefix"/>): prompts share whole pages. Default
+    /// <see cref="KeyValuePages.DefaultPageTokens"/> (IDRAK_KV_PAGE_TOKENS; 64).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public int PageTokens
+    {
+        get;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            field = value;
+        }
+    } = KeyValuePages.DefaultPageTokens;
+
+    /// <summary>What the shared cache holds now (<see cref="SharePrefix"/>), or null before a generation used it.</summary>
+    public KeyValuePageStats? PageStats
+    {
+        get
+        {
+            lock (_keptLock)
+            {
+                return _pages?.Stats;
+            }
+        }
+    }
+
+    // The pool of the shared cache (SharePrefix), made on first use for this generator's device, format and page size.
+    private KeyValuePages? _pages;
+
+    // Whether a generation's cache can be paged: every layer on the generator's device (a split model's layers on
+    // other devices keep caches of their own there).
+    private bool PagesApply => _pagesApply ??= Model.Parameters().Concat(Model.Buffers()).All(t => t.Device == Device);
+
+    private bool? _pagesApply;
+
+    // A context paged in the shared pool, reading the pages of the longest prompt that starts as `ids` (whole pages,
+    // leaving at least the last id to feed), with the ids it holds.
+    private (DecodingContext Context, List<int> Ids) OpenPaged(int capacity, List<int> ids)
+    {
+        KeyValuePages pool;
+        lock (_keptLock)
+        {
+            if (_pages is not { } existing || existing.PageTokens != PageTokens || existing.Layout != Layout || existing.Device != Device)
+            {
+                _pages?.Dispose();
+                _pages = new KeyValuePages(Device, Layout, PageTokens);
+            }
+
+            pool = _pages;
+        }
+
+        var context = pool.Open(capacity, ids, ids.Count - 1);
+        return (context, ids.GetRange(0, context.Length));
+    }
+
+    /// <summary>
     /// The arithmetic of a prompt's pass (<see cref="MixedPrecision.Use"/> around the prefill alone), or null for the
     /// caller's (<see cref="MixedPrecision.Current"/>). <see cref="MatMulPrecision.BFloat16"/> runs the prompt's matrix
     /// products on tensor cores where the device has them (a long prompt, or an image's tokens, several times faster); the
@@ -317,6 +384,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             _draftKept?.Dispose();
             _draftKept = null;
             _draftKeptIds = [];
+            _pages?.ReleaseIdle();
         }
     }
 
@@ -1044,7 +1112,9 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         TensorOffloading.BeforeInference(Device, Model);                          // with offloading: room for the pass on the device
         {
             // NoGrad is entered per compute call, never held across a yield (it is thread-local state of the caller).
-            var (kept, keptIds) = options.UseCache && KeepCache ? TakeCache(context) : (null, []);
+            // A shared, paged cache (SharePrefix) in place of the kept one: the pages of a prompt that starts alike are read.
+            bool paged = options.UseCache && KeepCache && SharePrefix && images.Count == 0 && PagesApply;
+            var (kept, keptIds) = paged ? OpenPaged(context, history) : options.UseCache && KeepCache ? TakeCache(context) : (null, []);
             // A cache kept for the next turn holds the whole window; otherwise it holds what this reply can reach (the
             // prompt and its most tokens, as the batched path), less memory to hold and to clear on every call. Only a
             // reply that can outgrow the window re-reads its last half, at the window's size as before.
@@ -1162,6 +1232,10 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     }
 
                     sampler.Read(0, 1);
+
+                    // The prompt's whole pages, published: a generation that starts alike, now or later, reads them.
+                    decoding.Pages?.Publish(decoding, history);
+
                     // A decoding step is never stopped part-way: a cancellation that comes during one ends the reply
                     // after it (the loop's check), the cache kept, instead of throwing it away with the step. Only the
                     // prompt's passes (this one, and a full window's re-read) stop between layers.
@@ -1172,8 +1246,16 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     // The prompt's pass stopped part-way (the next request came): the stopped pass is withdrawn, so the
                     // cache still holds history[..Length] (the shared prefix, and every piece fed whole). It is kept for
                     // the next prompt, which would otherwise feed the whole prefix again.
-                    KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
-                    keep = true;
+                    if (decoding.Pages is { } pool)
+                    {
+                        pool.Publish(decoding, history.GetRange(0, decoding.Length));      // its pages stay for the next prompt
+                    }
+                    else
+                    {
+                        KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
+                        keep = true;
+                    }
+
                     throw;
                 }
 
@@ -1269,7 +1351,15 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 }
 
                 // The cache holds the keys and values of history[..Length] (the last sampled token was never fed).
-                if (options.UseCache && KeepCache && resets == 0 && decoding.Length <= history.Count)
+                if (decoding.Pages is { } pages)
+                {
+                    // Paged: its whole pages published, then the context goes (its pages stay for the next prompt, idle).
+                    if (resets == 0 && decoding.Length <= history.Count)
+                    {
+                        pages.Publish(decoding, history.GetRange(0, decoding.Length));
+                    }
+                }
+                else if (options.UseCache && KeepCache && resets == 0 && decoding.Length <= history.Count)
                 {
                     KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
                     keep = true;
