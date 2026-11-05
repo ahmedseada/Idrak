@@ -123,16 +123,6 @@ software driver (llvmpipe, installed in the cloud container; Idrak's Vulkan grou
 of this plan is proven before it lands. The owner tests `cuda` and `hip` on real cards, from the exact commands each
 piece hands over. llvmpipe proves results, never speed: speed is measured only on the owner's devices.
 
-**M0, the measurement tool (the owner, 2026-11-05: "these measurements should be implemented so I can run it
-whenever"):** `idrak bench MODEL` already measures prompt and generation speed and device memory, `--devices` runs it
-on several devices in one table (GPU only against CPU only), `--matrix` across weight and KV formats, and
-`--save NAME` / `--compare NAME` keeps a run and shows the change. M0 adds the axes this plan introduced, for any model,
-no family named: `--placements device,split,stream,auto` (W1), the element type with how it was chosen (`--dtypes`
-once T2 lands), the KV cache type (T2), eager against lazy load time (W2), and per row the bus line (bytes per token,
-layers staged, layers moved) beside memory and tokens per second, cold and warm apart; `--profile` adds its report.
-Each later stage adds its own axis to this one command, so the owner measures any stage before and after on any model
-with one command.
-
 W comes first: it turns today's failure or crawl on a model larger than the device into a run at a usable speed. Then
 V: views pay off with float32 alone. Then T0, T1 (exact indices are a correctness fix), then Q0 (the largest memory
 gain for low-bit models, built on T0's block formats), then T2 with the KV cache types, T3 with int2 and the other
