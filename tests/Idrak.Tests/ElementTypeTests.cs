@@ -20,7 +20,7 @@ internal abstract partial class DesktopTests : Tests
         ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
-        ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the compute capability; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
+        ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
         ("element types: decoding with learned positions (a decoder's position table, and a position encoding's) takes no counted conversion on the device: the prompt's ids, the step's positions and the sampled ids in its index type; the tokens as without the cache, and the cached lookup the float positions' converted one bit for bit", LearnedPositionDecoding),
     ];
@@ -284,11 +284,23 @@ internal abstract partial class DesktopTests : Tests
               && ElementTypes.Pick(Reporting(ElementType.Float8E4M3, ElementType.Float32)) == ElementType.Float32
               && ElementTypes.Pick(new BackendCapabilities { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1 }) == ElementType.Float32,
             "auto picks bfloat16, then float16, else float32 (fp8 is never picked)");
-        Check(Idrak.Gpu.Cuda.CudaNativeTypes.Of(7, 5).SequenceEqual([ElementType.Float32])
-              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(8, 6).SequenceEqual([ElementType.BFloat16, ElementType.Float32])
-              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(8, 9).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32])
-              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(12, 0).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32]),
-            "CUDA's native types from the compute capability: bfloat16 from 8.0, fp8 from 8.9");
+        // CUDA's native types: what the device reaches of the PTX targets its kernels declare (read from their source), never
+        // a list of cards.
+        var undeclared = Idrak.Gpu.Cuda.PtxKernels.TensorCoreModules
+            .Where(m => Idrak.Gpu.Cuda.PtxKernels.DeclaredTarget(m.Source).ToString()
+                        != (m.Name == "fp8 products" ? Idrak.Gpu.Cuda.PtxKernels.Float8Target : Idrak.Gpu.Cuda.PtxKernels.TensorCoreTarget))
+            .Select(m => $"{m.Name}: {Idrak.Gpu.Cuda.PtxKernels.DeclaredTarget(m.Source).ToString()}").ToList();
+        Check(undeclared.Count == 0, $"every tensor-core module declares the target the gates read (fp8's its own): [{string.Join("; ", undeclared)}]");
+        Check(Idrak.Gpu.Cuda.PtxKernels.TargetNumber("sm_80") == 80 && Idrak.Gpu.Cuda.PtxKernels.TargetNumber("sm_90a") == 90
+              && Idrak.Gpu.Cuda.PtxKernels.TargetNumber("sm_") == -1 && Idrak.Gpu.Cuda.PtxKernels.TargetNumber("compute_80") == -1,
+            "a PTX target read as the compute capability it names (sm_80 → 80, sm_90a → 90; anything else -1)");
+        Check(Idrak.Gpu.Cuda.CudaNativeTypes.Of(false, false).SequenceEqual([ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, false).SequenceEqual([ElementType.BFloat16, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, true).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Report(1, 2, true, false) is var report
+              && report.Contains("compute capability 1.2", StringComparison.Ordinal) && report.Contains(Idrak.Gpu.Cuda.PtxKernels.TensorCoreTarget, StringComparison.Ordinal)
+              && report.Contains(Idrak.Gpu.Cuda.PtxKernels.Float8Target, StringComparison.Ordinal),
+            $"CUDA's native types follow the kernels' declared targets the device reaches: {Idrak.Gpu.Cuda.CudaNativeTypes.Report(1, 2, true, false)}");
         Check(Device.Cpu.Backend.Capabilities.IndexType == ElementType.Int32 && Device.Cpu.Backend.IndexTypeOf(Ops.Gather) == ElementType.Int32
               && new BackendCapabilities { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1 }.IndexType == ElementType.Float32,
             "the CPU reads int32 indices; a device that says nothing float32");

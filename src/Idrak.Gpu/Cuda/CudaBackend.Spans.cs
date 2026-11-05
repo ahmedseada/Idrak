@@ -337,9 +337,9 @@ internal sealed unsafe partial class CudaBackend
             if (!_spanModules.TryGetValue(key, out var kernels))
             {
                 string? reason = null;
-                if (_computeMajor < 8)
+                if (BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
                 {
-                    reason = $"compute capability {_computeMajor}.x has no bfloat16 tensor cores (8.0 or newer needed)";
+                    reason = $"no bfloat16 tensor-core kernels: {below}";
                 }
                 else
                 {
@@ -397,9 +397,9 @@ internal sealed unsafe partial class CudaBackend
     private Dictionary<string, IntPtr>? LoadSpanModule(bool tensor, int d, out string? reason)
     {
         reason = null;
-        if (tensor && _computeMajor < 8)
+        if (tensor && BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
         {
-            reason = $"compute capability {_computeMajor}.x has no bfloat16 tensor cores (8.0 or newer needed)";
+            reason = $"no bfloat16 tensor-core kernels: {below}";
             return null;
         }
 

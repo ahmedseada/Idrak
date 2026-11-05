@@ -113,7 +113,8 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
     /// <summary>The kernel shapes generated for this GPU (tests and diagnostics).</summary>
     internal KernelShapes Shapes => _shapes;
 
-    // The tensor-core module (compute capability 8.0 and newer), loaded on first use; null when unavailable.
+    // The tensor-core modules (where the device reaches the target they declare, PtxKernels.TensorCoreTarget), loaded on
+    // first use; null when unavailable.
     private Dictionary<string, IntPtr>? _tensorCore;
 
     // Set (with a release write) only after the load ended and its results were stored: a caller that sees it reads them.
@@ -219,13 +220,24 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         }
     }
 
+    // Why kernels declaring PTX `target` (".target sm_NN") do not load here, or null when they can: the compute capability
+    // the device reports is below the one the target names. The comparison is between what the device reports and what
+    // the kernels declare, never a list of cards; a target that does not read as "sm_" and digits is left to the driver.
+    private string? BelowTarget(ReadOnlySpan<char> target)
+    {
+        int needed = PtxKernels.TargetNumber(target);
+        return needed >= 0 && _computeMajor * 10 + _computeMinor < needed
+            ? $"the device reports compute capability {_computeMajor}.{_computeMinor}; the kernels declare {target.ToString()}"
+            : null;
+    }
+
     // Loads the tensor-core modules (under _tensorCoreLock): _tensorCore, _tensorCoreAny and the reasons set before it returns.
     private void LoadTensorCores()
     {
         TensorCoreLoads++;
-        if (_computeMajor < 8)
+        if (BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
         {
-            TensorCoreUnavailableReason = $"compute capability {_computeMajor}.x has no bfloat16 tensor cores (8.0 or newer needed)";
+            TensorCoreUnavailableReason = $"no bfloat16 tensor-core kernels: {below}";
             return;
         }
 
@@ -238,9 +250,9 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         var errors = new List<string>();
         foreach (var (moduleName, names, source) in PtxKernels.TensorCoreModules)
         {
-            if (moduleName.StartsWith("fp8", StringComparison.Ordinal) && _computeMajor * 10 + _computeMinor < 89)
+            if (BelowTarget(PtxKernels.DeclaredTarget(source)) is not null)
             {
-                continue;                                           // FP8 tensor cores: compute capability 8.9 and newer
+                continue;                                           // a module whose declared target the device does not reach (fp8's)
             }
 
             if (PtxKernels.Fits(source, _limits) is { } tooLarge)
@@ -367,8 +379,8 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         Capabilities = Capabilities with { SpanAttentionHeadDim = SpanHeadDim(_limits) };   // the span kernels this device holds
         Capabilities = Capabilities with                                    // the types its kernels compute natively here (plan 37, T2)
         {
-            NativeTypes = CudaNativeTypes.Of(_computeMajor, _computeMinor),
-            NativeReport = $"compute capability {_computeMajor}.{_computeMinor}: bfloat16 tensor cores from 8.0, fp8 tensor cores from 8.9; float16 products are not built",
+            NativeTypes = CudaNativeTypes.Of(BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
+            NativeReport = CudaNativeTypes.Report(_computeMajor, _computeMinor, BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
         };
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
@@ -1688,7 +1700,8 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         }
     }
 
-    // The 8-bit products and their quantizers loaded (FP8: compute capability 8.9+; INT8: 8.0+).
+    // The 8-bit products and their quantizers loaded (each where the device reaches its module's declared PTX target:
+    // PtxKernels.Float8Target for FP8, PtxKernels.TensorCoreTarget for INT8).
     // Benchmarks: x [rows][ld] quantized by rows (the a operand's quantizer).
     internal void QuantizeRowsForBenchmark(bool fp8, Storage x, int ld, Storage output, Storage scale, int rows, int k) =>
         QuantizeOperand(fp8, P(x), ld, byRows: true, output, scale, rows, k, PtxKernels.EightBitPaddedK(k));

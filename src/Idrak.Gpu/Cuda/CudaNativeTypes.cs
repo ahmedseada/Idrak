@@ -4,22 +4,24 @@
 namespace Idrak.Gpu.Cuda;
 
 /// <summary>
-/// The element types the CUDA backend's kernels compute natively on a device (plan 37, T2), from the compute capability
-/// the device reports, as the tensor-core loader gates its modules: bfloat16 tensor cores from 8.0, fp8 (e4m3) from 8.9.
-/// No float16 product is built (the tensor-core kernels take bfloat16), so float16 is not listed. float32 always.
+/// The element types the CUDA backend's kernels compute natively on a device (plan 37, T2): bfloat16 where the compute
+/// capability the device reports reaches the PTX target its bfloat16 tensor-core kernels declare
+/// (<see cref="PtxKernels.TensorCoreTarget"/>), fp8 (e4m3) where it reaches the fp8 kernels' target
+/// (<see cref="PtxKernels.Float8Target"/>); float32 always. The targets are the kernels' own, never a list of cards. No
+/// float16 product is built, so float16 is not listed.
 /// </summary>
 internal static class CudaNativeTypes
 {
-    /// <summary>The types a device of compute capability <paramref name="major"/>.<paramref name="minor"/> computes natively here, best first.</summary>
-    public static IReadOnlyList<ElementType> Of(int major, int minor)
+    /// <summary>The types the device computes natively here, best first: bfloat16 and fp8 where it reaches their kernels' targets.</summary>
+    public static IReadOnlyList<ElementType> Of(bool bfloat16, bool float8)
     {
         var types = new List<ElementType>(3);
-        if (major >= 8)
+        if (bfloat16)
         {
             types.Add(ElementType.BFloat16);
         }
 
-        if (major * 10 + minor >= 89)
+        if (float8)
         {
             types.Add(ElementType.Float8E4M3);
         }
@@ -27,4 +29,9 @@ internal static class CudaNativeTypes
         types.Add(ElementType.Float32);
         return types;
     }
+
+    /// <summary>What the device reported and what follows from it, for people: its compute capability against each kernel family's declared target.</summary>
+    public static string Report(int major, int minor, bool bfloat16, bool float8) =>
+        $"compute capability {major}.{minor}: the bfloat16 tensor-core kernels (PTX {PtxKernels.TensorCoreTarget}) {(bfloat16 ? "load" : "need more")}, "
+        + $"the fp8 ones (PTX {PtxKernels.Float8Target}) {(float8 ? "load" : "need more")}; no float16 product is built";
 }

@@ -7,8 +7,10 @@ using System.Text;
 namespace Idrak.Gpu.Cuda;
 
 /// <summary>
-/// Tensor-core matrix multiplies (sm_80 and newer: Ampere, Ada, Hopper, Blackwell), in a module of their own so older
-/// GPUs still load the main one. Inputs and outputs are float32 like every other kernel: tiles are rounded to bfloat16
+/// Tensor-core matrix multiplies (PTX target <see cref="TensorCoreTarget"/>, which the bfloat16 <c>mma.sync</c> and
+/// <c>ldmatrix</c> they use need), in a module of their own so a device below that target still loads the main one. A
+/// device loads them when the compute capability it reports reaches the target the module declares, never by a list of
+/// cards. Inputs and outputs are float32 like every other kernel: tiles are rounded to bfloat16
 /// as they are copied to shared memory, multiplied with <c>mma.sync.m16n8k16</c> and summed in float32 (what PyTorch's
 /// bfloat16 autocast does, without the separate cast kernels and copies).
 /// </summary>
@@ -21,6 +23,43 @@ internal static partial class PtxKernels
     public const int TensorThreads = 256;
 
     private const int TensorK = 32;
+
+    /// <summary>
+    /// The PTX target the bfloat16 tensor-core modules declare (<c>.target</c>; the span and flash attention modules too):
+    /// what their <c>mma.sync</c> bfloat16 shapes and <c>ldmatrix</c> need, as the PTX ISA defines them.
+    /// </summary>
+    internal const string TensorCoreTarget = "sm_80";
+
+    /// <summary>The PTX target the fp8 (e4m3) product module declares: what its e4m3 <c>mma.sync</c> needs.</summary>
+    internal const string Float8Target = "sm_89";
+
+    /// <summary>
+    /// The compute capability a PTX target names, as one number ("sm_89" → 89, "sm_90a" → 90), or -1 when the text is not
+    /// "sm_" followed by digits.
+    /// </summary>
+    internal static int TargetNumber(ReadOnlySpan<char> target)
+    {
+        if (!target.StartsWith("sm_", StringComparison.Ordinal))
+        {
+            return -1;
+        }
+
+        int end = SkipDigits(target, 3);
+        return end > 3 && int.TryParse(target[3..end], NumberStyles.None, CultureInfo.InvariantCulture, out int number) ? number : -1;
+    }
+
+    /// <summary>The target a module's PTX declares (the word after <c>.target</c>), or an empty span when it declares none.</summary>
+    internal static ReadOnlySpan<char> DeclaredTarget(string source)
+    {
+        int at = source.AsSpan().IndexOf(".target", StringComparison.Ordinal);
+        if (at < 0)
+        {
+            return [];
+        }
+
+        int start = SkipWhiteSpace(source, at + ".target".Length);
+        return source.AsSpan(start, SkipWord(source, start) - start);
+    }
 
     // Shared-memory row strides in bytes (bfloat16 rows padded by 8 elements, so ldmatrix's eight 16-byte row reads
     // fall in distinct banks): tiles 32 wide (k contiguous) and 128 wide (m or n contiguous).
@@ -74,7 +113,7 @@ internal static partial class PtxKernels
         Module("attention d128", sb => { FlashForward(sb, 128); FlashBackwardQ(sb, 128); FlashBackwardKv(sb, 128); }),
         Module("attention row sums", FlashDelta),
         Module("int8 products", sb => BuildEightBit(sb, fp8: false)),
-        Module("fp8 products", sb => BuildEightBit(sb, fp8: true), version: "8.4", target: "sm_89"),
+        Module("fp8 products", sb => BuildEightBit(sb, fp8: true), version: "8.4", target: Float8Target),
         // Prompt-sized products over bfloat16 weights with more in the epilogue (Backend.PackedMatMulEpilogue): GELU of the
         // biased product (an encoder's first feed-forward projection) and the residual added after the bias (its output
         // projections).
@@ -88,7 +127,7 @@ internal static partial class PtxKernels
         }),
     ]);
 
-    private static (string Name, string[] Kernels, string Source) Module(string name, Action<StringBuilder> build, string version = "7.0", string target = "sm_80")
+    private static (string Name, string[] Kernels, string Source) Module(string name, Action<StringBuilder> build, string version = "7.0", string target = TensorCoreTarget)
     {
         var sb = new StringBuilder();
         sb.AppendLine($".version {version}");
