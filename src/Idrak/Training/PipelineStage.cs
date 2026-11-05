@@ -64,9 +64,10 @@ public sealed class PipelineStage : IDisposable
 
     private PipelineStage(PipelinePlan plan, PipelineLayout layout, int rank, ITransport transport, Device device, IReadOnlyList<Module> modules,
         IReadOnlyList<Tensor> parameters, IReadOnlyList<int> indices, List<(int, int[], Tensor)> shared, IPipelineSchedule schedule, ICollectives? replicas,
-        int[] holders, bool deviceActivations)
+        int[] holders, bool deviceActivations, long? measuredMemory)
     {
         _holders = holders;
+        MeasuredMemory = measuredMemory;
         Plan = plan;
         Layout = layout;
         Rank = rank;
@@ -153,6 +154,15 @@ public sealed class PipelineStage : IDisposable
     /// <summary>This stage's bytes, as the plan measured them.</summary>
     public long Bytes => Plan.Stages[Stage].Bytes;
 
+    /// <summary>
+    /// This rank's free memory as the ranks joined (<see cref="ClusterContext.RankMemory"/>, measured on its device at run
+    /// time), or null when its collectives give none.
+    /// </summary>
+    public long? MeasuredMemory { get; }
+
+    /// <summary>Whether this stage's bytes fit its memory (<see cref="PipelinePlan.Fits"/>); true when its memory is unknown.</summary>
+    public bool Fits => Plan.Fits(Stage);
+
     /// <summary>The schedule its training steps follow.</summary>
     public IPipelineSchedule Schedule { get; }
 
@@ -190,7 +200,9 @@ public sealed class PipelineStage : IDisposable
         var layout = PipelineLayout.For(cluster.WorldSize, options);
         var schedule = PipelineSchedules.Get(options.Schedule);
         var top = network.ToList();
-        var plan = PlanFor(network, layout, options, cluster.Context?.Topology);
+        // Each rank's memory as the ranks joined (plan 37, N2): the same on every rank, so every rank cuts alike.
+        var measured = cluster.Context?.RankMemory is { } memory && memory.Count == layout.WorldSize ? memory : null;
+        var plan = PlanFor(network, layout, options, cluster.Context?.Topology, measured);
         int rank = cluster.Rank, stage = layout.StageOf(rank);
         var range = plan.Stages[stage];
 
@@ -281,20 +293,30 @@ public sealed class PipelineStage : IDisposable
             int[] members = layout.StageRanks(stage);
             var topology = ClusterGroups.Topology(context.Topology, members);
             replicas = Collectives.Get(options.CollectiveFor(topology)).Create(ClusterGroups.Transport(transport, members), cluster.Device,
-                new ClusterContext(topology, layout.ReplicaOf(rank), options));
+                new ClusterContext(topology, layout.ReplicaOf(rank), options) { RankMemory = measured is null ? null : [.. members.Select(m => measured[m])] });
         }
 
-        return new PipelineStage(plan, layout, rank, transport, cluster.Device, [.. top.Skip(range.Start).Take(range.Count)], parameters, indices, shared, schedule, replicas,
-            [.. holders.Select(h => h?.Min() ?? -1)], options.DeviceActivations);
+        var placed = new PipelineStage(plan, layout, rank, transport, cluster.Device, [.. top.Skip(range.Start).Take(range.Count)], parameters, indices, shared, schedule, replicas,
+            [.. holders.Select(h => h?.Min() ?? -1)], options.DeviceActivations, measured?[rank]);
+        if (Telemetry.IsEnabled(TelemetryLevel.Network))
+        {
+            string names = range.Count > 1 ? $"{plan.Modules[range.Start].Name} … {plan.Modules[range.End - 1].Name}" : plan.Modules[range.Start].Name;
+            Telemetry.PipelinePlaced(new PipelineStagePlaced(rank, stage, layout.Stages, layout.ReplicaOf(rank), range.Start, range.Count, names, range.Bytes,
+                placed.MeasuredMemory, plan.StageMemory?[stage], plan.Basis, plan.Reason));
+        }
+
+        return placed;
     }
 
     /// <summary>
     /// The plan <see cref="Place"/> cuts <paramref name="network"/> by over <paramref name="layout"/>: its top-level modules
     /// (embeddings first, the head last) and the bytes of the tensors each holds or reads, measured from the tensors the
     /// model was built with (a tied head counts the table it reads), cut as <paramref name="options"/> ask
-    /// (<see cref="PipelinePlan.For"/>).
+    /// (<see cref="PipelinePlan.For"/>), by <paramref name="measured"/> (each rank's memory as the ranks joined,
+    /// <see cref="ClusterContext.RankMemory"/>) where the options cut by memory.
     /// </summary>
-    public static PipelinePlan PlanFor(Sequential network, PipelineLayout layout, ClusterOptions? options = null, IClusterTopology? topology = null)
+    public static PipelinePlan PlanFor(Sequential network, PipelineLayout layout, ClusterOptions? options = null, IClusterTopology? topology = null,
+        IReadOnlyList<long?>? measured = null)
     {
         ArgumentNullException.ThrowIfNull(network);
         options ??= ClusterOptions.FromEnvironment();
@@ -322,7 +344,7 @@ public sealed class PipelineStage : IDisposable
             modules.Add(new PipelineModule(module.Name ?? module.GetType().Name, read));
         }
 
-        return PipelinePlan.For(modules, tensorBytes, layout, options, topology);
+        return PipelinePlan.For(modules, tensorBytes, layout, options, topology, measured);
     }
 
     // The tensors a module holds or reads: its parameters and buffers, and the tables its tied layers read.

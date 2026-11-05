@@ -129,6 +129,7 @@ internal sealed class ClusterSimCommand : Command
               --seed N           the seed of the simulation's jitter and faults (the file's)
               --placement P      single or pipeline: the whole model on every rank, or a stage each (pretrain)
               --stages N         a pipeline's stages, dividing the ranks (one per rank)
+              --stage-layers L   the layers each stage holds, such as 3,5,2 (sized by each rank's measured memory)
               --event-log FILE   where the event log goes (the run folder's cluster-events.idrklog)
               --check-prediction profile the run: the probes' rows and the predicted step beside the measured
               --dashboard        show and steer the run in a browser (127.0.0.1, IDRAK_CLUSTER_UI_HOST)
@@ -149,7 +150,7 @@ internal sealed class ClusterSimCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--topology", "--collective", "--wire", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--event-log", "--port"];   // --seed: a common option
+        ["--topology", "--collective", "--wire", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--stage-layers", "--event-log", "--port"];   // --seed: a common option
 
     public override IReadOnlyCollection<string> Flags => ["--check-prediction", "--dashboard", "--no-browser"];
 
@@ -458,6 +459,11 @@ internal sealed class ClusterSimCommand : Command
             options = options with { Stages = int.TryParse(stages, NumberStyles.None, CultureInfo.InvariantCulture, out int n) && n >= 1 ? n : throw new UsageException($"--stages is a whole number, 1 or more, not '{stages}'.") };
         }
 
+        if (context.Option("--stage-layers") is { } layers)
+        {
+            options = options with { PipelineStageLayers = ClusterJoin.StageLayers(layers) };
+        }
+
         if (options.Pipelined && inner[0] != "pretrain" && !(inner[0] == "resume"))
         {
             throw new UsageException($"--placement pipeline trains with pretrain (and resumes its runs); {inner[0]} trains the whole model on every rank.");
@@ -715,6 +721,11 @@ internal sealed class ClusterSimCommand : Command
         if (options.Stages is { } stages)
         {
             environment["IDRAK_CLUSTER_STAGES"] = stages.ToString(CultureInfo.InvariantCulture);
+        }
+
+        if (options.PipelineStageLayers is { } layers)
+        {
+            environment["IDRAK_CLUSTER_STAGE_LAYERS"] = string.Join(",", layers.Select(l => l.ToString(CultureInfo.InvariantCulture)));
         }
 
         return environment;

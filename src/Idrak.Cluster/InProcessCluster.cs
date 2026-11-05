@@ -165,7 +165,10 @@ public static class InProcessCluster
         {
             // Every rank runs rank 0's measured kernel choices, followed before any rank's thread makes one (ShareTuning).
             shared = ChoiceSharing.Follow(devices, options);
-            return RunRanks(topology, options, work, plan, transports, collectives, devices, shared);
+
+            // Each rank's memory, measured on its carved device as the ranks join (plan 37, N2): every rank's context holds them all.
+            var memory = Measure(devices);
+            return RunRanks(topology, options, work, plan, transports, collectives, devices, shared, memory);
         }
         finally
         {
@@ -175,6 +178,25 @@ public static class InProcessCluster
                 ReleaseDevices(devices);
             }
         }
+    }
+
+    // Each device's free memory now (ClusterMemory.Measure); null for one that cannot say (its rank's thread meets the error again).
+    private static long?[] Measure(Device[] devices)
+    {
+        var memory = new long?[devices.Length];
+        for (int r = 0; r < devices.Length; r++)
+        {
+            try
+            {
+                memory[r] = ClusterMemory.Measure(devices[r]);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                memory[r] = null;
+            }
+        }
+
+        return memory;
     }
 
     // Gives the run's carved devices back (a rank that failed may have given its own back already).
@@ -200,7 +222,7 @@ public static class InProcessCluster
     }
 
     private static ClusterRunResult RunRanks(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, TransportPlan plan, ITransportProvider? transports,
-                                        ICollectivesProvider collectives, Device[] devices, ChoiceSharing.Following shared)
+                                        ICollectivesProvider collectives, Device[] devices, ChoiceSharing.Following shared, long?[] memory)
     {
         int world = devices.Length;
         var errors = new Exception?[world];
@@ -213,7 +235,7 @@ public static class InProcessCluster
             int rank = r;
             threads[r] = new Thread(() =>
             {
-                var context = new ClusterContext(topology, rank, options);
+                var context = new ClusterContext(topology, rank, options) { RankMemory = memory };
                 ITransport? transport = null;
                 ICollectives? group = null;
                 ClusterRank? me = null;

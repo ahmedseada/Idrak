@@ -48,6 +48,15 @@ public static partial class Pretrainer
         Directory.CreateDirectory(outputFolder);
         var started = Stopwatch.StartNew();
         bool lead = collectives.Rank == 0;
+
+        // A resumed run keeps its checkpoint's cut (each stage's optimizer state belongs to it), unless the user sets one: the
+        // ranks' free memory, measured anew as they joined (plan 37, N2), would otherwise move it.
+        if (resume is not null && cluster.PipelineCuts is null && cluster.PipelineStageLayers is null && ReadPipeline(resume.Folder) is { Length: > 1 } kept
+            && kept.Length == PipelineLayout.For(collectives.WorldSize, cluster).Stages)
+        {
+            cluster = cluster with { PipelineCuts = [.. kept.Skip(1)] };
+        }
+
         using var pipe = PipelineStage.Place(model.Network, collectives, cluster, keepOthers: lead);
         if (pipe.IsLast && pipe.Head is not ILinearLayer)
         {
@@ -62,7 +71,8 @@ public static partial class Pretrainer
 
         string settings = string.Create(CultureInfo.InvariantCulture,
             $"pipeline {pipe.Layout.Stages} stage(s) × {pipe.Layout.Replicas} replica(s), {pipe.Schedule.Name}, cut by {pipe.Plan.Basis}: {pipe.Plan}");
-        trace?.Invoke($"rank {pipe.Rank}: stage {pipe.Stage}{(pipe.Layout.Replicas > 1 ? $" of replica {pipe.Replica}" : "")}, {pipe.Modules.Count} module(s), {pipe.Bytes / 1024.0:F1} KiB; {settings}");
+        trace?.Invoke($"rank {pipe.Rank}: stage {pipe.Stage}{(pipe.Layout.Replicas > 1 ? $" of replica {pipe.Replica}" : "")}, {pipe.Modules.Count} module(s), {pipe.Bytes / 1024.0:F1} KiB, "
+            + $"measured memory {ClusterMemory.Format(pipe.MeasuredMemory)}{(pipe.Fits ? "" : " (the stage does not fit it)")}; {pipe.Plan.Reason}; {settings}");
         var losses = new List<float>(resume?.Losses ?? []);
         var evaluations = new List<(int, float)>(resume?.EvaluationLosses ?? []);
         int totalSteps = options.Stages.Sum(s => s.Steps);

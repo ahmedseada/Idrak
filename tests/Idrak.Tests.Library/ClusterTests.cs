@@ -123,6 +123,8 @@ internal abstract partial class Tests
             ["IDRAK_CLUSTER_GATHER_BYTES"] = "64MB", ["IDRAK_CLUSTER_SHM_SPIN"] = "0.0001", ["IDRAK_CLUSTER_SHM_CHECK"] = "2",
             // C7: a pipeline's stages and how they are cut.
             ["IDRAK_CLUSTER_STAGES"] = "2", ["IDRAK_CLUSTER_PIPELINE_BALANCE"] = "memory", ["IDRAK_CLUSTER_PIPELINE_CUTS"] = "3,6",
+            // Plan 37, N2: how far apart the measured memory may be and still cut equal bytes; each stage's layers set by the user.
+            ["IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE"] = "0.25", ["IDRAK_CLUSTER_STAGE_LAYERS"] = "3, 5,2",
             // C8: the chunk measurement's probe, the measured sizes' file, the event log's flush interval.
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
             // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its bf16 slice.
@@ -160,6 +162,8 @@ internal abstract partial class Tests
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
             $"every value parsed: {all}");
         Check(all is { ChunkProbeBytes: 1L << 20, TuningFile: "sizes.txt", Simulation.EventLogFlushSteps: 4 }, $"the C8 settings parsed: {all}");
+        Check(all.PipelineStageLayers is [3, 5, 2] && all.PipelineMemoryTolerance == 0.25 && defaults is { PipelineStageLayers: null, PipelineMemoryTolerance: 0.1 },
+            $"the N2 settings parsed (each stage's layers, the measured memory's tolerance): [{string.Join(", ", all.PipelineStageLayers ?? [])}], {all.PipelineMemoryTolerance}");
         Check(defaults.ShareTuning && !all.ShareTuning, $"the ranks run rank 0's measured choices unless IDRAK_CLUSTER_SHARE_TUNING=0: {all.ShareTuning}");
         Check(!all.ToString().Contains("owner", StringComparison.Ordinal) && all.ToString().Contains("(secret)", StringComparison.Ordinal), "the key never in ToString");
         foreach (var (name, value, expected) in new[]
@@ -168,6 +172,7 @@ internal abstract partial class Tests
                      ("IDRAK_CLUSTER_KEY", "short", "16"), ("IDRAK_CLUSTER_TOPK", "2", "0 to 1"), ("IDRAK_CLUSTER_MODE", "cloud", "in-process or localhost"),
                      ("IDRAK_CLUSTER_PORT", "70000", "0 to 65535"), ("IDRAK_CLUSTER_SHARD", "3", "none, optimizer"),
                      ("IDRAK_CLUSTER_START", "copy", "broadcast or check"), ("IDRAK_CLUSTER_REBALANCE_TOLERANCE", "-1", "0 or more"),
+                     ("IDRAK_CLUSTER_STAGE_LAYERS", "3,0", "1 or more"), ("IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE", "-0.5", "0 or more"),
                  })
         {
             ThrowsNaming<ArgumentException>(() => ClusterOptions.From(n => n == name ? value : null, null), $"{name}={value}", name, expected);
@@ -433,6 +438,8 @@ internal abstract partial class Tests
                             TimeSpan.FromMilliseconds(2), 3));
                         Telemetry.TransportChosen(new TransportChosen(0, 1, "tcp", "fastest available"));
                         Telemetry.ChoicesShared(new MeasuredChoicesShared(2, "sim:2", false, 0, "kept its own: another device"));
+                        Telemetry.PipelinePlaced(new PipelineStagePlaced(1, 1, 2, 0, 4, 5, "layers.2 … head", 3L << 20, 6L << 20, 6L << 20, "measured",
+                            "sized by measured memory (rank 0 2.0 MiB, rank 1 6.0 MiB free as the ranks joined)"));
                         Telemetry.RankState(new RankStateChanged(3, RankState.Slow, 12, "blocked others 40% of the step"));
                         Telemetry.Fault(new FaultInjected(7, 3, FaultKind.SlowWorker, [3], TimeSpan.FromMilliseconds(250), 2.5));
                         Telemetry.Calibrated(new ProfileCalibrated("ethernet-1g", 125e6, 112e6, TimeSpan.FromMicroseconds(80), TimeSpan.FromMicroseconds(95), 1.2e-4, 40));
@@ -444,15 +451,21 @@ internal abstract partial class Tests
 
             string text = console.ToString();
             foreach (string expected in new[] { "Transfer sim 0->1", "simulated 33.000 ms", "Collective ring all-reduce rank 0/4", "slowest rank 3", "Ranks 0 and 1 use tcp",
-                         "Rank 2 (sim:2) keeps its own measured choices: kept its own: another device", "Rank 3 slow at step 12", "replay with --seed 7 --step 3", "Calibrated ethernet-1g: 125.0 -> 112.0 MB/s" })
+                         "Rank 2 (sim:2) keeps its own measured choices: kept its own: another device",
+                         "Pipeline rank 1 stage 1/2: 5 layer(s) from 4 (layers.2 … head), 3.0 MiB; measured memory 6.0 MiB, stage sized against 6.0 MiB; sized by measured memory", "Rank 3 slow at step 12", "replay with --seed 7 --step 3", "Calibrated ethernet-1g: 125.0 -> 112.0 MB/s" })
             {
                 Check(text.Contains(expected, StringComparison.Ordinal), $"the console prints '{expected}':\n{text}");
             }
 
             Check(metrics.Collectives is [{ Collective: "ring", SlowestRank: 3 }] && training.Collectives.Count == 0, "the metrics recorder keeps collectives at the network level only");
+            Check(metrics.PipelinePlacements is [{ Rank: 1, Stage: 1, Modules: 5, Basis: "measured", Fits: true }] && training.PipelinePlacements.Count == 0,
+                "the metrics recorder keeps pipeline placements at the network level only");
             var events = File.ReadAllLines(path).Select(l => (string)JsonNode.Parse(l)!["event"]!).ToArray();
-            Check(events.SequenceEqual(["transfer", "collective", "transport_chosen", "choices_shared", "rank_state", "fault", "profile_calibrated"]), $"the JSON lines: {string.Join(", ", events)}");
-            var fault = JsonNode.Parse(File.ReadAllLines(path)[5])!;
+            Check(events.SequenceEqual(["transfer", "collective", "transport_chosen", "choices_shared", "pipeline_placed", "rank_state", "fault", "profile_calibrated"]), $"the JSON lines: {string.Join(", ", events)}");
+            var placed = JsonNode.Parse(File.ReadAllLines(path)[4])!;
+            Check((long)placed["measured_memory"]! == 6L << 20 && (int)placed["modules"]! == 5 && (bool)placed["fits"]! && (string)placed["basis"]! == "measured",
+                $"a pipeline placement's memory, layers and basis: {placed.ToJsonString()}");
+            var fault = JsonNode.Parse(File.ReadAllLines(path)[6])!;
             Check((int)fault["seed"]! == 7 && (long)fault["step"]! == 3 && (string)fault["kind"]! == "SlowWorker" && fault["ranks"]!.AsArray().Count == 1, $"a fault's replay key: {fault.ToJsonString()}");
         }
         finally

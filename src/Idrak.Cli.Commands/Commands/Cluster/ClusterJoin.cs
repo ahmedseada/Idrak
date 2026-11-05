@@ -24,7 +24,19 @@ internal static class ClusterJoin
     public static readonly string[] Options = ["--cluster", "--world-size", "--coordinator", "--node"];
 
     /// <summary>The placement options pretrain takes beside them.</summary>
-    public static readonly string[] PipelineOptions = ["--placement", "--stages"];
+    public static readonly string[] PipelineOptions = ["--placement", "--stages", "--stage-layers"];
+
+    /// <summary>
+    /// The top-level modules (layers) each pipeline stage holds, from <c>--stage-layers</c> ("3,5,2", in stage order;
+    /// IDRAK_CLUSTER_STAGE_LAYERS): it overrides the stages' sizing by the ranks' measured memory.
+    /// </summary>
+    /// <exception cref="UsageException">A count that is not a whole number, 1 or more.</exception>
+    public static IReadOnlyList<int> StageLayers(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        int[] layers = [.. text.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(c => Whole("--stage-layers", c, 1))];
+        return layers.Length > 0 ? layers : throw new UsageException($"--stage-layers takes each stage's layers, such as 3,5,2, not '{text}'.");
+    }
 
     /// <summary>
     /// Joins this process to the cluster its options (or, as phase C5 had it, the environment a launcher set) name, making it
@@ -42,12 +54,12 @@ internal static class ClusterJoin
 
         string? file = context.Option("--cluster"), coordinator = context.Option("--coordinator"), worldText = context.Option("--world-size");
         string? rankText = ownsRank ? null : context.Option("--rank");
-        string? node = context.Option("--node"), placement = context.Option("--placement"), stagesText = context.Option("--stages");
+        string? node = context.Option("--node"), placement = context.Option("--placement"), stagesText = context.Option("--stages"), layersText = context.Option("--stage-layers");
         if (file is null && coordinator is null && worldText is null && rankText is null)
         {
-            if (node is not null || placement is not null || stagesText is not null)
+            if (node is not null || placement is not null || stagesText is not null || layersText is not null)
             {
-                throw new UsageException($"{(node is not null ? "--node" : placement is not null ? "--placement" : "--stages")} is for a cluster run: give --cluster FILE (or --coordinator).");
+                throw new UsageException($"{(node is not null ? "--node" : placement is not null ? "--placement" : stagesText is not null ? "--stages" : "--stage-layers")} is for a cluster run: give --cluster FILE (or --coordinator).");
             }
 
             return Showing(context, ClusterSession.JoinStarted());        // a rank process of idrak cluster start (phase C5)
@@ -81,6 +93,11 @@ internal static class ClusterJoin
         if (stagesText is not null)
         {
             options = options with { Stages = Whole("--stages", stagesText, 1) };
+        }
+
+        if (layersText is not null)
+        {
+            options = options with { PipelineStageLayers = StageLayers(layersText) };
         }
 
         options = options with { Rank = rank, Coordinator = coordinator ?? options.Coordinator, Node = node ?? options.Node };

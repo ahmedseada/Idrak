@@ -9,13 +9,20 @@ namespace Idrak.Abstraction.Cluster;
 /// <summary>How a pipeline's stages are cut (<see cref="ClusterOptions.PipelineBalance"/>).</summary>
 public enum PipelineBalance
 {
-    /// <summary>By the ranks' declared memory when the topology declares every rank's and they differ, else by bytes.</summary>
+    /// <summary>
+    /// By the ranks' measured memory when every rank reported it and they differ beyond
+    /// <see cref="ClusterOptions.PipelineMemoryTolerance"/>, else by their declared memory when the topology declares every
+    /// rank's and they differ, else by bytes.
+    /// </summary>
     Auto,
 
     /// <summary>Stages hold equal bytes of the model's tensors.</summary>
     Bytes,
 
-    /// <summary>Stages hold bytes in proportion to their ranks' declared memory (the smallest of a stage's replicas).</summary>
+    /// <summary>
+    /// Stages hold bytes in proportion to their ranks' memory (the least of a stage's replicas): measured when every rank
+    /// reported it, else declared by the topology.
+    /// </summary>
     Memory,
 }
 
@@ -97,17 +104,21 @@ public readonly record struct PipelineLayout(int WorldSize, int Stages)
 /// How a model is cut into pipeline stages (plan 23, phase C7): its top-level modules (embeddings first, the output head
 /// last) in contiguous ranges, every module in exactly one stage, each stage at least one module. The cut balances the
 /// bytes of the tensors each stage holds (a tied head's table counted in the stage that reads it), equal by default or in
-/// proportion to each stage's declared memory, or follows cuts given (<see cref="ClusterOptions.PipelineCuts"/>). The same
-/// sizes give the same plan on every rank.
+/// proportion to each stage's memory (measured as the ranks joined, plan 37 N2, or declared by the topology), or follows
+/// what the user set (<see cref="ClusterOptions.PipelineCuts"/>, <see cref="ClusterOptions.PipelineStageLayers"/>). The
+/// same sizes give the same plan on every rank.
 /// </summary>
 public sealed class PipelinePlan
 {
-    private PipelinePlan(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, PipelineStageRange[] stages, string basis)
+    private PipelinePlan(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, PipelineStageRange[] stages, string basis, string reason,
+        IReadOnlyList<long>? stageMemory)
     {
         Modules = modules;
         TensorBytes = tensorBytes;
         Stages = stages;
         Basis = basis;
+        Reason = reason;
+        StageMemory = stageMemory;
     }
 
     /// <summary>The model's top-level modules, in order.</summary>
@@ -119,8 +130,23 @@ public sealed class PipelinePlan
     /// <summary>The stages, in order.</summary>
     public IReadOnlyList<PipelineStageRange> Stages { get; }
 
-    /// <summary>What the cut balanced: "bytes", "memory", or "cuts" (given).</summary>
+    /// <summary>
+    /// What the cut balanced: "bytes", "memory" (declared by the topology), "measured" (the ranks' measured memory), or
+    /// what the user set: "cuts" (<see cref="ClusterOptions.PipelineCuts"/>) or "layers" (<see cref="ClusterOptions.PipelineStageLayers"/>).
+    /// </summary>
     public string Basis { get; }
+
+    /// <summary>Why the stages are cut so, for people: "sized by measured memory (…)", "set by the user (IDRAK_CLUSTER_STAGE_LAYERS=…)", "equal bytes: …".</summary>
+    public string Reason { get; }
+
+    /// <summary>
+    /// Each stage's memory (the least of its ranks': measured, else declared), the memory a cut by memory is sized by, or
+    /// null when no rank's memory is known.
+    /// </summary>
+    public IReadOnlyList<long>? StageMemory { get; }
+
+    /// <summary>Whether stage <paramref name="stage"/>'s bytes fit its memory (<see cref="StageMemory"/>); true when its memory is unknown.</summary>
+    public bool Fits(int stage) => StageMemory is not { } memory || Stages[stage].Bytes <= memory[stage];
 
     /// <summary>The bytes of every distinct tensor of the model (what one device holds).</summary>
     public long TotalBytes => Bytes(0, Modules.Count);
@@ -223,7 +249,8 @@ public sealed class PipelinePlan
             end = starts[s];
         }
 
-        return Make(modules, tensorBytes, starts, capacities is null ? "bytes" : "memory");
+        return Make(modules, tensorBytes, starts, capacities is null ? "bytes" : "memory",
+            capacities is null ? "equal bytes" : "sized by memory: each stage's bytes in proportion to its memory", capacities);
     }
 
     /// <summary>The plan whose stages start at <paramref name="starts"/> (the first 0, rising, each below the module count).</summary>
@@ -239,56 +266,131 @@ public sealed class PipelinePlan
                 + $"must rise from 0 within the model's {modules.Count} top-level modules ({string.Join(", ", modules.Select((m, i) => $"{i} {m.Name}"))}).");
         }
 
-        return Make(modules, tensorBytes, [.. starts], "cuts");
+        return Make(modules, tensorBytes, [.. starts], "cuts", "set by the user (IDRAK_CLUSTER_PIPELINE_CUTS)", null);
     }
 
     /// <summary>
-    /// The plan <paramref name="options"/> ask for over <paramref name="layout"/>'s stages: <see cref="ClusterOptions.PipelineCuts"/>
-    /// when given; else balanced by the ranks' declared memory (<see cref="ClusterOptions.PipelineBalance"/>: memory, or
-    /// auto when <paramref name="topology"/> declares every rank's memory and they differ), each stage's the least of its
-    /// replicas'; else by bytes.
+    /// The plan whose stages hold <paramref name="layers"/> top-level modules each, in stage order (set by the user,
+    /// <see cref="ClusterOptions.PipelineStageLayers"/>).
+    /// </summary>
+    /// <exception cref="ArgumentException">A count below 1, or counts that do not add up to the modules; the message names IDRAK_CLUSTER_STAGE_LAYERS.</exception>
+    public static PipelinePlan FromLayers(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, IReadOnlyList<int> layers)
+    {
+        Validate(modules, tensorBytes);
+        ArgumentNullException.ThrowIfNull(layers);
+        if (layers.Count == 0 || layers.Any(l => l < 1) || layers.Sum(l => (long)l) != modules.Count)
+        {
+            throw new ArgumentException($"The stages' layers [{string.Join(", ", layers)}] (IDRAK_CLUSTER_STAGE_LAYERS: the top-level modules each stage holds, in stage order) "
+                + $"must each be 1 or more and add up to the model's {modules.Count} top-level modules ({string.Join(", ", modules.Select((m, i) => $"{i} {m.Name}"))}).");
+        }
+
+        var starts = new int[layers.Count];
+        for (int s = 1; s < starts.Length; s++)
+        {
+            starts[s] = starts[s - 1] + layers[s - 1];
+        }
+
+        return Make(modules, tensorBytes, starts, "layers", "set by the user (IDRAK_CLUSTER_STAGE_LAYERS)", null);
+    }
+
+    /// <summary>
+    /// The plan <paramref name="options"/> ask for over <paramref name="layout"/>'s stages: what the user set
+    /// (<see cref="ClusterOptions.PipelineCuts"/> or <see cref="ClusterOptions.PipelineStageLayers"/>) when given; else
+    /// balanced by the ranks' memory (<see cref="ClusterOptions.PipelineBalance"/>), each stage's the least of its
+    /// replicas': the memory <paramref name="measured"/> as the ranks joined (<see cref="ClusterContext.RankMemory"/>) when
+    /// every rank reported it, else the memory <paramref name="topology"/> declares; auto takes the measured memory when it
+    /// differs beyond <see cref="ClusterOptions.PipelineMemoryTolerance"/>, the declared when it differs; else by bytes.
+    /// A cut by memory is the one whose largest stage over its memory is least, so when any cut fits every stage's memory
+    /// this one does (<see cref="Fits"/>).
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// The cuts do not match the stages, or a memory cut is asked of a topology that does not declare a rank's memory (named).
+    /// The cuts or the layers do not match the stages, both are set, or a memory cut is asked where a rank's memory is
+    /// neither measured nor declared (named).
     /// </exception>
     public static PipelinePlan For(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, PipelineLayout layout, ClusterOptions options,
-        IClusterTopology? topology)
+        IClusterTopology? topology, IReadOnlyList<long?>? measured = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        if (measured is not null && measured.Count != layout.WorldSize)
+        {
+            throw new ArgumentException($"The ranks' measured memory gives {measured.Count} value(s) for {layout.WorldSize} rank(s).", nameof(measured));
+        }
+
+        long?[] declared = topology is null ? new long?[layout.WorldSize]
+            : [.. Enumerable.Range(0, layout.WorldSize).Select(r => topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].MemoryBytes)];
+        bool allMeasured = measured is not null && measured.All(m => m is not null);
+        bool allDeclared = declared.All(d => d is not null);
+        long[]? Capacities(IReadOnlyList<long?> memory) =>
+            [.. Enumerable.Range(0, layout.Stages).Select(s => Math.Max(1, layout.StageRanks(s).Min(r => memory[r]!.Value)))];
+        var known = allMeasured ? Capacities(measured!) : allDeclared ? Capacities(declared) : null;
+        string Memory(IReadOnlyList<long?> memory, string what) => string.Join(", ", Enumerable.Range(0, layout.WorldSize).Select(r => string.Create(CultureInfo.InvariantCulture,
+            $"rank {r} {ClusterMemory.Format(memory[r])}"))) + " " + what;
+        string KnownText() => allMeasured ? Memory(measured!, "measured") : allDeclared ? Memory(declared, "declared") : "";
+
         if (options.PipelineCuts is { } cuts)
         {
+            if (options.PipelineStageLayers is not null)
+            {
+                throw new ArgumentException("IDRAK_CLUSTER_PIPELINE_CUTS and IDRAK_CLUSTER_STAGE_LAYERS both set the stages by hand; give one.");
+            }
+
             int[] starts = [0, .. cuts];
             if (starts.Length != layout.Stages)
             {
                 throw new ArgumentException($"IDRAK_CLUSTER_PIPELINE_CUTS gives {cuts.Count} cut(s), so {starts.Length} stages; the layout has {layout.Stages} (IDRAK_CLUSTER_STAGES).");
             }
 
-            return FromStarts(modules, tensorBytes, starts);
+            var byCuts = FromStarts(modules, tensorBytes, starts);
+            return byCuts.With("cuts", $"set by the user (IDRAK_CLUSTER_PIPELINE_CUTS={string.Join(",", cuts)}){Over(known, KnownText())}", known);
         }
 
-        long?[] Declared() => topology is null ? [.. Enumerable.Repeat((long?)null, layout.WorldSize)]
-            : [.. Enumerable.Range(0, layout.WorldSize).Select(r => topology.Nodes[topology.Place(r).Node].Devices[topology.Place(r).Local].MemoryBytes)];
-        var declared = Declared();
-        bool memory = options.PipelineBalance switch
+        if (options.PipelineStageLayers is { } layers)
         {
-            PipelineBalance.Memory => true,
-            PipelineBalance.Bytes => false,
-            _ => declared.All(d => d is not null) && declared.Distinct().Count() > 1,
-        };
-        if (!memory)
-        {
-            return Balance(modules, tensorBytes, layout.Stages);
+            if (layers.Count != layout.Stages)
+            {
+                throw new ArgumentException($"IDRAK_CLUSTER_STAGE_LAYERS gives {layers.Count} stage(s) [{string.Join(", ", layers)}]; the layout has {layout.Stages} (IDRAK_CLUSTER_STAGES).");
+            }
+
+            var byLayers = FromLayers(modules, tensorBytes, layers);
+            return byLayers.With("layers", $"set by the user (IDRAK_CLUSTER_STAGE_LAYERS={string.Join(",", layers)}){Over(known, KnownText())}", known);
         }
 
-        int missing = Array.FindIndex(declared, d => d is null);
-        if (missing >= 0)
+        if (options.PipelineBalance == PipelineBalance.Bytes)
         {
-            throw new ArgumentException($"IDRAK_CLUSTER_PIPELINE_BALANCE=memory cuts by the ranks' declared memory, and the topology declares none for rank {missing}; "
+            return Balance(modules, tensorBytes, layout.Stages).With("bytes", "equal bytes (IDRAK_CLUSTER_PIPELINE_BALANCE=bytes)", known);
+        }
+
+        if (options.PipelineBalance == PipelineBalance.Memory && !allMeasured && !allDeclared)
+        {
+            int missing = Enumerable.Range(0, layout.WorldSize).First(r => measured?[r] is null && declared[r] is null);
+            throw new ArgumentException($"IDRAK_CLUSTER_PIPELINE_BALANCE=memory cuts by the ranks' memory, and rank {missing} reported none as it joined and the topology declares none for it; "
                 + "give every device a \"memory\" in the topology file, or cut by bytes.");
         }
 
-        long[] capacities = [.. Enumerable.Range(0, layout.Stages).Select(s => layout.StageRanks(s).Min(r => declared[r]!.Value))];
-        return Balance(modules, tensorBytes, layout.Stages, capacities);
+        if (allMeasured)
+        {
+            long most = measured!.Max(m => m!.Value), least = measured!.Min(m => m!.Value);
+            double spread = least > 0 ? (most / (double)least) - 1 : most > 0 ? double.PositiveInfinity : 0;
+            if (options.PipelineBalance == PipelineBalance.Memory || spread > options.PipelineMemoryTolerance)
+            {
+                return Balance(modules, tensorBytes, layout.Stages, known).With("measured",
+                    $"sized by measured memory ({Memory(measured!, "free as the ranks joined")}; each stage's bytes in proportion to the least of its ranks')", known);
+            }
+
+            return Balance(modules, tensorBytes, layout.Stages).With("bytes", string.Create(CultureInfo.InvariantCulture,
+                $"equal bytes: the ranks' measured memory is within IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE ({options.PipelineMemoryTolerance:P0}) of each other ({Memory(measured!, "free")})"), known);
+        }
+
+        if (allDeclared && (options.PipelineBalance == PipelineBalance.Memory || declared.Distinct().Count() > 1))
+        {
+            return Balance(modules, tensorBytes, layout.Stages, known).With("memory",
+                $"sized by declared memory ({Memory(declared, "in the topology")}; each stage's bytes in proportion to the least of its ranks')", known);
+        }
+
+        return Balance(modules, tensorBytes, layout.Stages).With("bytes",
+            allDeclared ? "equal bytes: every rank declares the same memory" : "equal bytes: no rank's memory was measured or declared", known);
+
+        static string Over(long[]? memory, string text) => memory is null ? "" : $", over {text}";
     }
 
     /// <summary>"stage 0: modules 0-2 (embed … layers.0), 101 KiB; stage 1: …" (invariant culture).</summary>
@@ -313,9 +415,9 @@ public sealed class PipelinePlan
         return bytes;
     }
 
-    private static PipelinePlan Make(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, int[] starts, string basis)
+    private static PipelinePlan Make(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes, int[] starts, string basis, string reason, IReadOnlyList<long>? memory)
     {
-        var plan = new PipelinePlan(modules, tensorBytes, [], basis);
+        var plan = new PipelinePlan(modules, tensorBytes, [], basis, reason, null);
         var stages = new PipelineStageRange[starts.Length];
         for (int s = 0; s < starts.Length; s++)
         {
@@ -323,8 +425,12 @@ public sealed class PipelinePlan
             stages[s] = new PipelineStageRange(s, starts[s], end, plan.Bytes(starts[s], end));
         }
 
-        return new PipelinePlan(modules, tensorBytes, stages, basis);
+        return new PipelinePlan(modules, tensorBytes, stages, basis, reason, memory is null ? null : [.. memory]);
     }
+
+    // The same stages, named by what chose them and with each stage's memory (for the fit).
+    private PipelinePlan With(string basis, string reason, IReadOnlyList<long>? memory) =>
+        new(Modules, TensorBytes, [.. Stages], basis, reason, memory is null ? null : [.. memory]);
 
     private static void Validate(IReadOnlyList<PipelineModule> modules, IReadOnlyList<long> tensorBytes)
     {

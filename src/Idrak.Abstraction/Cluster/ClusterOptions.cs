@@ -413,11 +413,27 @@ public sealed record ClusterOptions
     public int? Stages { get; init; }
 
     /// <summary>
-    /// How a pipeline's stages are cut when no <see cref="PipelineCuts"/> are given: equal bytes, or in proportion to the
-    /// ranks' declared memory; auto: memory when the topology declares every rank's and they differ (<c>IDRAK_CLUSTER_PIPELINE_BALANCE</c>:
-    /// auto, bytes or memory).
+    /// How a pipeline's stages are cut when neither <see cref="PipelineCuts"/> nor <see cref="PipelineStageLayers"/> are
+    /// given: equal bytes, or in proportion to the ranks' memory (each rank's free memory measured as the ranks joined,
+    /// <see cref="ClusterContext.RankMemory"/>, else the topology's declared memory); auto: by the measured memory when every
+    /// rank reported it and they differ by more than <see cref="PipelineMemoryTolerance"/>, else by the declared memory when
+    /// the topology declares every rank's and they differ, else by bytes (<c>IDRAK_CLUSTER_PIPELINE_BALANCE</c>: auto,
+    /// bytes or memory).
     /// </summary>
     public PipelineBalance PipelineBalance { get; init; } = PipelineBalance.Auto;
+
+    /// <summary>
+    /// How far apart the ranks' measured memory may be (the most over the least, minus 1) and an automatic cut still gives
+    /// the stages equal bytes, so the noise of equal machines never moves a cut (<c>IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE</c>).
+    /// </summary>
+    public double PipelineMemoryTolerance { get; init; } = 0.1;
+
+    /// <summary>
+    /// The top-level modules (layers) each stage of a pipeline holds, set by the user, in stage order (every rank of a stage
+    /// holds its stage's), or null: sized by <see cref="PipelineBalance"/>. It overrides the measured memory; the counts add
+    /// up to the model's top-level modules (<c>IDRAK_CLUSTER_STAGE_LAYERS</c>, "3,5,2").
+    /// </summary>
+    public IReadOnlyList<int>? PipelineStageLayers { get; init; }
 
     /// <summary>
     /// A pipeline's cuts given by hand, or null: measured (<see cref="PipelineBalance"/>): the first top-level module of each
@@ -522,7 +538,8 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_DEVICE_ACTIVATIONS", "IDRAK_CLUSTER_DIRECT_WAKE", "IDRAK_CLUSTER_OWN_TENSORS", "IDRAK_CLUSTER_STREAMED_SAVE",
         "IDRAK_CLUSTER_SHARE_TUNING",
         "IDRAK_CLUSTER_PLACEMENT",
-        "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
+        "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS",
+        "IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE", "IDRAK_CLUSTER_STAGE_LAYERS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_SUGGEST", "IDRAK_CLUSTER_SUGGEST_STEPS", "IDRAK_CLUSTER_SUGGEST_SLICE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
         "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS", "IDRAK_CLUSTER_RELEASE_DEVICES",
@@ -618,6 +635,20 @@ public sealed record ClusterOptions
                 PipelineCuts = [.. cuts.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(c => Whole("IDRAK_CLUSTER_PIPELINE_CUTS", c, 1))],
             };
         }
+
+        if (Read(variable, "IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE") is { } memoryTolerance)
+        {
+            o = o with { PipelineMemoryTolerance = Number("IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE", memoryTolerance, "a number, 0 or more", v => v >= 0) };
+        }
+
+        if (Read(variable, "IDRAK_CLUSTER_STAGE_LAYERS") is { } stageLayers)
+        {
+            o = o with
+            {
+                PipelineStageLayers = [.. stageLayers.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(c => Whole("IDRAK_CLUSTER_STAGE_LAYERS", c, 1))],
+            };
+        }
+
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SHARE") is { } share) o = o with { SuggestShare = Number("IDRAK_CLUSTER_SUGGEST_SHARE", share, "a share from 0 to 1", v => v is >= 0 and <= 1) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE") is { } tolerance) o = o with { SuggestBFloat16Tolerance = Number("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", tolerance, "a number above 0", v => v > 0) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST") is { } suggest) o = o with { Suggest = Flag("IDRAK_CLUSTER_SUGGEST", suggest) };

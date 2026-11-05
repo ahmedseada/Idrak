@@ -226,6 +226,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A rank of a pipeline took its stage: its measured memory, the stage's layers and why (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnPipelinePlaced(in PipelineStagePlaced e)
+    {
+    }
+
     /// <summary>A rank of a cluster run took rank 0's measured kernel choices, or kept its own (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnChoicesShared(in MeasuredChoicesShared e)
     {
@@ -471,6 +476,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Network) != 0)
             {
                 h.OnTransportChosen(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a pipeline rank's stage, its measured memory and why, to the hooks listening at <see cref="TelemetryLevel.Network"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void PipelinePlaced(in PipelineStagePlaced e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnPipelinePlaced(in e);
             }
         }
     }

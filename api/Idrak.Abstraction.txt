@@ -88,6 +88,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterContext : System.IEquatabl
   public Idrak.Abstraction.Cluster.ClusterNodeSpec Node { get; }
   public Idrak.Abstraction.Cluster.ClusterOptions Options { get; init; }
   public Idrak.Abstraction.Cluster.IClusterTopology Topology { get; init; }
+  public System.Collections.Generic.IReadOnlyList<long?>? RankMemory { get; init; }
   public int Rank { get; init; }
 
 public enum Idrak.Abstraction.Cluster.ClusterControlCommand : int
@@ -124,6 +125,11 @@ public sealed record Idrak.Abstraction.Cluster.ClusterLinkOverride : System.IEqu
   public string? AddressA { get; init; }
   public string? AddressB { get; init; }
 
+public static class Idrak.Abstraction.Cluster.ClusterMemory
+  public static long? Measure(Idrak.Abstraction.Device device)
+  public static long?[] Exchange(Idrak.Abstraction.Cluster.ITransport transport, long? mine)
+  public static string Format(long? bytes)
+
 public sealed record Idrak.Abstraction.Cluster.ClusterNodeSpec : System.IEquatable<Idrak.Abstraction.Cluster.ClusterNodeSpec>
   public ClusterNodeSpec(string Name, string? Address, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterDeviceSpec> Devices)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterDeviceSpec> Devices { get; init; }
@@ -139,6 +145,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public Idrak.Abstraction.Cluster.StartingState StartingState { get; init; }
   public Idrak.Abstraction.Cluster.WireType Wire { get; init; }
   public System.Collections.Generic.IReadOnlyList<int>? PipelineCuts { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int>? PipelineStageLayers { get; init; }
   public System.TimeSpan RetryDelay { get; init; }
   public System.TimeSpan SharedMemoryCheck { get; init; }
   public System.TimeSpan StopWait { get; init; }
@@ -156,6 +163,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public bool ShareTuning { get; init; }
   public bool StreamedSave { get; init; }
   public bool? Suggest { get; init; }
+  public double PipelineMemoryTolerance { get; init; }
   public double RebalanceTolerance { get; init; }
   public double SuggestShare { get; init; }
   public double TopK { get; init; }
@@ -557,13 +565,17 @@ public sealed class Idrak.Abstraction.Cluster.PipelinePlan
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> Modules { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineStageRange> Stages { get; }
   public System.Collections.Generic.IReadOnlyList<long> TensorBytes { get; }
+  public System.Collections.Generic.IReadOnlyList<long>? StageMemory { get; }
+  public bool Fits(int stage)
   public int StageOf(int module)
   public long TotalBytes { get; }
   public override string ToString()
   public static Idrak.Abstraction.Cluster.PipelinePlan Balance(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> modules, System.Collections.Generic.IReadOnlyList<long> tensorBytes, int stages, System.Collections.Generic.IReadOnlyList<long>? capacities = null)
-  public static Idrak.Abstraction.Cluster.PipelinePlan For(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> modules, System.Collections.Generic.IReadOnlyList<long> tensorBytes, Idrak.Abstraction.Cluster.PipelineLayout layout, Idrak.Abstraction.Cluster.ClusterOptions options, Idrak.Abstraction.Cluster.IClusterTopology? topology)
+  public static Idrak.Abstraction.Cluster.PipelinePlan For(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> modules, System.Collections.Generic.IReadOnlyList<long> tensorBytes, Idrak.Abstraction.Cluster.PipelineLayout layout, Idrak.Abstraction.Cluster.ClusterOptions options, Idrak.Abstraction.Cluster.IClusterTopology? topology, System.Collections.Generic.IReadOnlyList<long?>? measured = null)
+  public static Idrak.Abstraction.Cluster.PipelinePlan FromLayers(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> modules, System.Collections.Generic.IReadOnlyList<long> tensorBytes, System.Collections.Generic.IReadOnlyList<int> layers)
   public static Idrak.Abstraction.Cluster.PipelinePlan FromStarts(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineModule> modules, System.Collections.Generic.IReadOnlyList<long> tensorBytes, System.Collections.Generic.IReadOnlyList<int> starts)
   public string Basis { get; }
+  public string Reason { get; }
 
 public static class Idrak.Abstraction.Cluster.PipelineSchedules
   public static Idrak.Abstraction.Cluster.IPipelineSchedule Get(string name)
@@ -2286,6 +2298,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnPipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2334,6 +2347,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnPipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2485,6 +2499,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public (default) void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public (default) void OnPipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public (default) void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public (default) void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public (default) void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2558,6 +2573,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
+  public void OnPipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public void OnRankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public void OnSuggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2632,11 +2648,13 @@ public sealed class Idrak.Abstraction.Diagnostics.MetricsRecorder : Idrak.Abstra
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.CollectiveCompleted> Collectives { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.EpochCompleted> Epochs { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.GradientsSynced> Synchronisations { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.PipelineStagePlaced> PipelinePlacements { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.PipelineStepped> PipelineSteps { get; }
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnGradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public void OnPipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public void SaveCsv(string path)
 
@@ -2683,6 +2701,22 @@ public readonly record struct Idrak.Abstraction.Diagnostics.OverrideFailed : Sys
   public string Registry { get; init; }
   public string Slot { get; init; }
   public string? Hint { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.PipelineStagePlaced : System.IEquatable<Idrak.Abstraction.Diagnostics.PipelineStagePlaced>
+  public PipelineStagePlaced(int Rank, int Stage, int Stages, int Replica, int FirstModule, int Modules, string Names, long Bytes, long? MeasuredMemory, long? StageMemory, string Basis, string Reason)
+  public bool Fits { get; }
+  public int FirstModule { get; init; }
+  public int Modules { get; init; }
+  public int Rank { get; init; }
+  public int Replica { get; init; }
+  public int Stage { get; init; }
+  public int Stages { get; init; }
+  public long Bytes { get; init; }
+  public long? MeasuredMemory { get; init; }
+  public long? StageMemory { get; init; }
+  public string Basis { get; init; }
+  public string Names { get; init; }
+  public string Reason { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.PipelineStepped : System.IEquatable<Idrak.Abstraction.Diagnostics.PipelineStepped>
   public PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, System.TimeSpan Wall, System.TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived, string? Staging = null)
@@ -2924,6 +2958,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void KernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public static void Mcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public static void OutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
+  public static void PipelinePlaced(in Idrak.Abstraction.Diagnostics.PipelineStagePlaced e)
   public static void PipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)

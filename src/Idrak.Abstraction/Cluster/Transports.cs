@@ -97,6 +97,14 @@ public sealed record ClusterContext(IClusterTopology Topology, int Rank, Cluster
 {
     /// <summary>The node this rank is on.</summary>
     public ClusterNodeSpec Node => Topology.Nodes[Topology.Place(Rank).Node];
+
+    /// <summary>
+    /// Each rank's free memory as the ranks joined, in rank order (<see cref="ClusterMemory.Measure"/>: what its device reports
+    /// new tensors could take, within its cap), the same on every rank; an entry is null where a device reports none, and
+    /// the whole is null when the ranks did not report it (a group made by hand). A pipeline cuts its stages by it
+    /// (<see cref="PipelinePlan.For"/>).
+    /// </summary>
+    public IReadOnlyList<long?>? RankMemory { get; init; }
 }
 
 /// <summary>

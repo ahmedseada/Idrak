@@ -556,6 +556,30 @@ public readonly record struct GradientsSynced(string Sync, string Compression, i
 public readonly record struct PipelineStepped(string Schedule, int Rank, int Stage, int Stages, int Replica, int MicroBatches, long Step, TimeSpan Wall,
     TimeSpan Blocked, double Bubble, double IdealBubble, long BytesSent, long BytesReceived, string? Staging = null);
 
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> by each rank of a pipeline as it takes its stage (plan 37, N2): the rank's
+/// memory as the ranks joined, its stage's top-level modules (layers) and bytes, the memory the stage was sized by, and why
+/// the stages are cut so ("sized by measured memory", "set by the user", "equal bytes").
+/// </summary>
+/// <param name="Rank">The rank reporting.</param>
+/// <param name="Stage">Its stage, from 0.</param>
+/// <param name="Stages">The pipeline's stages.</param>
+/// <param name="Replica">Its pipeline, when several run side by side as data-parallel replicas; else 0.</param>
+/// <param name="FirstModule">The stage's first top-level module.</param>
+/// <param name="Modules">The stage's top-level modules (its layers, with the embeddings on the first and the head on the last).</param>
+/// <param name="Names">The first and the last of them ("layers.2 … head").</param>
+/// <param name="Bytes">The bytes of the stage's tensors.</param>
+/// <param name="MeasuredMemory">This rank's free memory as the ranks joined, measured on its device; null when not reported.</param>
+/// <param name="StageMemory">The memory the stage was sized by (the least of its ranks', measured or declared); null when unknown.</param>
+/// <param name="Basis">What the cut followed: "measured", "memory" (declared), "bytes", "layers" or "cuts" (the user's).</param>
+/// <param name="Reason">Why, for people.</param>
+public readonly record struct PipelineStagePlaced(int Rank, int Stage, int Stages, int Replica, int FirstModule, int Modules, string Names, long Bytes,
+    long? MeasuredMemory, long? StageMemory, string Basis, string Reason)
+{
+    /// <summary>Whether the stage's bytes fit its memory; true when the memory is unknown.</summary>
+    public bool Fits => StageMemory is not { } memory || Bytes <= memory;
+}
+
 /// <summary>Published at <c>TelemetryLevel.Network</c> once per pair of ranks when a group starts: the transport joining them, and why.</summary>
 /// <param name="RankA">One rank.</param>
 /// <param name="RankB">The other.</param>

@@ -421,6 +421,19 @@ public static class LocalhostCluster
                 transport = ThrottledTransport.Wrap(transport, context);
             }
 
+            // Each rank's memory, measured on its device and reported to every rank as the ranks join (plan 37, N2); a device
+            // that cannot say reports none, so no peer waits for it (its own work meets the error again).
+            long? measured;
+            try
+            {
+                measured = ClusterMemory.Measure(device);
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                measured = null;
+            }
+
+            context = context with { RankMemory = ClusterMemory.Exchange(transport, measured) };
             var collectives = Collectives.Get(options.CollectiveFor(topology)).Create(transport, device, context);
             try
             {

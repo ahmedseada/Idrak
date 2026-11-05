@@ -26,6 +26,7 @@ internal abstract partial class Tests
         ("cluster: micro-batches 1, 2 and 4 give the same loss: the pretrainer through 2 stages as one process (losses, clipped losses and the gathered checkpoint's weights), and 2 stages × 2 replicas; the bubble is in the telemetry", ClusterPipelineMicroBatches),
         ("cluster: a rank holds only its stage's tensors: InUse per rank against the stage's bytes and the whole model's, the other stages' tensors released", ClusterPipelineHoldsStage),
         ("cluster: chat through a 2-stage pipeline answers as one device does (greedy replies, a second turn reusing the caches, each stage keeping its own)", ClusterPipelineChat),
+        ("cluster: stages sized by measured memory: ranks of unequal memory (each carved device's cap) get stages that fit each where the even split does not; the step's losses and gradients are the even split's; each rank reads and holds only its stage; the user's layers override it; the telemetry names each rank's memory, its layers and why", ClusterPipelineMeasuredMemory),
     ];
 
     internal static ClusterOptions PipeOptions(int? stages = null, int? microBatches = null) =>
@@ -100,6 +101,46 @@ internal abstract partial class Tests
         var undeclared = ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec("cpu", null), new ClusterDeviceSpec("cpu", 3L << 20)])], null, null);
         ThrowsNaming<ArgumentException>(() => PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineBalance = PipelineBalance.Memory }, undeclared),
             "a memory cut without a rank's memory", "rank 0", "memory");
+
+        // By measured memory (plan 37, N2): the ranks' memory as they joined, before the topology's declared memory.
+        var measured = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), null, [1L << 20, 3L << 20]);
+        Check(measured.Basis == "measured" && measured.Stages.Select(s => s.Start).SequenceEqual(memory.Stages.Select(s => s.Start))
+              && measured.StageMemory is [1L << 20, 3L << 20] && measured.Reason.Contains("sized by measured memory", StringComparison.Ordinal),
+            $"auto balance follows the measured memory when it differs: {measured} ({measured.Reason})");
+        var overDeclared = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), topology, [3L << 20, 1L << 20]);
+        Check(overDeclared.Basis == "measured" && overDeclared.Stages[1].Start > two.Stages[1].Start && auto.Stages[1].Start < two.Stages[1].Start,
+            $"the measured memory (3:1) goes before the declared (1:3): {overDeclared} against {auto}");
+        var close = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), null, [1_000_000L, 1_050_000L]);
+        Check(close.Basis == "bytes" && close.Stages.Select(s => s.Start).SequenceEqual(two.Stages.Select(s => s.Start))
+              && close.Reason.Contains("IDRAK_CLUSTER_PIPELINE_MEMORY_TOLERANCE", StringComparison.Ordinal),
+            $"measured memory within the tolerance (5% of 10%) cuts equal bytes: {close} ({close.Reason})");
+        Check(PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineMemoryTolerance = 0.01 }, null, [1_000_000L, 1_050_000L]).Basis == "measured",
+            "a tolerance of 1% cuts the 5% apart by memory");
+        Check(PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineBalance = PipelineBalance.Memory }, null, [1_000_000L, 1_000_000L]).Basis == "measured",
+            "IDRAK_CLUSTER_PIPELINE_BALANCE=memory follows the measured memory however close");
+        Check(PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), null, [1L << 20, null]).Basis == "bytes",
+            "a rank that reported no memory leaves the cut by bytes");
+        ThrowsNaming<ArgumentException>(() => PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), null, [1L << 20]), "a measurement for another rank count", "1 value", "2 rank");
+
+        // A cut that fits: the even split does not fit a rank with less than its first stage; the memory cut does.
+        long first = two.Stages[0].Bytes;
+        var tight = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions(), null, [first - 1, whole]);
+        var even = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineBalance = PipelineBalance.Bytes }, null, [first - 1, whole]);
+        Check(two.Stages[0].Count > 1 && !even.Fits(0) && tight.Fits(0) && tight.Fits(1) && tight.Basis == "measured",
+            $"rank 0 with {first - 1:N0} B: the even split's first stage ({first:N0} B) does not fit, the measured cut's ({tight.Stages[0].Bytes:N0} B) does: {tight}");
+
+        // Set by the user: each stage's layers, over the measurement.
+        var layered = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineStageLayers = [2, names.Count - 2] }, null, [1L << 20, 3L << 20]);
+        Check(layered.Basis == "layers" && layered.Stages[1].Start == 2 && layered.Reason.Contains($"set by the user (IDRAK_CLUSTER_STAGE_LAYERS=2,{names.Count - 2})", StringComparison.Ordinal)
+              && layered.StageMemory is [1L << 20, 3L << 20],
+            $"IDRAK_CLUSTER_STAGE_LAYERS=2,{names.Count - 2} overrides the measured memory: {layered} ({layered.Reason})");
+        ThrowsNaming<ArgumentException>(() => PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineStageLayers = [2, 2] }),
+            "layers that do not add up to the modules", "IDRAK_CLUSTER_STAGE_LAYERS", "add up", "embed");
+        ThrowsNaming<ArgumentException>(() => PipelineStage.PlanFor(model.Network, new PipelineLayout(3, 3), PipeOptions() with { PipelineStageLayers = [2, names.Count - 2] }),
+            "layers for another stage count", "IDRAK_CLUSTER_STAGE_LAYERS", "IDRAK_CLUSTER_STAGES");
+        ThrowsNaming<ArgumentException>(() => PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineStageLayers = [2, names.Count - 2], PipelineCuts = [2] }),
+            "both the layers and the cuts", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_STAGE_LAYERS", "give one");
+        Check(ClusterOptions.From(n => n == "IDRAK_CLUSTER_STAGE_LAYERS" ? "2, 7" : null, null).PipelineStageLayers!.SequenceEqual([2, 7]), "the layers parse from the environment");
 
         // By hand, and what is refused.
         var cut = PipelineStage.PlanFor(model.Network, new PipelineLayout(2, 2), PipeOptions() with { PipelineCuts = [3] });
@@ -340,6 +381,90 @@ internal abstract partial class Tests
 
         Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"    measured: in use per rank {string.Join(", ", ranks.Select(r => $"stage {r.Stage} {r.InUse:N0} B ({r.InUse * 100.0 / whole:F0}%)"))} of the whole model's {whole:N0} B"));
+    }
+
+    // Plan 37, N2: two ranks of unequal memory, simulated by their carved devices' caps (the topology's "memory"), each
+    // measured as the ranks join. The stages are sized so each fits its rank; a step gives the even split's losses and
+    // gradients; each rank reads only its stage's tensors from the checkpoint and holds them at its stage's size; the
+    // user's layers override the measurement; each rank's telemetry names its memory, its layers and why.
+    internal static void ClusterPipelineMeasuredMemory(Device device)
+    {
+        var (ids, targets) = PipeWindows();
+        long whole;
+        using (var model = HostTiny())
+        {
+            whole = PipelineStage.PlanFor(model.Network, new PipelineLayout(1, 1), PipeOptions()).TotalBytes;
+        }
+
+        // Room for a stage's weights, its gradients and a step's activations on either rank; the second has three times the first's.
+        long small = (4 * whole) + (8L << 20), large = 3 * small;
+        var topology = ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec(device.ToString(), small), new ClusterDeviceSpec(device.ToString(), large)])], null, null);
+
+        (int Stage, int Start, int Count, long Bytes, long? Measured, bool Fits, long Read, long Own, long InUse, double Loss, (int Index, float[] Values)[] Grads) Rank(ClusterRank rank, ClusterOptions options)
+        {
+            long before = rank.Device.Backend.GetMemoryUsage().InUse;
+            using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = rank.Device, Deferred = true });
+            using var pipe = PipelineStage.Place(model.Network, rank.Collectives, options);
+            long read = model.BytesRead ?? -1;
+            long inUse = rank.Device.Backend.GetMemoryUsage().InUse - before;
+            long own = pipe.Parameters.Sum(p => (long)p.Size * sizeof(float));
+            foreach (var p in pipe.Parameters)
+            {
+                p.RequiresGrad = true;
+            }
+
+            var result = pipe.Step(2,
+                m => Tensor.From(ids.AsSpan(m * 64, 64), [2, 32], pipe.Device),
+                (m, output) => Losses.SparseCrossEntropy(output, Tensor.From(targets.AsSpan(m * 64, 64), [2, 32], pipe.Device)) * 0.5f);
+            var range = pipe.Plan.Stages[pipe.Stage];
+            return (pipe.Stage, range.Start, range.Count, range.Bytes, pipe.MeasuredMemory, pipe.Fits, read, own, inUse, result.Loss,
+                [.. pipe.Parameters.Select((p, i) => (pipe.ParameterIndices[i], p.Grad!.ToArray()))]);
+        }
+
+        var options = PipeOptions();
+        var (sized, seen) = OverlapRun(topology, options, rank => Rank(rank, options));
+        var evenOptions = PipeOptions() with { PipelineBalance = PipelineBalance.Bytes };
+        var even = DpRun(topology, evenOptions, rank => Rank(rank, evenOptions));
+
+        // Sized by the measured memory: the smaller rank takes the smaller stage, and each stage fits its rank.
+        Check(sized[0].Measured is { } m0 && m0 <= small && sized[1].Measured is { } m1 && m1 <= large && m0 < m1,
+            $"each rank measured its carved device's memory as the ranks joined: {sized[0].Measured:N0} B (cap {small:N0}) and {sized[1].Measured:N0} B (cap {large:N0})");
+        Check(sized[1].Start != even[1].Start && sized[0].Bytes < even[0].Bytes, $"the measured cut gives rank 0 less than the even split: stage 0 {sized[0].Bytes:N0} B against {even[0].Bytes:N0} B");
+        foreach (var r in sized)
+        {
+            Check(r.Fits && r.Bytes <= r.Measured, $"stage {r.Stage}: its {r.Bytes:N0} B fit its rank's measured {r.Measured:N0} B");
+            Check(r.Read == r.Own, $"stage {r.Stage}: read {r.Read:N0} B from the checkpoint, its own tensors' {r.Own:N0} B, nothing of the other stage's");
+            Check(r.InUse >= r.Own && r.InUse <= r.Measured, $"stage {r.Stage}: {r.InUse:N0} B in use on its device, at least its {r.Own:N0} B and within its measured {r.Measured:N0} B");
+        }
+
+        Check(sized[0].InUse < whole, $"rank 0, the smaller, holds {sized[0].InUse:N0} B: under the whole model's {whole:N0} B");
+
+        // The results are the even split's.
+        Check(sized[0].Loss == sized[1].Loss, "both stages report the same loss");
+        double lossGap = Math.Abs(sized[0].Loss - even[0].Loss);
+        Check(lossGap <= 1e-5 * Math.Max(1, Math.Abs(even[0].Loss)), $"the loss {sized[0].Loss} is the even split's {even[0].Loss} (gap {lossGap:G3})");
+        var evenGrads = even.SelectMany(r => r.Grads).GroupBy(g => g.Index).ToDictionary(g => g.Key, g => g.First().Values);
+        var sizedGrads = sized.SelectMany(r => r.Grads).GroupBy(g => g.Index).ToDictionary(g => g.Key, g => g.First().Values);
+        Check(sizedGrads.Keys.Order().SequenceEqual(evenGrads.Keys.Order()), "every parameter is held by a stage in both cuts");
+        float scale = evenGrads.Values.Max(g => g.Max(MathF.Abs)), gradGap = sizedGrads.Max(g => Gap(evenGrads[g.Key], g.Value));
+        Check(gradGap <= 1e-5f * scale, $"every gradient within 1e-5 of the largest ({scale:G3}) of the even split's: {gradGap:G3}");
+
+        // The telemetry: each rank's measured memory, its stage's layers and why.
+        var placed = seen.PipelinePlacements.OrderBy(p => p.Rank).ToList();
+        Check(placed.Count == 2 && placed.All(p => p.Basis == "measured" && p.Reason.Contains("sized by measured memory", StringComparison.Ordinal) && p.Fits)
+              && placed.Select(p => p.MeasuredMemory).SequenceEqual(sized.Select(r => r.Measured)) && placed.Select(p => p.Modules).SequenceEqual(sized.Select(r => r.Count)),
+            $"each rank's placement in the telemetry, sized by measured memory: {string.Join(" | ", placed.Select(p => $"rank {p.Rank}: {p.Modules} layer(s), {p.MeasuredMemory:N0} B, {p.Reason}"))}");
+
+        // The user's layers override the measurement: the even split's counts, set by hand.
+        var layers = PipeOptions() with { PipelineStageLayers = [even[0].Count, even[1].Count] };
+        var (byUser, userSeen) = OverlapRun(topology, layers, rank => Rank(rank, layers));
+        Check(byUser[1].Start == even[1].Start && byUser[0].Loss == even[0].Loss,
+            $"IDRAK_CLUSTER_STAGE_LAYERS={even[0].Count},{even[1].Count} places the stages so on unequal ranks, with the even split's loss");
+        Check(userSeen.PipelinePlacements is { Count: 2 } userPlaced && userPlaced.All(p => p.Basis == "layers" && p.Reason.Contains("set by the user", StringComparison.Ordinal)),
+            $"the telemetry says the user set the layers: {string.Join(" | ", userSeen.PipelinePlacements.Select(p => p.Reason))}");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"    measured: ranks of {sized[0].Measured:N0} and {sized[1].Measured:N0} B: stages of {sized[0].Bytes:N0} and {sized[1].Bytes:N0} B (even {even[0].Bytes:N0} and {even[1].Bytes:N0}); "
+            + $"in use {sized[0].InUse:N0} and {sized[1].InUse:N0} B; loss gap {lossGap:G3}, gradient gap {gradGap:G3}"));
     }
 
     internal static void ClusterPipelineChat(Device device)

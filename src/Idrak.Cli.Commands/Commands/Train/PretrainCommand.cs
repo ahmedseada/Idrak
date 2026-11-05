@@ -107,6 +107,8 @@ internal sealed class PretrainCommand : Command
               --world-size N       the ranks of a cluster without a file, with --coordinator and --rank (IDRAK_WORLD_SIZE)
               --placement P        single or pipeline: the whole model on every rank, or a stage each (IDRAK_CLUSTER_PLACEMENT)
               --stages N           a pipeline's stages, dividing the ranks (IDRAK_CLUSTER_STAGES)
+              --stage-layers L     the layers each stage holds, such as 3,5,2 (sized by each rank's measured memory;
+                                   IDRAK_CLUSTER_STAGE_LAYERS)
 
         Examples:
           idrak data tokens corpus.txt --tokenizer tokenizer.json -o tokens.bin
@@ -219,6 +221,11 @@ internal sealed class PretrainCommand : Command
             if (context.Option("--stages") is not null)
             {
                 clusterOptions = clusterOptions with { Stages = context.IntOption("--stages", 1) is >= 1 and var stages ? stages : throw new UsageException("--stages needs a whole number, 1 or more.") };
+            }
+
+            if (context.Option("--stage-layers") is { } layers)
+            {
+                clusterOptions = clusterOptions with { PipelineStageLayers = ClusterJoin.StageLayers(layers) };
             }
 
             options = options with { Cluster = rank.Collectives, ClusterOptions = clusterOptions };
@@ -531,6 +538,9 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     public void OnGradientSync(in GradientsSynced e) => Write(e);
 
     public void OnPipelineStep(in PipelineStepped e) => Write(e);
+
+    // Each pipeline rank's stage: its measured memory, its layers and why (plan 37, N2).
+    public void OnPipelinePlaced(in PipelineStagePlaced e) => Write(e);
 
     // The settings the library suggested while the run trained (a cluster run's "cluster" advisor, plan 23 decision 4):
     // idrak suggest RUN lists them.

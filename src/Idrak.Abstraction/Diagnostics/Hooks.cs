@@ -193,6 +193,24 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
 
     /// <inheritdoc />
+    public void OnPipelinePlaced(in PipelineStagePlaced e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Pipeline rank {e.Rank} stage {e.Stage}/{e.Stages}{(e.Replica > 0 ? $" replica {e.Replica}" : "")}: {e.Modules} layer(s) from {e.FirstModule} ({e.Names}), {Bytes(e.Bytes)}; ")
+            + $"measured memory {Bytes(e.MeasuredMemory)}"
+            + (e.StageMemory is { } memory ? $", stage sized against {Bytes(memory)}{(e.Fits ? "" : " (does not fit)")}" : "")
+            + $"; {e.Reason}");
+
+    // A memory size for people, as the cluster's measured memory is written (ClusterMemory.Format): "3.0 MiB", or "not reported".
+    private static string Bytes(long? bytes) => bytes switch
+    {
+        null => "not reported",
+        >= 1L << 30 => string.Create(CultureInfo.InvariantCulture, $"{bytes.Value / (double)(1L << 30):F2} GiB"),
+        >= 1L << 20 => string.Create(CultureInfo.InvariantCulture, $"{bytes.Value / (double)(1L << 20):F1} MiB"),
+        >= 1L << 10 => string.Create(CultureInfo.InvariantCulture, $"{bytes.Value / (double)(1L << 10):F1} KiB"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"{bytes.Value} B"),
+    };
+
+    /// <inheritdoc />
     public void OnChoicesShared(in MeasuredChoicesShared e) =>
         _out.WriteLine(e.Taken ? string.Create(CultureInfo.InvariantCulture, $"Rank {e.Rank} ({e.Device}) runs rank 0's measured choices ({e.Choices} known): {e.Detail}")
             : $"Rank {e.Rank} ({e.Device}) keeps its own measured choices: {e.Detail}");
@@ -224,6 +242,7 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
     private readonly List<CollectiveCompleted> _collectives = [];
     private readonly List<GradientsSynced> _syncs = [];
     private readonly List<PipelineStepped> _pipelineSteps = [];
+    private readonly List<PipelineStagePlaced> _pipelinePlacements = [];
     private readonly Lock _lock = new();
 
     /// <inheritdoc />
@@ -322,6 +341,27 @@ public sealed class MetricsRecorder(TelemetryLevel levels = TelemetryLevel.Train
         lock (_lock)
         {
             _pipelineSteps.Add(e);
+        }
+    }
+
+    /// <summary>Recorded pipeline placements, one per rank (needs <see cref="TelemetryLevel.Network"/>): each rank's measured memory, its stage's layers and why.</summary>
+    public IReadOnlyList<PipelineStagePlaced> PipelinePlacements
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _pipelinePlacements];
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public void OnPipelinePlaced(in PipelineStagePlaced e)
+    {
+        lock (_lock)
+        {
+            _pipelinePlacements.Add(e);
         }
     }
 
@@ -490,6 +530,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnTransportChosen(in TransportChosen e) => Write(e);
 
     /// <inheritdoc />
+    public void OnPipelinePlaced(in PipelineStagePlaced e) => Write(e);
+
+    /// <inheritdoc />
     public void OnChoicesShared(in MeasuredChoicesShared e) => Write(e);
 
     /// <inheritdoc />
@@ -603,6 +646,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _channel.OnTransportChosen(in e);
+
+    /// <inheritdoc />
+    public void OnPipelinePlaced(in PipelineStagePlaced e) => _channel.OnPipelinePlaced(in e);
 
     /// <inheritdoc />
     public void OnChoicesShared(in MeasuredChoicesShared e) => _channel.OnChoicesShared(in e);
@@ -937,6 +983,30 @@ public static class TelemetryJson
                     w.WriteString("lost", lost);
                 }
 
+                break;
+            case PipelineStagePlaced e:
+                w.WriteString("event", "pipeline_placed");
+                w.WriteNumber("rank", e.Rank);
+                w.WriteNumber("stage", e.Stage);
+                w.WriteNumber("stages", e.Stages);
+                w.WriteNumber("replica", e.Replica);
+                w.WriteNumber("first_module", e.FirstModule);
+                w.WriteNumber("modules", e.Modules);
+                w.WriteString("names", e.Names);
+                w.WriteNumber("bytes", e.Bytes);
+                if (e.MeasuredMemory is { } measuredMemory)
+                {
+                    w.WriteNumber("measured_memory", measuredMemory);
+                }
+
+                if (e.StageMemory is { } stageMemory)
+                {
+                    w.WriteNumber("stage_memory", stageMemory);
+                }
+
+                w.WriteBoolean("fits", e.Fits);
+                w.WriteString("basis", e.Basis);
+                w.WriteString("reason", e.Reason);
                 break;
             case TransportChosen e:
                 w.WriteString("event", "transport_chosen");
