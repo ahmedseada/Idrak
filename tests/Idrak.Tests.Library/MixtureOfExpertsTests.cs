@@ -24,6 +24,7 @@ internal abstract partial class Tests
         ("mixture of experts: routing takes the k most probable experts (ties to the lowest index, as torch.topk), renormalized when configured; a known routing on the device", ExpertRouting),
         ("mixture of experts: routing where the tensors are (RouteTopK, ExpertGatedPair, ExpertMatMul) gives the host routing's values bit for bit (biases, odd widths, experts with many rows and few, every activation, a shared expert); RouteTopK matches the layer's host routing; a device without the kernels routes on the host, counted as a host fallback of RouteTopK; IDRAK_MOE_ROUTING=host turns it off", ExpertRoutingOnDevice),
         ("mixture of experts: Mixtral-, Qwen2-MoE- and Qwen3-MoE-shaped decoders match the loop reference (prompt, training, cached decoding, batches); packed experts; recording falls back; JSON and parameter counts", ExpertDecoders),
+        ("mixture of experts: CUDA's routing and expert kernels (PtxKernels.Routing.cs), read on the host: each declares the parameters its launch passes and only the registers it declares, every branch reaches a label of its own kernel, indices are read as int32, the weights divided by div.rn, each product one fma.rn chain from zero with its bias added by add.rn, and the gated pair's activation is gated_act_f32's", ExpertPtx),
         ("mixture of experts: gradients of router, experts, shared expert and input match finite differences; load-balancing loss; LoRA on attention fine-tunes a model with experts", ExpertTraining),
         ("pretrained: Mixtral, Qwen2-MoE and Qwen3-MoE configs and checkpoints (their tensor names) load and match the reference; GGUF files with experts (qwen2moe, qwen3moe, llama as Mixtral) too", ExpertCheckpoints),
     ];
@@ -173,8 +174,8 @@ internal abstract partial class Tests
             ("tanh · sigmoid, every expert a token", 7, 5, 3, 3, true, 0, FeedForwardActivation.TanhSigmoid, false, 11),
         };
         bool own = backend.RoutesExperts;
-        bool expected = device.Type == DeviceType.Cpu || device.Kind is "vulkan" or "hip";
-        Check(own == expected, $"{backend.Name}: RoutesExperts {own}, expected {expected} (the CPU, Vulkan and HIP have the kernels, plan 37 R0a and R0b; CUDA falls back until R0c)");
+        bool expected = device.Type == DeviceType.Cpu || device.Kind is "vulkan" or "hip" or "cuda";
+        Check(own == expected, $"{backend.Name}: RoutesExperts {own}, expected {expected} (the CPU, Vulkan, HIP and CUDA have the kernels, plan 37 R0a, R0b and R0c)");
         bool before = MixtureOfExperts.RoutesOnDevice;
         try
         {
@@ -388,6 +389,66 @@ internal abstract partial class Tests
 
         Check(direct.Zip(replayed).All(p => p.First.SequenceEqual(p.Second)),
             $"replayed steps sample what direct steps do: {string.Join(" ", direct.Select(d => d[0]))} vs {string.Join(" ", replayed.Select(d => d[0]))}");
+    }
+
+    internal static void ExpertPtx(Device device)
+    {
+        _ = device;
+        string source = Idrak.Gpu.Cuda.PtxKernels.Source;
+        var entries = Idrak.Gpu.Cuda.PtxKernels.Entries(source);
+        var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCounts;
+        // The launches' arguments (CudaBackend.Routing.cs): pointers, then the scalars, then the thread count.
+        var expected = new Dictionary<string, int>
+        {
+            ["route_choose_f32"] = 7, ["route_counts_f32"] = 4, ["route_offsets_f32"] = 5, ["route_place_f32"] = 7, ["expert_gated_f32"] = 12, ["expert_matmul_f32"] = 9,
+        };
+        Check(Idrak.Gpu.Cuda.PtxKernels.RoutingNames.Order().SequenceEqual(expected.Keys.Order()), $"the routing kernels: {string.Join(", ", Idrak.Gpu.Cuda.PtxKernels.RoutingNames)}");
+        foreach (var (name, parameters) in expected)
+        {
+            int at = entries.FindIndex(e => e.Name == name);
+            Check(at >= 0 && entries.Count(e => e.Name == name) == 1, $"{name}: declared once in the main module");
+            Check(counts[name] == parameters, $"{name}: {counts[name]} parameters, its launch passes {parameters}");
+            string text = source[entries[at].Start..(at + 1 < entries.Count ? entries[at + 1].Start : source.Length)];
+
+            // Registers within what the kernel declares (.reg .x %name<N>), and every branch to a label of this kernel.
+            var declared = System.Text.RegularExpressions.Regex.Matches(text, @"\.reg \.\w+ %(\w+?)<(\d+)>")
+                .ToDictionary(m => m.Groups[1].Value, m => int.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
+            foreach (System.Text.RegularExpressions.Match used in System.Text.RegularExpressions.Regex.Matches(text, @"%(rd|r|f|p)(\d+)\b"))
+            {
+                string file = used.Groups[1].Value;
+                int index = int.Parse(used.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+                Check(declared.TryGetValue(file, out int size) && index < size, $"{name}: {used.Value} is past the declared %{file}<{(declared.TryGetValue(file, out int s) ? s : 0)}>");
+            }
+
+            var labels = System.Text.RegularExpressions.Regex.Matches(text, @"^\s*(\w+):\s*$", System.Text.RegularExpressions.RegexOptions.Multiline).Select(m => m.Groups[1].Value).ToList();
+            Check(labels.Count == labels.Distinct().Count(), $"{name}: a label defined twice ({string.Join(", ", labels)})");
+            foreach (System.Text.RegularExpressions.Match branch in System.Text.RegularExpressions.Regex.Matches(text, @"\bbra(?:\.uni)?\s+(\w+);"))
+            {
+                Check(labels.Contains(branch.Groups[1].Value), $"{name}: branches to {branch.Groups[1].Value}, not a label of its own");
+            }
+
+            Check(!text.Contains("ld.global.f32 %r", StringComparison.Ordinal) && !text.Contains(".s64 %f", StringComparison.Ordinal), $"{name}: indices read as int32 words, values as floats");
+        }
+
+        string Kernel(string name)
+        {
+            int at = entries.FindIndex(e => e.Name == name);
+            return source[entries[at].Start..(at + 1 < entries.Count ? entries[at + 1].Start : source.Length)];
+        }
+
+        string choose = Kernel("route_choose_f32"), gated = Kernel("expert_gated_f32"), product = Kernel("expert_matmul_f32");
+        Check(choose.Contains("div.rn.f32 %f4, %f2, %f3;", StringComparison.Ordinal) && choose.Contains("add.rn.f32 %f3, %f3, %f2;", StringComparison.Ordinal)
+              && choose.Contains("setp.gt.f32 %p3, %f1, %f2;", StringComparison.Ordinal) && choose.Contains("ld.global.u32", StringComparison.Ordinal),
+            "route_choose_f32: the sum by add.rn in expert order, the weights by div.rn, a later expert inserted only where strictly more probable (ties to the lowest index), choices as int32");
+        Check(product.Contains("fma.rn.f32 %f20, %f22, %f23, %f20;", StringComparison.Ordinal) && product.Contains("add.rn.f32 %f20, %f20, %f22;", StringComparison.Ordinal)
+              && product.Contains("mov.f32 %f20, 0f00000000;", StringComparison.Ordinal) && !product.Contains("mul.f32", StringComparison.Ordinal),
+            "expert_matmul_f32: one fma.rn chain from zero, the bias added by add.rn (nothing to contract)");
+        Check(gated.Contains("fma.rn.f32 %f20, %f22, %f23, %f20;", StringComparison.Ordinal) && gated.Contains("fma.rn.f32 %f21, %f22, %f24, %f21;", StringComparison.Ordinal)
+              && gated.Contains("add.rn.f32 %f21, %f21, %f22;", StringComparison.Ordinal),
+            "expert_gated_f32: the gate and up chains by fma.rn from zero, their biases by add.rn");
+        string act = Kernel("gated_act_f32");
+        int from = act.IndexOf("mov.f32 %f17", StringComparison.Ordinal), to = act.IndexOf("ACT_DONE:", StringComparison.Ordinal);
+        Check(from > 0 && to > from && gated.Contains(act[from..to], StringComparison.Ordinal), "expert_gated_f32: the activation of gated_act_f32, line for line");
     }
 
     internal static void ExpertTraining(Device device)

@@ -504,69 +504,8 @@ internal static partial class PtxKernels
             PT_END:
             """);
 
-        // act(gate) and act'(gate) into %f5 and %f6 (kind 0 SiLU, 1 GELU tanh, 2 ReLU, 3 tanh) from %f1; the up side's
-        // function into %f19 (up itself, or sigmoid(up) for kind 3) and its slope into %f17 (1, or sigmoid'(up)). %f2 keeps
-        // the up value as read, for the kernels that pack it.
-        string activation = $"""
-            mov.f32 %f17, {One};
-            mov.f32 %f19, %f2;
-            setp.eq.u32 %p5, %s_kind, 1;
-            @%p5 bra ACT_GELU;
-            setp.eq.u32 %p5, %s_kind, 2;
-            @%p5 bra ACT_RELU;
-            setp.eq.u32 %p5, %s_kind, 3;
-            @%p5 bra ACT_TANH;
-            mul.f32 %f3, %f1, {F(-1.4426950408889634f)};
-            ex2.approx.ftz.f32 %f3, %f3;
-            add.f32 %f3, %f3, {One};
-            rcp.rn.f32 %f3, %f3;
-            mul.f32 %f5, %f1, %f3;
-            sub.f32 %f4, {One}, %f3;
-            fma.rn.f32 %f4, %f1, %f4, {One};
-            mul.f32 %f6, %f3, %f4;
-            bra ACT_DONE;
-            ACT_GELU:
-            mul.f32 %f7, %f1, %f1;
-            mul.f32 %f8, %f7, %f1;
-            fma.rn.f32 %f8, %f8, {F(0.044715f)}, %f1;
-            mul.f32 %f8, %f8, {F(0.7978845608f)};
-            mul.f32 %f9, %f8, {F(2.8853900817779268f)};
-            ex2.approx.ftz.f32 %f9, %f9;
-            add.f32 %f9, %f9, {One};
-            rcp.rn.f32 %f9, %f9;
-            fma.rn.f32 %f9, %f9, {F(-2f)}, {One};
-            add.f32 %f10, %f9, {One};
-            mul.f32 %f5, %f10, %f1;
-            mul.f32 %f5, %f5, {F(0.5f)};
-            mul.f32 %f11, %f9, %f9;
-            sub.f32 %f11, {One}, %f11;
-            mul.f32 %f11, %f11, %f1;
-            mul.f32 %f11, %f11, {F(0.5f * 0.7978845608f)};
-            fma.rn.f32 %f12, %f7, {F(3f * 0.044715f)}, {One};
-            mul.f32 %f11, %f11, %f12;
-            fma.rn.f32 %f6, %f10, {F(0.5f)}, %f11;
-            bra ACT_DONE;
-            ACT_RELU:
-            max.f32 %f5, %f1, {Zero};
-            setp.gt.f32 %p6, %f1, {Zero};
-            selp.f32 %f6, {One}, {Zero}, %p6;
-            bra ACT_DONE;
-            ACT_TANH:
-            mul.f32 %f9, %f1, {F(2.8853900817779268f)};
-            ex2.approx.ftz.f32 %f9, %f9;
-            add.f32 %f9, %f9, {One};
-            rcp.rn.f32 %f9, %f9;
-            fma.rn.f32 %f5, %f9, {F(-2f)}, {One};
-            mul.f32 %f6, %f5, %f5;
-            sub.f32 %f6, {One}, %f6;
-            mul.f32 %f3, %f2, {F(-1.4426950408889634f)};
-            ex2.approx.ftz.f32 %f3, %f3;
-            add.f32 %f3, %f3, {One};
-            rcp.rn.f32 %f19, %f3;
-            sub.f32 %f17, {One}, %f19;
-            mul.f32 %f17, %f17, %f19;
-            ACT_DONE:
-            """;
+        // act(gate), act'(gate) and the up side's function and slope (GatedActivation, below).
+        string activation = GatedActivation;
 
         // y = act(gate) · up.
         Elementwise(sb, "gated_act_f32", ["gate", "up", "y"], [("u32", "kind")],
@@ -790,4 +729,68 @@ internal static partial class PtxKernels
             st.global.f32 [%rd8], %f7;
             """);
     }
+
+    // act(gate) and act'(gate) into %f5 and %f6 (kind %s_kind: 0 SiLU, 1 GELU tanh, 2 ReLU, 3 tanh) from %f1; the up side's
+    // function into %f19 (up itself, or sigmoid(up) for kind 3) and its slope into %f17 (1, or sigmoid'(up)); %f2 keeps the up
+    // value as read. Uses %f1-%f12, %f17, %f19, %p5 and %p6; shared by the gated kernels and expert_gated_f32 (PtxKernels.Routing.cs).
+    private static string GatedActivation => $"""
+            mov.f32 %f17, {One};
+            mov.f32 %f19, %f2;
+            setp.eq.u32 %p5, %s_kind, 1;
+            @%p5 bra ACT_GELU;
+            setp.eq.u32 %p5, %s_kind, 2;
+            @%p5 bra ACT_RELU;
+            setp.eq.u32 %p5, %s_kind, 3;
+            @%p5 bra ACT_TANH;
+            mul.f32 %f3, %f1, {F(-1.4426950408889634f)};
+            ex2.approx.ftz.f32 %f3, %f3;
+            add.f32 %f3, %f3, {One};
+            rcp.rn.f32 %f3, %f3;
+            mul.f32 %f5, %f1, %f3;
+            sub.f32 %f4, {One}, %f3;
+            fma.rn.f32 %f4, %f1, %f4, {One};
+            mul.f32 %f6, %f3, %f4;
+            bra ACT_DONE;
+            ACT_GELU:
+            mul.f32 %f7, %f1, %f1;
+            mul.f32 %f8, %f7, %f1;
+            fma.rn.f32 %f8, %f8, {F(0.044715f)}, %f1;
+            mul.f32 %f8, %f8, {F(0.7978845608f)};
+            mul.f32 %f9, %f8, {F(2.8853900817779268f)};
+            ex2.approx.ftz.f32 %f9, %f9;
+            add.f32 %f9, %f9, {One};
+            rcp.rn.f32 %f9, %f9;
+            fma.rn.f32 %f9, %f9, {F(-2f)}, {One};
+            add.f32 %f10, %f9, {One};
+            mul.f32 %f5, %f10, %f1;
+            mul.f32 %f5, %f5, {F(0.5f)};
+            mul.f32 %f11, %f9, %f9;
+            sub.f32 %f11, {One}, %f11;
+            mul.f32 %f11, %f11, %f1;
+            mul.f32 %f11, %f11, {F(0.5f * 0.7978845608f)};
+            fma.rn.f32 %f12, %f7, {F(3f * 0.044715f)}, {One};
+            mul.f32 %f11, %f11, %f12;
+            fma.rn.f32 %f6, %f10, {F(0.5f)}, %f11;
+            bra ACT_DONE;
+            ACT_RELU:
+            max.f32 %f5, %f1, {Zero};
+            setp.gt.f32 %p6, %f1, {Zero};
+            selp.f32 %f6, {One}, {Zero}, %p6;
+            bra ACT_DONE;
+            ACT_TANH:
+            mul.f32 %f9, %f1, {F(2.8853900817779268f)};
+            ex2.approx.ftz.f32 %f9, %f9;
+            add.f32 %f9, %f9, {One};
+            rcp.rn.f32 %f9, %f9;
+            fma.rn.f32 %f5, %f9, {F(-2f)}, {One};
+            mul.f32 %f6, %f5, %f5;
+            sub.f32 %f6, {One}, %f6;
+            mul.f32 %f3, %f2, {F(-1.4426950408889634f)};
+            ex2.approx.ftz.f32 %f3, %f3;
+            add.f32 %f3, %f3, {One};
+            rcp.rn.f32 %f19, %f3;
+            sub.f32 %f17, {One}, %f19;
+            mul.f32 %f17, %f17, %f19;
+            ACT_DONE:
+            """;
 }

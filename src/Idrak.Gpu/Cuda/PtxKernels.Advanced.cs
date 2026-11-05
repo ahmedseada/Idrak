@@ -50,6 +50,7 @@ internal static partial class PtxKernels
         BuildCtc(sb);
         BuildRecurrent(sb);
         BuildPointwise(sb);
+        BuildRouting(sb);
     }
 
     // ------------------------------------------------------------------ element-wise math
