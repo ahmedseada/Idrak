@@ -327,7 +327,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.IDecoderBlock` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IFusedRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IGraphOp` | interface | public | Tensor | GraphOps.FunctionOp, GraphOps.GuardedOp |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.IHostRoundTrip` | interface | public | — | MixtureOfExperts, PipelineBoundary |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IHostRoundTrip` | interface | public | Backend | MixtureOfExperts, PipelineBoundary |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ILayerType` | interface | public | Device, Module | LayerTypes.FunctionType<T>, LayerTypes.GuardedType |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ILayerType<T>` | interface | public | Device | LayerTypes.FunctionType<T> |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INamedLambda` | interface | public | — | Lambda |  | Idrak | Idrak |
@@ -642,7 +642,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CudaBackend` | 138 of 155 |
 | `DeferredBackend` | 11 of 155 |
 | `HipBackend` | 139 of 155 |
-| `VulkanBackend` | 128 of 155 |
+| `VulkanBackend` | 131 of 155 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -707,8 +707,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ExpandStoredKernel(7)` | virtual | ✓ |  |  |  | ✓ |
-| `ExpertGatedPairKernel(8)` | virtual | ✓ |  |  |  |  |
-| `ExpertMatMulKernel(7)` | virtual | ✓ |  |  |  |  |
+| `ExpertGatedPairKernel(8)` | virtual | ✓ |  |  |  | ✓ |
+| `ExpertMatMulKernel(7)` | virtual | ✓ |  |  |  | ✓ |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -774,7 +774,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `RouteTopKKernel(9)` | virtual | ✓ |  |  |  |  |
+| `RouteTopKKernel(9)` | virtual | ✓ |  |  |  | ✓ |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

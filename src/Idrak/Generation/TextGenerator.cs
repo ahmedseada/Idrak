@@ -346,9 +346,10 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         return (pieces, (length + pieces - 1) / pieces);
     }
 
-    // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
-    // A pipeline's boundary sends each step to the other stages (plan 23, C7): a recorded step would replay without them.
-    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is IHostRoundTrip);
+    // Whether a decoding step can be recorded: not through a layer that goes beyond the device here (IHostRoundTrip.RoundTrips):
+    // experts whose routing is read back to the host (a device that routes them itself, plan 37 R0, records them), or a
+    // pipeline's boundary, which sends each step to the other stages (plan 23, C7): a recorded step would replay without them.
+    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is IHostRoundTrip trip && trip.RoundTrips(Device.Backend));
 
     private bool? _stepsRecordable;
 

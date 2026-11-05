@@ -173,7 +173,8 @@ internal abstract partial class Tests
             ("tanh · sigmoid, every expert a token", 7, 5, 3, 3, true, 0, FeedForwardActivation.TanhSigmoid, false, 11),
         };
         bool own = backend.RoutesExperts;
-        Check(own == (device.Type == DeviceType.Cpu), $"{backend.Name}: RoutesExperts {own} (the CPU has the kernels; the GPUs fall back until plan 37's R0)");
+        bool expected = device.Type == DeviceType.Cpu || device.Kind == "vulkan";
+        Check(own == expected, $"{backend.Name}: RoutesExperts {own}, expected {expected} (the CPU and Vulkan have the kernels, plan 37 R0a; CUDA and HIP fall back until R0c and R0b)");
         bool before = MixtureOfExperts.RoutesOnDevice;
         try
         {
@@ -205,7 +206,12 @@ internal abstract partial class Tests
 
                 var onDevice = Run(true, out long deviceCalls, out long deviceFallbacks);
                 var onHost = Run(false, out long hostCalls, out long hostFallbacks);
-                Check(Bits(onDevice).SequenceEqual(Bits(onHost)), $"{c.Name}: the device routing gives the host routing's values bit for bit (largest difference {onDevice.Zip(onHost, (a, b) => MathF.Abs(a - b)).Max()})");
+                // Where the device has the kernels, the host routing runs its experts through the same ExpertGatedPair and
+                // ExpertMatMul (plan 37, R0, option B): on a GPU the outputs move in the last bits against the old per-expert
+                // Linear products, within the tolerance of "mixture of experts: Mixtral-, Qwen2-MoE- and Qwen3-MoE-shaped
+                // decoders match the loop reference" and "pretrained: Mixtral, Qwen2-MoE and Qwen3-MoE configs and checkpoints".
+                Check(Bits(onDevice).SequenceEqual(Bits(onHost)), $"{c.Name}: the device routing gives the host routing's values bit for bit (largest difference {onDevice.Zip(onHost, (a, b) => MathF.Abs(a - b)).Max()}; "
+                    + "both run the experts through ExpertGatedPair and ExpertMatMul where the device has them, so GPU outputs moved in the last bits against the per-expert Linear products, within the decoder and checkpoint tests' tolerance)");
                 Check(own ? deviceCalls == 1 && deviceFallbacks == 0 && hostCalls == 0 && hostFallbacks == 0 : deviceCalls == 0 && deviceFallbacks == 1 && hostFallbacks == 1,
                     $"{c.Name} on {backend.Name}: RouteTopK called {deviceCalls} times on the device path and {hostCalls} with it off; host fallbacks of RouteTopK {deviceFallbacks} and {hostFallbacks}");
             }
@@ -335,8 +341,8 @@ internal abstract partial class Tests
             }
         }
 
-        // Recording a decoding step through the experts fails cleanly (the routing is read back): replays run the step and
-        // sample what direct steps do.
+        // Recording a decoding step through the experts: where the device routes them itself (plan 37, R0) the step is
+        // recorded; elsewhere it fails cleanly (the routing is read back). Either way replays sample what direct steps do.
         using var recorded = ExpertSpecs[0].Spec.Build(new RandomWeights(93), new DecoderBuildOptions { Device = device });
         int[][] Run(bool useGraph, out ComputeGraph? kept)
         {
@@ -375,8 +381,9 @@ internal abstract partial class Tests
         var replayed = Run(useGraph: true, out var capture);
         using (capture)
         {
-            Check(!capture!.IsRecorded && (!device.Backend.SupportsGraphs || capture.FailureReason?.Contains("experts", StringComparison.Ordinal) == true),
-                $"the recording falls back ({capture.FailureReason})");
+            bool records = device.Backend.SupportsGraphs && device.Backend.RoutesExperts && MixtureOfExperts.RoutesOnDevice;
+            Check(records ? capture!.IsRecorded : !capture!.IsRecorded && (!device.Backend.SupportsGraphs || capture.FailureReason?.Contains("experts", StringComparison.Ordinal) == true),
+                records ? $"the step through the experts is recorded where the device routes them ({capture.FailureReason})" : $"the recording falls back ({capture.FailureReason})");
         }
 
         Check(direct.Zip(replayed).All(p => p.First.SequenceEqual(p.Second)),

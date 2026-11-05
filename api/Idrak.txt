@@ -582,6 +582,7 @@ public interface Idrak.Layers.Abstractions.IGraphOp : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Tensor Run(Idrak.Layers.Abstractions.GraphOpContext context)
 
 public interface Idrak.Layers.Abstractions.IHostRoundTrip
+  public (default) bool RoundTrips(Idrak.Abstraction.Devices.Backend backend)
 
 public interface Idrak.Layers.Abstractions.ILayerType : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Module Create(System.Text.Json.Nodes.JsonObject description, Idrak.Abstraction.Device device)
@@ -1205,6 +1206,7 @@ public sealed class Idrak.Layers.MixtureOfExperts : Idrak.Abstraction.Module, Id
   public MixtureOfExperts(int dim, int hidden, int experts, int expertsPerToken, bool normalizeTopK = true, int sharedHidden = 0, Idrak.Abstraction.Generation.FeedForwardActivation activation = (Idrak.Abstraction.Generation.FeedForwardActivation)0, bool bias = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Layers.FeedForward> Experts { get; }
   public bool NormalizeTopK { get; }
+  public bool RoundTrips(Idrak.Abstraction.Devices.Backend backend)
   public int ExpertsPerToken { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()

@@ -62,10 +62,18 @@ public interface IRoutedLayer
 }
 
 /// <summary>
-/// A layer whose forward pass goes beyond the device on every call (a mixture's routing read back to the host, a
-/// pipeline boundary sending to other stages): a decoding step through it is not recorded and replayed.
+/// A layer whose forward pass may go beyond the device (a mixture's routing read back to the host, a pipeline boundary
+/// sending to other stages): a decoding step through it on a device where it does (<see cref="RoundTrips"/>) is not
+/// recorded and replayed.
 /// </summary>
-public interface IHostRoundTrip;
+public interface IHostRoundTrip
+{
+    /// <summary>
+    /// Whether an inference pass through the layer on <paramref name="backend"/> goes beyond the device (true by default):
+    /// a mixture of experts that routes where its tensors are (plan 37, R0) does not.
+    /// </summary>
+    bool RoundTrips(Backend backend) => true;
+}
 
 /// <summary>
 /// A layer that numbers positions itself, from the start of each row (a sinusoidal position encoding), unaware of the
