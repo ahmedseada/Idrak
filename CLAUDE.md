@@ -72,8 +72,8 @@ These are the owner's standing rules. They hold in every session, after every co
   operation took a host fallback). 3. Build once, only the projects that changed, and only after all the work is
   written; if it has compile errors, fix every one, then rebuild once. Before every build (the first and the rebuild),
   run the Roslyn check, `dotnet run -c Release --project tools/check -- tests/Idrak.Tests/Idrak.Tests.csproj`, which
-  compiles every project in memory and lists every error in every project in one pass; fix everything it lists, and
-  build only when it reports 0 errors (until `tools/check` is on `main`, the review below stands in for it). Before the first build, review every edited file
+  compiles every project in memory and lists every error in every project in one pass; fix every error it lists, and
+  build as soon as it reports 0 errors; its warnings are ignored and never hold the build back (until `tools/check` is on `main`, the review below stands in for it). Before the first build, review every edited file
   (new names searched for clashes, doc comments and attributes in place, every call site of a changed member updated).
   After a failed build, read its whole output and list every error; the compiler stops at the first failing project,
   so read the projects it did not reach for the same mistakes, fix them all, and only then rebuild once. Never rebuild
