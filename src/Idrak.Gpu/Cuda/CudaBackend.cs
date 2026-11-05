@@ -1357,11 +1357,12 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         bool skinny = batch == 1 && Math.Min(m, n) >= 8 && k >= 16
             && (Math.Max(m, n) >= 256 && (long)m * n * k >= 1 << 24 || Math.Max(m, n) >= 64 && k >= 2048);
         // Each precision on its own kernels: fp8 products on the fp8 kernels (large ones, where they loaded), bfloat16 on
-        // the bfloat16 ones; a reduced precision without a kernel here for the call runs float32, counted
-        // (ReducedPrecision), never another reduced type in its place.
+        // the bfloat16 ones, float16 on the float16 ones (each line scaled by a power of two first: HalfShifts); a reduced
+        // precision without a kernel here for the call runs float32, counted (ReducedPrecision), never another reduced
+        // type in its place.
         var precision = MixedPrecision.Current;
         bool reduced = !few && (large || skinny) && precision != MatMulPrecision.Float32;
-        var tensorCore = reduced && precision is MatMulPrecision.BFloat16 or MatMulPrecision.Float8 ? TensorCoreKernels() : null;
+        var tensorCore = reduced ? TensorCoreKernels() : null;
         if (tensorCore is not null && large && precision == MatMulPrecision.Float8 && EightBitReady(fp8: true) && batch <= 64)
         {
             for (int i = 0; i < batch; i++)
@@ -1373,7 +1374,10 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             return;
         }
 
-        if (precision != MatMulPrecision.BFloat16)
+        // The float16 products take one launch: a batch within the grid's z and y limits, rows within one launch's.
+        bool half = precision == MatMulPrecision.Float16;
+        if (precision != MatMulPrecision.BFloat16
+            && !(half && tensorCore is not null && tensorCore.ContainsKey(HalfKernel(transA, transB)) && batch <= maxGridZ && batch <= maxGridY && m <= rowsPerLaunch))
         {
             tensorCore = null;
         }
@@ -1436,6 +1440,13 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                     _profileFlops = 2.0 * rows * n * k * count;
                 }
 
+                if (tensorCore is not null && half)
+                {
+                    HalfProduct(tensorCore, new FloatProduct(P(a), P(b), m, m, n, k, batch, transA, transB, beta, mk, kn, mn), P(c));
+                    Interlocked.Increment(ref TensorCoreLaunches);
+                    continue;
+                }
+
                 if (tensorCore is not null)
                 {
                     string kernel = transA ? (transB ? "gemm_tc_tt_f32" : "gemm_tc_tn_f32") : (transB ? "gemm_tc_nt_f32" : "gemm_tc_nn_f32");
@@ -1465,15 +1476,63 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         ulong Mk, ulong Kn, ulong Mn);
 
     // The tensor-core product of `p` into `cAt`. A method of its own: the closure TensorSplits needs is created only when
-    // it runs (inside BatchedMatMulKernel it was created on every call, the few-row and 16 × 16 products included).
-    private void TensorCoreRows(IntPtr function, FloatProduct p, ulong cAt)
+    // it runs (inside BatchedMatMulKernel it was created on every call, the few-row and 16 × 16 products included). The
+    // float16 products (`rowShifts` set) also take the shifts of op(a)'s rows and op(b)'s columns (HalfProduct).
+    private void TensorCoreRows(IntPtr function, FloatProduct p, ulong cAt, ulong rowShifts = 0, ulong columnShifts = 0)
     {
-        void Run(int splits, ulong target) =>
-            LaunchTensor(function, (p.N + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, (p.Rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile,
-                PtxKernels.TensorTile, splits, (uint)(splits > 1 ? splits : p.Count), p.A, p.B, target,
-                U(p.Rows), U(p.N), U(p.K), F(p.Beta), splits > 1 ? 0UL : p.Mk, splits > 1 ? 0UL : p.Kn, splits > 1 ? 0UL : p.Mn, 0UL, U(p.TransA ? p.M : p.K),
-                U(p.TransB ? p.K : p.N), U(p.N), 0UL);
-        Run(p.Count == 1 ? TensorSplits(p.Rows, p.N, p.K, p.Beta, cAt, p.N, (p.TransA ? 2 : 0) + (p.TransB ? 1 : 0), Run) : 1, cAt);
+        bool half = rowShifts != 0;
+        void Run(int splits, ulong target)
+        {
+            int columnTiles = (p.N + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, rowTiles = (p.Rows + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
+            uint gridZ = (uint)(splits > 1 ? splits : p.Count);
+            ulong sa = splits > 1 ? 0UL : p.Mk, sb = splits > 1 ? 0UL : p.Kn, sc = splits > 1 ? 0UL : p.Mn;
+            if (half)
+            {
+                LaunchTensor(function, columnTiles, rowTiles, PtxKernels.TensorTile, splits, gridZ, p.A, p.B, target, U(p.Rows), U(p.N), U(p.K), F(p.Beta), sa, sb, sc,
+                    0UL, U(p.TransA ? p.M : p.K), U(p.TransB ? p.K : p.N), U(p.N), 0UL, rowShifts, columnShifts);
+                return;
+            }
+
+            LaunchTensor(function, columnTiles, rowTiles, PtxKernels.TensorTile, splits, gridZ, p.A, p.B, target, U(p.Rows), U(p.N), U(p.K), F(p.Beta), sa, sb, sc,
+                0UL, U(p.TransA ? p.M : p.K), U(p.TransB ? p.K : p.N), U(p.N), 0UL);
+        }
+
+        Run(p.Count == 1 ? TensorSplits(p.Rows, p.N, p.K, p.Beta, cAt, p.N, (half ? 16 : 0) + (p.TransA ? 2 : 0) + (p.TransB ? 1 : 0), Run) : 1, cAt);
+    }
+
+    // The float16 product of a layout (PtxKernels.TensorCore.cs, …_f16_f32).
+    private static string HalfKernel(bool transA, bool transB) => $"gemm_tc_{(transA ? 't' : 'n')}{(transB ? 't' : 'n')}_f16_f32";
+
+    // The float16 tensor-core product of `p` (all its rows and batch entries in one launch) into `cAt`: first the shift of
+    // every row of op(a) and every column of op(b) (line_shifts_*: the power of two that brings the line's largest
+    // magnitude into [2^14, 2^15), so no value overflows a half and the small ones keep their bits), into scratch memory
+    // given back after the launch (stream order keeps it until the kernels are done); the product scales its tiles by
+    // them before rounding to halves and its sums back after.
+    private void HalfProduct(Dictionary<string, IntPtr> tensorCore, in FloatProduct p, ulong cAt)
+    {
+        var shifts = Allocate(checked(p.Count * (p.M + p.N)), zeroed: false);
+        try
+        {
+            ulong rows = P(shifts), columns = rows + (ulong)p.Count * (ulong)p.M * sizeof(float);
+            // op(a)'s rows: A's rows as stored ([m, k], contiguous), its columns transposed ([k, m]).
+            LineShifts(tensorCore, p.A, rows, p.M, p.K, p.TransA ? p.M : p.K, contiguous: !p.TransA, p.Count, p.Mk);
+            // op(b)'s columns: B's columns as stored ([k, n]), its rows transposed ([n, k], contiguous).
+            LineShifts(tensorCore, p.B, columns, p.N, p.K, p.TransB ? p.K : p.N, contiguous: p.TransB, p.Count, p.Kn);
+            TensorCoreRows(tensorCore[HalfKernel(p.TransA, p.TransB)], p, cAt, rows, columns);
+        }
+        finally
+        {
+            shifts.Release();
+        }
+    }
+
+    // line_shifts_{rows,cols}_f32 over `count` matrices `batch` floats apart: `lines` lines of `length` floats, `ld` apart
+    // (rows: a warp a line, 8 a block; columns: a thread a line).
+    private void LineShifts(Dictionary<string, IntPtr> tensorCore, ulong x, ulong shifts, int lines, int length, int ld, bool contiguous, int count, ulong batch)
+    {
+        uint perBlock = contiguous ? 8u : 256u;
+        Launch(tensorCore[contiguous ? "line_shifts_rows_f32" : "line_shifts_cols_f32"], (uint)((lines + perBlock - 1) / perBlock), (uint)count, 1, 256, 1,
+            x, shifts, U(lines), U(length), U(ld), batch);
     }
 
     // The register-blocked product of `p` into `cAt`: the tile from the SM count, then measured once per shape (both

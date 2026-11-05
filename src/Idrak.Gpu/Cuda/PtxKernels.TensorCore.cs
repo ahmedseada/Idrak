@@ -12,7 +12,11 @@ namespace Idrak.Gpu.Cuda;
 /// device loads them when the compute capability it reports reaches the target the module declares, never by a list of
 /// cards. Inputs and outputs are float32 like every other kernel: tiles are rounded to bfloat16
 /// as they are copied to shared memory, multiplied with <c>mma.sync.m16n8k16</c> and summed in float32 (what PyTorch's
-/// bfloat16 autocast does, without the separate cast kernels and copies).
+/// bfloat16 autocast does, without the separate cast kernels and copies). The float16 products (…_f16_f32, for
+/// MatMulPrecision.Float16) first multiply each row of op(a) and each column of op(b) by the power of two that brings its
+/// largest magnitude into [2^14, 2^15) (line_shifts_*: exact, as Vulkan's 16-bit float products do), round the tiles to
+/// IEEE halves, multiply on the float16 tensor cores, sum in float32 and divide the outputs by the same powers: no value
+/// overflows a half, and only values below 2^-29 of their row's (or column's) largest lose bits.
 /// </summary>
 internal static partial class PtxKernels
 {
@@ -98,6 +102,18 @@ internal static partial class PtxKernels
                 TensorCoreGemm(sb, false, false, 0, packed: packed, tileM: 64);
                 TensorCoreGemm(sb, false, false, 0, packed: packed, multi: true, tileM: 64);
             }
+
+            // Float16 operands (MatMulPrecision.Float16), each line scaled by a power of two first (line_shifts_*).
+            foreach (bool ta in new[] { false, true })
+            {
+                foreach (bool tb in new[] { false, true })
+                {
+                    TensorCoreGemm(sb, ta, tb, 0, half: true);
+                }
+            }
+
+            LineShifts(sb, contiguous: true);
+            LineShifts(sb, contiguous: false);
 
             // LoRA: the adapter's low-rank term as one more k step of the product (…_lr_f32).
             TensorCoreGemm(sb, false, false, 0, lowRank: true);
@@ -210,8 +226,13 @@ internal static partial class PtxKernels
     // values per 32-bit word along k; ldb = words per row): dx = g · Wᵀ reads the weight as stored, with no float copy. Each
     // thread's pair of k is one word, copied to shared memory as it is (the tile holds bfloat16 pairs anyway).
     private static void TensorCoreGemm(StringBuilder sb, bool ta, bool tb, int mode, int packed = 0, bool multi = false, int tileM = TensorTile,
-        bool lowRank = false, bool bf16B = false, bool residual = false)
+        bool lowRank = false, bool bf16B = false, bool residual = false, bool half = false)
     {
+        if (half && (mode != 0 || packed != 0 || multi || tileM != TensorTile || lowRank || bf16B || residual))
+        {
+            throw new ArgumentException("The float16 products take float operands as stored or transposed, with no epilogue, packing or low-rank stage.");
+        }
+
         if (residual && (mode != 0 || packed is 1 or 2 || multi || lowRank))
         {
             throw new ArgumentException("The residual reads p_aux: mode 0, no int8 or 4-bit scales there, one product, no low-rank stage.");
@@ -228,7 +249,7 @@ internal static partial class PtxKernels
         }
 
         string name = $"gemm_tc_{(ta ? 't' : 'n')}{(tb ? 't' : 'n')}{mode switch { 1 => "_gelu", 2 => "_gelugrad", _ => "" }}"
-                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(residual ? "_res" : "")}{(lowRank ? "_lr" : "")}_f32";
+                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(residual ? "_res" : "")}{(lowRank ? "_lr" : "")}{(half ? "_f16" : "")}_f32";
         int mts = tileM / 32, warpRowShift = (int)Math.Log2(tileM / 2);          // m16 slices per warp; the warp's first row
         int cpw = packed switch { 1 => 4, 2 => 8, _ => 2 }, tileWords = TensorTile / cpw, wordRows = TensorThreads / tileWords;
         int wordsPerThread = TensorK * tileWords / TensorThreads;
@@ -252,6 +273,9 @@ internal static partial class PtxKernels
                 """ : "")}}{{(lowRank && multi ? """
                 ,
                                 .param .u64 p_u1, .param .u64 p_v1, .param .u64 p_u2, .param .u64 p_v2
+                """ : "")}}{{(half ? """
+                ,
+                                .param .u64 p_rowshift, .param .u64 p_colshift
                 """ : "")}}{{(mode == 0 ? """
                 ,
                                 .param .u64 p_ws, .param .u64 p_cnt
@@ -282,7 +306,14 @@ internal static partial class PtxKernels
                 .reg .b64 %rd<32>;
                 .reg .b32 %lr<8>;
                 .reg .b64 %lrd<8>;
-                .reg .pred %plr;
+                .reg .pred %plr;{{(half ? """
+
+                                .reg .f32 %ha<8>;
+                                .reg .f32 %hb<8>;
+                                .reg .b32 %hr<20>;
+                                .reg .b64 %hrd<4>;
+                                .reg .pred %hp;
+                """ : "")}}
                 .shared .align 16 .b8 {{name}}_as[{{2 * StageBytes}}];
                 .shared .align 16 .b8 {{name}}_bs[{{2 * StageBytes}}];
                 ld.param.u64 %rd1, [p_a];
@@ -515,6 +546,61 @@ internal static partial class PtxKernels
             s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %c{i}, 0f00000000;");
         }
 
+        if (half)
+        {
+            // The shifts of op(a)'s rows (%hrd0) and op(b)'s columns (%hrd1) of this batch entry (z indexes one only when p_sc
+            // is set; with a split k it is the split), and the scales 2^shift of the lines this thread stages, read once:
+            // A as stored, its 8 rows (%ha0-7); transposed, its 2 rows (%ha0-1); B as stored, its 2 columns (%hb0-1);
+            // transposed, its 8 columns (%hb0-7). A line past the matrix scales by 1.
+            s.AppendLine("""
+                    ld.param.u64 %hrd0, [p_rowshift];
+                    cvta.to.global.u64 %hrd0, %hrd0;
+                    ld.param.u64 %hrd1, [p_colshift];
+                    cvta.to.global.u64 %hrd1, %hrd1;
+                    setp.ne.u64 %hp, %rd6, 0;
+                    selp.u32 %hr1, %r40, 0, %hp;
+                    mul.lo.u32 %hr2, %hr1, %r1;
+                    mul.wide.u32 %hrd2, %hr2, 4;
+                    add.u64 %hrd0, %hrd0, %hrd2;
+                    mul.lo.u32 %hr2, %hr1, %r2;
+                    mul.wide.u32 %hrd2, %hr2, 4;
+                    add.u64 %hrd1, %hrd1, %hrd2;
+                """);
+            if (!ta)
+            {
+                for (int r = 0; r < a.Pairs; r++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %hr3, %r9, %r13;\n    add.u32 %hr3, %hr3, {r * a.RowStep};");
+                    s.AppendLine(ShiftScale($"%ha{r}", "%hr3", "%r1", "%hrd0"));
+                }
+            }
+            else
+            {
+                for (int e = 0; e < 2; e++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %hr3, %r9, %r14;\n    add.u32 %hr3, %hr3, {e};");
+                    s.AppendLine(ShiftScale($"%ha{e}", "%hr3", "%r1", "%hrd0"));
+                }
+            }
+
+            if (!tb)
+            {
+                for (int e = 0; e < 2; e++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %hr3, %r10, %r17;\n    add.u32 %hr3, %hr3, {e};");
+                    s.AppendLine(ShiftScale($"%hb{e}", "%hr3", "%r2", "%hrd1"));
+                }
+            }
+            else
+            {
+                for (int r = 0; r < b.Pairs; r++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %hr3, %r10, %r16;\n    add.u32 %hr3, %hr3, {r * b.RowStep};");
+                    s.AppendLine(ShiftScale($"%hb{r}", "%hr3", "%r2", "%hrd1"));
+                }
+            }
+        }
+
         // Global → registers for the k tile starting at %r30: 8 pairs of adjacent floats per operand, zero outside the matrix.
         void Load(TileLoad t, string baseAddress, string leading, string row, string column, string staging)
         {
@@ -573,6 +659,21 @@ internal static partial class PtxKernels
                 if (bf16B && t.Name == "b")
                 {
                     s.AppendLine(CultureInfo.InvariantCulture, $"    st.shared.b32 [%r35+{r * t.RowStep * t.Stride}], %gw{r};");
+                    continue;
+                }
+
+                if (half)
+                {
+                    // The pair's scales: one row's (A as stored, B transposed: both values on one line) or two lines'.
+                    bool oneLine = t.Name == "a" ? !ta : tb;
+                    string prefix = t.Name == "a" ? "%ha" : "%hb";
+                    string low = oneLine ? $"{prefix}{r}" : $"{prefix}0", high = oneLine ? $"{prefix}{r}" : $"{prefix}1";
+                    s.AppendLine(CultureInfo.InvariantCulture, $"""
+                            mul.f32 {staging}{2 * r}, {staging}{2 * r}, {low};
+                            mul.f32 {staging}{2 * r + 1}, {staging}{2 * r + 1}, {high};
+                            cvt.rn.f16x2.f32 %r36, {staging}{2 * r + 1}, {staging}{2 * r};
+                            st.shared.b32 [%r35+{r * t.RowStep * t.Stride}], %r36;
+                        """);
                     continue;
                 }
 
@@ -753,7 +854,7 @@ internal static partial class PtxKernels
                     for (int nt = 0; nt < 4; nt++)
                     {
                         int c = (mt * 4 + nt) * 4, fb = (nt / 2) * 4 + (nt % 2) * 2;
-                        s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"    mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}}, ")
+                        s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"    mma.sync.aligned.m16n8k16.row.col.f32.{(half ? "f16.f16" : "bf16.bf16")}.f32 {{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}}, ")
                                      + string.Create(CultureInfo.InvariantCulture, $"{{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, {{%fb{fb}, %fb{fb + 1}}}, ")
                                      + string.Create(CultureInfo.InvariantCulture, $"{{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}};"));
                     }
@@ -810,7 +911,8 @@ internal static partial class PtxKernels
             s.AppendLine("LR_DONE:");
         }
 
-        EmitTensorEpilogue(s, mode, packed == 1 ? t => ColumnScales(t, mts) : null, splitK: mode == 0, mts: mts, residual: residual);
+        EmitTensorEpilogue(s, mode, half ? t => UndoShifts(t, mts) : packed == 1 ? t => ColumnScales(t, mts) : null, splitK: mode == 0, mts: mts,
+            residual: residual);
         s.AppendLine("""
                 ret;
             }
@@ -1159,6 +1261,153 @@ internal static partial class PtxKernels
     }
 
     // Int8 weights: acc · scale[column] (the per-column scales in p_aux).
+    // `target` = 2^shift of line `index` (shifts at `shifts`, 4 bytes each); 1 for a line at or past `limit`.
+    private static string ShiftScale(string target, string index, string limit, string shifts) => $"""
+            setp.lt.u32 %hp, {index}, {limit};
+            mov.u32 %hr0, 0;
+            mul.wide.u32 %hrd2, {index}, 4;
+            add.u64 %hrd2, %hrd2, {shifts};
+            @%hp ld.global.s32 %hr0, [%hrd2];
+            add.s32 %hr0, %hr0, 127;
+            shl.b32 %hr0, %hr0, 23;
+            mov.b32 {target}, %hr0;
+        """;
+
+    // The float16 products' epilogue scale (once %r42 / %r43 are set, after a split's ordered sum): every accumulator times
+    // 2^-(row shift + column shift), as two exact multiplications by powers of two each within float32's normal range
+    // (the shifts lie in [-126, 126]). Column shifts in %hr4-11 (this thread's 8 columns), row shifts in %hr12-19.
+    private static void UndoShifts(StringBuilder s, int mts)
+    {
+        for (int nt = 0; nt < 4; nt++)
+        {
+            for (int j = 0; j < 2; j++)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
+                        add.u32 %hr3, %r43, {nt * 8 + j};
+                        setp.lt.u32 %hp, %hr3, %r2;
+                        mov.u32 %hr{4 + 2 * nt + j}, 0;
+                        mul.wide.u32 %hrd2, %hr3, 4;
+                        add.u64 %hrd2, %hrd2, %hrd1;
+                        @%hp ld.global.s32 %hr{4 + 2 * nt + j}, [%hrd2];
+                    """);
+            }
+        }
+
+        for (int mt = 0; mt < mts; mt++)
+        {
+            for (int half = 0; half < 2; half++)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
+                        add.u32 %hr3, %r42, {mt * 16 + half * 8};
+                        setp.lt.u32 %hp, %hr3, %r1;
+                        mov.u32 %hr{12 + 2 * mt + half}, 0;
+                        mul.wide.u32 %hrd2, %hr3, 4;
+                        add.u64 %hrd2, %hrd2, %hrd0;
+                        @%hp ld.global.s32 %hr{12 + 2 * mt + half}, [%hrd2];
+                    """);
+                for (int nt = 0; nt < 4; nt++)
+                {
+                    for (int j = 0; j < 2; j++)
+                    {
+                        int c = (mt * 4 + nt) * 4 + half * 2 + j;
+                        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                                add.s32 %hr0, %hr{12 + 2 * mt + half}, %hr{4 + 2 * nt + j};
+                                neg.s32 %hr0, %hr0;
+                                shr.s32 %hr1, %hr0, 1;
+                                sub.s32 %hr2, %hr0, %hr1;
+                                add.s32 %hr1, %hr1, 127;
+                                shl.b32 %hr1, %hr1, 23;
+                                mov.b32 %t0, %hr1;
+                                add.s32 %hr2, %hr2, 127;
+                                shl.b32 %hr2, %hr2, 23;
+                                mov.b32 %t1, %hr2;
+                                mul.f32 %c{c}, %c{c}, %t0;
+                                mul.f32 %c{c}, %c{c}, %t1;
+                            """);
+                    }
+                }
+            }
+        }
+    }
+
+    // line_shifts_{rows,cols}_f32: s[b · lines + i] = the shift of line i of batch entry b (grid y): the power of two 2^s
+    // that brings the line's largest magnitude into [2^14, 2^15), s = clamp(141 - its exponent bits, -126, 126) (as
+    // Vulkan's 16-bit float products and their test reference take it). Element j of line i: x[b · batch + i · ld + j]
+    // for rows (contiguous: a warp a line, 8 a block of 256, the lanes' maxima combined through shuffles), x[b · batch +
+    // i + j · ld] for columns (a thread a line, neighbouring threads reading neighbouring floats). The largest magnitude is
+    // an integer maximum of the bits without their sign: one value whatever the order (rule 86).
+    private static void LineShifts(StringBuilder sb, bool contiguous)
+    {
+        string name = contiguous ? "line_shifts_rows_f32" : "line_shifts_cols_f32";
+        string line = contiguous ? "shr.u32 %r5, %r4, 5;\n    shl.b32 %r7, %r7, 3;\n    add.u32 %r7, %r7, %r5;" : "shl.b32 %r7, %r7, 8;\n    add.u32 %r7, %r7, %r4;";
+        string start = contiguous ? "mul.wide.u32 %rd6, %r7, %r3;" : "cvt.u64.u32 %rd6, %r7;";
+        string step = contiguous ? "mul.wide.u32 %rd6, %r10, 4;" : "mul.wide.u32 %rd6, %r10, %r3;\n    shl.b64 %rd6, %rd6, 2;";
+        string reduce = contiguous
+            ? string.Concat(new[] { 16, 8, 4, 2, 1 }.Select(o => $"    shfl.sync.bfly.b32 %r11, %r9, {o}, 31, 0xFFFFFFFF;\n    max.u32 %r9, %r9, %r11;\n"))
+              + "    setp.ne.u32 %p3, %r6, 0;\n    @%p3 bra DONE;"
+            : "";
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
+            .visible .entry {{name}}(
+                .param .u64 p_x, .param .u64 p_s, .param .u32 p_lines, .param .u32 p_length, .param .u32 p_ld, .param .u64 p_batch
+            )
+            {
+                .reg .pred %p<4>;
+                .reg .b32 %r<16>;
+                .reg .b64 %rd<10>;
+                ld.param.u64 %rd1, [p_x];
+                cvta.to.global.u64 %rd1, %rd1;
+                ld.param.u64 %rd2, [p_s];
+                cvta.to.global.u64 %rd2, %rd2;
+                ld.param.u32 %r1, [p_lines];
+                ld.param.u32 %r2, [p_length];
+                ld.param.u32 %r3, [p_ld];
+                ld.param.u64 %rd3, [p_batch];
+                mov.u32 %r4, %tid.x;
+                and.b32 %r6, %r4, 31;
+                mov.u32 %r7, %ctaid.x;
+                {{line}}
+                setp.ge.u32 %p1, %r7, %r1;
+                {{(contiguous ? "" : "@%p1 bra DONE;")}}
+                mov.u32 %r8, %ctaid.y;
+                cvt.u64.u32 %rd4, %r8;
+                mul.lo.u64 %rd5, %rd4, %rd3;
+                {{start}}
+                add.u64 %rd5, %rd5, %rd6;
+                shl.b64 %rd5, %rd5, 2;
+                add.u64 %rd5, %rd5, %rd1;
+                mov.u32 %r9, 0;
+                mov.u32 %r10, {{(contiguous ? "%r6" : "0")}};
+                @%p1 mov.u32 %r10, %r2;
+            LOOP:
+                setp.ge.u32 %p2, %r10, %r2;
+                @%p2 bra REDUCE;
+                {{step}}
+                add.u64 %rd7, %rd5, %rd6;
+                ld.global.u32 %r11, [%rd7];
+                and.b32 %r11, %r11, 0x7FFFFFFF;
+                max.u32 %r9, %r9, %r11;
+                add.u32 %r10, %r10, {{(contiguous ? 32 : 1)}};
+                bra LOOP;
+            REDUCE:
+            {{reduce}}
+                @%p1 bra DONE;
+                shr.u32 %r12, %r9, 23;
+                mov.u32 %r13, 141;
+                sub.s32 %r12, %r13, %r12;
+                max.s32 %r12, %r12, -126;
+                min.s32 %r12, %r12, 126;
+                mul.lo.u32 %r13, %r8, %r1;
+                add.u32 %r13, %r13, %r7;
+                mul.wide.u32 %rd6, %r13, 4;
+                add.u64 %rd6, %rd6, %rd2;
+                st.global.s32 [%rd6], %r12;
+            DONE:
+                ret;
+            }
+
+            """);
+    }
+
     private static void ColumnScales(StringBuilder s, int mts)
     {
         s.AppendLine("""

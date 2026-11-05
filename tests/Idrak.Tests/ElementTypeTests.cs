@@ -337,8 +337,8 @@ internal abstract partial class DesktopTests : Tests
               && Idrak.Gpu.Cuda.PtxKernels.TargetNumber("sm_") == -1 && Idrak.Gpu.Cuda.PtxKernels.TargetNumber("compute_80") == -1,
             "a PTX target read as the compute capability it names (sm_80 → 80, sm_90a → 90; anything else -1)");
         Check(Idrak.Gpu.Cuda.CudaNativeTypes.Of(false, false).SequenceEqual([ElementType.Float32])
-              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, false).SequenceEqual([ElementType.BFloat16, ElementType.Float32])
-              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, true).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, false).SequenceEqual([ElementType.BFloat16, ElementType.Float16, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(true, true).SequenceEqual([ElementType.BFloat16, ElementType.Float16, ElementType.Float8E4M3, ElementType.Float32])
               && Idrak.Gpu.Cuda.CudaNativeTypes.Report(1, 2, true, false) is var report
               && report.Contains("compute capability 1.2", StringComparison.Ordinal) && report.Contains(Idrak.Gpu.Cuda.PtxKernels.TensorCoreTarget, StringComparison.Ordinal)
               && report.Contains(Idrak.Gpu.Cuda.PtxKernels.Float8Target, StringComparison.Ordinal),

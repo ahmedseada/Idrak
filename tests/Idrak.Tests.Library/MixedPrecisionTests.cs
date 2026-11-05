@@ -13,6 +13,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] MixedPrecisionGroup =
     [
         ("mixed precision: bfloat16 tensor-core products (every transpose, edges, batches, beta, split k) match bfloat16-rounded references", TensorCoreProducts),
+        ("mixed precision: float16 tensor-core products (every transpose, edges, batches, beta, split k; rows and columns far past a half's range) match the line-scaled float16 reference", HalfTensorCoreProducts),
         ("mixed precision: tensor-core split k adds the splits in split order (no atomic float additions): a split product repeated, and identical rows of one product, give the same bits; beta, bias and residual added once", TensorCoreSplitOrder),
         ("mixed precision: tensor-core flash attention (forward, log-sum-exp, dq, dk, dv; head sizes 64 and 128) matches float32", TensorCoreAttention),
         ("layer norm: the fused training kernels match the composed operations (output, input, gamma and beta gradients)", LayerNormTraining),
@@ -1384,10 +1385,11 @@ internal abstract partial class Tests
 
     internal static void TensorCoreProducts(Device device)
     {
-        // 15 parameters (23 with three products), the low-rank term's 3 (7), and the split-k sum's workspace and counters
-        // on every product that splits k (all but the GELU ones).
+        // 15 parameters (23 with three products), the low-rank term's 3 (7), the float16 products' row and column shifts,
+        // and the split-k sum's workspace and counters on every product that splits k (all but the GELU ones).
         Check(PtxKernels.TensorCoreNames.Where(k => k.StartsWith("gemm_tc")).All(k => PtxKernels.TensorCoreParameterCounts.TryGetValue(k, out int n)
-                  && n == (k.Contains("_multi") ? 23 : 15) + (k.Contains("_lr_") ? (k.Contains("_multi") ? 7 : 3) : 0) + (k.Contains("_gelu") ? 0 : 2))
+                  && n == (k.Contains("_multi") ? 23 : 15) + (k.Contains("_lr_") ? (k.Contains("_multi") ? 7 : 3) : 0) + (k.Contains("_f16_") ? 2 : 0)
+                       + (k.Contains("_gelu") ? 0 : 2))
               && PtxKernels.TensorCoreNames.All(PtxKernels.TensorCoreParameterCounts.ContainsKey), "tensor-core kernel signatures");
         var random = new Random(3);
         // A GPU that has tensor cores must load the module: a JIT error would otherwise fall back to float32 silently.
@@ -1496,6 +1498,105 @@ internal abstract partial class Tests
         {
             Console.WriteLine($"    (no tensor cores: {((CudaBackend)device.Backend).TensorCoreUnavailableReason}; float32 checked)");
         }
+    }
+
+    // Float16 products on the tensor cores (MatMulPrecision.Float16; PtxKernels.TensorCore.cs, …_f16_f32): every row of
+    // op(a) and column of op(b) scaled by the power of two that brings its largest magnitude into [2^14, 2^15), rounded to
+    // halves, summed in float32 and scaled back, against the same rounding summed in double (VulkanMixedMatrixTests'
+    // RoundedProduct, the reference Vulkan's float16 products meet): within float32's rounding of the sum of the terms'
+    // magnitudes, which bfloat16 operands, or float16 ones without the shifts (rows past 65504, columns below 2^-24),
+    // would miss by far. On a GPU without the tensor-core module, and on other devices, the product runs float32, counted.
+    internal static void HalfTensorCoreProducts(Device device)
+    {
+        if (device.Type != DeviceType.Cuda || MixedPrecision.TensorCoresUnavailable(device) is { } unavailable)
+        {
+            Console.WriteLine($"    (no CUDA tensor cores here; the float16 products are CUDA's)");
+            return;
+        }
+
+        var cuda = (CudaBackend)device.Backend;
+        Check(new[] { "gemm_tc_nn_f16_f32", "gemm_tc_nt_f16_f32", "gemm_tc_tn_f16_f32", "gemm_tc_tt_f16_f32", "line_shifts_rows_f32", "line_shifts_cols_f32" }
+                .All(PtxKernels.TensorCoreNames.Contains), "the float16 products and their shift kernels are built");
+        var random = new Random(16);
+        long launchesBefore = cuda.TensorCoreLaunches;
+        long convertedBefore = ElementTypes.ConversionsByOperation.TryGetValue(Idrak.Abstraction.Operations.Ops.BatchedMatMul.Name, out long was) ? was : 0;
+        bool anyDifferent = false;
+        // 130×150×4200: k split over blocks; (257, 300, 129) rows and columns past the tiles; batches of 2 and 3.
+        foreach (var (m, n, k, batch, wide) in new[] { (64, 64, 32, 1, false), (200, 130, 71, 2, true), (257, 300, 129, 1, true), (128, 256, 512, 3, false), (130, 150, 4200, 1, true) })
+        {
+            foreach (bool ta in new[] { false, true })
+            {
+                foreach (bool tb in new[] { false, true })
+                {
+                    foreach (float beta in new[] { 0f, 1f })
+                    {
+                        float[] a = [.. Enumerable.Range(0, batch * m * k).Select(_ => random.NextSingle() * 2 - 1)];
+                        float[] b = [.. Enumerable.Range(0, batch * k * n).Select(_ => random.NextSingle() * 2 - 1)];
+                        float[] c = [.. Enumerable.Range(0, batch * m * n).Select(_ => random.NextSingle() * 2 - 1)];
+                        if (wide)
+                        {
+                            // Rows of op(a) by 2^20 (past a half's 65504), columns of op(b) by 2^-30 (below its smallest
+                            // subnormal), every third row of op(a) by 2^-20, and one row of op(a) zero.
+                            for (int s = 0; s < batch; s++)
+                            {
+                                for (int i = 0; i < m; i++)
+                                {
+                                    float scale = i == 1 ? 0f : i % 3 == 0 ? MathF.ScaleB(1f, -20) : MathF.ScaleB(1f, 20);
+                                    for (int q = 0; q < k; q++)
+                                    {
+                                        a[s * m * k + (ta ? q * m + i : i * k + q)] *= scale;
+                                    }
+                                }
+
+                                for (int q = 0; q < k * n; q++)
+                                {
+                                    b[s * k * n + q] *= MathF.ScaleB(1f, -30);
+                                }
+                            }
+                        }
+
+                        using var ta_ = Tensor.From(a, [a.Length], device);
+                        using var tb_ = Tensor.From(b, [b.Length], device);
+                        using var tc_ = Tensor.From(c, [c.Length], device);
+                        using (MixedPrecision.Use(MatMulPrecision.Float16))
+                        {
+                            device.Backend.BatchedMatMul(ta_.Storage, tb_.Storage, tc_.Storage, batch, m, n, k, ta, tb, beta);
+                        }
+
+                        var got = tc_.ToArray();
+                        var (sum, rounded, exact) = RoundedProduct(a, b, batch, m, n, k, ta, tb, beta, c, VulkanKernels.CoopPrecision.Float16, roundB: true);
+                        string what = $"{m}×{n}×{k} batch {batch}, {(ta ? "t" : "n")}{(tb ? "t" : "n")}, beta {beta}{(wide ? ", wide lines" : "")}";
+                        for (int o = 0; o < got.Length; o++)
+                        {
+                            double allowed = 1e-5 * rounded[o] + 1e-30;
+                            Check(Math.Abs(got[o] - sum[o]) <= allowed,
+                                $"{what}: element {o} is {got[o]:R}, the float16 reference {sum[o]:R} (within {allowed:G3})");
+                        }
+
+                        // Rounded to halves, not computed in float32: some of the first outputs differ from the exact product.
+                        anyDifferent |= Enumerable.Range(0, Math.Min(64, got.Length))
+                            .Any(o => Math.Abs(got[o] - ExactValue(a, b, c, batch, m, n, k, ta, tb, beta, o)) > 1e-6 * exact[o]);
+                    }
+                }
+            }
+        }
+
+        long convertedAfter = ElementTypes.ConversionsByOperation.TryGetValue(Idrak.Abstraction.Operations.Ops.BatchedMatMul.Name, out long now) ? now : 0;
+        Check(cuda.TensorCoreLaunches > launchesBefore && anyDifferent && convertedAfter == convertedBefore,
+            $"the products ran on the tensor cores in float16, none counted as float32 ({convertedAfter - convertedBefore} counted)");
+    }
+
+    // op(a) · op(b) + beta · c at output `o`, in double from the unrounded operands.
+    private static double ExactValue(float[] a, float[] b, float[] c, int batch, int m, int n, int k, bool ta, bool tb, float beta, int o)
+    {
+        int s = o / (m * n), i = o % (m * n) / n, j = o % n;
+        double sum = 0;
+        for (int q = 0; q < k; q++)
+        {
+            sum += (double)a[s * m * k + (ta ? q * m + i : i * k + q)] * b[s * k * n + (tb ? j * k + q : q * n + j)];
+        }
+
+        return sum + (double)beta * c[o];
     }
 
     // Split k on the tensor cores (PtxKernels.TensorCore.cs, SplitSum). The PTX, on every device: each product kernel that
