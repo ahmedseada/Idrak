@@ -2,9 +2,10 @@
 
 **Status (2026-11-05):** W0-W2 (weight placement) and V0, V1, V1b (layouts, CPU views read in place) built, `main`
 6eff13c; N0 (int8 and fp8 gradient compression with error feedback; N0b: an all-to-all, so 4× fewer bytes on any number
-of ranks), N2 (pipeline stages sized by measured memory), T0, T1 (element and block types, integer indices on CPU and
-Vulkan) and K0 (a paged key/value cache with shared prompt prefixes, off by default; each layer's pages gathered into a
-working cache as it attends, page-aware attention kernels not yet) built 2026-11-05; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
+of ranks), N2 (pipeline stages sized by measured memory), T0, T1, T1b (element and block types, integer indices on CPU,
+Vulkan, CUDA and HIP) and K0 (a paged key/value cache with shared prompt prefixes, off by default; each layer's pages
+gathered into a working cache as it attends, page-aware attention kernels not yet) built 2026-11-05; Q0 (weights kept
+in their file's format, CPU and five Vulkan formats) built 2026-11-05; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
 2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`

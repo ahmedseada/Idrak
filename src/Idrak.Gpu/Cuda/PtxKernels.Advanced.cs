@@ -15,7 +15,7 @@ internal static partial class PtxKernels
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "log_softmax_topk_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32", "weight_norm_f32", "weight_norm_bwd_f32",
-        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
+        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "convert_f32_i32", "convert_i32_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "sum_axis_rows_f32", "broadcast_axis_f32",
     ];
 
@@ -332,9 +332,8 @@ internal static partial class PtxKernels
             mul.wide.u32 %rd8, %r13, 4;
             add.u64 %rd9, %b_values, %rd8;
             add.u64 %rd10, %b_indices, %rd8;
-            cvt.rn.f32.s32 %f9, %r11;
             @%p5 st.global.f32 [%rd9], %f7;
-            @%p5 st.global.f32 [%rd10], %f9;
+            @%p5 st.global.s32 [%rd10], %r11;
             mov.f32 %f6, %f7;
             mov.u32 %r10, %r11;
             add.u32 %r12, %r12, 1;
@@ -1035,14 +1034,17 @@ internal static partial class PtxKernels
 
     // ------------------------------------------------------------------ embeddings
 
-    /// <summary>Row index (clamped to maxindex) of element i: %r8 = table offset, element address in %rd3.</summary>
+    /// <summary>
+    /// Row index of element i, an int32 (the device's index type, plan 37, T1b) clamped to [0, maxindex]: %r8 = table
+    /// offset, element address in %rd3.
+    /// </summary>
     private const string TableIndex = """
         div.u32 %r5, %i, %s_dim;
         rem.u32 %r6, %i, %s_dim;
         mul.wide.u32 %rd1, %r5, 4;
         add.u64 %rd2, %b_indices, %rd1;
-        ld.global.f32 %f1, [%rd2];
-        cvt.rzi.u32.f32 %r7, %f1;
+        ld.global.s32 %r7, [%rd2];
+        max.s32 %r7, %r7, 0;
         min.u32 %r7, %r7, %s_maxindex;
         mad.lo.u32 %r8, %r7, %s_dim, %r6;
         mul.wide.u32 %rd3, %r8, 4;
@@ -1063,8 +1065,8 @@ internal static partial class PtxKernels
             rem.u32 %r6, %i, %s_dim;
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd2, %b_indices, %rd1;
-            ld.global.f32 %f1, [%rd2];
-            cvt.rzi.u32.f32 %r7, %f1;
+            ld.global.s32 %r7, [%rd2];
+            max.s32 %r7, %r7, 0;
             min.u32 %r7, %r7, %s_maxindex;
             shr.u32 %r9, %r6, 1;
             mad.lo.u32 %r8, %r7, %s_words, %r9;
@@ -1088,8 +1090,8 @@ internal static partial class PtxKernels
             rem.u32 %r6, %i, %s_dim;
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd2, %b_indices, %rd1;
-            ld.global.f32 %f1, [%rd2];
-            cvt.rzi.u32.f32 %r7, %f1;
+            ld.global.s32 %r7, [%rd2];
+            max.s32 %r7, %r7, 0;
             min.u32 %r7, %r7, %s_maxindex;
             shr.u32 %r9, %r7, 1;
             mul.wide.u32 %rd3, %r6, %s_words;
@@ -1113,12 +1115,27 @@ internal static partial class PtxKernels
             rem.u32 %r6, %i, %s_dim;
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd2, %b_indices, %rd1;
-            ld.global.f32 %f1, [%rd2];
-            cvt.rzi.u32.f32 %r7, %f1;
+            ld.global.s32 %r7, [%rd2];
+            max.s32 %r7, %r7, 0;
             min.u32 %r7, %r7, %s_maxindex;
             setp.eq.u32 %p1, %r7, %r6;
             selp.f32 %f2, 0f3F800000, 0f00000000, %p1;
             st.global.f32 [%a_y], %f2;
+            """);
+
+        // y[i] = x[i] between float32 and int32 (plan 37, T1b: the dispatcher's index conversions and a decoding context's
+        // positions in the index type), as Vulkan's: a float truncated toward zero (saturating, NaN to 0), an integer rounded
+        // to the nearest float. One thread per element.
+        Elementwise(sb, "convert_f32_i32", ["x", "y"], [], """
+            ld.global.f32 %f1, [%a_x];
+            cvt.rzi.s32.f32 %r5, %f1;
+            st.global.s32 [%a_y], %r5;
+            """);
+
+        Elementwise(sb, "convert_i32_f32", ["x", "y"], [], """
+            ld.global.s32 %r5, [%a_x];
+            cvt.rn.f32.s32 %f1, %r5;
+            st.global.f32 [%a_y], %f1;
             """);
 
         // dtable[indices[i], :] += dy[i, :] in a fixed order, no atomics (rule 86): each id's rows are added in position
@@ -1157,8 +1174,8 @@ internal static partial class PtxKernels
                 @!%p1 bra OWN_DONE;
                 mul.wide.u32 %rd3, %r6, 4;
                 add.u64 %rd4, %rd1, %rd3;
-                ld.global.f32 %f1, [%rd4];
-                cvt.rzi.u32.f32 %r7, %f1;
+                ld.global.s32 %r7, [%rd4];
+                max.s32 %r7, %r7, 0;
                 min.u32 %r7, %r7, %r2;
             OWN_DONE:
                 mov.u32 %r8, 0x80000000;
@@ -1174,8 +1191,8 @@ internal static partial class PtxKernels
                 @!%p3 bra STORE;
                 mul.wide.u32 %rd5, %r11, 4;
                 add.u64 %rd6, %rd1, %rd5;
-                ld.global.f32 %f2, [%rd6];
-                cvt.rzi.u32.f32 %r12, %f2;
+                ld.global.s32 %r12, [%rd6];
+                max.s32 %r12, %r12, 0;
                 min.u32 %r12, %r12, %r2;
             STORE:
                 shl.b32 %r13, %r3, 2;
@@ -1236,8 +1253,8 @@ internal static partial class PtxKernels
             setp.eq.u32 %p1, %r8, 0;
             @%p1 bra WALKED;
             add.u64 %rd3, %b_indices, %rd1;
-            ld.global.f32 %f1, [%rd3];
-            cvt.rzi.u32.f32 %r9, %f1;
+            ld.global.s32 %r9, [%rd3];
+            max.s32 %r9, %r9, 0;
             min.u32 %r9, %r9, %s_maxindex;
             mad.lo.u32 %r10, %r9, %s_dim, %r6;
             mul.wide.u32 %rd4, %r10, 4;

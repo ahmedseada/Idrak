@@ -639,9 +639,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | Device | Methods overridden |
 |---|---|
 | `CpuBackend` | 139 of 155 |
-| `CudaBackend` | 137 of 155 |
+| `CudaBackend` | 138 of 155 |
 | `DeferredBackend` | 11 of 155 |
-| `HipBackend` | 138 of 155 |
+| `HipBackend` | 139 of 155 |
 | `VulkanBackend` | 128 of 155 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -690,7 +690,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ClassMatchKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Col2ImKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `ConvertElementsKernel(2)` | virtual | ✓ |  |  |  | ✓ |
+| `ConvertElementsKernel(2)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ConvolutionBackwardInputKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ConvolutionBackwardWeightKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ConvolutionKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

@@ -177,6 +177,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
         SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
+        IndexType = ElementType.Int32,                                      // indices, token ids and offsets (plan 37, T1b: the int32 kernels)
     };
 
     bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);

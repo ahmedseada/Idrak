@@ -622,8 +622,9 @@ internal abstract partial class Tests
         var worst = new Dictionary<string, float>();
         var random = new Random(59);
         const int Count = 300, Dim = 13, Vocabulary = 37;
-        float[] ids = [.. Enumerable.Range(0, Count).Select(_ => (float)random.Next(Vocabulary))];
-        ids[5] = Vocabulary - 1;
+        int[] values = [.. Enumerable.Range(0, Count).Select(_ => random.Next(Vocabulary))];
+        values[5] = Vocabulary - 1;
+        float[] ids = Int32Words(values);                                        // int32, the device's index type (plan 37, T1b)
         foreach (var isa in TrainingIsas)
         {
             TrainingCase($"scatter_chain_u32 + scatter_walk_f32 ({isa}), {Count} rows of {Dim} into {Vocabulary} ids",

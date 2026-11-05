@@ -685,8 +685,8 @@ internal static partial class PtxKernels
             @%p13 ld.global.f32 %f30, [%rd9];
             @%p13 cvt.rzi.s32.f32 %r26, %f30;
             cvt.rn.f32.s32 %f14, %r26;
-            max.f32 %f19, %f14, 0f00000000;
-            @%p15 st.global.f32 [%a_ids], %f19;
+            max.s32 %r27, %r26, 0;
+            @%p15 st.global.s32 [%a_ids], %r27;
             @%p15 st.global.f32 [%rd5], %f14;
             div.rn.f32 %f15, %f10, %f6;
             @%p15 st.global.f32 [%rd5+4], %f15;
@@ -1040,7 +1040,8 @@ internal static partial class PtxKernels
             mov.f32 %f29, {Zero};
             sub.f32 %f29, %f29, %f28;
             add.u64 %rd14, %rd13, %b_ids;
-            st.global.f32 [%rd14], %f22;
+            cvt.rzi.s32.f32 %r31, %f22;
+            st.global.s32 [%rd14], %r31;
             ld.global.f32 %f23, [%b_step];
             cvt.rzi.u32.f32 %r31, %f23;
             mad.lo.u32 %r31, %r31, %s_nrows, %r7;
@@ -1100,8 +1101,7 @@ internal static partial class PtxKernels
             rem.u32 %r11, %r11, %s_cap;
             mul.wide.u32 %rd8, %r11, 4;
             add.u64 %rd8, %rd8, %rd4;
-            ld.global.f32 %f2, [%rd8];
-            cvt.rzi.u32.f32 %r12, %f2;
+            ld.global.u32 %r12, [%rd8];
             mov.u32 %r13, 0;
             mov.u32 %r14, 0;
             mov.u32 %r15, 0;
@@ -1113,8 +1113,7 @@ internal static partial class PtxKernels
             rem.u32 %r16, %r16, %s_cap;
             mul.wide.u32 %rd9, %r16, 4;
             add.u64 %rd9, %rd9, %rd4;
-            ld.global.f32 %f3, [%rd9];
-            cvt.rzi.u32.f32 %r17, %f3;
+            ld.global.u32 %r17, [%rd9];
             setp.eq.u32 %p3, %r17, %r12;
             selp.u32 %r18, 1, 0, %p3;
             add.u32 %r13, %r13, %r18;
@@ -1155,8 +1154,8 @@ internal static partial class PtxKernels
             mad.lo.u32 %r5, %i, %s_cap, %r5;
             mul.wide.u32 %rd1, %r5, 4;
             add.u64 %rd1, %b_history, %rd1;
-            ld.global.f32 %f2, [%a_ids];
-            st.global.f32 [%rd1], %f2;
+            ld.global.u32 %r6, [%a_ids];
+            st.global.u32 [%rd1], %r6;
             """);
     }
 }

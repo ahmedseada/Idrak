@@ -121,6 +121,7 @@ internal sealed unsafe partial class HipBackend
         "kv_write_bf16" or "gather_bf16_f32" => (0, 6),
         "kv_write_int8" => (3, 9),
         "decoder_mask_f32" => (0, 4),
+        "convert_f32_i32" or "convert_i32_f32" => (0, 8),
         "permute_f32" or "copy2d_f32" => variant ? (1, 12) : (0, 8),             // variant: adding into the output
         _ => TrainingCost(kernel),                                          // GcnKernels.Training.cs's table
     };

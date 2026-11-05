@@ -1286,9 +1286,10 @@ public sealed class PositionEmbedding : Module, ICachedModule, INamedWeights, IP
     }
 
     /// <inheritdoc />
-    public Tensor ForwardCached(Tensor input, DecodingContext context) => context.TokenPositions is { } positions
+    /// <remarks>The positions in the device's index type (<see cref="DecodingContext.PositionIndices"/>): the lookup takes no conversion.</remarks>
+    public Tensor ForwardCached(Tensor input, DecodingContext context) => context.TokenPositionIndices is { } positions
         ? input + Weight.EmbeddingLookup(positions).Reshape(input.Shape)                     // rows of different lengths
-        : input + Weight.EmbeddingLookup(context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first."));
+        : input + Weight.EmbeddingLookup(context.PositionIndices ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first."));
 
     /// <inheritdoc />
     public override IEnumerable<Tensor> Parameters() => [Weight];

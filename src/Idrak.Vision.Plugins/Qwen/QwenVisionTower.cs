@@ -126,7 +126,7 @@ public sealed class QwenVisionTower : Module
         var x = Step(patches, _patches.Forward);                                                // [patches, dim]
         if (layout.Order is { } order)
         {
-            x = Step(x, h => h.EmbeddingLookup(Tensor.From(order, [order.Length], device)));    // into window order
+            x = Step(x, h => h.EmbeddingLookup(RowIndices(order, device)));                    // into window order
         }
 
         for (int i = 0; i < _blocks.Length; i++)
@@ -138,10 +138,23 @@ public sealed class QwenVisionTower : Module
 
         if (layout.Reverse is { } reverse)
         {
-            x = Step(x, h => h.EmbeddingLookup(Tensor.From(reverse, [reverse.Length], device)));   // back into the patches' order
+            x = Step(x, h => h.EmbeddingLookup(RowIndices(reverse, device)));                  // back into the patches' order
         }
 
         return x;
+    }
+
+    // A row order as the library's integer indices (Tensor.Indices: the device's index type, plan 37 T1b), so the gather
+    // takes no conversion.
+    private static Tensor RowIndices(float[] rows, Device device)
+    {
+        var whole = new int[rows.Length];
+        for (int i = 0; i < whole.Length; i++)
+        {
+            whole[i] = (int)rows[i];
+        }
+
+        return Tensor.Indices(whole, device);
     }
 
     /// <inheritdoc />

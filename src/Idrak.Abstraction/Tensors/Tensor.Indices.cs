@@ -151,8 +151,12 @@ public sealed partial class Tensor
         return offset == 0 && count == all.Length ? all : all.AsSpan(offset, count).ToArray();
     }
 
-    // Overwrites an index tensor's elements with `indices`, stored in its type (a sampler's history).
-    internal void LoadIndices(ReadOnlySpan<int> indices)
+    /// <summary>
+    /// Overwrites this index tensor's elements in place with <paramref name="indices"/>, stored in its element type (a
+    /// sampler's history, a recordable pass's fixed row buffer; plan 37, T1 and T1b), as <see cref="Load"/> does for floats.
+    /// </summary>
+    /// <exception cref="ArgumentException">Not one index per element, or an index its type cannot hold exactly.</exception>
+    public void LoadIndices(ReadOnlySpan<int> indices)
     {
         ThrowIfDisposed();
         if (indices.Length != Size)

@@ -27,7 +27,7 @@ internal abstract partial class Tests
         ("gcn kernels: attention: attention_spans_f32 equals the CPU's attention over key ranges (grouped heads, two tables, an empty range: zeros and a log-sum-exp of -inf; a soft-cap; two splits merged) and its strided form over packed rows (two batches), the same bits on two grids and wave orders", GcnAttentionSpans),
         ("gcn kernels: attention: attn_scores_int8 and attn_context_int8 equal the CPU's scores and weighted values over an int8 cache (an odd head), the same bits on two grids and wave orders", GcnAttentionInt8Products),
         ("gcn kernels: shapes: kv_write_f32, kv_write_bf16 (an odd head, a NaN kept quiet) and kv_write_int8 (an odd head, a zero row) write the CPU's cache bit for bit, decoder_mask_f32 its mask, the same bits on two grids and wave orders", GcnShapesCache),
-        ("gcn kernels: shapes: gather_f32, gather_bf16_f32 and gather_bf16_cols_f32 (odd widths, the last row) equal the CPU's gathers bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
+        ("gcn kernels: shapes: gather_f32, gather_bf16_f32 and gather_bf16_cols_f32 (int32 indices; odd widths, the last row) and convert_f32_i32 and convert_i32_f32 equal the CPU's gathers and conversions bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
         ("gcn kernels: shapes: permute_f32 (ranks 1, 4 and 6; adding) and copy2d_f32 (pitches, adding) equal the CPU's bit for bit, the same bits on two grids and wave orders", GcnShapesPermute),
     ];
 
@@ -170,7 +170,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = AttentionAndShapes.Select(k => k.Name).ToArray();
-        Check(names.Length == 19 && names.Distinct().Count() == names.Length, $"19 attention and shape kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 21 && names.Distinct().Count() == names.Length, $"21 attention and shape kernels, each once: {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -496,7 +496,7 @@ internal abstract partial class Tests
         _ = device;
         const int Vocabulary = 37, Dim = 13, Count = 5;
         var random = new Random(46);
-        float[] ids = [0f, 5f, 36f, 2f, 36f];
+        float[] ids = Int32Words(0, 5, 36, 2, 36);                              // int32, the device's index type (plan 37, T1b)
         float[] table = RowsRandom(random, Vocabulary * Dim, 2f);
         float[] rowsTable = PackHalves(RowsRandom(random, Vocabulary * Dim, 2f), Vocabulary, Dim);
         float[] columnsTable = PackHalves(RowsRandom(random, Dim * Vocabulary, 2f), Dim, Vocabulary);
@@ -513,6 +513,21 @@ internal abstract partial class Tests
                 (b, s) => b.GatherBFloat16Columns(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) => AttentionDispatch("gather_bf16_cols_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (Vocabulary + 1) / 2,
                     (ulong)n));
+        }
+
+        // The conversions between float32 and int32 (plan 37, T1b), against the CPU's ConvertElements: whole numbers either
+        // way, signs, zero and the largest float32 holds exactly (2^24), over more than a block.
+        const int Converted = 300;
+        int[] whole = [.. Enumerable.Range(0, Converted).Select(i => i switch { 0 => 0, 1 => -1, 2 => 1 << 24, 3 => -(1 << 24), _ => random.Next(-100_000, 100_000) })];
+        float[] floats = [.. whole.Select(v => (float)v)];
+        foreach (var isa in AttentionIsas)
+        {
+            ShapesCase($"convert_f32_i32 ({isa})", [floats, Int32Words(new int[Converted])], ShapeGrid(Converted), [1],
+                (b, s) => b.ConvertElements(s[0], s[1]),
+                (m, a, grid, seed) => AttentionDispatch("convert_f32_i32", isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)Converted));
+            ShapesCase($"convert_i32_f32 ({isa})", [Int32Words(whole), new float[Converted]], ShapeGrid(Converted), [1],
+                (b, s) => b.ConvertElements(s[0], s[1]),
+                (m, a, grid, seed) => AttentionDispatch("convert_i32_f32", isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)Converted));
         }
     }
 

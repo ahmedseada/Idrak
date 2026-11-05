@@ -150,6 +150,23 @@ internal sealed unsafe partial class CudaBackend
         Launch1D(K("gather_f32"), n, P(table), P(indices), P(y), U(dim), U(vocabulary - 1), U(n));
     }
 
+    // The index conversions between float32 and int32 on the device (no host round trip, recordable in a graph), as
+    // Vulkan's; any other pair takes the host fallback (which checks every value).
+    public override void ConvertElementsKernel(Storage source, Storage destination)
+    {
+        var (from, to) = (source.ElementType, destination.ElementType);
+        string? kernel = ReferenceEquals(from, ElementType.Float32) && ReferenceEquals(to, ElementType.Int32) ? "convert_f32_i32"
+            : ReferenceEquals(from, ElementType.Int32) && ReferenceEquals(to, ElementType.Float32) ? "convert_i32_f32" : null;
+        long n = source.ElementCount;
+        if (kernel is null || n != destination.ElementCount || n > int.MaxValue)
+        {
+            base.ConvertElementsKernel(source, destination);
+            return;
+        }
+
+        Launch1D(K(kernel), (int)n, P(source), P(destination), U((int)n));
+    }
+
     public override void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {
         int n = count * classes;

@@ -577,9 +577,7 @@ internal static partial class GcnKernels
             v_cndmask_b32_e32 {bestColumn}, {bestColumn}, {e.Column}, vcc
             """, columns: true);
         w.Reduce(RowWriter.ArgMax, best, bestColumn);
-        string index = w.V();
-        w.L($"v_cvt_f32_i32_e32 {index}, {bestColumn}");
-        w.StoreFirstLane((vb, best, at), (ib, index, at));
+        w.StoreFirstLane((vb, best, at), (ib, bestColumn, at));     // an int32 column, -1 for none (plan 37 T1b)
         w.L($"v_mov_b32_e32 {previous}, {best}");
         w.L($"v_mov_b32_e32 {previousColumn}, {bestColumn}");
         w.L($"v_add_u32_e32 {at}, 4, {at}");

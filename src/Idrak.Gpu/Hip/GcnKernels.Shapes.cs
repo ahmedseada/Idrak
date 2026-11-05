@@ -7,7 +7,8 @@ using System.Text;
 namespace Idrak.Gpu.Hip;
 
 // HIP's shape kernels in GCN (plan 35, G4b): the key/value cache writes (float32, bfloat16, int8), the decoder mask, the
-// gathers (float32, bfloat16 rows, bfloat16 columns), the permute and the strided copy (adding or not), with CUDA's names
+// gathers (float32, bfloat16 rows, bfloat16 columns; int32 indices, plan 37 T1b), the permute, the strided copy (adding
+// or not) and the conversions between float32 and int32 (plan 37 T1b), with CUDA's names
 // and arguments in CUDA's order (PtxKernels.Decoding.cs, .Quantized.cs, .Advanced.cs: the buffers, then the 32-bit
 // values, the count n last), each computing what the CPU backend computes (CpuBackend.Decoding.cs, .Quantized.cs,
 // .Advanced.cs), the reference their results are proven against.
@@ -20,7 +21,7 @@ namespace Idrak.Gpu.Hip;
 // the kernel's start (rule 85), then each element takes a high product and two corrections. A position read from the
 // device (pos, position: a float holding a whole number) is read once. Byte offsets are 32-bit: every buffer a kernel
 // indexes stays below 2^30 floats (the backend checks and otherwise takes the host fallback). Out-of-range indices are
-// clamped to the table's last row as CUDA's are (the CPU refuses them).
+// clamped to [0, the table's last row] as CUDA's are (the CPU refuses them).
 //
 // For the profile's labels and --bench-hip's rates (HipBackend.Cost): each kernel, its arguments, its unit of work and
 // its floating-point operations and global-memory bytes per unit (an index's read counted with its row's elements, so
@@ -37,6 +38,8 @@ namespace Idrak.Gpu.Hip;
 // | gather_bf16_cols_f32 | table, indices, y; dim, maxindex, words, n                           | an output float      | 0     | 8            |
 // | permute_f32          | x, y; s0..s5, t0..t5, accumulate, n                                  | an output float      | 0 (1) | 8 (12)       |
 // | copy2d_f32           | src, dst; srcoff, srcstride, dstoff, dststride, cols, accumulate, n  | a copied float       | 0 (1) | 8 (12)       |
+// | convert_f32_i32      | x, y; n                                                              | an element           | 0     | 8            |
+// | convert_i32_f32      | x, y; n                                                              | an element           | 0     | 8            |
 //
 // (In brackets: adding into the output.) kv_write_bf16's work-item writes a word of two values (n = heads · steps ·
 // words); kv_write_int8's quantizes a whole cached row (n = heads · steps), reading it twice (its largest magnitude, then
@@ -65,6 +68,8 @@ internal static partial class GcnKernels
         ShapeGatherBFloat16(columns: true),
         ShapePermute(),
         ShapeCopy2D(),
+        ShapeConvert(toInt32: true),
+        ShapeConvert(toInt32: false),
     ];
 
     // cache[h, pos + t, d] = src[h, t, d]: one source float a work-item (h, rest) = i / (steps · dim).
@@ -245,7 +250,7 @@ internal static partial class GcnKernels
         w.L($"""
             v_lshlrev_b32_e32 {at}, 2, {row}
             global_load_dword {index}, {at}, {w.Pointer("indices")}
-            v_cvt_u32_f32_e32 {index}, {index}
+            v_max_i32_e32 {index}, 0, {index}
             v_min_u32_e32 {index}, {w.Scalar("maxindex")}, {index}
             """);
         return (index, column);
@@ -294,6 +299,23 @@ internal static partial class GcnKernels
             v_cndmask_b32_e32 {bits}, {bits}, {low}, vcc
             v_lshlrev_b32_e32 {at}, 2, {w.Item}
             global_store_dword {at}, {bits}, {w.Pointer("y")}
+            """);
+        return w.End();
+    }
+
+    // y[i] = x[i] between float32 and int32 (plan 37, T1b: the dispatcher's index conversions and a decoding context's
+    // positions in the index type), as CUDA's and Vulkan's: a float truncated toward zero (v_cvt_i32_f32 saturates, NaN
+    // gives 0), an integer rounded to the nearest float.
+    private static GcnKernelSource ShapeConvert(bool toInt32)
+    {
+        var w = new ElementWriter(toInt32 ? "convert_f32_i32" : "convert_i32_f32", ["x", "y"], ["n"]);
+        w.Begin();
+        string at = w.V(), value = w.V();
+        w.L($"""
+            v_lshlrev_b32_e32 {at}, 2, {w.Item}
+            global_load_dword {value}, {at}, {w.Pointer("x")}
+            {(toInt32 ? "v_cvt_i32_f32_e32" : "v_cvt_f32_i32_e32")} {value}, {value}
+            global_store_dword {at}, {value}, {w.Pointer("y")}
             """);
         return w.End();
     }

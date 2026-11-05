@@ -479,7 +479,7 @@ public static class BeamSearch
     {
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
-        using var input = Tensor.From(ids, shape, context.Device);
+        using var input = TokenIds.Of(ids, shape, context.Device);
         var output = step(input, context);
         int v = output.Shape[^1];
         if (output.Size != beams * v)
@@ -547,7 +547,7 @@ public static class BeamSearch
         {
             using var noGrad = Autograd.NoGrad();
             using var scope = new TensorScope();
-            using var input = Tensor.From(ids, shape, context.Device);
+            using var input = TokenIds.Of(ids, shape, context.Device);
             var output = step(input, context);
             int v = output.Shape[^1];
             if (output.Size != beams * v)

@@ -251,8 +251,10 @@ internal abstract partial class DesktopTests : Tests
                     Shown(get) ? (get!.IsPublic || any.IsFamily ? "" : "protected ") + "get;" : null,
                     Shown(set) ? (set!.IsPublic || any.IsFamily ? "" : "protected ") + (init ? "init;" : "set;") : null,
                 }.Where(a => a is not null));
+                // An indexer's parameters as its accessor declares them: the compiler puts their nullable annotations there,
+                // and the property's own index parameters carry none (read through them, the type's default answers).
                 var indexes = property.GetIndexParameters();
-                string name = indexes.Length == 0 ? property.Name : $"this[{string.Join(", ", indexes.Select(Parameter))}]";
+                string name = indexes.Length == 0 ? property.Name : $"this[{string.Join(", ", (get ?? set)!.GetParameters().Take(indexes.Length).Select(Parameter))}]";
                 string required = property.IsDefined(typeof(RequiredMemberAttribute), false) ? "required " : "";
                 yield return $"{Attributes(property.CustomAttributes, " ")}{Access(any)}{Modifiers(any, type)} {required}{TypeName(property.PropertyType, Nullability(property))} {name} {{ {accessors} }}";
             }

@@ -317,7 +317,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     ids.Slice(r * length + from, count).CopyTo(buffer.AsSpan(r * count, count));
                 }
 
-                using var part = Tensor.From(buffer.AsSpan(0, rows * count), [rows, count], Device);
+                using var part = TokenIds.Of(buffer.AsSpan(0, rows * count), [rows, count], Device);
                 if (from + count >= length)
                 {
                     return Model.ForwardCached(part, decoding);
@@ -758,7 +758,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 }
                 else
                 {
-                    using var ids = Tensor.From(input, [rows, promptLength], Device);
+                    using var ids = TokenIds.Of(input, [rows, promptLength], Device);
                     logits = images.Count == 0 ? Model.ForwardCached(ids, decoding) : Model.ForwardCached(ids, images, imageInput!.Value.Attention, decoding);
                 }
             }
@@ -1162,7 +1162,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     return values;
                 }
 
-                Tensor Window(int keep) => Tensor.From(WindowValues(keep), [1, keep], Device);
+                Tensor Window(int keep) => TokenIds.Of(WindowValues(keep), [1, keep], Device);
 
                 // The cached pass over the last `keep` ids (from position `start`): in pieces when they are more than one.
                 Tensor Feed(int keep, int start)

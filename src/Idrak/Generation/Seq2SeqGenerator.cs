@@ -242,7 +242,7 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
                 ids[i] = source[i];                                          // an empty prompt: one token 0
             }
 
-            var memory = Model.Encoder.Encode(Tensor.From(ids, [1, length], Model.Device));
+            var memory = Model.Encoder.Encode(TokenIds.Of(ids, [1, length], Model.Device));
             Model.SetMemory(memory, context);                               // projected once; the context holds it (one memory, every row)
         }
     }
@@ -356,7 +356,7 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
                 using (new TensorScope())
                 {
                     step[0] = current;
-                    var logits = Model.DecodeCached(Tensor.From(step, [1, 1], device), context);
+                    var logits = Model.DecodeCached(TokenIds.Of(step, [1, 1], device), context);
                     sampler.Sample(logits);
                 }
 

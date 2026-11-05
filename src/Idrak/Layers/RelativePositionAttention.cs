@@ -19,7 +19,7 @@ public sealed class RelativePositionAttention : Module
     private readonly Linear _q, _k, _v, _out;
     private readonly float[]? _relK, _relV;                                      // [2w + 1, d] each
     private readonly Tensor? _relKParameter, _relVParameter, _zeroRow;          // training: the relative embeddings [2w + 1, d] as parameters, and a zero row [1, d]
-    private readonly ConcurrentDictionary<int, (float[] RelK, float[] RelV, float[] Offsets)> _byLength = new();
+    private readonly ConcurrentDictionary<int, (float[] RelK, float[] RelV, int[] Offsets)> _byLength = new();
 
     /// <summary>
     /// Over the projections (each hidden → hidden), <paramref name="heads"/> heads, and the relative embeddings of
@@ -188,18 +188,19 @@ public sealed class RelativePositionAttention : Module
 
     // The relative embeddings [2T - 1, d] for T queries: the host's slices when speaking; when training, the parameters'
     // rows gathered (each offset's row, the zero row beyond the window), so their gradients reach the parameters.
-    private Tensor RelativeTable(Tensor? parameter, float[] host, float[] offsets, int t, int d, Device device) =>
+    // The offsets' rows are integer indices in the device's index type (plan 37, T1b): the gather takes no conversion.
+    private Tensor RelativeTable(Tensor? parameter, float[] host, int[] offsets, int t, int d, Device device) =>
         parameter is null
             ? Tensor.From(host, [2 * t - 1, d], device)
-            : Tensor.Concat([parameter, _zeroRow!], 0).EmbeddingLookup(Tensor.From(offsets, [offsets.Length], device));
+            : Tensor.Concat([parameter, _zeroRow!], 0).EmbeddingLookup(Tensor.Indices(offsets, device));
 
     // The relative embeddings for T queries: offset r in [0, 2T - 2] is key j = i + r - (T - 1).
-    private (float[] RelK, float[] RelV, float[] Offsets) BuildTables(int t)
+    private (float[] RelK, float[] RelV, int[] Offsets) BuildTables(int t)
     {
         int w = _window, d = Hidden / _heads, offsets = 2 * t - 1;
         var relK = new float[offsets * d];
         var relV = new float[offsets * d];
-        var rows = new float[offsets];
+        var rows = new int[offsets];
         for (int r = 0; r < offsets; r++)
         {
             int offset = r - (t - 1);

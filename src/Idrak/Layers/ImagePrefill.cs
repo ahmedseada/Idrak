@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
@@ -397,7 +398,7 @@ public sealed class ImagePrefillInputs : IDisposable
             .ToDictionary(r => r, r => (Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device),
                 Tensor.PersistentZeros([batch * steps, r.Rope.Scaled(r.HeadDim).Frequencies.Length], device)));
         var buffers = new ImageBlocks.Buffers(Tensor.PersistentZeros([imageTokens, dim], device),
-            Tensor.PersistentZeros([batch * steps], device),
+            Tensor.Empty([batch * steps], device, device.Backend.IndexTypeOf(Ops.Gather), zeroed: true, track: false),   // the gather's index type (plan 37, T1b)
             windows.ToDictionary(w => w, _ => (Tensor.PersistentZeros([batch * steps], device), Tensor.PersistentZeros([batch * steps], device))))
         {
             Rotary = rotary,
@@ -983,10 +984,10 @@ internal sealed class ImageBlocks
 
     // The row of the table [batch · steps rows of embeddings, then the features] each position reads: its own embedding,
     // or its image's feature row (the features counted from `first`, image after image).
-    private float[] Rows(int first)
+    private int[] Rows(int first)
     {
         int n = Batch, t = Steps;
-        var rows = new float[n * t];
+        var rows = new int[n * t];
         for (int r = 0; r < rows.Length; r++)
         {
             rows[r] = r;
@@ -1023,7 +1024,7 @@ internal sealed class ImageBlocks
             at += image.Tokens;
         }
 
-        buffers.Rows.Load(Rows(Batch * Steps));
+        buffers.Rows.LoadIndices(Rows(Batch * Steps));
         foreach (var (window, (starts, ends)) in buffers.Spans)
         {
             var (s, e) = SpanValues(window, 0, null);
@@ -1078,7 +1079,7 @@ internal sealed class ImageBlocks
         }
 
         var table = Tensor.Concat(parts, 0);
-        return table.EmbeddingLookup(Tensor.From(Rows(n * t), embeddings.Device)).Reshape(n, t, _dim);
+        return table.EmbeddingLookup(Tensor.Indices(Rows(n * t), embeddings.Device)).Reshape(n, t, _dim);
     }
 
     public readonly struct Scope(ImageBlocks? previous) : IDisposable

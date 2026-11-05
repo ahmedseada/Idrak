@@ -823,7 +823,7 @@ public sealed class PositionalEncoding : Module, ICachedModule, IPositionAware
 
     /// <inheritdoc />
     public Tensor ForwardCached(Tensor input, DecodingContext context) =>
-        input + _table.EmbeddingLookup(context.Positions ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first."));
+        input + _table.EmbeddingLookup(context.PositionIndices ?? throw new InvalidOperationException("Call DecodingContext.BeginStep first."));
 
     /// <inheritdoc />
     protected override void MoveTo(Device device) => _table = MoveTensor(_table, device);

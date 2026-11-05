@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Idrak.Gpu.Abstractions;
@@ -80,11 +81,35 @@ internal abstract partial class Tests
 
     private static ulong Bits(float value) => BitConverter.SingleToUInt32Bits(value);
 
-    // The buffers on the CPU backend after op.
+    // Index buffers (plan 37, T1b: indices, token ids and history in the device's index type, int32): their int32 values
+    // in a float array's words, as the GCN kernels read them; the CPU's storage of such a buffer is int32 too, so its
+    // dispatcher reads them as they are, and its outputs are compared bit for bit.
+    private static readonly ConditionalWeakTable<float[], object> s_int32Buffers = new();
+
+    private static float[] Int32Words(params ReadOnlySpan<int> values)
+    {
+        float[] words = MemoryMarshal.Cast<int, float>(values).ToArray();
+        s_int32Buffers.AddOrUpdate(words, s_int32Buffers);
+        return words;
+    }
+
+    private static float[] Int32Copy(float[] buffer) => Int32Words(MemoryMarshal.Cast<float, int>(buffer.AsSpan()));
+
+    private static bool IsInt32(float[] buffer) => s_int32Buffers.TryGetValue(buffer, out _);
+
+    // The int32 values an index buffer holds.
+    private static int[] Int32Values(float[] words) => MemoryMarshal.Cast<float, int>(words.AsSpan()).ToArray();
+
+    // The buffers on the CPU backend after op (an index buffer in an int32 storage).
     private static float[][] RowsOnCpu(float[][] inputs, Action<Backend, Storage[]> op)
     {
         var cpu = CpuBackend.Instance;
-        var storages = inputs.Select(d => { var s = cpu.Allocate(Math.Max(1, d.Length), false); cpu.Upload(d, s); return s; }).ToArray();
+        var storages = inputs.Select(d =>
+        {
+            var s = IsInt32(d) ? cpu.Allocate(ElementType.Int32, Math.Max(1, d.Length), false) : cpu.Allocate(Math.Max(1, d.Length), false);
+            cpu.Upload(d, s);
+            return s;
+        }).ToArray();
         try
         {
             op(cpu, storages);
@@ -151,6 +176,13 @@ internal abstract partial class Tests
         RowsSameBits(first, second, what);
         foreach (int o in outputs)
         {
+            if (IsInt32(inputs[o]))
+            {
+                Check(Int32Values(first[o]).SequenceEqual(Int32Values(expected[o])),
+                    $"{what}, storage {o} (int32): [{string.Join(", ", Int32Values(first[o]))}], the CPU's [{string.Join(", ", Int32Values(expected[o]))}]");
+                continue;
+            }
+
             float error = RowsCompare(expected[o], first[o], $"{what}, storage {o}");
             worst[kernel] = MathF.Max(worst.GetValueOrDefault(kernel), error);
         }
@@ -428,7 +460,7 @@ internal abstract partial class Tests
             x[3 * cols + cols / 2] = float.NaN;                              // a NaN: no candidate in its row
             foreach (var isa in RowsIsas)
             {
-                RowsCase($"log_softmax_topk_f32 ({isa}), {Rows} x {cols}, k = {K}", [x, new float[Rows * K], new float[Rows * K]], Rows, [1, 2],
+                RowsCase($"log_softmax_topk_f32 ({isa}), {Rows} x {cols}, k = {K}", [x, new float[Rows * K], Int32Words(new int[Rows * K])], Rows, [1, 2],
                     (b, s) => b.LogSoftmaxTopK(s[0], s[1], s[2], Rows, cols, K),
                     (m, a, grid, seed) => RowDispatch("log_softmax_topk_f32", isa, m, grid, seed, a[0], a[1], a[2], (ulong)cols, K, Rows),
                     worst, "log_softmax_topk_f32");

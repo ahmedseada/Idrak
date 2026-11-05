@@ -1304,8 +1304,7 @@ internal static partial class GcnKernels
             var (item, column) = w.DivMod(index, classes, byClasses);
             string at = w.V(), id = w.V(), value = w.V();
             w.L($"v_lshlrev_b32_e32 {at}, 2, {item}");
-            w.L($"global_load_dword {id}, {at}, {indices}");
-            w.L($"v_cvt_i32_f32_e32 {id}, {id}");
+            w.L($"global_load_dword {id}, {at}, {indices}");             // an int32 (the device's index type, plan 37 T1b)
             w.L($"v_min_i32_e32 {id}, {last}, {id}");
             w.L($"v_max_i32_e32 {id}, 0, {id}");
             w.L($"v_cmp_eq_u32_e32 vcc, {id}, {column}");
@@ -1325,7 +1324,8 @@ internal static partial class GcnKernels
 
     private static GcnArgument[]? _historyPushArguments;
 
-    // history[r · capacity + length mod capacity] = ids[r] (the length as the device holds it, a float).
+    // history[r · capacity + length mod capacity] = ids[r] (int32 ids copied as they lie; the length as the device holds
+    // it, a float).
     private static GcnKernelSource HistoryPush()
     {
         var w = new ProductWriter("history_push_f32");
@@ -1400,7 +1400,6 @@ internal static partial class GcnKernels
             v_cndmask_b32_e32 {slotK}, {slotK}, {wrapped}, vcc
             v_lshlrev_b32_e32 {slotK}, 2, {slotK}
             global_load_dword {id}, {slotK}, {hb}
-            v_cvt_i32_f32_e32 {id}, {id}
             v_mov_b32_e32 {count}, 0
             v_mov_b32_e32 {seen}, 0
             s_mov_b32 {q}, 0
@@ -1412,7 +1411,7 @@ internal static partial class GcnKernels
             s_cbranch_scc1 .Lwindow_end
             s_lshl_b32 {qAt}, {slotQ}, 2
             s_load_dword {other}, {hb}, {qAt}
-            v_cvt_i32_f32_e32 {otherId}, {other}
+            v_mov_b32_e32 {otherId}, {other}
             v_cmp_eq_u32_e32 vcc, {otherId}, {id}
             v_cndmask_b32_e64 {one}, 0, 1, vcc
             v_add_u32_e32 {count}, {count}, {one}
@@ -1765,7 +1764,7 @@ internal static partial class GcnKernels
                 v_min_f32_e32 {firstId}, {firstId}, {ided}
                 """);
             w.Reduce(SumAndMin, count, firstId);
-            string magnitude = w.V(), single = w.SPair(), minus = w.V(), unity = w.V(), greedySaved = w.SPair();
+            string magnitude = w.V(), single = w.SPair(), minus = w.V(), unity = w.V(), greedySaved = w.SPair(), firstInt = w.V();
             w.L($"""
                 v_and_b32_e32 {magnitude}, 0x7fffffff, {best}
                 v_cmp_ge_f32_e32 vcc, {PointwiseWriter.Literal(1e38f)}, {magnitude}
@@ -1774,9 +1773,10 @@ internal static partial class GcnKernels
                 s_cbranch_vccz {prefix}sample
                 v_mov_b32_e32 {minus}, -1.0
                 v_mov_b32_e32 {unity}, 1.0
+                v_cvt_i32_f32_e32 {firstInt}, {firstId}
                 v_cmp_eq_u32_e32 vcc, 0, {w.Tid}
                 s_and_saveexec_b64 {greedySaved}, vcc
-                global_store_dword {w.Zero}, {firstId}, {idsAt}
+                global_store_dword {w.Zero}, {firstInt}, {idsAt}
                 global_store_dword {w.Zero}, {firstId}, {statsRow}
                 global_store_dword {w.Zero}, {unity}, {statsRow} offset:4
                 global_store_dword {w.Zero}, {w.Zero}, {statsRow} offset:8
@@ -2228,6 +2228,7 @@ internal static partial class GcnKernels
         w.L($"""
             {MapId(chosen, chosenId)}
             v_max_f32_e32 {idValue}, 0, {chosenId}
+            v_cvt_i32_f32_e32 {idValue}, {idValue}
             v_mov_b32_e32 {divN}, {chosenWeight}
             {divText}
             v_mov_b32_e32 {probability}, {divQ}

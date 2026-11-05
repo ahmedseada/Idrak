@@ -900,6 +900,83 @@ public sealed partial class DecodingContext : IDisposable
     public Tensor? TokenStarts { get; private set; }
 
     /// <summary>
+    /// <see cref="Positions"/> in the element type the device's gathers read indices in (plan 37, T1b): what a learned
+    /// position table is read by (<see cref="Tensor.EmbeddingLookup(Tensor)"/>), so the lookup takes no conversion. Made
+    /// on first use in a step: a one-token step's on the device from <see cref="Position"/> into a buffer the context keeps
+    /// (a recorded step converts the position it is replayed at); a step of several positions' from the host. The
+    /// positions themselves stay float32, as the rotary, cache and mask kernels read them. Null outside a step.
+    /// </summary>
+    public Tensor? PositionIndices
+    {
+        get
+        {
+            var type = IndexType;
+            if (!InStep || Positions is not { } positions || ReferenceEquals(positions.ElementType, type))
+            {
+                return InStep ? Positions : null;
+            }
+
+            if (_steps == 1)
+            {
+                return Converted(positions, type, ref _positionIndices);
+            }
+
+            if (_stepPositionIndices is null)
+            {
+                var values = new int[_steps];
+                for (int t = 0; t < values.Length; t++)
+                {
+                    values[t] = Length + t;
+                }
+
+                _stepPositionIndices = Tensor.Empty([_steps], Device, type, track: false);   // freed with the step, not by a scope
+                _stepPositionIndices.LoadIndices(values);
+            }
+
+            return _stepPositionIndices;
+        }
+    }
+
+    /// <summary>
+    /// <see cref="TokenPositions"/> in the element type the device's gathers read indices in (plan 37, T1b), as
+    /// <see cref="PositionIndices"/>: converted on the device, into a buffer the context keeps for a one-token step (so it
+    /// records) and into the step's own otherwise. Null without <see cref="RowStarts"/> or outside a step.
+    /// </summary>
+    public Tensor? TokenPositionIndices
+    {
+        get
+        {
+            var type = IndexType;
+            if (!InStep || TokenPositions is not { } positions || ReferenceEquals(positions.ElementType, type))
+            {
+                return InStep ? TokenPositions : null;
+            }
+
+            return _steps == 1 ? Converted(positions, type, ref _tokenPositionIndices) : Converted(positions, type, ref _stepTokenPositionIndices);
+        }
+    }
+
+    // The positions in the index type: kept for one-token steps (a recorded step writes into the same buffer when replayed),
+    // and the current step's when it has several positions (freed with the step).
+    private Tensor? _positionIndices, _tokenPositionIndices, _stepPositionIndices, _stepTokenPositionIndices;
+
+    // The element type the device's gathers read indices in.
+    private ElementType IndexType => Device.Backend.IndexTypeOf(Operations.Ops.Gather);
+
+    // `source`'s elements converted on its device into `buffer` (made, or made again for another size, untracked).
+    private static Tensor Converted(Tensor source, ElementType type, ref Tensor? buffer)
+    {
+        if (buffer is null || buffer.Size != source.Size)
+        {
+            buffer?.Dispose();
+            buffer = Tensor.Empty(source.Shape, source.Device, type, track: false);
+        }
+
+        source.Backend.ConvertElements(source.Storage, buffer.Storage);
+        return buffer;
+    }
+
+    /// <summary>
     /// For a decoder with several rotary axes (<see cref="RopeSettings.Sections"/>) after a prompt whose image tokens were
     /// placed by an image position rule (<see cref="ImagePositionRules"/>): each row's rotary position minus its position
     /// in its sequence (Qwen2-VL's <c>rope_deltas</c>, negative when images take fewer positions than tokens), which the
@@ -1223,6 +1300,9 @@ public sealed partial class DecodingContext : IDisposable
         RotaryPositions = null;
         InStep = false;
         Positions = null;
+        _stepPositionIndices?.Dispose();
+        _stepTokenPositionIndices?.Dispose();
+        (_stepPositionIndices, _stepTokenPositionIndices) = (null, null);
     }
 
     /// <summary>Replays a step recorded with <see cref="CaptureStep"/> and advances the host-side length.</summary>
@@ -1495,6 +1575,8 @@ public sealed partial class DecodingContext : IDisposable
         _rotaryOffset?.Dispose();
         _rowStarts?.Dispose();
         _rowPositions?.Dispose();
+        _positionIndices?.Dispose();
+        _tokenPositionIndices?.Dispose();
         Position.Dispose();
         if (_mirrors is { } mirrors)
         {

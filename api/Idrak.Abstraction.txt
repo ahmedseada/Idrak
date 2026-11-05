@@ -3704,8 +3704,10 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Tensor PositionOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Mask { get; }
   public Idrak.Abstraction.Tensor? MaskOf(Idrak.Abstraction.Generation.KeyValueCache cache)
+  public Idrak.Abstraction.Tensor? PositionIndices { get; }
   public Idrak.Abstraction.Tensor? Positions { get; }
   public Idrak.Abstraction.Tensor? RotaryPositions { get; }
+  public Idrak.Abstraction.Tensor? TokenPositionIndices { get; }
   public Idrak.Abstraction.Tensor? TokenPositions { get; }
   public Idrak.Abstraction.Tensor? TokenStarts { get; }
   public System.Collections.Generic.IReadOnlyList<int>? MemoryLengthsOf(object owner)
@@ -6814,6 +6816,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public void Fill(float value)
   public void FillInPlace(float value)
   public void Load(System.ReadOnlySpan<float> values)
+  public void LoadIndices(System.ReadOnlySpan<int> indices)
   public void Record(string operation, System.Action<Idrak.Abstraction.Tensor> backward, params Idrak.Abstraction.Tensor[] inputs)
   public void ReleaseGrad()
   public void Scale(float factor)

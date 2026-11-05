@@ -143,7 +143,7 @@ public sealed partial class TextGenerator
                     {
                         if (count <= piece)
                         {
-                            using var input = Tensor.From(values.AsSpan(0, count), [1, count], Device);
+                            using var input = TokenIds.Of(values.AsSpan(0, count), [1, count], Device);
                             logits = Model.ForwardCached(input, decoding);
                         }
                         else
@@ -287,7 +287,7 @@ public sealed partial class TextGenerator
 
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
-                    using var tensor = Tensor.From(input.AsSpan(0, fed), [1, fed], Device);
+                    using var tensor = TokenIds.Of(input.AsSpan(0, fed), [1, fed], Device);
                     decoding.LastPositionOnly = false;
                     try
                     {
@@ -701,7 +701,7 @@ public sealed partial class TextGenerator
                 {
                     if (count <= piece)
                     {
-                        using var input = Tensor.From(values.AsSpan(0, count), [1, count], _owner.Device);
+                        using var input = TokenIds.Of(values.AsSpan(0, count), [1, count], _owner.Device);
                         logits = _owner.Model.ForwardCached(input, _decoding);
                     }
                     else

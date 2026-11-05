@@ -5,6 +5,8 @@ using System.Runtime.InteropServices;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Abstraction.Operations;
+using Idrak.Generation;
+using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
 // Plan 37, T0 and T1: element and block types as registered data, their conversions, the dispatcher's counted conversion
@@ -20,6 +22,7 @@ internal abstract partial class DesktopTests : Tests
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked: float32 until T2) or float32 (selected by --dtype or IDRAK_DEFAULT_DTYPE, said so); another value is refused naming the accepted ones; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
+        ("element types: decoding with learned positions (a decoder's position table, and a position encoding's) takes no counted conversion on the device: the prompt's ids, the step's positions and the sampled ids in its index type; the tokens as without the cache, and the cached lookup the float positions' converted one bit for bit", LearnedPositionDecoding),
     ];
 
     private static void ElementTypeRegistry(Device device)
@@ -260,6 +263,56 @@ internal abstract partial class DesktopTests : Tests
         Check(Device.Cpu.Backend.Capabilities.IndexType == ElementType.Int32 && Device.Cpu.Backend.IndexTypeOf(Ops.Gather) == ElementType.Int32
               && new BackendCapabilities { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1 }.IndexType == ElementType.Float32,
             "the CPU reads int32 indices; a device that says nothing float32");
+    }
+
+    // Plan 37, T1b: a decoder that reads a position table by each step's positions (GPT-2's learned positions, and the
+    // tiny model's position encoding), generating on `device`: no conversion counted, the same tokens with and without
+    // the cache, and the cached lookup (the context's positions in the index type) equal to the float positions' through
+    // the dispatcher's conversion, bit for bit: a prompt of several positions, then single steps.
+    private static void LearnedPositionDecoding(Device device)
+    {
+        var tokenizer = new CharTokenizer("abcdefghijklmnopqrstuvwxyz .");
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 32, Layers = 2, Heads = 2, KvHeads = 2, HeadDim = 16, FfDim = 64, MaxPositions = 48,
+            Norm = DecoderNorm.Layer, NormEpsilon = 1e-5f, Gated = false, Activation = FeedForwardActivation.Gelu, Rope = null,
+            QkvBias = true, OutputBias = true, FeedForwardBias = true, TieEmbeddings = true, LearnedPositions = true,
+        };
+        using var learned = spec.Build(options: new DecoderBuildOptions { Device = device, Seed = 3, InitStd = 0.05f });
+        learned.Eval();
+        var (tiny, tinyTokenizer) = TinyLanguageModel(device);
+        var options = new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = 10, Seed = 1 };
+        foreach (var (name, model, tokens) in new (string, Sequential, CharTokenizer)[] { ("learned positions", learned, tokenizer), ("a position encoding", tiny, tinyTokenizer) })
+        {
+            var hook = new ConversionsSeen();
+            string cached;
+            using (Telemetry.Subscribe(hook))
+            {
+                cached = new TextGenerator(model, tokens, 32) { KeepCache = false }.Generate("a cat sat", options).Text;
+            }
+
+            string recomputed = new TextGenerator(model, tokens, 32) { KeepCache = false }.Generate("a cat sat", options with { UseCache = false }).Text;
+            Check(hook.Events.Count == 0, $"{name} on {device}: no conversion counted while decoding, {hook.Events.Count} were: {string.Join("; ", hook.Events.Take(5))}");
+            Check(cached.Length > 0 && cached == recomputed, $"{name} on {device}: '{cached}' with the cache, '{recomputed}' without");
+        }
+
+        var table = learned.OfType<PositionEmbedding>().Single();
+        using var context = new DecodingContext(device, 1, 16);
+        using (Autograd.NoGrad())
+        using (new TensorScope())
+        {
+            foreach (int steps in (int[])[5, 1, 1])
+            {
+                context.BeginStep(steps);
+                var zeros = Tensor.Zeros([1, steps, spec.Dim], device);
+                Check(context.PositionIndices!.ElementType == device.Backend.IndexTypeOf(Ops.Gather), $"{steps} positions: in the gather's index type ({context.PositionIndices.ElementType})");
+                float[] indexed = table.ForwardCached(zeros, context).ToArray();
+                float[] converted = (zeros + table.Weight.EmbeddingLookup(context.Positions!)).ToArray();
+                string? differs = SameBits(converted, indexed, $"{steps} positions from {context.Length}");
+                Check(differs is null, differs ?? "");
+                context.EndStep(steps);
+            }
+        }
     }
 
     private static void IndicesPast2To24(Device device)

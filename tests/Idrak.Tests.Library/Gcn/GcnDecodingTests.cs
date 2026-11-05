@@ -734,7 +734,7 @@ internal abstract partial class Tests
         // wrapped (length 11), repeated ids and ids out of the vocabulary.
         {
             const int Rows = 2, Vocabulary = 300, Stride = 310, Offset = 5, Capacity = 8, LastN = 6;
-            float[] logits = RowsRandom(random, Rows * Stride, 4f), history = [12, 40, 299, 12, 350, 7, 40, 12, 3, -1, 3, 3, 250, 0, 9, 3];
+            float[] logits = RowsRandom(random, Rows * Stride, 4f), history = Int32Words(12, 40, 299, 12, 350, 7, 40, 12, 3, -1, 3, 3, 250, 0, 9, 3);
             foreach (var isa in RowsIsas)
             {
                 RowsCase($"penalize_rows_f32 {Rows}x{Vocabulary} ({isa})", [logits, new float[Rows * Vocabulary], history, [11f]], Rows, [1],
@@ -781,7 +781,7 @@ internal abstract partial class Tests
 
         {
             const int Count = 7, Classes = 13;
-            float[] indices = [0f, 12f, 5f, 5f, 3f, 11f, 1f];
+            float[] indices = Int32Words(0, 12, 5, 5, 3, 11, 1);
             float[] expected = RowsOnCpu([indices, new float[Count * Classes]], (cpu, s) => cpu.OneHot(s[0], s[1], Count, Classes))[1];
             foreach (var isa in ProductIsas)
             {
@@ -794,12 +794,12 @@ internal abstract partial class Tests
 
         {
             const int HRows = 3, Capacity = 5;
-            // The history holds token ids: whole numbers (the CPU's history is int32, plan 37's T1).
-            float[] ids = [17f, 4f, 99f], history = [.. RowsRandom(random, HRows * Capacity, 9f).Select(x => MathF.Abs(MathF.Round(x)))];
-            float[] expected = RowsOnCpu([ids, (float[])history.Clone(), [12f]], (cpu, s) => cpu.HistoryPush(s[0], s[1], s[2], HRows, Capacity))[1];
+            // The ids and the history are int32 token ids (the device's index type, plan 37's T1 and T1b).
+            float[] ids = Int32Words(17, 4, 99), history = Int32Words([.. RowsRandom(random, HRows * Capacity, 9f).Select(x => (int)MathF.Abs(MathF.Round(x)))]);
+            float[] expected = RowsOnCpu([ids, Int32Copy(history), [12f]], (cpu, s) => cpu.HistoryPush(s[0], s[1], s[2], HRows, Capacity))[1];
             foreach (var isa in ProductIsas)
             {
-                ProductsCase($"history_push_f32 {HRows} rows of {Capacity} ({isa})", [ids, (float[])history.Clone(), [12f]], [1], [ids, expected, [12f]],
+                ProductsCase($"history_push_f32 {HRows} rows of {Capacity} ({isa})", [ids, Int32Copy(history), [12f]], [1], [ids, expected, [12f]],
                     (memory, at, second, seed) => DecodingDispatch("history_push_f32", isa, memory, (1, 1, 1), seed, at[0], at[1], at[2], Capacity, HRows, HRows),
                     worst, "history_push_f32", exact: true);
             }
@@ -1005,7 +1005,8 @@ internal abstract partial class Tests
     // equal, the probabilities and entropy within the tolerance; the largest error.
     private static float SamplerCompare(float[] expectedIds, float[] ids, float[] expected, float[] actual, string what)
     {
-        Check(expectedIds.AsSpan().SequenceEqual(ids), $"{what}: tokens {string.Join(' ', ids)}, the CPU's {string.Join(' ', expectedIds)}");
+        int[] want = Int32Values(expectedIds), have = Int32Values(ids);                // int32 token ids (plan 37, T1b)
+        Check(want.SequenceEqual(have), $"{what}: tokens {string.Join(' ', have)}, the CPU's {string.Join(' ', want)}");
         float worst = 0f;
         for (int i = 0; i < expected.Length; i++)
         {
@@ -1071,7 +1072,7 @@ internal abstract partial class Tests
             // Inputs: logits, ids, stats, step 0, step 1, candidate scores, candidate ids, flags, parts, counters.
             float[][] inputs =
             [
-                logits, new float[Rows], new float[Steps * Rows * 13], [0f], [1f], new float[Rows * slots], new float[Rows * slots], new float[Rows * blocks],
+                logits, Int32Words(new int[Rows]), new float[Steps * Rows * 13], [0f], [1f], new float[Rows * slots], new float[Rows * slots], new float[Rows * blocks],
                 new float[Rows * blocks * 3], new float[Rows],
             ];
             float[][] expected = RowsOnCpu(inputs, (cpu, s) =>
