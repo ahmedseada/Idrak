@@ -598,6 +598,24 @@ public static class ElementTypes
     /// <summary>The conversions so far by operation ("Gather", "RouteTopK", ...).</summary>
     public static IReadOnlyDictionary<string, long> ConversionsByOperation => new Dictionary<string, long>(s_byOperation, StringComparer.Ordinal);
 
+    /// <summary>
+    /// Counts one conversion <paramref name="backend"/> made for <paramref name="operation"/> because its kernel takes
+    /// another type than its operand's (plan 37, T0; the brief: never widened silently): <paramref name="elements"/>
+    /// elements of <paramref name="from"/> converted to <paramref name="to"/>, in <see cref="Conversions"/>,
+    /// <see cref="ConversionsByOperation"/> and the telemetry (<see cref="Diagnostics.ElementsConverted"/>), as the
+    /// dispatcher counts its own. A backend whose kernel for a type is missing and that runs the operation through another
+    /// type (bfloat16 values computed as float32) counts each such conversion here.
+    /// </summary>
+    public static void CountConversion(Devices.Backend backend, Operations.Operation operation, ElementType from, ElementType to, long elements)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(from);
+        ArgumentNullException.ThrowIfNull(to);
+        ArgumentOutOfRangeException.ThrowIfNegative(elements);
+        Converted(backend.Kind, operation.Name, from, to, elements);
+    }
+
     // Counts one conversion for `operation` and publishes it while someone listens at TelemetryLevel.Devices.
     internal static void Converted(string device, string operation, ElementType from, ElementType to, long elements)
     {

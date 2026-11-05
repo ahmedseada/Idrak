@@ -27,7 +27,7 @@ internal abstract partial class DesktopTests : Tests
         ("element types: ids are stored in the smallest integer type that holds the data (uint8, int8, uint16, uint32, uint64, int64 by range), or the user's (--id-dtype, IDRAK_ID_DTYPE; one that does not hold the data is refused naming both), said with the role \"id type\"; Tensor.Ids stores them so and an embedding lookup reads uint8 ids", IdTypeChoice),
         ("element types: TypePromotions gives a result type from the inputs' types as data (a float over an integer, more bits over fewer, the narrowest type holding both exactly: bfloat16 with float16 gives float32, e4m3 with e5m2 bfloat16, uint8 with int8 int16; a block format takes the other's type); an app's rule is asked first; an undecided pair is refused", TypePromotionRules),
         ("element types: an operation's sum type is chosen per device from the types its backend reports (the CPU: float32): auto the fastest within the tolerance (IDRAK_SUM_TOLERANCE, else the values' resolution) from measurements, the only one when one is reported, or the user's (--sum-dtype, IDRAK_SUM_DTYPE); the telemetry carries its role", SumTypeChoice),
-        ("element types: Span<T> reads a tensor as its own type's C# type and refuses another naming both; FromValues stores host values in a given type or the run's choice", TypedReads),
+        ("element types: Span<T> reads a tensor as its own type's C# type and refuses another naming both; FromValues stores host values in a given type or the run's choice; a backend counts a conversion of its own with CountConversion", TypedReads),
     ];
 
     private static void ElementTypeRegistry(Device device)

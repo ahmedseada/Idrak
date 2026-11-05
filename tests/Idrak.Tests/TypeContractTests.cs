@@ -253,6 +253,14 @@ internal abstract partial class DesktopTests : Tests
         using var nibbles = Tensor.FromBytes([0x12], ElementType.Int4, [2], device);
         ThrowsNaming<InvalidOperationException>(() => nibbles.Span<byte>(), "int4 read as byte", "int4", "ToBytes");
 
+        // A backend counts a conversion it makes itself (a missing kernel run through another type), as the dispatcher does.
+        long conversions = ElementTypes.Conversions, elements = ElementTypes.ConvertedElements;
+        long softmax = ElementTypes.ConversionsByOperation.GetValueOrDefault(Ops.Softmax.Name);
+        ElementTypes.CountConversion(device.Backend, Ops.Softmax, ElementType.BFloat16, ElementType.Float32, 12);
+        Check(ElementTypes.Conversions - conversions == 1 && ElementTypes.ConvertedElements - elements == 12
+              && ElementTypes.ConversionsByOperation[Ops.Softmax.Name] - softmax == 1, "CountConversion: one conversion of 12 elements, by operation");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => ElementTypes.CountConversion(device.Backend, Ops.Softmax, ElementType.BFloat16, ElementType.Float32, -1), "a negative count", "elements");
+
         // FromValues without a type: the run's choice on the device.
         string? saved = Environment.GetEnvironmentVariable(ElementTypes.EnvironmentVariable);
         try

@@ -3272,6 +3272,7 @@ public static class Idrak.Abstraction.ElementTypes
   public static long ConvertedElements { get; }
   public static string Describe()
   public static string? Origin(string name)
+  public static void CountConversion(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Operations.Operation operation, Idrak.Abstraction.ElementType from, Idrak.Abstraction.ElementType to, long elements)
   public static void Register(Idrak.Abstraction.ElementType type)
   public static void Report(Idrak.Abstraction.ElementTypeChoice choice, Idrak.Abstraction.Device device)
 
