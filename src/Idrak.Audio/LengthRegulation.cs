@@ -107,7 +107,7 @@ public static class LengthRegulation
         int longest = 0;
         for (int i = 0; i < durations.Length; i++)
         {
-            double frames = (Math.Exp(logDurations[i]) - offset) / rate;
+            double frames = (PortableMath.Exp(logDurations[i]) - offset) / rate;
             durations[i] = frames > 0 ? (int)Math.Min(int.MaxValue / 2, Math.Round(frames, MidpointRounding.AwayFromZero)) : 0;
             total += durations[i];
             if (logDurations[i] > logDurations[longest])

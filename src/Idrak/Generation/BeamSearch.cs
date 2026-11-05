@@ -422,7 +422,7 @@ public static class BeamSearch
             }
         }
 
-        return [.. results.Select(x => new BeamHypothesis(x.Tokens, (float)(x.LogProb / Math.Pow(x.Length, options.LengthPenalty)), (float)x.LogProb))
+        return [.. results.Select(x => new BeamHypothesis(x.Tokens, (float)(x.LogProb / PortableMath.Pow(x.Length, options.LengthPenalty)), (float)x.LogProb))
             .OrderByDescending(h => h.Score)];
     }
 
@@ -449,7 +449,7 @@ public static class BeamSearch
         {
             if (!float.IsNegativeInfinity(x) && !float.IsNaN(x))
             {
-                sum += Math.Exp(x / (double)temperature - max);
+                sum += PortableMath.Exp(x / (double)temperature - max);
             }
         }
 
@@ -464,7 +464,7 @@ public static class BeamSearch
             }
 
             last = t;
-            running += Math.Exp(x / (double)temperature - max);
+            running += PortableMath.Exp(x / (double)temperature - max);
             if (running > target)
             {
                 return t;
@@ -682,11 +682,11 @@ public static class BeamSearch
         {
             if (!float.IsNegativeInfinity(x))
             {
-                sum += Math.Exp(x - max);
+                sum += PortableMath.Exp(x - max);
             }
         }
 
-        float shift = (float)(max + Math.Log(sum));
+        float shift = (float)(max + PortableMath.Log(sum));
         for (int i = 0; i < row.Length; i++)
         {
             row[i] -= shift;
@@ -758,7 +758,7 @@ public static class BeamSearch
     // A finished hypothesis, ranked by its length-normalized score; at most `beams` are kept (the worst dropped).
     private static void AddFinished(List<(List<int> Tokens, double Score, double LogProb)> finished, List<int> tokens, double logProb, int length, float penalty, int beams)
     {
-        double score = logProb / Math.Pow(Math.Max(length, 1), penalty);
+        double score = logProb / PortableMath.Pow(Math.Max(length, 1), penalty);
         if (finished.Count >= beams)
         {
             int worst = 0;
@@ -785,7 +785,7 @@ public static class BeamSearch
     // the worst finished hypothesis (transformers' BeamHypotheses.is_done).
     private static bool Finished(List<(List<int> Tokens, double Score, double LogProb)> finished, double bestLogProb, int length, float penalty)
     {
-        double highest = penalty > 0 ? bestLogProb / Math.Pow(length, penalty) : bestLogProb;
+        double highest = penalty > 0 ? bestLogProb / PortableMath.Pow(length, penalty) : bestLogProb;
         double worst = double.PositiveInfinity;
         foreach (var f in finished)
         {

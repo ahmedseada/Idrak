@@ -374,7 +374,7 @@ internal static class DataPreparation
 
             if (Log)
             {
-                value = Math.Log(value);
+                value = PortableMath.Log(value);
             }
 
             double std = Std ?? 1;

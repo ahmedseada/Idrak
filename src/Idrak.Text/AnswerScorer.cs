@@ -379,7 +379,7 @@ public sealed class AnswerScorer
         }
 
         double best = logLikelihoods.Max();
-        var weights = logLikelihoods.Select(x => Math.Exp(x - best)).ToArray();
+        var weights = logLikelihoods.Select(x => PortableMath.Exp(x - best)).ToArray();
         double total = weights.Sum();
         return new AnswerChoice(Array.IndexOf(logLikelihoods, best), [.. weights.Select(w => w / total)], logLikelihoods);
     }

@@ -272,10 +272,10 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
 
         foreach (float x in logits)
         {
-            sum += Math.Exp(x - max);
+            sum += PortableMath.Exp(x - max);
         }
 
-        return (float)(Math.Exp(logits[Config.NoSpeechToken] - max) / sum);
+        return (float)(PortableMath.Exp(logits[Config.NoSpeechToken] - max) / sum);
     }
 
     /// <summary>
@@ -409,7 +409,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
                 continue;
             }
 
-            double e = Math.Exp(x - max);
+            double e = PortableMath.Exp(x - max);
             sum += e;
             if (i >= begin)
             {
@@ -421,7 +421,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
             }
         }
 
-        if (timestampSum > 0 && (float.IsNegativeInfinity(bestText) || Math.Log(timestampSum) > bestText - max))
+        if (timestampSum > 0 && (float.IsNegativeInfinity(bestText) || PortableMath.Log(timestampSum) > bestText - max))
         {
             logits[..begin].Fill(float.NegativeInfinity);
         }

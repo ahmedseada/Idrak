@@ -38,7 +38,7 @@ internal sealed class RnNoiseFft
         {
             const double Pi = 3.14159265358979323846264338327;
             double phase = (-2 * Pi / size) * i;
-            _twiddles[i] = new RnNoiseComplex { R = (float)Math.Cos(phase), I = (float)Math.Sin(phase) };
+            _twiddles[i] = new RnNoiseComplex { R = (float)PortableMath.Cos(phase), I = (float)PortableMath.Sin(phase) };
         }
 
         if (!Factor(size, _factors))

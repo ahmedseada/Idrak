@@ -37,7 +37,7 @@ internal static class DynamicsMath
 {
     public const double SilentPower = 1e-30, GainSnap = 1e-12;
 
-    public static double Coefficient(double milliseconds, int sampleRate) => milliseconds <= 0 ? 0 : Math.Exp(-1000.0 / (milliseconds * sampleRate));
+    public static double Coefficient(double milliseconds, int sampleRate) => milliseconds <= 0 ? 0 : PortableMath.Exp(-1000.0 / (milliseconds * sampleRate));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static double Follow(double value, double target, double coefficient, double snap)
@@ -46,7 +46,7 @@ internal static class DynamicsMath
         return Math.Abs(step) >= snap ? target + step : target;
     }
 
-    public static double Gain(double decibels) => Math.Pow(10, decibels / 20);
+    public static double Gain(double decibels) => PortableMath.Pow(10, decibels / 20);
 
     // round(ms · fs / 1000) samples, half to even (as the reference's round).
     public static int Samples(double milliseconds, int sampleRate) => (int)Math.Round(milliseconds * sampleRate / 1000.0);
@@ -99,7 +99,7 @@ internal static class DynamicsMath
             for (int k = 0; k < width; k++)
             {
                 double t = fraction - (k - taps + 1), y = Math.PI * t;
-                filter[(p - 1) * width + k] = (float)(Math.Sin(y) / y * (0.5 + 0.5 * Math.Cos(Math.PI * t / taps)));
+                filter[(p - 1) * width + k] = (float)(PortableMath.Sin(y) / y * (0.5 + 0.5 * PortableMath.Cos(Math.PI * t / taps)));
             }
         }
 
@@ -364,8 +364,8 @@ internal sealed class GateProcessor : ILiveAudioProcessor
             _window = DynamicsMath.Coefficient(step.Number("window", 10), sampleRate);
             _attack = DynamicsMath.Coefficient(step.Number("attack", 1), sampleRate);
             _release = DynamicsMath.Coefficient(step.Number("release", 100), sampleRate);
-            _open = Math.Pow(10, threshold / 10);
-            _close = Math.Pow(10, (threshold - step.Number("hysteresis", 3)) / 10);
+            _open = PortableMath.Pow(10, threshold / 10);
+            _close = PortableMath.Pow(10, (threshold - step.Number("hysteresis", 3)) / 10);
             _floor = DynamicsMath.Gain(-step.Number("range", 60));
             _hold = DynamicsMath.Samples(step.Number("hold", 50), sampleRate);
             (_env, _gain, _left, _opened) = (new double[Groups], new double[Groups], new int[Groups], new bool[Groups]);
@@ -501,7 +501,7 @@ internal sealed class CompressProcessor : ILiveAudioProcessor
             _attack = DynamicsMath.Coefficient(step.Number("attack", 10), sampleRate);
             _release = DynamicsMath.Coefficient(step.Number("release", 100), sampleRate);
             // Under the knee's start the curve gives 0 dB: the level is compared there, without a logarithm.
-            _kneeStart = Math.Pow(10, (_threshold - _knee / 2) / (_rms ? 10 : 20));
+            _kneeStart = PortableMath.Pow(10, (_threshold - _knee / 2) / (_rms ? 10 : 20));
             (_env, _reduction, _lastReduction, _lastGain) = (new double[Groups], new double[Groups], new double[Groups], new double[Groups]);
             Array.Fill(_lastGain, _makeupGain);
         }
@@ -519,7 +519,7 @@ internal sealed class CompressProcessor : ILiveAudioProcessor
                     x = env;
                 }
 
-                double wanted = x > _kneeStart ? Curve((_rms ? 10 : 20) * Math.Log10(x), _threshold, _ratio, _knee) : 0;
+                double wanted = x > _kneeStart ? Curve((_rms ? 10 : 20) * PortableMath.Log10(x), _threshold, _ratio, _knee) : 0;
                 reduction = DynamicsMath.Follow(reduction, wanted, wanted < reduction ? _attack : _release, DynamicsMath.GainSnap);
                 if (reduction != last)
                 {
@@ -770,7 +770,7 @@ internal sealed class AgcProcessor : ILiveAudioProcessor
             _attack = DynamicsMath.Coefficient(step.Number("attack", 100), sampleRate);
             _release = DynamicsMath.Coefficient(step.Number("release", 1000), sampleRate);
             _window = DynamicsMath.Coefficient(step.Number("window", 300), sampleRate);
-            _gate = Math.Pow(10, step.Number("quiet", -50) / 10);
+            _gate = PortableMath.Pow(10, step.Number("quiet", -50) / 10);
             (_env, _gain, _last, _lastGain) = (new double[Groups], new double[Groups], new double[Groups], new double[Groups]);
             Array.Fill(_lastGain, 1.0);
         }
@@ -784,7 +784,7 @@ internal sealed class AgcProcessor : ILiveAudioProcessor
                 env = DynamicsMath.Follow(env, level[i], _window, DynamicsMath.SilentPower);
                 if (env >= _gate)
                 {
-                    double wanted = Math.Min(Math.Max(_target - 10 * Math.Log10(env), _min), _max);
+                    double wanted = Math.Min(Math.Max(_target - 10 * PortableMath.Log10(env), _min), _max);
                     gain = DynamicsMath.Follow(gain, wanted, wanted < gain ? _attack : _release, DynamicsMath.GainSnap);
                     if (gain != last)
                     {
@@ -822,10 +822,10 @@ internal static class KWeighting
 
         if (rbj)
         {
-            double a = Math.Pow(10, 4.0 / 40.0), w0 = 2.0 * Math.PI * 1500.0 / sampleRate;
-            double alpha = Math.Sin(w0) / (2.0 * (1 / Math.Sqrt(2))), cos = Math.Cos(w0), root = Math.Sqrt(a);
+            double a = PortableMath.Pow(10, 4.0 / 40.0), w0 = 2.0 * Math.PI * 1500.0 / sampleRate;
+            double alpha = PortableMath.Sin(w0) / (2.0 * (1 / Math.Sqrt(2))), cos = PortableMath.Cos(w0), root = Math.Sqrt(a);
             double s0 = (a + 1) - (a - 1) * cos + 2 * root * alpha;
-            double w1 = 2.0 * Math.PI * 38.0 / sampleRate, alpha1 = Math.Sin(w1) / (2.0 * 0.5), cos1 = Math.Cos(w1), h0 = 1 + alpha1;
+            double w1 = 2.0 * Math.PI * 38.0 / sampleRate, alpha1 = PortableMath.Sin(w1) / (2.0 * 0.5), cos1 = PortableMath.Cos(w1), h0 = 1 + alpha1;
             return
             [
                 a * ((a + 1) + (a - 1) * cos + 2 * root * alpha) / s0, -2 * a * ((a - 1) + (a + 1) * cos) / s0,
@@ -835,9 +835,9 @@ internal static class KWeighting
             ];
         }
 
-        double k = Math.Tan(Math.PI * ShelfHertz / sampleRate), vh = Math.Pow(10, ShelfGain / 20.0), vb = Math.Pow(vh, 0.499666774155);
+        double k = PortableMath.Tan(Math.PI * ShelfHertz / sampleRate), vh = PortableMath.Pow(10, ShelfGain / 20.0), vb = PortableMath.Pow(vh, 0.499666774155);
         double a0 = 1.0 + k / ShelfQ + k * k;
-        double kp = Math.Tan(Math.PI * PassHertz / sampleRate), p0 = 1.0 + kp / PassQ + kp * kp;
+        double kp = PortableMath.Tan(Math.PI * PassHertz / sampleRate), p0 = 1.0 + kp / PassQ + kp * kp;
         return
         [
             (vh + vb * k / ShelfQ + k * k) / a0, 2.0 * (k * k - vh) / a0, (vh - vb * k / ShelfQ + k * k) / a0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / ShelfQ + k * k) / a0,
@@ -967,7 +967,7 @@ internal sealed class LoudnessProcessor : IRecordingAudioProcessor
             }
 
             means[j] = sum / span.Length;
-            loudness[j] = means[j] > 0 ? -0.691 + 10 * Math.Log10(means[j]) : double.NegativeInfinity;
+            loudness[j] = means[j] > 0 ? -0.691 + 10 * PortableMath.Log10(means[j]) : double.NegativeInfinity;
             if (loudness[j] > absolute)
             {
                 gated += means[j];
@@ -980,7 +980,7 @@ internal sealed class LoudnessProcessor : IRecordingAudioProcessor
             return null;
         }
 
-        double gamma = -0.691 + 10 * Math.Log10(gated / count) + relative, kept = 0;
+        double gamma = -0.691 + 10 * PortableMath.Log10(gated / count) + relative, kept = 0;
         count = 0;
         for (int j = 0; j < blocks; j++)
         {
@@ -991,7 +991,7 @@ internal sealed class LoudnessProcessor : IRecordingAudioProcessor
             }
         }
 
-        return count == 0 ? null : -0.691 + 10 * Math.Log10(kept / count);
+        return count == 0 ? null : -0.691 + 10 * PortableMath.Log10(kept / count);
     }
 }
 
@@ -1080,7 +1080,7 @@ internal sealed class LiveLoudnessProcessor : ILiveAudioProcessor
                         total += _ring[k];
                     }
 
-                    double loudness = total > 0 ? -0.691 + 10 * Math.Log10(total / (_filled * _hop)) : double.NegativeInfinity;
+                    double loudness = total > 0 ? -0.691 + 10 * PortableMath.Log10(total / (_filled * _hop)) : double.NegativeInfinity;
                     _holding = loudness < _gate;
                     if (!_holding)
                     {

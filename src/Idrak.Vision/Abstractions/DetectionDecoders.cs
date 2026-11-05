@@ -297,7 +297,7 @@ internal sealed class BoxesScoresDecoder : IDetectionDecoderKind
 
                 if (logits)
                 {
-                    score = 1f / (1f + MathF.Exp(-score));
+                    score = 1f / (1f + PortableMathF.Exp(-score));
                 }
 
                 float a = outputs[first] * sx, b = outputs[first + step] * sy, c2 = outputs[first + 2 * step] * sx, d = outputs[first + 3 * step] * sy;

@@ -1367,8 +1367,8 @@ internal static class RopeTables
                     for (int i = 0; i < half; i++)
                     {
                         double angle = p * frequencies[i];
-                        cos[p * half + i] = (float)(Math.Cos(angle) * factor);
-                        sin[p * half + i] = (float)(Math.Sin(angle) * factor);
+                        cos[p * half + i] = (float)(PortableMath.Cos(angle) * factor);
+                        sin[p * half + i] = (float)(PortableMath.Sin(angle) * factor);
                     }
                 });
                 entry = new Entry(Tensor.Persistent(cos, [maxPositions, half], device, requiresGrad: false),

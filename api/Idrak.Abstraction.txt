@@ -6068,6 +6068,27 @@ public static class Idrak.Abstraction.Plugins.PluginPackageCatalogs
   public static string? PackageOf(string registry, string name)
   public static void Register(Idrak.Abstraction.Plugins.IPluginPackageCatalog catalog)
 
+public static class Idrak.Abstraction.PortableMath
+  public static double Atan(double x)
+  public static double Atan2(double y, double x)
+  public static double Cos(double x)
+  public static double Exp(double x)
+  public static double Log(double x)
+  public static double Log10(double x)
+  public static double Log2(double x)
+  public static double Pow(double x, double y)
+  public static double Sin(double x)
+  public static double Tan(double x)
+  public static double Tanh(double x)
+
+public static class Idrak.Abstraction.PortableMathF
+  public static float Cos(float x)
+  public static float Exp(float x)
+  public static float Log(float x)
+  public static float Pow(float x, float y)
+  public static float Sin(float x)
+  public static float Tanh(float x)
+
 public static class Idrak.Abstraction.RandomDraws
   public static double NextGaussian(this System.Random random)
 

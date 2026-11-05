@@ -94,7 +94,7 @@ internal sealed partial class CpuBackend
                 if (overlap == BoxOverlap.CIoU)
                 {
                     const double K = 4 / (Math.PI * Math.PI);
-                    double difference = Math.Atan(wg / hg) - Math.Atan(wp / hp);
+                    double difference = CpuMath.AtanDouble(wg / hg) - CpuMath.AtanDouble(wp / hp);
                     double v = K * difference * difference;
                     double alpha = v / (1 - iou + v + eps);    // a constant (no gradient), as torchvision's
                     loss += alpha * v;
@@ -171,8 +171,8 @@ internal sealed partial class CpuBackend
         float p = x >= 0 ? 1 / (1 + e) : e / (1 + e);
         float ce = MathF.Max(x, 0) - x * t + CpuMath.Log(1 + e);
         float pt = p * t + (1 - p) * (1 - t), q = 1 - pt;
-        float lower = gamma switch { 0 => 0, 1 => 1, 2 => q, _ => q == 0 && gamma < 1 ? 0 : MathF.Pow(q, gamma - 1) };   // q^(γ - 1)
-        float modulating = gamma == 0 ? 1 : gamma is 1 or 2 ? lower * q : MathF.Pow(q, gamma);
+        float lower = gamma switch { 0 => 0, 1 => 1, 2 => q, _ => q == 0 && gamma < 1 ? 0 : CpuMath.Pow(q, gamma - 1) };   // q^(γ - 1)
+        float modulating = gamma == 0 ? 1 : gamma is 1 or 2 ? lower * q : CpuMath.Pow(q, gamma);
         float weight = alpha >= 0 ? alpha * t + (1 - alpha) * (1 - t) : 1;
         float dPt = (2 * t - 1) * p * (1 - p);
         derivative = weight * ((p - t) * modulating - ce * gamma * lower * dPt);

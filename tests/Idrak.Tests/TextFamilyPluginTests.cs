@@ -116,9 +116,15 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             var (exit, output, error) = IdrakProcess("hello\n/exit\n", cache, "chat", TestData("gguf/tiny-llama-hf"), "--max-tokens", "2", "--seed", "1");
-            Check(exit == 0 && error.Length == 0 && output.Contains(" tokens", StringComparison.Ordinal) && !output.Contains("not registered", StringComparison.Ordinal), $"idrak chat on a Llama folder: exit {exit}, {output}{error}");
+            // Standard error holds the load's report (its element type, plan 37 T0; the weights kept packed, Q0: always shown)
+            // and nothing else.
+            static bool OnlyLoadReport(string error) => error.Split('\n').All(line => line.Trim().Length == 0
+                || line.StartsWith("element type: ", StringComparison.Ordinal) || line.StartsWith("weights kept packed: ", StringComparison.Ordinal)
+                || line.StartsWith("weights expanded: ", StringComparison.Ordinal));
+            Check(exit == 0 && OnlyLoadReport(error) && output.Contains(" tokens", StringComparison.Ordinal) && !output.Contains("not registered", StringComparison.Ordinal),
+                $"idrak chat on a Llama folder: exit {exit}, {output}{error}");
             (exit, output, error) = IdrakProcess(null, cache, "run", TestData("gguf/tiny-qwen3-q8.gguf"), "hi", "--max-tokens", "2", "-q");
-            Check(exit == 0 && error.Length == 0, $"idrak run on a qwen3 GGUF file: exit {exit}, {output}{error}");
+            Check(exit == 0 && OnlyLoadReport(error), $"idrak run on a qwen3 GGUF file: exit {exit}, {output}{error}");
         }
         finally
         {

@@ -63,8 +63,8 @@ internal sealed class PageCanvas : IDisposable
             {
                 double a = dir * 2 * Math.PI * k / Steps;
                 verbs.Add(k == 0 ? OutlineVerb.Move : OutlineVerb.Line);
-                points.Add((float)(r * Math.Cos(a)));
-                points.Add((float)(r * Math.Sin(a)));
+                points.Add((float)(r * PortableMath.Cos(a)));
+                points.Add((float)(r * PortableMath.Sin(a)));
             }
 
             verbs.Add(OutlineVerb.Close);

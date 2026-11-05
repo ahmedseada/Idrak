@@ -929,10 +929,10 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             sum += score;
         }
 
-        float logSum = (float)Math.Log(sum);
+        float logSum = (float)PortableMath.Log(sum);
         for (int i = 0; i < seeds.Count; i++)
         {
-            seeds[i] = (seeds[i].Item1, (float)(Math.Log(seeds[i].Item2) - logSum));
+            seeds[i] = (seeds[i].Item1, (float)(PortableMath.Log(seeds[i].Item2) - logSum));
         }
 
         return seeds;
@@ -1181,7 +1181,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             }
 
             float min = Math.Min(x, y), max = Math.Max(x, y);
-            return max > min + 50f ? max : (float)(max + Math.Log(Math.Exp(min - max) + 1.0));
+            return max > min + 50f ? max : (float)(max + PortableMath.Log(PortableMath.Exp(min - max) + 1.0));
         }
 
         // Forward-backward; adds each node's expected count, times the word's count, to the piece's (SentencePiece's
@@ -1220,7 +1220,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
             for (int i = 0; i < n; i++)
             {
                 float exponent = alpha[i] + Score[i] + beta[i] - z;
-                expected.Add(Id[i], frequency * Math.Exp(exponent));
+                expected.Add(Id[i], frequency * PortableMath.Exp(exponent));
             }
 
             // alpha of a node beginning at pos > 0 (or of EOS at the end): over the nodes ending there, in order.
@@ -1511,7 +1511,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         double xx = 1.0 / x;
         double xx2 = xx * xx;
         double xx4 = xx2 * xx2;
-        result += Math.Log(x) + ((1.0 / 24.0) * xx2) - ((7.0 / 960.0) * xx4) + ((31.0 / 8064.0) * xx4 * xx2) - ((127.0 / 30720.0) * xx4 * xx4);
+        result += PortableMath.Log(x) + ((1.0 / 24.0) * xx2) - ((7.0 / 960.0) * xx4) + ((31.0 / 8064.0) * xx4 * xx2) - ((127.0 / 30720.0) * xx4 * xx4);
         return result;
     }
 
@@ -1569,7 +1569,7 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
         }
 
         float sum = (float)accumulated;
-        float logSum = (float)Math.Log(sum);
+        float logSum = (float)PortableMath.Log(sum);
         var candidates = new List<(int Index, float Loss)>();
         var kept = new List<(string, float)>();
         for (int i = 0; i < count; i++)
@@ -1585,12 +1585,12 @@ internal sealed class UnigramTrainer : ITokenizerTrainer
                 continue;
             }
 
-            float logProbability = (float)(Math.Log(frequency[i]) - logSum);
-            float logSumAlternative = (float)Math.Log(sum + (frequency[i] * (float)(alternatives[i].Length - 1)));
+            float logProbability = (float)(PortableMath.Log(frequency[i]) - logSum);
+            float logSumAlternative = (float)PortableMath.Log(sum + (frequency[i] * (float)(alternatives[i].Length - 1)));
             float logProbabilityAlternative = 0;
             foreach (int n in alternatives[i])
             {
-                logProbabilityAlternative = (float)(logProbabilityAlternative + (Math.Log(frequency[n] + frequency[i]) - logSumAlternative));
+                logProbabilityAlternative = (float)(logProbabilityAlternative + (PortableMath.Log(frequency[n] + frequency[i]) - logSumAlternative));
             }
 
             float share = frequency[i] / sum;

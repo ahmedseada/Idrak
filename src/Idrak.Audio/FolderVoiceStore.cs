@@ -437,7 +437,7 @@ public sealed class FolderVoiceStore : ICheckpointVoiceStore
             peak = Math.Max(peak, Math.Abs(s));
         }
 
-        float floor = peak * MathF.Pow(10f, -options.SilenceDecibels / 20f);
+        float floor = peak * PortableMathF.Pow(10f, -options.SilenceDecibels / 20f);
         int window = Math.Max(1, sampleRate / 100), windows = (samples.Length + window - 1) / window;
         int first = 0, last = windows - 1;
         while (first < windows && WindowPeak(samples, first, window) < floor)

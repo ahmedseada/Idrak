@@ -424,7 +424,7 @@ public sealed class BucketedPositionBias : DistancePositionBias
             return result + relative;
         }
 
-        float scaled = MathF.Log((float)relative / exact) / (float)Math.Log((double)maxDistance / exact) * (buckets - exact);
+        float scaled = PortableMathF.Log((float)relative / exact) / (float)PortableMath.Log((double)maxDistance / exact) * (buckets - exact);
         return result + Math.Min(exact + (int)scaled, buckets - 1);
     }
 

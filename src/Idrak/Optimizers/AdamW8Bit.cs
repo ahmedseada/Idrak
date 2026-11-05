@@ -115,7 +115,7 @@ public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientSt
         for (int i = 0; i < ExponentBits; i++)
         {
             int items = signed ? (1 << (i + NonSignBits - ExponentBits)) + 1 : (1 << (i + NonSignBits - ExponentBits + 1)) + 1;
-            float power = MathF.Pow(10f, -(ExponentBits - 1) + i);
+            float power = PortableMathF.Pow(10f, -(ExponentBits - 1) + i);
             for (int j = 0; j + 1 < items; j++)
             {
                 // Midpoints of linspace(0.1, 1, items), in float32 as torch computes them.

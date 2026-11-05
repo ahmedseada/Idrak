@@ -60,7 +60,7 @@ internal sealed partial class VulkanBackend
 
         // The host computes what the CPU computes on the host, so both use the same values.
         float invT = 1f / MathF.Max(temperature, 1e-3f);
-        float logMinP = minP > 0f ? MathF.Log(minP) : 0f;
+        float logMinP = minP > 0f ? PortableMathF.Log(minP) : 0f;
         int blocks = (vocabulary + VulkanKernels.SliceLength - 1) / VulkanKernels.SliceLength;
         bool useSlots = topK > 0 && topK < vocabulary && topK <= VulkanKernels.MaxTopKSlots && vocabulary > SlotVocabulary;
         int slotCount = useSlots ? blocks * topK : 0;

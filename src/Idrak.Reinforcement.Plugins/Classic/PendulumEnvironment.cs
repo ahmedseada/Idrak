@@ -145,7 +145,7 @@ public sealed class PendulumEnvironment : IEnvironment<float[], float[]>
         float u = Math.Clamp(action[0], -MaxTorque, MaxTorque);
         double normalized = AngleNormalize(_theta);
         double costs = normalized * normalized + 0.1 * (_thetaDot * _thetaDot) + (double)(_costGain * (u * u));
-        double newThetaDot = _thetaDot + (3 * Options.Gravity / (2 * Length) * Math.Sin(_theta) + (double)(_torqueGain * u)) * Dt;
+        double newThetaDot = _thetaDot + (3 * Options.Gravity / (2 * Length) * PortableMath.Sin(_theta) + (double)(_torqueGain * u)) * Dt;
         newThetaDot = Math.Clamp(newThetaDot, -MaxSpeed, MaxSpeed);
         _theta += newThetaDot * Dt;
         _thetaDot = newThetaDot;
@@ -158,7 +158,7 @@ public sealed class PendulumEnvironment : IEnvironment<float[], float[]>
     /// <summary>Ends the episode under way; more than once is harmless.</summary>
     public void Dispose() => _clock.Running = false;
 
-    private float[] Observe() => [(float)Math.Cos(_theta), (float)Math.Sin(_theta), (float)_thetaDot];
+    private float[] Observe() => [(float)PortableMath.Cos(_theta), (float)PortableMath.Sin(_theta), (float)_thetaDot];
 
     // Gymnasium's angle_normalize: ((x + π) mod 2π) − π with Python's floor modulo (numpy's remainder: the sign of the divisor).
     private static double AngleNormalize(double x)

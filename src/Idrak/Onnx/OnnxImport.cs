@@ -1498,8 +1498,8 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
             {
                 for (int i = 0; i < d; i++)
                 {
-                    double angle = pos / Math.Pow(10000, 2 * (i / 2) / (double)d);
-                    if (MathF.Abs(values[pos * d + i] - (float)(i % 2 == 0 ? Math.Sin(angle) : Math.Cos(angle))) > 1e-4f)
+                    double angle = pos / PortableMath.Pow(10000, 2 * (i / 2) / (double)d);
+                    if (MathF.Abs(values[pos * d + i] - (float)(i % 2 == 0 ? PortableMath.Sin(angle) : PortableMath.Cos(angle))) > 1e-4f)
                     {
                         throw Unsupported(node, "a learned (non-sinusoidal) position table");
                     }

@@ -43,7 +43,7 @@ internal sealed class SilenceSplitter : IAudioSplitter
                 return [];                                                       // all silence
             }
 
-            double floor = loudest * Math.Pow(10, -options.SilenceDecibels / 10.0);
+            double floor = loudest * PortableMath.Pow(10, -options.SilenceDecibels / 10.0);
             int minSilence = Math.Max(1, (int)Math.Ceiling(options.MinSilenceSeconds * audio.SampleRate / hop));
             // The voiced stretches (frame ranges), joined across pauses shorter than the minimum.
             var stretches = new List<(int First, int Last)>();

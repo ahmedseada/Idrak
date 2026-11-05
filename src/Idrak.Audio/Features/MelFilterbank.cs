@@ -77,23 +77,23 @@ public static class MelFilterbank
     {
         if (htk)
         {
-            return 2595.0 * Math.Log10(1.0 + hz / 700.0);
+            return 2595.0 * PortableMath.Log10(1.0 + hz / 700.0);
         }
 
         const double FSp = 200.0 / 3, MinLogHz = 1000.0;
-        double minLogMel = MinLogHz / FSp, logStep = Math.Log(6.4) / 27.0;
-        return hz >= MinLogHz ? minLogMel + Math.Log(hz / MinLogHz) / logStep : hz / FSp;
+        double minLogMel = MinLogHz / FSp, logStep = PortableMath.Log(6.4) / 27.0;
+        return hz >= MinLogHz ? minLogMel + PortableMath.Log(hz / MinLogHz) / logStep : hz / FSp;
     }
 
     private static double MelToHz(double mel, bool htk)
     {
         if (htk)
         {
-            return 700.0 * (Math.Pow(10.0, mel / 2595.0) - 1.0);
+            return 700.0 * (PortableMath.Pow(10.0, mel / 2595.0) - 1.0);
         }
 
         const double FSp = 200.0 / 3, MinLogHz = 1000.0;
-        double minLogMel = MinLogHz / FSp, logStep = Math.Log(6.4) / 27.0;
-        return mel >= minLogMel ? MinLogHz * Math.Exp(logStep * (mel - minLogMel)) : FSp * mel;
+        double minLogMel = MinLogHz / FSp, logStep = PortableMath.Log(6.4) / 27.0;
+        return mel >= minLogMel ? MinLogHz * PortableMath.Exp(logStep * (mel - minLogMel)) : FSp * mel;
     }
 }

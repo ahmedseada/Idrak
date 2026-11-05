@@ -358,27 +358,50 @@ internal sealed partial class CpuBackend
             return;
         }
 
+        // Short runs: chunks of rows from the numerical contract (about CpuTuning.ReductionElements values each, never a
+        // thread count), each chunk's per-element sums in float, then the chunks' sums added into s1 and s2 in chunk order
+        // (plan 37, P0b; they were added under a lock as the threads finished). The chunks run a wave of one per thread at
+        // a time, so the scratch is a wave's, not every chunk's; the order of every sum is the same however many threads.
         int row = groups * inner;
-        var gate = new Lock();
-        For(outer, (long)outer * row * 2, (start, end) =>
+        int rowsPerChunk = Math.Max(1, CpuTuning.ReductionElements / Math.Max(1, row));
+        int chunks = (outer + rowsPerChunk - 1) / rowsPerChunk;
+        bool parallel = chunks > 1 && (long)outer * row * 2 >= CpuTuning.ReductionElements && ComputeResources.AllowParallel;
+        int wave = parallel ? Math.Min(chunks, ComputeResources.MaxCpuThreads) : 1;
+        float[] scratch = ArrayPool<float>.Shared.Rent(Math.Max(1, wave * 2 * row));
+        try
         {
-            float[] rented1 = ArrayPool<float>.Shared.Rent(row), rented2 = ArrayPool<float>.Shared.Rent(row);
-            try
+            for (int first = 0; first < chunks; first += wave)
             {
-                var acc1 = rented1.AsSpan(0, row);
-                var acc2 = rented2.AsSpan(0, row);
-                acc1.Clear();
-                acc2.Clear();
-                for (int o = start; o < end; o++)
+                int count = Math.Min(wave, chunks - first), firstChunk = first;
+                void Chunk(int k)
                 {
-                    var ra = a.AsSpan(o * row, row);
-                    var rb = b is null ? ra : b.AsSpan(o * row, row);
-                    AddInPlace(acc1, ra);
-                    MultiplyAddInPlace(acc2, ra, rb);
+                    var acc1 = scratch.AsSpan(k * 2 * row, row);
+                    var acc2 = scratch.AsSpan(k * 2 * row + row, row);
+                    acc1.Clear();
+                    acc2.Clear();
+                    int o0 = (firstChunk + k) * rowsPerChunk, o1 = Math.Min(outer, o0 + rowsPerChunk);
+                    for (int o = o0; o < o1; o++)
+                    {
+                        var ra = a.AsSpan(o * row, row);
+                        var rb = b is null ? ra : b.AsSpan(o * row, row);
+                        AddInPlace(acc1, ra);
+                        MultiplyAddInPlace(acc2, ra, rb);
+                    }
                 }
 
-                lock (gate)
+                if (count > 1)
                 {
+                    Parallel.For(0, count, ComputeResources.ParallelOptions, Chunk);
+                }
+                else
+                {
+                    Chunk(0);
+                }
+
+                for (int k = 0; k < count; k++)                              // in chunk order
+                {
+                    var acc1 = scratch.AsSpan(k * 2 * row, row);
+                    var acc2 = scratch.AsSpan(k * 2 * row + row, row);
                     for (int i = 0; i < row; i++)
                     {
                         s1[i / inner] += acc1[i];
@@ -386,12 +409,11 @@ internal sealed partial class CpuBackend
                     }
                 }
             }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(rented2);
-                ArrayPool<float>.Shared.Return(rented1);
-            }
-        }, chunksSummed: true);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(scratch);
+        }
     }
 
     /// <summary>Σ x over a row, in the fixed lanes (<see cref="CpuMath.Sum"/>).</summary>

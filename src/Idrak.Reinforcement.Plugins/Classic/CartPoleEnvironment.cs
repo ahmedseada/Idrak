@@ -149,7 +149,7 @@ public sealed class CartPoleEnvironment : IEnvironment<float[], int>
         // Gymnasium's step, in its order of operations.
         double x = _state[0], xDot = _state[1], theta = _state[2], thetaDot = _state[3];
         double force = action == 1 ? ForceMagnitude : -ForceMagnitude;
-        double cos = Math.Cos(theta), sin = Math.Sin(theta);
+        double cos = PortableMath.Cos(theta), sin = PortableMath.Sin(theta);
         double temp = (force + PoleMassLength * (thetaDot * thetaDot) * sin) / TotalMass;
         double thetaAcc = (Gravity * sin - cos * temp) / (Length * (4.0 / 3.0 - MassPole * (cos * cos) / TotalMass));
         double xAcc = temp - PoleMassLength * thetaAcc * cos / TotalMass;

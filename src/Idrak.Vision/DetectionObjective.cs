@@ -77,7 +77,7 @@ public static class DetectionObjective
         var matcher = BoxMatchers.Get(options.Matcher);
         bool set = string.Equals(options.Matcher, BoxMatchers.Hungarian, StringComparison.OrdinalIgnoreCase);
         float[] predicted = candidates.Boxes.ToArray();
-        float[]? probabilities = set ? [.. candidates.ClassLogits.ToArray().Select(v => 1f / (1f + MathF.Exp(-v)))] : null;
+        float[]? probabilities = set ? [.. candidates.ClassLogits.ToArray().Select(v => 1f / (1f + PortableMathF.Exp(-v)))] : null;
         bool objectness = candidates.Objectness is not null;
 
         var boxTargets = new float[rows * 4];

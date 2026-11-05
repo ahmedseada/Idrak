@@ -78,7 +78,7 @@ public sealed class ElementwiseAffineFlow : Module
         float[] logScale = LogScale.ToArray(), translate = Translate.ToArray();
         for (int c = 0; c < channels; c++)
         {
-            double scale = Math.Exp(-logScale[c]);
+            double scale = PortableMath.Exp(-logScale[c]);
             var row = latents.Slice(c * t, t);
             for (int n = 0; n < t; n++)
             {

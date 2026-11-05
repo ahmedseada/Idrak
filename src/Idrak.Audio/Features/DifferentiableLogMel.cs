@@ -30,8 +30,8 @@ public static class DifferentiableLogMel
             for (int n = 0; n < size; n++)
             {
                 double angle = 2 * Math.PI * n * k / size;
-                basis[k * size + n] = (float)(window[n] * Math.Cos(angle));
-                basis[(bins + k) * size + n] = (float)(-window[n] * Math.Sin(angle));
+                basis[k * size + n] = (float)(window[n] * PortableMath.Cos(angle));
+                basis[(bins + k) * size + n] = (float)(-window[n] * PortableMath.Sin(angle));
             }
         }
 

@@ -791,7 +791,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     if (ends[r] is null)
                     {
                         generated[r].Add(step[r].Id);
-                        logProbabilities?[r].Add(MathF.Log(step[r].Probability));
+                        logProbabilities?[r].Add(PortableMathF.Log(step[r].Probability));
                     }
                 }
             }
@@ -1507,7 +1507,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 _shown.Add(id);
             }
 
-            LogProbabilities?.Add(MathF.Log(probability));
+            LogProbabilities?.Add(PortableMathF.Log(probability));
         }
 
         // After ids were added: a reply caught in a loop ends (GenerationOptions.RepeatStop).

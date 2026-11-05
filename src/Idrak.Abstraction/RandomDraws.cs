@@ -11,6 +11,6 @@ public static class RandomDraws
     {
         ArgumentNullException.ThrowIfNull(random);
         double u1 = 1.0 - random.NextDouble(), u2 = random.NextDouble();
-        return Math.Sqrt(-2 * Math.Log(u1)) * Math.Cos(2 * Math.PI * u2);
+        return Math.Sqrt(-2 * PortableMath.Log(u1)) * PortableMath.Cos(2 * Math.PI * u2);
     }
 }

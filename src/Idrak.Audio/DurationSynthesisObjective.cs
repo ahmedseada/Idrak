@@ -87,7 +87,7 @@ public sealed class DurationSynthesisObjective : ISpeechSynthesisObjective
             for (int i = 0; i < lengths[b]; i++)
             {
                 ids[b * length + i] = labels[b][i];
-                targets[b * length + i] = MathF.Log(durations[b][i] + offset);
+                targets[b * length + i] = PortableMathF.Log(durations[b][i] + offset);
                 labelWeights[b * length + i] = labelWeight;
             }
 

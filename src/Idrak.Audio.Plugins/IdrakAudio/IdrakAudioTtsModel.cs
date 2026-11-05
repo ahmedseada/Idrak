@@ -551,8 +551,8 @@ internal sealed class SinusoidTable(int width) : IDisposable
                 {
                     for (int i = 0; i < width; i++)
                     {
-                        double angle = p / Math.Pow(10000, 2 * (i / 2) / (double)width);
-                        values[p * width + i] = (float)(i % 2 == 0 ? Math.Sin(angle) : Math.Cos(angle));
+                        double angle = p / PortableMath.Pow(10000, 2 * (i / 2) / (double)width);
+                        values[p * width + i] = (float)(i % 2 == 0 ? PortableMath.Sin(angle) : PortableMath.Cos(angle));
                     }
                 }
 

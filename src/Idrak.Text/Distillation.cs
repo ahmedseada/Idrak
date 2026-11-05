@@ -119,7 +119,7 @@ internal static class TopKLogits
                 {
                     if (ids[at + j] < vocabulary)
                     {
-                        sum += Math.Exp((logits[at + j] - max) / temperature);
+                        sum += PortableMath.Exp((logits[at + j] - max) / temperature);
                     }
                 }
 
@@ -127,7 +127,7 @@ internal static class TopKLogits
                 {
                     if (ids[at + j] < vocabulary)
                     {
-                        values[r * vocabulary + ids[at + j]] += (float)(Math.Exp((logits[at + j] - max) / temperature) / sum);
+                        values[r * vocabulary + ids[at + j]] += (float)(PortableMath.Exp((logits[at + j] - max) / temperature) / sum);
                     }
                 }
             }

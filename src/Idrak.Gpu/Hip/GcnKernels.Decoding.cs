@@ -1545,7 +1545,7 @@ internal static partial class GcnKernels
         /// <summary>The settings of a call of Backend.SampleRows.</summary>
         public static SamplerSettings Of(int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed, int rows) =>
             new((uint)vocabulary, (uint)rowStride, (uint)rowOffset, 1f / MathF.Max(temperature, 1e-3f), (uint)Math.Max(0, topK), topP,
-                minP > 0f ? MathF.Log(minP) : float.NegativeInfinity, seed, (uint)rows);
+                minP > 0f ? PortableMathF.Log(minP) : float.NegativeInfinity, seed, (uint)rows);
     }
 
     /// <summary>
@@ -2335,7 +2335,7 @@ internal static partial class GcnKernels
         w.L($"s_mul_i32 {first}, {row}, {a.Scalar("rowstride")}");
         w.L($"s_add_u32 {first}, {first}, {a.Scalar("rowoffset")}");
         string xb = w.ElementAddress(a.Pointer("logits"), first);
-        w.L($"s_lshl_b32 {sliceFirst}, {block}, {(int)Math.Log2(CandidateSlice)}");
+        w.L($"s_lshl_b32 {sliceFirst}, {block}, {(int)PortableMath.Log2(CandidateSlice)}");
         string firstIndex = w.V();
         w.L($"v_add_u32_e32 {firstIndex}, {sliceFirst}, {tid8}           ; this thread's 8 scores");
         string[] js = new string[8], ats = new string[8], vs = new string[8];

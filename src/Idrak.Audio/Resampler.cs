@@ -206,10 +206,10 @@ public static class Resampler
             {
                 double t = ((double)(j - half) / orig - (double)p / next) * baseFreq;
                 t = Math.Clamp(t, -width, width);
-                double window = Math.Cos(t * Math.PI / width / 2);
+                double window = PortableMath.Cos(t * Math.PI / width / 2);
                 window *= window;
                 t *= Math.PI;
-                double sinc = t == 0 ? 1.0 : Math.Sin(t) / t;
+                double sinc = t == 0 ? 1.0 : PortableMath.Sin(t) / t;
                 values[p * taps + j] = (float)(sinc * window * scale);
             }
         }

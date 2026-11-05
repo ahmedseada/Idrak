@@ -244,7 +244,7 @@ public sealed class RandomRotation(float maxDegrees, float fill = 0f) : ISampleT
             return;
         }
 
-        float cos = (float)Math.Cos(angle), sin = (float)Math.Sin(angle);
+        float cos = (float)PortableMath.Cos(angle), sin = (float)PortableMath.Sin(angle);
         float cx = (w - 1) / 2f, cy = (h - 1) / 2f;
         var scratch = ArrayPool<float>.Shared.Rent(h * w);
         try
@@ -294,11 +294,11 @@ public sealed class GaussianNoise(float standardDeviation, bool clamp = false) :
         {
             // Box-Muller: two independent normal values from two uniform ones.
             double u = 1 - random.NextDouble(), v = random.NextDouble();
-            double r = Math.Sqrt(-2 * Math.Log(u)) * StandardDeviation;
-            features[i] += (float)(r * Math.Cos(2 * Math.PI * v));
+            double r = Math.Sqrt(-2 * PortableMath.Log(u)) * StandardDeviation;
+            features[i] += (float)(r * PortableMath.Cos(2 * Math.PI * v));
             if (i + 1 < features.Length)
             {
-                features[i + 1] += (float)(r * Math.Sin(2 * Math.PI * v));
+                features[i + 1] += (float)(r * PortableMath.Sin(2 * Math.PI * v));
             }
         }
 

@@ -19,11 +19,105 @@ internal abstract partial class Tests
         ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
         ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) choose the kernels the runtime's report allows; portable 128-bit vectors where it reports no NEON; lane shifts equal their multiplies; the description says what runs", CpuVectorPathsChosen),
         ("cpu tuning: the k-split product (ComputeResources.CpuProductKChunk, off by default) splits only where the product's row and column blocks cannot occupy the threads (never on one thread, never a prompt's 512 x 1024 x 1024 or 512 x 1024 x 3072): there it sums its chunks in chunk order (every transpose and beta, the chunks' own products added in order, close to the unsplit product), elsewhere the unsplit bits", CpuProductSplitK),
-        ("cpu tuning: one result on every CPU (plan 37, P0): exp, log, the sigmoids, GELU, softmax and log-softmax with their gradients, layer norm, the gated activations, few-row and tiled products, the lane sums and dot products (float, bfloat16, int8, double), the sums past one chunk, the sampler's weights and the double exp and log hash to the pinned bits (the same with DOTNET_EnableAVX512=0, DOTNET_EnableAVX2=0, DOTNET_EnableHWIntrinsic=0 and IDRAK_CPU_VECTORS=scalar, portable or native)", CpuOneResult),
+        ("cpu tuning: one result on every CPU (plan 37, P0 and P0b): exp, log, the sigmoids, GELU, softmax, log-softmax, sin, cos and pow with their gradients, layer norm, batch statistics over short runs in chunks, the gated activations, few-row and tiled products, the lane sums and dot products (float, bfloat16, int8, double), the sums past one chunk, the sampler's weights and the host's double functions (PortableMath) hash to the pinned bits (the same with DOTNET_EnableAVX512=0, DOTNET_EnableAVX2=0, DOTNET_EnableHWIntrinsic=0 and IDRAK_CPU_VECTORS=scalar, portable or native)", CpuOneResult),
+        ("cpu tuning: the portable math (plan 37, P0b): the CPU's float sin and cos lanes give their scalar form's bits and are within an ulp of MathF's over [-1e4, 1e4]; PortableMath's sin, cos, tan, atan, atan2, tanh, pow, log2 and log10 are within a few ulp of Math's, with its special cases; integer powers, log2 of powers of two and log10 of powers of ten exact", CpuPortableMath),
     ];
 
+    internal static void CpuPortableMath(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(CpuPortableMath)))
+        {
+            return;
+        }
+
+        // Float sin and cos: lanes against the scalar form (bits) and MathF (an ulp of the result or 1e-7 absolute near zeros).
+        int width = Vector<float>.Count;
+        var inputs = new List<float> { 0f, -0f, float.NaN, float.PositiveInfinity, float.NegativeInfinity, 1e-30f, MathF.PI / 2, MathF.PI, 1e6f };
+        for (float v = -1e4f; v <= 1e4f; v += 0.7319f)
+        {
+            inputs.Add(v);
+        }
+
+        for (float v = -7f; v <= 7f; v += 1e-3f)
+        {
+            inputs.Add(v);
+        }
+
+        while (inputs.Count % 16 != 0)
+        {
+            inputs.Add(0.25f);
+        }
+
+        float[] values = [.. inputs], sines = new float[values.Length], cosines = new float[values.Length];
+        for (int i = 0; i < values.Length; i += width)
+        {
+            CpuMath.Sin(new Vector<float>(values.AsSpan(i, width))).CopyTo(sines.AsSpan(i, width));
+            CpuMath.Cos(new Vector<float>(values.AsSpan(i, width))).CopyTo(cosines.AsSpan(i, width));
+        }
+
+        int differ = 0;
+        double worst = 0;
+        float worstAt = 0;
+        for (int i = 0; i < values.Length; i++)
+        {
+            float x = values[i];
+            differ += BitConverter.SingleToInt32Bits(CpuMath.Sin(x)) != BitConverter.SingleToInt32Bits(sines[i]) ? 1 : 0;
+            differ += BitConverter.SingleToInt32Bits(CpuMath.Cos(x)) != BitConverter.SingleToInt32Bits(cosines[i]) ? 1 : 0;
+            if (!float.IsFinite(x))
+            {
+                Check(float.IsNaN(sines[i]) && float.IsNaN(cosines[i]), $"sin and cos of {x} are NaN, got {sines[i]}, {cosines[i]}");
+                continue;
+            }
+
+            foreach (var (got, expected) in new[] { (sines[i], Math.Sin(x)), (cosines[i], Math.Cos(x)) })
+            {
+                float magnitude = MathF.Abs((float)expected);
+                double ulps = Math.Abs(got - expected) / Math.Max(MathF.BitIncrement(magnitude) - magnitude, float.Epsilon);   // in the result's ulps
+                if (ulps > worst)
+                {
+                    (worst, worstAt) = (ulps, x);
+                }
+            }
+        }
+
+        Check(differ == 0, $"the float sin and cos lanes give their scalar form's bits: {differ} of {2 * values.Length} differ");
+        Check(worst <= 1.0, $"the float sin and cos are within an ulp of the true value: {worst:F2} ulp at x = {worstAt}");
+
+        // The double functions against the runtime's (a few ulp), and their special cases.
+        double sinWorst = 0, tanWorst = 0, atanWorst = 0, tanhWorst = 0, powWorst = 0, logWorst = 0;
+        static double Relative(double got, double expected) => expected == got ? 0 : Math.Abs(got - expected) / Math.Max(Math.Abs(expected), 1e-300);
+        for (double v = -1e5; v <= 1e5; v += 13.37)
+        {
+            sinWorst = Math.Max(sinWorst, Math.Max(Math.Abs(PortableMath.Sin(v) - Math.Sin(v)), Math.Abs(PortableMath.Cos(v) - Math.Cos(v))));
+        }
+
+        for (double v = -1.5; v <= 1.5; v += 1e-4)
+        {
+            tanWorst = Math.Max(tanWorst, Relative(PortableMath.Tan(v), Math.Tan(v)));
+            atanWorst = Math.Max(atanWorst, Math.Max(Relative(PortableMath.Atan(v * 40), Math.Atan(v * 40)), Relative(PortableMath.Atan2(v, 1 - v), Math.Atan2(v, 1 - v))));
+            tanhWorst = Math.Max(tanhWorst, Relative(PortableMath.Tanh(v * 9), Math.Tanh(v * 9)));
+            powWorst = Math.Max(powWorst, Relative(PortableMath.Pow(Math.Abs(v) * 7 + 0.01, v * 20), Math.Pow(Math.Abs(v) * 7 + 0.01, v * 20)));
+            logWorst = Math.Max(logWorst, Math.Max(Relative(PortableMath.Log2(Math.Abs(v) * 1e3 + 1e-9), Math.Log2(Math.Abs(v) * 1e3 + 1e-9)),
+                Relative(PortableMath.Log10(Math.Abs(v) * 1e3 + 1e-9), Math.Log10(Math.Abs(v) * 1e3 + 1e-9))));
+        }
+
+        Check(sinWorst <= 3e-16 && tanWorst <= 1e-15 && atanWorst <= 1e-15 && tanhWorst <= 1e-14 && powWorst <= 2e-13 && logWorst <= 1e-15,
+            $"the double functions are close to the runtime's: sin and cos {sinWorst:E2} absolute, tan {tanWorst:E2}, atan and atan2 {atanWorst:E2}, tanh {tanhWorst:E2}, pow {powWorst:E2}, log2 and log10 {logWorst:E2}");
+        bool exact = Enumerable.Range(-1074, 2098).All(e => PortableMath.Log2(Math.ScaleB(1, e)) == e)
+                     && Enumerable.Range(0, 23).All(e => PortableMath.Log10(Math.Pow(10, e)) == e && PortableMath.Pow(10, e) == Math.Pow(10, e))
+                     && PortableMath.Pow(1024, 3) == 1073741824 && PortableMath.Pow(2, -3) == 0.125 && PortableMath.Pow(-2, 3) == -8;
+        Check(exact, "log2 of every power of two, log10 and pow of the powers of ten a double holds, and integer powers are exact");
+        Check(PortableMath.Pow(0, -1) == double.PositiveInfinity && PortableMath.Pow(-0.0, -1) == double.NegativeInfinity && double.IsNaN(PortableMath.Pow(-2, 0.5))
+              && PortableMath.Pow(double.NaN, 0) == 1 && PortableMath.Pow(1, double.NaN) == 1 && PortableMath.Pow(0.5, double.PositiveInfinity) == 0
+              && PortableMath.Pow(double.NegativeInfinity, 3) == double.NegativeInfinity && PortableMath.Atan2(0, -1) == Math.PI && PortableMath.Atan2(-0.0, 1) == 0
+              && double.IsNegative(PortableMath.Atan2(-0.0, 1)) && PortableMath.Atan2(1, 0) == Math.PI / 2 && PortableMath.Atan(double.PositiveInfinity) == Math.PI / 2
+              && PortableMath.Tanh(-30) == -1 && double.IsNaN(PortableMath.Sin(double.PositiveInfinity)) && PortableMath.Sin(-0.0) == 0 && double.IsNegative(PortableMath.Sin(-0.0))
+              && PortableMath.Cos(0) == 1 && PortableMathF.Pow(2f, 10f) == 1024f && PortableMathF.Pow(-8f, 1f / 3) is float.NaN,
+            "the special cases are Math's: pow at 0, ±∞ and NaN, atan2's quadrants and signed zeros, atan and tanh at the ends, sin and cos at ∞ and ±0");
+    }
+
     // The pinned bits of CpuOneResult's outputs (see there): any change to the CPU's arithmetic changes them, on purpose only.
-    private const string CpuOneResultBits = "E1D2FEC4796F1008";
+    private const string CpuOneResultBits = "4DADF671C4E39E78";
 
     internal static void CpuOneResult(Device device)
     {
@@ -44,7 +138,7 @@ internal abstract partial class Tests
                      {
                          ("exp", t => t.Exp()), ("log", t => (t.Square() + 1e-3f).Log()), ("sigmoid", t => t.Sigmoid()), ("silu", t => t.Silu()),
                          ("gelu", t => t.Gelu()), ("gelu erf", t => t.GeluErf()), ("tanh", t => t.Tanh()), ("softmax", t => t.Softmax()),
-                         ("log-softmax", t => t.LogSoftmax()),
+                         ("log-softmax", t => t.LogSoftmax()), ("sin", t => t.Sin()), ("cos", t => t.Cos()), ("pow 2.5", t => (t.Square() + 0.5f).Pow(2.5f)),
                      })
             {
                 var x = Tensor.From(xs, [Rows, Cols], device, requiresGrad: true);
@@ -79,7 +173,24 @@ internal abstract partial class Tests
 
             float[] big = Values(70_001, -1f, 1f);                            // past one reduction chunk
             outputs.Add(("sum past one chunk", [Tensor.From(big, [big.Length], device).Sum().Item()]));
+
+            // Batch statistics over short runs (inner 2 < 16): three chunks of rows, their sums added in chunk order.
+            const int Outer = 12_000, Groups = 7, Inner = 2;
+            var batch = Tensor.From(Values(Outer * Groups * Inner, -3f, 3f), [Outer, Groups, Inner], device, requiresGrad: true);
+            var normalized = batch.Normalize(Outer, Groups, Inner, 1e-5f, out var batchMean, out var batchVariance);
+            outputs.Add(("batch norm", normalized.ToArray()));
+            outputs.Add(("batch norm's mean and variance", [.. batchMean.ToArray(), .. batchVariance.ToArray()]));
+            (normalized * Tensor.From(Values(Outer * Groups * Inner, -1f, 1f), [Outer, Groups, Inner], device)).Sum().Backward();
+            outputs.Add(("batch norm's gradient", batch.Grad!.ToArray()));
         }
+
+        // The host's double functions (PortableMath), as two floats a double.
+        double[] arguments = [.. Enumerable.Range(0, 300).Select(i => -40.0 + i * 0.2771)];
+        double[] portable = [.. arguments.Select(PortableMath.Sin), .. arguments.Select(PortableMath.Cos), .. arguments.Select(PortableMath.Tan),
+            .. arguments.Select(PortableMath.Atan), .. arguments.Select(v => PortableMath.Atan2(v, 3.5 - v)), .. arguments.Select(v => PortableMath.Tanh(v / 8)),
+            .. arguments.Select(v => PortableMath.Pow(Math.Abs(v) + 0.1, v / 7)), .. arguments.Select(v => PortableMath.Log2(Math.Abs(v) + 1e-3)),
+            .. arguments.Select(v => PortableMath.Log10(Math.Abs(v) + 1e-3)), .. arguments.Select(v => PortableMath.Exp(v)), .. arguments.Select(v => PortableMath.Log(Math.Abs(v) + 1e-3))];
+        outputs.Add(("portable double math", System.Runtime.InteropServices.MemoryMarshal.Cast<double, float>(portable.AsSpan()).ToArray()));
 
         float[] p = Values(Cols, -2f, 2f), q = Values(Cols, -2f, 2f);
         ushort[] halves = [.. q.Select(v => (ushort)(BitConverter.SingleToUInt32Bits(v) >> 16))];

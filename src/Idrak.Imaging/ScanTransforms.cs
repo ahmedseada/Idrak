@@ -222,7 +222,7 @@ internal static class ScanImageOps
             return image;
         }
 
-        double a = degrees * Math.PI / 180, cos = Math.Cos(a), sin = Math.Sin(a);
+        double a = degrees * Math.PI / 180, cos = PortableMath.Cos(a), sin = PortableMath.Sin(a);
         double cx = (image.Width - 1) / 2.0, cy = (image.Height - 1) / 2.0;
 
         // From an output pixel back to where it was: turned the other way about the centre.
@@ -426,7 +426,7 @@ internal static class ScanImageOps
         const double Low = 0.02425;
         if (p < Low || p > 1 - Low)
         {
-            double q = Math.Sqrt(-2 * Math.Log(p < Low ? p : 1 - p));
+            double q = Math.Sqrt(-2 * PortableMath.Log(p < Low ? p : 1 - p));
             double x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
             return p < Low ? x : -x;
         }
@@ -567,13 +567,13 @@ internal static class ScanImageOps
         int w = image.Width, h = image.Height;
         var paper = PaperLevels(planes, w * h);
         var random = new Random(seed);
-        double meanArea = Math.PI * Math.Pow(size * 0.7, 2) * 0.7;
+        double meanArea = Math.PI * PortableMath.Pow(size * 0.7, 2) * 0.7;
         int count = (int)Math.Round(share * w * h / Math.Max(1, meanArea));
         for (int k = 0; k < count; k++)
         {
             double cx = random.NextDouble() * w, cy = random.NextDouble() * h;
             double rx = size * (0.4 + 0.6 * random.NextDouble()), ry = rx * (0.4 + 0.6 * random.NextDouble());
-            double angle = random.NextDouble() * Math.PI, ca = Math.Cos(angle), sa = Math.Sin(angle);
+            double angle = random.NextDouble() * Math.PI, ca = PortableMath.Cos(angle), sa = PortableMath.Sin(angle);
             float take = (float)(strength * (0.5 + 0.5 * random.NextDouble()));
             int reach = (int)Math.Ceiling(Math.Max(rx, ry)) + 1;
             int x0 = Math.Max(0, (int)cx - reach), x1 = Math.Min(w - 1, (int)cx + reach);
@@ -703,8 +703,8 @@ internal static class ScanImageOps
             double reach = Math.Max(rx, ry) * 1.3;
             int x0 = Math.Max(0, (int)(cx - reach)), x1 = Math.Min(w - 1, (int)(cx + reach));
             int y0 = Math.Max(0, (int)(cy - reach)), y1 = Math.Min(h - 1, (int)(cy + reach));
-            double ca = Math.Cos(angle), sa = Math.Sin(angle);
-            double c1 = Math.Cos(phase1), s1 = Math.Sin(phase1), c2 = Math.Cos(phase2), s2 = Math.Sin(phase2);
+            double ca = PortableMath.Cos(angle), sa = PortableMath.Sin(angle);
+            double c1 = PortableMath.Cos(phase1), s1 = PortableMath.Sin(phase1), c2 = PortableMath.Cos(phase2), s2 = PortableMath.Sin(phase2);
             HostParallel.For(y1 - y0 + 1, Grain(x1 - x0 + 1), (first, last) =>
             {
                 for (int y = y0 + first; y < y0 + last; y++)
@@ -733,7 +733,7 @@ internal static class ScanImageOps
                         // A faint body and a darker rim just inside the edge.
                         double body = t < 0.6 ? 1 : t < 1 ? 1 - (t - 0.6) / 0.4 : 0;
                         double e = (t - 0.95) / 0.06;
-                        float a = alpha * (float)Math.Min(1, 0.45 * body + 0.9 * Math.Exp(-e * e));
+                        float a = alpha * (float)Math.Min(1, 0.45 * body + 0.9 * PortableMath.Exp(-e * e));
                         for (int c = 0; c < planes.Length; c++)
                         {
                             ref byte p = ref planes[c][y * w + x];

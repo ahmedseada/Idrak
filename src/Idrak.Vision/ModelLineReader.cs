@@ -233,7 +233,7 @@ public sealed class ModelLineReader
         for (int n = 0; n < lines.Count; n++)
         {
             var best = decoded[n].Count > 0 ? decoded[n][0] : new CtcHypothesis([], 0f);
-            result[n] = new RecognizedLine(Text(best.Labels), best.Labels, best.LogProbability, Math.Exp(best.LogProbability / Math.Max(1, steps[n])));
+            result[n] = new RecognizedLine(Text(best.Labels), best.Labels, best.LogProbability, PortableMath.Exp(best.LogProbability / Math.Max(1, steps[n])));
         }
 
         return result;

@@ -44,7 +44,7 @@ internal static class CleaningLevels
             }
 
             double meanSquare = sum / (end - start);
-            decibels[f] = meanSquare > 0 ? (float)(10 * Math.Log10(meanSquare)) : -200f;
+            decibels[f] = meanSquare > 0 ? (float)(10 * PortableMath.Log10(meanSquare)) : -200f;
             loudest = Math.Max(loudest, decibels[f]);
         }
 

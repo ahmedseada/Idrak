@@ -139,7 +139,7 @@ public sealed class MountainCarEnvironment : IEnvironment<float[], int>
         _clock.Tick(KindName, cancellationToken);
 
         // Gymnasium's step, in its order of operations.
-        _velocity += (action - 1) * Force + Math.Cos(3 * _position) * -Gravity;
+        _velocity += (action - 1) * Force + PortableMath.Cos(3 * _position) * -Gravity;
         _velocity = Math.Clamp(_velocity, -MaxSpeed, MaxSpeed);
         _position += _velocity;
         _position = Math.Clamp(_position, MinPosition, MaxPosition);

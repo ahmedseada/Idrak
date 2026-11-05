@@ -50,14 +50,14 @@ internal static class MovedObjects
     public static double Uniform(Random random, (double Low, double High) range) => range.Low + random.NextDouble() * (range.High - range.Low);
 
     // A draw from the standard normal distribution (Box-Muller).
-    public static double Normal(Random random) => Math.Sqrt(-2 * Math.Log(1 - random.NextDouble())) * Math.Cos(2 * Math.PI * random.NextDouble());
+    public static double Normal(Random random) => Math.Sqrt(-2 * PortableMath.Log(1 - random.NextDouble())) * PortableMath.Cos(2 * Math.PI * random.NextDouble());
 
     // A draw from Gamma(shape, 1) (Marsaglia and Tsang 2000; shape below 1 by the boost u^(1/shape)).
     public static double Gamma(Random random, double shape)
     {
         if (shape < 1)
         {
-            return Gamma(random, shape + 1) * Math.Pow(1 - random.NextDouble(), 1 / shape);
+            return Gamma(random, shape + 1) * PortableMath.Pow(1 - random.NextDouble(), 1 / shape);
         }
 
         double d = shape - 1.0 / 3, c = 1 / Math.Sqrt(9 * d);
@@ -71,7 +71,7 @@ internal static class MovedObjects
 
             v = v * v * v;
             double u = 1 - random.NextDouble();
-            if (Math.Log(u) < 0.5 * x * x + d - d * v + d * Math.Log(v))
+            if (PortableMath.Log(u) < 0.5 * x * x + d - d * v + d * PortableMath.Log(v))
             {
                 return d * v;
             }
@@ -198,10 +198,10 @@ public sealed class RandomResizedCrop(int width = 0, int height = 0, (double Low
     private (int X, int Y, int W, int H) Choose(int width, int height, Random random)
     {
         double area = (double)width * height;
-        var logRatio = (Math.Log(Ratio.Low), Math.Log(Ratio.High));
+        var logRatio = (PortableMath.Log(Ratio.Low), PortableMath.Log(Ratio.High));
         for (int attempt = 0; attempt < 10; attempt++)
         {
-            double target = area * MovedObjects.Uniform(random, Scale), aspect = Math.Exp(MovedObjects.Uniform(random, logRatio));
+            double target = area * MovedObjects.Uniform(random, Scale), aspect = PortableMath.Exp(MovedObjects.Uniform(random, logRatio));
             int w = (int)Math.Round(Math.Sqrt(target * aspect)), h = (int)Math.Round(Math.Sqrt(target / aspect));
             if (w > 0 && w <= width && h > 0 && h <= height)
             {
@@ -291,7 +291,7 @@ public sealed class RandomAffine((double Low, double High) degrees, (double X, d
     // the screen (y down) and the shear x += -tan(shear) · y, as torchvision's affine matrix.
     private static double[] Map(int w, int h, double angle, double tx, double ty, double scale, double shear)
     {
-        double cos = Math.Cos(angle), sin = Math.Sin(angle), k = -Math.Tan(shear);
+        double cos = PortableMath.Cos(angle), sin = PortableMath.Sin(angle), k = -PortableMath.Tan(shear);
         // R · S · Shear: [[cos, sin], [-sin, cos]] · s · [[1, k], [0, 1]].
         double a = cos * scale, b = (cos * k + sin) * scale, d = -sin * scale, e = (-sin * k + cos) * scale;
         double cx = w / 2.0, cy = h / 2.0;
@@ -482,7 +482,7 @@ public sealed class Cutout(double probability = 0.5, (double Low, double High)? 
         var image = sample.Image;
         int w = image.Width, h = image.Height, plane = w * h;
         float[]? pixels = null;
-        var logRatio = (Math.Log(Ratio.Low), Math.Log(Ratio.High));
+        var logRatio = (PortableMath.Log(Ratio.Low), PortableMath.Log(Ratio.High));
         for (int n = 0; n < Count; n++)
         {
             if (random.NextDouble() >= Probability)
@@ -492,7 +492,7 @@ public sealed class Cutout(double probability = 0.5, (double Low, double High)? 
 
             for (int attempt = 0; attempt < 10; attempt++)
             {
-                double area = plane * MovedObjects.Uniform(random, Scale), aspect = Math.Exp(MovedObjects.Uniform(random, logRatio));
+                double area = plane * MovedObjects.Uniform(random, Scale), aspect = PortableMath.Exp(MovedObjects.Uniform(random, logRatio));
                 int eh = (int)Math.Round(Math.Sqrt(area * aspect)), ew = (int)Math.Round(Math.Sqrt(area / aspect));
                 if (!(eh < h && ew < w))
                 {
@@ -733,7 +733,7 @@ public sealed class PixelNoise(double standardDeviation = 0.05, double probabili
         for (int i = 0; i < pixels.Length; i++)
         {
             double u = 1 - random.NextDouble(), v = random.NextDouble();
-            double normal = Math.Sqrt(-2 * Math.Log(u)) * Math.Cos(2 * Math.PI * v);
+            double normal = Math.Sqrt(-2 * PortableMath.Log(u)) * PortableMath.Cos(2 * Math.PI * v);
             pixels[i] = Math.Clamp(pixels[i] + (float)(normal * deviation), 0f, 1f);
         }
 

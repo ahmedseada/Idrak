@@ -74,14 +74,14 @@ public sealed class StepDecay(IOptimizer optimizer, int stepSize, float gamma = 
     private static Func<int, float, float> Rate(int stepSize, float gamma)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(stepSize);
-        return (epoch, rate) => rate * MathF.Pow(gamma, epoch / stepSize);
+        return (epoch, rate) => rate * PortableMathF.Pow(gamma, epoch / stepSize);
     }
 }
 
 /// <summary>Multiplies the rate by gamma every epoch.</summary>
 /// <param name="optimizer">The optimizer to schedule.</param>
 /// <param name="gamma">The factor.</param>
-public sealed class ExponentialDecay(IOptimizer optimizer, float gamma) : LearningRateScheduler(optimizer, (epoch, rate) => rate * MathF.Pow(gamma, epoch));
+public sealed class ExponentialDecay(IOptimizer optimizer, float gamma) : LearningRateScheduler(optimizer, (epoch, rate) => rate * PortableMathF.Pow(gamma, epoch));
 
 /// <summary>
 /// Optional linear warm-up from near zero, then cosine annealing from the base rate down to
@@ -106,7 +106,7 @@ public sealed class CosineAnnealing(IOptimizer optimizer, int totalEpochs, float
             }
 
             double progress = Math.Min(1.0, (epoch - warmupEpochs) / (double)Math.Max(1, totalEpochs - warmupEpochs));
-            return (float)(minLearningRate + (rate - minLearningRate) * 0.5 * (1 + Math.Cos(Math.PI * progress)));
+            return (float)(minLearningRate + (rate - minLearningRate) * 0.5 * (1 + PortableMath.Cos(Math.PI * progress)));
         };
     }
 }

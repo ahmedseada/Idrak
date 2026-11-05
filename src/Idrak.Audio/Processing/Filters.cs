@@ -45,7 +45,7 @@ internal readonly record struct Biquad(double B0, double B1, double B2, double A
     // The RBJ cookbook's high-pass, twoQ = 2·Q; at twoQ = √2 the arithmetic of the high-pass before plan 31, bit for bit.
     public static Biquad HighPass(double hertz, int rate, double twoQ)
     {
-        double w0 = 2 * Math.PI * hertz / rate, cos = Math.Cos(w0), alpha = Math.Sin(w0) / twoQ;
+        double w0 = 2 * Math.PI * hertz / rate, cos = PortableMath.Cos(w0), alpha = PortableMath.Sin(w0) / twoQ;
         double a0 = 1 + alpha;
         double b0 = (1 + cos) / 2 / a0;
         return new Biquad(b0, -(1 + cos) / a0, b0, -2 * cos / a0, (1 - alpha) / a0, 0);
@@ -54,7 +54,7 @@ internal readonly record struct Biquad(double B0, double B1, double B2, double A
     // The RBJ cookbook's low-pass.
     public static Biquad LowPass(double hertz, int rate, double twoQ)
     {
-        double w0 = 2 * Math.PI * hertz / rate, cos = Math.Cos(w0), alpha = Math.Sin(w0) / twoQ;
+        double w0 = 2 * Math.PI * hertz / rate, cos = PortableMath.Cos(w0), alpha = PortableMath.Sin(w0) / twoQ;
         double a0 = 1 + alpha;
         double b0 = (1 - cos) / 2 / a0;
         return new Biquad(b0, (1 - cos) / a0, b0, -2 * cos / a0, (1 - alpha) / a0, 1);
@@ -64,22 +64,22 @@ internal readonly record struct Biquad(double B0, double B1, double B2, double A
     // order's first-order section, as scipy's butter makes it.
     public static Biquad FirstOrder(bool high, double hertz, int rate)
     {
-        double k = Math.Tan(Math.PI * hertz / rate), a1 = (k - 1) / (k + 1);
+        double k = PortableMath.Tan(Math.PI * hertz / rate), a1 = (k - 1) / (k + 1);
         return high ? new Biquad(1 / (1 + k), -1 / (1 + k), 0, a1, 0, 0) : new Biquad(k / (1 + k), k / (1 + k), 0, a1, 0, 1);
     }
 
     // scipy.signal.iirnotch's: the -3 dB bandwidth is hertz / q exactly, the gain 1 away from the notch.
     public static Biquad Notch(double hertz, double q, int rate)
     {
-        double w0 = 2 * Math.PI * hertz / rate, cos = Math.Cos(w0);
-        double gain = 1 / (1 + Math.Tan(w0 / q / 2));
+        double w0 = 2 * Math.PI * hertz / rate, cos = PortableMath.Cos(w0);
+        double gain = 1 / (1 + PortableMath.Tan(w0 / q / 2));
         return new Biquad(gain, -2 * gain * cos, gain, -2 * gain * cos, 2 * gain - 1, 1);
     }
 
     // The RBJ cookbook's peaking EQ: decibels at hertz, its width q; 1 far from it.
     public static Biquad Peaking(double hertz, double decibels, double q, int rate)
     {
-        double w0 = 2 * Math.PI * hertz / rate, cos = Math.Cos(w0), alpha = Math.Sin(w0) / (2 * q), a = Math.Pow(10, decibels / 40);
+        double w0 = 2 * Math.PI * hertz / rate, cos = PortableMath.Cos(w0), alpha = PortableMath.Sin(w0) / (2 * q), a = PortableMath.Pow(10, decibels / 40);
         double a0 = 1 + alpha / a;
         return new Biquad((1 + alpha * a) / a0, -2 * cos / a0, (1 - alpha * a) / a0, -2 * cos / a0, (1 - alpha / a) / a0, 1);
     }
@@ -87,7 +87,7 @@ internal readonly record struct Biquad(double B0, double B1, double B2, double A
     // The RBJ cookbook's shelves: decibels below (low) or above (high) hertz, alpha from the slope or q.
     public static Biquad Shelf(bool high, double hertz, double decibels, double alphaOverSin, int rate)
     {
-        double w0 = 2 * Math.PI * hertz / rate, cos = Math.Cos(w0), alpha = Math.Sin(w0) * alphaOverSin, a = Math.Pow(10, decibels / 40);
+        double w0 = 2 * Math.PI * hertz / rate, cos = PortableMath.Cos(w0), alpha = PortableMath.Sin(w0) * alphaOverSin, a = PortableMath.Pow(10, decibels / 40);
         double root = 2 * Math.Sqrt(a) * alpha;
         if (high)
         {
@@ -116,7 +116,7 @@ internal static class FilterDesign
         int pairs = order / 2;
         for (int k = 0; k < pairs; k++)
         {
-            double twoQ = order == 2 ? Math.Sqrt(2) : 1 / Math.Sin(Math.PI * (2 * k + 1) / (2 * order));
+            double twoQ = order == 2 ? Math.Sqrt(2) : 1 / PortableMath.Sin(Math.PI * (2 * k + 1) / (2 * order));
             sections[k] = high ? Biquad.HighPass(hertz, rate, twoQ) : Biquad.LowPass(hertz, rate, twoQ);
         }
 
@@ -322,7 +322,7 @@ internal sealed class GainProcessor : ILiveAudioProcessor
     {
         ArgumentNullException.ThrowIfNull(step);
         step.Validate(Parameters);
-        return new Stage((float)Math.Pow(10, step.Number() / 20), sampleRate, channels);
+        return new Stage((float)PortableMath.Pow(10, step.Number() / 20), sampleRate, channels);
     }
 
     private sealed class Stage(float factor, int sampleRate, int channels) : IAudioStage
@@ -589,7 +589,7 @@ internal sealed class ShelfProcessor(bool high) : ILiveAudioProcessor
 
     private Biquad[] Design(AudioProcessorStep step, int sampleRate)
     {
-        double hertz = step.Number(), decibels = step.Number("db", 0), a = Math.Pow(10, decibels / 40);
+        double hertz = step.Number(), decibels = step.Number("db", 0), a = PortableMath.Pow(10, decibels / 40);
         FilterDesign.ThrowIfNotBelowHalf(Name, "frequency", hertz, sampleRate);
         double alphaOverSin = step.Option("q") is not null
             ? 1 / (2 * step.Number("q", 1))

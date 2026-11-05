@@ -31,7 +31,7 @@ internal abstract partial class Tests
         // linear and llama3 give what the formulas before the registry gave (copied here), bit for bit.
         const double theta = 500000;
         const int dim = 64;
-        double[] Base() => [.. Enumerable.Range(0, dim / 2).Select(i => 1.0 / Math.Pow(theta, 2.0 * i / dim))];
+        double[] Base() => [.. Enumerable.Range(0, dim / 2).Select(i => 1.0 / PortableMath.Pow(theta, 2.0 * i / dim))];   // the library's own pow (rule 70)
         var linear = Base().Select(f => f / 2.0).ToArray();
         Check(new RopeSettings((float)theta, Scaling: RopeScaling.Linear(2)).Frequencies(dim).SequenceEqual(linear), "linear unchanged");
         var llama3 = Base();

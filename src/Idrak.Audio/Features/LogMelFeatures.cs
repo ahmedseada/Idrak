@@ -129,7 +129,7 @@ public sealed class LogMelFeatures : IAudioFeatureExtractor
         Stft.PowerOnHost(segment, Options, power);
         var filterbank = MelFilterbank.Build(Options);
         var features = GC.AllocateUninitializedArray<float>(frames * mels);
-        float floor = Options.LogFloor, scale = 1f / MathF.Log(10f);
+        float floor = Options.LogFloor, scale = 1f / PortableMathF.Log(10f);
         HostParallel.For(frames, 32, (first, last) =>
         {
             for (int f = first; f < last; f++)
@@ -154,7 +154,7 @@ public sealed class LogMelFeatures : IAudioFeatureExtractor
 
                 for (int m = 0; m < mels; m++)
                 {
-                    output[m] = MathF.Log(Math.Max(output[m], floor)) * scale;
+                    output[m] = PortableMathF.Log(Math.Max(output[m], floor)) * scale;
                 }
             }
         });
@@ -195,7 +195,7 @@ public sealed class LogMelFeatures : IAudioFeatureExtractor
         using var mel = (kept ?? power).MatMul(MelFilterbank.Tensor(Options, device));   // [frames, mels]
         using var floored = mel.Clamp(Options.LogFloor, float.PositiveInfinity);
         using var logged = floored.Log();
-        Tensor current = logged * (1f / MathF.Log(10f));
+        Tensor current = logged * (1f / PortableMathF.Log(10f));
         if (Options.DynamicRange is { } range)
         {
             // The segment's largest value: one max pooling to one value, read once (one value per segment).

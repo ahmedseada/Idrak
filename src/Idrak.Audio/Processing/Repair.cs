@@ -41,7 +41,7 @@ internal static class RepairProcessors
     }
 
     // The one-pole coefficient of a time constant of `milliseconds` at one step every `hop` samples (0: at once).
-    public static double FrameCoefficient(double milliseconds, int hop, int sampleRate) => milliseconds <= 0 ? 0 : Math.Exp(-hop / (milliseconds / 1000.0 * sampleRate));
+    public static double FrameCoefficient(double milliseconds, int hop, int sampleRate) => milliseconds <= 0 ? 0 : PortableMath.Exp(-hop / (milliseconds / 1000.0 * sampleRate));
 
     public static void ThrowIfOther(AudioData block, int sampleRate, int channels, string name)
     {
@@ -108,7 +108,7 @@ internal sealed class SpectralStream
         _window = new double[size];
         for (int n = 0; n < size; n++)
         {
-            _window[n] = 0.5 - 0.5 * Math.Cos(2 * Math.PI * n / size);
+            _window[n] = 0.5 - 0.5 * PortableMath.Cos(2 * Math.PI * n / size);
         }
 
         _norm = new double[_hop];
@@ -454,7 +454,7 @@ internal sealed class DereverbProcessor : ILiveAudioProcessor
             _floor = DynamicsMath.Gain(step.Number("floor", -15));
             _smooth = RepairProcessors.FrameCoefficient(step.Number("smooth", 20), hop, sampleRate);
             _delay = Math.Max(1, (int)Math.Round(step.Number("delay", 50) / 1000.0 * sampleRate / hop));
-            _decay = Math.Exp(-2 * (3 * Math.Log(10) / step.Number("t60", 0.5)) * _delay * hop / sampleRate);
+            _decay = PortableMath.Exp(-2 * (3 * PortableMath.Log(10) / step.Number("t60", 0.5)) * _delay * hop / sampleRate);
             _history = new double[channels * (_delay + 1) * _bins];
             _count = new long[channels];
         }
@@ -612,7 +612,7 @@ internal sealed class SpectralGateProcessor : IRecordingAudioProcessor
 
             for (int b = 0; b < bins; b++)
             {
-                deviation[b] = Math.Pow(10, (mean[b] + threshold * Math.Sqrt(deviation[b] / quiet)) / 10);   // the power a bin must pass
+                deviation[b] = PortableMath.Pow(10, (mean[b] + threshold * Math.Sqrt(deviation[b] / quiet)) / 10);   // the power a bin must pass
             }
 
             for (int i = 0; i < frames * bins; i++)
@@ -636,7 +636,7 @@ internal sealed class SpectralGateProcessor : IRecordingAudioProcessor
         return new AudioData(output, audio.Channels, audio.SampleRate);
     }
 
-    private static double Decibels(double power) => 10 * Math.Log10(Math.Max(power, 1e-20));
+    private static double Decibels(double power) => 10 * PortableMath.Log10(Math.Max(power, 1e-20));
 
     // noisereduce's triangle: weight (half + 1 - |j|) / (half + 1) at j = -half..half.
     private static double Weight(int j, int half) => (half + 1 - Math.Abs(j)) / (double)(half + 1);
@@ -746,7 +746,7 @@ internal sealed class DeessProcessor : ILiveAudioProcessor
             return Biquad.LowPass(hertz, sampleRate, 2 * q);
         }
 
-        double w0 = 2 * Math.PI * hertz / sampleRate, cos = Math.Cos(w0), alpha = Math.Sin(w0) / (2 * q);
+        double w0 = 2 * Math.PI * hertz / sampleRate, cos = PortableMath.Cos(w0), alpha = PortableMath.Sin(w0) / (2 * q);
         double a0 = 1 + alpha;
         return new Biquad(alpha / a0, 0, -alpha / a0, -2 * cos / a0, (1 - alpha) / a0, 0);
     }
@@ -775,7 +775,7 @@ internal sealed class DeessProcessor : ILiveAudioProcessor
             _window = DynamicsMath.Coefficient(step.Number("window", 5), sampleRate);
             _attack = DynamicsMath.Coefficient(step.Number("attack", 1), sampleRate);
             _release = DynamicsMath.Coefficient(step.Number("release", 50), sampleRate);
-            _kneeStart = Math.Pow(10, (_threshold - _knee / 2) / 10);
+            _kneeStart = PortableMath.Pow(10, (_threshold - _knee / 2) / 10);
             _memory = new double[4 * channels];
             _band = new double[channels * Chunk];
             (_env, _reduction, _last, _lastGain) = (new double[_groups], new double[_groups], new double[_groups], new double[_groups]);
@@ -874,7 +874,7 @@ internal sealed class DeessProcessor : ILiveAudioProcessor
             for (int i = 0; i < level.Length; i++)
             {
                 env = DynamicsMath.Follow(env, level[i], _window, DynamicsMath.SilentPower);
-                double wanted = env > _kneeStart ? CompressProcessor.Curve(10 * Math.Log10(env), _threshold, _ratio, _knee) : 0;
+                double wanted = env > _kneeStart ? CompressProcessor.Curve(10 * PortableMath.Log10(env), _threshold, _ratio, _knee) : 0;
                 reduction = DynamicsMath.Follow(reduction, wanted, wanted < reduction ? _attack : _release, DynamicsMath.GainSnap);
                 if (reduction != last)
                 {

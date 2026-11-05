@@ -266,7 +266,7 @@ public static partial class PillowImageOps
         var lut = new byte[256];
         for (int i = 0; i < 256; i++)
         {
-            lut[i] = (byte)(int)(Math.Pow(i / 255.0, 1.0 / gamma) * 255 + 0.5);
+            lut[i] = (byte)(int)(PortableMath.Pow(i / 255.0, 1.0 / gamma) * 255 + 0.5);
         }
 
         var planes = Bytes(image);

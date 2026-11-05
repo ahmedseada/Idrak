@@ -421,11 +421,11 @@ public sealed partial class Tensor : IDisposable
         {
             double u1 = 1.0 - random.NextDouble();
             double u2 = random.NextDouble();
-            double r = Math.Sqrt(-2.0 * Math.Log(u1));
-            values[i] = (float)(mean + std * r * Math.Cos(2 * Math.PI * u2));
+            double r = Math.Sqrt(-2.0 * PortableMath.Log(u1));
+            values[i] = (float)(mean + std * r * PortableMath.Cos(2 * Math.PI * u2));
             if (i + 1 < values.Length)
             {
-                values[i + 1] = (float)(mean + std * r * Math.Sin(2 * Math.PI * u2));
+                values[i + 1] = (float)(mean + std * r * PortableMath.Sin(2 * Math.PI * u2));
             }
         }
 

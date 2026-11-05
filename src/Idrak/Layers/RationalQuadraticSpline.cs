@@ -130,7 +130,7 @@ public static class RationalQuadraticSpline
         }
 
         int bins = unnormalizedWidths.Length;
-        double constant = Math.Log(Math.Exp(1 - MinDerivative) - 1);
+        double constant = PortableMath.Log(PortableMath.Exp(1 - MinDerivative) - 1);
         derivatives[0] = constant;
         derivatives[bins] = constant;
 
@@ -184,19 +184,19 @@ public static class RationalQuadraticSpline
         double sum = 0;
         for (int k = 0; k < bins; k++)
         {
-            sum += Math.Exp(unnormalized[k] - max);
+            sum += PortableMath.Exp(unnormalized[k] - max);
         }
 
         cumulative[0] = -tail;
         double running = 0;
         for (int k = 0; k < bins; k++)
         {
-            running += minimum + (1 - minimum * bins) * (Math.Exp(unnormalized[k] - max) / sum);
+            running += minimum + (1 - minimum * bins) * (PortableMath.Exp(unnormalized[k] - max) / sum);
             cumulative[k + 1] = 2 * tail * running - tail;
         }
 
         cumulative[bins] = tail;
     }
 
-    private static double Softplus(double x) => x > 20 ? x : Math.Log(1 + Math.Exp(x));
+    private static double Softplus(double x) => x > 20 ? x : PortableMath.Log(1 + PortableMath.Exp(x));
 }

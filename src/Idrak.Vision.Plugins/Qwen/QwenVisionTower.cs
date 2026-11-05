@@ -436,7 +436,7 @@ internal sealed class QwenTowerLayout
         var frequencies = new double[quarter];
         for (int j = 0; j < quarter; j++)
         {
-            frequencies[j] = 1.0 / Math.Pow(config.RopeTheta, 2.0 * j / half);
+            frequencies[j] = 1.0 / PortableMath.Pow(config.RopeTheta, 2.0 * j / half);
         }
 
         var cos = new float[count * half];
@@ -447,8 +447,8 @@ internal sealed class QwenTowerLayout
             for (int j = 0; j < half; j++)
             {
                 double angle = (j < quarter ? row[patch] : column[patch]) * frequencies[j % quarter];
-                cos[r * half + j] = (float)Math.Cos(angle);
-                sin[r * half + j] = (float)Math.Sin(angle);
+                cos[r * half + j] = (float)PortableMath.Cos(angle);
+                sin[r * half + j] = (float)PortableMath.Sin(angle);
             }
         }
 

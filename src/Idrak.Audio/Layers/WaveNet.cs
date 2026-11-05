@@ -67,7 +67,7 @@ public sealed class WaveNet : Module
         var resSkip = new Conv1d[layers];
         for (int i = 0; i < layers; i++)
         {
-            int dilation = (int)Math.Pow(dilationRate, i), padding = (kernel * dilation - dilation) / 2;
+            int dilation = (int)PortableMath.Pow(dilationRate, i), padding = (kernel * dilation - dilation) / 2;
             inLayers[i] = stored.Conv($"{prefix}.in_layers.{i}", channels, 2 * channels, kernel, padding, dilation);
             int outChannels = i < layers - 1 ? 2 * channels : channels;
             resSkip[i] = stored.Conv($"{prefix}.res_skip_layers.{i}", channels, outChannels, 1, 0);

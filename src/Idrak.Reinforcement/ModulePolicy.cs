@@ -240,7 +240,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
     private const string Format = "idrak-module-policy/1", StateFile = "policy.json", ActorFile = "actor.ikw", CriticFile = "critic.ikw",
         SpreadFile = "spread.ikw", ReferenceFile = "reference.ikw", OptimizerFile = "optimizer.safetensors";
 
-    private static readonly double HalfLogTwoPi = 0.5 * Math.Log(2 * Math.PI);
+    private static readonly double HalfLogTwoPi = 0.5 * PortableMath.Log(2 * Math.PI);
 
     private readonly Module _actor;
     private readonly Module? _critic, _reference;
@@ -379,12 +379,12 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
                     for (int j = 0; j < _actionSize; j++)
                     {
                         // The spread sampled with: σ · √temperature (greedy: the mean, its density under σ).
-                        double sigma = Math.Exp(logStd[j]) * (sampling.Greedy ? 1 : Math.Sqrt(sampling.Temperature));
+                        double sigma = PortableMath.Exp(logStd[j]) * (sampling.Greedy ? 1 : Math.Sqrt(sampling.Temperature));
                         double drawn = sampling.Greedy ? mean[j] : mean[j] + sigma * random.NextGaussian();
                         float clipped = Math.Clamp((float)drawn, ActionSpace.Low[j], ActionSpace.High[j]);
                         action[j] = clipped;
                         double z = (clipped - mean[j]) / sigma;
-                        logp += -0.5 * z * z - Math.Log(sigma) - HalfLogTwoPi;
+                        logp += -0.5 * z * z - PortableMath.Log(sigma) - HalfLogTwoPi;
                     }
 
                     actions[row] = action;
@@ -662,14 +662,14 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         for (int u = 0; u < logp.Length; u++)
         {
             double d = (double)logp[u] - behavior[u];
-            double ratio = Math.Exp(d);
+            double ratio = PortableMath.Exp(d);
             kl += ratio - 1 - d;
             clipped += Math.Abs(ratio - 1) > clip ? 1 : 0;
             entropySum += entropy[u];
             if (reference is not null)
             {
                 double r = (double)reference[u] - logp[u];
-                referenceKl += Math.Exp(r) - r - 1;
+                referenceKl += PortableMath.Exp(r) - r - 1;
             }
         }
 
@@ -720,13 +720,13 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         double total = 0;
         foreach (float logit in logits)
         {
-            total += Math.Exp(logit / (double)temperature - max);
+            total += PortableMath.Exp(logit / (double)temperature - max);
         }
 
         double u = random.NextDouble() * total, cumulative = 0;
         for (int i = 0; i < logits.Length; i++)
         {
-            cumulative += Math.Exp(logits[i] / (double)temperature - max);
+            cumulative += PortableMath.Exp(logits[i] / (double)temperature - max);
             if (u < cumulative)
             {
                 return i;
@@ -748,10 +748,10 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         double total = 0;
         foreach (float logit in logits)
         {
-            total += Math.Exp(logit / (double)temperature - max);
+            total += PortableMath.Exp(logit / (double)temperature - max);
         }
 
-        return logits[choice] / (double)temperature - max - Math.Log(total);
+        return logits[choice] / (double)temperature - max - PortableMath.Log(total);
     }
 
     // The Gaussian's log standard deviation per action element: a trained parameter of its own, saved with the policy.

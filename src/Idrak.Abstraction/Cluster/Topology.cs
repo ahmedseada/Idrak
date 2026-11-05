@@ -633,7 +633,7 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
             throw new FormatException($"'{text.ToString()}' is not a memory size (a number and B, KB, MB, GB or TB; KiB, MiB, GiB and TiB mean the same, powers of 1,024).");
         }
 
-        double bytes = Math.Round(count * Math.Pow(1024, power));
+        double bytes = Math.Round(count * PortableMath.Pow(1024, power));
         return bytes < long.MaxValue ? (long)bytes : throw new FormatException($"'{text.ToString()}' is too large a memory size.");
     }
 

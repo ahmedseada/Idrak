@@ -91,8 +91,8 @@ internal static partial class PaperImageOps
             {
                 for (int x = Math.Max(0, (int)cx - reach); x <= Math.Min(w - 1, (int)cx + reach); x++)
                 {
-                    double dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.Sqrt(dx * dx + dy * dy), angle = Math.Atan2(dy, dx);
-                    double edge = r * (1 + waves.Sum(v => v.Amp * Math.Sin(v.Freq * angle + v.Phase)));
+                    double dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.Sqrt(dx * dx + dy * dy), angle = PortableMath.Atan2(dy, dx);
+                    double edge = r * (1 + waves.Sum(v => v.Amp * PortableMath.Sin(v.Freq * angle + v.Phase)));
                     double off = Math.Abs(d - edge);
                     if (d > edge + line)
                     {
@@ -235,7 +235,7 @@ internal static partial class PaperImageOps
             MultiplyIn(planes, w, h, (int)(sx - r - 1), (int)(sy - r - 1), (int)(sx + r + 1), (int)(sy + r + 1), rust, (x, y) =>
             {
                 double d = Math.Sqrt((x + 0.5 - sx) * (x + 0.5 - sx) + (y + 0.5 - sy) * (y + 0.5 - sy));
-                return d >= r ? 0 : strength * (float)Math.Pow(1 - d / r, 1.5);
+                return d >= r ? 0 : strength * (float)PortableMath.Pow(1 - d / r, 1.5);
             });
         }
 
@@ -266,7 +266,7 @@ internal static partial class PaperImageOps
         var background = Background(planes.Length, fill, random);
         var rust = Tint(planes.Length, 0.75f, 0.55f, 0.35f);
         double angle = random.NextDouble() < 0.6 ? (left ? -1 : 1) * (Math.PI / 4 + (random.NextDouble() - 0.5) * 0.5) : (random.NextDouble() - 0.5) * 0.28;
-        double ux = Math.Cos(angle), uy = Math.Sin(angle);
+        double ux = PortableMath.Cos(angle), uy = PortableMath.Sin(angle);
         double cx0 = room * (0.44 + 0.06 * random.NextDouble()), cy0 = room * (0.44 + 0.06 * random.NextDouble());   // the staple, its rust and a second one stay within the room
         for (int k = 0; k < count; k++)
         {
@@ -389,13 +389,13 @@ internal static partial class PaperImageOps
         for (int k = 0; k <= 12; k++)
         {
             double t = Math.PI + Math.PI * k / 12;
-            points.Add((r * Math.Cos(t), top + r + r * Math.Sin(t)));
+            points.Add((r * PortableMath.Cos(t), top + r + r * PortableMath.Sin(t)));
         }
 
         for (int k = 0; k <= 12; k++)
         {
             double t = Math.PI * k / 12;
-            points.Add((r * Math.Cos(t), bottom - r + r * Math.Sin(t)));
+            points.Add((r * PortableMath.Cos(t), bottom - r + r * PortableMath.Sin(t)));
         }
 
         points.Add(points[0]);
@@ -424,7 +424,7 @@ internal static partial class PaperImageOps
         for (int k = 0; k < count; k++)
         {
             double width = length * 0.28, cx = w * (0.15 + 0.7 * random.NextDouble()), tilt = (random.NextDouble() - 0.5) * 0.2;
-            double cos = Math.Cos(tilt), sin = Math.Sin(tilt);
+            double cos = PortableMath.Cos(tilt), sin = PortableMath.Sin(tilt);
             List<(double, double)> Place(List<(double X, double Y)> loop, double dx, double dy) =>
                 [.. loop.Select(p => (cx + p.X * cos - p.Y * sin + dx, p.X * sin + p.Y * cos + dy))];
             var outer = Loop(width, -0.4 * length, 0.6 * length);
@@ -489,7 +489,7 @@ internal static partial class PaperImageOps
             var field = ScanImageOps.SmoothGrid(random.Next(), out int cells);
             float strength = (float)(0.4 + 0.5 * random.NextDouble());
             var flecks = new Random(random.Next());
-            Strip(w, h, w * random.NextDouble(), h * random.NextDouble(), Math.Cos(angle), Math.Sin(angle), length, width, false, (x, y, a, b, edge) =>
+            Strip(w, h, w * random.NextDouble(), h * random.NextDouble(), PortableMath.Cos(angle), PortableMath.Sin(angle), length, width, false, (x, y, a, b, edge) =>
             {
                 float k = strength * (0.5f + 0.5f * ScanImageOps.Smooth(field, cells, (float)(a + 1) / 2, (float)(b + 1) / 2)) * (edge ? 1.3f : 1f);
                 bool fleck = flecks.NextDouble() < 0.02;
@@ -548,8 +548,8 @@ internal static partial class PaperImageOps
             {
                 for (int x = (int)hx - reach; x <= (int)hx + reach; x++)
                 {
-                    double dx = x + 0.5 - hx, dy = y + 0.5 - hy, d = Math.Sqrt(dx * dx + dy * dy), t = Math.Atan2(dy, dx);
-                    double edge = r * (1 + 0.25 * Math.Sin(3 * t + phase) + 0.15 * Math.Sin(5 * t + 2 * phase));
+                    double dx = x + 0.5 - hx, dy = y + 0.5 - hy, d = Math.Sqrt(dx * dx + dy * dy), t = PortableMath.Atan2(dy, dx);
+                    double edge = r * (1 + 0.25 * PortableMath.Sin(3 * t + phase) + 0.15 * PortableMath.Sin(5 * t + 2 * phase));
                     if (d > edge + 1.5)
                     {
                         continue;
@@ -630,7 +630,7 @@ internal static partial class PaperImageOps
             {
                 double bump = Math.Max(0, 1 - Math.Abs(i - center) / (width / 2));
                 jag = Math.Clamp(jag + (random.NextDouble() - 0.5) * 2, -3, 3);
-                double depth = bump > 0 ? Math.Clamp(deepest * Math.Pow(bump, 0.7) + jag, 0, rooms[s]) : 0;
+                double depth = bump > 0 ? Math.Clamp(deepest * PortableMath.Pow(bump, 0.7) + jag, 0, rooms[s]) : 0;
                 cut[s][i] = Math.Max(cut[s][i], depth);
             }
         }
@@ -711,13 +711,13 @@ internal static partial class PaperImageOps
                     for (int x = x0; x <= x1; x++)
                     {
                         double u = Math.Abs(x + 0.5 - cx) / rx, v = Math.Abs(y + 0.5 - cy) / ry;
-                        double shape = Math.Pow(u, 4) + Math.Pow(v, 4), edge = 1 + 0.08 * Math.Sin(x * 0.3 + phase);
+                        double shape = PortableMath.Pow(u, 4) + PortableMath.Pow(v, 4), edge = 1 + 0.08 * PortableMath.Sin(x * 0.3 + phase);
                         if (shape > edge)
                         {
                             continue;
                         }
 
-                        float bump = (float)(Math.Sin(x * 0.7 + phase) * Math.Sin(y * 0.9 - phase) * 2.5);
+                        float bump = (float)(PortableMath.Sin(x * 0.7 + phase) * PortableMath.Sin(y * 0.9 - phase) * 2.5);
                         for (int c = 0; c < planes.Length; c++)
                         {
                             float white = (planes.Length == 3 && c == 2 ? 245 : 249) + bump;
@@ -756,7 +756,7 @@ internal static partial class PaperImageOps
 
             int s = usable[random.Next(usable.Count)];
             double size = side * (0.08 + 0.05 * random.NextDouble()), turn = (random.NextDouble() - 0.5) * 0.28;
-            double extent = size * (Math.Abs(Math.Cos(turn)) + Math.Abs(Math.Sin(turn))) / 2, depth = rooms[s] * (0.4 + 0.45 * random.NextDouble()) - 4;
+            double extent = size * (Math.Abs(PortableMath.Cos(turn)) + Math.Abs(PortableMath.Sin(turn))) / 2, depth = rooms[s] * (0.4 + 0.45 * random.NextDouble()) - 4;
             double along = (s % 2 == 0 ? w : h) * (0.1 + 0.8 * random.NextDouble()), from = depth - extent;   // its centre, off the page
             (double cx, double cy) = s switch
             {
@@ -767,7 +767,7 @@ internal static partial class PaperImageOps
             };
             var (red, green, blue) = colors[random.Next(colors.Length)];
             var color = Tint(planes.Length, red, green, blue);
-            double ux = Math.Cos(turn), uy = Math.Sin(turn), half = size / 2;
+            double ux = PortableMath.Cos(turn), uy = PortableMath.Sin(turn), half = size / 2;
             for (int y = Math.Max(0, (int)(cy - extent - 4)); y <= Math.Min(h - 1, (int)(cy + extent + 4)); y++)
             {
                 for (int x = Math.Max(0, (int)(cx - extent - 4)); x <= Math.Min(w - 1, (int)(cx + extent + 4)); x++)
@@ -827,7 +827,7 @@ internal static partial class PaperImageOps
                     for (int x = (int)(cx - halo); x <= (int)(cx + halo); x++)
                     {
                         double dx = x + 0.5 - cx, dy = y + 0.5 - cy, d = Math.Sqrt(dx * dx + dy * dy);
-                        double edge = r * (1 + 0.2 * Math.Sin(4 * Math.Atan2(dy, dx) + phase));
+                        double edge = r * (1 + 0.2 * PortableMath.Sin(4 * PortableMath.Atan2(dy, dx) + phase));
                         if (d > halo)
                         {
                             continue;
@@ -1016,7 +1016,7 @@ internal static partial class PaperImageOps
         var streaks = Enumerable.Range(0, 1 + random.Next(4)).Select(_ => (At: w * random.NextDouble(), Width: 3 + 25 * random.NextDouble())).ToArray();
         for (int x = 0; x < w; x++)
         {
-            double f = 0.35 + 0.35 * Math.Sin(x / period * 6.283 + phase);
+            double f = 0.35 + 0.35 * PortableMath.Sin(x / period * 6.283 + phase);
             f = Math.Max(f, streaks.Max(s => Math.Max(0, 1 - Math.Abs(x - s.At) / s.Width)));
             fade[x] = (float)(Math.Clamp(f, 0, 1) * amount);
         }
@@ -1053,7 +1053,7 @@ internal static partial class PaperImageOps
         double period = 20 + 60 * random.NextDouble(), phase = random.NextDouble() * 6.3, period2 = period * (2.3 + random.NextDouble());
         Rows(w, h, y =>
         {
-            float band = (float)(amount * (0.5 + 0.35 * Math.Sin(y / period * 6.283 + phase) + 0.15 * Math.Sin(y / period2 * 6.283)));
+            float band = (float)(amount * (0.5 + 0.35 * PortableMath.Sin(y / period * 6.283 + phase) + 0.15 * PortableMath.Sin(y / period2 * 6.283)));
             for (int x = 0; x < w; x++)
             {
                 for (int c = 0; c < planes.Length; c++)
@@ -1150,7 +1150,7 @@ internal static partial class PaperImageOps
         int w = image.Width, h = image.Height;
         var random = new Random(seed);
         double angle = random.NextDouble() * 6.283, size = pixels * (0.5 + 0.5 * random.NextDouble());
-        int dx = (int)Math.Round(Math.Cos(angle) * size), dy = (int)Math.Round(Math.Sin(angle) * size);
+        int dx = (int)Math.Round(PortableMath.Cos(angle) * size), dy = (int)Math.Round(PortableMath.Sin(angle) * size);
         if (dx == 0 && dy == 0)
         {
             dx = 1;
@@ -1219,7 +1219,7 @@ internal static partial class PaperImageOps
                 hash = (hash ^ (hash >> 13)) * 0x5bd1e995;
                 float speck = ((hash >> 8) & 0xFF) / 255f - 0.5f;
                 float grain = wood
-                    ? (float)(1 + 0.07 * Math.Sin(y / grainPeriod + mottle * 25 + grainPhase) * Math.Sin(y / (grainPeriod * 7.3) + mottle * 9) + 0.03 * speck)
+                    ? (float)(1 + 0.07 * PortableMath.Sin(y / grainPeriod + mottle * 25 + grainPhase) * PortableMath.Sin(y / (grainPeriod * 7.3) + mottle * 9) + 0.03 * speck)
                     : 1 + 0.08f * (mottle - 0.5f) + 0.04f * speck;
                 for (int c = 0; c < planes.Length; c++)
                 {
@@ -1242,7 +1242,7 @@ internal static partial class PaperImageOps
         int w = image.Width, h = image.Height, side = Math.Min(w, h);
         var random = new Random(seed);
         double cx = w * random.NextDouble(), cy = h * random.NextDouble(), rx = side * (0.1 + 0.25 * random.NextDouble()), ry = rx * (0.4 + 0.6 * random.NextDouble());
-        double turn = random.NextDouble() * Math.PI, cos = Math.Cos(turn), sin = Math.Sin(turn);
+        double turn = random.NextDouble() * Math.PI, cos = PortableMath.Cos(turn), sin = PortableMath.Sin(turn);
         Rows(w, h, y =>
         {
             for (int x = 0; x < w; x++)
@@ -1254,7 +1254,7 @@ internal static partial class PaperImageOps
                     continue;
                 }
 
-                float k = (float)(amount * Math.Exp(-d2));
+                float k = (float)(amount * PortableMath.Exp(-d2));
                 for (int c = 0; c < planes.Length; c++)
                 {
                     ref byte v = ref planes[c][y * w + x];
@@ -1304,7 +1304,7 @@ internal static partial class PaperImageOps
         var planes = PillowImageOps.Bytes(image);
         int w = image.Width, h = image.Height;
         var random = new Random(seed);
-        double angle = random.NextDouble() * Math.PI, ux = Math.Cos(angle), uy = Math.Sin(angle);
+        double angle = random.NextDouble() * Math.PI, ux = PortableMath.Cos(angle), uy = PortableMath.Sin(angle);
         int taps = Math.Max(2, (int)Math.Ceiling(length) + 1);
         var result = planes.Select(_ => new byte[w * h]).ToArray();
         Rows(w, h, y =>
@@ -1340,16 +1340,16 @@ internal static partial class PaperImageOps
         int w = image.Width, h = image.Height;
         var random = new Random(seed);
         double f1 = 0.6 + 0.4 * random.NextDouble(), f2 = f1 * (1.02 + 0.05 * random.NextDouble()), a1 = random.NextDouble() * Math.PI, a2 = a1 + 0.05 + 0.1 * random.NextDouble();
-        double c1 = Math.Cos(a1), s1 = Math.Sin(a1), c2 = Math.Cos(a2), s2 = Math.Sin(a2);
+        double c1 = PortableMath.Cos(a1), s1 = PortableMath.Sin(a1), c2 = PortableMath.Cos(a2), s2 = PortableMath.Sin(a2);
         Rows(w, h, y =>
         {
             for (int x = 0; x < w; x++)
             {
-                double p = Math.Sin((x * c1 + y * s1) * f1) * Math.Sin((x * c2 + y * s2) * f2);
+                double p = PortableMath.Sin((x * c1 + y * s1) * f1) * PortableMath.Sin((x * c2 + y * s2) * f2);
                 for (int c = 0; c < planes.Length; c++)
                 {
                     // Each colour its own phase: the rainbow of a screen's moiré.
-                    double wave = planes.Length == 3 ? 0.5 * p + 0.5 * Math.Sin((x * c1 + y * s1) * (f1 - f2) + c * 2.1) : p;
+                    double wave = planes.Length == 3 ? 0.5 * p + 0.5 * PortableMath.Sin((x * c1 + y * s1) * (f1 - f2) + c * 2.1) : p;
                     ref byte v = ref planes[c][y * w + x];
                     v = (byte)Math.Clamp(v * (1 - amount * 0.3 * (1 + wave)) + 0.5, 0, 255);
                 }
@@ -1415,7 +1415,7 @@ internal static partial class PaperImageOps
         for (int k = 0; k < count; k++)
         {
             double cx = w * random.NextDouble(), cy = h * random.NextDouble(), rx = side * (0.025 + 0.015 * random.NextDouble()), ry = rx * 1.35;
-            double turn = random.NextDouble() * Math.PI, cos = Math.Cos(turn), sin = Math.Sin(turn), pitch = 2.5 + random.NextDouble(), phase = random.NextDouble() * 6.3;
+            double turn = random.NextDouble() * Math.PI, cos = PortableMath.Cos(turn), sin = PortableMath.Sin(turn), pitch = 2.5 + random.NextDouble(), phase = random.NextDouble() * 6.3;
             float strength = (float)(0.3 + 0.4 * random.NextDouble());
             int reach = (int)ry + 2;
             MultiplyIn(planes, w, h, (int)cx - reach, (int)cy - reach, (int)cx + reach, (int)cy + reach, grease, (x, y) =>
@@ -1427,7 +1427,7 @@ internal static partial class PaperImageOps
                 }
 
                 // Ridges: loops round the core, wavering.
-                double ridge = Math.Sin(d * rx / pitch * 6.283 + Math.Sin(a * 3 + phase) * 0.8);
+                double ridge = PortableMath.Sin(d * rx / pitch * 6.283 + PortableMath.Sin(a * 3 + phase) * 0.8);
                 return ridge > 0.2 ? strength * (float)(1 - d * d) : 0;
             });
         }
@@ -1501,7 +1501,7 @@ internal static partial class PaperImageOps
         {
             for (int x = 0; x < w; x++)
             {
-                double wave1 = Math.Sin((y + amp * Math.Sin(x * f1)) / pitch * 6.283), wave2 = Math.Sin((x + amp * Math.Sin(y * f2)) / pitch * 6.283);
+                double wave1 = PortableMath.Sin((y + amp * PortableMath.Sin(x * f1)) / pitch * 6.283), wave2 = PortableMath.Sin((x + amp * PortableMath.Sin(y * f2)) / pitch * 6.283);
                 float k = (float)(Math.Max(0, Math.Max(wave1, wave2) - 0.8) / 0.2) * a;
                 if (k <= 0)
                 {
@@ -1536,7 +1536,7 @@ internal static partial class PaperImageOps
             double x0 = w * random.NextDouble(), y0 = h * random.NextDouble(), angle = random.NextDouble() * Math.PI, length = 3 + 12 * random.NextDouble();
             float[] color = random.NextDouble() < 0.7 ? [.. paper.Select(p => p * (float)(0.55 + 0.3 * random.NextDouble()))]
                 : Tint(planes.Length, 120 + random.Next(80), 100 + random.Next(80), 140 + random.Next(80));
-            Stroke(planes, w, h, HandLine(x0, y0, x0 + Math.Cos(angle) * length, y0 + Math.Sin(angle) * length, random, 0.8), 0.7, color, (float)(0.4 + 0.4 * random.NextDouble()));
+            Stroke(planes, w, h, HandLine(x0, y0, x0 + PortableMath.Cos(angle) * length, y0 + PortableMath.Sin(angle) * length, random, 0.8), 0.7, color, (float)(0.4 + 0.4 * random.NextDouble()));
         }
 
         int grain = (int)(6 * amount);

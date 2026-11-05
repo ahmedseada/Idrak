@@ -117,7 +117,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
             noiseSquares += (double)v * v;
         }
 
-        float logQ0 = (float)(-0.5 * (2 * positions * Math.Log(2 * Math.PI) + noiseSquares));
+        float logQ0 = (float)(-0.5 * (2 * positions * PortableMath.Log(2 * Math.PI) + noiseSquares));
         var logQ = logDetQ * -1f + logQ0;
 
         // The durations dequantized by the posterior's first channel, through the flows to the prior.
@@ -125,7 +125,7 @@ internal sealed class VitsStochasticDurationPredictor : IVitsDurationPredictor
         latents = Prior(Tensor.Concat([dequantized, second], 1), x, mask, out var flowsDet);
         var logDetSum = (mask is null ? dequantized : mask.Apply(dequantized)).Sum() * -1f + flowsDet;
         var squares = latents.Square() * 0.5f;
-        var nll = (mask is null ? squares : mask.Apply(squares)).Sum() + (float)(0.5 * 2 * positions * Math.Log(2 * Math.PI)) - logDetSum;
+        var nll = (mask is null ? squares : mask.Apply(squares)).Sum() + (float)(0.5 * 2 * positions * PortableMath.Log(2 * Math.PI)) - logDetSum;
         return nll + logQ;
     }
 

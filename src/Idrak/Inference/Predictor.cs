@@ -544,7 +544,7 @@ public sealed class Predictor<TIn, TOut> : IPredictor<TIn, TOut>, IDisposable
             float max = float.NegativeInfinity;
             foreach (float v in row) max = MathF.Max(max, v);
             float sum = 0;
-            for (int i = 0; i < row.Length; i++) sum += row[i] = MathF.Exp(row[i] - max);
+            for (int i = 0; i < row.Length; i++) sum += row[i] = PortableMathF.Exp(row[i] - max);
             for (int i = 0; i < row.Length; i++) row[i] /= sum;
         }
     }

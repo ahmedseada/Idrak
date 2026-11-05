@@ -168,7 +168,7 @@ public static class LiveTranscriber
                     energy += (double)_samples[i] * _samples[i];
                 }
 
-                double level = 10 * Math.Log10(Math.Max(energy / _frame, 1e-12));
+                double level = 10 * PortableMath.Log10(Math.Max(energy / _frame, 1e-12));
                 _levels.Add(level);
                 _loudest = Math.Max(_loudest, level);
             }

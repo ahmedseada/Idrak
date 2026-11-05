@@ -48,7 +48,7 @@ public sealed class DilatedDepthSeparableConv : Module
         var norms2 = new LayerNorm[layers];
         for (int i = 0; i < layers; i++)
         {
-            int dilation = (int)Math.Pow(kernel, i), padding = (kernel * dilation - dilation) / 2;
+            int dilation = (int)PortableMath.Pow(kernel, i), padding = (kernel * dilation - dilation) / 2;
             dilated[i] = stored.Conv($"{prefix}.convs_dilated.{i}", channels, channels, kernel, padding, dilation, groups: channels);
             pointwise[i] = stored.Conv($"{prefix}.convs_pointwise.{i}", channels, channels, 1, 0);
             norms1[i] = stored.Norm($"{prefix}.norms_1.{i}", channels, layerNormEpsilon);

@@ -216,6 +216,6 @@ internal static class CtcDecoding
             return a;
         }
 
-        return a > b ? a + Math.Log(1 + Math.Exp(b - a)) : b + Math.Log(1 + Math.Exp(a - b));
+        return a > b ? a + PortableMath.Log(1 + PortableMath.Exp(b - a)) : b + PortableMath.Log(1 + PortableMath.Exp(a - b));
     }
 }

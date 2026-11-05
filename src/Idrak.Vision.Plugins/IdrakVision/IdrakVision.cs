@@ -111,11 +111,11 @@ public sealed class IdrakVisionFamily : IVisionFamily
                 {
                     // Box-Muller: two normal values from two uniform ones.
                     double u = 1.0 - random.NextDouble(), v = random.NextDouble();
-                    double radius = Math.Sqrt(-2.0 * Math.Log(u));
-                    values[i] = (float)(std * radius * Math.Cos(2 * Math.PI * v));
+                    double radius = Math.Sqrt(-2.0 * PortableMath.Log(u));
+                    values[i] = (float)(std * radius * PortableMath.Cos(2 * Math.PI * v));
                     if (i + 1 < count)
                     {
-                        values[i + 1] = (float)(std * radius * Math.Sin(2 * Math.PI * v));
+                        values[i + 1] = (float)(std * radius * PortableMath.Sin(2 * Math.PI * v));
                     }
                 }
             }

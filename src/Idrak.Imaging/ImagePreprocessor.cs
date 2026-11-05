@@ -1151,7 +1151,7 @@ public sealed class ImagePreprocessor
                 }
 
                 x *= Math.PI;
-                return Math.Sin(x) / x * (0.54 + 0.46 * Math.Cos(x));
+                return PortableMath.Sin(x) / x * (0.54 + 0.46 * PortableMath.Cos(x));
             case ImageResampling.Bicubic:
             {
                 const double a = -0.5;
@@ -1173,7 +1173,7 @@ public sealed class ImagePreprocessor
             }
 
             x *= Math.PI;
-            return Math.Sin(x) / x;
+            return PortableMath.Sin(x) / x;
         }
     }
 }

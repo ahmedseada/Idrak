@@ -183,7 +183,7 @@ public readonly record struct AttentionVariant(int Window, float Softcap)
     public int Start(int end) => Window > 0 ? Math.Max(0, end - Window) : 0;
 
     /// <summary>A scaled score, soft-capped when a cap is set.</summary>
-    public float Cap(float score) => Softcap > 0f ? MathF.Tanh(score / Softcap) * Softcap : score;
+    public float Cap(float score) => Softcap > 0f ? Cpu.CpuMath.Tanh(score / Softcap) * Softcap : score;   // the CPU's own tanh (rule 70)
 
     /// <summary>The derivative of <see cref="Cap"/> given its result: 1 - (capped / cap)² (1 without a cap).</summary>
     public float Slope(float capped) => Softcap > 0f ? 1f - capped / Softcap * (capped / Softcap) : 1f;

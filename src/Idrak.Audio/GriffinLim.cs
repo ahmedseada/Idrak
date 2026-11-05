@@ -114,7 +114,7 @@ public sealed class GriffinLimVocoder : IVocoder
             var row = logMel.Slice(f * mels, mels);
             for (int m = 0; m < mels; m++)
             {
-                melPower[m] = Math.Pow(10, row[m] / scale - offset);           // (log10 p + offset) · scale undone
+                melPower[m] = PortableMath.Pow(10, row[m] / scale - offset);           // (log10 p + offset) · scale undone
             }
 
             var target = power.AsSpan(f * bins, bins);
@@ -159,7 +159,7 @@ public sealed class GriffinLimVocoder : IVocoder
         float exponent = 1f / Settings.Power;
         for (int i = 0; i < own * bins; i++)
         {
-            magnitude[i] = Settings.Power == 1f ? spectrogram[i] : MathF.Pow(spectrogram[i], exponent);
+            magnitude[i] = Settings.Power == 1f ? spectrogram[i] : PortableMathF.Pow(spectrogram[i], exponent);
         }
 
         // The current phases as unit complex numbers, and the previous rebuilt spectrum for the momentum.
@@ -171,8 +171,8 @@ public sealed class GriffinLimVocoder : IVocoder
             for (int i = 0; i < count; i++)
             {
                 double phase = random.NextDouble() * 2 * Math.PI;
-                angleRe[i] = (float)Math.Cos(phase);
-                angleIm[i] = (float)Math.Sin(phase);
+                angleRe[i] = (float)PortableMath.Cos(phase);
+                angleIm[i] = (float)PortableMath.Sin(phase);
             }
         }
         else

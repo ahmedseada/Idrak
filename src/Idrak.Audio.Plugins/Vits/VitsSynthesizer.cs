@@ -323,7 +323,7 @@ public sealed class VitsSynthesizer : IPartFreezingSynthesizer
         int frames = 0;
         for (int i = 0; i < durations.Length; i++)
         {
-            durations[i] = (int)Math.Ceiling(Math.Exp(logDurations[i]) * lengthScale);
+            durations[i] = (int)Math.Ceiling(PortableMath.Exp(logDurations[i]) * lengthScale);
             frames += durations[i];
         }
 

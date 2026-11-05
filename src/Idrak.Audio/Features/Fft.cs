@@ -51,8 +51,8 @@ internal sealed class Fft
                 for (int q = 1; q < radix; q++)
                 {
                     double angle = 2 * Math.PI * (q * j) / length;               // W_L^(q j), q j < L
-                    re[j * (radix - 1) + q - 1] = Math.Cos(angle);
-                    im[j * (radix - 1) + q - 1] = -Math.Sin(angle);
+                    re[j * (radix - 1) + q - 1] = PortableMath.Cos(angle);
+                    im[j * (radix - 1) + q - 1] = -PortableMath.Sin(angle);
                 }
             }
 
@@ -64,8 +64,8 @@ internal sealed class Fft
                 rootIm = new double[radix];
                 for (int e = 0; e < radix; e++)
                 {
-                    rootRe[e] = Math.Cos(2 * Math.PI * e / radix);
-                    rootIm[e] = -Math.Sin(2 * Math.PI * e / radix);
+                    rootRe[e] = PortableMath.Cos(2 * Math.PI * e / radix);
+                    rootIm[e] = -PortableMath.Sin(2 * Math.PI * e / radix);
                 }
             }
 
@@ -84,8 +84,8 @@ internal sealed class Fft
             _splitIm = new double[_points + 1];
             for (int k = 0; k <= _points; k++)
             {
-                _splitRe[k] = Math.Cos(2 * Math.PI * k / size);
-                _splitIm[k] = -Math.Sin(2 * Math.PI * k / size);
+                _splitRe[k] = PortableMath.Cos(2 * Math.PI * k / size);
+                _splitIm[k] = -PortableMath.Sin(2 * Math.PI * k / size);
             }
         }
     }

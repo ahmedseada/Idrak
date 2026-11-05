@@ -341,7 +341,7 @@ internal sealed class VitsTraining : IDisposable
                 var logsB = logStddevs.Narrow(0, b * tokens, t);
                 var priorT = prior.Narrow(0, b, 1).Reshape(flow, length).Narrow(1, 0, frames[b]).Transpose();   // [frames, F]
                 var inverse = (logsB * -2f).Exp();                                  // [T, F]
-                var perToken = (logsB * -1f - 0.5f * MathF.Log(2 * MathF.PI)).Sum(1) + (meansB.Square() * inverse * -0.5f).Sum(1);   // [T]
+                var perToken = (logsB * -1f - 0.5f * PortableMathF.Log(2 * MathF.PI)).Sum(1) + (meansB.Square() * inverse * -0.5f).Sum(1);   // [T]
                 var scores = (priorT.Square() * -0.5f).MatMul(inverse, transposeB: true) + priorT.MatMul(meansB * inverse, transposeB: true) + perToken;   // [frames, T]
                 paths[b] = MonotonicAlignment.Search(scores.ToArray(), frames[b], t);
                 durations[b] = MonotonicAlignment.Durations(paths[b], t);

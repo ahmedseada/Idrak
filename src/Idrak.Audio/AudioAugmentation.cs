@@ -57,16 +57,16 @@ internal sealed class NoiseAugmentation : ISoundAugmentation
         var output = new float[length];
         if (options.NoiseFiles.Count == 0)
         {
-            double scale = Math.Sqrt(power / Math.Pow(10, snr / 10));
+            double scale = Math.Sqrt(power / PortableMath.Pow(10, snr / 10));
             for (int i = 0; i < length; i += 2)
             {
                 // Box-Muller: two normal draws a pair of uniforms.
                 double u = 1 - random.NextDouble(), v = random.NextDouble();
-                double radius = Math.Sqrt(-2 * Math.Log(u));
-                output[i] = (float)(samples[i] + scale * radius * Math.Cos(2 * Math.PI * v));
+                double radius = Math.Sqrt(-2 * PortableMath.Log(u));
+                output[i] = (float)(samples[i] + scale * radius * PortableMath.Cos(2 * Math.PI * v));
                 if (i + 1 < length)
                 {
-                    output[i + 1] = (float)(samples[i + 1] + scale * radius * Math.Sin(2 * Math.PI * v));
+                    output[i + 1] = (float)(samples[i + 1] + scale * radius * PortableMath.Sin(2 * Math.PI * v));
                 }
             }
 
@@ -95,7 +95,7 @@ internal sealed class NoiseAugmentation : ISoundAugmentation
         }
 
         noisePower /= length;
-        float gain = noisePower > 0 ? (float)Math.Sqrt(power / Math.Pow(10, snr / 10) / noisePower) : 0f;
+        float gain = noisePower > 0 ? (float)Math.Sqrt(power / PortableMath.Pow(10, snr / 10) / noisePower) : 0f;
         for (int i = 0; i < length; i++)
         {
             output[i] = samples[i] + gain * noise[(offset + i) % noise.Length];

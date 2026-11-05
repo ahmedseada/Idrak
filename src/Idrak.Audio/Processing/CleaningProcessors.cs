@@ -120,7 +120,7 @@ internal sealed class NormalizeProcessor : IRecordingAudioProcessor
         {
             if (d >= threshold && d > -200f)
             {
-                sum += Math.Pow(10, d / 10);
+                sum += PortableMath.Pow(10, d / 10);
                 count++;
             }
         }
@@ -130,8 +130,8 @@ internal sealed class NormalizeProcessor : IRecordingAudioProcessor
             return audio;
         }
 
-        double level = 10 * Math.Log10(sum / count), ceiling = step.Number("peak", DefaultPeak);
-        double gain = Math.Pow(10, (step.Number(DefaultTarget) - level) / 20);
+        double level = 10 * PortableMath.Log10(sum / count), ceiling = step.Number("peak", DefaultPeak);
+        double gain = PortableMath.Pow(10, (step.Number(DefaultTarget) - level) / 20);
         var samples = audio.Samples;
         float peak = 0;
         foreach (float x in samples)
@@ -208,7 +208,7 @@ internal sealed class DenoiseProcessor : IRecordingAudioProcessor
 
         var stft = new AudioFeatureOptions { SampleRate = audio.SampleRate, WindowSize = size, HopSize = size / 4, Window = "hann", Center = true, PadSeconds = null };
         int length = audio.Length, frames = Stft.FramesFor(length, stft), bins = stft.Bins;
-        float floorGain = (float)Math.Pow(10, step.Number("floor", DefaultFloor) / 20);
+        float floorGain = (float)PortableMath.Pow(10, step.Number("floor", DefaultFloor) / 20);
         float strength = (float)step.Number(DefaultStrength);
         var real = GC.AllocateUninitializedArray<float>(frames * bins);
         var imaginary = GC.AllocateUninitializedArray<float>(frames * bins);

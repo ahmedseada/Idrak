@@ -273,7 +273,7 @@ public static class RopeScalings
         double betaSlow = RopeScaling.Number(p, "beta_slow", 0) is var slow && slow != 0 ? slow : 1;
         bool truncate = p["truncate"] is not JsonValue t || !t.TryGetValue<bool>(out var flag) || flag;
 
-        static double MScale(double scale, double m = 1) => scale <= 1 ? 1.0 : 0.1 * m * Math.Log(scale) + 1.0;
+        static double MScale(double scale, double m = 1) => scale <= 1 ? 1.0 : 0.1 * m * PortableMath.Log(scale) + 1.0;
         double attention;
         if (p["attention_factor"] is not null)
         {
@@ -286,7 +286,7 @@ public static class RopeScalings
         }
 
         int dim = input.RotaryDim;
-        double Correction(double rotations) => dim * Math.Log(original / (rotations * 2 * Math.PI)) / (2 * Math.Log(input.Theta));
+        double Correction(double rotations) => dim * PortableMath.Log(original / (rotations * 2 * Math.PI)) / (2 * PortableMath.Log(input.Theta));
         double low = Correction(betaFast), high = Correction(betaSlow);
         if (truncate)
         {
@@ -335,11 +335,11 @@ public static class RopeScalings
             }
 
             // f_i · (b' / b)^(-2i / d): the unscaled frequencies with the grown base.
-            double growth = Math.Pow(factor * length / max - (factor - 1), (double)dim / (dim - 2));
+            double growth = PortableMath.Pow(factor * length / max - (factor - 1), (double)dim / (dim - 2));
             var frequencies = new double[unscaled.Length];
             for (int i = 0; i < frequencies.Length; i++)
             {
-                frequencies[i] = unscaled[i] * Math.Pow(growth, -2.0 * i / dim);
+                frequencies[i] = unscaled[i] * PortableMath.Pow(growth, -2.0 * i / dim);
             }
 
             return frequencies;
@@ -375,7 +375,7 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
         var frequencies = new double[half];
         for (int i = 0; i < half; i++)
         {
-            frequencies[i] = 1.0 / Math.Pow(Theta, 2.0 * i / rotary);
+            frequencies[i] = 1.0 / PortableMath.Pow(Theta, 2.0 * i / rotary);
         }
 
         if (Scaling is null)

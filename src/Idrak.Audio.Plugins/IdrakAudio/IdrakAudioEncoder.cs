@@ -171,8 +171,8 @@ public sealed class IdrakAudioEncoder : Module
                 {
                     for (int i = 0; i < d; i++)
                     {
-                        double angle = p / Math.Pow(10000, 2 * (i / 2) / (double)d);
-                        values[p * d + i] = (float)(i % 2 == 0 ? Math.Sin(angle) : Math.Cos(angle));
+                        double angle = p / PortableMath.Pow(10000, 2 * (i / 2) / (double)d);
+                        values[p * d + i] = (float)(i % 2 == 0 ? PortableMath.Sin(angle) : PortableMath.Cos(angle));
                     }
                 }
 

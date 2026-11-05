@@ -73,7 +73,7 @@ public static class LlamaArchitectures
             double worst = 0;
             for (int i = 0; i < divisors.Length; i++)
             {
-                double wavelength = 2 * Math.PI * Math.Pow(theta, 2.0 * i / headDim);
+                double wavelength = 2 * Math.PI * PortableMath.Pow(theta, 2.0 * i / headDim);
                 double low = original / 1.0, high = original / 4.0;
                 double expected = wavelength < high ? 1 : wavelength > low ? factor
                     : 1 / ((1 - (original / wavelength - 1) / 3) / factor + (original / wavelength - 1) / 3);

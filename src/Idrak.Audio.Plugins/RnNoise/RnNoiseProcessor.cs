@@ -70,7 +70,7 @@ internal sealed class RnNoiseProcessor : ILiveAudioProcessor
 
         var model = RnNoiseModel.Load(RnNoisePlugin.LocateModel(step.Option(RnNoisePlugin.ModelOption)));
         float mix = (float)step.Number("mix", 1);
-        float floor = step.Option("attenuation") is null ? 0 : (float)Math.Pow(10, -step.Number("attenuation", 0) / 20);
+        float floor = step.Option("attenuation") is null ? 0 : (float)PortableMath.Pow(10, -step.Number("attenuation", 0) / 20);
         var core = new RnNoiseStream(model, channels, mix, floor);
         return sampleRate == Rate ? new Stage(core, channels) : new ResampledStage(core, sampleRate, channels);
     }

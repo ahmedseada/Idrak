@@ -32,7 +32,7 @@ public static partial class Stft
         var w = new float[size];
         for (int n = 0; n < size; n++)
         {
-            double c = Math.Cos(2 * Math.PI * n / size);
+            double c = PortableMath.Cos(2 * Math.PI * n / size);
             w[n] = (float)(name switch
             {
                 "hann" => 0.5 - 0.5 * c,
@@ -160,8 +160,8 @@ public static partial class Stft
                 for (int k = 0; k < bins; k++)
                 {
                     double angle = 2 * Math.PI * n * k / size;
-                    values[n * 2 * bins + k] = (float)(window[n] * Math.Cos(angle));
-                    values[n * 2 * bins + bins + k] = (float)(-window[n] * Math.Sin(angle));
+                    values[n * 2 * bins + k] = (float)(window[n] * PortableMath.Cos(angle));
+                    values[n * 2 * bins + bins + k] = (float)(-window[n] * PortableMath.Sin(angle));
                 }
             }
 

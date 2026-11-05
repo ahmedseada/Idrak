@@ -468,7 +468,7 @@ internal static partial class PaperImageOps
         for (int k = 0; k <= steps; k++)
         {
             double t = (double)k / steps, along = t * length;
-            double off = wave * Math.Sin(phase + along / period * 6.28) + (random.NextDouble() - 0.5) * 0.6;
+            double off = wave * PortableMath.Sin(phase + along / period * 6.28) + (random.NextDouble() - 0.5) * 0.6;
             points.Add((x0 + (x1 - x0) * t + nx * off, y0 + (y1 - y0) * t + ny * off));
         }
 
@@ -548,8 +548,8 @@ internal static partial class PaperImageOps
             double start = random.NextDouble() * 6.3, turn = 6.28 * (1.05 + 0.1 * random.NextDouble());
             for (int k = 0; k <= 60; k++)
             {
-                double a = start + turn * k / 60, wobble = 1 + 0.05 * Math.Sin(a * 3 + start);
-                ring.Add((cx + rx * wobble * Math.Cos(a), cy + ry * wobble * Math.Sin(a)));
+                double a = start + turn * k / 60, wobble = 1 + 0.05 * PortableMath.Sin(a * 3 + start);
+                ring.Add((cx + rx * wobble * PortableMath.Cos(a), cy + ry * wobble * PortableMath.Sin(a)));
             }
 
             Stroke(planes, w, h, ring, thickness, ink, opacity);
@@ -566,8 +566,8 @@ internal static partial class PaperImageOps
         for (int k = 0; k < steps; k++)
         {
             heading += (random.NextDouble() - 0.5) * 1.4;
-            x = Math.Clamp(x + Math.Cos(heading) * speed, 1, w - 2);
-            y = Math.Clamp(y + Math.Sin(heading) * speed, 1, h - 2);
+            x = Math.Clamp(x + PortableMath.Cos(heading) * speed, 1, w - 2);
+            y = Math.Clamp(y + PortableMath.Sin(heading) * speed, 1, h - 2);
             points.Add((x, y));
         }
 
@@ -628,12 +628,12 @@ internal static partial class PaperImageOps
         for (int k = 0; k < creases; k++)
         {
             double angle = random.NextDouble() * Math.PI;
-            double nx = Math.Cos(angle), ny = Math.Sin(angle);
+            double nx = PortableMath.Cos(angle), ny = PortableMath.Sin(angle);
             double c = nx * random.NextDouble() * w + ny * random.NextDouble() * h;
             lines[k] = (nx, ny, c, 15 + random.NextDouble() * 90, (random.NextDouble() < 0.5 ? -1 : 1) * (0.4 + 0.6 * random.NextDouble()));
         }
 
-        double lightX = Math.Cos(0.8), lightY = Math.Sin(0.8), shift = 2.5 * strength;
+        double lightX = PortableMath.Cos(0.8), lightY = PortableMath.Sin(0.8), shift = 2.5 * strength;
         var shade = new float[w * h];
         var warped = ScanImageOps.WarpRows(image, (y, sxs, sys) =>
         {
@@ -645,7 +645,7 @@ internal static partial class PaperImageOps
                     double d = (nx * x + ny * y - c) / width;
                     if (d is > -3 and < 3)
                     {
-                        double e = Math.Exp(-d * d);
+                        double e = PortableMath.Exp(-d * d);
                         double slope = amplitude * -2 * d * e;   // the crease's slope across it
                         gx += slope * nx;
                         gy += slope * ny;
@@ -698,7 +698,7 @@ internal static partial class PaperImageOps
         {
             double share = count == 1 ? 0.5 : (k + 1.0) / (count + 1);
             double angle = (random.NextDouble() - 0.5) * 0.03;
-            double nx = across ? -Math.Sin(angle) : Math.Cos(angle), ny = across ? Math.Cos(angle) : Math.Sin(angle);
+            double nx = across ? -PortableMath.Sin(angle) : PortableMath.Cos(angle), ny = across ? PortableMath.Cos(angle) : PortableMath.Sin(angle);
             double c = (across ? h : w) * (share + (random.NextDouble() - 0.5) * 0.04);
             float dark = (float)(0.72 + random.NextDouble() * 0.18), soft = (float)(0.03 + random.NextDouble() * 0.05);
             double reach = 30 + random.NextDouble() * 90;
@@ -762,7 +762,7 @@ internal static partial class PaperImageOps
             }
 
             double rx = 15 + random.NextDouble() * 45, ry = 6 + random.NextDouble() * 18, angle = random.NextDouble() * Math.PI;
-            double ca = Math.Cos(angle), sa = Math.Sin(angle), drag = length * (0.5 + 0.5 * random.NextDouble());
+            double ca = PortableMath.Cos(angle), sa = PortableMath.Sin(angle), drag = length * (0.5 + 0.5 * random.NextDouble());
             float strength = (float)(0.35 + random.NextDouble() * 0.35);
             int reach = (int)Math.Ceiling(Math.Max(rx, ry) + drag);
             for (int y = Math.Max(0, (int)cy - reach); y <= Math.Min(h - 1, (int)cy + reach); y++)
@@ -867,7 +867,7 @@ internal static partial class PaperImageOps
             {
                 at = Math.Clamp(at + (random.NextDouble() - 0.5) * 1.6, 0, most * 0.3);
                 double bite = biteAt.Max(b => Math.Max(0, 1 - Math.Abs(i - b.Center) / b.Width));
-                cut[s][i] = Math.Max(0, Math.Min(Math.Min(most, room[s]), at + most * Math.Pow(bite, 1.5)));
+                cut[s][i] = Math.Max(0, Math.Min(Math.Min(most, room[s]), at + most * PortableMath.Pow(bite, 1.5)));
             }
         }
 
@@ -944,7 +944,7 @@ internal static partial class PaperImageOps
             for (int u = 0; u < length; u++)
             {
                 walk = Math.Clamp(walk + (random.NextDouble() - 0.5) * 1.2, -3, 3);
-                line[u] = start + drift * u / length + a1 * Math.Sin(f1 + u * 6.283 / p1) + a2 * Math.Sin(f2 + u * 6.283 / p2) + walk + (random.NextDouble() - 0.5) * 0.8;
+                line[u] = start + drift * u / length + a1 * PortableMath.Sin(f1 + u * 6.283 / p1) + a2 * PortableMath.Sin(f2 + u * 6.283 / p2) + walk + (random.NextDouble() - 0.5) * 0.8;
             }
 
             int along = (int)Math.Round((random.NextDouble() * 2 - 1) * shift), apart = (int)Math.Round(gap * (0.35 + 0.65 * random.NextDouble()));
@@ -1002,7 +1002,7 @@ internal static partial class PaperImageOps
                 double angle = (lengthwise ? 0 : Math.PI / 2) + (random.NextDouble() - 0.5) * 0.5;   // from the tear's direction
                 double tapeLength = side * (lengthwise ? 0.18 + 0.15 * random.NextDouble() : 0.07 + 0.07 * random.NextDouble());
                 double tapeWidth = side * (0.022 + 0.015 * random.NextDouble());
-                double du = Math.Cos(angle), dv = Math.Sin(angle);
+                double du = PortableMath.Cos(angle), dv = PortableMath.Sin(angle);
                 Tape(planes, w, h, across ? uc : vc, across ? vc : uc, across ? du : dv, across ? dv : du, tapeLength, tapeWidth, kind, sheen);
             }
         }
@@ -1117,7 +1117,7 @@ internal static partial class PaperImageOps
             float[] color = light ? [.. paper.Select(p => Math.Min(255f, p + 25))] : [.. paper.Select(p => p * 0.45f)];
             double length = Math.Max(w, h) * (0.2 + 0.7 * random.NextDouble()), angle = random.NextDouble() * Math.PI;
             double x0 = random.NextDouble() * w, y0 = random.NextDouble() * h;
-            var line = HandLine(x0, y0, x0 + Math.Cos(angle) * length, y0 + Math.Sin(angle) * length, random, 3);
+            var line = HandLine(x0, y0, x0 + PortableMath.Cos(angle) * length, y0 + PortableMath.Sin(angle) * length, random, 3);
             if (light)
             {
                 Stroke(planes, w, h, line, 0.6 + random.NextDouble() * 0.9, color, (float)(0.4 + random.NextDouble() * 0.4), lighten: true);
@@ -1187,7 +1187,7 @@ internal static partial class PaperImageOps
             double phase = random.NextDouble() * 6.3, period = h * (0.2 + random.NextDouble());
             for (int y = 0; y < h; y++)
             {
-                float along = (float)(0.6 + 0.4 * Math.Sin(phase + y / period * 6.28));
+                float along = (float)(0.6 + 0.4 * PortableMath.Sin(phase + y / period * 6.28));
                 for (int x = Math.Max(0, (int)(x0 - width)); x <= Math.Min(w - 1, (int)(x0 + width)); x++)
                 {
                     float cover = (float)Math.Clamp(width / 2 + 0.5 - Math.Abs(x + 0.5 - x0), 0, 1);

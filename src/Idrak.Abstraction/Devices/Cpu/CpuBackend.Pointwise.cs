@@ -41,7 +41,8 @@ internal sealed partial class CpuBackend
 
     private readonly struct MathLoop(UnaryOp op, float[] x, float[] y) : IRangeKernel
     {
-        // A vector main loop per operation (the runtime's Vector.Sqrt, Sin, Cos and Exp, CpuMath's erf), then the tail.
+        // A vector main loop per operation (Vector.SquareRoot, exact; CpuMath's sin, cos, sigmoid and erf), then the tail, which
+        // rounds as the lanes (plan 37, P0b: no runtime's or C runtime's sin and cos, whose bits differ between platforms).
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
@@ -57,12 +58,12 @@ internal sealed partial class CpuBackend
                     for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Sqrt(xs[i]);
                     break;
                 case UnaryOp.Sin:
-                    for (int i = 0; i < xv.Length; i++) yv[i] = Vector.Sin(xv[i]);
-                    for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Sin(xs[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = CpuMath.Sin(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = CpuMath.Sin(xs[i]);
                     break;
                 case UnaryOp.Cos:
-                    for (int i = 0; i < xv.Length; i++) yv[i] = Vector.Cos(xv[i]);
-                    for (int i = tail; i < xs.Length; i++) ys[i] = MathF.Cos(xs[i]);
+                    for (int i = 0; i < xv.Length; i++) yv[i] = CpuMath.Cos(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ys[i] = CpuMath.Cos(xs[i]);
                     break;
                 case UnaryOp.Silu:
                     for (int i = 0; i < xv.Length; i++) yv[i] = xv[i] * CpuMath.Sigmoid(xv[i]);
@@ -123,12 +124,12 @@ internal sealed partial class CpuBackend
                 }
 
                 case UnaryOp.Sin:
-                    for (int i = 0; i < xv.Length; i++) dv[i] += gv[i] * Vector.Cos(xv[i]);
-                    for (int i = tail; i < xs.Length; i++) ds[i] += gs[i] * MathF.Cos(xs[i]);
+                    for (int i = 0; i < xv.Length; i++) dv[i] += gv[i] * CpuMath.Cos(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ds[i] += gs[i] * CpuMath.Cos(xs[i]);
                     break;
                 case UnaryOp.Cos:
-                    for (int i = 0; i < xv.Length; i++) dv[i] -= gv[i] * Vector.Sin(xv[i]);
-                    for (int i = tail; i < xs.Length; i++) ds[i] -= gs[i] * MathF.Sin(xs[i]);
+                    for (int i = 0; i < xv.Length; i++) dv[i] -= gv[i] * CpuMath.Sin(xv[i]);
+                    for (int i = tail; i < xs.Length; i++) ds[i] -= gs[i] * CpuMath.Sin(xs[i]);
                     break;
                 case UnaryOp.Silu:
                     for (int i = 0; i < xv.Length; i++)
@@ -242,7 +243,7 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public void Execute(int start, int end)
         {
-            for (int i = start; i < end; i++) y[i] = MathF.Pow(x[i], exponent);
+            for (int i = start; i < end; i++) y[i] = CpuMath.Pow(x[i], exponent);
         }
     }
 
@@ -256,7 +257,7 @@ internal sealed partial class CpuBackend
                 return;                                                     // a constant: no gradient (not 0 · x^-1, NaN at 0)
             }
 
-            for (int i = start; i < end; i++) dx[i] += dy[i] * exponent * MathF.Pow(x[i], exponent - 1f);
+            for (int i = start; i < end; i++) dx[i] += dy[i] * exponent * CpuMath.Pow(x[i], exponent - 1f);
         }
     }
 

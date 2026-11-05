@@ -799,8 +799,8 @@ public sealed class PositionalEncoding : Module, ICachedModule, IPositionAware
         {
             for (int i = 0; i < dim; i++)
             {
-                double angle = pos / Math.Pow(10000, 2 * (i / 2) / (double)dim);
-                values[pos * dim + i] = (float)(i % 2 == 0 ? Math.Sin(angle) : Math.Cos(angle));
+                double angle = pos / PortableMath.Pow(10000, 2 * (i / 2) / (double)dim);
+                values[pos * dim + i] = (float)(i % 2 == 0 ? PortableMath.Sin(angle) : PortableMath.Cos(angle));
             }
         }
 

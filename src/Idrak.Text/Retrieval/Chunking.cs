@@ -191,7 +191,7 @@ public sealed class Bm25Index : IKeywordIndex
         {
             var list = postings[id];
             int n = list.Documents.Count;
-            _terms[word] = (Math.Log(1 + (lengths.Count - n + 0.5) / (n + 0.5)), [.. list.Documents], [.. list.Counts]);
+            _terms[word] = (PortableMath.Log(1 + (lengths.Count - n + 0.5) / (n + 0.5)), [.. list.Documents], [.. list.Counts]);
         }
     }
 

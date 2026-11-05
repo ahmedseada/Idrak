@@ -132,7 +132,7 @@ internal sealed class DemoCommand : Command
                 int row = c * PerClass + i;
                 double radius = i / (double)PerClass;
                 double angle = c * 2 * Math.PI / Classes + radius * 5 + random.NextDouble() * 0.25;
-                (features[row, 0], features[row, 1], labels[row]) = ((float)(radius * Math.Cos(angle)), (float)(radius * Math.Sin(angle)), c);
+                (features[row, 0], features[row, 1], labels[row]) = ((float)(radius * PortableMath.Cos(angle)), (float)(radius * PortableMath.Sin(angle)), c);
             }
         }
 

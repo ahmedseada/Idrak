@@ -188,7 +188,7 @@ internal sealed class RnNoiseDenoiser
         var ly = _ly.AsSpan();
         for (int i = 0; i < Bands; i++)
         {
-            ly[i] = (float)Math.Log10(1e-2 + ex[i]);
+            ly[i] = (float)PortableMath.Log10(1e-2 + ex[i]);
             double fall = follow - 1.5, inner = fall > ly[i] ? fall : ly[i];
             float low = logMax - 7;
             ly[i] = (float)(low > inner ? low : inner);
@@ -906,8 +906,8 @@ internal sealed class RnNoiseDenoiser
         var w = new float[FrameSize];
         for (int i = 0; i < FrameSize; i++)
         {
-            double s = Math.Sin(.5 * Math.PI * (i + .5) / FrameSize);
-            w[i] = (float)Math.Sin(.5 * Math.PI * s * s);
+            double s = PortableMath.Sin(.5 * Math.PI * (i + .5) / FrameSize);
+            w[i] = (float)PortableMath.Sin(.5 * Math.PI * s * s);
         }
 
         return w;
@@ -921,7 +921,7 @@ internal sealed class RnNoiseDenoiser
         {
             for (int j = 0; j < Bands; j++)
             {
-                t[i * Bands + j] = (float)Math.Cos((i + .5) * j * Math.PI / Bands);
+                t[i * Bands + j] = (float)PortableMath.Cos((i + .5) * j * Math.PI / Bands);
                 if (j == 0)
                 {
                     t[i * Bands + j] = (float)(t[i * Bands + j] * Math.Sqrt(.5));

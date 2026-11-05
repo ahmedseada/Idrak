@@ -233,7 +233,7 @@ public sealed class ProjectionLineSegmenter : ITextLineSegmenter
         var rows = new int[height];                                                   // one buffer for every angle, grown as the margin needs
         double Score(double degrees)
         {
-            double slope = Math.Tan(degrees * Math.PI / 180);
+            double slope = PortableMath.Tan(degrees * Math.PI / 180);
             int margin = (int)Math.Ceiling(Math.Abs(slope) * width) + 1;
             int length = height + 2 * margin;
             if (rows.Length < length)
@@ -277,7 +277,7 @@ public sealed class ProjectionLineSegmenter : ITextLineSegmenter
     private static int Decimals(double step)
     {
         int decimals = 1;
-        while (decimals < 6 && Math.Abs(step * Math.Pow(10, decimals) - Math.Round(step * Math.Pow(10, decimals))) > 1e-9)
+        while (decimals < 6 && Math.Abs(step * PortableMath.Pow(10, decimals) - Math.Round(step * PortableMath.Pow(10, decimals))) > 1e-9)
         {
             decimals++;
         }
@@ -289,7 +289,7 @@ public sealed class ProjectionLineSegmenter : ITextLineSegmenter
     // arrays' order): each column's shift is worked out once.
     private static float[] Shear(ReadOnlySpan<float> source, int width, int height, double degrees, float fill)
     {
-        double slope = Math.Tan(degrees * Math.PI / 180);
+        double slope = PortableMath.Tan(degrees * Math.PI / 180);
         var shifts = new double[width];
         for (int x = 0; x < width; x++)
         {

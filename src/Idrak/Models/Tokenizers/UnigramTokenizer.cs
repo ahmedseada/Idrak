@@ -790,7 +790,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
                 for (int e = head[at]; e >= 0; e = edges.Next[e])
                 {
                     chosen = e;
-                    sum += Math.Exp(forward[edges.Start[e]] + alpha * edges.Score[e] - forward[at]);
+                    sum += PortableMath.Exp(forward[edges.Start[e]] + alpha * edges.Score[e] - forward[at]);
                     if (draw < sum)
                     {
                         break;
@@ -862,14 +862,14 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
             double top = score[n * k], total = 0;
             for (int r = 0; r < paths; r++)
             {
-                total += Math.Exp(alpha * (score[n * k + r] - top));
+                total += PortableMath.Exp(alpha * (score[n * k + r] - top));
             }
 
             double draw = _random.NextDouble() * total, sum = 0;
             int chosen = paths - 1;
             for (int r = 0; r < paths; r++)
             {
-                sum += Math.Exp(alpha * (score[n * k + r] - top));
+                sum += PortableMath.Exp(alpha * (score[n * k + r] - top));
                 if (draw < sum)
                 {
                     chosen = r;
@@ -905,7 +905,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
         }
 
         double high = Math.Max(x, y), low = Math.Min(x, y);
-        return high + double.LogP1(Math.Exp(low - high));
+        return high + double.LogP1(PortableMath.Exp(low - high));
     }
 
     // A sampled lattice's edges in pooled arrays, in the order they were found (by start), each linked to the previous

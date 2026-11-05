@@ -186,8 +186,8 @@ public abstract class Optimizer : IOptimizer
     /// </summary>
     protected static (float StepSize, float Epsilon) AdamCorrection(float learningRate, float beta1, float beta2, float epsilon, int step)
     {
-        double second = Math.Sqrt(1 - Math.Pow(beta2, step));
-        return ((float)(learningRate * second / (1 - Math.Pow(beta1, step))), (float)(epsilon * second));
+        double second = Math.Sqrt(1 - PortableMath.Pow(beta2, step));
+        return ((float)(learningRate * second / (1 - PortableMath.Pow(beta1, step))), (float)(epsilon * second));
     }
 
     /// <summary>A state tensor's values as a saved value.</summary>

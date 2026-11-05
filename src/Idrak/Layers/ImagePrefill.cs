@@ -628,8 +628,8 @@ internal sealed class ImageBlocks
                 int p = (int)positions[axisOf[i] * tokens + r];
                 var frequencies = scaled.FrequenciesAt?.At(p) ?? scaled.Frequencies;
                 double angle = p * frequencies[i];
-                cos[r * half + i] = (float)(Math.Cos(angle) * factor);
-                sin[r * half + i] = (float)(Math.Sin(angle) * factor);
+                cos[r * half + i] = (float)(PortableMath.Cos(angle) * factor);
+                sin[r * half + i] = (float)(PortableMath.Sin(angle) * factor);
             }
         }
 
