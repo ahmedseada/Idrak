@@ -221,7 +221,7 @@ public sealed class AnswerScorer
         using (Autograd.NoGrad())
         using (new TensorScope())
         {
-            var hidden = _model.Network.ForwardFirst(Tensor.From(input, [rows, length], _model.Device), _modules.Count - 1);
+            var hidden = _model.Network.ForwardFirst(TokenIds.Of(input, [rows, length], _model.Device), _modules.Count - 1);
             Add(scores, hidden, positions, targets, owners);
         }
 
@@ -314,7 +314,7 @@ public sealed class AnswerScorer
                     }
                 }
 
-                var hidden = _model.Network.ForwardCached(Tensor.From(input, [live.Length, end], device), context, layers);
+                var hidden = _model.Network.ForwardCached(TokenIds.Of(input, [live.Length, end], device), context, layers);
                 Add(scores, hidden, positions, targets, owners);
             }
 
@@ -352,7 +352,7 @@ public sealed class AnswerScorer
                     }
                 }
 
-                var hidden = _model.Network.ForwardCached(Tensor.From(input, [live.Length, steps], device), context, layers);
+                var hidden = _model.Network.ForwardCached(TokenIds.Of(input, [live.Length, steps], device), context, layers);
                 Add(scores, hidden, positions, targets, owners);
             }
         }

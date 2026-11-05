@@ -2742,7 +2742,7 @@ public static class FineTuner
     {
         var data = Prepare(sequences, batch);
         var images = StepImages.Of(sequences, batch, vision, checkpointing, parts);
-        var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
+        var tokens = TokenIds.Of(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
         var loss = custom is null
             ? NetworkLoss(model, tokens, (hidden, head) => Losses.TokenCrossEntropyRows(hidden, h => head.Forward(h), data.Trained, data.Targets,
                 data.Weights, normalizer, chunkRows), checkpointing, images)
@@ -2757,7 +2757,7 @@ public static class FineTuner
     {
         var data = Prepare(sequences, batch);
         var images = StepImages.Of(sequences, batch, options.Vision, checkpointing: false, options.Parts);
-        var tokens = Tensor.From(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
+        var tokens = TokenIds.Of(data.Inputs, [batch.Rows.Length, batch.Length], model.Device);
         int[] targets = [.. data.Targets.Select(t => (int)t)];
         return NetworkLoss(model, tokens, (hidden, head) => Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, options.LossChunkRows),
             checkpointing: false, images);

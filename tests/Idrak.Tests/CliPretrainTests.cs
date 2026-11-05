@@ -210,6 +210,11 @@ internal abstract partial class DesktopTests : Tests
                 "--lr", "3e-3", "--warmup", "0", "--schedule", "constant", "-o", run, "-d", device.ToString(), "--log-every", "1");
             Check((int)first["steps"]! == 2 && File.Exists(Path.Combine(run, "run.json")) && File.Exists(Path.Combine(run, "log.jsonl")), $"{first}");
             Check(first["final_loss"] is not null, $"the first run's losses are finite (training on {device}, {first["settings"]}): {File.ReadAllText(Path.Combine(run, "log.jsonl"))}");
+            // The same steps with the batches' ids in uint16 (--id-dtype; the gather converts them to the type it reads): the
+            // ids pick the same rows, so the losses are the same bit for bit.
+            var narrowIds = TrainCliJson("pretrain", model, "--tokens", PretrainData("tokens.bin"), "--steps", "2", "--max-length", "32", "--batch-tokens", "64",
+                "--lr", "3e-3", "--warmup", "0", "--schedule", "constant", "-o", Path.Combine(folder, "run-uint16"), "-d", device.ToString(), "--log-every", "1", "--id-dtype", "uint16");
+            Check((double?)narrowIds["final_loss"] == (double?)first["final_loss"], $"--id-dtype uint16 trains as the device's own index type: {narrowIds["final_loss"]} vs {first["final_loss"]}");
             var resumed = TrainCliJson("resume", run, "--steps", "2", "-d", device.ToString());
             Check((int)resumed["steps"]! == 4 && ((string)resumed["checkpoint"]!).EndsWith("checkpoint-4", StringComparison.Ordinal), $"resume: {resumed}");
             Check(resumed["final_loss"] is not null, $"the resumed run's losses are finite (training on {device} from the saved moments, {resumed["settings"]}): {File.ReadAllText(Path.Combine(run, "log.jsonl"))}");

@@ -282,7 +282,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
                 if (rows.Count > 0)
                 {
                     using var scope = new TensorScope();
-                    var hidden = Tensor.From(inputs, [count, longest], model.Device);
+                    var hidden = TokenIds.Of(inputs, [count, longest], model.Device);
                     for (int i = 0; i < modules.Count - 1; i++)
                     {
                         // Each module's intermediate results, and the previous activation, are freed at once.
@@ -453,7 +453,7 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         }
 
         prompt.Sort((x, y) => x.Position.CompareTo(y.Position));
-        var ids = Tensor.From(tokens.Take(tokens.Count - 1).Select(t => (float)t).ToArray(), [1, tokens.Count - 1], model.Device);
+        var ids = TokenIds.Of(tokens.Take(tokens.Count - 1).ToArray(), [1, tokens.Count - 1], model.Device);
         using var images = model.Network.Begin(ids, prompt, attention!);
         var hidden = ids;
         for (int i = 0; i < modules.Count - 1; i++)

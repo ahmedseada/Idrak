@@ -355,7 +355,7 @@ public static partial class Pretrainer
             using var recompute = options.RecomputeFeedForward == true ? ActivationMemory.Recompute() : (ActivationMemory.Scope?)null;
             using var compress = options.BFloat16Activations == true ? ActivationMemory.CompressToBFloat16() : (ActivationMemory.Scope?)null;
             var result = pipe.Step(Math.Max(1, batches.Count),
-                m => Tensor.From(data[m].Inputs, [batches[m].Rows.Length, batches[m].Length], pipe.Device),
+                m => Idrak.Generation.TokenIds.Of(data[m].Inputs, [batches[m].Rows.Length, batches[m].Length], pipe.Device),
                 (m, hidden) =>
                 {
                     var flat = hidden.Reshape(hidden.Size / hidden.Shape[^1], hidden.Shape[^1]);
@@ -385,7 +385,7 @@ public static partial class Pretrainer
         var batches = FineTuner.Batches(mine, options.BatchTokens, random: null).Select(b => FineTuner.Batch.Padded(b, mine)).ToList();
         var data = batches.Select(b => FineTuner.Prepare(mine, b)).ToList();
         double total = batches.Count == 0 ? 0 : pipe.Evaluate(batches.Count,
-            m => Tensor.From(data[m].Inputs, [batches[m].Rows.Length, batches[m].Length], pipe.Device),
+            m => Idrak.Generation.TokenIds.Of(data[m].Inputs, [batches[m].Rows.Length, batches[m].Length], pipe.Device),
             (m, hidden) =>
             {
                 var flat = hidden.Reshape(hidden.Size / hidden.Shape[^1], hidden.Shape[^1]);
