@@ -57,7 +57,7 @@ public interface IGradientCompression
 /// <summary>
 /// The gradient compressions, by name (plan 23, phase C4): "none" (float32), "bf16" (bfloat16 on the wire, sums in
 /// float32), "top-k" (the largest share of each bucket's values, by magnitude, with the rest kept for the next step:
-/// error feedback), and "int8" and "fp8" (plan 37, N0: every value as one byte times its bucket's scale, each rank's
+/// error feedback), and "int8" and "fp8" (plan 37, N0 and N0b: every value as one byte times a scale a piece, each rank's
 /// rounding error kept for its next step). A run names one with <see cref="ClusterOptions.Compression"/>
 /// (<c>IDRAK_CLUSTER_COMPRESSION</c>).
 /// </summary>

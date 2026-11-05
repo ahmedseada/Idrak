@@ -342,6 +342,10 @@ public static class Idrak.Abstraction.Cluster.GradientSyncs
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Cluster.IGradientSyncProvider provider)
 
+public interface Idrak.Abstraction.Cluster.IAllToAllHostValueCollectives : Idrak.Abstraction.Cluster.IHostValueCollectives
+  public bool SupportsAllToAll { get; }
+  public bool TryAllToAll(System.ReadOnlySpan<float> send, System.Span<float> receive, int count)
+
 public interface Idrak.Abstraction.Cluster.ICarriedStopAgreement : Idrak.Abstraction.Cluster.IStopAgreement
   public float Contribution { get; }
   public void Carried(float sum)

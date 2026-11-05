@@ -33,7 +33,8 @@ internal abstract partial class DesktopTests : Tests
         ("cluster: overlap shortens the simulated step on a slow link (ethernet-1g): the exposed network time a step, the simulator's number, is less with the buckets sent during the backward pass; the bucket size is measured once on the first step, the same on every run", ClusterOverlapShortens),
         ("cluster: compressions are a registry picked by name (none, bf16, top-k, int8, fp8); top-k sends each rank's largest values as pairs summed in rank order and keeps the rest as a residual for the next step", ClusterCompressions),
         ("cluster: fp8 E4M3 codes as the format defines them: every code's value, every finite code back to itself, the nearest code with ties to even (every midpoint, its neighbours, and values over every size against a search of all codes), saturation at 448, NaN", ClusterFloat8Codes),
-        ("cluster: int8 and fp8 compressions on 2 ranks, bit for bit as their definition (written apart) gives: one byte a value times the bucket's scale, the vector and scalar paths alike, summed in rank order; the rounding error sent with the next step (error feedback) and none without it; a rank with no rows adds nothing and keeps its residual; a NaN travels and drops the residual; 4x fewer bytes on the wire than float32", ClusterQuantizedCompressions),
+        ("cluster: int8 and fp8 compressions on 2 and 3 ranks, bit for bit as their definition (written apart) gives: one byte a value times a scale, by the way of fewer bytes: each piece to its owner (all-to-all), summed there in rank order, rounded again and all-gathered (3 ranks), or every rank's codes all-gathered (2 ranks, small buckets, collectives without an all-to-all); the vector and scalar paths alike; both roundings sent with the next step (error feedback) and none without it; a rank with no rows adds nothing and keeps its residual; a NaN travels and drops the residual; 4x fewer bytes on the wire than float32 on 2, 4 and 8 ranks, every rank alike", ClusterQuantizedCompressions),
+        ("cluster: all-to-all (ring on 1 and 3 ranks, naive on 3, hierarchical on 2 nodes of 2) gives each rank every rank's block for it, bit for bit (NaN patterns too), published as all-to-all with a block to each other rank", ClusterAllToAll),
         ("cluster: top-k (10%) with error feedback converges on the Spirals sample within 0.02 of the full-gradient training loss after 20 epochs (the tolerance measured on the CPU), sending under half the bytes", ClusterTopKSpirals),
         ("cluster: local SGD every k steps equals one process at k = 1 (plain SGD, the weights averaged by each rank's rows) and runs k times fewer weight averages at k = 4, the weights alike on every rank after each", ClusterLocalSgd),
         ("cluster: a simulated training run with a slow worker shows it as blocked time naming it: the pretrainer's gradient all-reduces on every other rank wait on rank 2, the losses as without the fault", ClusterTrainingSlowWorker),
@@ -347,168 +348,344 @@ internal abstract partial class DesktopTests : Tests
             "E4M3: beyond 448 and infinity saturate to ±448, NaN stays NaN, half the smallest subnormal ties to 0, a tiny negative is -0");
     }
 
-    // One rank's step of an int8 or fp8 compression by its definition, written apart from the library: v = values · weight
-    // (+ residual), scale = largest / 127 (or 448), each value's code nearest v · (127 / largest) (or 448 / largest), ties
-    // to even; returns the decoded values (code · scale) and leaves v less them as the residual. A rank with no rows sends
-    // zeros and keeps its residual; a NaN or infinity sends NaN and drops it.
-    private static float[] QuantizedReference(float[] values, float weight, float[] residual, bool fp8, bool feedback)
+    // By the definition, written apart from the library: finite values as codes of one scale, largest / 127 (or 448), each
+    // code the nearest to v · (127 / largest) (or 448 / largest), ties to even; returns the scale (0 when every value is
+    // zero or too small to scale), writes the decoded values (code · scale) and leaves in `values` what they do not carry.
+    private static float QuantizeReference(Span<float> values, Span<float> decoded, bool fp8)
     {
-        int n = values.Length;
-        if (weight == 0f)
+        float top = fp8 ? 448f : 127f, largest = 0f;
+        foreach (float x in values)
         {
-            return new float[n];
+            largest = Math.Max(largest, MathF.Abs(x));
         }
 
-        var v = new float[n];
-        for (int i = 0; i < n; i++)
+        float inverse = top / largest, scale = largest / top;
+        decoded.Clear();
+        if (largest == 0f || !float.IsFinite(inverse))
         {
-            v[i] = (values[i] * weight) + (feedback ? residual[i] : 0f);
+            return 0f;
         }
 
-        if (v.Any(x => !float.IsFinite(x)))
+        for (int i = 0; i < values.Length; i++)
         {
-            Array.Clear(residual);
-            return [.. v.Select(_ => float.NaN)];
+            float code = fp8 ? (float)E4M3Value(E4M3Nearest(values[i] * inverse)) : MathF.Round(Math.Clamp(values[i] * inverse, -127f, 127f), MidpointRounding.ToEven);
+            decoded[i] = code * scale;
+            values[i] -= decoded[i];
         }
 
-        float top = fp8 ? 448f : 127f, largest = v.Max(MathF.Abs), inverse = top / largest, scale = largest / top;
-        var decoded = new float[n];
-        if (largest != 0f && float.IsFinite(inverse))
+        return scale;
+    }
+
+    // One step of an int8 or fp8 compression over every rank, by its definition: each rank's values weighted, its residual
+    // added. Gathered: each rank's whole bucket at one scale, every rank's decoded values summed in rank order. Exchanged:
+    // the bucket cut in one piece per rank (as a ring cuts it), each rank's piece at a scale of its own; owner p sums every
+    // rank's decoded piece p in rank order, rounds the sum again at its own scale and keeps that rounding's rest too. A rank
+    // with no rows sends zeros and keeps its residual; a NaN or infinity makes every value NaN and drops the residual of the
+    // rank that had it (and the owners' second rest).
+    private static float[] QuantizedStepReference(float[][] values, float[] weights, float[][] residuals, bool fp8, bool feedback, bool exchanged)
+    {
+        int world = values.Length, n = values[0].Length;
+        int Start(int p) => (p * (n / world)) + Math.Min(p, n % world);
+        int Size(int p) => (n / world) + (p < n % world ? 1 : 0);
+        var decoded = new float[world][];
+        for (int r = 0; r < world; r++)
         {
+            decoded[r] = new float[n];
+            if (weights[r] == 0f)
+            {
+                continue;
+            }
+
+            var v = new float[n];
             for (int i = 0; i < n; i++)
             {
-                float code = fp8 ? (float)E4M3Value(E4M3Nearest(v[i] * inverse)) : MathF.Round(Math.Clamp(v[i] * inverse, -127f, 127f), MidpointRounding.ToEven);
-                decoded[i] = code * scale;
+                v[i] = (values[r][i] * weights[r]) + (feedback ? residuals[r][i] : 0f);
+            }
+
+            if (v.Any(x => !float.IsFinite(x)))
+            {
+                Array.Clear(residuals[r]);
+                Array.Fill(decoded[r], float.NaN);
+                continue;
+            }
+
+            for (int p = 0; p < (exchanged ? world : 1); p++)
+            {
+                int start = exchanged ? Start(p) : 0, size = exchanged ? Size(p) : n;
+                QuantizeReference(v.AsSpan(start, size), decoded[r].AsSpan(start, size), fp8);
+            }
+
+            if (feedback)
+            {
+                v.CopyTo(residuals[r]);
             }
         }
 
-        if (feedback)
+        var result = new float[n];
+        if (!exchanged)
         {
-            for (int i = 0; i < n; i++)
+            for (int r = 0; r < world; r++)
             {
-                residual[i] = v[i] - decoded[i];
+                for (int i = 0; i < n; i++)
+                {
+                    result[i] += decoded[r][i];
+                }
+            }
+
+            return result;
+        }
+
+        for (int p = 0; p < world; p++)
+        {
+            int start = Start(p), size = Size(p);
+            var sum = new float[size];
+            for (int r = 0; r < world; r++)
+            {
+                for (int i = 0; i < size; i++)
+                {
+                    sum[i] += decoded[r][start + i];
+                }
+            }
+
+            var second = new float[size];
+            if (sum.All(float.IsFinite))
+            {
+                QuantizeReference(sum, second, fp8);
+                for (int i = 0; feedback && i < size; i++)
+                {
+                    residuals[p][start + i] += sum[i];
+                }
+            }
+            else
+            {
+                Array.Fill(second, float.NaN);
+            }
+
+            for (int i = 0; i < size; i++)
+            {
+                result[start + i] += second[i];
             }
         }
 
-        return decoded;
+        return result;
+    }
+
+    // Collectives that take host values but exchange no blocks (as a plug-in's may), over a rank's own: the int8 and fp8
+    // compressions all-gather every rank's codes over them.
+    private sealed class GatherOnly(ICollectives inner) : ICollectives, IHostValueCollectives
+    {
+        private readonly IHostValueCollectives _host = (IHostValueCollectives)inner;
+
+        public string Name => inner.Name;
+
+        public int Rank => inner.Rank;
+
+        public int WorldSize => inner.WorldSize;
+
+        public Device Device => inner.Device;
+
+        public bool SupportsHostValues => _host.SupportsHostValues;
+
+        public TimeSpan SimulatedTime => _host.SimulatedTime;
+
+        public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32) => inner.AllReduce(buffer, count, op, wire);
+
+        public void AllGather(Storage input, int count, Storage output) => inner.AllGather(input, count, output);
+
+        public void ReduceScatter(Storage input, int count, Storage output, ReduceOp op) => inner.ReduceScatter(input, count, output, op);
+
+        public void Broadcast(Storage buffer, int count, int root) => inner.Broadcast(buffer, count, root);
+
+        public void Barrier() => inner.Barrier();
+
+        public bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire) => _host.TryAllReduce(values, op, wire);
+
+        public bool TryAllGather(Span<float> all, int count) => _host.TryAllGather(all, count);
+
+        public bool TryBroadcast(Span<float> values, int root) => _host.TryBroadcast(values, root);
+
+        public void Dispose()
+        {
+            // The rank's collectives are the run's.
+        }
     }
 
     private static void ClusterQuantizedCompressions(Device device)
     {
-        // Rank 0's first ten values make the bytes FF FF FF 7F at scale 1 (-1, -1, -1, 127): a float whose bits are a NaN,
-        // which the float32 wire carries unchanged. 1,000 values over five sizes take the vector paths and their tails.
-        float[][] small = [[-1f, -1f, -1f, 127f, -63.5f, 0.5f, 2.25f, 0f, 10f, -10f], [254f, 3f, -5f, 1f, 0f, 0f, 0f, -254f, 7f, 0.5f]];
+        // Rank 0's first four values make the bytes FF FF FF 7F at scale 1 (-1, -1, -1, 127) on the gathered path: a float
+        // whose bits are a NaN, which the float32 wire carries unchanged. 1,000 values over five sizes take the vector
+        // paths and their tails; on 3 ranks the pieces are uneven (14, 13, 13 and 334, 333, 333).
+        float[][] rows = [[-1f, -1f, -1f, 127f, -63.5f, 0.5f, 2.25f, 0f, 10f, -10f], [254f, 3f, -5f, 1f, 0f, 0f, 0f, -254f, 7f, 0.5f],
+            [0.001f, -2f, 0f, 3.5f, -127f, 64.25f, 1e-3f, -0.5f, 9f, 100f]];
+        float[][] small = [.. rows.Select(r => r.Concat(r.Select(x => x * 0.5f)).Concat(r.Select(x => -x)).Concat(r.Select(x => x * 0.01f)).ToArray())];
         var random = new Random(23);
-        float[][] large = [.. Enumerable.Range(0, 2).Select(_ => Enumerable.Range(0, 1000).Select(_ => (float)((random.NextDouble() - 0.5) * Math.Pow(10, random.Next(-4, 1)))).ToArray())];
-        float[][] withNaN = [(float[])small[0].Clone(), (float[])small[1].Clone()];
+        float[][] large = [.. Enumerable.Range(0, 3).Select(_ => Enumerable.Range(0, 1000).Select(_ => (float)((random.NextDouble() - 0.5) * Math.Pow(10, random.Next(-4, 1)))).ToArray())];
+        float[][] withNaN = [.. small.Select(v => (float[])v.Clone())];
         withNaN[1][3] = float.NaN;
 
         // The steps: (parameter, each rank's values or null for zeros, each rank's weight, forget the residual after it).
         var steps = new (int Parameter, float[][]? Values, float[] Weights, bool Forget)[]
         {
-            (0, small, [1f, 1f], false),
-            (0, null, [1f, 1f], false),                                          // the residual goes
-            (1, large, [2f, 2f], false),
-            (1, null, [1f, 1f], false),
-            (0, small, [2f, 0f], false),                                         // rank 1 has no rows: adds nothing, keeps its residual
-            (0, null, [1f, 1f], false),
-            (0, withNaN, [1f, 1f], false),                                       // the NaN travels; rank 1's residual dropped
-            (0, null, [1f, 1f], false),
-            (0, small, [1f, 1f], true),                                          // the bucket went again whole: the residual forgotten
-            (0, null, [1f, 1f], false),
+            (0, small, [1f, 1f, 1f], false),
+            (0, null, [1f, 1f, 1f], false),                                      // the residual goes
+            (1, large, [2f, 2f, 2f], false),
+            (1, null, [1f, 1f, 1f], false),
+            (0, small, [2f, 0f, 2f], false),                                     // rank 1 has no rows: adds nothing, keeps its residual
+            (0, null, [1f, 1f, 1f], false),
+            (0, withNaN, [1f, 1f, 1f], false),                                   // the NaN travels; rank 1's residual dropped
+            (0, null, [1f, 1f, 1f], false),
+            (0, small, [1f, 1f, 1f], true),                                      // the bucket went again whole: the residual forgotten
+            (0, null, [1f, 1f, 1f], false),
         };
 
-        foreach (var (name, fp8) in new[] { ("int8", false), ("fp8", true) })
+        // The way a bucket goes, as the compressor picks it: exchanged where the collectives offer it and two blocks of a
+        // piece's codes (a scale, then the codes four to a float) are fewer floats than one block of the whole bucket's.
+        static int Floats(int codes) => 1 + ((codes + 3) / 4);
+        static bool Exchanges(int n, int world, bool offered) => offered && world > 1 && 2 * Floats((n + world - 1) / world) < Floats(n);
+        foreach (var (world, offered) in new[] { (2, true), (3, true), (3, false) })
         {
-            foreach (bool feedback in new[] { true, false })
+            foreach (var (name, fp8) in new[] { ("int8", false), ("fp8", true) })
             {
-                var options = DpOptions() with { Compression = name, ErrorFeedback = feedback };
-                var results = DpRun(DpTopology(device, 2), options, rank =>
+                foreach (bool feedback in new[] { true, false })
                 {
-                    using var p = Tensor.Persistent(new float[10], [10], rank.Device, requiresGrad: true);
-                    using var q = Tensor.Persistent(new float[1000], [1000], rank.Device, requiresGrad: true);
-                    using var compressor = GradientCompressions.Create(rank.Collectives, [p, q], options);
-                    var outputs = new List<float[]>();
-                    foreach (var step in steps)
+                    var options = DpOptions() with { Compression = name, ErrorFeedback = feedback };
+                    var results = DpRun(DpTopology(device, world), options, rank =>
                     {
-                        int n = step.Parameter == 0 ? 10 : 1000;
-                        var values = step.Values is { } given ? (float[])given[rank.Rank].Clone() : new float[n];
-                        GradientPiece[] pieces = [new(step.Parameter, 0, n, 0)];
-                        compressor.Reduce(values, step.Weights[rank.Rank], pieces);
+                        using var p = Tensor.Persistent(new float[40], [40], rank.Device, requiresGrad: true);
+                        using var q = Tensor.Persistent(new float[1000], [1000], rank.Device, requiresGrad: true);
+                        using var collectives = offered ? null : new GatherOnly(rank.Collectives);
+                        using var compressor = GradientCompressions.Create(collectives ?? rank.Collectives, [p, q], options);
+                        Check(compressor is QuantizedCompressor c && c.Exchanges(40) == Exchanges(40, world, offered) && c.Exchanges(1000) == Exchanges(1000, world, offered)
+                              && c.Exchanges(4) == false,
+                            $"{name} on {world} ranks{(offered ? "" : " without an all-to-all")}: buckets of 40 and 1,000 values {(Exchanges(40, world, offered) ? "exchanged" : "all-gathered")}, the way of fewer bytes; 4 values all-gathered");
+                        var outputs = new List<float[]>();
+                        foreach (var step in steps)
+                        {
+                            int n = step.Parameter == 0 ? 40 : 1000;
+                            var values = step.Values is { } given ? (float[])given[rank.Rank].Clone() : new float[n];
+                            GradientPiece[] pieces = [new(step.Parameter, 0, n, 0)];
+                            compressor.Reduce(values, step.Weights[rank.Rank], pieces);
+                            if (step.Forget)
+                            {
+                                compressor.Forget(pieces);
+                            }
+
+                            outputs.Add(values);
+                        }
+
+                        return outputs;
+                    });
+
+                    // The reference: every rank's step by the definition.
+                    float[][][] residuals = [.. Enumerable.Range(0, world).Select(_ => new[] { new float[40], new float[1000] })];
+                    for (int k = 0; k < steps.Length; k++)
+                    {
+                        var step = steps[k];
+                        int n = step.Parameter == 0 ? 40 : 1000;
+                        bool exchanged = Exchanges(n, world, offered);
+                        float[][] given = [.. Enumerable.Range(0, world).Select(r => step.Values?[r] ?? new float[n])];
+                        var sum = QuantizedStepReference(given, step.Weights[..world], [.. residuals.Select(r => r[step.Parameter])], fp8, feedback, exchanged);
                         if (step.Forget)
                         {
-                            compressor.Forget(pieces);
+                            foreach (var r in residuals)
+                            {
+                                Array.Clear(r[step.Parameter]);
+                            }
                         }
 
-                        outputs.Add(values);
-                    }
-
-                    return outputs;
-                });
-
-                // The reference: each rank's step by the definition, the two summed in rank order.
-                float[][][] residuals = [[new float[10], new float[1000]], [new float[10], new float[1000]]];
-                for (int k = 0; k < steps.Length; k++)
-                {
-                    var step = steps[k];
-                    int n = step.Parameter == 0 ? 10 : 1000;
-                    var sum = new float[n];
-                    for (int r = 0; r < 2; r++)
-                    {
-                        var decoded = QuantizedReference(step.Values?[r] ?? new float[n], step.Weights[r], residuals[r][step.Parameter], fp8, feedback);
-                        for (int i = 0; i < n; i++)
+                        string what = $"{name} on {world} ranks{(offered ? "" : " without an all-to-all")} ({(exchanged ? "exchanged" : "all-gathered")}){(feedback ? "" : " without error feedback")}, step {k + 1}";
+                        for (int r = 0; r < world; r++)
                         {
-                            sum[i] += decoded[i];
-                        }
-
-                        if (step.Forget)
-                        {
-                            Array.Clear(residuals[r][step.Parameter]);
+                            var got = results[r][k];
+                            int bad = Enumerable.Range(0, n).FirstOrDefault(i => !(float.IsNaN(sum[i]) ? float.IsNaN(got[i]) : BitConverter.SingleToInt32Bits(got[i]) == BitConverter.SingleToInt32Bits(sum[i])), -1);
+                            Check(bad < 0, bad < 0 ? what : $"{what}, rank {r}: value {bad} is {got[bad]:R}, the definition gives {sum[bad]:R}");
                         }
                     }
 
-                    string what = $"{name}{(feedback ? "" : " without error feedback")}, step {k + 1}";
-                    for (int r = 0; r < 2; r++)
+                    string run = $"{name} on {world} ranks{(offered ? "" : " without an all-to-all")}";
+                    if (feedback)
                     {
-                        var got = results[r][k];
-                        int bad = Enumerable.Range(0, n).FirstOrDefault(i => !(float.IsNaN(sum[i]) ? float.IsNaN(got[i]) : BitConverter.SingleToInt32Bits(got[i]) == BitConverter.SingleToInt32Bits(sum[i])), -1);
-                        Check(bad < 0, bad < 0 ? what : $"{what}, rank {r}: value {bad} is {got[bad]:R}, the definition gives {sum[bad]:R}");
+                        Check(results[0][1].Any(x => x != 0f) && results[0][9].All(x => x == 0f), $"{run}: the step after sends the rounding error left over; after a forget, nothing");
                     }
-                }
-
-                if (feedback)
-                {
-                    Check(results[0][1].Any(x => x != 0f) && results[0][9].All(x => x == 0f), $"{name}: the step after sends the rounding error left over; after a forget, nothing");
-                }
-                else
-                {
-                    Check(results[0][1].All(x => x == 0f), $"{name} without error feedback: nothing kept for the next step");
+                    else
+                    {
+                        Check(results[0][1].All(x => x == 0f), $"{run} without error feedback: nothing kept for the next step");
+                    }
                 }
             }
         }
 
-        // Bytes on the wire for a bucket of 4,096 values on 2 ranks (a ring): float32's all-reduce against one byte a value
-        // and a scale, all-gathered.
-        const int Values = 4096;
-        long Bytes(string compression)
+        // Bytes on the wire a rank sends for a bucket of 65,536 values (a ring): float32's all-reduce, 2 (W - 1) / W · 4n,
+        // against one byte a value and a scale: on 2 ranks every rank's codes all-gathered, W - 1 blocks of the whole
+        // bucket's; beyond, all-to-all then all-gathered, 2 (W - 1) blocks of a piece's.
+        const int Values = 65536;
+        (long Bytes, float[][] Results) Run(int world, string compression)
         {
             var options = DpOptions() with { Compression = compression };
-            var (_, metrics) = OverlapRun(DpTopology(device, 2), options, rank =>
+            var (results, metrics) = OverlapRun(DpTopology(device, world), options, rank =>
             {
                 using var p = Tensor.Persistent(new float[Values], [Values], rank.Device, requiresGrad: true);
                 using var compressor = GradientCompressions.Create(rank.Collectives, [p], options);
                 var values = Enumerable.Range(0, Values).Select(i => MathF.Sin(i + rank.Rank)).ToArray();
                 compressor.Reduce(values, 1f, [new(0, 0, Values, 0)]);
-                return 0;
+                return values;
             });
-            return metrics.Collectives.Where(c => c.Rank == 0 && c.Operation is "all-reduce" or "all-gather").Sum(c => c.BytesSent);
+            return (metrics.Collectives.Where(c => c.Rank == 0 && c.Operation is "all-reduce" or "all-gather" or "all-to-all").Sum(c => c.BytesSent), results);
         }
 
-        long plain = Bytes("none"), int8 = Bytes("int8"), fp8Bytes = Bytes("fp8");
-        Console.WriteLine($"    a bucket of {Values:N0} values on 2 ranks: float32 {plain:N0} B sent by rank 0, int8 {int8:N0} B, fp8 {fp8Bytes:N0} B ({(double)plain / int8:F3}x fewer)");
-        Check(int8 == 4L * QuantizedCompressor.Slots(Values) && fp8Bytes == int8 && plain == 4L * Values,
-            $"one byte a value and a 4-byte scale against 4 bytes a value: int8 {int8}, fp8 {fp8Bytes}, float32 {plain}");
-        Check(plain >= 3.99 * int8, $"4x fewer bytes on the wire than float32: {plain:N0} against {int8:N0}");
+        foreach (int world in new[] { 2, 4, 8 })
+        {
+            var plain = Run(world, "none");
+            var int8 = Run(world, "int8");
+            var fp8Run = Run(world, "fp8");
+            long expected = 4L * (world - 1) * (Exchanges(Values, world, true) ? 2 * Floats(Values / world) : Floats(Values));
+            Console.WriteLine($"    a bucket of {Values:N0} values on {world} ranks: float32 {plain.Bytes:N0} B sent by rank 0, int8 {int8.Bytes:N0} B, fp8 {fp8Run.Bytes:N0} B ({(double)plain.Bytes / int8.Bytes:F3}x fewer)");
+            Check(plain.Bytes == 2L * (world - 1) * 4 * (Values / world) && int8.Bytes == expected && fp8Run.Bytes == expected,
+                $"{world} ranks: one byte a value and its scale (the bucket's to each other rank on 2, a piece's twice beyond) against float32's piece twice: int8 {int8.Bytes}, fp8 {fp8Run.Bytes}, expected {expected}, float32 {plain.Bytes}");
+            Check(plain.Bytes >= 3.99 * int8.Bytes, $"{world} ranks: 4x fewer bytes on the wire than float32: {plain.Bytes:N0} against {int8.Bytes:N0}");
+            Check(int8.Results.All(r => r.AsSpan().SequenceEqual(int8.Results[0])) && fp8Run.Results.All(r => r.AsSpan().SequenceEqual(fp8Run.Results[0])),
+                $"{world} ranks: every rank ends with the same values, bit for bit");
+        }
+    }
+
+    private static void ClusterAllToAll(Device device)
+    {
+        // Rank r's block for rank j: float bits that encode (r, j, i), half of them NaN patterns (a signalling NaN's too),
+        // so a value that is not carried bit for bit shows.
+        static float Sent(int from, int to, int i) => BitConverter.Int32BitsToSingle(i % 2 == 0 ? 0x7F800001 + (from << 16) + (to << 8) + i : (from * 1000) + (to * 100) + i);
+        const int Count = 37;
+        foreach (var (topology, algorithm) in new[] { (DpTopology(device, 1), "ring"), (DpTopology(device, 3), "ring"), (DpTopology(device, 3), "naive"), (NodesOf([2, 2], device.ToString()), "hierarchical") })
+        {
+            int world = topology.WorldSize;
+            var options = DpOptions() with { Collective = algorithm };
+            var (results, metrics) = OverlapRun(topology, options, rank =>
+            {
+                var exchange = (IAllToAllHostValueCollectives)rank.Collectives;
+                var send = new float[world * Count];
+                var receive = new float[world * Count];
+                for (int j = 0; j < world; j++)
+                {
+                    for (int i = 0; i < Count; i++)
+                    {
+                        send[(j * Count) + i] = Sent(rank.Rank, j, i);
+                    }
+                }
+
+                bool done = exchange.SupportsAllToAll && exchange.TryAllToAll(send, receive, Count);
+                return (Done: done, Received: receive);
+            });
+
+            for (int r = 0; r < world; r++)
+            {
+                var (done, received) = results[r];
+                int wrong = Enumerable.Range(0, world * Count)
+                    .Count(k => BitConverter.SingleToInt32Bits(received[k]) != BitConverter.SingleToInt32Bits(Sent(k / Count, r, k % Count)));
+                Check(done && wrong == 0, $"{algorithm} on {world} ranks, rank {r}: every rank's block for it, bit for bit ({wrong} values differ)");
+                var sent = metrics.Collectives.Where(c => c.Rank == r && c.Operation == "all-to-all").ToList();
+                Check(sent.Count == 1 && sent[0].BytesSent == 4L * Count * (world - 1) && sent[0].BytesReceived == 4L * Count * (world - 1),
+                    $"{algorithm} on {world} ranks, rank {r}: one all-to-all published, its block to each other rank: {string.Join(", ", sent.Select(c => $"{c.BytesSent} B sent, {c.BytesReceived} B received"))}");
+            }
+        }
     }
 
     // The Spirals sample's model and data (as ClusterSpirals), on two ranks, with the given cluster options.

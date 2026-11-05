@@ -391,7 +391,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured on the first step (kept in the tuning cache over a real transport)", "The size of a gradient bucket: gradients are reduced a bucket at a time, each sent once the backward pass finished it (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_MESSAGE_COST", Cluster, "measured on this machine", "Seconds one collective's messages cost beyond their bytes, which the measured bucket size counts", ClusterRun),
         new("IDRAK_CLUSTER_OVERLAP", Cluster, "1", "1 or 0: gradient buckets are reduced while the backward pass continues (the same result either way)", ClusterRun),
-        new("IDRAK_CLUSTER_COMPRESSION", Cluster, "top-k with IDRAK_CLUSTER_TOPK, bf16 with IDRAK_CLUSTER_WIRE=bf16, else none", "How gradient buckets are compressed on their way: none, bf16, top-k, int8, fp8 (one byte a value times its bucket's scale), or a plug-in's", ClusterRun),
+        new("IDRAK_CLUSTER_COMPRESSION", Cluster, "top-k with IDRAK_CLUSTER_TOPK, bf16 with IDRAK_CLUSTER_WIRE=bf16, else none", "How gradient buckets are compressed on their way: none, bf16, top-k, int8, fp8 (one byte a value times a scale a piece), or a plug-in's", ClusterRun),
         new("IDRAK_CLUSTER_WIRE", Cluster, "f32", "f32 or bf16: how gradients travel (sums are always made in float32)", ClusterRun),
         new("IDRAK_CLUSTER_TOPK", Cluster, "0 (every value)", "The share of gradient values sent, largest first, from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_ERROR_FEEDBACK", Cluster, "1", "1 or 0: what a compression did not send (values top-k leaves out, the rounding error of int8 and fp8) is added to the next step's values", ClusterRun),

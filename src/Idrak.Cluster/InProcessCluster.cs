@@ -338,7 +338,7 @@ public static class InProcessCluster
 /// of the ranks that take part (its own queues over the same clock, numbered from 0, with the topology of those ranks).
 /// When the group changes its ranks meet at a barrier, so a late joiner's clock moves to theirs as it joins.
 /// </summary>
-internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCollectives
+internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCollectives, IAllToAllHostValueCollectives
 {
     private readonly SimTransport _root;
     private readonly SimWorld _world;
@@ -484,6 +484,12 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCo
         Current is IShardedHostValueCollectives host && host.TryReduceScatter(values, counts, op, wire);
 
     public bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts) => Current is IShardedHostValueCollectives host && host.TryAllGather(values, counts);
+
+    // Every group's collectives come from one provider: they all exchange blocks, or none does.
+    public bool SupportsAllToAll => _current.Collectives is IAllToAllHostValueCollectives { SupportsAllToAll: true };
+
+    public bool TryAllToAll(ReadOnlySpan<float> send, Span<float> receive, int count) =>
+        Current is IAllToAllHostValueCollectives host && host.TryAllToAll(send, receive, count);
 
     public void Dispose()
     {

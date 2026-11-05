@@ -14,6 +14,8 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
 {
     private readonly IHostValueCollectives? _host = collectives is IHostValueCollectives { SupportsHostValues: true } host ? host : null;
     private readonly IShardedHostValueCollectives? _pieces = collectives is IShardedHostValueCollectives { SupportsHostValues: true } pieces ? pieces : null;
+    private readonly IAllToAllHostValueCollectives? _exchange =
+        collectives is IAllToAllHostValueCollectives { SupportsHostValues: true, SupportsAllToAll: true } exchange ? exchange : null;
     private Tensor? _scratch;
 
     /// <summary>Whether the values travel from the host buffer itself (and so may from any thread).</summary>
@@ -26,6 +28,21 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     public bool Simulated => _host?.Simulated ?? collectives.Transport?.Simulated ?? false;
 
     public ICollectives Collectives => collectives;
+
+    /// <summary>Whether the collectives exchange a block with every rank (<see cref="AllToAll"/>); the same for the whole run.</summary>
+    public bool CanAllToAll => _exchange is not null;
+
+    /// <summary>
+    /// Block r of <paramref name="send"/> (<paramref name="count"/> values) to rank r; block r of <paramref name="receive"/>
+    /// from it, bits unchanged. Only where <see cref="CanAllToAll"/>.
+    /// </summary>
+    public void AllToAll(ReadOnlySpan<float> send, Span<float> receive, int count)
+    {
+        if (_exchange is null || !_exchange.TryAllToAll(send, receive, count))
+        {
+            throw new InvalidOperationException($"The collectives '{collectives.Name}' did not exchange the blocks, though they said they would (IAllToAllHostValueCollectives).");
+        }
+    }
 
     /// <summary>Sums <paramref name="values"/> across the ranks in place.</summary>
     public void AllReduce(Span<float> values, WireType wire, ReduceOp op = ReduceOp.Sum)

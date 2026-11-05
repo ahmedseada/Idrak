@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 186 | 18 | 61 | 265 | 0 |
+| `Idrak.Abstraction` | 187 | 18 | 61 | 266 | 0 |
 | `Idrak` | 55 | 5 | 21 | 81 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -48,6 +48,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, live, mixed, none, partition, slow-worker | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd, sharded | Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IAllToAllHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.ICarriedStopAgreement` | interface | public | — | AllReduceStopAgreement |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |

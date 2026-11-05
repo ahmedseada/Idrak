@@ -27,7 +27,7 @@ namespace Idrak.Networking.Abstractions;
 /// says which ("device" or "host"). <see cref="ClusterOptions.DeviceCollectives"/> turns the device path off.
 /// </para>
 /// </summary>
-internal abstract partial class HostCollectives : ICollectives, IShardedHostValueCollectives
+internal abstract partial class HostCollectives : ICollectives, IShardedHostValueCollectives, IAllToAllHostValueCollectives
 {
     private long _chunkBytes;
     private bool _chunkKnown;
@@ -46,6 +46,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     // Phase C5: the step's totals over every collective, kept where the ranks are separate processes (their telemetry is
     // their own), sent to rank 0 after each step (ReportStep) so rank 0's log describes the cluster.
     private const int SummaryTag = -90;
+    private const int AllToAllTag = -30;
     private const int SummaryBytes = 44;
     private readonly bool _summarize;
     private long _stepSent;
@@ -417,6 +418,47 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
 
         EndTiming(timed, "all-gather", start, simulated);
         return true;
+    }
+
+    public bool SupportsAllToAll => true;
+
+    public bool TryAllToAll(ReadOnlySpan<float> send, Span<float> receive, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        int length = checked(count * WorldSize);
+        if (send.Length != length || receive.Length != length)
+        {
+            throw new ArgumentException($"An all-to-all of {count} values a rank over {WorldSize} ranks sends and receives {length} values, not {send.Length} and {receive.Length}.", nameof(send));
+        }
+
+        _staging = null;
+        bool timed = BeginTiming(out long start, out var simulated);
+        try
+        {
+            AllToAllHost(send, receive, count);
+        }
+        finally
+        {
+            _measuring = false;
+        }
+
+        EndTiming(timed, "all-to-all", start, simulated);
+        return true;
+    }
+
+    /// <summary>
+    /// Block r of <paramref name="send"/> to rank r, block r of <paramref name="receive"/> from it. By default a pairwise
+    /// exchange: at step k (1 to W−1) each rank sends to rank + k and receives from rank − k, chunk by chunk in turn, so no
+    /// rank waits on another in a circle and each pair of ranks meets once; an algorithm with a cheaper way overrides it.
+    /// </summary>
+    protected virtual void AllToAllHost(ReadOnlySpan<float> send, Span<float> receive, int count)
+    {
+        send.Slice(Rank * count, count).CopyTo(receive.Slice(Rank * count, count));
+        for (int k = 1; k < WorldSize; k++)
+        {
+            int to = (Rank + k) % WorldSize, from = (Rank - k + WorldSize) % WorldSize;
+            Exchange(to, send.Slice(to * count, count), from, receive.Slice(from * count, count), AllToAllTag, WireType.Float32);
+        }
     }
 
     /// <summary>
