@@ -137,6 +137,47 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // Float32 to and from the 16-bit floats (plan 37: ConvertElements), bit for bit the CPU's, NaNs included, with
+        // CUDA's and HIP's names (DeviceConversions; PtxKernels.Conversions.cs): two values a word, element 2i in the low
+        // half. Narrowing runs an invocation per word, 0 past the last element (RoundBFloat16 with the conversions' NaN,
+        // RoundFloat16: integer work only); widening one per element, exactly (BFloat16At, Float16At: NaNs kept as they are).
+        foreach (bool bfloat16 in (bool[])[true, false])
+        {
+            string name = bfloat16 ? "convert_f32_bf16" : "convert_f32_f16";
+            yield return (name, () =>
+            {
+                var k = new KernelBuilder(name, Block);
+                var (x, packed) = (k.Buffer("x"), k.Buffer("packed"));
+                var n = k.PushInt("n");
+                Grid(k, (n + 1) / 2, i =>
+                {
+                    var low = bfloat16 ? RoundBFloat16(k, x[2 * i]) : RoundFloat16(k, x[2 * i]);
+                    var high = k.Local(k.UInt(0));
+                    k.If(2 * i + 1 < n, () => high.V = bfloat16 ? RoundBFloat16(k, x[2 * i + 1]) : RoundFloat16(k, x[2 * i + 1]));
+                    packed[i] = (low | high.V << 16).AsFloat();
+                });
+                return k.Build();
+            });
+        }
+
+        yield return ("convert_bf16_f32", () =>
+        {
+            var k = new KernelBuilder("convert_bf16_f32", Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var n = k.PushInt("n");
+            Grid(k, n, i => y[i] = BFloat16At(k, x, i >> 1, i));
+            return k.Build();
+        });
+
+        yield return ("convert_f16_f32", () =>
+        {
+            var k = new KernelBuilder("convert_f16_f32", Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var n = k.PushInt("n");
+            Grid(k, n, i => y[i] = Float16At(k, x, i >> 1, i));
+            return k.Build();
+        });
+
         // dtable[indices[i], :] += dy[i, :]: one invocation per column, walking the indices in order (repeated indices
         // add up without atomics). TODO(tuning): parallel over the indices for narrow tables.
         yield return ("scatter_add", () =>

@@ -8,7 +8,7 @@ namespace Idrak.Gpu.Hip;
 
 // HIP's shape kernels in GCN (plan 35, G4b): the key/value cache writes (float32, bfloat16, int8), the decoder mask, the
 // gathers (float32, bfloat16 rows, bfloat16 columns; int32 indices, plan 37 T1b), the permute, the strided copy (adding
-// or not) and the conversions between float32 and int32 (plan 37 T1b), with CUDA's names
+// or not) and the conversions between float32 and int32 (plan 37 T1b), bfloat16 and float16, with CUDA's names
 // and arguments in CUDA's order (PtxKernels.Decoding.cs, .Quantized.cs, .Advanced.cs: the buffers, then the 32-bit
 // values, the count n last), each computing what the CPU backend computes (CpuBackend.Decoding.cs, .Quantized.cs,
 // .Advanced.cs), the reference their results are proven against.
@@ -40,6 +40,10 @@ namespace Idrak.Gpu.Hip;
 // | copy2d_f32           | src, dst; srcoff, srcstride, dstoff, dststride, cols, accumulate, n  | a copied float       | 0 (1) | 8 (12)       |
 // | convert_f32_i32      | x, y; n                                                              | an element           | 0     | 8            |
 // | convert_i32_f32      | x, y; n                                                              | an element           | 0     | 8            |
+// | convert_f32_bf16     | x, y; count, n                                                       | a word of two halves | 0     | 12           |
+// | convert_f32_f16      | x, y; count, n                                                       | a word of two halves | 0     | 12           |
+// | convert_bf16_f32     | x, y; n                                                              | an element           | 0     | 6            |
+// | convert_f16_f32      | x, y; n                                                              | an element           | 0     | 6            |
 //
 // (In brackets: adding into the output.) kv_write_bf16's work-item writes a word of two values (n = heads · steps ·
 // words); kv_write_int8's quantizes a whole cached row (n = heads · steps), reading it twice (its largest magnitude, then
@@ -70,6 +74,10 @@ internal static partial class GcnKernels
         ShapeCopy2D(),
         ShapeConvert(toInt32: true),
         ShapeConvert(toInt32: false),
+        ShapeNarrow(bfloat16: true),
+        ShapeNarrow(bfloat16: false),
+        ShapeWiden(bfloat16: true),
+        ShapeWiden(bfloat16: false),
     ];
 
     // cache[h, pos + t, d] = src[h, t, d]: one source float a work-item (h, rest) = i / (steps · dim).
@@ -320,6 +328,96 @@ internal static partial class GcnKernels
         return w.End();
     }
 
+    // Word i of y = x[2i], x[2i + 1] narrowed to bfloat16 or float16 (low half first; 0 past count), as the CPU's
+    // conversions (ElementConversions) and CUDA's and Vulkan's kernels make them, NaNs included: bfloat16 as
+    // BFloat16Bits.Round (RoundBFloat16), float16 as .NET's (Half) (RoundFloat16: integer work only). One word a work-item.
+    private static GcnKernelSource ShapeNarrow(bool bfloat16)
+    {
+        var w = new ElementWriter(bfloat16 ? "convert_f32_bf16" : "convert_f32_f16", ["x", "y"], ["count", "n"]);
+        string count = w.Scalar("count");
+        w.Begin();
+        string from = w.V(), low = w.V(), high = w.V(), second = w.V(), saved = w.SPair();
+        w.L($"""
+            v_lshlrev_b32_e32 {from}, 3, {w.Item}
+            global_load_dword {low}, {from}, {w.Pointer("x")}
+            v_mov_b32_e32 {high}, 0
+            v_lshlrev_b32_e32 {second}, 1, {w.Item}
+            v_add_u32_e32 {second}, 1, {second}
+            v_cmp_gt_u32_e32 vcc, {count}, {second}
+            s_and_saveexec_b64 {saved}, vcc
+            global_load_dword {high}, {from}, {w.Pointer("x")} offset:4
+            s_or_b64 exec, exec, {saved}
+            """);
+        string a = bfloat16 ? w.RoundBFloat16(low) : w.RoundFloat16(low), b = bfloat16 ? w.RoundBFloat16(high) : w.RoundFloat16(high);
+        string packed = w.V(), at = w.V();
+        w.L($"""
+            v_lshl_or_b32 {packed}, {b}, 16, {a}
+            v_lshlrev_b32_e32 {at}, 2, {w.Item}
+            global_store_dword {at}, {packed}, {w.Pointer("y")}
+            """);
+        return w.End();
+    }
+
+    // y[i] = element i of the 16-bit words x widened, exactly: bfloat16 as the float32's high half, float16 as
+    // HalfFloats widens it (normal halves rebiased, a subnormal as mantissa · 2^-24, a NaN's payload kept). One element a
+    // work-item.
+    private static GcnKernelSource ShapeWiden(bool bfloat16)
+    {
+        var w = new ElementWriter(bfloat16 ? "convert_bf16_f32" : "convert_f16_f32", ["x", "y"], ["n"]);
+        w.Begin();
+        string word = w.V(), bits = w.V(), odd = w.V(), low = w.V(), at = w.V(), value = w.V();
+        w.L($"""
+            v_lshrrev_b32_e32 {word}, 1, {w.Item}
+            v_lshlrev_b32_e32 {word}, 2, {word}
+            global_load_dword {bits}, {word}, {w.Pointer("x")}
+            v_and_b32_e32 {odd}, 1, {w.Item}
+            v_cmp_eq_u32_e32 vcc, 0, {odd}
+            """);
+        if (bfloat16)
+        {
+            w.L($"""
+                v_lshlrev_b32_e32 {low}, 16, {bits}
+                v_and_b32_e32 {bits}, 0xffff0000, {bits}
+                v_cndmask_b32_e32 {value}, {bits}, {low}, vcc
+                """);
+        }
+        else
+        {
+            string half = w.V(), e = w.V(), m = w.V(), sign = w.V(), t = w.V(), normal = w.V(), special = w.V(), sub = w.V();
+            w.L($"""
+                v_and_b32_e32 {low}, 0xffff, {bits}
+                v_lshrrev_b32_e32 {bits}, 16, {bits}
+                v_cndmask_b32_e32 {half}, {bits}, {low}, vcc
+                v_bfe_u32 {e}, {half}, 10, 5
+                v_and_b32_e32 {m}, 0x3ff, {half}
+                v_and_b32_e32 {sign}, 0x8000, {half}
+                v_lshlrev_b32_e32 {sign}, 16, {sign}
+                v_lshlrev_b32_e32 {m}, 13, {m}
+                v_lshlrev_b32_e32 {t}, 23, {e}
+                v_add_u32_e32 {t}, 0x38000000, {t}
+                v_or_b32_e32 {normal}, {t}, {m}
+                v_or_b32_e32 {normal}, {normal}, {sign}
+                v_or_b32_e32 {special}, 0x7f800000, {m}
+                v_or_b32_e32 {special}, {special}, {sign}
+                v_lshrrev_b32_e32 {t}, 13, {m}
+                v_cvt_f32_u32_e32 {t}, {t}
+                v_mul_f32_e32 {t}, 0x33800000, {t}
+                v_or_b32_e32 {sub}, {sign}, {t}
+                v_mov_b32_e32 {value}, {normal}
+                v_cmp_eq_u32_e32 vcc, 31, {e}
+                v_cndmask_b32_e32 {value}, {value}, {special}, vcc
+                v_cmp_eq_u32_e32 vcc, 0, {e}
+                v_cndmask_b32_e32 {value}, {value}, {sub}, vcc
+                """);
+        }
+
+        w.L($"""
+            v_lshlrev_b32_e32 {at}, 2, {w.Item}
+            global_store_dword {at}, {value}, {w.Pointer("y")}
+            """);
+        return w.End();
+    }
+
     // y[i] (+)= x[Σ_k c_k · t_k] for output element i at coordinates c of the shape s (six dimensions, right-aligned):
     // the coordinates taken off right to left, each by its own reciprocal made once.
     private static GcnKernelSource ShapePermute()
@@ -542,6 +640,63 @@ internal static partial class GcnKernels
                 v_div_fmas_f32 {ds}, {ds}, {r}, {q}
                 v_div_fixup_f32 {target}, {ds}, {d}, {n}
                 """);
+        }
+
+        /// <summary>
+        /// The IEEE half bits of float <paramref name="x"/> as .NET's (Half) makes them, in the low half, by integer work
+        /// only (no conversion instruction, so no mode register's rounding or denormal setting): to nearest, ties to even,
+        /// subnormal halves kept, from 65520 on an infinity, below 2^-25 a signed zero; a NaN sign | 0x7E00 | its
+        /// payload's top ten bits.
+        /// </summary>
+        public string RoundFloat16(string x)
+        {
+            string sign = V(), a = V(), t = V(), nan = V(), infinity = V(), normal = V(), e = V(), shift = V(), significand = V(), kept = V(),
+                rest = V(), half = V(), one = V(), up = V(), sub = V(), result = V();
+            L($"""
+                v_lshrrev_b32_e32 {t}, 16, {x}
+                v_and_b32_e32 {sign}, 0x8000, {t}
+                v_and_b32_e32 {a}, 0x7fffffff, {x}
+                v_bfe_u32 {t}, {a}, 13, 10
+                v_or_b32_e32 {nan}, {sign}, {t}
+                v_or_b32_e32 {nan}, 0x7e00, {nan}
+                v_or_b32_e32 {infinity}, 0x7c00, {sign}
+                v_bfe_u32 {t}, {a}, 13, 1
+                v_add_u32_e32 {normal}, 0xc8000fff, {a}
+                v_add_u32_e32 {normal}, {normal}, {t}
+                v_lshrrev_b32_e32 {normal}, 13, {normal}
+                v_or_b32_e32 {normal}, {normal}, {sign}
+                v_lshrrev_b32_e32 {e}, 23, {a}
+                v_min_u32_e32 {t}, 0x7e, {e}
+                v_sub_u32_e32 {shift}, 0x7e, {t}
+                v_max_u32_e32 {shift}, 14, {shift}
+                v_min_u32_e32 {shift}, 24, {shift}
+                v_and_b32_e32 {significand}, 0x7fffff, {a}
+                v_or_b32_e32 {significand}, 0x800000, {significand}
+                v_lshrrev_b32_e32 {kept}, {shift}, {significand}
+                v_lshlrev_b32_e32 {t}, {shift}, {kept}
+                v_sub_u32_e32 {rest}, {significand}, {t}
+                v_mov_b32_e32 {one}, 1
+                v_add_u32_e32 {t}, -1, {shift}
+                v_lshlrev_b32_e32 {half}, {t}, {one}
+                v_cmp_gt_u32_e32 vcc, {rest}, {half}
+                v_cndmask_b32_e32 {up}, 0, {one}, vcc
+                v_and_b32_e32 {t}, 1, {kept}
+                v_cmp_eq_u32_e32 vcc, {rest}, {half}
+                v_cndmask_b32_e32 {t}, 0, {t}, vcc
+                v_or_b32_e32 {up}, {up}, {t}
+                v_add_u32_e32 {sub}, {kept}, {up}
+                v_or_b32_e32 {sub}, {sub}, {sign}
+                v_mov_b32_e32 {result}, {sign}
+                v_cmp_le_u32_e32 vcc, 0x66, {e}
+                v_cndmask_b32_e32 {result}, {result}, {sub}, vcc
+                v_cmp_le_u32_e32 vcc, 0x38800000, {a}
+                v_cndmask_b32_e32 {result}, {result}, {normal}, vcc
+                v_cmp_le_u32_e32 vcc, 0x477ff000, {a}
+                v_cndmask_b32_e32 {result}, {result}, {infinity}, vcc
+                v_cmp_lt_u32_e32 vcc, 0x7f800000, {a}
+                v_cndmask_b32_e32 {result}, {result}, {nan}, vcc
+                """);
+            return result;
         }
 
         /// <summary>The bfloat16 bits of float <paramref name="x"/> as BFloat16Bits.Round makes them (to nearest, ties to even; a NaN quiet), in the low half.</summary>

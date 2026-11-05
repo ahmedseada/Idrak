@@ -134,9 +134,9 @@ internal static partial class VulkanKernels
             var n = k.PushInt("n");
             Grid(k, (n + 1) / 2, i =>
             {
-                var low = RoundBFloat16(k, x[2 * i]);
+                var low = RoundBFloat16(k, x[2 * i], packNaN: true);
                 var high = k.Local(k.UInt(0));
-                k.If(2 * i + 1 < n, () => high.V = RoundBFloat16(k, x[2 * i + 1]));
+                k.If(2 * i + 1 < n, () => high.V = RoundBFloat16(k, x[2 * i + 1], packNaN: true));
                 packed[i] = (low | high.V << 16).AsFloat();
             });
             return k.Build();
@@ -461,11 +461,41 @@ internal static partial class VulkanKernels
         return k.Select(e.Eq(k.UInt(0u)), subnormal, k.Select(e.Eq(k.UInt(31u)), special, normal)).AsFloat();
     }
 
-    // The bfloat16 bits of v (as uint in the low half): to nearest, ties to even; NaN → 0x7FC0.
-    private static Val RoundBFloat16(KernelBuilder k, Val v)
+    // The bfloat16 bits of v (as uint in the low half): to nearest, ties to even, in integer arithmetic; a NaN, told by its
+    // bits (no float comparison a driver might drop), as the CPU's conversions and caches keep it (BFloat16Bits.Round: its
+    // sign and top payload bits, made quiet, (bits >> 16) | 0x40) or, packNaN, as the CPU's PackBFloat16 writes it (0x7FC0).
+    private static Val RoundBFloat16(KernelBuilder k, Val v, bool packNaN = false)
     {
         var u = v.AsUInt();
         var rounded = (u + k.UInt(0x7FFFu) + ((u >> 16) & 1)) >> 16;
-        return k.Select(v.IsNan(), k.UInt(0x7FC0u), rounded);
+        return k.Select((u & k.UInt(0x7FFFFFFFu)) > k.UInt(0x7F800000u), packNaN ? k.UInt(0x7FC0u) : (u >> 16) | k.UInt(0x40u), rounded);
+    }
+
+    // The IEEE half bits of v (as uint in the low half), as the CPU's (Half) gives them, in integer arithmetic only (no
+    // device conversion, so no rounding mode or denormal setting of the driver): to nearest, ties to even, subnormal
+    // halves kept, from 65520 on an infinity, below 2^-25 a zero (signed); a NaN sign | 0x7E00 | its payload's top ten bits.
+    private static Val RoundFloat16(KernelBuilder k, Val v)
+    {
+        var u = v.AsUInt();
+        var sign = (u >> 16) & k.UInt(0x8000u);
+        var a = u & k.UInt(0x7FFFFFFFu);
+        var nan = sign | k.UInt(0x7E00u) | ((a >> 13) & k.UInt(0x3FFu));
+        var infinity = sign | k.UInt(0x7C00u);
+        var normal = sign | ((a - k.UInt(0x38000000u) + k.UInt(0xFFFu) + ((a >> 13) & k.UInt(1u))) >> 13);
+
+        // A subnormal half (2^-25 to 2^-14): the 24-bit significand shifted right by 126 - exponent (14 to 24; the shift
+        // held in that range for the other values, whose result another branch gives), rounded to nearest, ties to even.
+        var exponent = a >> 23;
+        var shift = k.Min(k.Max(k.UInt(126u) - k.Min(exponent, k.UInt(126u)), k.UInt(14u)), k.UInt(24u));
+        var significand = (a & k.UInt(0x7FFFFFu)) | k.UInt(0x800000u);
+        var kept = significand.ShiftRight(shift);
+        var rest = significand - kept.ShiftLeft(shift);
+        var halfway = k.UInt(1u).ShiftLeft(shift - k.UInt(1u));
+        var up = (rest > halfway) | (rest.Eq(halfway) & (kept & k.UInt(1u)).Eq(k.UInt(1u)));
+        var subnormal = sign | (kept + k.Select(up, k.UInt(1u), k.UInt(0u)));
+        return k.Select(a > k.UInt(0x7F800000u), nan,
+            k.Select(a >= k.UInt(0x477FF000u), infinity,
+                k.Select(a >= k.UInt(0x38800000u), normal,
+                    k.Select(exponent >= k.UInt(102u), subnormal, sign))));
     }
 }

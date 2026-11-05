@@ -90,17 +90,25 @@ internal sealed unsafe partial class HipBackend
         LaunchShape(f, (int)n, 0, P(position), P(mask), U(capacity), U((int)n));
     }
 
-    // The index conversions between float32 and int32 on the device (no host round trip, recordable), as CUDA's and
-    // Vulkan's; any other pair, or one past the shape kernels' bound, takes the host fallback (which checks every value).
+    // The conversions on the device (no host round trip, recordable), as CUDA's and Vulkan's: the index ones between
+    // float32 and int32, and float32 to and from bfloat16 and float16, bit for bit the CPU's, NaNs included
+    // (GcnKernels.Shapes.cs); any other pair, or one past the shape kernels' bound, takes the host fallback (which checks
+    // every value).
     public override void ConvertElementsKernel(Storage source, Storage destination)
     {
         var (from, to) = (source.ElementType, destination.ElementType);
-        string? name = ReferenceEquals(from, ElementType.Float32) && ReferenceEquals(to, ElementType.Int32) ? "convert_f32_i32"
-            : ReferenceEquals(from, ElementType.Int32) && ReferenceEquals(to, ElementType.Float32) ? "convert_i32_f32" : null;
+        string? name = DeviceConversions.Kernel(from, to);
         long n = source.ElementCount;
         if (name is null || n <= 0 || n != destination.ElementCount || !ShapeFits(n) || ShapeKernel(name) is not { } f)
         {
             base.ConvertElementsKernel(source, destination);
+            return;
+        }
+
+        if (DeviceConversions.Narrows(name))
+        {
+            int words = (int)((n + 1) / 2);                                    // a work-item per word of two halves
+            LaunchShape(f, words, 0, P(source), P(destination), U((int)n), U(words));
             return;
         }
 

@@ -18,7 +18,7 @@ internal abstract partial class DesktopTests : Tests
     [
         ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
         ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
-        ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
+        ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); float32 to and from bfloat16 and float16 on the device equal the CPU's bit for bit (NaN payloads, ties, subnormals, every 16-bit code); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
@@ -152,6 +152,8 @@ internal abstract partial class DesktopTests : Tests
                 $"int32 to float32 and back on {device}: {string.Join(", ", floats.ToArray())}");
         }
 
+        SixteenBitConversions(device);
+
         if (!FirstRun(nameof(ElementTypeConversions)))
         {
             return;
@@ -188,6 +190,40 @@ internal abstract partial class DesktopTests : Tests
             $"published: {string.Join("; ", hook.Events)}");
         Check(Ops.Gather.IndexParameters.SequenceEqual(["indices"]) && Ops.RouteTopK.IndexParameters.SequenceEqual(["offsets", "tokenOfRow", "slotRow"])
               && Ops.Softmax.IndexParameters.Count == 0 && Ops.ConvertElements.Fallback == KernelSource.Host, "the operations name their index parameters");
+    }
+
+    // Float32 to and from bfloat16 and float16 on the device (its own kernels on CUDA, Vulkan and HIP), bit for bit the
+    // CPU's conversions (ElementConversions), NaNs included: the patterns of SixteenBitPatterns narrowed, and every 16-bit
+    // code widened (an odd count each).
+    private static void SixteenBitConversions(Device device)
+    {
+        uint[] patterns = SixteenBitPatterns(new Random(53), 4000);
+        int count = patterns.Length;
+        ushort[] codes = [.. Enumerable.Range(0, 65537).Select(i => (ushort)i)];          // 65537: code 0 again, an odd count
+        foreach (var type in (ElementType[])[ElementType.BFloat16, ElementType.Float16])
+        {
+            var expected = new byte[type.ByteCount(count)];
+            ElementConversions.Convert(ElementType.Float32, MemoryMarshal.AsBytes(patterns.AsSpan()), type, expected, count);
+            using (var source = Tensor.FromBytes(MemoryMarshal.AsBytes(patterns.AsSpan()), ElementType.Float32, [count], device))
+            using (var narrowed = Tensor.Empty([count], device, type))
+            {
+                device.Backend.ConvertElements(source.Storage, narrowed.Storage);
+                byte[] got = narrowed.ToBytes();
+                int bad = Enumerable.Range(0, count).FirstOrDefault(i => got[2 * i] != expected[2 * i] || got[2 * i + 1] != expected[2 * i + 1], -1);
+                Check(bad < 0, bad < 0 ? "" : $"float32 0x{patterns[bad]:X8} to {type} on {device}: 0x{BitConverter.ToUInt16(got, 2 * bad):X4}, the CPU's 0x{BitConverter.ToUInt16(expected, 2 * bad):X4}");
+            }
+
+            var widened = new byte[4 * codes.Length];
+            ElementConversions.Convert(type, MemoryMarshal.AsBytes(codes.AsSpan()), ElementType.Float32, widened, codes.Length);
+            using (var source = Tensor.FromBytes(MemoryMarshal.AsBytes(codes.AsSpan()), type, [codes.Length], device))
+            using (var floats = Tensor.Empty([codes.Length], device, ElementType.Float32))
+            {
+                device.Backend.ConvertElements(source.Storage, floats.Storage);
+                byte[] got = floats.ToBytes();
+                int bad = Enumerable.Range(0, codes.Length).FirstOrDefault(i => BitConverter.ToUInt32(got, 4 * i) != BitConverter.ToUInt32(widened, 4 * i), -1);
+                Check(bad < 0, bad < 0 ? "" : $"{type} 0x{codes[bad]:X4} to float32 on {device}: 0x{BitConverter.ToUInt32(got, 4 * bad):X8}, the CPU's 0x{BitConverter.ToUInt32(widened, 4 * bad):X8}");
+            }
+        }
     }
 
     private sealed class ConversionsSeen : ITelemetryHook

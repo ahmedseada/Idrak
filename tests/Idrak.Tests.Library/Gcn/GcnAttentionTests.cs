@@ -27,7 +27,7 @@ internal abstract partial class Tests
         ("gcn kernels: attention: attention_spans_f32 equals the CPU's attention over key ranges (grouped heads, two tables, an empty range: zeros and a log-sum-exp of -inf; a soft-cap; two splits merged) and its strided form over packed rows (two batches), the same bits on two grids and wave orders", GcnAttentionSpans),
         ("gcn kernels: attention: attn_scores_int8 and attn_context_int8 equal the CPU's scores and weighted values over an int8 cache (an odd head), the same bits on two grids and wave orders", GcnAttentionInt8Products),
         ("gcn kernels: shapes: kv_write_f32, kv_write_bf16 (an odd head, a NaN kept quiet) and kv_write_int8 (an odd head, a zero row) write the CPU's cache bit for bit, decoder_mask_f32 its mask, the same bits on two grids and wave orders", GcnShapesCache),
-        ("gcn kernels: shapes: gather_f32, gather_bf16_f32 and gather_bf16_cols_f32 (int32 indices; odd widths, the last row) and convert_f32_i32 and convert_i32_f32 equal the CPU's gathers and conversions bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
+        ("gcn kernels: shapes: gather_f32, gather_bf16_f32 and gather_bf16_cols_f32 (int32 indices; odd widths, the last row), convert_f32_i32 and convert_i32_f32, and the 16-bit conversions convert_f32_bf16, convert_f32_f16, convert_bf16_f32 and convert_f16_f32 (ties both ways, NaN payloads, infinities, overflow, subnormal halves, an odd count) equal the CPU's gathers and conversions bit for bit, the same bits on two grids and wave orders", GcnShapesGather),
         ("gcn kernels: shapes: permute_f32 (ranks 1, 4 and 6; adding) and copy2d_f32 (pitches, adding) equal the CPU's bit for bit, the same bits on two grids and wave orders", GcnShapesPermute),
     ];
 
@@ -170,7 +170,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = AttentionAndShapes.Select(k => k.Name).ToArray();
-        Check(names.Length == 21 && names.Distinct().Count() == names.Length, $"21 attention and shape kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 25 && names.Distinct().Count() == names.Length, $"25 attention and shape kernels, each once: {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -528,6 +528,100 @@ internal abstract partial class Tests
             ShapesCase($"convert_i32_f32 ({isa})", [Int32Words(whole), new float[Converted]], ShapeGrid(Converted), [1],
                 (b, s) => b.ConvertElements(s[0], s[1]),
                 (m, a, grid, seed) => AttentionDispatch("convert_i32_f32", isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)Converted));
+        }
+
+        // Float32 to and from bfloat16 and float16 (plan 37: no fixed type), against the CPU's conversions
+        // (ElementConversions) bit for bit: the float32 patterns of SixteenBitPatterns narrowed (an odd count: the last
+        // word's high half 0), and 16-bit codes widened (every exponent with mantissas at the edges, both signs, an odd count).
+        uint[] patterns = SixteenBitPatterns(random, 300);
+        int count = patterns.Length, words = (count + 1) / 2;
+        float[] floats32 = MemoryMarshal.Cast<uint, float>(patterns.AsSpan()).ToArray();
+        ushort[] codes = SixteenBitCodes(random);
+        float[] codeWords = new float[(codes.Length + 1) / 2];
+        MemoryMarshal.AsBytes(codes.AsSpan()).CopyTo(MemoryMarshal.AsBytes(codeWords.AsSpan()));
+        foreach (var (type, narrow, widen) in new[] { (ElementType.BFloat16, "convert_f32_bf16", "convert_bf16_f32"), (ElementType.Float16, "convert_f32_f16", "convert_f16_f32") })
+        {
+            var narrowed = new float[words];
+            ElementConversions.Convert(ElementType.Float32, MemoryMarshal.AsBytes(patterns.AsSpan()), type, MemoryMarshal.AsBytes(narrowed.AsSpan()), count);
+            var widened = new float[codes.Length];
+            ElementConversions.Convert(type, MemoryMarshal.AsBytes(codes.AsSpan()), ElementType.Float32, MemoryMarshal.AsBytes(widened.AsSpan()), codes.Length);
+            foreach (var isa in AttentionIsas)
+            {
+                SixteenBitCase($"{narrow} ({isa})", [floats32, new float[words]], ShapeGrid(words), narrowed, patterns,
+                    (m, a, grid, seed) => AttentionDispatch(narrow, isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)count, (ulong)words));
+                SixteenBitCase($"{widen} ({isa})", [codeWords, new float[codes.Length]], ShapeGrid(codes.Length), widened, null,
+                    (m, a, grid, seed) => AttentionDispatch(widen, isa, m, (grid.X, 1), seed, a[0], a[1], (ulong)codes.Length));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Float32 bit patterns the 16-bit conversions are checked on (here through the GCN interpreter, on each device by
+    /// the element type tests): zeros, ones and bfloat16 ties both ways; NaNs quiet and signalling with payloads, both
+    /// signs; infinities; the largest finite values and those rounding past them (bfloat16's and float16's 65504, 65520);
+    /// float16's smallest normal and the values rounding up to it; subnormal halves, their ties and 2^-25 (a tie to
+    /// zero); float32 subnormals; then `randoms` values, half of them in float16's range (exponents 100 to 145), half any
+    /// bits. An odd count.
+    /// </summary>
+    internal static uint[] SixteenBitPatterns(Random random, int randoms)
+    {
+        uint[] special =
+        [
+            0x00000000, 0x80000000, 0x3F800000, 0xBF800000, 0x3F808000, 0x3F818000, 0x3F807FFF, 0x3F808001, 0x7F7FFFFF, 0xFF7FFFFF,
+            0x7F800000, 0xFF800000, 0x7FC00000, 0xFFC00000, 0x7FC12345, 0x7F800001, 0x7FA00000, 0xFF812345, 0x7FFFFFFF, 0xFFFFFFFF,
+            0x477FE000, 0x477FEFFF, 0x477FF000, 0x477FF001, 0x47800000, 0xC77FF000, 0x38800000, 0x387FFFFF, 0x387FF000, 0x387FE000,
+            0x33800000, 0x33000000, 0x33000001, 0x33400000, 0x33C00000, 0x32FFFFFF, 0xB3C00000, 0x34000000, 0x37800000, 0x37FFF000,
+            0x37FFE000, 0x37FFFFFF, 0x00000001, 0x807FFFFF, 0x00800000,
+        ];
+        int total = special.Length + randoms;
+        var bits = new uint[total % 2 == 0 ? total + 1 : total];
+        special.CopyTo(bits, 0);
+        for (int i = special.Length; i < bits.Length; i++)
+        {
+            uint any = (uint)random.Next() << 1 ^ (uint)random.Next(2);
+            bits[i] = i % 2 == 0 ? any : (any & 0x807FFFFFu) | (uint)random.Next(100, 146) << 23;
+        }
+
+        return bits;
+    }
+
+    /// <summary>16-bit codes the widening conversions are checked on: every exponent with mantissas at its edges and a few others, both signs; an odd count.</summary>
+    internal static ushort[] SixteenBitCodes(Random random)
+    {
+        var codes = new List<ushort>();
+        foreach (int sign in (int[])[0, 0x8000])
+        {
+            for (int exponent = 0; exponent < 32; exponent++)
+            {
+                foreach (int mantissa in (int[])[0, 1, 2, 0x1FF, 0x200, 0x201, 0x3FE, 0x3FF, random.Next(0x400), random.Next(0x400)])
+                {
+                    codes.Add((ushort)(sign | exponent << 10 | mantissa));
+                }
+            }
+        }
+
+        if (codes.Count % 2 == 0)
+        {
+            codes.Add(0x7E01);                                                  // a float16 NaN with a payload (a bfloat16 normal)
+        }
+
+        return [.. codes];
+    }
+
+    // One 16-bit conversion kernel over inputs (storage 1 the output) against `expected` bit for bit, on two grids and wave
+    // orders; `patterns` (the narrowing's inputs) name the element in a failure.
+    private static void SixteenBitCase(string what, float[][] inputs, int blocks, float[] expected, uint[]? patterns,
+        Action<GcnMemory, ulong[], (int X, int Y), ulong> gcn)
+    {
+        float[][] first = RowsOnGcn(inputs, (m, a) => gcn(m, a, (Math.Min(blocks, 2), 1), 1));
+        float[][] second = RowsOnGcn(inputs, (m, a) => gcn(m, a, (blocks, 1), 7));
+        RowsSameBits(first, second, what);
+        var e = MemoryMarshal.Cast<float, uint>(expected.AsSpan());
+        var g = MemoryMarshal.Cast<float, uint>(first[1].AsSpan());
+        for (int i = 0; i < e.Length; i++)
+        {
+            string input = patterns is null ? $"input word {i / 2}" : $"inputs 0x{patterns[2 * i]:X8}{(2 * i + 1 < patterns.Length ? $", 0x{patterns[2 * i + 1]:X8}" : "")}";
+            Check(e[i] == g[i], $"{what}: word {i} ({input}) is 0x{g[i]:X8}, the CPU's 0x{e[i]:X8}");
         }
     }
 

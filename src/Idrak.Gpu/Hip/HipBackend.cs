@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
 using static Idrak.Gpu.Hip.HipRuntime;
 
 namespace Idrak.Gpu.Hip;
@@ -132,6 +133,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
         // as the host fallback (the CPU's code) does.
         DefaultValueTypes = [ElementType.Float32],
         DefaultSumTypes = [ElementType.Float32],
+        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
     };
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>

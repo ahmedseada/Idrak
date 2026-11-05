@@ -15,7 +15,7 @@ internal static partial class PtxKernels
         "softmax_f32", "softmax_bwd_f32", "argmax_f32", "log_softmax_topk_f32", "class_match_f32",
         "norm_stats_f32", "norm_apply_f32", "norm_bwd_f32", "group_scale_shift_f32", "group_reduce_f32",
         "norm_stats_part_f32", "norm_stats_final_f32", "group_reduce_part_f32", "group_reduce_final_f32", "weight_norm_f32", "weight_norm_bwd_f32",
-        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "convert_f32_i32", "convert_i32_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
+        "gather_f32", "gather_bf16_f32", "gather_bf16_cols_f32", "one_hot_f32", "convert_f32_i32", "convert_i32_f32", "convert_f32_bf16", "convert_f32_f16", "convert_bf16_f32", "convert_f16_f32", "scatter_chain_u32", "scatter_walk_f32", "im2col_f32", "col2im_f32", "maxpool_f32", "maxpool_bwd_f32", "maxpool_bwd_gather_f32",
         "permute_f32", "copy2d_f32", "sum_axis_f32", "sum_axis_rows_f32", "broadcast_axis_f32",
     ];
 

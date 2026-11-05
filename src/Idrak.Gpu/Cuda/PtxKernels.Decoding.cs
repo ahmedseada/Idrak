@@ -318,9 +318,10 @@ internal static partial class PtxKernels
             """);
 
         // bfloat16 cache: word w of row (h, pos + t) = the rounded pair src[h, t, 2w], src[h, t, 2w + 1] (0 past dim),
-        // rounded to nearest, ties to even; one thread per word.
+        // rounded to nearest, ties to even; a NaN as the CPU's cache keeps it (BFloat16Bits.Round: its payload, made
+        // quiet); one thread per word.
         Elementwise(sb, "kv_write_bf16", ["src", "cache", "pos"], [("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("u32", "words")],
-            """
+            $$"""
             ld.global.f32 %f1, [%b_pos];
             cvt.rzi.u32.f32 %r5, %f1;
             div.u32 %r6, %i, %s_words;
@@ -337,20 +338,13 @@ internal static partial class PtxKernels
             mul.wide.u32 %rd2, %r12, 4;
             add.u64 %rd2, %b_src, %rd2;
             ld.global.u32 %r13, [%rd2];
-            shr.u32 %r14, %r13, 16;
-            and.b32 %r14, %r14, 1;
-            add.u32 %r14, %r14, 0x7FFF;
-            add.u32 %r13, %r13, %r14;
-            shr.u32 %r13, %r13, 16;
+            {{BFloat16Round("%r13", "%r13")}}
             add.u32 %r15, %r11, 1;
             mov.u32 %r16, 0;
             setp.lt.u32 %p1, %r15, %s_dim;
             @%p1 ld.global.u32 %r16, [%rd2+4];
-            shr.u32 %r14, %r16, 16;
-            and.b32 %r14, %r14, 1;
-            add.u32 %r14, %r14, 0x7FFF;
-            add.u32 %r16, %r16, %r14;
-            and.b32 %r16, %r16, 0xFFFF0000;
+            {{BFloat16Round("%r16", "%r16")}}
+            shl.b32 %r16, %r16, 16;
             or.b32 %r13, %r13, %r16;
             st.global.u32 [%rd1], %r13;
             """);

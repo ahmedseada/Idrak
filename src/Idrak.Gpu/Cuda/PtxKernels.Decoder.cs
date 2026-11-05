@@ -369,11 +369,20 @@ internal static partial class PtxKernels
             mul.wide.u32 %rd11, %r27, 2;
             add.u64 %rd11, %rd11, %rd10;
             mov.b32 %r28, {0};
-            shr.u32 %r29, %r28, 16;
-            and.b32 %r29, %r29, 1;
-            add.u32 %r29, %r29, 0x7FFF;
-            add.u32 %r28, %r28, %r29;
-            shr.u32 %r28, %r28, 16;
+            {{
+            .reg .b32 %bt<3>;
+            .reg .pred %bnan;
+            shr.u32 %bt0, %r28, 16;
+            and.b32 %bt0, %bt0, 1;
+            add.u32 %bt0, %bt0, 0x7FFF;
+            add.u32 %bt1, %r28, %bt0;
+            shr.u32 %bt1, %bt1, 16;
+            and.b32 %bt2, %r28, 0x7FFFFFFF;
+            setp.gt.u32 %bnan, %bt2, 0x7F800000;
+            shr.u32 %bt2, %r28, 16;
+            or.b32 %bt2, %bt2, 0x40;
+            selp.b32 %r28, %bt2, %bt1, %bnan;
+            }}
             st.global.u16 [%rd11], %r28;
             {2}_D:
             """;
@@ -549,14 +558,11 @@ internal static partial class PtxKernels
             """);
 
         // bfloat16 variants, one thread per word (elements 2i and 2i + 1, low half first, as bf16_pack_f32 writes them).
-        // Round {f} to bfloat16 bits in the low half of {r} (to nearest, ties to even, in integer arithmetic).
+        // Round {f} to bfloat16 bits in the low half of {r} (to nearest, ties to even, in integer arithmetic; a NaN 0x7FC0,
+        // as the CPU's PackBFloat16 packs these words).
         static string Round(string f, string r) => $"""
             mov.b32 {r}, {f};
-            shr.u32 %r23, {r}, 16;
-            and.b32 %r23, %r23, 1;
-            add.u32 %r23, %r23, 32767;
-            add.u32 {r}, {r}, %r23;
-            shr.u32 {r}, {r}, 16;
+            {BFloat16Round(r, r, packNaN: true)}
             """;
 
         // Element e (%r11) of the pair: its index %r18, its float offset %rd1; past count: done.

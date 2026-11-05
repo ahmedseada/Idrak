@@ -3,6 +3,7 @@
 
 using System.Runtime.InteropServices;
 using System.Text;
+using Idrak.Abstraction.Operations;
 using static Idrak.Gpu.Vulkan.VulkanDriver;
 
 namespace Idrak.Gpu.Vulkan;
@@ -334,6 +335,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         // float32 accumulators).
         DefaultValueTypes = [ElementType.Float32],
         DefaultSumTypes = [ElementType.Float32],
+        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
     };
 
     /// <summary>The number of usable Vulkan devices (0 when there is no loader or driver).</summary>

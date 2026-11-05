@@ -200,37 +200,7 @@ internal static partial class PtxKernels
             st.global.f32 [%a_y], %f2;
             """);
 
-        // Word i of y = x[2i], x[2i + 1] rounded to bfloat16 (to nearest, ties to even, in integer arithmetic so every GPU
-        // runs it; low half first; past the end 0): n = words.
-        Elementwise(sb, "bf16_pack_f32", ["x", "y"], [("u32", "count")],
-            """
-            mul.wide.u32 %rd1, %i, 8;
-            ld.param.u64 %rd2, [p_x];
-            cvta.to.global.u64 %rd2, %rd2;
-            add.u64 %rd1, %rd1, %rd2;
-            ld.global.f32 %f1, [%rd1];
-            mov.f32 %f2, 0f00000000;
-            shl.b32 %r1, %i, 1;
-            add.u32 %r1, %r1, 1;
-            setp.lt.u32 %p1, %r1, %s_count;
-            @%p1 ld.global.f32 %f2, [%rd1+4];
-            mov.b32 %r3, %f1;
-            shr.u32 %r4, %r3, 16;
-            and.b32 %r4, %r4, 1;
-            add.u32 %r4, %r4, 32767;
-            add.u32 %r3, %r3, %r4;
-            shr.u32 %r3, %r3, 16;
-            mov.b32 %r5, %f2;
-            shr.u32 %r6, %r5, 16;
-            and.b32 %r6, %r6, 1;
-            add.u32 %r6, %r6, 32767;
-            add.u32 %r5, %r5, %r6;
-            shr.u32 %r5, %r5, 16;
-            @!%p1 mov.u32 %r5, 0;
-            shl.b32 %r5, %r5, 16;
-            or.b32 %r2, %r3, %r5;
-            st.global.b32 [%a_y], %r2;
-            """);
+        Conversions(sb);                                                       // bf16_pack_f32 and the 16-bit conversions (PtxKernels.Conversions.cs)
 
         // y = min(1, maxNorm / √x) for one value (1 when x ≤ 0): the gradient-clipping factor.
         Elementwise(sb, "clip_factor_f32", ["x", "y"], [("f32", "maxnorm")],

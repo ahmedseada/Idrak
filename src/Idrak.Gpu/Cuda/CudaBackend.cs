@@ -186,6 +186,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         // CTC loss keeps its rows in float32 and only their running offsets in float64).
         DefaultValueTypes = [ElementType.Float32],
         DefaultSumTypes = [ElementType.Float32],
+        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
     };
 
     bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
