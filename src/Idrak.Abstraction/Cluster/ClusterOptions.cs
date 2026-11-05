@@ -318,8 +318,8 @@ public sealed record ClusterOptions
 
     /// <summary>
     /// How a gradient bucket is compressed on its way: a <c>GradientCompressions</c> name of Idrak.Network ("none",
-    /// "bf16", "top-k", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, "bf16" on a bfloat16
-    /// <see cref="Wire"/>, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
+    /// "bf16", "top-k", "int8", "fp8", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, "bf16" on a
+    /// bfloat16 <see cref="Wire"/>, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
     /// </summary>
     public string? Compression { get; init; }
 
@@ -340,7 +340,10 @@ public sealed record ClusterOptions
     /// <summary>The share of gradient values sent (largest first), from 0 to 1; 0 sends them all (<c>IDRAK_CLUSTER_TOPK</c>).</summary>
     public double TopK { get; init; }
 
-    /// <summary>Whether values top-k leaves out are added to the next step's (<c>IDRAK_CLUSTER_ERROR_FEEDBACK</c>: 1 or 0).</summary>
+    /// <summary>
+    /// Whether what a compression did not send (the values top-k leaves out, the rounding error of int8 and fp8) is added
+    /// to the next step's values (<c>IDRAK_CLUSTER_ERROR_FEEDBACK</c>: 1 or 0).
+    /// </summary>
     public bool ErrorFeedback { get; init; } = true;
 
     /// <summary>

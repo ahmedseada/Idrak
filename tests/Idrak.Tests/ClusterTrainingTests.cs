@@ -30,6 +30,7 @@ internal abstract partial class DesktopTests : Tests
         ("cluster: the starting state: rank 0's values sent to every rank, or every rank's hash checked and a rank that differs named", ClusterStartingState),
         ("cluster: data parallel 2 ranks on sim matches the ddp fixture: each rank's losses, the step 1 gradients within 1e-4 of the largest, three SGD and AdamW (torch's own) steps' losses within 1e-5 and weights within 1e-5 (AdamW: the fixture's measured growth of the gradient gap)", ClusterDdpTrainer),
         ("cluster: bf16 wire within the fixture's tolerance: the step 1 gradients, three SGD steps' losses and weights against bf16/ within its measured gaps", ClusterDdpBFloat16),
+        ("cluster: int8 and fp8 wires with error feedback within their measured tolerance of float32: three SGD steps' losses against the ddp fixture and ten against Idrak's float32 run, closer with error feedback than without, the gradients' bytes on the wire 4x fewer", ClusterDdpQuantized),
         ("cluster: 2 ranks equal one process with the global batch (rule 71, Idrak against Idrak): the Trainer, the fine-tuner (accumulation 1 on 2 ranks as 2 in one) and the pretrainer", ClusterEqualsOneProcess),
         ("cluster: 3 ranks with unequal token counts give the token-weighted gradient: the pretrainer's losses and weights as one process's", ClusterUnequalRanks),
         ("cluster: rank 0 alone writes the checkpoint; a 2-rank run resumes as 3 ranks giving the 3-rank run's losses", ClusterResumeOtherWorld),
@@ -143,10 +144,10 @@ internal abstract partial class DesktopTests : Tests
     // Two ranks of the tiny model training with the Trainer on the fixture's windows (rank r's loader shard: windows r, r+2,
     // r+4, r+6), batch 4 a rank, one step an epoch; rank 0 saves the weights. Returns the global losses, each rank's own.
     private static (float[] Losses, float[][] RankLosses, string Saved) DdpTrain(Device device, string windows, string folder, string name, int epochs,
-        Func<IReadOnlyList<Tensor>, Optimizer> make, WireType wire = WireType.Float32)
+        Func<IReadOnlyList<Tensor>, Optimizer> make, WireType wire = WireType.Float32, Func<ClusterOptions, ClusterOptions>? adjust = null)
     {
         string saved = Path.Combine(folder, name);
-        var options = DpOptions(wire);
+        var options = adjust is null ? DpOptions(wire) : adjust(DpOptions(wire));
         var ranks = DpRun(DpTopology(device, 2), options, rank =>
         {
             using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = rank.Device });
@@ -264,6 +265,69 @@ internal abstract partial class DesktopTests : Tests
             float weightGap = ReadTensors(ClusterData("bf16/weights-step3.safetensors")).Max(t => Gap(t.Value.Values, after[t.Key].Values));
             Check(weightGap <= weights, $"bf16: the weights after three steps within the fixture's measured {weights:G3}: {weightGap:G3}");
             Console.WriteLine($"    measured: bf16 gradients {gradientGap:G3}, losses {lossGap:G3}, weights {weightGap:G3}");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // Measured on the CPU (2026-11-05): an int8 or fp8 wire with error feedback (one scale a bucket of 1 MiB) against
+    // float32 on the ddp fixture's SGD run, the largest gap of the losses over three steps (against the fixture) and over
+    // ten (against Idrak's float32 run): int8 5.06e-4 and 0.0115 (0.0293 without error feedback), fp8 1.41e-3 and 0.0328.
+    private const float Int8FixtureGap = 0.001f;
+    private const float Int8RunGap = 0.015f;
+    private const float Float8FixtureGap = 0.002f;
+    private const float Float8RunGap = 0.04f;
+
+    private static void ClusterDdpQuantized(Device device)
+    {
+        const int Steps = 10;
+        string folder = TempFolder("cluster-quantized");
+        try
+        {
+            string windows = DdpWindows(folder);
+            var ddp = JsonNode.Parse(File.ReadAllText(ClusterData("ddp/ddp.json")))!;
+            var fixture = ddp["sgd"]!["losses"]!.AsArray().Select(l => (float)(double)l!).ToArray();
+
+            // One run of SGD (the fixture's rate) with a compression; the bytes rank 0 sent in all-reduces and all-gathers.
+            // Buckets of a set size, so every run's header all-reduce is the same and the difference is the gradients'.
+            (float[] Losses, long Reduced, long Gathered) Run(string compression, bool feedback = true)
+            {
+                var metrics = new MetricsRecorder(TelemetryLevel.Network);
+                float[] losses;
+                using (Telemetry.Subscribe(metrics))
+                {
+                    losses = DdpTrain(device, windows, folder, compression + (feedback ? "" : "-plain"), Steps, ps => new Sgd(ps, 0.2f),
+                        adjust: o => o with { Compression = compression, ErrorFeedback = feedback, BucketBytes = 1L << 20 }).Losses;
+                }
+
+                long Sent(string operation) => metrics.Collectives.Where(c => c.Rank == 0 && c.Operation == operation).Sum(c => c.BytesSent);
+                return (losses, Sent("all-reduce"), Sent("all-gather"));
+            }
+
+            var full = Run("none");
+            Check(full.Losses.Length == Steps, $"float32: {full.Losses.Length} steps' losses");
+            float int8Gap = 0f;
+            foreach (var (name, fixtureTolerance, runTolerance) in new[] { ("int8", Int8FixtureGap, Int8RunGap), ("fp8", Float8FixtureGap, Float8RunGap) })
+            {
+                var run = Run(name);
+                float againstFixture = Gap(fixture, run.Losses[..fixture.Length]), againstFull = Gap(full.Losses, run.Losses);
+                long fullBytes = full.Reduced - run.Reduced, runBytes = run.Gathered - full.Gathered;
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"    {name}: losses {againstFixture:G3} from the fixture's float32 over {fixture.Length} steps, {againstFull:G3} from Idrak's float32 over {Steps}; "
+                    + $"gradients {runBytes:N0} B on the wire against {fullBytes:N0} B ({(double)fullBytes / runBytes:F3}x fewer)"));
+                Check(againstFixture <= fixtureTolerance, $"{name}: three steps' losses within {fixtureTolerance} of the ddp fixture's float32: {againstFixture:G3}");
+                Check(againstFull <= runTolerance, $"{name}: {Steps} steps' losses within {runTolerance} of Idrak's float32 run: {againstFull:G3}");
+                int8Gap = name == "int8" ? againstFull : int8Gap;
+                Check(runBytes > 0 && fullBytes >= 3.99 * runBytes, $"{name}: the gradients' bytes on the wire 4x fewer than float32: {runBytes:N0} against {fullBytes:N0}");
+            }
+
+            // Without error feedback each step's rounding is lost instead of sent late, and the run drifts further.
+            var plain = Run("int8", feedback: false);
+            float plainGap = Gap(full.Losses, plain.Losses);
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"    int8 without error feedback: losses {plainGap:G3} from Idrak's float32 over {Steps} steps"));
+            Check(int8Gap < plainGap, $"int8: error feedback keeps the losses closer to float32 than without it: {int8Gap:G3} against {plainGap:G3}");
         }
         finally
         {

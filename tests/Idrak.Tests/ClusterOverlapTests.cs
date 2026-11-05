@@ -11,6 +11,7 @@ using Idrak.Datasets.Abstractions;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Networking.Abstractions;
+using Idrak.Networking.Compression;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Training;
@@ -30,7 +31,9 @@ internal abstract partial class DesktopTests : Tests
         ("cluster: the gradient-ready hook names each parameter once its backward pass finished it, the last layers first; a checkpointed block's as not final; none outside the scope", ClusterGradientReadyHook),
         ("cluster: bucketed overlap equals the unbucketed step bit for bit: buckets sent during the backward pass against one bucket after it (2 ranks ring, 3 ranks naive) and against the same buckets after it (3 ranks ring); the telemetry counts the buckets sent during the backward pass and names a lost overlap", ClusterOverlapEqualsAfter),
         ("cluster: overlap shortens the simulated step on a slow link (ethernet-1g): the exposed network time a step, the simulator's number, is less with the buckets sent during the backward pass; the bucket size is measured once on the first step, the same on every run", ClusterOverlapShortens),
-        ("cluster: compressions are a registry picked by name (none, bf16, top-k); top-k sends each rank's largest values as pairs summed in rank order and keeps the rest as a residual for the next step", ClusterCompressions),
+        ("cluster: compressions are a registry picked by name (none, bf16, top-k, int8, fp8); top-k sends each rank's largest values as pairs summed in rank order and keeps the rest as a residual for the next step", ClusterCompressions),
+        ("cluster: fp8 E4M3 codes as the format defines them: every code's value, every finite code back to itself, the nearest code with ties to even (every midpoint, its neighbours, and values over every size against a search of all codes), saturation at 448, NaN", ClusterFloat8Codes),
+        ("cluster: int8 and fp8 compressions on 2 ranks, bit for bit as their definition (written apart) gives: one byte a value times the bucket's scale, the vector and scalar paths alike, summed in rank order; the rounding error sent with the next step (error feedback) and none without it; a rank with no rows adds nothing and keeps its residual; a NaN travels and drops the residual; 4x fewer bytes on the wire than float32", ClusterQuantizedCompressions),
         ("cluster: top-k (10%) with error feedback converges on the Spirals sample within 0.02 of the full-gradient training loss after 20 epochs (the tolerance measured on the CPU), sending under half the bytes", ClusterTopKSpirals),
         ("cluster: local SGD every k steps equals one process at k = 1 (plain SGD, the weights averaged by each rank's rows) and runs k times fewer weight averages at k = 4, the weights alike on every rank after each", ClusterLocalSgd),
         ("cluster: a simulated training run with a slow worker shows it as blocked time naming it: the pretrainer's gradient all-reduces on every other rank wait on rank 2, the losses as without the fault", ClusterTrainingSlowWorker),
@@ -217,8 +220,9 @@ internal abstract partial class DesktopTests : Tests
     {
         if (FirstRun(nameof(ClusterCompressions)))
         {
-            Check(new[] { "none", "bf16", "top-k" }.All(n => GradientCompressions.Find(n) is not null && GradientCompressions.Origin(n) == Overrides.Library)
-                  && GradientCompressions.Describe().Contains("top-k:", StringComparison.Ordinal), $"the built-in compressions: {GradientCompressions.Describe()}");
+            Check(new[] { "none", "bf16", "top-k", "int8", "fp8" }.All(n => GradientCompressions.Find(n) is not null && GradientCompressions.Origin(n) == Overrides.Library)
+                  && GradientCompressions.Describe().Contains("top-k:", StringComparison.Ordinal) && GradientCompressions.Describe().Contains("int8:", StringComparison.Ordinal)
+                  && GradientCompressions.Describe().Contains("fp8:", StringComparison.Ordinal), $"the built-in compressions: {GradientCompressions.Describe()}");
             ThrowsNaming<NotSupportedException>(() => GradientCompressions.Get("zip"), "an unknown compression", "is not registered", "GradientCompressions.Register");
             Check(GradientSyncs.Find("local-sgd") is not null && GradientSyncs.Origin("local-sgd") == Overrides.Library, $"Idrak.Network registers local-sgd: {GradientSyncs.Describe()}");
         }
@@ -246,6 +250,265 @@ internal abstract partial class DesktopTests : Tests
             Check(result.First.SequenceEqual(expectedFirst), $"rank {r}: the step's sum of each rank's two largest, weighted: [{string.Join(", ", result.First)}]");
             Check(result.Second.SequenceEqual(expectedSecond), $"rank {r}: the next step sends what was left, largest first (error feedback): [{string.Join(", ", result.Second)}]");
         }
+    }
+
+    // E4M3 by its definition, written apart from the library: (-1)^s · 2^(e-7) · (1 + m/8), subnormal 2^-6 · m/8, S.1111.111 NaN.
+    private static double E4M3Value(int code)
+    {
+        int e = (code >> 3) & 15, m = code & 7;
+        double magnitude = e == 15 && m == 7 ? double.NaN : e == 0 ? Math.Pow(2, -6) * (m / 8.0) : Math.Pow(2, e - 7) * (1 + (m / 8.0));
+        return (code & 0x80) != 0 ? -magnitude : magnitude;
+    }
+
+    // The nearest finite E4M3 code to x by a search of every code, ties to the even code; ±448 beyond it; NaN for NaN.
+    private static int E4M3Nearest(float x)
+    {
+        int sign = float.IsNegative(x) ? 0x80 : 0;
+        if (float.IsNaN(x))
+        {
+            return sign | 0x7F;
+        }
+
+        double a = Math.Abs((double)x);
+        if (a >= 448)
+        {
+            return sign | 0x7E;
+        }
+
+        int best = 0;
+        double distance = double.PositiveInfinity;
+        for (int c = 0; c <= 0x7E; c++)
+        {
+            double d = Math.Abs(a - E4M3Value(c));
+            if (d < distance || (d == distance && (c & 1) == 0))
+            {
+                (best, distance) = (c, d);
+            }
+        }
+
+        return sign | best;
+    }
+
+    private static void ClusterFloat8Codes(Device device)
+    {
+        if (!FirstRun(nameof(ClusterFloat8Codes)))
+        {
+            return;
+        }
+
+        // Every code's value, against the definition and at the known points.
+        var wrong = Enumerable.Range(0, 256).Where(c => !(double.IsNaN(E4M3Value(c)) ? float.IsNaN(Float8E4M3.Decode((byte)c)) : Float8E4M3.Decode((byte)c) == E4M3Value(c))).ToList();
+        Check(wrong.Count == 0, $"codes whose value is not the format's: {string.Join(", ", wrong.Select(c => $"0x{c:X2} = {Float8E4M3.Decode((byte)c)}"))}");
+        Check(Float8E4M3.Decode(0x00) == 0f && BitConverter.SingleToUInt32Bits(Float8E4M3.Decode(0x80)) == 0x80000000u && Float8E4M3.Decode(0x01) == MathF.ScaleB(1f, -9)
+              && Float8E4M3.Decode(0x07) == 7 * MathF.ScaleB(1f, -9) && Float8E4M3.Decode(0x08) == MathF.ScaleB(1f, -6) && Float8E4M3.Decode(0x38) == 1f && Float8E4M3.Decode(0x40) == 2f
+              && Float8E4M3.Decode(0x7E) == 448f && Float8E4M3.Decode(0xFE) == -448f && float.IsNaN(Float8E4M3.Decode(0x7F)) && float.IsNaN(Float8E4M3.Decode(0xFF)) && Float8E4M3.MaxValue == 448f,
+            "E4M3: 0 and -0, the smallest subnormal 2^-9, the largest 7·2^-9, the smallest normal 2^-6, 1, 2, ±448, the NaN codes");
+
+        // Every finite code back to itself.
+        var lost = Enumerable.Range(0, 256).Where(c => (c & 0x7F) != 0x7F && Float8E4M3.Encode(Float8E4M3.Decode((byte)c)) != c).ToList();
+        Check(lost.Count == 0, $"finite codes that do not come back: {string.Join(", ", lost.Select(c => $"0x{c:X2} -> 0x{Float8E4M3.Encode(Float8E4M3.Decode((byte)c)):X2}"))}");
+
+        // Each midpoint goes to the even code, its neighbours one float away to the nearer code; both signs.
+        var ties = new List<string>();
+        for (int c = 0; c < 0x7E; c++)
+        {
+            float mid = (float)((E4M3Value(c) + E4M3Value(c + 1)) / 2);         // exact: a few bits
+            foreach (int sign in new[] { 1, -1 })
+            {
+                int s = sign < 0 ? 0x80 : 0;
+                int even = s | ((c & 1) == 0 ? c : c + 1);
+                if (Float8E4M3.Encode(sign * mid) != even || Float8E4M3.Encode(sign * MathF.BitDecrement(mid)) != (s | c) || Float8E4M3.Encode(sign * MathF.BitIncrement(mid)) != (s | (c + 1)))
+                {
+                    ties.Add($"0x{c:X2}/0x{c + 1:X2} sign {sign}: {Float8E4M3.Encode(sign * mid):X2}, below {Float8E4M3.Encode(sign * MathF.BitDecrement(mid)):X2}, above {Float8E4M3.Encode(sign * MathF.BitIncrement(mid)):X2}");
+                }
+            }
+        }
+
+        Check(ties.Count == 0, $"midpoints not to the even code, or neighbours not to the nearer: {string.Join("; ", ties.Take(8))}");
+
+        // Values over every size (float32 subnormals to beyond 448) against the search of every code.
+        var random = new Random(37);
+        var misses = new List<string>();
+        for (int i = 0; i < 200_000; i++)
+        {
+            float x = i % 4 == 0 ? BitConverter.Int32BitsToSingle(random.Next()) % 1024f
+                : (float)((random.NextDouble() < 0.5 ? -1 : 1) * Math.Pow(2, (random.NextDouble() * 22) - 12) * (1 + random.NextDouble()));
+            if (Float8E4M3.Encode(x) != E4M3Nearest(x) && misses.Count < 8)
+            {
+                misses.Add($"{x:R} -> 0x{Float8E4M3.Encode(x):X2}, the nearest is 0x{E4M3Nearest(x):X2}");
+            }
+        }
+
+        Check(misses.Count == 0, $"values not encoded to the nearest code: {string.Join("; ", misses)}");
+        Check(Float8E4M3.Encode(448f) == 0x7E && Float8E4M3.Encode(449f) == 0x7E && Float8E4M3.Encode(1e30f) == 0x7E && Float8E4M3.Encode(float.PositiveInfinity) == 0x7E
+              && Float8E4M3.Encode(float.NegativeInfinity) == 0xFE && Float8E4M3.Encode(-500f) == 0xFE && float.IsNaN(Float8E4M3.Decode(Float8E4M3.Encode(float.NaN)))
+              && Float8E4M3.Encode(MathF.ScaleB(1f, -10)) == 0x00 && Float8E4M3.Encode(MathF.BitIncrement(MathF.ScaleB(1f, -10))) == 0x01 && Float8E4M3.Encode(-1e-30f) == 0x80
+              && Float8E4M3.Encode(float.Epsilon) == 0x00,
+            "E4M3: beyond 448 and infinity saturate to ±448, NaN stays NaN, half the smallest subnormal ties to 0, a tiny negative is -0");
+    }
+
+    // One rank's step of an int8 or fp8 compression by its definition, written apart from the library: v = values · weight
+    // (+ residual), scale = largest / 127 (or 448), each value's code nearest v · (127 / largest) (or 448 / largest), ties
+    // to even; returns the decoded values (code · scale) and leaves v less them as the residual. A rank with no rows sends
+    // zeros and keeps its residual; a NaN or infinity sends NaN and drops it.
+    private static float[] QuantizedReference(float[] values, float weight, float[] residual, bool fp8, bool feedback)
+    {
+        int n = values.Length;
+        if (weight == 0f)
+        {
+            return new float[n];
+        }
+
+        var v = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            v[i] = (values[i] * weight) + (feedback ? residual[i] : 0f);
+        }
+
+        if (v.Any(x => !float.IsFinite(x)))
+        {
+            Array.Clear(residual);
+            return [.. v.Select(_ => float.NaN)];
+        }
+
+        float top = fp8 ? 448f : 127f, largest = v.Max(MathF.Abs), inverse = top / largest, scale = largest / top;
+        var decoded = new float[n];
+        if (largest != 0f && float.IsFinite(inverse))
+        {
+            for (int i = 0; i < n; i++)
+            {
+                float code = fp8 ? (float)E4M3Value(E4M3Nearest(v[i] * inverse)) : MathF.Round(Math.Clamp(v[i] * inverse, -127f, 127f), MidpointRounding.ToEven);
+                decoded[i] = code * scale;
+            }
+        }
+
+        if (feedback)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                residual[i] = v[i] - decoded[i];
+            }
+        }
+
+        return decoded;
+    }
+
+    private static void ClusterQuantizedCompressions(Device device)
+    {
+        // Rank 0's first ten values make the bytes FF FF FF 7F at scale 1 (-1, -1, -1, 127): a float whose bits are a NaN,
+        // which the float32 wire carries unchanged. 1,000 values over five sizes take the vector paths and their tails.
+        float[][] small = [[-1f, -1f, -1f, 127f, -63.5f, 0.5f, 2.25f, 0f, 10f, -10f], [254f, 3f, -5f, 1f, 0f, 0f, 0f, -254f, 7f, 0.5f]];
+        var random = new Random(23);
+        float[][] large = [.. Enumerable.Range(0, 2).Select(_ => Enumerable.Range(0, 1000).Select(_ => (float)((random.NextDouble() - 0.5) * Math.Pow(10, random.Next(-4, 1)))).ToArray())];
+        float[][] withNaN = [(float[])small[0].Clone(), (float[])small[1].Clone()];
+        withNaN[1][3] = float.NaN;
+
+        // The steps: (parameter, each rank's values or null for zeros, each rank's weight, forget the residual after it).
+        var steps = new (int Parameter, float[][]? Values, float[] Weights, bool Forget)[]
+        {
+            (0, small, [1f, 1f], false),
+            (0, null, [1f, 1f], false),                                          // the residual goes
+            (1, large, [2f, 2f], false),
+            (1, null, [1f, 1f], false),
+            (0, small, [2f, 0f], false),                                         // rank 1 has no rows: adds nothing, keeps its residual
+            (0, null, [1f, 1f], false),
+            (0, withNaN, [1f, 1f], false),                                       // the NaN travels; rank 1's residual dropped
+            (0, null, [1f, 1f], false),
+            (0, small, [1f, 1f], true),                                          // the bucket went again whole: the residual forgotten
+            (0, null, [1f, 1f], false),
+        };
+
+        foreach (var (name, fp8) in new[] { ("int8", false), ("fp8", true) })
+        {
+            foreach (bool feedback in new[] { true, false })
+            {
+                var options = DpOptions() with { Compression = name, ErrorFeedback = feedback };
+                var results = DpRun(DpTopology(device, 2), options, rank =>
+                {
+                    using var p = Tensor.Persistent(new float[10], [10], rank.Device, requiresGrad: true);
+                    using var q = Tensor.Persistent(new float[1000], [1000], rank.Device, requiresGrad: true);
+                    using var compressor = GradientCompressions.Create(rank.Collectives, [p, q], options);
+                    var outputs = new List<float[]>();
+                    foreach (var step in steps)
+                    {
+                        int n = step.Parameter == 0 ? 10 : 1000;
+                        var values = step.Values is { } given ? (float[])given[rank.Rank].Clone() : new float[n];
+                        GradientPiece[] pieces = [new(step.Parameter, 0, n, 0)];
+                        compressor.Reduce(values, step.Weights[rank.Rank], pieces);
+                        if (step.Forget)
+                        {
+                            compressor.Forget(pieces);
+                        }
+
+                        outputs.Add(values);
+                    }
+
+                    return outputs;
+                });
+
+                // The reference: each rank's step by the definition, the two summed in rank order.
+                float[][][] residuals = [[new float[10], new float[1000]], [new float[10], new float[1000]]];
+                for (int k = 0; k < steps.Length; k++)
+                {
+                    var step = steps[k];
+                    int n = step.Parameter == 0 ? 10 : 1000;
+                    var sum = new float[n];
+                    for (int r = 0; r < 2; r++)
+                    {
+                        var decoded = QuantizedReference(step.Values?[r] ?? new float[n], step.Weights[r], residuals[r][step.Parameter], fp8, feedback);
+                        for (int i = 0; i < n; i++)
+                        {
+                            sum[i] += decoded[i];
+                        }
+
+                        if (step.Forget)
+                        {
+                            Array.Clear(residuals[r][step.Parameter]);
+                        }
+                    }
+
+                    string what = $"{name}{(feedback ? "" : " without error feedback")}, step {k + 1}";
+                    for (int r = 0; r < 2; r++)
+                    {
+                        var got = results[r][k];
+                        int bad = Enumerable.Range(0, n).FirstOrDefault(i => !(float.IsNaN(sum[i]) ? float.IsNaN(got[i]) : BitConverter.SingleToInt32Bits(got[i]) == BitConverter.SingleToInt32Bits(sum[i])), -1);
+                        Check(bad < 0, bad < 0 ? what : $"{what}, rank {r}: value {bad} is {got[bad]:R}, the definition gives {sum[bad]:R}");
+                    }
+                }
+
+                if (feedback)
+                {
+                    Check(results[0][1].Any(x => x != 0f) && results[0][9].All(x => x == 0f), $"{name}: the step after sends the rounding error left over; after a forget, nothing");
+                }
+                else
+                {
+                    Check(results[0][1].All(x => x == 0f), $"{name} without error feedback: nothing kept for the next step");
+                }
+            }
+        }
+
+        // Bytes on the wire for a bucket of 4,096 values on 2 ranks (a ring): float32's all-reduce against one byte a value
+        // and a scale, all-gathered.
+        const int Values = 4096;
+        long Bytes(string compression)
+        {
+            var options = DpOptions() with { Compression = compression };
+            var (_, metrics) = OverlapRun(DpTopology(device, 2), options, rank =>
+            {
+                using var p = Tensor.Persistent(new float[Values], [Values], rank.Device, requiresGrad: true);
+                using var compressor = GradientCompressions.Create(rank.Collectives, [p], options);
+                var values = Enumerable.Range(0, Values).Select(i => MathF.Sin(i + rank.Rank)).ToArray();
+                compressor.Reduce(values, 1f, [new(0, 0, Values, 0)]);
+                return 0;
+            });
+            return metrics.Collectives.Where(c => c.Rank == 0 && c.Operation is "all-reduce" or "all-gather").Sum(c => c.BytesSent);
+        }
+
+        long plain = Bytes("none"), int8 = Bytes("int8"), fp8Bytes = Bytes("fp8");
+        Console.WriteLine($"    a bucket of {Values:N0} values on 2 ranks: float32 {plain:N0} B sent by rank 0, int8 {int8:N0} B, fp8 {fp8Bytes:N0} B ({(double)plain / int8:F3}x fewer)");
+        Check(int8 == 4L * QuantizedCompressor.Slots(Values) && fp8Bytes == int8 && plain == 4L * Values,
+            $"one byte a value and a 4-byte scale against 4 bytes a value: int8 {int8}, fp8 {fp8Bytes}, float32 {plain}");
+        Check(plain >= 3.99 * int8, $"4x fewer bytes on the wire than float32: {plain:N0} against {int8:N0}");
     }
 
     // The Spirals sample's model and data (as ClusterSpirals), on two ranks, with the given cluster options.

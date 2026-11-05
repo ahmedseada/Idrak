@@ -589,10 +589,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Networking.Abstractions.FramedTransport` | abstract class | internal | — | NvlinkTransport, PciHostTransport, SharedMemoryTransport, TcpTransport |  | Network | Network |
-| `Idrak.Networking.Abstractions.GradientCompressions` | registry | public | Tensor |  | bf16, none, top-k | Network | Network |
+| `Idrak.Networking.Abstractions.GradientCompressions` | registry | public | Tensor |  | bf16, fp8, int8, none, top-k | Network | Network |
 | `Idrak.Networking.Abstractions.HostCollectives` | abstract class | internal | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives |  | Network | Network |
-| `Idrak.Networking.Abstractions.IGradientCompression` | interface | public | Tensor | BFloat16Compression, PlainCompression, TopKCompression |  | Network | Network |
-| `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, TopKCompressor |  | Network | Network |
+| `Idrak.Networking.Abstractions.IGradientCompression` | interface | public | Tensor | BFloat16Compression, Float8Compression, Int8Compression, PlainCompression, TopKCompression |  | Network | Network |
+| `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, QuantizedCompressor, TopKCompressor |  | Network | Network |
 | `Idrak.Networking.Abstractions.LocalTransport` | abstract class | internal | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
 | `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd, ShardedGradientReduction |  | Network | Network |
 
