@@ -984,8 +984,8 @@ public static class ProfileProbes
                 {
                     if (hook.Chosen.Count > 0)
                     {
-                        run.Add(new ProfileTable("element types", ["device", "type", "how", "device reports"],
-                            [.. hook.Chosen.Select(c => (IReadOnlyList<string>)[c.Device, c.ElementType, c.How, c.Native])]));
+                        run.Add(new ProfileTable("element types", ["device", "for", "type", "how", "device reports"],
+                            [.. hook.Chosen.Select(c => (IReadOnlyList<string>)[c.Device, c.Role, c.ElementType, c.How, c.Native])]));
                     }
 
                     if (hook.Kept.Count > 0)

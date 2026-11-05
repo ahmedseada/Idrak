@@ -143,7 +143,7 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             $"Device {e.Device} {e.Operation}: {e.Elements} elements converted from {e.From} to {e.To} (its kernel takes {e.To})"));
 
     /// <inheritdoc />
-    public void OnElementTypeChosen(in ElementTypeChosen e) => _out.WriteLine($"Device {e.Device} element type: {e.ElementType} ({e.How})");
+    public void OnElementTypeChosen(in ElementTypeChosen e) => _out.WriteLine($"Device {e.Device} {e.Role}: {e.ElementType} ({e.How})");
 
     /// <inheritdoc />
     public void OnWeightsKept(in WeightsKept e) =>
@@ -916,6 +916,7 @@ public static class TelemetryJson
                 w.WriteString("event", "element_type");
                 w.WriteString("device", e.Device);
                 w.WriteString("element_type", e.ElementType);
+                w.WriteString("role", e.Role);
                 w.WriteString("how", e.How);
                 w.WriteString("native", e.Native);
                 break;

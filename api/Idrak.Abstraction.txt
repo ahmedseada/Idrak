@@ -1860,7 +1860,13 @@ public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEqu
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public BackendCapabilities()
   public Idrak.Abstraction.ElementType IndexType { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Operations.Operation, Idrak.Abstraction.ElementType> IndexTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Operations.Operation, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType>> SumTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Operations.Operation, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType>> ValueTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> DefaultSumTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> DefaultValueTypes { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> NativeTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> SumTypesOf(Idrak.Abstraction.Operations.Operation operation)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> ValueTypesOf(Idrak.Abstraction.Operations.Operation operation)
   public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> StridedInputs { get; init; }
   public System.Collections.Generic.IReadOnlySet<string> StoredFormats { get; init; }
   public bool StoresAnyFormat { get; init; }
@@ -2443,11 +2449,12 @@ public readonly record struct Idrak.Abstraction.Diagnostics.DeviceListed : Syste
   public string? Error { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.ElementTypeChosen : System.IEquatable<Idrak.Abstraction.Diagnostics.ElementTypeChosen>
-  public ElementTypeChosen(string Device, string ElementType, string How, string Native = "")
+  public ElementTypeChosen(string Device, string ElementType, string How, string Native = "", string Role = "element type")
   public string Device { get; init; }
   public string ElementType { get; init; }
   public string How { get; init; }
   public string Native { get; init; }
+  public string Role { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.ElementsConverted : System.IEquatable<Idrak.Abstraction.Diagnostics.ElementsConverted>
   public ElementsConverted(string Device, string Operation, string From, string To, long Elements)
@@ -3193,8 +3200,12 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
   public Idrak.Abstraction.ElementDecoder? ToFloat32 { get; init; }
   public Idrak.Abstraction.ElementEncoder? FromFloat32 { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Kernels { get; init; }
+  public System.Int128 MaxValue { get; }
+  public System.Int128 MinValue { get; }
+  public bool Holds(long smallest, long largest)
   public bool IsBlock { get; }
   public bool IsFloat { get; init; }
+  public bool IsInteger { get; init; }
   public bool IsSigned { get; init; }
   public double BitsPerValue { get; }
   public int BlockSize { get; init; }
@@ -3218,6 +3229,9 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
   public static readonly Idrak.Abstraction.ElementType Int64
   public static readonly Idrak.Abstraction.ElementType Int8
   public static readonly Idrak.Abstraction.ElementType UInt16
+  public static readonly Idrak.Abstraction.ElementType UInt2
+  public static readonly Idrak.Abstraction.ElementType UInt32
+  public static readonly Idrak.Abstraction.ElementType UInt64
   public static readonly Idrak.Abstraction.ElementType UInt8
   public string Describe()
   public void Decode(System.ReadOnlySpan<byte> source, System.Span<float> destination)
@@ -3230,21 +3244,27 @@ public sealed record Idrak.Abstraction.ElementTypeChoice : System.IEquatable<Idr
   public bool Picked { get; init; }
   public override string ToString()
   public string How { get; }
+  public string Role { get; init; }
   public string? Device { get; init; }
+  public string? Measured { get; init; }
   public string? Native { get; init; }
   public string? Source { get; init; }
 
 public static class Idrak.Abstraction.ElementTypes
   public const string Auto = "auto"
   public const string EnvironmentVariable = "IDRAK_DEFAULT_DTYPE"
+  public const string IdEnvironmentVariable = "IDRAK_ID_DTYPE"
   public static Idrak.Abstraction.ElementType Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.ElementType Pick(Idrak.Abstraction.Devices.BackendCapabilities capabilities)
   public static Idrak.Abstraction.ElementType? Default(string name)
   public static Idrak.Abstraction.ElementType? Find(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.ElementType? Of<T>() where T : struct
   public static Idrak.Abstraction.ElementTypeChoice Choose(string? asked = null, string source = "--dtype", Idrak.Abstraction.Device? device = null)
+  public static Idrak.Abstraction.ElementTypeChoice ChooseIds(long largest, long smallest = 0, string? asked = null, string source = "--id-dtype", Idrak.Abstraction.Device? device = null)
   public static System.Collections.Generic.IReadOnlyDictionary<string, long> ConversionsByOperation { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> All { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> ComputeTypes { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> IdTypes { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Accepted { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
   public static bool Unregister(string name)
@@ -5109,6 +5129,9 @@ public interface Idrak.Abstraction.IRecordable
 public interface Idrak.Abstraction.ITiedWeights
   public Idrak.Abstraction.Module? WeightsOf { get; }
 
+public interface Idrak.Abstraction.ITypePromotion : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.ElementType? Promote(Idrak.Abstraction.Operations.Operation? operation, Idrak.Abstraction.ElementType left, Idrak.Abstraction.ElementType right)
+
 public sealed class Idrak.Abstraction.KeySpans
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) ToTensors(Idrak.Abstraction.Device? device = null)
   public KeySpans(System.Collections.Generic.IReadOnlyList<int> starts, System.Collections.Generic.IReadOnlyList<int> ends)
@@ -6717,6 +6740,25 @@ public readonly record struct Idrak.Abstraction.StoredScales : System.IEquatable
   public int IndexOf(int row, int column)
   public int ScaleColumns { get; init; }
 
+public sealed record Idrak.Abstraction.SumTypeMeasurement : System.IEquatable<Idrak.Abstraction.SumTypeMeasurement>
+  public Idrak.Abstraction.ElementType Type { get; init; }
+  public SumTypeMeasurement(Idrak.Abstraction.ElementType Type, double Seconds, double Error)
+  public double Error { get; init; }
+  public double Seconds { get; init; }
+
+public static class Idrak.Abstraction.SumTypes
+  public const string Auto = "auto"
+  public const string EnvironmentVariable = "IDRAK_SUM_DTYPE"
+  public const string ToleranceVariable = "IDRAK_SUM_TOLERANCE"
+  public static Idrak.Abstraction.ElementTypeChoice Choose(Idrak.Abstraction.Operations.Operation operation, Idrak.Abstraction.Device? device = null, string? asked = null, string source = "--sum-dtype")
+  public static Idrak.Abstraction.SumTypeMeasurement Pick(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.SumTypeMeasurement> measurements, double tolerance)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.SumTypeMeasurement> Measurements(Idrak.Abstraction.Device device, Idrak.Abstraction.Operations.Operation operation)
+  public static double Resolution(Idrak.Abstraction.ElementType type)
+  public static double ToleranceOn(Idrak.Abstraction.Device? device = null)
+  public static double? Tolerance { get; set; }
+  public static void Record(Idrak.Abstraction.Device device, Idrak.Abstraction.Operations.Operation operation, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.SumTypeMeasurement> measurements)
+  public static void Report(Idrak.Abstraction.ElementTypeChoice choice, Idrak.Abstraction.Device device)
+
 public sealed class Idrak.Abstraction.SyncProgress<T> : System.IProgress<T>
   public SyncProgress(System.Action<T> report)
   public void Report(T value)
@@ -6799,6 +6841,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Transpose(int dim0 = -2, int dim1 = -1)
   public Idrak.Abstraction.Tensor? Grad { get; }
   public Idrak.Abstraction.TensorLayout Layout { get; }
+  public System.ReadOnlySpan<T> Span<T>() where T : struct
   public System.ReadOnlySpan<int> Shape { get; }
   public T[] ToArray<T>() where T : System.Numerics.INumberBase<T>
   public bool IsDisposed { get; }
@@ -6833,9 +6876,12 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor From<T>(System.ReadOnlySpan<T> values, System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device? device = null, bool requiresGrad = false) where T : System.Numerics.INumberBase<T>
   public static Idrak.Abstraction.Tensor From<T>(T[,] values, Idrak.Abstraction.Device? device = null, bool requiresGrad = false) where T : System.Numerics.INumberBase<T>
   public static Idrak.Abstraction.Tensor FromBytes(System.ReadOnlySpan<byte> bytes, Idrak.Abstraction.ElementType type, System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Abstraction.Tensor FromValues(System.ReadOnlySpan<float> values, System.ReadOnlySpan<int> shape, Idrak.Abstraction.ElementType? type = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false, bool track = true)
   public static Idrak.Abstraction.Tensor Full(System.ReadOnlySpan<int> shape, float value, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor GatedActivation(Idrak.Abstraction.Tensor gate, Idrak.Abstraction.Tensor up, Idrak.Abstraction.Generation.FeedForwardActivation activation)
   public static Idrak.Abstraction.Tensor GatherRows(Idrak.Abstraction.Tensor x, int[] rows)
+  public static Idrak.Abstraction.Tensor Ids(System.ReadOnlySpan<int> ids, System.ReadOnlySpan<int> shape, Idrak.Abstraction.ElementType? type = null, Idrak.Abstraction.Device? device = null)
+  public static Idrak.Abstraction.Tensor Ids(System.ReadOnlySpan<long> ids, System.ReadOnlySpan<int> shape, Idrak.Abstraction.ElementType? type = null, Idrak.Abstraction.Device? device = null)
   public static Idrak.Abstraction.Tensor Indices(System.ReadOnlySpan<int> indices, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Tensor Indices(System.ReadOnlySpan<long> indices, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Tensor MatMulBias(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor w, Idrak.Abstraction.Tensor bias)
@@ -7136,3 +7182,15 @@ public sealed class Idrak.Abstraction.Training.Sgd : Idrak.Abstraction.Training.
 
 public sealed class Idrak.Abstraction.Training.StepDecay : Idrak.Abstraction.Training.LearningRateScheduler
   public StepDecay(Idrak.Abstraction.Training.IOptimizer optimizer, int stepSize, float gamma = 0.1f)
+
+public static class Idrak.Abstraction.TypePromotions
+  public const string Standard = "standard"
+  public static Idrak.Abstraction.ElementType Result(Idrak.Abstraction.ElementType left, Idrak.Abstraction.ElementType right, Idrak.Abstraction.Operations.Operation? operation = null)
+  public static Idrak.Abstraction.ElementType Result(System.ReadOnlySpan<Idrak.Abstraction.ElementType> inputs, Idrak.Abstraction.Operations.Operation? operation = null)
+  public static Idrak.Abstraction.ITypePromotion? Default(string name)
+  public static Idrak.Abstraction.ITypePromotion? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.ITypePromotion rule)

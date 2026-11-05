@@ -214,4 +214,110 @@ public sealed partial class Tensor
             ArrayPool<float>.Shared.Return(words);
         }
     }
+
+    /// <summary>
+    /// A tensor of <paramref name="shape"/> holding <paramref name="values"/> in <paramref name="type"/>, or when null in
+    /// the type the run keeps its values in on <paramref name="device"/> (<see cref="ElementTypes.Choose"/>: a run's
+    /// <c>--dtype</c> passed by the app, <see cref="ElementTypes.EnvironmentVariable"/>, else auto, what the device computes
+    /// natively): each value stored by the type's own conversion (rounded to nearest, ties to even). Owned by the current
+    /// <see cref="TensorScope"/> when <paramref name="track"/>; long-lived state (a layer's parameters) passes false.
+    /// </summary>
+    /// <exception cref="ArgumentException">The values do not fill the shape.</exception>
+    public static Tensor FromValues(ReadOnlySpan<float> values, ReadOnlySpan<int> shape, ElementType? type = null, Device? device = null, bool requiresGrad = false,
+        bool track = true)
+    {
+        device ??= Device.Default;
+        type ??= ElementTypes.Choose(device: device).Type;
+        var t = ReferenceEquals(type, ElementType.Float32) ? From(values, shape, device) : FromBytes(MemoryMarshal.AsBytes(values), ElementType.Float32, shape, device, type);
+        if (!track)
+        {
+            TensorScope.Untrack(t);
+        }
+
+        t.RequiresGrad = requiresGrad;
+        return t;
+    }
+
+    /// <summary>
+    /// A tensor of ids or indices of <paramref name="shape"/> (token ids, embedding and gather indices, expert indices,
+    /// positions) in <paramref name="type"/>, or when null in the smallest type that holds them
+    /// (<see cref="ElementTypes.ChooseIds"/>: <see cref="ElementTypes.IdEnvironmentVariable"/> when set, else auto from the
+    /// data's range; an app passes its <c>--id-dtype</c> through <see cref="ElementTypes.ChooseIds"/>'s choice). An
+    /// operation whose kernel reads another index type gets them through the dispatcher's counted conversion.
+    /// </summary>
+    /// <exception cref="ArgumentException">The ids do not fill the shape, or an id the type does not hold.</exception>
+    public static Tensor Ids(ReadOnlySpan<int> ids, ReadOnlySpan<int> shape, ElementType? type = null, Device? device = null)
+    {
+        device ??= Device.Default;
+        if (type is null)
+        {
+            var (smallest, largest) = Range(ids);
+            type = ElementTypes.ChooseIds(largest, smallest, device: device).Type;
+        }
+
+        return FromBytes(MemoryMarshal.AsBytes(ids), ElementType.Int32, shape, device, type);
+    }
+
+    /// <summary><see cref="Ids(ReadOnlySpan{int}, ReadOnlySpan{int}, ElementType?, Device?)"/> of int64 ids.</summary>
+    /// <exception cref="ArgumentException">The ids do not fill the shape, or an id the type does not hold.</exception>
+    public static Tensor Ids(ReadOnlySpan<long> ids, ReadOnlySpan<int> shape, ElementType? type = null, Device? device = null)
+    {
+        device ??= Device.Default;
+        if (type is null)
+        {
+            var (smallest, largest) = Range(ids);
+            type = ElementTypes.ChooseIds(largest, smallest, device: device).Type;
+        }
+
+        return FromBytes(MemoryMarshal.AsBytes(ids), ElementType.Int64, shape, device, type);
+    }
+
+    // The smallest and largest of `values` in one pass ((0, 0) when empty).
+    private static (long Smallest, long Largest) Range<T>(ReadOnlySpan<T> values)
+        where T : unmanaged, System.Numerics.IBinaryInteger<T>
+    {
+        if (values.IsEmpty)
+        {
+            return (0, 0);
+        }
+
+        T smallest = values[0], largest = values[0];
+        foreach (var v in values)
+        {
+            smallest = T.Min(smallest, v);
+            largest = T.Max(largest, v);
+        }
+
+        return (long.CreateTruncating(smallest), long.CreateTruncating(largest));
+    }
+
+    /// <summary>
+    /// The elements as <typeparamref name="T"/>, checked (plan 37, decision 6): <typeparamref name="T"/> must be this
+    /// tensor's type's C# type (<see cref="ElementTypes.Of{T}"/>: <see cref="float"/> for float32, <see cref="ushort"/>
+    /// for uint16, <see cref="Half"/> for float16, ...), else the read is refused naming both. Read where they lie when the
+    /// storage is in the host's memory (the CPU: no copy; valid while the tensor lives and nothing writes it), else copied
+    /// from the device once. A type with no C# type (bfloat16, fp8, int4, the block formats) is read with
+    /// <see cref="ToBytes"/>, or converted first (<see cref="ConvertTo"/>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException"><typeparamref name="T"/> is not this tensor's type's C# type.</exception>
+    public ReadOnlySpan<T> Span<T>()
+        where T : unmanaged
+    {
+        ThrowIfDisposed();
+        var type = ElementTypes.Of<T>();
+        if (!ReferenceEquals(type, ElementType))
+        {
+            throw new InvalidOperationException(type is null
+                ? $"A {ElementType.Name} tensor read as {typeof(T).Name}, which stores no registered type: read its bytes (ToBytes) or convert it (ConvertTo)."
+                : $"A {ElementType.Name} tensor read as {typeof(T).Name} ({type.Name}): read it as its own type's C# type where it has one, its bytes (ToBytes), or convert it first (ConvertTo({type.Name})).");
+        }
+
+        var storage = Storage;
+        if (storage is Devices.IHostStorage host && !storage.Evicted)
+        {
+            return MemoryMarshal.Cast<float, T>(host.HostMemory[..storage.Length])[..Size];
+        }
+
+        return MemoryMarshal.Cast<byte, T>(ToBytes());
+    }
 }

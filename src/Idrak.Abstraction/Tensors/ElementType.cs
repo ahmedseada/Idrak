@@ -82,14 +82,14 @@ public sealed class ElementType : IKind
     /// <summary>64-bit signed integer (indices past 2³¹, read through int32 kernels by a counted conversion).</summary>
     public static readonly ElementType Int64 = new()
     {
-        Name = "int64", Summary = "64-bit signed integer (indices; read by the index kernels through an int32 conversion)", BlockBits = 64, IsSigned = true, Kernels = [],
+        Name = "int64", Summary = "64-bit signed integer (indices; read by the index kernels through an int32 conversion)", BlockBits = 64, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int64ToFloat32, FromFloat32 = ElementConversions.Int64FromFloat32,
     };
 
     /// <summary>32-bit signed integer: indices, token ids and offsets, exact past 2²⁴.</summary>
     public static readonly ElementType Int32 = new()
     {
-        Name = "int32", Summary = "32-bit signed integer: indices, token ids and offsets, exact past 2^24", BlockBits = 32, IsSigned = true,
+        Name = "int32", Summary = "32-bit signed integer: indices, token ids and offsets, exact past 2^24", BlockBits = 32, IsSigned = true, IsInteger = true,
         Kernels = ["Gather", "GatherBFloat16", "GatherBFloat16Columns", "OneHot", "ScatterAdd", "LogSoftmaxTopK", "SampleRows", "PenalizeRows", "HistoryPush",
             "RouteTopK", "ExpertGatedPair", "ExpertMatMul", "ConvertElements"],
         ToFloat32 = ElementConversions.Int32ToFloat32, FromFloat32 = ElementConversions.Int32FromFloat32,
@@ -98,28 +98,28 @@ public sealed class ElementType : IKind
     /// <summary>8-bit signed integer.</summary>
     public static readonly ElementType Int8 = new()
     {
-        Name = "int8", Summary = "8-bit signed integer", BlockBits = 8, IsSigned = true, Kernels = [],
+        Name = "int8", Summary = "8-bit signed integer", BlockBits = 8, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int8ToFloat32, FromFloat32 = ElementConversions.Int8FromFloat32,
     };
 
     /// <summary>8-bit unsigned integer.</summary>
     public static readonly ElementType UInt8 = new()
     {
-        Name = "uint8", Summary = "8-bit unsigned integer", BlockBits = 8, Kernels = [],
+        Name = "uint8", Summary = "8-bit unsigned integer", BlockBits = 8, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.UInt8ToFloat32, FromFloat32 = ElementConversions.UInt8FromFloat32,
     };
 
     /// <summary>4-bit signed integer, two a byte (the first in the low nibble).</summary>
     public static readonly ElementType Int4 = new()
     {
-        Name = "int4", Summary = "4-bit signed integer in [-8, 7], two a byte, the first value in the low nibble", BlockBits = 4, IsSigned = true, Kernels = [],
+        Name = "int4", Summary = "4-bit signed integer in [-8, 7], two a byte, the first value in the low nibble", BlockBits = 4, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int4ToFloat32, FromFloat32 = ElementConversions.Int4FromFloat32,
     };
 
     /// <summary>2-bit signed integer, four a byte (the first in the low bits).</summary>
     public static readonly ElementType Int2 = new()
     {
-        Name = "int2", Summary = "2-bit signed integer in [-2, 1], four a byte, the first value in the lowest bits", BlockBits = 2, IsSigned = true, Kernels = [],
+        Name = "int2", Summary = "2-bit signed integer in [-2, 1], four a byte, the first value in the lowest bits", BlockBits = 2, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int2ToFloat32, FromFloat32 = ElementConversions.Int2FromFloat32,
     };
 
@@ -133,14 +133,14 @@ public sealed class ElementType : IKind
     /// <summary>16-bit signed integer (plan 37, T2): audio's 16-bit samples kept as stored; storage and conversions only.</summary>
     public static readonly ElementType Int16 = new()
     {
-        Name = "int16", Summary = "16-bit signed integer (audio's 16-bit samples kept as stored; storage and conversions only)", BlockBits = 16, IsSigned = true, Kernels = [],
+        Name = "int16", Summary = "16-bit signed integer (audio's 16-bit samples kept as stored; storage and conversions only)", BlockBits = 16, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int16ToFloat32, FromFloat32 = ElementConversions.Int16FromFloat32,
     };
 
     /// <summary>16-bit unsigned integer (plan 37, T2): token ids of vocabularies under 65,536 in datasets; storage and conversions only.</summary>
     public static readonly ElementType UInt16 = new()
     {
-        Name = "uint16", Summary = "16-bit unsigned integer (token ids of vocabularies under 65,536, half of int32's memory; storage and conversions only)", BlockBits = 16, Kernels = [],
+        Name = "uint16", Summary = "16-bit unsigned integer (token ids of vocabularies under 65,536, half of int32's memory; storage and conversions only)", BlockBits = 16, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.UInt16ToFloat32, FromFloat32 = ElementConversions.UInt16FromFloat32,
     };
 
@@ -150,6 +150,27 @@ public sealed class ElementType : IKind
         Name = "float64", Summary = "64-bit IEEE float (values kept for checks against a reference; storage and conversions only, narrowed to float32 rounded to nearest)",
         BlockBits = 64, IsFloat = true, IsSigned = true, Kernels = [],
         ToFloat32 = ElementConversions.Float64ToFloat32, FromFloat32 = ElementConversions.Float64FromFloat32,
+    };
+
+    /// <summary>32-bit unsigned integer (plan 37, T3): ids and indices past int32's range in half of int64's memory.</summary>
+    public static readonly ElementType UInt32 = new()
+    {
+        Name = "uint32", Summary = "32-bit unsigned integer (ids and indices up to 4,294,967,295)", BlockBits = 32, IsInteger = true, Kernels = [],
+        ToFloat32 = ElementConversions.UInt32ToFloat32, FromFloat32 = ElementConversions.UInt32FromFloat32,
+    };
+
+    /// <summary>64-bit unsigned integer (plan 37, T3).</summary>
+    public static readonly ElementType UInt64 = new()
+    {
+        Name = "uint64", Summary = "64-bit unsigned integer", BlockBits = 64, IsInteger = true, Kernels = [],
+        ToFloat32 = ElementConversions.UInt64ToFloat32, FromFloat32 = ElementConversions.UInt64FromFloat32,
+    };
+
+    /// <summary>2-bit unsigned integer, four a byte (the first in the low bits) (plan 37, T3).</summary>
+    public static readonly ElementType UInt2 = new()
+    {
+        Name = "uint2", Summary = "2-bit unsigned integer in [0, 3], four a byte, the first value in the lowest bits", BlockBits = 2, IsInteger = true, Kernels = [],
+        ToFloat32 = ElementConversions.UInt2ToFloat32, FromFloat32 = ElementConversions.UInt2FromFloat32,
     };
 
     /// <inheritdoc />
@@ -180,6 +201,25 @@ public sealed class ElementType : IKind
 
     /// <summary>Whether values may be negative.</summary>
     public bool IsSigned { get; init; }
+
+    /// <summary>
+    /// Whether values are whole numbers of <see cref="BlockBits"/> bits, two's complement when <see cref="IsSigned"/> (int64
+    /// down to int2, uint64 down to uint2): ids and indices may be stored in one (<see cref="ElementTypes.ChooseIds"/>).
+    /// </summary>
+    public bool IsInteger { get; init; }
+
+    /// <summary>The smallest value an integer type holds (0 for an unsigned one).</summary>
+    /// <exception cref="InvalidOperationException">Not an integer type.</exception>
+    public Int128 MinValue => IsInteger ? IsSigned ? -((Int128)1 << (BlockBits - 1)) : 0 : throw NotInteger();
+
+    /// <summary>The largest value an integer type holds.</summary>
+    /// <exception cref="InvalidOperationException">Not an integer type.</exception>
+    public Int128 MaxValue => IsInteger ? ((Int128)1 << (IsSigned ? BlockBits - 1 : BlockBits)) - 1 : throw NotInteger();
+
+    /// <summary>Whether an integer type holds every value in [<paramref name="smallest"/>, <paramref name="largest"/>]; false for any other type.</summary>
+    public bool Holds(long smallest, long largest) => IsInteger && smallest >= MinValue && largest <= MaxValue;
+
+    private InvalidOperationException NotInteger() => new($"{Name} is not an integer type: it has no range of whole numbers.");
 
     /// <summary>Whether it is a block format: more than one value a block, or scales.</summary>
     public bool IsBlock => BlockSize > 1 || Scales is not null;
@@ -269,20 +309,33 @@ public sealed record ElementTypeChoice(ElementType Type, bool Picked, string? So
     public bool IsNative { get; init; } = true;
 
     /// <summary>
+    /// What the type is chosen for, as the report names it: "element type" (the values a run computes in,
+    /// <see cref="ElementTypes.Choose"/>), "id type" (ids and indices, <see cref="ElementTypes.ChooseIds"/>) or "sum type
+    /// for MatMul" (an operation's sums, <see cref="SumTypes.Choose"/>).
+    /// </summary>
+    public string Role { get; init; } = "element type";
+
+    /// <summary>
+    /// What auto measured or found that the pick follows from ("ids from 0 to 151,935 fit uint32", the sum types' times
+    /// and errors), said in place of the device's report; null for a pick from what the device reports.
+    /// </summary>
+    public string? Measured { get; init; }
+
+    /// <summary>
     /// "picked by auto: cuda:0 computes bfloat16, float32 natively (...)", or "selected by the user (IDRAK_DEFAULT_DTYPE)"
     /// (with "; cpu computes it in float32" where the device has no arithmetic of the type).
     /// </summary>
     public string How => Picked
-        ? Native is null ? "picked by auto" : $"picked by auto: {Device} computes {Native}"
+        ? Measured is not null ? $"picked by auto: {Measured}" : Native is null ? "picked by auto" : $"picked by auto: {Device} computes {Native}"
         : IsNative ? $"selected by the user ({Source})" : $"selected by the user ({Source}); {Device} computes it in float32 (it computes {Native})";
 
-    /// <summary>"element type: bfloat16 on cuda:0 (picked by auto: ...)": the line a load's report shows.</summary>
-    public override string ToString() => Device is null ? $"element type: {Type.Name} ({How})" : $"element type: {Type.Name} on {Device} ({How})";
+    /// <summary>"element type: bfloat16 on cuda:0 (picked by auto: ...)": the line a load's report shows (its <see cref="Role"/> first).</summary>
+    public override string ToString() => Device is null ? $"{Role}: {Type.Name} ({How})" : $"{Role}: {Type.Name} on {Device} ({How})";
 }
 
 /// <summary>
 /// The element types, by name (ignoring case): the per-element types float32, bfloat16, float16, float8_e4m3,
-/// float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16 and float64, which Idrak.Abstraction
+/// float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2, which Idrak.Abstraction
 /// registers, and the block formats the packages register (Idrak adds ggml's, from its GGUF types). The short names
 /// bf16, f16, fp16, half, f32, fp32, f64, fp64, double and fp8 find their types too. A name nobody registered is refused
 /// with "not registered". The type a run computes in on a device comes from a run's option (<c>--dtype</c>), else
@@ -320,7 +373,7 @@ public static class ElementTypes
     {
         foreach (var type in (ReadOnlySpan<ElementType>)[ElementType.Float32, ElementType.BFloat16, ElementType.Float16, ElementType.Float8E4M3, ElementType.Float8E5M2,
                      ElementType.Int64, ElementType.Int32, ElementType.Int8, ElementType.UInt8, ElementType.Int4, ElementType.Int2, ElementType.Bool,
-                     ElementType.Int16, ElementType.UInt16, ElementType.Float64])
+                     ElementType.Int16, ElementType.UInt16, ElementType.Float64, ElementType.UInt32, ElementType.UInt64, ElementType.UInt2])
         {
             Table.RegisterDefault(type);
         }
@@ -441,6 +494,86 @@ public static class ElementTypes
         return new ElementTypeChoice(type, Picked: false, Source: from) { Device = device.ToString(), Native = native, IsNative = IsNative(capabilities, type) };
     }
 
+    /// <summary>The variable naming the type ids and indices are stored in: "IDRAK_ID_DTYPE".</summary>
+    public const string IdEnvironmentVariable = "IDRAK_ID_DTYPE";
+
+    /// <summary>
+    /// The types ids and indices may be stored in, as auto tries them: every registered integer type of whole bytes
+    /// (<see cref="ElementType.IsInteger"/>: uint8, int8, uint16, int16, uint32, int32, uint64, int64 and any an app
+    /// registers), fewest bits first, unsigned before signed.
+    /// </summary>
+    public static IReadOnlyList<ElementType> IdTypes =>
+        [.. All.Where(t => t.IsInteger && t.BlockSize == 1 && t.BlockBits % 8 == 0).OrderBy(t => t.BlockBits).ThenBy(t => t.IsSigned)];
+
+    /// <summary>
+    /// The type ids or indices in [<paramref name="smallest"/>, <paramref name="largest"/>] are stored in on
+    /// <paramref name="device"/> (the CPU when null), from the data: <paramref name="asked"/> (a run's option, named
+    /// <paramref name="source"/>) when given, else <see cref="IdEnvironmentVariable"/>, else <see cref="Auto"/>, which picks
+    /// the smallest of <see cref="IdTypes"/> that holds them (a vocabulary of 50,000 tokens: uint16; an expert index:
+    /// uint8). A kernel that reads another index type (<see cref="Devices.BackendCapabilities.IndexType"/>) gets them
+    /// through the dispatcher's counted conversion.
+    /// </summary>
+    /// <exception cref="ArgumentException">A value that is no integer type, or a type that does not hold the data (the message names both).</exception>
+    public static ElementTypeChoice ChooseIds(long largest, long smallest = 0, string? asked = null, string source = "--id-dtype", Device? device = null)
+    {
+        if (smallest > largest)
+        {
+            throw new ArgumentException($"Ids from {smallest} to {largest}: the smallest is past the largest.", nameof(smallest));
+        }
+
+        device ??= Device.Cpu;
+        var capabilities = device.Backend.Capabilities;
+        string range = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"ids from {smallest:N0} to {largest:N0}");
+        string native = $"its index kernels read {capabilities.IndexType.Name}";
+        string? value = asked, from = source;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = Environment.GetEnvironmentVariable(IdEnvironmentVariable);
+            from = IdEnvironmentVariable;
+        }
+
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals(Auto, StringComparison.OrdinalIgnoreCase))
+        {
+            var fits = IdTypes.FirstOrDefault(t => t.Holds(smallest, largest)) ?? throw new ArgumentException($"No registered integer type holds {range}.");
+            return new ElementTypeChoice(fits, Picked: true, Source: null) { Device = device.ToString(), Native = native, Role = "id type", Measured = $"{range} fit {fits.Name}" };
+        }
+
+        var type = Find(value.AsSpan().Trim());
+        if (type is null || !IdTypes.Contains(type))
+        {
+            throw new ArgumentException($"{from} '{value}': ids are stored in one of {Auto}, {string.Join(", ", IdTypes.Select(t => t.Name))} (auto picks the smallest that holds them).");
+        }
+
+        if (!type.Holds(smallest, largest))
+        {
+            throw new ArgumentException($"{from} '{value}': {type.Name} holds [{type.MinValue}, {type.MaxValue}], not the data's {range}.");
+        }
+
+        return new ElementTypeChoice(type, Picked: false, Source: from) { Device = device.ToString(), Native = native, Role = "id type" };
+    }
+
+    /// <summary>
+    /// The registered type of the C# type <typeparamref name="T"/>: float32 for <see cref="float"/>, float64 for
+    /// <see cref="double"/>, float16 for <see cref="Half"/>, int8 to int64 and uint8 to uint64 for the integers, bool for
+    /// <see cref="bool"/>; null for a C# type no built-in stores (bfloat16, fp8, int4 and the block formats have none:
+    /// their bytes are read with <c>Tensor.ToBytes</c>). Tested on <c>typeof(T)</c>, which the JIT folds (rule 89: no box).
+    /// </summary>
+    public static ElementType? Of<T>()
+        where T : unmanaged =>
+        typeof(T) == typeof(float) ? ElementType.Float32
+        : typeof(T) == typeof(double) ? ElementType.Float64
+        : typeof(T) == typeof(Half) ? ElementType.Float16
+        : typeof(T) == typeof(sbyte) ? ElementType.Int8
+        : typeof(T) == typeof(byte) ? ElementType.UInt8
+        : typeof(T) == typeof(short) ? ElementType.Int16
+        : typeof(T) == typeof(ushort) ? ElementType.UInt16
+        : typeof(T) == typeof(int) ? ElementType.Int32
+        : typeof(T) == typeof(uint) ? ElementType.UInt32
+        : typeof(T) == typeof(long) ? ElementType.Int64
+        : typeof(T) == typeof(ulong) ? ElementType.UInt64
+        : typeof(T) == typeof(bool) ? ElementType.Bool
+        : null;
+
     /// <summary>
     /// Publishes <paramref name="choice"/> for a run on <paramref name="device"/> to telemetry
     /// (<see cref="Diagnostics.ElementTypeChosen"/>, at <see cref="Diagnostics.TelemetryLevel.Devices"/>): a load says which type
@@ -452,7 +585,7 @@ public static class ElementTypes
         ArgumentNullException.ThrowIfNull(device);
         if (Diagnostics.Telemetry.IsEnabled(Diagnostics.TelemetryLevel.Devices))
         {
-            Diagnostics.Telemetry.ElementTypeChosen(new Diagnostics.ElementTypeChosen(device.ToString(), choice.Type.Name, choice.How, choice.Native ?? ""));
+            Diagnostics.Telemetry.ElementTypeChosen(new Diagnostics.ElementTypeChosen(device.ToString(), choice.Type.Name, choice.How, choice.Native ?? "", choice.Role));
         }
     }
 
@@ -805,6 +938,64 @@ internal static class ElementConversions
         }
     }
 
+    // Rounded to the nearest float32 (exact up to 2^24, as int32's).
+    public static void UInt32ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, uint>(source);
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = values[i];
+        }
+    }
+
+    // Rounded to nearest (ties to even) and saturated to [0, 2^32 - 1]; NaN gives 0.
+    public static void UInt32FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, uint>(destination);
+        for (int i = 0; i < source.Length; i++)
+        {
+            float x = MathF.Round(source[i]);
+            values[i] = float.IsNaN(x) || x <= 0f ? 0u : x >= 4294967296f ? uint.MaxValue : (uint)x;
+        }
+    }
+
+    public static void UInt64ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, ulong>(source);
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = values[i];
+        }
+    }
+
+    // Rounded to nearest (ties to even) and saturated to [0, 2^64 - 1]; NaN gives 0.
+    public static void UInt64FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, ulong>(destination);
+        for (int i = 0; i < source.Length; i++)
+        {
+            float x = MathF.Round(source[i]);
+            values[i] = float.IsNaN(x) || x <= 0f ? 0ul : x >= 18446744073709551616f ? ulong.MaxValue : (ulong)x;
+        }
+    }
+
+    public static void UInt2ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = source[i >> 2] >> ((i & 3) * 2) & 0x3;
+        }
+    }
+
+    public static void UInt2FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        destination[..(int)((source.Length + 3L) / 4)].Clear();
+        for (int i = 0; i < source.Length; i++)
+        {
+            destination[i >> 2] |= (byte)((Saturate(source[i], 0, 3) & 0x3) << ((i & 3) * 2));
+        }
+    }
+
     // Narrowed to the nearest float32 (ties to even; past float32's range an infinity, as a cast does).
     public static void Float64ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
     {
@@ -830,9 +1021,10 @@ internal static class ElementConversions
 
     /// <summary>
     /// Converts <paramref name="count"/> elements of <paramref name="from"/> in <paramref name="source"/> to
-    /// <paramref name="to"/> in <paramref name="destination"/>. Integers to and from float32 and between int32 and int64
-    /// are exact or refused (an index that is not a whole number, or past what the other type holds exactly: float32 holds
-    /// integers up to 2²⁴); any other pair goes through float32 with the types' own conversions.
+    /// <paramref name="to"/> in <paramref name="destination"/>. Indices between float32, int32 and int64 are exact or
+    /// refused (an index that is not a whole number, or past what the other type holds exactly: float32 holds integers up
+    /// to 2²⁴); between any two integer types of whole bytes (uint8, uint16, int16, uint32, ...) exact, or refused for a
+    /// value past the destination's range; any other pair goes through float32 with the types' own conversions.
     /// </summary>
     /// <exception cref="ArgumentException">A value the destination type cannot hold exactly (integers), naming it.</exception>
     public static void Convert(ElementType from, ReadOnlySpan<byte> source, ElementType to, Span<byte> destination, int count)
@@ -907,6 +1099,24 @@ internal static class ElementConversions
             return;
         }
 
+        // Between two integer types of whole bytes (ids and indices: uint8, uint16, int32, ...): exact, or refused for a
+        // value the destination does not hold.
+        if (from.IsInteger && to.IsInteger && from.BlockBits % 8 == 0 && to.BlockBits % 8 == 0)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                var v = ReadInteger(from, source, i);
+                if (v < to.MinValue || v > to.MaxValue)
+                {
+                    throw new ArgumentException($"Index {v} (element {i}) is past what {to.Name} holds ([{to.MinValue}, {to.MaxValue}]).");
+                }
+
+                WriteInteger(to, destination, i, v);
+            }
+
+            return;
+        }
+
         // Any other pair through float32, a chunk at a time (whole blocks).
         int chunk = Math.Max(from.BlockSize, to.BlockSize) * Math.Max(1, 65536 / Math.Max(from.BlockSize, to.BlockSize));
         float[] values = ArrayPool<float>.Shared.Rent(Math.Min(count, chunk));
@@ -923,6 +1133,42 @@ internal static class ElementConversions
         finally
         {
             ArrayPool<float>.Shared.Return(values);
+        }
+    }
+
+    // Element i of an integer type of whole bytes, little-endian.
+    private static Int128 ReadInteger(ElementType type, ReadOnlySpan<byte> source, int i) => (type.BlockBits, type.IsSigned) switch
+    {
+        (8, true) => (sbyte)source[i],
+        (8, false) => source[i],
+        (16, true) => System.Buffers.Binary.BinaryPrimitives.ReadInt16LittleEndian(source[(2 * i)..]),
+        (16, false) => System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(source[(2 * i)..]),
+        (32, true) => System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(source[(4 * i)..]),
+        (32, false) => System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(source[(4 * i)..]),
+        (64, true) => System.Buffers.Binary.BinaryPrimitives.ReadInt64LittleEndian(source[(8 * i)..]),
+        (64, false) => System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(source[(8 * i)..]),
+        _ => throw new NotSupportedException($"{type.Name}: an integer of {type.BlockBits} bits is not read as whole bytes."),
+    };
+
+    // Writes v (held by the type) as element i, little-endian.
+    private static void WriteInteger(ElementType type, Span<byte> destination, int i, Int128 v)
+    {
+        switch (type.BlockBits)
+        {
+            case 8:
+                destination[i] = (byte)v;
+                break;
+            case 16:
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(destination[(2 * i)..], (ushort)v);
+                break;
+            case 32:
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(destination[(4 * i)..], (uint)v);
+                break;
+            case 64:
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(destination[(8 * i)..], (ulong)v);
+                break;
+            default:
+                throw new NotSupportedException($"{type.Name}: an integer of {type.BlockBits} bits is not written as whole bytes.");
         }
     }
 

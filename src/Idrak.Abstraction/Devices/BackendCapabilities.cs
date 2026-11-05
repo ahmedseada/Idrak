@@ -84,8 +84,43 @@ public sealed record BackendCapabilities
     public IReadOnlyList<ElementType> NativeTypes { get; init; } = [ElementType.Float32];
 
     /// <summary>
-    /// What the device reported that <see cref="NativeTypes"/> follows from, for people ("compute capability 8.9: bfloat16
-    /// tensor cores (8.0 or newer), fp8 tensor cores (8.9 or newer)"): the telemetry says it with auto's pick.
+    /// What the device reported that <see cref="NativeTypes"/> follows from, for people (the device's own report of the
+    /// 16-bit and 8-bit arithmetic it runs): the telemetry says it with auto's pick.
     /// </summary>
     public string NativeReport { get; init; } = "the device reports no 16-bit arithmetic the backend computes in";
+
+    /// <summary>
+    /// Per operation, the value types its kernel on this device reads and writes without a conversion (plan 37, decision 8:
+    /// activations in the run's type), each backend's own report from its kernels and what the device reports at run time;
+    /// an operation not listed takes <see cref="DefaultValueTypes"/>. The dispatcher converts a storage of another type for
+    /// the call once, counts it and says so in the telemetry (<see cref="ElementTypes.Conversions"/>). Default: none listed.
+    /// </summary>
+    public IReadOnlyDictionary<Operations.Operation, IReadOnlyList<ElementType>> ValueTypes { get; init; } = new Dictionary<Operations.Operation, IReadOnlyList<ElementType>>();
+
+    /// <summary>The value types an operation not listed in <see cref="ValueTypes"/> takes on this device, as its backend reports them. Default: none reported.</summary>
+    public IReadOnlyList<ElementType> DefaultValueTypes { get; init; } = [];
+
+    /// <summary>
+    /// Per operation, the types its kernel on this device can sum in (plan 37, decision 7: no fixed sum type), the
+    /// device's preferred first, each backend's own report from what the device reports at run time; an operation not
+    /// listed takes <see cref="DefaultSumTypes"/>. <see cref="Abstraction.SumTypes"/>' choice picks among them. Default: none listed.
+    /// </summary>
+    public IReadOnlyDictionary<Operations.Operation, IReadOnlyList<ElementType>> SumTypes { get; init; } = new Dictionary<Operations.Operation, IReadOnlyList<ElementType>>();
+
+    /// <summary>The sum types an operation not listed in <see cref="SumTypes"/> takes on this device, as its backend reports them. Default: none reported.</summary>
+    public IReadOnlyList<ElementType> DefaultSumTypes { get; init; } = [];
+
+    /// <summary>The value types <paramref name="operation"/>'s kernel reads and writes on this device (<see cref="ValueTypes"/>, else <see cref="DefaultValueTypes"/>).</summary>
+    public IReadOnlyList<ElementType> ValueTypesOf(Operations.Operation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return ValueTypes.TryGetValue(operation, out var types) ? types : DefaultValueTypes;
+    }
+
+    /// <summary>The types <paramref name="operation"/>'s kernel can sum in on this device (<see cref="SumTypes"/>, else <see cref="DefaultSumTypes"/>).</summary>
+    public IReadOnlyList<ElementType> SumTypesOf(Operations.Operation operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return SumTypes.TryGetValue(operation, out var types) ? types : DefaultSumTypes;
+    }
 }

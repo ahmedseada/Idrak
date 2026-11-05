@@ -16,13 +16,18 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ElementTypesGroup =
     [
-        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16 and float64 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
+        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
         ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
         ("element types: decoding with learned positions (a decoder's position table, and a position encoding's) takes no counted conversion on the device: the prompt's ids, the step's positions and the sampled ids in its index type; the tokens as without the cache, and the cached lookup the float positions' converted one bit for bit", LearnedPositionDecoding),
+        ("element types: uint32, uint64 and uint2 are registered unsigned integers (their ranges, round trips saturated and rounded to nearest even, uint2 four a byte); conversions between integer types are exact or refused past the destination's range", UnsignedTypes),
+        ("element types: ids are stored in the smallest integer type that holds the data (uint8, int8, uint16, uint32, uint64, int64 by range), or the user's (--id-dtype, IDRAK_ID_DTYPE; one that does not hold the data is refused naming both), said with the role \"id type\"; Tensor.Ids stores them so and an embedding lookup reads uint8 ids", IdTypeChoice),
+        ("element types: TypePromotions gives a result type from the inputs' types as data (a float over an integer, more bits over fewer, the narrowest type holding both exactly: bfloat16 with float16 gives float32, e4m3 with e5m2 bfloat16, uint8 with int8 int16; a block format takes the other's type); an app's rule is asked first; an undecided pair is refused", TypePromotionRules),
+        ("element types: an operation's sum type is chosen per device from the types its backend reports (the CPU: float32): auto the fastest within the tolerance (IDRAK_SUM_TOLERANCE, else the values' resolution) from measurements, the only one when one is reported, or the user's (--sum-dtype, IDRAK_SUM_DTYPE); the telemetry carries its role", SumTypeChoice),
+        ("element types: Span<T> reads a tensor as its own type's C# type and refuses another naming both; FromValues stores host values in a given type or the run's choice", TypedReads),
     ];
 
     private static void ElementTypeRegistry(Device device)
@@ -33,7 +38,7 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool", "int16", "uint16", "float64"];
+        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool", "int16", "uint16", "float64", "uint32", "uint64", "uint2"];
         Check(ElementTypes.Names.Take(builtIns.Length).SequenceEqual(builtIns), $"the built-ins in order: {string.Join(", ", ElementTypes.Names)}");
         Check(ReferenceEquals(ElementTypes.Get("INT32"), ElementType.Int32) && ReferenceEquals(ElementTypes.Find("BFloat16"), ElementType.BFloat16)
               && ElementTypes.Origin("int32") == Overrides.Library, "found by name, ignoring case; the library's");

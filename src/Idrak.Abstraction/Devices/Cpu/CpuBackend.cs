@@ -81,6 +81,8 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         IndexType = ElementType.Int32,                                       // indices, token ids and offsets (plan 37, T1)
         StoresAnyFormat = true,                                              // weights kept as stored, every type (plan 37, Q0)
         NativeReport = "the CPU's kernels compute float32; 16-bit values are widened to it",   // the types it computes (plan 37, T2)
+        DefaultValueTypes = [ElementType.Float32],                           // what its kernels read and write today (decision 8)
+        DefaultSumTypes = [ElementType.Float32],                             // what its kernels sum in today (decision 7)
     };
 
     public override string Kind => "cpu";
