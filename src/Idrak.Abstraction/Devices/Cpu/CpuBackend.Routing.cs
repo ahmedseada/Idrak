@@ -15,7 +15,8 @@ internal sealed partial class CpuBackend
     public override void RouteTopKKernel(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k,
         bool normalize)
     {
-        float[] pv = D(probabilities), wv = D(weights), ov = D(offsets), tv = D(tokenOfRow), sv = D(slotRow);
+        float[] pv = D(probabilities), wv = D(weights);
+        Span<int> ov = I(offsets), tv = I(tokenOfRow), sv = I(slotRow);               // int32 (plan 37, T1)
         int slots = tokens * k;
         int[] choices = ArrayPool<int>.Shared.Rent(Math.Max(1, slots));
         int[] cursor = ArrayPool<int>.Shared.Rent(experts);
@@ -103,7 +104,8 @@ internal sealed partial class CpuBackend
     public override void ExpertGatedPairKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden,
         int rows, int k, int n, int activation)
     {
-        float[] xv = D(x), ov = D(offsets), hv = D(hidden);
+        float[] xv = D(x), hv = D(hidden);
+        var ov = I(offsets);
         for (int e = 0; e < experts.Length; e++)
         {
             var (first, count) = ExpertRows(ov, e, rows);
@@ -136,7 +138,8 @@ internal sealed partial class CpuBackend
 
     public override void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
     {
-        float[] xv = D(x), ov = D(offsets), yv = D(y);
+        float[] xv = D(x), yv = D(y);
+        var ov = I(offsets);
         for (int e = 0; e < experts.Length; e++)
         {
             var (first, count) = ExpertRows(ov, e, rows);
@@ -149,9 +152,9 @@ internal sealed partial class CpuBackend
     }
 
     // The first row and the row count of expert e, from the offsets RouteTopK wrote (checked against the rows given).
-    private static (int First, int Count) ExpertRows(float[] offsets, int e, int rows)
+    private static (int First, int Count) ExpertRows(ReadOnlySpan<int> offsets, int e, int rows)
     {
-        int first = (int)offsets[e], end = (int)offsets[e + 1];
+        int first = offsets[e], end = offsets[e + 1];
         if (first < 0 || end < first || end > rows)
         {
             throw new ArgumentException($"Expert {e}'s rows {first} to {end} are not within the {rows} rows given (offsets as RouteTopK writes them).");

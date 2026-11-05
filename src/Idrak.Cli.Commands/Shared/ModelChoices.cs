@@ -33,7 +33,12 @@ internal static class ModelChoices
               --device-layers N  decoder layers kept on the GPU when the model does not fit it; the rest are computed by
                                  the CPU from system memory (auto: as the GPU's free memory allows; IDRAK_DEVICE_LAYERS;
                                  IDRAK_WEIGHT_PLACEMENT device, split, stream or auto chooses how)
+              --dtype TYPE       the element type the run computes in: auto (the default, picked per run) or float32
+                                 (IDRAK_DEFAULT_DTYPE)
         """;
+
+    /// <summary>The option naming the element type a run computes in (auto or float32, plan 37's T0); over IDRAK_DEFAULT_DTYPE.</summary>
+    public const string DtypeOption = "--dtype";
 
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
@@ -78,6 +83,9 @@ internal static class ModelChoices
         /// <summary>The decoder layers kept on the device (<c>--device-layers</c>, or the alias's "device_layers"), or null to size them (auto).</summary>
         public int? DeviceLayers { get; init; }
 
+        /// <summary>The element type the run computes in (<c>--dtype</c>, or the alias's "dtype"), or null for IDRAK_DEFAULT_DTYPE, else auto.</summary>
+        public string? Dtype { get; init; }
+
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
             ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
@@ -88,7 +96,7 @@ internal static class ModelChoices
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? weights = null, kv = null, headWeights = null, deviceLayers = null;
+        string? weights = null, kv = null, headWeights = null, deviceLayers = null, dtype = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         ImageTransformPipeline? transforms = null;
@@ -99,6 +107,7 @@ internal static class ModelChoices
             headWeights = (string?)alias["head_weights"];
             kv = (string?)alias["kv"];
             deviceLayers = alias["device_layers"]?.ToString();
+            dtype = (string?)alias["dtype"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
             {
@@ -129,6 +138,7 @@ internal static class ModelChoices
         {
             AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights,
             DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
+            Dtype = context.Option(DtypeOption) ?? dtype,
         };
     }
 
@@ -289,10 +299,13 @@ internal static class ModelChoices
                 AutoWeights = auto,
                 AutoWeightsContext = choice.Context ?? DefaultContext,
                 DeviceLayers = choice.DeviceLayers,
+                ElementType = choice.Dtype,
+                ElementTypeSource = DtypeOption,
             });
             progress.Clear();
         }
 
+        context.Error(model.ElementType.ToString());                   // "element type: float32 (picked by auto)", always shown (plan 37, T0)
         if (model.Placement is { } placed)
         {
             // A model split with the CPU or streamed from system memory is said on the error output (it is slower for it).

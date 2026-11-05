@@ -22,8 +22,8 @@ public abstract partial class Backend
     /// by the sum of the token's k chosen probabilities added in increasing expert order when <paramref name="normalize"/>),
     /// <paramref name="offsets"/>[e] (the first row of expert e when the slots are listed expert by expert, each expert's in
     /// slot order; <paramref name="offsets"/>[experts] = tokens·k), <paramref name="tokenOfRow"/>[row] (the token of that
-    /// row) and <paramref name="slotRow"/>[slot] (the row of that slot); indices and offsets are written as floats (exact
-    /// below 2²⁴ rows).
+    /// row) and <paramref name="slotRow"/>[slot] (the row of that slot); indices and offsets are written in the device's
+    /// index type (<see cref="BackendCapabilities.IndexType"/>: int32 on the CPU, exact past 2²⁴ rows).
     /// </summary>
     public virtual void RouteTopKKernel(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k,
         bool normalize)

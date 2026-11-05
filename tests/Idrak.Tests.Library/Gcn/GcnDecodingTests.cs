@@ -738,7 +738,7 @@ internal abstract partial class Tests
             foreach (var isa in RowsIsas)
             {
                 RowsCase($"penalize_rows_f32 {Rows}x{Vocabulary} ({isa})", [logits, new float[Rows * Vocabulary], history, [11f]], Rows, [1],
-                    (cpu, s) => cpu.PenalizeRowsKernel(s[0], s[1], s[2], s[3], Rows, Vocabulary, Stride, Offset, Capacity, LastN, 1.3f, 0.2f, 0.1f),
+                    (cpu, s) => cpu.PenalizeRows(s[0], s[1], s[2], s[3], Rows, Vocabulary, Stride, Offset, Capacity, LastN, 1.3f, 0.2f, 0.1f),
                     (m, at, grid, seed) => DecodingRowDispatch("penalize_rows_f32", isa, m, grid, seed, at[0], at[1], at[2], at[3], Vocabulary, Stride, Offset, Capacity, LastN, Bits(1.3f),
                         Bits(0.2f), Bits(0.1f), Rows, Rows),
                     worst, "penalize_rows_f32");
@@ -782,7 +782,7 @@ internal abstract partial class Tests
         {
             const int Count = 7, Classes = 13;
             float[] indices = [0f, 12f, 5f, 5f, 3f, 11f, 1f];
-            float[] expected = RowsOnCpu([indices, new float[Count * Classes]], (cpu, s) => cpu.OneHotKernel(s[0], s[1], Count, Classes))[1];
+            float[] expected = RowsOnCpu([indices, new float[Count * Classes]], (cpu, s) => cpu.OneHot(s[0], s[1], Count, Classes))[1];
             foreach (var isa in ProductIsas)
             {
                 ProductsCase($"one_hot_f32 {Count}x{Classes} ({isa})", [indices, new float[Count * Classes]], [1], [indices, expected],
@@ -794,8 +794,9 @@ internal abstract partial class Tests
 
         {
             const int HRows = 3, Capacity = 5;
-            float[] ids = [17f, 4f, 99f], history = RowsRandom(random, HRows * Capacity, 9f);
-            float[] expected = RowsOnCpu([ids, (float[])history.Clone(), [12f]], (cpu, s) => cpu.HistoryPushKernel(s[0], s[1], s[2], HRows, Capacity))[1];
+            // The history holds token ids: whole numbers (the CPU's history is int32, plan 37's T1).
+            float[] ids = [17f, 4f, 99f], history = [.. RowsRandom(random, HRows * Capacity, 9f).Select(x => MathF.Abs(MathF.Round(x)))];
+            float[] expected = RowsOnCpu([ids, (float[])history.Clone(), [12f]], (cpu, s) => cpu.HistoryPush(s[0], s[1], s[2], HRows, Capacity))[1];
             foreach (var isa in ProductIsas)
             {
                 ProductsCase($"history_push_f32 {HRows} rows of {Capacity} ({isa})", [ids, (float[])history.Clone(), [12f]], [1], [ids, expected, [12f]],
@@ -1077,7 +1078,7 @@ internal abstract partial class Tests
             {
                 for (int step = 0; step < Steps; step++)
                 {
-                    cpu.SampleRowsKernel(s[0], s[1], s[2], s[3 + step], Rows, vocabulary, vocabulary, 0, temperature, topK, topP, minP, Seed);
+                    cpu.SampleRows(s[0], s[1], s[2], s[3 + step], Rows, vocabulary, vocabulary, 0, temperature, topK, topP, minP, Seed);
                 }
             });
             var form = !candidates ? GcnKernels.SamplerForm.Rows : greedy ? GcnKernels.SamplerForm.Greedy : GcnKernels.SamplerForm.Candidates;

@@ -111,9 +111,29 @@ internal static partial class VulkanKernels
             Grid(k, count * classes, idx =>
             {
                 var (i, j) = (idx / classes, idx % classes);
-                var hot = k.Clamp(indices[i].ToInt(), k.Int(0), classes - 1);
+                var hot = k.Clamp(indices.Int(i), k.Int(0), classes - 1);
                 y[idx] = k.Select(j.Eq(hot), k.Float(1f), k.Float(0f));
             });
+            return k.Build();
+        });
+
+        // y[i] = x[i] converted between float32 and int32 (plan 37, T1: the dispatcher's index conversions): a float
+        // truncated toward zero, an integer rounded to the nearest float. One invocation per element.
+        yield return ("convert_f32_i32", () =>
+        {
+            var k = new KernelBuilder("convert_f32_i32", Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var n = k.PushInt("n");
+            Grid(k, n, i => y[i] = x[i].ToInt());
+            return k.Build();
+        });
+
+        yield return ("convert_i32_f32", () =>
+        {
+            var k = new KernelBuilder("convert_i32_f32", Block);
+            var (x, y) = (k.Buffer("x"), k.Buffer("y"));
+            var n = k.PushInt("n");
+            Grid(k, n, i => y[i] = x.Int(i).ToFloat());
             return k.Build();
         });
 
@@ -128,7 +148,7 @@ internal static partial class VulkanKernels
             var (count, dim, vocabulary) = (k.PushInt("count"), k.PushInt("dim"), k.PushInt("vocabulary"));
             Grid(k, dim, d => k.For(k.Int(0), count, 1, i =>
             {
-                var at = k.Clamp(indices[i].ToInt(), k.Int(0), vocabulary - 1) * dim + d;
+                var at = k.Clamp(indices.Int(i), k.Int(0), vocabulary - 1) * dim + d;
                 dtable[at] = dtable[at] + dy[i * dim + d];
             }));
             return k.Build();

@@ -192,7 +192,7 @@ public readonly record struct AttentionVariant(int Window, float Softcap)
 /// <summary>
 /// A reference-counted block of device memory holding <see cref="Length"/> floats: what a device's kernels read and write.
 /// A device subclasses it to hold its own handle (a pointer, a buffer and offset) and creates it in
-/// <see cref="Backend.Allocate"/>; when the last reference is released the block goes back to its device
+/// <see cref="Backend.Allocate(int, bool)"/>; when the last reference is released the block goes back to its device
 /// (<see cref="Backend.Return"/>). A storage in memory the process reads directly (the CPU device's) implements
 /// <see cref="IHostStorage"/>; any other is read and written with <see cref="Backend.Download"/> and
 /// <see cref="Backend.Upload"/>.
@@ -220,6 +220,30 @@ public abstract class Storage
 
     /// <summary>The number of floats.</summary>
     public int Length { get; }
+
+    // The element type when it is not float32 (plan 37, T0: Backend.Allocate(ElementType, ...)), and its element count.
+    private ElementType? _type;
+    private long _elements = -1;
+
+    /// <summary>
+    /// What the storage's elements are (plan 37, T0): float32 for every storage but those allocated with a type
+    /// (<see cref="Backend.Allocate(ElementType, int, bool)"/>: int32 indices, ...), whose <see cref="Length"/> 4-byte words
+    /// hold <see cref="ElementCount"/> elements of that type.
+    /// </summary>
+    public ElementType ElementType => _type ?? ElementType.Float32;
+
+    /// <summary>The number of elements of <see cref="ElementType"/> it holds (<see cref="Length"/> for float32).</summary>
+    public long ElementCount => _elements >= 0 ? _elements : Length;
+
+    /// <summary>The bytes of memory it holds: <see cref="Length"/> 4-byte words.</summary>
+    public long ByteLength => (long)Length * sizeof(float);
+
+    // Marks a storage just allocated as holding `count` elements of `type` (its words hold them: Backend.Allocate).
+    internal void SetType(ElementType type, long count)
+    {
+        _type = ReferenceEquals(type, ElementType.Float32) ? null : type;
+        _elements = _type is null ? -1 : count;
+    }
 
     /// <summary>Adds a reference: the block stays until <see cref="Release"/> has been called once more than this.</summary>
     public void AddRef() => Interlocked.Increment(ref _refs);
@@ -298,7 +322,9 @@ public abstract class Storage
 /// read once when the backend starts: the operations they hold reach the device's kernels through them. A device comes with an <see cref="IDeviceProvider"/>, which starts it.
 /// </summary>
 /// <remarks>
-/// Every operation works on contiguous row-major float32 buffers. Methods named "...Backward", <see cref="Axpy"/>,
+/// Every operation works on contiguous row-major float32 buffers, but for its index storages
+/// (<see cref="Operations.Operation.IndexParameters"/>), which are in the device's index type
+/// (<see cref="BackendCapabilities.IndexType"/>; the dispatcher converts another, counted). Methods named "...Backward", <see cref="Axpy"/>,
 /// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/> accumulate into their output (+=) so
 /// gradients from several paths add up.
 /// </remarks>
@@ -1512,7 +1538,7 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// instead of the whole rows): with shift = max + log Σ exp(x - max) over the row (the max ignoring NaN, the sum the
     /// entries other than -∞), each entry's log-probability is x - shift in float32; values[r, j] is the row's j-th best of
     /// those that are neither NaN nor -∞ (larger first, the smaller column first on equal values) and indices[r, j] its column
-    /// (as a float), j &lt; k; past the row's last such entry values gets -∞ and indices -1. A row with no finite logit, a
+    /// (in the device's index type, <see cref="BackendCapabilities.IndexType"/>), j &lt; k; past the row's last such entry values gets -∞ and indices -1. A row with no finite logit, a
     /// NaN or a +∞ one has a NaN shift, so none. The CPU sums in double (its shift rounded to float32 once); a device's sum
     /// may differ from it by float rounding.
     /// </summary>

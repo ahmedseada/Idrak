@@ -69,7 +69,7 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.DtypeOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
         Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];

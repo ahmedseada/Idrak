@@ -65,10 +65,12 @@ public sealed class TokenSampler : ITokenSampler
         Vocabulary = vocabulary;
         MaxSteps = maxSteps;
         HistoryCapacity = historyCapacity;
-        Ids = Tensor.Persistent(new float[rows], [rows], device, requiresGrad: false);
+        // Token ids and the history in the type the device's sampler kernels write (plan 37, T1: int32 on the CPU).
+        var ids = device.Backend.IndexTypeOf(Operations.Ops.SampleRows);
+        Ids = Tensor.Empty([rows], device, ids, zeroed: true, track: false);
         _stats = Tensor.Persistent(new float[maxSteps * rows * StatsPerToken], [maxSteps, rows, StatsPerToken], device, requiresGrad: false);
         _step = Tensor.Persistent([0f], [1], device, requiresGrad: false);
-        _history = Tensor.Persistent(new float[rows * historyCapacity], [rows, historyCapacity], device, requiresGrad: false);
+        _history = Tensor.Empty([rows, historyCapacity], device, ids, zeroed: true, track: false);
         _historyLength = Tensor.Persistent([0f], [1], device, requiresGrad: false);
         _work = Tensor.Persistent(new float[rows * vocabulary], [rows, vocabulary], device, requiresGrad: false);
     }
@@ -100,7 +102,7 @@ public sealed class TokenSampler : ITokenSampler
     /// </summary>
     public void SetHistory(IReadOnlyList<int> tokens)
     {
-        var values = new float[Rows * HistoryCapacity];
+        var values = new int[Rows * HistoryCapacity];
         for (int t = Math.Max(0, tokens.Count - HistoryCapacity); t < tokens.Count; t++)
         {
             for (int r = 0; r < Rows; r++)
@@ -109,7 +111,7 @@ public sealed class TokenSampler : ITokenSampler
             }
         }
 
-        _history.Load(values);
+        _history.LoadIndices(values);
         _historyLength.FillInPlace(tokens.Count);
     }
 

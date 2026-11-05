@@ -680,13 +680,13 @@ public sealed class DecodingContext : IDisposable
 
             // Row r of the cache belongs to sequence r / perRow: it takes the same head of the source sequence.
             int perRow = rows / Batch;
-            var index = new float[rows];
+            var index = new int[rows];
             for (int r = 0; r < rows; r++)
             {
                 index[r] = sources[r / perRow] * perRow + r % perRow;
             }
 
-            using var indices = Tensor.From(index, [rows], Device);
+            using var indices = Tensor.Indices(index, Device);
             Gather(cache.Keys, indices);
             Gather(cache.Values, indices);
             Gather(cache.KeyScales, indices);

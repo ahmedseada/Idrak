@@ -285,7 +285,8 @@ internal sealed partial class CpuBackend
     public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        float[] lv = D(logits), iv = D(ids), sv = D(stats);
+        float[] lv = D(logits), sv = D(stats);
+        var iv = I(ids);                                                    // int32 token ids (plan 37, T1)
         uint stepNumber = (uint)D(step)[0];
         float[] e = ArrayPool<float>.Shared.Rent(vocabulary);
         float[] top = ArrayPool<float>.Shared.Rent(Math.Max(1, Math.Min(topK, vocabulary)));
@@ -370,7 +371,8 @@ internal sealed partial class CpuBackend
     public override void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
         int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
-        float[] lv = D(logits), wv = D(work), hv = D(history);
+        float[] lv = D(logits), wv = D(work);
+        var hv = I(history);
         uint len = (uint)D(length)[0];
         int n = (int)Math.Min(len, (uint)Math.Min(lastN, capacity));
         for (int r = 0; r < rows; r++)
@@ -379,12 +381,12 @@ internal sealed partial class CpuBackend
             lv.AsSpan(r * rowStride + rowOffset, vocabulary).CopyTo(w);
             for (int k = 0; k < n; k++)
             {
-                int id = (int)hv[r * capacity + (int)((len - 1 - (uint)k) % (uint)capacity)];
+                int id = hv[r * capacity + (int)((len - 1 - (uint)k) % (uint)capacity)];
                 bool seenMoreRecently = false;
                 int count = 0;
                 for (int q = 0; q < n; q++)
                 {
-                    int other = (int)hv[r * capacity + (int)((len - 1 - (uint)q) % (uint)capacity)];
+                    int other = hv[r * capacity + (int)((len - 1 - (uint)q) % (uint)capacity)];
                     if (other == id)
                     {
                         count++;
@@ -406,7 +408,7 @@ internal sealed partial class CpuBackend
 
     public override void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
-        float[] iv = D(ids), hv = D(history);
+        Span<int> iv = I(ids), hv = I(history);
         uint len = (uint)D(length)[0];
         for (int r = 0; r < rows; r++)
         {

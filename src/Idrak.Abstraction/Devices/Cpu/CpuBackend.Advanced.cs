@@ -236,7 +236,7 @@ internal sealed partial class CpuBackend
         {
             for (int r = r0; r < r1; r++)
             {
-                LogSoftmaxTopKRow(xv.AsSpan(r * cols, cols), vv.AsSpan(r * k, k), iv.AsSpan(r * k, k));
+                LogSoftmaxTopKRow(xv.AsSpan(r * cols, cols), vv.AsSpan(r * k, k), MemoryMarshal.Cast<float, int>(iv.AsSpan(r * k, k)));
             }
         });
     }
@@ -244,10 +244,10 @@ internal sealed partial class CpuBackend
     // One row of LogSoftmaxTopK: the shift as the beam search computed it on the host (max over the non-NaN entries, the sum
     // of exponentials in double over those other than -∞, rounded to float once), then the best k of x - shift by one pass
     // keeping a short ordered list (equal values keep the earlier column first).
-    private static void LogSoftmaxTopKRow(ReadOnlySpan<float> row, Span<float> values, Span<float> indices)
+    private static void LogSoftmaxTopKRow(ReadOnlySpan<float> row, Span<float> values, Span<int> indices)
     {
         values.Fill(float.NegativeInfinity);
-        indices.Fill(-1f);
+        indices.Fill(-1);
         float max = float.NegativeInfinity;
         foreach (float x in row)
         {
@@ -713,7 +713,8 @@ internal sealed partial class CpuBackend
 
     public override void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        float[] tv = D(table), iv = D(indices), yv = D(y);
+        float[] tv = D(table), yv = D(y);
+        var iv = I(indices);
         for (int i = 0; i < count; i++)
         {
             int index = CheckIndex(iv[i], vocabulary);
@@ -723,7 +724,8 @@ internal sealed partial class CpuBackend
 
     public override void OneHotKernel(Storage indices, Storage y, int count, int classes)
     {
-        float[] iv = D(indices), yv = D(y);
+        float[] yv = D(y);
+        var iv = I(indices);
         yv.AsSpan(0, count * classes).Clear();
         for (int i = 0; i < count; i++)
         {
@@ -734,7 +736,8 @@ internal sealed partial class CpuBackend
     public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         var halves = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
-        float[] iv = D(indices), yv = D(y);
+        float[] yv = D(y);
+        var iv = I(indices);
         int stride = (dim + 1) / 2 * 2;
         for (int i = 0; i < count; i++)
         {
@@ -746,7 +749,8 @@ internal sealed partial class CpuBackend
     public override void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         var halves = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
-        float[] iv = D(indices), yv = D(y);
+        float[] yv = D(y);
+        var iv = I(indices);
         int stride = (vocabulary + 1) / 2 * 2;
         for (int i = 0; i < count; i++)
         {
@@ -761,7 +765,8 @@ internal sealed partial class CpuBackend
 
     public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        float[] gv = D(dy), iv = D(indices), tv = D(dtable);
+        float[] gv = D(dy), tv = D(dtable);
+        var iv = I(indices);
         for (int i = 0; i < count; i++)
         {
             int index = CheckIndex(iv[i], vocabulary);
@@ -770,16 +775,8 @@ internal sealed partial class CpuBackend
         }
     }
 
-    private static int CheckIndex(float value, int vocabulary)
-    {
-        int index = (int)value;
-        if ((uint)index >= (uint)vocabulary || index != value)
-        {
-            throw new IndexOutOfRangeException($"Embedding index {value} is not an integer in [0, {vocabulary}).");
-        }
-
-        return index;
-    }
+    private static int CheckIndex(int index, int vocabulary) =>
+        (uint)index < (uint)vocabulary ? index : throw new IndexOutOfRangeException($"Embedding index {index} is not in [0, {vocabulary}).");
 
     private static void AddInPlace(Span<float> target, ReadOnlySpan<float> source)
     {

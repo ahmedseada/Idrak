@@ -256,8 +256,8 @@ public sealed partial class Tensor
     }
 
     /// <summary>
-    /// The <paramref name="k"/> best log-probabilities along the last dimension (log-softmax over it) and their indices (as
-    /// floats), larger first and the smaller index first on equal values, each [..., k]; NaN and -∞ entries are never among
+    /// The <paramref name="k"/> best log-probabilities along the last dimension (log-softmax over it) and their indices (in
+    /// the device's index type, int32 on the CPU: <see cref="ToArray"/> reads them as floats), larger first and the smaller index first on equal values, each [..., k]; NaN and -∞ entries are never among
     /// them, and past a row's last candidate the values are -∞ and the indices -1 (see <c>Backend.LogSoftmaxTopKKernel</c>:
     /// a row with no finite logit, or with a NaN or a +∞ one, has none). Computed where the tensor is, so a search reads
     /// back k values a row instead of the whole row; not differentiated.
@@ -271,7 +271,7 @@ public sealed partial class Tensor
         int cols = _shape[^1], rows = cols == 0 ? 0 : Size / cols;
         int[] shape = [.. _shape[..^1], k];
         var values = Empty(shape, Device);
-        var indices = Empty(shape, Device);
+        var indices = Empty(shape, Device, Backend.IndexTypeOf(Operations.Ops.LogSoftmaxTopK));   // the type its kernel writes (plan 37, T1)
         long start = Telemetry.Start(TelemetryLevel.Operations);
         Backend.LogSoftmaxTopK(Storage, values.Storage, indices.Storage, rows, cols, k);
         return (Traced("log_softmax_topk", values, start), indices);

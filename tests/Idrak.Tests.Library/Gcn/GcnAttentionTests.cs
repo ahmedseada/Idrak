@@ -504,13 +504,13 @@ internal abstract partial class Tests
         foreach (var isa in AttentionIsas)
         {
             ShapesCase($"gather_f32 ({isa})", [table, ids, new float[n]], ShapeGrid(n), [2],
-                (b, s) => b.GatherKernel(s[0], s[1], s[2], Count, Dim, Vocabulary),
+                (b, s) => b.Gather(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) => AttentionDispatch("gather_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (ulong)n));
             ShapesCase($"gather_bf16_f32 ({isa})", [rowsTable, ids, new float[n]], ShapeGrid(n), [2],
-                (b, s) => b.GatherBFloat16Kernel(s[0], s[1], s[2], Count, Dim, Vocabulary),
+                (b, s) => b.GatherBFloat16(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) => AttentionDispatch("gather_bf16_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (Dim + 1) / 2, (ulong)n));
             ShapesCase($"gather_bf16_cols_f32 ({isa})", [columnsTable, ids, new float[n]], ShapeGrid(n), [2],
-                (b, s) => b.GatherBFloat16ColumnsKernel(s[0], s[1], s[2], Count, Dim, Vocabulary),
+                (b, s) => b.GatherBFloat16Columns(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) => AttentionDispatch("gather_bf16_cols_f32", isa, m, (grid.X, 1), seed, a[0], a[1], a[2], Dim, Vocabulary - 1, (Vocabulary + 1) / 2,
                     (ulong)n));
         }

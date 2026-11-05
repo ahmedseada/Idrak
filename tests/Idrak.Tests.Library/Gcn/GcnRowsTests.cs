@@ -429,7 +429,7 @@ internal abstract partial class Tests
             foreach (var isa in RowsIsas)
             {
                 RowsCase($"log_softmax_topk_f32 ({isa}), {Rows} x {cols}, k = {K}", [x, new float[Rows * K], new float[Rows * K]], Rows, [1, 2],
-                    (b, s) => b.LogSoftmaxTopKKernel(s[0], s[1], s[2], Rows, cols, K),
+                    (b, s) => b.LogSoftmaxTopK(s[0], s[1], s[2], Rows, cols, K),
                     (m, a, grid, seed) => RowDispatch("log_softmax_topk_f32", isa, m, grid, seed, a[0], a[1], a[2], (ulong)cols, K, Rows),
                     worst, "log_softmax_topk_f32");
             }

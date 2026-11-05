@@ -784,6 +784,24 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         Grid("one_hot", (long)count * classes, [indices, y], new Push(b).I(count).I(classes).Bytes);
     }
 
+    // The index conversions between float32 and int32 on the device (no host round trip, recordable in a graph); any
+    // other pair, or a storage past one binding, takes the host fallback (which checks every value).
+    public override void ConvertElementsKernel(Storage source, Storage destination)
+    {
+        var (from, to) = (source.ElementType, destination.ElementType);
+        string? kernel = ReferenceEquals(from, ElementType.Float32) && ReferenceEquals(to, ElementType.Int32) ? "convert_f32_i32"
+            : ReferenceEquals(from, ElementType.Int32) && ReferenceEquals(to, ElementType.Float32) ? "convert_i32_f32" : null;
+        long n = source.ElementCount;
+        if (kernel is null || n != destination.ElementCount || !Fit(source, destination))
+        {
+            base.ConvertElementsKernel(source, destination);
+            return;
+        }
+
+        Span<byte> b = stackalloc byte[4];
+        Grid(kernel, n, [source, destination], new Push(b).I((int)n).Bytes);
+    }
+
     public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         if (!Fit(dy, indices, dtable))

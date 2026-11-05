@@ -383,6 +383,28 @@ public readonly record struct DeviceFailed(string Device, string? Operation, str
 public readonly record struct HostFallback(string Device, string Operation, string? KernelsUnavailable = null);
 
 /// <summary>
+/// Published each time the dispatcher converts an operation's storage to the element type the device's kernel for it
+/// takes (plan 37, T0 and T1: float32 indices for an int32 index kernel, int32 ones for a device that still reads them as
+/// float32), to the hooks listening at <c>TelemetryLevel.Devices</c>. <c>ElementTypes.Conversions</c> counts them all.
+/// </summary>
+/// <param name="Device">The kind of device ("cpu", "vulkan", …).</param>
+/// <param name="Operation">The operation (as <c>Operation.Name</c>).</param>
+/// <param name="From">The storage's element type.</param>
+/// <param name="To">The type the kernel takes.</param>
+/// <param name="Elements">The elements converted.</param>
+public readonly record struct ElementsConverted(string Device, string Operation, string From, string To, long Elements);
+
+/// <summary>
+/// Published when a load chooses the element type its run computes in (plan 37, T0): the type and how it was chosen,
+/// "picked by auto" or "selected by the user" (naming <c>--dtype</c> or <c>IDRAK_DEFAULT_DTYPE</c>), at
+/// <c>TelemetryLevel.Devices</c>.
+/// </summary>
+/// <param name="Device">The device the run computes on.</param>
+/// <param name="ElementType">The type's name.</param>
+/// <param name="How">"picked by auto" or "selected by the user (…)".</param>
+public readonly record struct ElementTypeChosen(string Device, string ElementType, string How);
+
+/// <summary>
 /// A device measured the candidates of an operation at a shape class it had not seen and kept the fastest
 /// (<c>TelemetryLevel.Devices</c>). The choice is kept for the class (and in the device's tuning cache file), so the time
 /// is paid once per class and device: a run whose batches keep landing in new classes (a new batch count or padded length

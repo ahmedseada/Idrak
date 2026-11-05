@@ -46,4 +46,19 @@ public sealed record BackendCapabilities
     /// (every tensor a copy, as before views).
     /// </summary>
     public IReadOnlySet<Operations.Operation> StridedInputs { get; init; } = new HashSet<Operations.Operation>();
+
+    /// <summary>
+    /// The element type this device's kernels read and write indices, token ids and offsets in (plan 37, T1): the storages an
+    /// operation lists in <see cref="Operations.Operation.IndexParameters"/>. A storage of another type is converted for the
+    /// call by the dispatcher, once, and counted (<see cref="ElementTypes.Conversions"/>); index tensors the library makes
+    /// (<see cref="Tensor.Indices(ReadOnlySpan{int}, Device)"/>, a top-k's indices, a sampler's ids, the routing of a mixture
+    /// of experts) are made in it, so they need none. Default: float32 (indices exact up to 2²⁴, as before int32 kernels).
+    /// </summary>
+    public ElementType IndexType { get; init; } = ElementType.Float32;
+
+    /// <summary>
+    /// Operations whose kernels on this device take another index type than <see cref="IndexType"/> (a device whose integer
+    /// kernels cover some operations so far). Default: none.
+    /// </summary>
+    public IReadOnlyDictionary<Operations.Operation, ElementType> IndexTypes { get; init; } = new Dictionary<Operations.Operation, ElementType>();
 }

@@ -184,7 +184,9 @@ internal static class DeviceConformance
         {
             for (int i = 0; i < storages.Length; i++)
             {
-                storages[i] = backend.Allocate(call.Before[i].Length, zeroed: false);
+                storages[i] = i < call.Types.Length && !ReferenceEquals(call.Types[i].Type, ElementType.Float32)
+                    ? backend.Allocate(call.Types[i].Type, (int)call.Types[i].Count, zeroed: false)          // a typed storage's words, as recorded
+                    : backend.Allocate(call.Before[i].Length, zeroed: false);
                 backend.Upload(call.Before[i], storages[i]!);
             }
 
@@ -205,7 +207,12 @@ internal static class DeviceConformance
             {
                 var values = new float[call.After[i].Length];
                 backend.Download(storages[i]!, values);
-                if (Comparisons.Difference(call.After[i], values, tolerance) is { } difference)
+                bool exact = i < call.Types.Length && !call.Types[i].Type.IsFloat;      // integers (indices) compared bit for bit
+                if (exact && !System.Runtime.InteropServices.MemoryMarshal.Cast<float, int>(call.After[i]).SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.Cast<float, int>(values)))
+                {
+                    problems.Add($"{ArgumentName(call, i)}: the {call.Types[i].Type.Name} elements differ from the CPU's");
+                }
+                else if (!exact && Comparisons.Difference(call.After[i], values, tolerance) is { } difference)
                 {
                     problems.Add($"{ArgumentName(call, i)}: {difference}");
                 }

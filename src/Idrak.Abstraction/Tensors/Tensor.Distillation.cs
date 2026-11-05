@@ -76,7 +76,7 @@ public sealed partial class Tensor
         var y = Empty([rows.Length, dim], x.Device);
         if (rows.Length > 0)
         {
-            using var index = From([.. rows.Select(r => (float)r)], [rows.Length], x.Device);
+            using var index = Indices(rows, x.Device);
             x.Backend.Gather(x.Storage, index.Storage, y.Storage, rows.Length, dim, total);
         }
 
@@ -117,7 +117,7 @@ public sealed partial class Tensor
         {
             int n = Math.Min(chunkRows, count - r0);
             using var scope = new TensorScope();
-            var index = From([.. rows.AsSpan(r0, n).ToArray().Select(r => (float)r)], [n], device);
+            var index = Indices(rows.AsSpan(r0, n), device);
             var chunk = Empty([n, dim], device);
             backend.Gather(hidden.Storage, index.Storage, chunk.Storage, n, dim, total);
             chunk.RequiresGrad = record;
@@ -193,7 +193,7 @@ public sealed partial class Tensor
         var loss = From([(float)sum], [1], device);
         if (gradient is not null)
         {
-            var gradientRows = From([.. rows.Select(r => (float)r)], [count], device);
+            var gradientRows = Indices(rows, device);
             // dhidden[rows] += gradient · g, with g read on the device.
             loss.Record("token_divergence", g =>
             {

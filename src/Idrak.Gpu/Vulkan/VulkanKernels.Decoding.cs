@@ -4,7 +4,8 @@
 namespace Idrak.Gpu.Vulkan;
 
 // Kernels for language models: rotary positions, embedding gathers, the key/value cache, the decoder mask, and attention
-// over the cache for decoding. Positions and indices are float values in device memory, read and truncated as the CPU.
+// over the cache for decoding. Positions are float values in device memory, read and truncated as the CPU; the gathers'
+// indices are int32 (the device's index type, plan 37, T1).
 internal static partial class VulkanKernels
 {
     private static IEnumerable<(string, Func<SpirvKernel>)> DecodingKernels()
@@ -47,7 +48,7 @@ internal static partial class VulkanKernels
             Grid(k, count * dim, i =>
             {
                 var (row, d) = (i / dim, i % dim);
-                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1) - first;
+                var index = k.Clamp(indices.Int(row), k.Int(0), vocabulary - 1) - first;
                 k.If((index >= 0) & (index < rows), () => y[i] = table[index * dim + d]);
             });
             return k.Build();
@@ -63,7 +64,7 @@ internal static partial class VulkanKernels
             Grid(k, count * dim, i =>
             {
                 var (row, d) = (i / dim, i % dim);
-                var index = k.Clamp(indices[row].ToInt(), k.Int(0), vocabulary - 1) - first;
+                var index = k.Clamp(indices.Int(row), k.Int(0), vocabulary - 1) - first;
                 k.If((index >= 0) & (index < rows), () => y[i] = BFloat16At(k, packed, index * ((dim + 1) / 2) + (d >> 1), d));
             });
             return k.Build();
@@ -81,7 +82,7 @@ internal static partial class VulkanKernels
             Grid(k, count * dim, i =>
             {
                 var (token, d) = (i / dim, i % dim - first);
-                var index = k.Clamp(indices[token].ToInt(), k.Int(0), vocabulary - 1);
+                var index = k.Clamp(indices.Int(token), k.Int(0), vocabulary - 1);
                 k.If((d >= 0) & (d < rows), () => y[i] = BFloat16At(k, packed, d * ((vocabulary + 1) / 2) + (index >> 1), index));
             });
             return k.Build();

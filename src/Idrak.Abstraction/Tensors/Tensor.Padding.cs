@@ -115,7 +115,7 @@ public sealed partial class Tensor
             inner *= _shape[d];
         }
 
-        var indices = new float[outer * positions.Length];
+        var indices = new int[outer * positions.Length];
         for (int o = 0; o < outer; o++)
         {
             for (int k = 0; k < positions.Length; k++)
@@ -130,7 +130,7 @@ public sealed partial class Tensor
             }
         }
 
-        var rows = Reshape(outer * size, inner).EmbeddingLookup(From(indices, [indices.Length], Device));
+        var rows = Reshape(outer * size, inner).EmbeddingLookup(Indices(indices, Device));
         return rows.Reshape(WithSize(dim, positions.Length));
     }
 

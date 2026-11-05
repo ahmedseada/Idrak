@@ -260,7 +260,7 @@ public sealed partial class Tensor
         {
             int n = Math.Min(chunkRows, count - r0);
             using var scope = new TensorScope();
-            var index = From([.. rows.AsSpan(r0, n).ToArray().Select(r => (float)r)], [n], device);
+            var index = Indices(rows.AsSpan(r0, n), device);
             var chunkTargets = From([.. targets.AsSpan(r0, n).ToArray().Select(t => (float)t)], [n], device);
             var ones = Full([n], 1f, device);
             var chunk = Empty([n, dim], device);
@@ -314,7 +314,7 @@ public sealed partial class Tensor
         // The gradient of the listed rows only ([count, dim], not [total, dim]): scattered into the hidden gradient in the
         // backward pass, with the positions they came from.
         var gradient = record ? Empty([count, dim], device, zeroed: true) : null;
-        var gradientRows = record ? Empty([count], device) : null;
+        var gradientRows = record ? Empty([count], device, rows.ElementType) : null;     // the rows' own type (plan 37, T1)
         if (gradientRows is not null)
         {
             backend.Copy2D(rows.Storage, 0, count, gradientRows.Storage, 0, count, 1, count, accumulate: false);
@@ -325,7 +325,7 @@ public sealed partial class Tensor
         {
             int n = Math.Min(chunkRows, count - r0);
             using var scope = new TensorScope();
-            var index = Empty([n], device);
+            var index = Empty([n], device, rows.ElementType);
             var chunkTargets = Empty([n], device);
             var chunkWeights = Empty([n], device);
             backend.Copy2D(rows.Storage, r0, n, index.Storage, 0, n, 1, n, accumulate: false);

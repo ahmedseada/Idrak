@@ -206,8 +206,8 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         }
 
         var cursor = (int[])starts.Clone();
-        var tokenOfRow = new float[tokens * k];
-        var slotRow = new float[tokens * k];
+        var tokenOfRow = new int[tokens * k];                                         // indices as integers (plan 37, T1)
+        var slotRow = new int[tokens * k];
         bool inOrder = true;
         for (int slot = 0; slot < choices.Length; slot++)
         {
@@ -222,13 +222,13 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         {
             if (counts[e] > 0)
             {
-                var rows = counts[e] == tokens ? x : x.EmbeddingLookup(Tensor.From(tokenOfRow.AsSpan(starts[e], counts[e]), [counts[e]], device));
+                var rows = counts[e] == tokens ? x : x.EmbeddingLookup(Tensor.Indices(tokenOfRow.AsSpan(starts[e], counts[e]), device));
                 outputs.Add(Experts[e].Forward(rows));
             }
         }
 
         var stacked = outputs.Count == 1 ? outputs[0] : Tensor.Concat(outputs);       // [tokens·k, dim], expert by expert
-        var slots = inOrder ? stacked : stacked.EmbeddingLookup(Tensor.From(slotRow, [tokens * k], device));
+        var slots = inOrder ? stacked : stacked.EmbeddingLookup(Tensor.Indices(slotRow, device));
         var routing = Autograd.IsEnabled && probabilities.RequiresGrad
             ? RecordedWeights(probabilities, choices, tokens, experts, k)
             : Tensor.From(weights, [tokens, 1, k], device);
@@ -295,9 +295,10 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         var backend = input.Backend;
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var weights = Tensor.Empty([tokens, 1, k], device, track: false);
-        var offsets = Tensor.Empty([experts + 1], device, track: false);
-        var tokenOfRow = Tensor.Empty([slots], device, track: false);
-        var slotRow = Tensor.Empty([slots], device, track: false);
+        var indexType = backend.IndexTypeOf(Ops.RouteTopK);                       // what the routing writes (plan 37, T1)
+        var offsets = Tensor.Empty([experts + 1], device, indexType, track: false);
+        var tokenOfRow = Tensor.Empty([slots], device, indexType, track: false);
+        var slotRow = Tensor.Empty([slots], device, indexType, track: false);
         Tensor? rows = null, gated = null, outputs = null, slotOrder = null;
         try
         {
@@ -353,13 +354,13 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
     // when normalized, divided by their sum.
     private Tensor RecordedWeights(Tensor probabilities, int[] choices, int tokens, int experts, int k)
     {
-        var index = new float[choices.Length];
+        var index = new int[choices.Length];                                       // exact past 2^24 (tokens · experts)
         for (int slot = 0; slot < choices.Length; slot++)
         {
             index[slot] = slot / k * experts + choices[slot];
         }
 
-        var chosen = probabilities.Reshape(tokens * experts, 1).EmbeddingLookup(Tensor.From(index, probabilities.Device)).Reshape(tokens, 1, k);
+        var chosen = probabilities.Reshape(tokens * experts, 1).EmbeddingLookup(Tensor.Indices(index, probabilities.Device)).Reshape(tokens, 1, k);
         return NormalizeTopK ? chosen.Sum(2, keepDim: true).Pow(-1f).MatMul(chosen) : chosen;
     }
 

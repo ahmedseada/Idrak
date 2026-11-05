@@ -266,6 +266,16 @@ public sealed record PretrainedOptions
     public int? DeviceLayers { get; init; }
 
     /// <summary>
+    /// The element type the run computes in (plan 37, T0): "auto" (picked per run) or "float32"; null takes
+    /// <see cref="ElementTypes.EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else auto. Until plan 37's T2 auto picks
+    /// float32, so every result is as before. <see cref="PretrainedModel.ElementType"/> says what was chosen and how.
+    /// </summary>
+    public string? ElementType { get; init; }
+
+    /// <summary>Where <see cref="ElementType"/> came from, as the choice and a refusal name it ("--dtype"; an app's own option name).</summary>
+    public string ElementTypeSource { get; init; } = "--dtype";
+
+    /// <summary>
     /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
     /// device's measured free memory changes (more on the device when memory frees, fewer under pressure; plan 37 W2):
     /// null takes <see cref="WeightPlacements.DefaultGrow"/> (IDRAK_WEIGHT_GROW; on).
@@ -463,6 +473,10 @@ public sealed class PretrainedModel : IDisposable
             notes.Add($"weights {weightsChoice}.");
         }
 
+        // The run's element type (plan 37, T0): chosen before any weight is read, so a value nobody accepts fails at once.
+        var elementType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource);
+        ElementTypes.Report(elementType, options.Device ?? Abstraction.Device.Default);
+
         WeightPlan? plan = null;
         WeightPlacementRequest? placedRequest = null;
         if (placement is not null)
@@ -602,6 +616,7 @@ public sealed class PretrainedModel : IDisposable
         model._loadBytes = reader.BytesRead;
         model.Weights = weightsChoice;
         model.Placement = plan;
+        model.ElementType = elementType;
         model._lazyReader = lazyReader;
         try
         {
@@ -828,6 +843,12 @@ public sealed class PretrainedModel : IDisposable
     /// the CPU (which layers compute where) or streamed from system memory, with what was measured; null on the CPU.
     /// </summary>
     public WeightPlan? Placement { get; private set; }
+
+    /// <summary>
+    /// The element type the load chose for the run and how (<see cref="PretrainedOptions.ElementType"/>): "element type:
+    /// float32 (picked by auto)", or "(selected by the user (IDRAK_DEFAULT_DTYPE))". Published to telemetry when chosen.
+    /// </summary>
+    public ElementTypeChoice ElementType { get; private set; } = ElementTypes.Choose(ElementTypes.Auto);
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

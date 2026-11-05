@@ -206,7 +206,7 @@ public abstract class DistancePositionBias : AttentionPositionBias
             return Step(keys, queryStart, device);
         }
 
-        var index = new float[queries * keys];
+        var index = new int[queries * keys];
         for (int i = 0; i < queries; i++)
         {
             int query = queryStart + i;
@@ -217,7 +217,7 @@ public abstract class DistancePositionBias : AttentionPositionBias
             }
         }
 
-        var indices = Tensor.From(index, [queries * keys], device);
+        var indices = Tensor.Indices(index, device);
         return Table.EmbeddingLookup(indices).Reshape(queries, keys, Heads).Permute(2, 0, 1);   // [heads, queries, keys]
     }
 
@@ -240,7 +240,7 @@ public abstract class DistancePositionBias : AttentionPositionBias
             int heldAhead = _byDistance is { } a && a.Device == device ? a.Values.Shape[1] - 1 - a.Back : 0;
             int newBack = (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(16, Math.Max(back, heldBack)));
             int newAhead = Math.Max(ahead, heldAhead) <= 0 ? 0 : (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(ahead, heldAhead));
-            var index = new float[newBack + newAhead + 1];
+            var index = new int[newBack + newAhead + 1];
             for (int c = 0; c < index.Length; c++)
             {
                 index[c] = Bucket(c - newBack);
@@ -250,7 +250,7 @@ public abstract class DistancePositionBias : AttentionPositionBias
             Tensor values;
             using (new TensorScope())
             {
-                values = TensorScope.Untrack(Table.EmbeddingLookup(Tensor.From(index, [index.Length], device)).Permute(1, 0));   // [heads, distances]
+                values = TensorScope.Untrack(Table.EmbeddingLookup(Tensor.Indices(index, device)).Permute(1, 0));   // [heads, distances]
             }
 
             _byDistance = (device, newBack, values);

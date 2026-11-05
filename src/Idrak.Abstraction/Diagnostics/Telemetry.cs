@@ -161,6 +161,16 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>The dispatcher converted an operation's storage to the element type the device's kernel takes (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnElementsConverted(in ElementsConverted e)
+    {
+    }
+
+    /// <summary>A load chose the element type its run computes in, and how (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnElementTypeChosen(in ElementTypeChosen e)
+    {
+    }
+
     /// <summary>A device measured an operation's candidates at a new shape class and kept the fastest (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnTuning(in TuningCompleted e)
     {
@@ -619,6 +629,28 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnHostFallback(in e);
+            }
+        }
+    }
+
+    internal static void ElementsConverted(in ElementsConverted e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnElementsConverted(in e);
+            }
+        }
+    }
+
+    internal static void ElementTypeChosen(in ElementTypeChosen e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnElementTypeChosen(in e);
             }
         }
     }

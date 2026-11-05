@@ -628,7 +628,7 @@ internal abstract partial class Tests
         {
             TrainingCase($"scatter_chain_u32 + scatter_walk_f32 ({isa}), {Count} rows of {Dim} into {Vocabulary} ids",
                 [TrainingRandom(random, Count * Dim, -1, 1), ids, TrainingRandom(random, Vocabulary * Dim, -1, 1), new float[Count]], [2],
-                (b, s) => b.ScatterAddKernel(s[0], s[1], s[2], Count, Dim, Vocabulary),
+                (b, s) => b.ScatterAdd(s[0], s[1], s[2], Count, Dim, Vocabulary),
                 (m, a, grid, seed) =>
                 {
                     int blocks = (Count + 255) / 256;

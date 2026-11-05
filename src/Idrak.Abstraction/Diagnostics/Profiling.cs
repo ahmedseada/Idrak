@@ -706,7 +706,7 @@ public static class ProfileProbes
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
         foreach (var probe in new IProfileProbe[]
                  {
-                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
+                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new TypesProbe(), new GraphsProbe(), new InferenceProbe(),
                      new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
                  })
         {
@@ -953,6 +953,72 @@ public static class ProfileProbes
                 lock (this)
                 {
                     Seen.Add((e.Device, e.Operation, e.KernelsUnavailable));
+                }
+            }
+        }
+    }
+
+    // The element types of a run (plan 37, T0 and T1): the type a load chose and how (ElementTypeChosen), and the conversions
+    // the dispatcher made for kernels that take another type (ElementsConverted), by device, operation and types. Not
+    // intrusive: both are published where they happen.
+    private sealed class TypesProbe : IProfileProbe
+    {
+        public string Name => "types";
+
+        public string Summary => "the element type a load chose and how (picked by auto or selected by the user), and the conversions made for kernels that take another type";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var hook = new Seen();
+            var subscription = Telemetry.Subscribe(hook);
+            long before = ElementTypes.Conversions;
+            return () =>
+            {
+                subscription.Dispose();
+                run.Record("element conversions", ElementTypes.Conversions - before, "calls");
+                lock (hook)
+                {
+                    if (hook.Chosen.Count > 0)
+                    {
+                        run.Add(new ProfileTable("element types", ["device", "type", "how"], [.. hook.Chosen.Select(c => (IReadOnlyList<string>)[c.Device, c.ElementType, c.How])]));
+                    }
+
+                    if (hook.Conversions.Count > 0)
+                    {
+                        run.Add(new ProfileTable("element conversions", ["device", "operation", "from", "to", "calls", "elements"],
+                            [.. hook.Conversions.OrderByDescending(c => c.Value.Calls).ThenBy(c => c.Key.Operation, StringComparer.Ordinal)
+                                .Select(c => (IReadOnlyList<string>)[c.Key.Device, c.Key.Operation, c.Key.From, c.Key.To, Text(c.Value.Calls), Text(c.Value.Elements)])]));
+                    }
+                }
+            };
+        }
+
+        private sealed class Seen : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+            public List<ElementTypeChosen> Chosen { get; } = [];
+
+            public Dictionary<(string Device, string Operation, string From, string To), (long Calls, long Elements)> Conversions { get; } = [];
+
+            public void OnElementTypeChosen(in ElementTypeChosen e)
+            {
+                lock (this)
+                {
+                    Chosen.Add(e);
+                }
+            }
+
+            public void OnElementsConverted(in ElementsConverted e)
+            {
+                lock (this)
+                {
+                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Conversions, (e.Device, e.Operation, e.From, e.To), out _);
+                    sum = (sum.Calls + 1, sum.Elements + e.Elements);
                 }
             }
         }

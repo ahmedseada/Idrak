@@ -120,8 +120,9 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     private int Ordinal => Array.IndexOf(Probe.Value.Devices, _device);
 
     // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
-    // the CPU's limits so the two agree.
-    public override BackendCapabilities Capabilities => Device.Cpu.Backend.Capabilities;
+    // the CPU's limits so the two agree. Its kernels read indices as float32 (plan 37, T1: its integer index kernels are the
+    // owner's to build and test; int32 indices reach them through the dispatcher's counted conversion).
+    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with { IndexType = ElementType.Float32 };
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";

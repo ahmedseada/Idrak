@@ -25,6 +25,9 @@ internal sealed class RecordedCall(string @case, Operation operation, object?[] 
     // The values of each storage before the call, by slot.
     public float[][] Before { get; } = before;
 
+    // The element type and element count of each storage, by slot (plan 37, T0: index storages are int32 on the CPU).
+    public (ElementType Type, long Count)[] Types { get; init; } = [];
+
     // The values of each storage after the call on the reference device, by slot.
     public float[][] After { get; set; } = [];
 
@@ -36,7 +39,10 @@ internal sealed class RecordedCall(string @case, Operation operation, object?[] 
     {
         var storages = StoragesOf(arguments);
         var slots = Map(arguments, s => new Slot(Array.FindIndex(storages, f => ReferenceEquals(f, s))));
-        return new RecordedCall(@case, operation, slots, Array.ConvertAll(storages, Read));
+        return new RecordedCall(@case, operation, slots, Array.ConvertAll(storages, Read))
+        {
+            Types = Array.ConvertAll(storages, s => (s.ElementType, s.ElementCount)),
+        };
     }
 
     // Every storage among the arguments, each once (a storage passed twice is one buffer).

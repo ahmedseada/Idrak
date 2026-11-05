@@ -83,14 +83,8 @@ public static class LengthRegulation
             throw new ArgumentException("No text has a frame to make (every duration is 0).", nameof(durations));
         }
 
-        var indices = new float[rows.Length];
-        for (int i = 0; i < rows.Length; i++)
-        {
-            indices[i] = rows[i];
-        }
-
         int longest = rows.Length / n;
-        var gathered = hidden.Reshape(n * length, width).EmbeddingLookup(Tensor.From(indices, [indices.Length], hidden.Device));
+        var gathered = hidden.Reshape(n * length, width).EmbeddingLookup(Tensor.Indices(rows, hidden.Device));
         return (gathered.Reshape(n, longest, width), frames);
     }
 

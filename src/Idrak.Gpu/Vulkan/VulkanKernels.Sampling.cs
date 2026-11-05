@@ -145,7 +145,7 @@ internal static partial class VulkanKernels
             }
 
             // History entry q (0 = newest) of row r.
-            Val Entry(Val q) => history[r * capacity + ((len - 1 - q.ToUInt()) % cap).ToInt()].ToInt();
+            Val Entry(Val q) => history.Int(r * capacity + ((len - 1 - q.ToUInt()) % cap).ToInt());   // int32 token ids (plan 37, T1)
 
             w.Columns(n, q0 =>
             {
@@ -314,7 +314,7 @@ internal static partial class VulkanKernels
             w.Leader(() =>
             {
                 var drawn = token >= 0;                                  // none when nothing could be sampled
-                ids[r] = k.Select(drawn, token, k.Int(0)).ToFloat();
+                ids[r] = k.Select(drawn, token, k.Int(0));                    // an int32 token id (plan 37, T1)
                 stats[o] = token.ToFloat();
                 stats[o + 1] = k.Select(drawn, tokenWeight / total, k.Float(0f));
                 stats[o + 2] = bits;

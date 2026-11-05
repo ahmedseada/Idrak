@@ -78,6 +78,7 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
             Operations.Ops.StridedCopy, Operations.Ops.BatchedMatMul, Operations.Ops.BatchedMatMulStrided, Operations.Ops.AttentionTiledStrided,
             Operations.Ops.AttentionTiledStridedBackward,
         },
+        IndexType = ElementType.Int32,                                       // indices, token ids and offsets (plan 37, T1)
     };
 
     public override string Kind => "cpu";
@@ -590,6 +591,21 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal static float[] D(Storage s) => ((CpuStorage)s).Data;
+
+    // An int32 storage's elements (plan 37, T1: indices, token ids, offsets): its words read as integers.
+    internal static Span<int> I(Storage s) => MemoryMarshal.Cast<float, int>(((CpuStorage)s).Data.AsSpan(0, s.Length));
+
+    public override void ConvertElementsKernel(Storage source, Storage destination)
+    {
+        long count = source.ElementCount;
+        if (destination.ElementCount != count)
+        {
+            throw new ArgumentException($"A conversion keeps the {count} elements of {source.ElementType}; the {destination.ElementType} storage holds {destination.ElementCount}.");
+        }
+
+        ElementConversions.Convert(source.ElementType, MemoryMarshal.AsBytes(D(source).AsSpan(0, source.Length)), destination.ElementType,
+            MemoryMarshal.AsBytes(D(destination).AsSpan(0, destination.Length)), (int)count);
+    }
 
     private static double SumSpan(ReadOnlySpan<float> x)
     {

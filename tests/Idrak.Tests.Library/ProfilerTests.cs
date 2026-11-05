@@ -268,7 +268,10 @@ internal abstract partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "jit", "memory", "tuning", "fallbacks", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        // Idrak.Mcp adds "mcp" after them when it is loaded before the registry's first use (as an earlier group may load it).
+        string[] library = ["bandwidth", "cpu", "heap", "jit", "memory", "tuning", "fallbacks", "types", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"];
+        Check(ProfileProbes.Names.Take(library.Length).SequenceEqual(library) && ProfileProbes.Names.Skip(library.Length).All(n => n == "mcp")
+              && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

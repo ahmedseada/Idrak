@@ -50,6 +50,13 @@ public class Operation
     /// </summary>
     public KernelSource Fallback { get; }
 
+    /// <summary>
+    /// The parameters holding indices, token ids or offsets (plan 37, T1), by name: storages of the device's index type
+    /// (<see cref="Devices.BackendCapabilities.IndexType"/>), converted by the dispatcher when they are another. Empty for
+    /// an operation that takes none.
+    /// </summary>
+    public IReadOnlyList<string> IndexParameters { get; internal init; } = [];
+
     /// <summary>A plug-in operation's default kernel; null for the library's operations (the device's own runs).</summary>
     internal virtual Delegate? Default => null;
 

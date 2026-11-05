@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
 using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Abstraction.Devices;
@@ -50,6 +51,7 @@ internal sealed class HostCall : IDisposable
             }
 
             var mirror = CpuBackend.Instance.Allocate(storage.Length, zeroed: false);
+            mirror.SetType(storage.ElementType, storage.ElementCount);    // the same words, read as the same type (plan 37, T0)
             try
             {
                 var values = CpuBackend.D(mirror).AsSpan(0, storage.Length);
@@ -89,7 +91,8 @@ internal sealed class HostCall : IDisposable
             try
             {
                 var values = CpuBackend.D(host).AsSpan(0, device.Length);
-                if (!values.SequenceEqual(before.AsSpan(0, device.Length)))
+                // Compared as bits: a word holding an integer (or a float's -0 against 0) is changed when its bits are.
+                if (!MemoryMarshal.Cast<float, int>(values).SequenceEqual(MemoryMarshal.Cast<float, int>(before.AsSpan(0, device.Length))))
                 {
                     if (device is IHostStorage inPlace)
                     {

@@ -18,6 +18,12 @@ public sealed partial class Tensor
             throw new ArgumentOutOfRangeException(nameof(offset), $"[{offset}, {offset + destination.Length}) is outside a tensor of {Size} elements.");
         }
 
+        if (!IsFloat32)
+        {
+            Widened(offset, destination.Length).CopyTo(destination);       // another type's values as floats (plan 37, T0)
+            return;
+        }
+
         Backend.DownloadRange(Storage, offset, destination);
     }
 

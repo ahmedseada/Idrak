@@ -132,6 +132,14 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             : $"Device {e.Device} {e.Operation} runs on the host: the device has no kernel of its own for it here, so each call copies its operands to the CPU and back");
 
     /// <inheritdoc />
+    public void OnElementsConverted(in ElementsConverted e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Device {e.Device} {e.Operation}: {e.Elements} elements converted from {e.From} to {e.To} (its kernel takes {e.To})"));
+
+    /// <inheritdoc />
+    public void OnElementTypeChosen(in ElementTypeChosen e) => _out.WriteLine($"Device {e.Device} element type: {e.ElementType} ({e.How})");
+
+    /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) =>
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class{(e.Nested ? ", inside another tuning" : "")})"));
 
@@ -491,6 +499,12 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnHostFallback(in HostFallback e) => Write(e);
 
     /// <inheritdoc />
+    public void OnElementsConverted(in ElementsConverted e) => Write(e);
+
+    /// <inheritdoc />
+    public void OnElementTypeChosen(in ElementTypeChosen e) => Write(e);
+
+    /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => Write(e);
 
     /// <inheritdoc />
@@ -607,6 +621,12 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnHostFallback(in HostFallback e) => _channel.OnHostFallback(in e);
+
+    /// <inheritdoc />
+    public void OnElementsConverted(in ElementsConverted e) => _channel.OnElementsConverted(in e);
+
+    /// <inheritdoc />
+    public void OnElementTypeChosen(in ElementTypeChosen e) => _channel.OnElementTypeChosen(in e);
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => _channel.OnTuning(in e);
@@ -838,6 +858,20 @@ public static class TelemetryJson
                 w.WriteString("device", e.Device);
                 w.WriteString("operation", e.Operation);
                 if (e.KernelsUnavailable is { } why) w.WriteString("kernels_unavailable", why);
+                break;
+            case ElementsConverted e:
+                w.WriteString("event", "elements_converted");
+                w.WriteString("device", e.Device);
+                w.WriteString("operation", e.Operation);
+                w.WriteString("from", e.From);
+                w.WriteString("to", e.To);
+                w.WriteNumber("elements", e.Elements);
+                break;
+            case ElementTypeChosen e:
+                w.WriteString("event", "element_type");
+                w.WriteString("device", e.Device);
+                w.WriteString("element_type", e.ElementType);
+                w.WriteString("how", e.How);
                 break;
             case TuningCompleted e:
                 w.WriteString("event", "tuning");
