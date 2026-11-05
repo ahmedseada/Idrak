@@ -10,6 +10,24 @@ These are the owner's standing rules. They hold in every session, after every co
   their progress. The session's work (each piece, each merge, each agent's piece) is listed as tasks in the Tasks window
   (TaskCreate / TaskUpdate), set in progress when started and completed when done, so the owner sees what is running.
 
+- **A session on the owner's machine** (Claude Code in a console on Windows, repo at `D:\Projects\Idrak`) follows every
+  rule here, with these differences: it builds and runs the targeted tests itself, on `cpu` and on the owner's own
+  devices (`cuda`, and `vulkan` on the real driver), never the full suite; it runs `idrak bench` itself when a piece
+  needs it, and those numbers are real speed and memory; it hands the owner command lists only for what it cannot run
+  itself. Agents' worktrees live under `test-output\worktrees\` (git ignores it). The machine has no AMD GPU for now:
+  HIP code is proven only by the GCN interpreter on the CPU, and the HIP runs are held in one list until the owner has
+  one.
+- **Answer the owner first.** A question is answered at once, before or between long builds and test runs, never after
+  them; a quick question never waits on a merge. When the owner says stop, stop and wait.
+- **Simple git commands that match the allow list.** One plain command per call (`git -C <path> commit -F <file>`,
+  `git -C <path> push origin main`, `git -C <path> cherry-pick <hash>`): no `-c user.name=...` overrides (the repository's
+  own git config holds the owner's name and email), no `&&` chains, no pipes or redirects on git commands. Commit
+  messages are written to a file first.
+- **Every command list for the owner is complete.** It always starts with `cd D:\Projects\Idrak; git checkout main;
+  git pull origin main`, then the build, then the runs; never a lone test line, not even an addition to a held list
+  (when lists are held, say that the run was added, with no command). HIP lines are left out while there is no AMD GPU.
+  A command whose output the owner will paste writes UTF-8: `| Out-File -Encoding utf8 test-output\<name>.txt`, never
+  PowerShell's `>` (which writes UTF-16).
 - **Ambiguous instructions are asked, not guessed.** When the owner's wording could mean start or stop, now or later,
   this or that, ask in one line before acting; never start new work (a phase, an agent, a side fix) the owner did not
   ask for.

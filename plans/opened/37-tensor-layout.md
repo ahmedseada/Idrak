@@ -8,7 +8,10 @@ gathered into a working cache as it attends, page-aware attention kernels not ye
 in their file's format, CPU and five Vulkan formats) built 2026-11-05; R0 (MoE routing on the device: R0a Vulkan, R0b HIP,
 R0c CUDA, R0d expert launches sized by the device's counts) and R1 (experts placed apart: `ExpertPlacements` resident,
 offload and auto, a device cache learned from the routing's counts, lazy experts, cold experts copied in or on the CPU;
-the copy stream's prefetch of the next layer's experts not yet) built 2026-11-05; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
+the copy stream's prefetch of the next layer's experts not yet) built 2026-11-05; P0 and P0b (one result on every CPU:
+Idrak's own exp, log, sin, cos, pow and the double functions, 16 fixed accumulator lanes, the k-split gated by shape;
+the owner's CPU and CUDA runs pass, the speed bench not yet run) built 2026-11-05; the rest (W3, T2, T3, N1, V2, N3, S0)
+planned, held by the owner. Q0, K0, W3 and the wider T0, T2, T3 added
 2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`
