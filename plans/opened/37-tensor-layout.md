@@ -2,7 +2,7 @@
 
 **Status (2026-11-05):** W0-W2 (weight placement) and V0, V1, V1b (layouts, CPU views read in place) built, `main`
 6eff13c; the rest planned; work stopped by the owner until resumed. Q0, K0, W3 and the wider T0, T2, T3 added
-2026-11-05. Written from the owner's request (2026-11-04): "add it as separate plan
+2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`
 82b0435.
@@ -25,7 +25,10 @@ Less memory and fewer copies on every path, with every existing result unchanged
 5. **Element and block types as registered data (T0, T3):** a type is a registry entry (its bits per value, block
    size, scales, conversions and kernels), so int2, ternary, fp8 and ggml's block formats plug in without changing
    tensors.
-6. **64-bit sizes (C3):** a tensor and a storage may hold more than 2^31 elements; index arithmetic that can overflow
+6. **Training across devices and machines (N0-N3):** fewer bytes on the network (int8/fp8 gradients with error
+   feedback, bf16/fp8 and packed weights when sharded), pipeline stages sized by each machine's measured memory, each
+   rank mapping only its shard, and tensor parallelism for a layer too large for one device.
+7. **64-bit sizes (C3):** a tensor and a storage may hold more than 2^31 elements; index arithmetic that can overflow
    is 64-bit.
 
 ## What it gains, and what it does not
@@ -44,6 +47,9 @@ the memory of every run.
 | A 4-bit or lower GGUF model | Types without a packed format expanded to float32 at load: up to 8× the file's size in memory (16× for 2-bit) | About the file's size (Q0) | Weights stay packed; the product expands each block per tile, as llama.cpp does |
 | A long context, or many users on `idrak serve` | The KV cache in float32, one per request | 2-4× less cache (T2), prompts' caches shared (K0) | An int8 or fp8 cache; a paged cache whose pages a shared prompt prefix reuses |
 | A CPU layer of a split model (W1) | Its weights copied from the file into memory | No second copy (W3) | The CPU reads the file's mapping, shared with the system's page cache |
+| Training over a network | Gradients in float32 or bf16 (top-k optional); sharded weights gathered in float32 | 2-8× fewer bytes on the wire (N0, N1) | The network is far slower than device memory, so bytes on the wire decide the step's speed |
+| A cluster of unequal machines | Pipeline stages split evenly | Stages sized by each machine's measured memory (N2) | W1's `auto` sizing, across machines |
+| A layer too large for one device | Cannot train or run it | Runs split across devices (N3) | Tensor parallelism splits the layer's products |
 
 What it does not change: a model that already fits the device runs as today in W1 and W2 (no gain, no loss); a model far
 larger than the device is still bound by the CPU's and the system memory's speed (Ollama has the same limit); lazy start
@@ -61,6 +67,7 @@ staging (W1 aims at inference). The numbers come from W0 and the owner's runs, n
 | Indices as floats | gathers, embeddings, MoE routing | Exact only below 2^24 |
 | Low-bit GGUF types expanded at load | `GgufFile` (plan 36's C14 types IQ1-IQ3, TQ1_0, TQ2_0, MXFP4, and any type with no packed format) | Dequantized to float32 when the model loads: memory up to 8-16× the file's size |
 | KV cache in the compute type, one per request | the decoder's `DecodingContext` | The largest memory of a long context or of many concurrent requests |
+| Cluster sharding without tensor parallelism | `Idrak.Cluster`, `ClusterOptions.Shard` (`none`, `optimizer`, `gradients`, `parameters`: ZeRO 1-3's ideas) and `Placement` (`single`, `pipeline`); gradient compressions `none`, `bf16`, `top-k` | No split of a single layer across devices; pipeline stages split evenly; no int8/fp8 gradients; sharded weights gathered in float32 |
 | `int` sizes | `Storage.Length`, `Tensor.Size`, GPU index math | At most 2^31 elements per tensor |
 | About 150 virtual backend operations | `src/Idrak.Abstraction/Devices/Backend*.cs` | Each implemented on CPU, CUDA, Vulkan, HIP |
 
@@ -105,6 +112,10 @@ on the benches, with the device's own reported limits (rule 84), never one card'
 | W3 | **CPU layers read the file's mapping** (the owner, 2026-11-05): a split model's CPU layers (W1) and lazily loaded layers (W2) read their weights from the checkpoint's file mapping in place where the stored format is the one computed in (or Q0 keeps it packed), so the weights are not copied a second time into memory; the operating system's page cache holds them once | Results unchanged; the process's memory measured lower by the CPU layers' bytes | `weight placement`, `lazy load` on `cpu` |
 | R0 | MoE routing on the device (moved here from plan 36's L4 by the owner, 2026-11-04): plan 36's G-1b adds the routing and the row-offset expert product as backend operations with CPU kernels, GPUs falling back to host routing (counted). R0 adds the device kernels: top-k over the router's logits, per-expert counts, an exclusive scan into offsets, the permutation, and the expert product reading its rows through the offsets, on Vulkan, CUDA and HIP, with int32 indices from T1 and a fixed summation order (rule 86); graph capture then allowed for MoE. No host round trip per layer | The MoE groups unchanged on every device; host syncs per layer zero on the GPU benches; the owner's GPU runs | the MoE groups on `vulkan` here, `cuda` and `hip` by the owner |
 | R1 | Expert offloading (the owner, 2026-11-04, after "only few are active and other on demand", as Ollama / llama.cpp do with `--cpu-moe`): today every expert of a `MixtureOfExperts` layer (`src/Idrak/Layers/MixtureOfExperts.cs`) stays in device memory, so a large MoE model needs its full size on the device. A contract plus registry `ExpertPlacements` (`Idrak.Abstraction`) chooses where experts live: `resident` (today's), `offload` (cold experts in host memory, pinned where the backend can, or read from the checkpoint's file mapping; the hot ones in a device cache) and `auto` (resident when the model fits the measured free device memory, else `offload`). The device cache's size comes from the measured free memory or a user limit (`ComputeResources`); which experts stay is learned from the routing counts at run time (most used first), never fixed per model. While a layer computes, the next layer's chosen experts are copied in on the backend's copy stream (independent work spread, rule 79). A cold expert either is copied in or runs on the CPU (a setting, as llama.cpp's `--cpu-moe`). Settings: `IDRAK_MOE_EXPERTS` (`resident`, `offload`, `auto`), `IDRAK_MOE_DEVICE_EXPERTS_MB`, `IDRAK_MOE_COLD` (`copy`, `cpu`), and `--moe-experts` on `idrak run`, `serve`, `tune` | Results equal the resident run bit for bit on every placement (rule 71); a model whose experts exceed the device's free memory runs; device memory measured lower and the time per token measured, cold and warm apart (rule 75) | `moe placement` (new) on `cpu` and `vulkan` here; `cuda` and `hip` by the owner |
+| N0 | **int8 and fp8 gradient compression with error feedback** (the owner, 2026-11-05): new entries in the existing gradient-compression registry (beside `none`, `bf16`, `top-k`), with each rank keeping the rounding error it did not send and adding it to the next step's gradient, so nothing drifts; the scales per bucket; the sum in a fixed order (rule 86). Settings through the existing `IDRAK_CLUSTER_*` compression option | The simulated cluster's loss curve within the fixture's tolerance of the float32 run over N steps (as the `bf16 wire` test does); bytes on the wire measured 4× fewer than float32 | `cluster` compression groups on `cpu` |
+| N1 | **Sharded weights sent smaller** (after Q0 and T2): with `IDRAK_CLUSTER_SHARD=parameters`, a layer's weights are gathered in their stored type (bf16, fp8) or, for a frozen packed base (QLoRA-style fine-tuning across machines), in their packed format, expanded on the receiving rank; activations between pipeline stages in bf16 where the run computes in it | Results equal the float32 gather where the stored type is float32, and within the type's reference tolerance otherwise; gather bytes measured 2-8× fewer | `cluster` sharding and pipeline groups on `cpu` |
+| N2 | **Pipeline stages sized by each machine's measured memory, and each rank mapping only its shard** (W1's `auto` and W2/W3 across machines): a rank reports its measured free memory; the stages are cut so each fits (a user's per-rank count overrides); each rank maps the checkpoint and touches only its shard's or stage's pages (the existing per-shard reads, through W3's mapping), so a rank starts fast and holds only its part | A cluster of unequal simulated ranks places stages that fit each; results equal the even split; each rank's memory measured at its part's size | `cluster` pipeline and topology groups on `cpu` |
+| N3 | **Tensor parallelism**: a layer's matrix products split across devices or machines (column-split then row-split, as Megatron does for attention and the MLP), with the all-gather and reduce-scatter through `Idrak.Network`'s collectives, so a layer too large for one device trains and runs; a placement `tensor` beside `single` and `pipeline`, combinable with data parallelism. Card-agnostic: the split count from the measured devices or a user setting | Results equal the single-device run within the fixed-order sum (rule 86); the simulated cluster and the owner's multi-GPU runs | `cluster` groups on `cpu` (simulated ranks), across `vulkan` for the device path; `cuda`/`hip` multi-GPU by the owner |
 | S0 | 64-bit lengths: `Storage` and `Tensor.Size` as `long`; index math 64-bit where it can overflow, 32-bit where the size is proven small (measured: no slowdown on the benches) | A tensor above 2^31 elements on CPU; the benches unchanged in speed | `large tensors` (new; CPU, memory permitting, skipped with the reason otherwise) |
 
 **Where each device is tested (the owner, 2026-11-04):** the sessions test on `cpu` and on `vulkan` through Mesa's
@@ -115,7 +126,8 @@ piece hands over. llvmpipe proves results, never speed: speed is measured only o
 W comes first: it turns today's failure or crawl on a model larger than the device into a run at a usable speed. Then
 V: views pay off with float32 alone. Then T0, T1 (exact indices are a correctness fix), then Q0 (the largest memory
 gain for low-bit models, built on T0's block formats), then T2 with the KV cache types, T3 with int2 and the other
-packed formats, K0 and W3. S0 last: it touches every kernel's index math and gains only for the largest tensors.
+packed formats, K0 and W3. N0 and N2 need neither types nor packing and may run as soon as the owner resumes; N1
+follows Q0 and T2; N3 after them, the largest of the network stages. S0 last: it touches every kernel's index math and gains only for the largest tensors.
 
 ## Decisions for the owner
 
