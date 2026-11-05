@@ -264,11 +264,15 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
     }
 
     // Whether every expert is a gated block of float32 layers of its own (no adapter, tie or soft-cap) of one hidden width on
-    // the input's device, with nothing listening to the forward passes (a sharded run's gathers, offloaded weights): what
-    // ExpertGatedPair and ExpertMatMul compute as the experts' own layers do. A plain loop: it runs on every forward.
+    // the input's device, with nothing listening to the forward passes (a sharded run's gathers): what ExpertGatedPair and
+    // ExpertMatMul compute as the experts' own layers do. A plain loop: it runs on every forward.
+    // Offloading is refused only where it is on (TensorOffloading.Active: ComputeResources.OffloadToHostMemory, or anything
+    // offloaded already). Then the experts' weights may live in system memory or move between steps: their own layers
+    // stage them, and a recorded graph could not follow them. A device that merely can offload (IOffloadingBackend, as
+    // CUDA always does) routes on the device while it is off.
     private bool ExpertsOnDevice(Tensor input)
     {
-        if (ForwardHooks.Listening || input.Backend.Offload is not null)
+        if (ForwardHooks.Listening || input.Backend.Offload is { } offload && TensorOffloading.Active(offload))
         {
             return false;
         }

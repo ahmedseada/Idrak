@@ -23,6 +23,7 @@ internal abstract partial class Tests
     [
         ("mixture of experts: routing takes the k most probable experts (ties to the lowest index, as torch.topk), renormalized when configured; a known routing on the device", ExpertRouting),
         ("mixture of experts: routing where the tensors are (RouteTopK, ExpertGatedPair, ExpertMatMul) gives the host routing's values bit for bit (biases, odd widths, experts with many rows and few, every activation, a shared expert); RouteTopK matches the layer's host routing; a device without the kernels routes on the host, counted as a host fallback of RouteTopK; IDRAK_MOE_ROUTING=host turns it off", ExpertRoutingOnDevice),
+        ("mixture of experts: a device that can offload (IOffloadingBackend, as CUDA always is) routes its experts on the device while nothing is offloaded and offloading is off; with a storage offloaded or ComputeResources.OffloadToHostMemory on, it reads the routing back (a recorded graph could not follow a moved weight)", ExpertsWithOffloadSupport),
         ("mixture of experts: Mixtral-, Qwen2-MoE- and Qwen3-MoE-shaped decoders match the loop reference (prompt, training, cached decoding, batches); packed experts; recording falls back; JSON and parameter counts", ExpertDecoders),
         ("mixture of experts: CUDA's routing and expert kernels (PtxKernels.Routing.cs), read on the host: each declares the parameters its launch passes and only the registers it declares, every branch reaches a label of its own kernel, indices are read as int32, the weights divided by div.rn, each product one fma.rn chain from zero with its bias added by add.rn, and the gated pair's activation is gated_act_f32's", ExpertPtx),
         ("mixture of experts: gradients of router, experts, shared expert and input match finite differences; load-balancing loss; LoRA on attention fine-tunes a model with experts", ExpertTraining),
@@ -236,6 +237,159 @@ internal abstract partial class Tests
 
         static int[] Bits(float[] values) => [.. values.Select(BitConverter.SingleToInt32Bits)];
         static float[] Uniform(Random random, int count) => [.. Enumerable.Range(0, count).Select(_ => random.NextSingle() * 2 - 1)];
+    }
+
+    // A device that can offload (IOffloadingBackend) with the routing operations as kernels of its own: plain arrays for its
+    // memory, every operation through the host fallback (the routing's too, so its results are the CPU's), and the number
+    // of storages it counts as offloaded set by the test (none at first). CUDA is such a device: it always implements
+    // IOffloadingBackend, whether or not anything is offloaded.
+    internal sealed class OffloadCapableBackend : Backend, IOffloadingBackend, IMemoryOffload
+    {
+        public static readonly OffloadCapableBackend Instance = new();
+
+        public int Offloaded;
+
+        public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities;
+
+        public override string Kind => "moe-offload-test";
+
+        public override string Name => "mixture-of-experts test (can offload, routing kernels of its own)";
+
+        public override Storage Allocate(int length, bool zeroed) => new MinimalStorage(this, new float[length], length);
+
+        public override void Return(Storage storage)
+        {
+        }
+
+        protected override void Detach(Storage storage) => ((MinimalStorage)storage).Data = null!;
+
+        protected override void Attach(Storage storage, Storage fresh) => ((MinimalStorage)storage).Data = ((MinimalStorage)fresh).Data;
+
+        public override MemoryUsage GetMemoryUsage() => new(0, 0, null);
+
+        public override void ReleaseCachedMemory()
+        {
+        }
+
+        public override void Upload(ReadOnlySpan<float> source, Storage destination) => source.CopyTo(((MinimalStorage)destination).Data);
+
+        public override void Download(Storage source, Span<float> destination) => ((MinimalStorage)source).Data.AsSpan(0, destination.Length).CopyTo(destination);
+
+        public override void DownloadRange(Storage source, int offset, Span<float> destination) =>
+            ((MinimalStorage)source).Data.AsSpan(offset, destination.Length).CopyTo(destination);
+
+        public override void Synchronize()
+        {
+        }
+
+        // The routing operations as its own kernels (RoutesExperts): the host fallback's work, declared here.
+        public override void RouteTopKKernel(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k,
+            bool normalize) => base.RouteTopKKernel(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+
+        public override void ExpertGatedPairKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts,
+            Storage hidden, int rows, int k, int n, int activation) => base.ExpertGatedPairKernel(x, offsets, experts, hidden, rows, k, n, activation);
+
+        public override void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n) =>
+            base.ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
+
+        IMemoryOffload IOffloadingBackend.Offload => this;
+
+        public int OffloadedCount => Offloaded;
+
+        public bool IsOffloaded(Storage storage) => false;
+
+        public void SetPriority(Storage storage, OffloadPriority priority)
+        {
+        }
+
+        public bool MoveToHost(Storage storage, bool keep) => false;
+
+        public bool MoveToDevice(Storage storage) => false;
+
+        public int Rebalance(bool makeRoom = true) => 0;
+
+        public void Prefetch(IReadOnlyList<Storage> storages)
+        {
+        }
+
+        public IDisposable? Stage(IReadOnlyList<Storage> storages) => null;
+    }
+
+    internal sealed class OffloadCapableProvider : IDeviceProvider
+    {
+        public string Name => "moe-offload-test";
+
+        public string Summary => "a test device that can offload, with the mixture-of-experts routing as kernels of its own";
+
+        public DeviceType Type => DeviceType.Other;
+
+        public int Count => 1;
+
+        public Backend Create(int ordinal) => OffloadCapableBackend.Instance;
+
+        public bool IsStarted(int ordinal) => false;
+
+        public bool Listed(int ordinal) => false;
+
+        public string? Note(int ordinal) => "test backend: by name only";
+    }
+
+    internal static void ExpertsWithOffloadSupport(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(ExpertsWithOffloadSupport)))
+        {
+            return;
+        }
+
+        if (DeviceProviders.Find("moe-offload-test") is null)
+        {
+            DeviceProviders.Register(new OffloadCapableProvider());
+        }
+
+        var capable = Device.Get("moe-offload-test");
+        var backend = OffloadCapableBackend.Instance;
+        bool routesBefore = MixtureOfExperts.RoutesOnDevice, offloadBefore = ComputeResources.OffloadToHostMemory;
+        try
+        {
+            MixtureOfExperts.RoutesOnDevice = true;
+            ComputeResources.OffloadToHostMemory = false;
+            backend.Offloaded = 0;
+            var random = new Random(23);
+            using var moe = new MixtureOfExperts(8, 6, 4, 2, normalizeTopK: true, device: capable, random: new Random(24));
+            using var input = Tensor.From([.. Enumerable.Range(0, 5 * 8).Select(_ => random.NextSingle() * 2 - 1)], [5, 8], capable);
+            long RouteCalls()
+            {
+                using var trace = Kernels.Trace(backend);
+                using var scope = new TensorScope();
+                using (Autograd.NoGrad())
+                {
+                    moe.Forward(input).ToArray();
+                    return trace.Calls(Ops.RouteTopK);
+                }
+            }
+
+            Check(backend.Offload is not null && backend.RoutesExperts, $"{backend.Name}: can offload ({backend.Offload is not null}) and routes experts ({backend.RoutesExperts})");
+            long calls = RouteCalls();
+            Check(calls == 1 && !moe.RoundTrips(backend),
+                $"nothing offloaded and offloading off: the experts route on the device (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)}), so a decoding step through them is recorded");
+
+            backend.Offloaded = 1;
+            calls = RouteCalls();
+            Check(calls == 0 && moe.RoundTrips(backend), $"a storage offloaded: the routing is read back (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)})");
+
+            backend.Offloaded = 0;
+            ComputeResources.OffloadToHostMemory = true;
+            calls = RouteCalls();
+            Check(calls == 0 && moe.RoundTrips(backend),
+                $"offloading on (ComputeResources.OffloadToHostMemory): the routing is read back (RouteTopK called {calls} times, round trips {moe.RoundTrips(backend)})");
+        }
+        finally
+        {
+            MixtureOfExperts.RoutesOnDevice = routesBefore;
+            ComputeResources.OffloadToHostMemory = offloadBefore;
+            backend.Offloaded = 0;
+        }
     }
 
     internal static void ExpertDecoders(Device device)
