@@ -2,12 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Abstraction.Generation;
 
 // The weights the CPU sampler draws a row from (Backend.SampleRowsKernel's rule: temperature, top-k, min-p, top-p, and the
 // non-finite scores), shared with TokenSampler.Probabilities so a host-side check (speculative decoding) reads the very
-// distribution a step samples from: the same operations in the same order.
+// distribution a step samples from: the same operations in the same order. e^x and ln x are the CPU's own (CpuMath), the
+// same bits on every machine.
 internal static class SamplingWeights
 {
     // Fills e[0..z.Length) with the row's unnormalized weights and returns their sum (0: nothing to sample). `top` holds at
@@ -72,7 +74,7 @@ internal static class SamplingWeights
         // Min-p: keep tokens at least minP times as likely as the best: s >= max + ln(minP).
         if (minP > 0f && !infinite && !empty)
         {
-            threshold = MathF.Max(threshold, max + MathF.Log(minP));
+            threshold = MathF.Max(threshold, max + CpuMath.Log(minP));
         }
 
         // Top-p (nucleus): the highest cut-off whose kept mass is still >= topP of the total, by bisection. Only scores at
@@ -88,7 +90,7 @@ internal static class SamplingWeights
                 float sc = v * invT;
                 if (sc >= threshold)
                 {
-                    float w = MathF.Exp(sc - max);
+                    float w = CpuMath.Exp(sc - max);
                     total += w;
                     if (sc >= floor)
                     {
@@ -137,7 +139,7 @@ internal static class SamplingWeights
         for (int j = 0; j < z.Length; j++)
         {
             float sc = z[j] * invT;
-            e[j] = infinite ? (sc == float.PositiveInfinity ? 1f : 0f) : sc >= threshold && sc > float.NegativeInfinity ? MathF.Exp(sc - max) : 0f;
+            e[j] = infinite ? (sc == float.PositiveInfinity ? 1f : 0f) : sc >= threshold && sc > float.NegativeInfinity ? CpuMath.Exp(sc - max) : 0f;
             sum += e[j];
         }
 

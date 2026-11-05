@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -161,23 +162,9 @@ internal sealed partial class CpuBackend
         var dxv = MemoryMarshal.Cast<float, Vector<float>>(dx);
         var m = new Vector<float>(mean);
         var r = new Vector<float>(rstd);
-        Vector<float> sum1 = default, sum2 = default;
-        for (int i = 0; i < xv.Length; i++)
-        {
-            var g = dyv[i] * gv[i];
-            sum1 += g;
-            sum2 = Vector.FusedMultiplyAdd(g, (xv[i] - m) * r, sum2);
-        }
-
-        float s1 = Vector.Sum(sum1), s2 = Vector.Sum(sum2);
         int tail = xv.Length * Vector<float>.Count;
-        for (int j = tail; j < cols; j++)
-        {
-            float g = dy[j] * gamma[j];
-            s1 += g;
-            s2 = MathF.FusedMultiplyAdd(g, (x[j] - mean) * rstd, s2);
-        }
-
+        var (s1, s2) = CpuMath.FoldPair(new LayerNormGradientTerms(ref MemoryMarshal.GetReference(x), ref MemoryMarshal.GetReference(gamma),
+            ref MemoryMarshal.GetReference(dy), mean, rstd), cols);                // Σ g and Σ g · xhat, in the fixed lanes
         s1 /= cols;
         s2 /= cols;
         var v1 = new Vector<float>(s1);
@@ -193,6 +180,38 @@ internal sealed partial class CpuBackend
         {
             float g = dy[j] * gamma[j], xhat = (x[j] - mean) * rstd;
             dx[j] = MathF.FusedMultiplyAdd(rstd, g - s1 - xhat * s2, dx[j]);
+        }
+    }
+
+    // g = dy · gamma into Σ g, and g · xhat (xhat = (x − mean) · rstd, one FMA) into the second sum.
+    private readonly ref struct LayerNormGradientTerms : CpuMath.ILanePair
+    {
+        private readonly ref float _x, _gamma, _dy;
+        private readonly float _mean, _rstd;
+
+        public LayerNormGradientTerms(ref float x, ref float gamma, ref float dy, float mean, float rstd)
+        {
+            _x = ref x;
+            _gamma = ref gamma;
+            _dy = ref dy;
+            _mean = mean;
+            _rstd = rstd;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Add(ref Vector<float> first, ref Vector<float> second, int i)
+        {
+            var g = Vector.LoadUnsafe(ref _dy, (nuint)i) * Vector.LoadUnsafe(ref _gamma, (nuint)i);
+            first += g;
+            second = Vector.FusedMultiplyAdd(g, (Vector.LoadUnsafe(ref _x, (nuint)i) - new Vector<float>(_mean)) * new Vector<float>(_rstd), second);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Add(ref float first, ref float second, int i)
+        {
+            float g = Unsafe.Add(ref _dy, i) * Unsafe.Add(ref _gamma, i);
+            first += g;
+            second = MathF.FusedMultiplyAdd(g, (Unsafe.Add(ref _x, i) - _mean) * _rstd, second);
         }
     }
 
@@ -249,15 +268,15 @@ internal sealed partial class CpuBackend
                 double sum = 0;
                 foreach (float v in x)
                 {
-                    sum += Math.Exp(v - max);
+                    sum += CpuMath.ExpDouble(v - max);
                 }
 
-                float lse = max + (float)Math.Log(sum);
+                float lse = max + (float)CpuMath.LogDouble(sum);
                 lv[r] = w * (lse - x[target]);
                 float g = scale * w;
                 for (int j = 0; j < x.Length; j++)
                 {
-                    x[j] = g * (MathF.Exp(x[j] - lse) - (j == target ? 1f : 0f));
+                    x[j] = g * (CpuMath.Exp(x[j] - lse) - (j == target ? 1f : 0f));
                 }
             }
         });
@@ -323,7 +342,7 @@ internal sealed partial class CpuBackend
                     if (w > 0f)
                     {
                         float p = w / sum;
-                        entropy -= p * MathF.Log2(p);
+                        entropy -= p * (CpuMath.Log(p) * 1.44269504f);   // log2 p as ln p · log2 e, no C runtime's logarithm
                         if (found < 5 || w > e[taken[4]])
                         {
                             int at = Math.Min(found, 4);

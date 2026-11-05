@@ -171,7 +171,7 @@ internal sealed partial class CpuBackend
                                 tileMax = MathF.Max(tileMax, seen[c]);
                             }
 
-                            float updated = MathF.Max(max[i], tileMax), alpha = MathF.Exp(max[i] - updated);
+                            float updated = MathF.Max(max[i], tileMax), alpha = CpuMath.Exp(max[i] - updated);
                             total[i] = total[i] * alpha + CpuMath.ExpShifted(seen, updated);
                             max[i] = updated;
                             if (alpha != 1f)
@@ -202,7 +202,7 @@ internal sealed partial class CpuBackend
 
                         if (lv is not null)
                         {
-                            lv[row] = total[i] > 0f ? max[i] + MathF.Log(total[i]) : float.NegativeInfinity;
+                            lv[row] = total[i] > 0f ? max[i] + CpuMath.Log(total[i]) : float.NegativeInfinity;
                         }
                     }
                 }
@@ -272,7 +272,7 @@ internal sealed partial class CpuBackend
                             continue;
                         }
 
-                        float score = variant.Cap(pr[c] * scale), weight = MathF.Exp(score - lv[row]);
+                        float score = variant.Cap(pr[c] * scale), weight = CpuMath.Exp(score - lv[row]);
                         pr[c] = weight;
                         dr[c] = scale * weight * (dr[c] - delta[row]) * variant.Slope(score);
                     }

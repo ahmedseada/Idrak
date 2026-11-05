@@ -101,7 +101,7 @@ internal sealed partial class CpuBackend
                         // In place: the exponentials go to scratch, so the log-probabilities still read the inputs.
                         scratch ??= ArrayPool<float>.Shared.Rent(cols);
                         xs.CopyTo(scratch);
-                        float inPlace = (float)Math.Log(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
+                        float inPlace = (float)CpuMath.LogDouble(CpuMath.ExpShifted(scratch.AsSpan(0, cols), max)) + max;
                         Shift(xs, ys, inPlace);
                         continue;
                     }
@@ -111,7 +111,7 @@ internal sealed partial class CpuBackend
 
                     if (log)
                     {
-                        Shift(xs, ys, (float)Math.Log(sum) + max);
+                        Shift(xs, ys, (float)CpuMath.LogDouble(sum) + max);
                     }
                     else
                     {
@@ -160,34 +160,13 @@ internal sealed partial class CpuBackend
         });
     }
 
-    // One row: s = Σ dy (log) or Σ dy · y, then dx += dy − e^y · s (log) or y · (dy − s); vectors with a scalar tail, the sum in double.
+    // One row: s = Σ dy (log) or Σ dy · y (in double, each product exact), then dx += dy − e^y · s (log) or y · (dy − s);
+    // the sums in the fixed lanes, the vectors' tail as their lanes.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void SoftmaxBackwardRow(ReadOnlySpan<float> y, ReadOnlySpan<float> dy, Span<float> dx, bool log)
     {
         int cols = y.Length, i = 0;
-        double dot = log ? RowSum(dy) : 0;
-        if (!log)
-        {
-            if (Vector.IsHardwareAccelerated && cols >= Vector<float>.Count)
-            {
-                var total = Vector<double>.Zero;
-                for (; i <= cols - Vector<float>.Count; i += Vector<float>.Count)
-                {
-                    Vector.Widen(new Vector<float>(dy.Slice(i)) * new Vector<float>(y.Slice(i)), out var lo, out var hi);
-                    total += lo + hi;
-                }
-
-                dot = Vector.Sum(total);
-            }
-
-            for (; i < cols; i++)
-            {
-                dot += (double)dy[i] * y[i];
-            }
-        }
-
-        float s = (float)dot;
-        i = 0;
+        float s = log ? RowSum(dy) : (float)CpuMath.DotDouble(dy, y);
         if (Vector.IsHardwareAccelerated && cols >= Vector<float>.Count)
         {
             var sv = new Vector<float>(s);
@@ -202,7 +181,7 @@ internal sealed partial class CpuBackend
 
         for (; i < cols; i++)
         {
-            dx[i] += log ? dy[i] - MathF.Exp(y[i]) * s : y[i] * (dy[i] - s);
+            dx[i] += log ? dy[i] - CpuMath.Exp(y[i]) * s : y[i] * (dy[i] - s);
         }
     }
 
@@ -267,11 +246,11 @@ internal sealed partial class CpuBackend
         {
             if (!float.IsNegativeInfinity(x))
             {
-                sum += Math.Exp(x - max);
+                sum += CpuMath.ExpDouble(x - max);
             }
         }
 
-        float shift = (float)(max + Math.Log(sum));
+        float shift = (float)(max + CpuMath.LogDouble(sum));
         int count = values.Length, held = 0;
         for (int t = 0; t < row.Length; t++)
         {
@@ -351,13 +330,13 @@ internal sealed partial class CpuBackend
 
     /// <summary>
     /// s1[g] += Σ a and s2[g] += Σ a·(b ?? a) over each group of the [outer, groups, inner] view, SIMD-vectorized.
-    /// Long contiguous runs (inner ≥ vector width) are summed per group; short ones (e.g. inner = 1, where a
-    /// group is a column) are accumulated row by row across all groups at once.
+    /// Long contiguous runs (inner ≥ <see cref="CpuMath.LaneCount"/>, the same choice whatever the vector width) are summed
+    /// per group in the fixed lanes; short ones (e.g. inner = 1, where a group is a column) are accumulated row by row
+    /// across all groups at once.
     /// </summary>
     private static void GroupMoments(float[] a, float[]? b, int outer, int groups, int inner, double[] s1, double[] s2)
     {
-        int w = Vector<float>.Count;
-        if (inner >= w)
+        if (inner >= CpuMath.LaneCount)
         {
             For(groups, (long)groups * outer * inner * 2, (start, end) =>
             {
@@ -415,66 +394,17 @@ internal sealed partial class CpuBackend
         }, chunksSummed: true);
     }
 
-    /// <summary>Σ x over a row: SIMD lanes added in a fixed order, then a scalar tail.</summary>
-    internal static float RowSum(ReadOnlySpan<float> x)
-    {
-        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
-        Vector<float> acc = default;
-        for (int i = 0; i < xv.Length; i++)
-        {
-            acc += xv[i];
-        }
+    /// <summary>Σ x over a row, in the fixed lanes (<see cref="CpuMath.Sum"/>).</summary>
+    internal static float RowSum(ReadOnlySpan<float> x) => CpuMath.Sum(x);
 
-        float sum = Vector.Sum(acc);
-        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
-        {
-            sum += x[i];
-        }
+    /// <summary>Σ (x − mean)² over a row (two passes keep the precision of a centred sum), in the fixed lanes.</summary>
+    internal static float RowSquaredDeviation(ReadOnlySpan<float> x, float mean) => CpuMath.SquaredDeviation(x, mean);
 
-        return sum;
-    }
-
-    /// <summary>Σ (x − mean)² over a row (two passes keep the precision of a centred sum).</summary>
-    internal static float RowSquaredDeviation(ReadOnlySpan<float> x, float mean)
-    {
-        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
-        var m = new Vector<float>(mean);
-        Vector<float> acc = default;
-        for (int i = 0; i < xv.Length; i++)
-        {
-            var d = xv[i] - m;
-            acc = Vector.FusedMultiplyAdd(d, d, acc);
-        }
-
-        float sum = Vector.Sum(acc);
-        for (int i = xv.Length * Vector<float>.Count; i < x.Length; i++)
-        {
-            float d = x[i] - mean;
-            sum = MathF.FusedMultiplyAdd(d, d, sum);
-        }
-
-        return sum;
-    }
-
+    // Σ a and Σ a · b (as FMAs) over a run, in the fixed lanes.
     private static (double Sum, double SumProduct) Moments(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
-        var av = MemoryMarshal.Cast<float, Vector<float>>(a);
-        var bv = MemoryMarshal.Cast<float, Vector<float>>(b);
-        Vector<float> v1 = default, v2 = default;
-        for (int i = 0; i < av.Length; i++)
-        {
-            v1 += av[i];
-            v2 = Vector.FusedMultiplyAdd(av[i], bv[i], v2);
-        }
-
-        double t1 = Vector.Sum(v1), t2 = Vector.Sum(v2);
-        for (int i = av.Length * Vector<float>.Count; i < a.Length; i++)
-        {
-            t1 += a[i];
-            t2 += a[i] * b[i];
-        }
-
-        return (t1, t2);
+        var (sum, product) = CpuMath.SumAndDot(a, b);
+        return (sum, product);
     }
 
     private static void MultiplyAddInPlace(Span<float> target, ReadOnlySpan<float> a, ReadOnlySpan<float> b)
@@ -489,7 +419,7 @@ internal sealed partial class CpuBackend
 
         for (int i = tv.Length * Vector<float>.Count; i < target.Length; i++)
         {
-            target[i] += a[i] * b[i];
+            target[i] = MathF.FusedMultiplyAdd(a[i], b[i], target[i]);    // as the lanes
         }
     }
 
@@ -523,7 +453,7 @@ internal sealed partial class CpuBackend
 
                     for (int i = xv.Length * w; i < groups; i++)
                     {
-                        float v = xs[i] * scaleRow[i] + shiftRow[i];
+                        float v = MathF.FusedMultiplyAdd(xs[i], scaleRow[i], shiftRow[i]);   // as the lanes
                         ys[i] = accumulate ? ys[i] + v : v;
                     }
                 }
@@ -552,7 +482,7 @@ internal sealed partial class CpuBackend
 
                 for (int i = xv.Length * w; i < inner; i++)
                 {
-                    float v = xs[i] * sc + sh;
+                    float v = MathF.FusedMultiplyAdd(xs[i], sc, sh);               // as the lanes
                     ys[i] = accumulate ? ys[i] + v : v;
                 }
             }
@@ -1137,11 +1067,12 @@ internal sealed partial class CpuBackend
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
-                ys[i] = MathF.Exp(xs[i]);
+                ys[i] = CpuMath.Exp(xs[i]);
             }
         }
     }
 
+    // CpuMath.Log: the lanes and the tail the same operations, no C runtime's logarithm.
     private readonly struct LogLoop(float[] x, float[] y) : IRangeKernel
     {
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -1153,12 +1084,12 @@ internal sealed partial class CpuBackend
             var yv = MemoryMarshal.Cast<float, Vector<float>>(ys);
             for (int i = 0; i < xv.Length; i++)
             {
-                yv[i] = Vector.Log(xv[i]);
+                yv[i] = CpuMath.Log(xv[i]);
             }
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
-                ys[i] = MathF.Log(xs[i]);
+                ys[i] = CpuMath.Log(xs[i]);
             }
         }
     }
@@ -1201,10 +1132,10 @@ internal sealed partial class CpuBackend
                 yv[i] = half * v * (Vector<float>.One + t);
             }
 
-            for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
+            for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)   // the lanes' operations, in their order
             {
                 float v = xs[i];
-                ys[i] = 0.5f * v * (1f + CpuMath.Tanh(GeluK * (v + GeluC * v * v * v)));
+                ys[i] = 0.5f * v * (1f + CpuMath.Tanh(GeluK * MathF.FusedMultiplyAdd(GeluC * v * v, v, v)));
             }
         }
     }
@@ -1234,12 +1165,12 @@ internal sealed partial class CpuBackend
                 dv[i] = Vector.FusedMultiplyAdd(gv[i], derivative, dv[i]);
             }
 
-            for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
+            for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)   // the lanes' operations, in their order
             {
-                float v = xs[i];
-                float t = CpuMath.Tanh(GeluK * (v + GeluC * v * v * v));
-                float derivative = 0.5f * (1f + t) + 0.5f * v * (1f - t * t) * GeluK * (1f + 3f * GeluC * v * v);
-                ds[i] += gs[i] * derivative;
+                float v = xs[i], v2 = v * v;
+                float t = CpuMath.Tanh(GeluK * MathF.FusedMultiplyAdd(GeluC * v2, v, v));
+                float derivative = 0.5f * (1f + t) + 0.5f * v * (1f - t * t) * GeluK * MathF.FusedMultiplyAdd(3f * GeluC, v2, 1f);
+                ds[i] = MathF.FusedMultiplyAdd(gs[i], derivative, ds[i]);
             }
         }
     }

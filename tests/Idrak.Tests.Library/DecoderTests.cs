@@ -497,34 +497,26 @@ internal abstract partial class Tests
 
         return results;
 
-        // Σ a[j] · q[j]: per vector of bytes, four products of the widened quarters added, then into the sum.
+        // Σ a[j] · q[j] in the CPU's fixed lanes, plainly (plan 37, P0): product j rounded and added onto lane j mod 16 in
+        // order, then lane i += lane i + 8, + 4, + 2, + 1.
         static float DotBytes(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q)
         {
-            int j = 0;
-            float total = 0f;
-            if (System.Numerics.Vector.IsHardwareAccelerated && q.Length >= System.Numerics.Vector<sbyte>.Count)
+            Span<float> lanes = stackalloc float[16];
+            lanes.Clear();
+            for (int j = 0; j < q.Length; j++)
             {
-                var sum = System.Numerics.Vector<float>.Zero;
-                int floats = System.Numerics.Vector<float>.Count;
-                for (; j <= q.Length - System.Numerics.Vector<sbyte>.Count; j += System.Numerics.Vector<sbyte>.Count)
+                lanes[j % 16] += a[j] * q[j];
+            }
+
+            for (int width = 8; width > 0; width /= 2)
+            {
+                for (int i = 0; i < width; i++)
                 {
-                    System.Numerics.Vector.Widen(new System.Numerics.Vector<sbyte>(q[j..]), out var lowShorts, out var highShorts);
-                    System.Numerics.Vector.Widen(lowShorts, out var i0, out var i1);
-                    System.Numerics.Vector.Widen(highShorts, out var i2, out var i3);
-                    var x = a[j..];
-                    sum += System.Numerics.Vector.ConvertToSingle(i0) * new System.Numerics.Vector<float>(x) + System.Numerics.Vector.ConvertToSingle(i1) * new System.Numerics.Vector<float>(x[floats..])
-                           + System.Numerics.Vector.ConvertToSingle(i2) * new System.Numerics.Vector<float>(x[(2 * floats)..]) + System.Numerics.Vector.ConvertToSingle(i3) * new System.Numerics.Vector<float>(x[(3 * floats)..]);
+                    lanes[i] += lanes[i + width];
                 }
-
-                total = System.Numerics.Vector.Sum(sum);
             }
 
-            for (; j < q.Length; j++)
-            {
-                total += a[j] * q[j];
-            }
-
-            return total;
+            return lanes[0];
         }
 
         // acc[j] += scale · q[j] (one product, one sum per element).

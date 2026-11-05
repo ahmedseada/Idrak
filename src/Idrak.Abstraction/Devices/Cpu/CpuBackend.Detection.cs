@@ -167,9 +167,9 @@ internal sealed partial class CpuBackend
     // exponential and one logarithm (e = exp(-|x|) gives both the sigmoid and log(1 + e^-|x|)); γ = 1 and 2 without a power.
     private static float Focal(float x, float t, float alpha, float gamma, out float derivative)
     {
-        float e = MathF.Exp(-MathF.Abs(x));
+        float e = CpuMath.Exp(-MathF.Abs(x));
         float p = x >= 0 ? 1 / (1 + e) : e / (1 + e);
-        float ce = MathF.Max(x, 0) - x * t + MathF.Log(1 + e);
+        float ce = MathF.Max(x, 0) - x * t + CpuMath.Log(1 + e);
         float pt = p * t + (1 - p) * (1 - t), q = 1 - pt;
         float lower = gamma switch { 0 => 0, 1 => 1, 2 => q, _ => q == 0 && gamma < 1 ? 0 : MathF.Pow(q, gamma - 1) };   // q^(γ - 1)
         float modulating = gamma == 0 ? 1 : gamma is 1 or 2 ? lower * q : MathF.Pow(q, gamma);

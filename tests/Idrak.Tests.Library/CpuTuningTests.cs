@@ -18,8 +18,109 @@ internal abstract partial class Tests
         ("cpu tuning: the CPU's memory is the system's (/proc/meminfo, the lowest cgroup v1 or v2 limit above the process with its usage less inactive file cache) where the runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR: unchanged), the runtime's where the system reports none; both listed, labelled", CpuSystemMemory),
         ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
         ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) choose the kernels the runtime's report allows; portable 128-bit vectors where it reports no NEON; lane shifts equal their multiplies; the description says what runs", CpuVectorPathsChosen),
-        ("cpu tuning: the k-split product (ComputeResources.CpuProductKChunk, off by default) sums its chunks in chunk order: every transpose and beta, the same bits at 1 and every thread, the chunks' own products added in order, close to the unsplit product", CpuProductSplitK),
+        ("cpu tuning: the k-split product (ComputeResources.CpuProductKChunk, off by default) splits only where the product's row and column blocks cannot occupy the threads (never on one thread, never a prompt's 512 x 1024 x 1024 or 512 x 1024 x 3072): there it sums its chunks in chunk order (every transpose and beta, the chunks' own products added in order, close to the unsplit product), elsewhere the unsplit bits", CpuProductSplitK),
+        ("cpu tuning: one result on every CPU (plan 37, P0): exp, log, the sigmoids, GELU, softmax and log-softmax with their gradients, layer norm, the gated activations, few-row and tiled products, the lane sums and dot products (float, bfloat16, int8, double), the sums past one chunk, the sampler's weights and the double exp and log hash to the pinned bits (the same with DOTNET_EnableAVX512=0, DOTNET_EnableAVX2=0, DOTNET_EnableHWIntrinsic=0 and IDRAK_CPU_VECTORS=scalar, portable or native)", CpuOneResult),
     ];
+
+    // The pinned bits of CpuOneResult's outputs (see there): any change to the CPU's arithmetic changes them, on purpose only.
+    private const string CpuOneResultBits = "E1D2FEC4796F1008";
+
+    internal static void CpuOneResult(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(CpuOneResult)))
+        {
+            return;
+        }
+
+        var random = new Random(23);
+        float[] Values(int count, float low, float high) => [.. Enumerable.Range(0, count).Select(_ => low + random.NextSingle() * (high - low))];
+        var outputs = new List<(string What, float[] Values)>();
+        const int Rows = 3, Cols = 1037;                                    // a tail past every vector width and the 16 lanes
+        using (var scope = new TensorScope())
+        {
+            float[] xs = Values(Rows * Cols, -9f, 9f), gs = Values(Rows * Cols, -1f, 1f);
+            var g = Tensor.From(gs, [Rows, Cols], device);
+            foreach (var (name, op) in new (string, Func<Tensor, Tensor>)[]
+                     {
+                         ("exp", t => t.Exp()), ("log", t => (t.Square() + 1e-3f).Log()), ("sigmoid", t => t.Sigmoid()), ("silu", t => t.Silu()),
+                         ("gelu", t => t.Gelu()), ("gelu erf", t => t.GeluErf()), ("tanh", t => t.Tanh()), ("softmax", t => t.Softmax()),
+                         ("log-softmax", t => t.LogSoftmax()),
+                     })
+            {
+                var x = Tensor.From(xs, [Rows, Cols], device, requiresGrad: true);
+                var y = op(x);
+                outputs.Add((name, y.ToArray()));
+                (y * g).Sum().Backward();
+                outputs.Add((name + "'s gradient", x.Grad!.ToArray()));
+            }
+
+            var gamma = Tensor.From(Values(Cols, 0.5f, 1.5f), [Cols], device, requiresGrad: true);
+            var beta = Tensor.From(Values(Cols, -0.5f, 0.5f), [Cols], device, requiresGrad: true);
+            var normed = Tensor.From(xs, [Rows, Cols], device, requiresGrad: true);
+            var norm = normed.LayerNormTrain(gamma, beta, 1e-5f);
+            outputs.Add(("layer norm", norm.ToArray()));
+            (norm * g).Sum().Backward();
+            outputs.Add(("layer norm's input gradient", normed.Grad!.ToArray()));
+            outputs.Add(("layer norm's gamma gradient", gamma.Grad!.ToArray()));
+
+            var gate = Tensor.From(xs, [Rows, Cols], device);
+            foreach (var activation in new[] { Idrak.Abstraction.Generation.FeedForwardActivation.Silu, Idrak.Abstraction.Generation.FeedForwardActivation.Gelu })
+            {
+                outputs.Add(($"gated {activation}", Tensor.GatedActivation(gate, g, activation).ToArray()));
+            }
+
+            // Few rows against B stored [n, k] (the lane sums), and a tiled product (one FMA chain an element), beta 1.
+            var a = Tensor.From(Values(2 * Cols, -1f, 1f), [2, Cols], device);
+            var b = Tensor.From(Values(67 * Cols, -1f, 1f), [67, Cols], device);
+            outputs.Add(("few-row product", a.MatMul(b, transposeB: true).ToArray()));
+            float[] ta = Values(37 * 129, -1f, 1f), tb = Values(129 * 45, -1f, 1f), tc = Values(37 * 45, -1f, 1f);
+            CpuMatMul.Multiply(ta, tb, tc, 37, 45, 129, false, false, 1f);
+            outputs.Add(("tiled product, beta 1", tc));
+
+            float[] big = Values(70_001, -1f, 1f);                            // past one reduction chunk
+            outputs.Add(("sum past one chunk", [Tensor.From(big, [big.Length], device).Sum().Item()]));
+        }
+
+        float[] p = Values(Cols, -2f, 2f), q = Values(Cols, -2f, 2f);
+        ushort[] halves = [.. q.Select(v => (ushort)(BitConverter.SingleToUInt32Bits(v) >> 16))];
+        sbyte[] bytes = [.. q.Select(v => (sbyte)(v * 60))];
+        outputs.Add(("lane sums", [CpuMath.Sum(p), CpuMath.Dot(p, q), CpuMath.Dot(p, halves), CpuMath.Dot(p, bytes),
+            CpuMath.DotFused(ref p[0], ref q[0], Cols), CpuMath.DotFused(ref p[0], ref halves[0], Cols), CpuMath.SquaredDeviation(p, 0.25f),
+            CpuMath.SumAndDot(p, q).Sum, CpuMath.SumAndDot(p, q).SumProduct, (float)CpuMath.SumSquaresDouble(p), (float)CpuMath.DotDouble(p, q)]));
+        double[] doubles = [.. Enumerable.Range(0, 400).Select(i => -700.0 + i * 3.5123)];
+        outputs.Add(("double exp and log", [.. doubles.Select(v => (float)CpuMath.ExpDouble(v / 4)), .. doubles.Select(v => (float)CpuMath.LogDouble(Math.Abs(v) + 1e-3))]));
+
+        var weights = new float[Cols];
+        float[]? candidateScores = null, candidateWeights = null;
+        try
+        {
+            float total = Idrak.Abstraction.Generation.SamplingWeights.Compute(p, weights, 0.7f, 40, 0.9f, 0.05f, new float[40], ref candidateScores, ref candidateWeights);
+            outputs.Add(("sampler weights", [.. weights, total]));
+        }
+        finally
+        {
+            foreach (var rented in new[] { candidateScores, candidateWeights })
+            {
+                if (rented is not null)
+                {
+                    System.Buffers.ArrayPool<float>.Shared.Return(rented);
+                }
+            }
+        }
+
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        foreach (var (what, values) in outputs)
+        {
+            var bits = System.Runtime.InteropServices.MemoryMarshal.AsBytes(values.AsSpan());
+            hash.AppendData(bits);
+            Console.WriteLine($"    {what}: bits {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bits))[..16]}");
+        }
+
+        string all = Convert.ToHexString(hash.GetHashAndReset())[..16];
+        Console.WriteLine($"    all: bits {all} ({System.Numerics.Vector<float>.Count}-wide Vector<float>, accelerated {System.Numerics.Vector.IsHardwareAccelerated}, " +
+                          $"512-bit {System.Runtime.Intrinsics.Vector512.IsHardwareAccelerated}, IDRAK_CPU_VECTORS {ComputeResources.CpuVectors})");
+        Check(all == CpuOneResultBits, $"the CPU's outputs hash to {all}, pinned {CpuOneResultBits}: the same bits are expected on every CPU and vector path");
+    }
 
     internal static void CpuProductSplitK(Device device)
     {
@@ -29,10 +130,23 @@ internal abstract partial class Tests
         }
 
         Check(ComputeResources.CpuProductKChunk == 0 || Environment.GetEnvironmentVariable("IDRAK_CPU_SPLIT_K") is { Length: > 0 }, "off unless IDRAK_CPU_SPLIT_K sets it");
+
+        // The gate from the shape and the threads: a prompt's products fill any core count's threads; a token's do not.
+        foreach (int threads in new[] { 2, 8, 64, 512 })
+        {
+            Check(!CpuMatMul.SplitsK(512, 1024, 1024, 256, threads) && !CpuMatMul.SplitsK(512, 1024, 3072, 1024, threads),
+                $"a 512-token prompt's products are not split on {threads} threads");
+            Check(!CpuMatMul.SplitsK(1, 1024, 3072, 0, threads) && !CpuMatMul.SplitsK(1, 1024, 1024, 1024, threads), $"off at chunk 0 and where k does not pass the chunk ({threads} threads)");
+        }
+
+        Check(CpuMatMul.SplitsK(1, 1024, 3072, 1024, 512) && !CpuMatMul.SplitsK(1, 1024, 3072, 1024, 1), "a token's product is split where its column blocks leave threads idle, never on one thread");
         var random = new Random(17);
         int chunkBefore = ComputeResources.CpuProductKChunk, threadsBefore = ComputeResources.MaxCpuThreads;
         try
         {
+            ComputeResources.CpuProductKChunk = 256;
+            ComputeResources.MaxCpuThreads = Environment.ProcessorCount;
+            Check(!CpuMatMul.SplitsK(512, 1024, 1024), "512 x 1024 x 1024 in chunks of 256 is not split on this machine's threads");
             foreach (var (m, n, k, chunk) in new[] { (3, 5, 37, 8), (17, 33, 1000, 128), (64, 48, 4099, 1024), (9, 1, 300, 299) })
             {
                 foreach (bool transA in new[] { false, true })
@@ -56,7 +170,12 @@ internal abstract partial class Tests
                             string what = $"{m}x{n}x{k} in chunks of {chunk}, transA {transA}, transB {transB}, beta {beta}";
                             var whole = Run(0, Environment.ProcessorCount);
                             var split = Run(chunk, Environment.ProcessorCount);
-                            Check(split.SequenceEqual(Run(chunk, 1)), $"{what}: the same bits on one thread and on every one");
+                            Check(Run(chunk, 1).SequenceEqual(whole), $"{what}: on one thread never split (the unsplit bits)");
+                            if (!CpuMatMul.SplitsK(m, n, k, chunk, Environment.ProcessorCount))
+                            {
+                                Check(split.SequenceEqual(whole), $"{what}: its blocks occupy the {Environment.ProcessorCount} threads, so not split (the unsplit bits)");
+                                continue;
+                            }
 
                             // The order: each chunk's own product (a product of its k), added in chunk order, then + beta · C.
                             var expected = new float[m * n];

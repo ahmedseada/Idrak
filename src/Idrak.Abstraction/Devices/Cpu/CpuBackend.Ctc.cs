@@ -102,14 +102,14 @@ internal sealed partial class CpuBackend
                 return a;
             }
 
-            return a > b ? a + Math.Log(1 + Math.Exp(b - a)) : b + Math.Log(1 + Math.Exp(a - b));
+            return a > b ? a + CpuMath.LogDouble(1 + CpuMath.ExpDouble(b - a)) : b + CpuMath.LogDouble(1 + CpuMath.ExpDouble(a - b));
         }
 
         // log(e^a + e^b + e^c) with one logarithm (c is -∞ when a state has only two predecessors).
         private static double LogSum(double a, double b, double c)
         {
             double m = Math.Max(a, Math.Max(b, c));
-            return double.IsNegativeInfinity(m) ? m : m + Math.Log(Math.Exp(a - m) + Math.Exp(b - m) + (double.IsNegativeInfinity(c) ? 0 : Math.Exp(c - m)));
+            return double.IsNegativeInfinity(m) ? m : m + CpuMath.LogDouble(CpuMath.ExpDouble(a - m) + CpuMath.ExpDouble(b - m) + (double.IsNegativeInfinity(c) ? 0 : CpuMath.ExpDouble(c - m)));
         }
 
         // α of step t from α of step t - 1 (log space). Only the states an alignment can be in at step t are computed: at
@@ -246,14 +246,14 @@ internal sealed partial class CpuBackend
                     {
                         for (int s = 0; s < states; s++)
                         {
-                            sums[slot[s]] += Math.Exp(a[s] + current[s] - top);
+                            sums[slot[s]] += CpuMath.ExpDouble(a[s] + current[s] - top);
                         }
                     }
 
                     for (int k = 0; k < sums.Length; k++)
                     {
                         int at = At(t, n, distinct[k]);
-                        gradient[at] -= scale * (float)(sums[k] * Math.Exp(top + nll - logProbs[at]));
+                        gradient[at] -= scale * (float)(sums[k] * CpuMath.ExpDouble(top + nll - logProbs[at]));
                     }
                 }
             }

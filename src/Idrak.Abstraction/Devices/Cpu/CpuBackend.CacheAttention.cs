@@ -597,47 +597,7 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
         }
     }
 
-    // Σ a[j] · widened h[j]: Dot(a, widened) operation for operation (one vector sum of products, its lanes added, the scalar tail).
+    // Σ a[j] · widened h[j]: Dot(a, widened) operation for operation (each product rounded, then added onto its fixed lane).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float DotBFloat16(ReadOnlySpan<float> a, ReadOnlySpan<ushort> h)
-    {
-        int j = 0;
-        float total = 0f;
-        if (Vector.IsHardwareAccelerated && a.Length >= Vector<float>.Count)
-        {
-            int w = Vector<float>.Count;
-            var sum = Vector<float>.Zero;
-            for (; j <= a.Length - 2 * w; j += 2 * w)
-            {
-                Vector.Widen(new Vector<ushort>(h[j..]), out var low, out var high);
-                sum += new Vector<float>(a[j..]) * Vector.AsVectorSingle(low << 16);
-                sum += new Vector<float>(a[(j + w)..]) * Vector.AsVectorSingle(high << 16);
-            }
-
-            if (j <= a.Length - w)
-            {
-                sum += new Vector<float>(a[j..]) * Widened(h.Slice(j, w));
-                j += w;
-            }
-
-            total = Vector.Sum(sum);
-        }
-
-        for (; j < a.Length; j++)
-        {
-            total += a[j] * BitConverter.Int32BitsToSingle(h[j] << 16);
-        }
-
-        return total;
-    }
-
-    // One vector of widened halves (h holds Vector<float>.Count of them): the last whole vector of a row whose halves do not
-    // fill two.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Vector<float> Widened(ReadOnlySpan<ushort> h)
-    {
-        Span<float> values = stackalloc float[Vector<float>.Count];
-        HalfFloats.WidenBFloat16(h, values);
-        return new Vector<float>(values);
-    }
+    private static float DotBFloat16(ReadOnlySpan<float> a, ReadOnlySpan<ushort> h) => CpuMath.Dot(a, h[..a.Length]);
 }

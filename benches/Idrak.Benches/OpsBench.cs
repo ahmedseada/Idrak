@@ -101,7 +101,8 @@ internal static class OpsBench
     /// The CPU's products with a long k, whole (one FMA chain over k: the default) and split into chunks of k
     /// (ComputeResources.CpuProductKChunk; IDRAK_BENCH_SPLIT_K the chunk length, default 4096): warm ms of each, the
     /// speed-up and the largest relative difference. A weight's gradient (Aᵀ·B, few rows and columns) and a plain product.
-    /// The default stays whole: the owner's runs decide.
+    /// A product splits only where its row and column blocks cannot occupy the threads (plan 37, P0), so on a machine
+    /// whose threads the blocks fill the two times are the same product's. The default stays whole: the owner's runs decide.
     /// </summary>
     private static void RunSplitK(Device device, Settings settings, Report report, Random random)
     {

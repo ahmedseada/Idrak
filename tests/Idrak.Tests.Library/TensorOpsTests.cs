@@ -11,7 +11,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] TensorOpsGroup =
     [
         ("tensor ops: sqrt, sin, cos (also far from zero), silu, sign, pow, clamp, maximum, minimum and where match the host's math; on Vulkan and CUDA as kernels, without the host fallback", TensorOpsForward),
-        ("tensor ops: the CPU's own vector exp (CpuMath.Exp, 256- and 512-bit lanes) is within 1.2e-7 of MathF.Exp over [-87.3, 88] and within two ulp up to 88.7 (a thousand points a unit), 0 below, +∞ above, NaN kept, -∞ to 0; exp, sigmoid, silu and softmax on the CPU equal the host's math", TensorOpsVectorExp),
+        ("tensor ops: the CPU's own vector exp (CpuMath.Exp, 256- and 512-bit lanes) is within 1.2e-7 of MathF.Exp over [-87.3, 88] and within two ulp up to 88.7 (a thousand points a unit), 0 below, +∞ above, NaN kept, -∞ to 0, its scalar form the lanes' bits; its log within 2.4e-7 of MathF.Log from subnormals to the largest float (the scalar form the same bits), its double exp and log within two ulp of the runtime's; exp, sigmoid, silu and softmax on the CPU equal the host's math", TensorOpsVectorExp),
         ("gradient: sqrt, sin, cos, silu, sign", TensorOpsUnaryGradients),
         ("gradient: pow (fractional, odd, negative and zero exponents), clamp, scalar maximum and minimum", TensorOpsParameterGradients),
         ("gradient: element-wise maximum and minimum (both inputs, and one tensor on both sides), where", TensorOpsSelectionGradients),
@@ -146,6 +146,81 @@ internal abstract partial class Tests
         }
 
         Check(worst <= 1.2e-7f, $"the vector exp is off by {worst:E2} at x = {values[at]} (lanes {lanes[at]}, MathF {MathF.Exp(values[at])})");
+        int scalarDiffers = Enumerable.Range(0, values.Length).Count(i => BitConverter.SingleToInt32Bits(Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(values[i])) != BitConverter.SingleToInt32Bits(lanes[i]));
+        Check(scalarDiffers == 0, $"the scalar exp (a tail's) rounds as the lanes: {scalarDiffers} of {values.Length} differ");
+
+        // ln x: the lanes against MathF.Log from subnormals to the largest float, the scalar form bit for bit as the lanes.
+        var logInputs = new List<float> { 0f, -0f, -1f, float.NaN, float.PositiveInfinity, float.NegativeInfinity, float.Epsilon, 1e-40f, 1.17549435E-38f, 1f, float.MaxValue };
+        for (double v = 1e-37; v < 3e38; v *= 1.0137)
+        {
+            logInputs.Add((float)v);
+        }
+
+        for (float v = 0.5f; v < 2f; v += 1e-4f)
+        {
+            logInputs.Add(v);                                                // near 1, where ln x is small
+        }
+
+        while (logInputs.Count % 16 != 0)
+        {
+            logInputs.Add(2f);
+        }
+
+        float[] logValues = [.. logInputs], logLanes = new float[logValues.Length];
+        for (int i = 0; i < logValues.Length; i += width)
+        {
+            Idrak.Abstraction.Devices.Cpu.CpuMath.Log(new System.Numerics.Vector<float>(logValues.AsSpan(i, width))).CopyTo(logLanes.AsSpan(i, width));
+        }
+
+        float logWorst = 0;
+        int logAt = 0, logScalar = 0;
+        for (int i = 0; i < logValues.Length; i++)
+        {
+            float expected = MathF.Log(logValues[i]), got = logLanes[i];
+            if (BitConverter.SingleToInt32Bits(Idrak.Abstraction.Devices.Cpu.CpuMath.Log(logValues[i])) != BitConverter.SingleToInt32Bits(got))
+            {
+                logScalar++;
+            }
+
+            if (float.IsNaN(expected) || float.IsInfinity(expected))
+            {
+                Check(got.Equals(expected), $"ln({logValues[i]}) = {got}, MathF {expected}");
+                continue;
+            }
+
+            // Within an ulp of the larger of the two and 1e-7 absolute (near 1, where ln x is tiny, the absolute error counts).
+            float error = MathF.Abs(got - expected) / MathF.Max(MathF.Abs(expected), 1f);
+            if (error > logWorst)
+            {
+                (logWorst, logAt) = (error, i);
+            }
+        }
+
+        Check(logWorst <= 2.4e-7f, $"the vector log is off by {logWorst:E2} at x = {logValues[logAt]} (lanes {logLanes[logAt]}, MathF {MathF.Log(logValues[logAt])})");
+        Check(logScalar == 0, $"the scalar log rounds as the lanes: {logScalar} of {logValues.Length} differ");
+
+        // The double exp and log (fdlibm's, in C#): within an ulp or two of the runtime's over their ranges; specials.
+        double expWorst = 0, logDoubleWorst = 0;
+        for (double v = -745; v <= 709.7; v += 0.0731)
+        {
+            double expected = Math.Exp(v), got = Idrak.Abstraction.Devices.Cpu.CpuMath.ExpDouble(v);
+            if (expected > 1e-300)
+            {
+                expWorst = Math.Max(expWorst, Math.Abs(got - expected) / expected);
+            }
+
+            double positive = Math.Abs(v) * 13.7 + 1e-300;
+            double logExpected = Math.Log(positive);
+            logDoubleWorst = Math.Max(logDoubleWorst, Math.Abs(Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(positive) - logExpected) / Math.Max(Math.Abs(logExpected), 1));
+        }
+
+        Check(expWorst <= 4.5e-16 && logDoubleWorst <= 4.5e-16, $"the double exp and log are within two ulp of the runtime's (exp {expWorst:E2}, log {logDoubleWorst:E2})");
+        Check(Idrak.Abstraction.Devices.Cpu.CpuMath.ExpDouble(0) == 1 && Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(1) == 0
+              && Idrak.Abstraction.Devices.Cpu.CpuMath.ExpDouble(800) == double.PositiveInfinity && Idrak.Abstraction.Devices.Cpu.CpuMath.ExpDouble(-800) == 0
+              && double.IsNaN(Idrak.Abstraction.Devices.Cpu.CpuMath.ExpDouble(double.NaN)) && Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(0) == double.NegativeInfinity
+              && double.IsNaN(Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(-1)) && Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(double.PositiveInfinity) == double.PositiveInfinity
+              && Math.Abs(Idrak.Abstraction.Devices.Cpu.CpuMath.LogDouble(double.Epsilon) - Math.Log(double.Epsilon)) < 1e-12,
+            "the double exp and log's special values: e^0 = 1, ln 1 = 0, overflow +∞, underflow 0, NaN kept, ln 0 = −∞, ln −1 = NaN, ln +∞ = +∞, a subnormal's log");
 
         // Through the tensors: exp, sigmoid, silu and a softmax row against the host's math.
         float[] xs = [.. OpValues, 40f, -25.5f, 12.25f, -0.01f, 3.5f, 0f];

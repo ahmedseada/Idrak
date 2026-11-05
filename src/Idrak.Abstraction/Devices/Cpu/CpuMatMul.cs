@@ -16,10 +16,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 /// NEON); otherwise rows of C are processed in blocks of <see cref="Mr"/>, each keeping a <see cref="Mr"/> x (2 * SIMD
 /// width) tile of C in registers across the whole k loop. Tile sizes, column blocks and the parallel cut-over come from
 /// <see cref="CpuTuning"/> (the machine's caches, vector width and threads, or measured). Every path computes each element
-/// as one FMA chain over k from zero, then + beta · C, so the choice of path and tiling never changes a result; the two
-/// exceptions (the few-row transposed-B path sums in vector lanes; the column-split path adds beta · C without FMA) are
-/// selected by the CPU's numerical contract (<see cref="CpuTuning.TransposedInPlace"/>, <see cref="CpuTuning.ColumnSplitRows"/>),
-/// the same on every machine.
+/// as one FMA chain over k from zero, then + beta · C as one FMA, so the choice of path and tiling never changes a result;
+/// the one exception (the few-row transposed-B path sums each dot product in the fixed lanes, <see cref="CpuMath.LaneCount"/>)
+/// is selected by the CPU's numerical contract (<see cref="CpuTuning.TransposedInPlace"/>), the same on every machine.
 /// </summary>
 internal static class CpuMatMul
 {
@@ -32,19 +31,44 @@ internal static class CpuMatMul
         Multiply(a, 0, b, 0, c, 0, m, n, k, transA, transB, beta);
 
     /// <summary>
-    /// Multiplies the matrices starting at the given element offsets of each array; over chunks of k when
-    /// <see cref="ComputeResources.CpuProductKChunk"/> is set and k passes it (<see cref="SplitK"/>).
+    /// Multiplies the matrices starting at the given element offsets of each array; over chunks of k where
+    /// <see cref="SplitsK(int, int, int)"/> says so (<see cref="SplitK"/>), else as one product (<see cref="Unsplit"/>).
     /// </summary>
     public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        int chunk = ComputeResources.CpuProductKChunk;
-        if (chunk > 0 && k > chunk && m > 0 && n > 0)
+        if (SplitsK(m, n, k))
         {
-            SplitK(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, chunk);
+            SplitK(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, ComputeResources.CpuProductKChunk);
             return;
         }
 
+        Unsplit(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta);
+    }
+
+    /// <summary>The product as one FMA chain over k per element (never split over k), on the threads the cut-over allows.</summary>
+    internal static void Unsplit(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta) =>
         Multiply(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, CpuTuning.ProductCutover((long)m * n * k), ComputeResources.ParallelOptions);
+
+    /// <summary>
+    /// Whether an m × n × k product runs over chunks of k: <see cref="ComputeResources.CpuProductKChunk"/> set, k past it,
+    /// and the product's row and column blocks too few to occupy <see cref="ComputeResources.MaxCpuThreads"/> (from the
+    /// shape and the thread count at run time). A product whose rows and columns already fill the cores (a prompt's) is
+    /// never split: there the chunks only add their partial products' traffic.
+    /// </summary>
+    internal static bool SplitsK(int m, int n, int k) => SplitsK(m, n, k, ComputeResources.CpuProductKChunk, ComputeResources.MaxCpuThreads);
+
+    /// <summary><see cref="SplitsK(int, int, int)"/> for a chunk length and a thread count (tests).</summary>
+    internal static bool SplitsK(int m, int n, int k, int chunk, int threads)
+    {
+        if (chunk <= 0 || k <= chunk || m <= 0 || n <= 0 || threads <= 1)
+        {
+            return false;
+        }
+
+        var kernel = CpuTuning.Kernel;
+        int rows = kernel != TiledKernel.None ? CpuTuning.KernelShape(kernel).Rows : Mr;   // a register block's rows
+        long rowBlocks = (m + rows - 1) / rows, columnBlocks = (n + CpuTuning.ColumnBlock - 1) / CpuTuning.ColumnBlock;
+        return rowBlocks * columnBlocks < threads;
     }
 
     // One thread a chunk's product: the chunks are what runs in parallel.
@@ -55,9 +79,10 @@ internal static class CpuMatMul
     /// (one FMA chain over its part of k from zero), the chunks in parallel, then for each element the partial sums added
     /// in chunk order and + beta · C. The order of every sum follows from k and the chunk length alone (rule 86), whatever
     /// the threads. A chunk's slice of A or B that is not contiguous (A stored [m, k], B stored [n, k]) is copied out
-    /// first; A stored [k, m] and B stored [k, n] (a weight's gradient) are read in place.
+    /// first; A stored [k, m] and B stored [k, n] (a weight's gradient) are read in place. Whether a product runs here is
+    /// <see cref="SplitsK(int, int, int)"/>'s (callers that cut a product into parts decide on the whole product).
     /// </summary>
-    private static void SplitK(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta, int chunk)
+    internal static void SplitK(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta, int chunk)
     {
         int chunks = (k + chunk - 1) / chunk, mn = m * n;
         float[] partial = ArrayPool<float>.Shared.Rent(checked(chunks * mn));
@@ -122,7 +147,7 @@ internal static class CpuMatMul
                     }
 
                     ref float dst = ref c[cOffset + j];
-                    dst = beta == 0f ? sum : sum + beta * dst;
+                    dst = beta == 0f ? sum : MathF.FusedMultiplyAdd(beta, dst, sum);
                 }
             });
         }
@@ -188,7 +213,7 @@ internal static class CpuMatMul
         bool columnSplit = beta == 0f
             ? m <= fewRows && n >= 2 * columnBlock && parallel               // same results either way: tuned
             : m <= CpuTuning.ColumnSplitRows && n >= CpuTuning.ColumnSplitColumns && (long)m * n * k >= CpuTuning.ColumnSplitWork
-              && options.MaxDegreeOfParallelism > 1;                         // beta · C rounds differently there: the contract
+              && options.MaxDegreeOfParallelism > 1;                         // every path fuses beta · C: the same results
         if (columnSplit)
         {
             // Few rows (token-by-token decoding): a single row block would leave most threads idle, so split the columns
@@ -262,10 +287,10 @@ internal static class CpuMatMul
         }
     }
 
-    // C[i, j] = A[i, :] · B[j, :] (+ beta · C[i, j]) for the columns j0..j1; each B row is read once for all m rows.
+    // C[i, j] = A[i, :] · B[j, :] (+ beta · C[i, j]) for the columns j0..j1; each B row is read once for all m rows. Each
+    // dot product in the fixed lanes (CpuMath.DotFused: one FMA per term onto lane p mod 16), the same bits on every machine.
     private static void DotColumns(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, float beta, int j0, int j1)
     {
-        int w = Vector<float>.Count;
         ref float ra = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(a), aOffset);
         ref float rb = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(b), bOffset);
         for (int j = j0; j < j1; j++)
@@ -273,81 +298,22 @@ internal static class CpuMatMul
             ref float row = ref Unsafe.Add(ref rb, (nint)j * k);
             for (int i = 0; i < m; i++)
             {
-                ref float x = ref Unsafe.Add(ref ra, (nint)i * k);
-                var s0 = Vector<float>.Zero;
-                var s1 = Vector<float>.Zero;
-                int p = 0;
-                for (; p <= k - 2 * w; p += 2 * w)
-                {
-                    s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.LoadUnsafe(ref row, (nuint)p), s0);
-                    s1 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)(p + w)), Vector.LoadUnsafe(ref row, (nuint)(p + w)), s1);
-                }
-
-                for (; p <= k - w; p += w)
-                {
-                    s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.LoadUnsafe(ref row, (nuint)p), s0);
-                }
-
-                float sum = Vector.Sum(s0 + s1);
-                for (; p < k; p++)
-                {
-                    sum = MathF.FusedMultiplyAdd(Unsafe.Add(ref x, p), Unsafe.Add(ref row, p), sum);
-                }
-
+                float sum = CpuMath.DotFused(ref Unsafe.Add(ref ra, (nint)i * k), ref row, k);
                 ref float dst = ref c[cOffset + i * n + j];
-                dst = beta == 0f ? sum : sum + beta * dst;
+                dst = beta == 0f ? sum : MathF.FusedMultiplyAdd(beta, dst, sum);
             }
         }
     }
 
     /// <summary>
-    /// x · row over k as <see cref="DotColumns"/> sums each output (two vector lanes of FMAs, one more vector into the first,
-    /// the lanes added, then the scalar tail as FMAs onto that sum), with the row held as bfloat16 halves widened in
-    /// registers as they are read (exactly: the halves as a float's high bits). The same operations on the same values, so
-    /// the bits of the few-row transposed-B product over the widened row; attention over a bfloat16 cache read in place
-    /// needs them (keep the two in step: the tests compare it with the product bit for bit).
+    /// x · row over k as <see cref="DotColumns"/> sums each output (one FMA per term onto its fixed lane, the lanes added in
+    /// their fixed tree), with the row held as bfloat16 halves widened in registers as they are read (exactly: the halves
+    /// as a float's high bits). The same operations on the same values, so the bits of the few-row transposed-B product
+    /// over the widened row; attention over a bfloat16 cache read in place needs them (the tests compare it with the
+    /// product bit for bit).
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static float DotLanesBFloat16(ref float x, ref ushort row, int k)
-    {
-        int w = Vector<float>.Count;
-        var s0 = Vector<float>.Zero;
-        var s1 = Vector<float>.Zero;
-        int p = 0;
-        for (; p <= k - 2 * w; p += 2 * w)
-        {
-            Vector.Widen(Vector.LoadUnsafe(ref row, (nuint)p), out var low, out var high);
-            s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.AsVectorSingle(low << 16), s0);
-            s1 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)(p + w)), Vector.AsVectorSingle(high << 16), s1);
-        }
-
-        if (p <= k - w)                                                      // DotColumns' single-vector loop runs at most once here
-        {
-            s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), WidenedVector(ref Unsafe.Add(ref row, p)), s0);
-            p += w;
-        }
-
-        float sum = Vector.Sum(s0 + s1);
-        for (; p < k; p++)
-        {
-            sum = MathF.FusedMultiplyAdd(Unsafe.Add(ref x, p), BitConverter.Int32BitsToSingle(Unsafe.Add(ref row, p) << 16), sum);
-        }
-
-        return sum;
-    }
-
-    // One vector of widened halves from the Vector<float>.Count halves at `row` (no read past them).
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Vector<float> WidenedVector(ref ushort row)
-    {
-        Span<float> values = stackalloc float[Vector<float>.Count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = BitConverter.Int32BitsToSingle(Unsafe.Add(ref row, i) << 16);
-        }
-
-        return new Vector<float>(values);
-    }
+    internal static float DotLanesBFloat16(ref float x, ref ushort row, int k) => CpuMath.DotFused(ref x, ref row, k);
 
     private static void FewRows(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta,
         int columnBlock, ParallelOptions options)
@@ -399,7 +365,7 @@ internal static class CpuMatMul
                     var sums = acc.AsSpan(i * width, width);
                     for (int j = 0; j < width; j++)
                     {
-                        dst[j] = beta == 0f ? sums[j] : sums[j] + beta * dst[j];
+                        dst[j] = beta == 0f ? sums[j] : MathF.FusedMultiplyAdd(beta, dst[j], sums[j]);   // as Store's lanes
                     }
                 }
             }
@@ -855,7 +821,7 @@ internal static class CpuMatMul
             }
 
             ref float dst = ref Unsafe.Add(ref ci, j);
-            dst = beta == 0f ? acc : acc + beta * dst;
+            dst = beta == 0f ? acc : MathF.FusedMultiplyAdd(beta, dst, acc);   // as Store's lanes
         }
     }
 

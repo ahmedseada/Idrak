@@ -12,8 +12,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // weights would be, and multiplied by CpuMatMul, whose every path computes each element as one FMA chain over k from zero:
 // so each output is the float32 product's over the weights expanded at load, bit for bit, while only a tile is ever
 // expanded. The tiles are independent (each its own columns of y), spread over the threads, each product on one thread;
-// with CpuProductKChunk set they run one after another, each product split over k as the float32 product splits it. The
-// widening goes through a source of rows (StoredRows), the one place a tile's float values come from.
+// where the whole product splits over k (CpuMatMul.SplitsK on its m, n and k, as the float32 product decides) they run one
+// after another, each tile's product split over k in the same chunks. The widening goes through a source of rows
+// (StoredRows), the one place a tile's float values come from.
 internal sealed partial class CpuBackend
 {
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
@@ -32,18 +33,28 @@ internal sealed partial class CpuBackend
         }
 
         int tile = StoredTile(n, k), tiles = (n + tile - 1) / tile;
-        int chunk = ComputeResources.CpuProductKChunk;
-        if (tiles == 1 || chunk > 0 && k > chunk)
+        bool split = CpuMatMul.SplitsK(m, n, k);                            // decided on the whole product, never a tile's
+        if (tiles == 1 || split)
         {
+            var how = split ? TileProduct.SplitK : TileProduct.Together;
             for (int t = 0; t < tiles; t++)
             {
-                StoredTileProduct(rows, xv, yv, m, n, k, t * tile, Math.Min(tile, n - t * tile), together: true);
+                StoredTileProduct(rows, xv, yv, m, n, k, t * tile, Math.Min(tile, n - t * tile), how);
             }
 
             return;
         }
 
-        Parallel.For(0, tiles, ComputeResources.ParallelOptions, t => StoredTileProduct(rows, xv, yv, m, n, k, t * tile, Math.Min(tile, n - t * tile), together: false));
+        Parallel.For(0, tiles, ComputeResources.ParallelOptions, t => StoredTileProduct(rows, xv, yv, m, n, k, t * tile, Math.Min(tile, n - t * tile), TileProduct.OneThread));
+    }
+
+    // How a tile's product runs: on this thread alone (the tiles in parallel), on every thread as one product (a single
+    // tile), or over chunks of k on every thread (the whole product splits).
+    private enum TileProduct : byte
+    {
+        OneThread,
+        Together,
+        SplitK,
     }
 
     public override void ExpandStoredKernel(Storage weight, Storage? scales, Storage? zeros, Storage w, int n, int k, StoredScales layout)
@@ -79,9 +90,9 @@ internal sealed partial class CpuBackend
         });
     }
 
-    // Columns [j0, j0 + columns) of y = x · W: the tile's rows widened, laid out as the [k, columns] panel, multiplied (on
-    // this thread alone unless `together`: a single tile, or products split over k, may use every thread).
-    private static void StoredTileProduct(StoredRows rows, float[] x, float[] y, int m, int n, int k, int j0, int columns, bool together)
+    // Columns [j0, j0 + columns) of y = x · W: the tile's rows widened, laid out as the [k, columns] panel, multiplied as
+    // `how` says (TileProduct).
+    private static void StoredTileProduct(StoredRows rows, float[] x, float[] y, int m, int n, int k, int j0, int columns, TileProduct how)
     {
         float[] decoded = ArrayPool<float>.Shared.Rent(columns * k);
         float[] panel = ArrayPool<float>.Shared.Rent(k * columns);
@@ -98,13 +109,17 @@ internal sealed partial class CpuBackend
                 }
             }
 
-            if (together)
+            switch (how)
             {
-                CpuMatMul.Multiply(x, 0, panel, 0, c, 0, m, columns, k, false, false, 0f);
-            }
-            else
-            {
-                CpuMatMul.Multiply(x, 0, panel, 0, c, 0, m, columns, k, false, false, 0f, long.MaxValue, OneThread);
+                case TileProduct.SplitK:
+                    CpuMatMul.SplitK(x, 0, panel, 0, c, 0, m, columns, k, false, false, 0f, ComputeResources.CpuProductKChunk);
+                    break;
+                case TileProduct.Together:
+                    CpuMatMul.Unsplit(x, 0, panel, 0, c, 0, m, columns, k, false, false, 0f);
+                    break;
+                default:
+                    CpuMatMul.Multiply(x, 0, panel, 0, c, 0, m, columns, k, false, false, 0f, long.MaxValue, OneThread);
+                    break;
             }
 
             for (int i = 0; i < m; i++)

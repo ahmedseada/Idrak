@@ -316,21 +316,21 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
     {
         float[] xv = D(x);
         double total;
-        if (n < CpuTuning.ReductionElements || !ComputeResources.AllowParallel)
+        if (n <= ReductionChunk)
         {
             total = SumSpan(xv.AsSpan(0, n));
         }
         else
         {
-            // Chunks from the numerical contract (never a timing), so the sum's order is the same on every run as before;
-            // they run on the threads once the measured cut-over says so.
+            // Chunks from the numerical contract (ReductionChunk: never a timing, a thread count or a vector width), so
+            // the sum's order is the same on every run and every CPU; they run on the threads once the measured cut-over
+            // says so.
             int chunks = ReductionChunkCount(n);
-            int size = ChunkSize(n, chunks);
             var partials = new double[chunks];
             void Chunk(int c)
             {
-                int start = c * size;
-                partials[c] = SumSpan(xv.AsSpan(start, Math.Max(0, Math.Min(size, n - start))));
+                int start = c * ReductionChunk;
+                partials[c] = SumSpan(xv.AsSpan(start, Math.Min(ReductionChunk, n - start)));
             }
 
             if (CpuTuning.SplitElements(n))
@@ -345,7 +345,11 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
                 }
             }
 
-            total = partials.Sum();
+            total = 0;
+            foreach (double partial in partials)
+            {
+                total += partial;                                          // in chunk order
+            }
         }
 
         D(result)[0] = (float)(total * scale);
@@ -446,19 +450,18 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
     // Σx² of the first n values in double precision: SIMD per chunk, chunks on all cores for large inputs.
     private static double SumSquaresParallel(float[] x, int n)
     {
-        if (n < CpuTuning.ReductionElements || !ComputeResources.AllowParallel)
+        if (n <= ReductionChunk)
         {
             return SumSquaresSpan(x.AsSpan(0, n));
         }
 
         // Chunks from the numerical contract, threads from the measured cut-over (as in Sum).
         int chunks = ReductionChunkCount(n);
-        int size = ChunkSize(n, chunks);
         var partials = new double[chunks];
         void Chunk(int c)
         {
-            int start = c * size;
-            partials[c] = SumSquaresSpan(x.AsSpan(start, Math.Max(0, Math.Min(size, n - start))));
+            int start = c * ReductionChunk;
+            partials[c] = SumSquaresSpan(x.AsSpan(start, Math.Min(ReductionChunk, n - start)));
         }
 
         if (CpuTuning.SplitElements(n))
@@ -482,25 +485,8 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         return total;
     }
 
-    private static double SumSquaresSpan(ReadOnlySpan<float> x)
-    {
-        var lanes = MemoryMarshal.Cast<float, Vector<float>>(x);
-        Vector<double> low = Vector<double>.Zero, high = Vector<double>.Zero;
-        foreach (var lane in lanes)
-        {
-            Vector.Widen(lane, out var a, out var b);
-            low += a * a;
-            high += b * b;
-        }
-
-        double sum = Vector.Sum(low) + Vector.Sum(high);
-        for (int i = lanes.Length * Vector<float>.Count; i < x.Length; i++)
-        {
-            sum += (double)x[i] * x[i];
-        }
-
-        return sum;
-    }
+    // Σx² in double over a chunk, in the fixed lanes (each square exact).
+    private static double SumSquaresSpan(ReadOnlySpan<float> x) => CpuMath.SumSquaresDouble(x);
 
     public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
     {
@@ -608,32 +594,21 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
             MemoryMarshal.AsBytes(D(destination).AsSpan(0, destination.Length)), (int)count);
     }
 
-    private static double SumSpan(ReadOnlySpan<float> x)
-    {
-        var acc = Vector<float>.Zero;
-        int i = 0;
-        var xv = MemoryMarshal.Cast<float, Vector<float>>(x);
-        foreach (var v in xv)
-        {
-            acc += v;
-        }
-
-        i = xv.Length * Vector<float>.Count;
-        double total = Vector.Sum(acc);
-        for (; i < x.Length; i++)
-        {
-            total += x[i];
-        }
-
-        return total;
-    }
+    // Σx over a chunk, in the fixed lanes.
+    private static double SumSpan(ReadOnlySpan<float> x) => CpuMath.Sum(x);
 
     // About two chunks per thread, each at least a quarter of the cut-over (a chunk smaller than that costs more to start
-    // than to run). Reductions take the contract's value (their chunks set the summation order), the rest the measured one.
+    // than to run).
     private static int ChunkCount(int n, int cutover) => Math.Max(1, Math.Min(ComputeResources.MaxCpuThreads * 2, n / Math.Max(1, cutover / 4)));
 
-    private static int ReductionChunkCount(int n) => ChunkCount(n, CpuTuning.ReductionElements);
+    // The reductions' chunks (Sum, SumSquares) set their summation order, so they come from the numerical contract alone:
+    // a quarter of CpuTuning.ReductionElements each (whole blocks of the fixed lanes), the partial sums added in chunk
+    // order. Neither the thread count nor the vector width moves a chunk's boundary, so the total is the same on every CPU.
+    private const int ReductionChunk = CpuTuning.ReductionElements / 4;
 
+    private static int ReductionChunkCount(int n) => Math.Max(1, (n + ReductionChunk - 1) / ReductionChunk);
+
+    // An element-wise kernel's chunks: whole vectors each.
     private static int ChunkSize(int n, int chunks)
     {
         int size = (n + chunks - 1) / chunks;
@@ -687,7 +662,7 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
             for (int i = xv.Length * Vector<float>.Count; i < xs.Length; i++)
             {
-                ys[i] = 1f / (1f + MathF.Exp(-xs[i]));
+                ys[i] = 1f / (1f + CpuMath.Exp(-xs[i]));
             }
         }
     }

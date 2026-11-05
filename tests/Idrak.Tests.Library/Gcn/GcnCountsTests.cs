@@ -104,8 +104,8 @@ internal abstract partial class Tests
     // The causal attention forward pass the backward passes above start from (row r of a head over positions 0..r): the
     // output and each row's log-sum-exp, in one order, from IEEE float arithmetic and the interpreter's own 2^x and log2
     // (GcnFloat), so the inputs, and the outputs pinned below, are the same bits on every machine (rule 70). The CPU
-    // backend's forward pass is not used here: its exponentials and logarithms are the C runtime's (MathF), and its vector
-    // width is the machine's, which change the last bits from one platform to another.
+    // backend's forward pass (its own exp, log and fixed lanes since plan 37, P0: one result on every CPU too) is not used
+    // here, so these pinned bits follow the interpreter's arithmetic alone.
     private static float[][] CausalForward(float[] q, float[] k, float[] v, int heads, int steps, int dim, float scale)
     {
         const float Log2E = 1.44269504f, Ln2 = 0.693147182f;

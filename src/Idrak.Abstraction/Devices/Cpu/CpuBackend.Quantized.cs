@@ -404,7 +404,7 @@ internal sealed partial class CpuBackend
 
                     if (lv is not null)
                     {
-                        lv[row] = max + MathF.Log(sum);
+                        lv[row] = max + CpuMath.Log(sum);
                     }
 
                     var output = yv.AsSpan(row * dim, dim);
@@ -450,7 +450,7 @@ internal sealed partial class CpuBackend
                         var keyRow = kv.AsSpan(RowAt(kRows, h * capacity + c, dim), dim);
                         float dot = Dot(query, keyRow), dp = Dot(gradOut, vv.AsSpan(RowAt(vRows, h * capacity + c, dim), dim));
 
-                        float score = variant.Cap(dot * scale), p = MathF.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
+                        float score = variant.Cap(dot * scale), p = CpuMath.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
                         AddScaled(dqv.AsSpan(row * dim, dim), keyRow, scale * ds);
                         AddScaled(dkv.AsSpan(key, dim), query, scale * ds);
                         AddScaled(dvv.AsSpan(key, dim), gradOut, p);
@@ -538,7 +538,7 @@ internal sealed partial class CpuBackend
                     float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
                     if (lv is not null)
                     {
-                        lv[row] = max + MathF.Log(sum);
+                        lv[row] = max + CpuMath.Log(sum);
                     }
 
                     var output = yv.AsSpan(row * dim, dim);
@@ -580,7 +580,7 @@ internal sealed partial class CpuBackend
                         int key = (h * steps + c) * dim;
                         float dot = Dot(query, kv.AsSpan(key, dim)), dp = Dot(gradOut, vv.AsSpan(key, dim));
 
-                        float score = variant.Cap(dot * scale), p = MathF.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
+                        float score = variant.Cap(dot * scale), p = CpuMath.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
                         AddScaled(dqv.AsSpan(row * dim, dim), kv.AsSpan(key, dim), scale * ds);
                         AddScaled(dkv.AsSpan(key, dim), query, scale * ds);
                         AddScaled(dvv.AsSpan(key, dim), gradOut, p);
@@ -693,7 +693,7 @@ internal sealed partial class CpuBackend
         {
             case 0:
             {
-                float s = 1f / (1f + MathF.Exp(-g));
+                float s = 1f / (1f + CpuMath.Exp(-g));
                 return (g * s, s * (1f + g * (1f - s)));
             }
 
@@ -723,7 +723,7 @@ internal sealed partial class CpuBackend
             return (u, 1f);
         }
 
-        float s = 1f / (1f + MathF.Exp(-u));
+        float s = 1f / (1f + CpuMath.Exp(-u));
         return (s, s * (1f - s));
     }
 
@@ -876,60 +876,12 @@ internal sealed partial class CpuBackend
         });
     }
 
-    // Σ a[j] · b[j], whole vectors at a time.
-    private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
-    {
-        int j = 0;
-        float total = 0f;
-        if (Vector.IsHardwareAccelerated && a.Length >= Vector<float>.Count)
-        {
-            var sum = Vector<float>.Zero;
-            for (; j <= a.Length - Vector<float>.Count; j += Vector<float>.Count)
-            {
-                sum += new Vector<float>(a[j..]) * new Vector<float>(b[j..]);
-            }
+    // Σ a[j] · b[j], each product rounded and added onto its fixed lane (CpuMath.Dot).
+    private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b) => CpuMath.Dot(a, b[..a.Length]);
 
-            total = Vector.Sum(sum);
-        }
-
-        for (; j < a.Length; j++)
-        {
-            total += a[j] * b[j];
-        }
-
-        return total;
-    }
-
-    // Σ a[j] · (float)q[j], bytes widened as in AddScaled.
+    // Σ a[j] · (float)q[j] over q's length, the bytes widened exactly, as Dot over the widened values.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q)
-    {
-        int j = 0;
-        float total = 0f;
-        if (Vector.IsHardwareAccelerated && q.Length >= Vector<sbyte>.Count)
-        {
-            var sum = Vector<float>.Zero;
-            int floats = Vector<float>.Count;
-            for (; j <= q.Length - Vector<sbyte>.Count; j += Vector<sbyte>.Count)
-            {
-                Vector.Widen(new Vector<sbyte>(q[j..]), out var lowShorts, out var highShorts);
-                Vector.Widen(lowShorts, out var i0, out var i1);
-                Vector.Widen(highShorts, out var i2, out var i3);
-                var x = a[j..];
-                sum += Vector.ConvertToSingle(i0) * new Vector<float>(x) + Vector.ConvertToSingle(i1) * new Vector<float>(x[floats..])
-                       + Vector.ConvertToSingle(i2) * new Vector<float>(x[(2 * floats)..]) + Vector.ConvertToSingle(i3) * new Vector<float>(x[(3 * floats)..]);
-            }
-
-            total = Vector.Sum(sum);
-        }
-
-        for (; j < q.Length; j++)
-        {
-            total += a[j] * q[j];
-        }
-
-        return total;
-    }
+    private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q) => CpuMath.Dot(a[..q.Length], q);
 
     private static ReadOnlySpan<sbyte> Bytes(Storage q, int count) => MemoryMarshal.Cast<float, sbyte>(D(q).AsSpan())[..count];
 

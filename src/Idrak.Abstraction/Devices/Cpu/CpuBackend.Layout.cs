@@ -110,10 +110,10 @@ internal sealed partial class CpuBackend
             if (!bLayout.IsContiguousFromStart)
             {
                 // B stored [n, k] reaches the product transposed to [k, n] (CpuMatMul.Multiply), unless few rows read it in place
-                // (lane sums) or the product runs in chunks of k: there it is packed straight to [k, n] here, the product's own
-                // transpose skipped, every sum the same. Otherwise it is packed in its order, its flag as it was.
-                int chunk = ComputeResources.CpuProductKChunk;
-                bool chunks = chunk > 0 && k > chunk && m > 0 && n > 0;
+                // (lane sums) or the product runs in chunks of k (CpuMatMul.SplitsK, from the shape and the threads): there it
+                // is packed straight to [k, n] here, the product's own transpose skipped, every sum the same. Otherwise it is
+                // packed in its order, its flag as it was.
+                bool chunks = CpuMatMul.SplitsK(m, n, k);
                 if (transB && !chunks && m > CpuTuning.TransposedInPlace && bLayout.Reshape([batch, rb, cb]) is { } stored)
                 {
                     bv = packedB = Pack(bv, stored.Permute([0, 2, 1]));

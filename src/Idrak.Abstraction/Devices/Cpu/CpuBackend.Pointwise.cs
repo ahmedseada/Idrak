@@ -37,7 +37,7 @@ internal sealed partial class CpuBackend
     // sign(x): -1, 0 or 1, and NaN for NaN (MathF.Sign throws on NaN).
     private static float SignOf(float x) => x > 0f ? 1f : x < 0f ? -1f : x;
 
-    private static float SigmoidOf(float x) => 1f / (1f + MathF.Exp(-x));
+    private static float SigmoidOf(float x) => 1f / (1f + CpuMath.Exp(-x));
 
     private readonly struct MathLoop(UnaryOp op, float[] x, float[] y) : IRangeKernel
     {
@@ -161,7 +161,7 @@ internal sealed partial class CpuBackend
                     for (int i = tail; i < xs.Length; i++)
                     {
                         float v = xs[i];
-                        ds[i] += gs[i] * (0.5f * (1f + ErfOf(v * 0.70710678f)) + v * 0.3989422804f * MathF.Exp(-0.5f * v * v));
+                        ds[i] += gs[i] * (0.5f * (1f + ErfOf(v * 0.70710678f)) + v * 0.3989422804f * CpuMath.Exp(-0.5f * v * v));
                     }
 
                     break;

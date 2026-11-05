@@ -230,10 +230,10 @@ internal static class CpuTuning
     internal const int TiledAttentionHeads = 128;
 
     /// <summary>
-    /// The column-split few-row product applies beta · C without FMA (the other paths fuse it), so when beta ≠ 0 the rule
-    /// that sends a product there is part of its result: at most this many rows, at least <see cref="ColumnSplitColumns"/>
-    /// columns, m·n·k at least <see cref="ColumnSplitWork"/>, more than one thread. With beta = 0 (every forward product)
-    /// the paths agree and the choice follows the measured cut-over and the vector width.
+    /// When beta ≠ 0, the column-split few-row product takes at most this many rows, at least <see cref="ColumnSplitColumns"/>
+    /// columns, m·n·k at least <see cref="ColumnSplitWork"/>, more than one thread. Every path adds beta · C as one FMA
+    /// (plan 37, P0; the column split once added it without), so the paths agree whatever the rule; with beta = 0 (every
+    /// forward product) the choice follows the measured cut-over and the vector width.
     /// </summary>
     internal const int ColumnSplitRows = 4;
 

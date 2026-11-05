@@ -577,7 +577,7 @@ internal abstract partial class Tests
 
             if (minP > 0f)
             {
-                threshold = MathF.Max(threshold, max + MathF.Log(minP));
+                threshold = MathF.Max(threshold, max + Idrak.Abstraction.Devices.Cpu.CpuMath.Log(minP));
             }
 
             if (topP > 0f && topP < 1f)
@@ -586,7 +586,7 @@ internal abstract partial class Tests
                 foreach (float v in z)
                 {
                     float s = v * invT;
-                    total += s >= threshold ? MathF.Exp(s - max) : 0f;
+                    total += s >= threshold ? Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(s - max) : 0f;
                 }
 
                 float goal = total * topP, lo = MathF.Max(max - 40f, threshold), hi = max;
@@ -596,7 +596,7 @@ internal abstract partial class Tests
                     foreach (float v in z)
                     {
                         float s = v * invT;
-                        mass += s >= threshold && s >= mid ? MathF.Exp(s - max) : 0f;
+                        mass += s >= threshold && s >= mid ? Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(s - max) : 0f;
                     }
 
                     if (mass >= goal)
@@ -616,7 +616,7 @@ internal abstract partial class Tests
             for (int j = 0; j < vocabulary; j++)
             {
                 float s = z[j] * invT;
-                e[j] = s >= threshold ? MathF.Exp(s - max) : 0f;
+                e[j] = s >= threshold ? Idrak.Abstraction.Devices.Cpu.CpuMath.Exp(s - max) : 0f;
                 sum += e[j];
             }
 
@@ -642,7 +642,7 @@ internal abstract partial class Tests
                 if (e[j] > 0f)
                 {
                     float p = e[j] / sum;
-                    entropy -= p * MathF.Log2(p);
+                    entropy -= p * (Idrak.Abstraction.Devices.Cpu.CpuMath.Log(p) * 1.44269504f);   // as the CPU kernel: its own ln, times log2 e
                 }
             }
 
