@@ -227,7 +227,12 @@ internal abstract partial class Tests
                     }
                     else
                     {
-                        Check(trace.Calls(Ops.AttentionSpans) + trace.Calls(Ops.ScaleMaskSoftmax) >= 1, "measured, the layer takes a path");
+                        // Measured, either path, whichever the device timed faster (that can change between runs): the key
+                        // ranges, read in place from the projections as when forced (AttentionSpansStrided), or the full
+                        // scores. The outputs are compared below either way.
+                        var spans = trace.Calls(Ops.AttentionSpans) + trace.Calls(Ops.AttentionSpansStrided);
+                        var composed = trace.Calls(Ops.ScaleMaskSoftmax);
+                        Check(spans + composed >= 1, $"measured, the layer takes a path (key ranges {spans}, full scores {composed})");
                     }
                 }
             }
