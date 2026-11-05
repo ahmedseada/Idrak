@@ -33,9 +33,19 @@ internal static class ModelChoices
               --device-layers N  decoder layers kept on the GPU when the model does not fit it; the rest are computed by
                                  the CPU from system memory (auto: as the GPU's free memory allows; IDRAK_DEVICE_LAYERS;
                                  IDRAK_WEIGHT_PLACEMENT device, split, stream or auto chooses how)
+              --moe-experts P    where a mixture-of-experts model's experts live: resident (all on the GPU), offload
+                                 (the most used on the GPU, the rest in system memory, copied in when picked) or auto
+                                 (the default: resident when it fits; IDRAK_MOE_EXPERTS, IDRAK_MOE_DEVICE_EXPERTS_MB,
+                                 IDRAK_MOE_COLD=cpu computes cold experts on the CPU)
               --dtype TYPE       the element type the run computes in: auto (the default, picked per run) or float32
                                  (IDRAK_DEFAULT_DTYPE)
         """;
+
+    /// <summary>
+    /// The option naming where a mixture-of-experts model's experts live (resident, offload, auto or a registered expert
+    /// placement, plan 37's R1); over IDRAK_MOE_EXPERTS (<see cref="Idrak.Models.Abstractions.ExpertPlacements"/>).
+    /// </summary>
+    public const string MoeExpertsOption = "--moe-experts";
 
     /// <summary>The option naming the element type a run computes in (auto or float32, plan 37's T0); over IDRAK_DEFAULT_DTYPE.</summary>
     public const string DtypeOption = "--dtype";
@@ -83,6 +93,9 @@ internal static class ModelChoices
         /// <summary>The decoder layers kept on the device (<c>--device-layers</c>, or the alias's "device_layers"), or null to size them (auto).</summary>
         public int? DeviceLayers { get; init; }
 
+        /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts"), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
+        public string? MoeExperts { get; init; }
+
         /// <summary>The element type the run computes in (<c>--dtype</c>, or the alias's "dtype"), or null for IDRAK_DEFAULT_DTYPE, else auto.</summary>
         public string? Dtype { get; init; }
 
@@ -96,7 +109,7 @@ internal static class ModelChoices
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? weights = null, kv = null, headWeights = null, deviceLayers = null, dtype = null;
+        string? weights = null, kv = null, headWeights = null, deviceLayers = null, dtype = null, moeExperts = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         ImageTransformPipeline? transforms = null;
@@ -108,6 +121,7 @@ internal static class ModelChoices
             kv = (string?)alias["kv"];
             deviceLayers = alias["device_layers"]?.ToString();
             dtype = (string?)alias["dtype"];
+            moeExperts = (string?)alias["moe_experts"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
             {
@@ -139,8 +153,13 @@ internal static class ModelChoices
             AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights,
             DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
             Dtype = context.Option(DtypeOption) ?? dtype,
+            MoeExperts = MoeExpertsOf(context.Option(MoeExpertsOption) ?? moeExperts),
         };
     }
+
+    // A registered expert placement's name (refused at once, naming the registered ones), or null when none is given.
+    private static string? MoeExpertsOf(string? name) => name is null ? null
+        : Parsed(() => Idrak.Models.Abstractions.ExpertPlacements.Get(name.Trim()).Name, MoeExpertsOption);
 
     // The head's registered format name: bf16 is bfloat16's short name, as in --weights.
     private static string? HeadFormat(string? name) => name?.ToLowerInvariant() switch
@@ -300,6 +319,7 @@ internal static class ModelChoices
                 AutoWeightsContext = choice.Context ?? DefaultContext,
                 DeviceLayers = choice.DeviceLayers,
                 ElementType = choice.Dtype,
+                ExpertPlacement = choice.MoeExperts,
                 ElementTypeSource = DtypeOption,
             });
             progress.Clear();

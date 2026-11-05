@@ -94,7 +94,9 @@ internal sealed class TuneTool(ToolConsole console)
                    GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
                    --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB,
                    --device-layers N | auto (chat and evaluate of a model larger than the GPU: N layers on it, the rest computed by
-                   the CPU from system memory; training keeps every layer on the device, --offload staging what does not fit)
+                   the CPU from system memory; training keeps every layer on the device, --offload staging what does not fit),
+                   --moe-experts resident | offload | auto (chat and evaluate of a mixture-of-experts model: offload keeps the
+                   most used experts on the GPU and the rest in system memory; training keeps every expert resident)
         """;
 
     /// <summary>The commands, the first argument.</summary>
@@ -108,7 +110,7 @@ internal sealed class TuneTool(ToolConsole console)
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers",
+        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts",
     ];
 
     /// <summary>The flags.</summary>
@@ -147,7 +149,7 @@ internal sealed class TuneTool(ToolConsole console)
     private long? gpuMemoryLimit;
     private int balance;
     private double evalFraction;
-    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers;
+    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers, moeExperts;
     private float? temperature;
     private string metric = ChatEvaluation.Auto;
 
@@ -265,6 +267,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--time-steps": profileTraining = true; break;
                 case "--offload": offload = true; break;
                 case "--device-layers": deviceLayers = Next(); break;
+                case "--moe-experts": moeExperts = Next(); break;
                 case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
                 case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
                 case "--weight-decay": weightDecay = NextFloat(); break;
@@ -1472,6 +1475,8 @@ internal sealed class TuneTool(ToolConsole console)
             Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
             WeightPlacement = training ? offload ? Idrak.Models.Abstractions.WeightPlacements.Stream : Idrak.Models.Abstractions.WeightPlacements.AllOnDevice : null,
             DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
+            // Training moves no expert between memories: every expert stays resident (plan 37, R1).
+            ExpertPlacement = training ? Idrak.Models.Abstractions.ExpertPlacements.Resident : moeExperts,
         });
         _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
         _out.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "

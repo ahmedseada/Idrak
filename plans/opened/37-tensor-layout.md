@@ -5,7 +5,10 @@
 of ranks), N2 (pipeline stages sized by measured memory), T0, T1, T1b (element and block types, integer indices on CPU,
 Vulkan, CUDA and HIP) and K0 (a paged key/value cache with shared prompt prefixes, off by default; each layer's pages
 gathered into a working cache as it attends, page-aware attention kernels not yet) built 2026-11-05; Q0 (weights kept
-in their file's format, CPU and five Vulkan formats) built 2026-11-05; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
+in their file's format, CPU and five Vulkan formats) built 2026-11-05; R0 (MoE routing on the device: R0a Vulkan, R0b HIP,
+R0c CUDA, R0d expert launches sized by the device's counts) and R1 (experts placed apart: `ExpertPlacements` resident,
+offload and auto, a device cache learned from the routing's counts, lazy experts, cold experts copied in or on the CPU;
+the copy stream's prefetch of the next layer's experts not yet) built 2026-11-05; the rest planned. Q0, K0, W3 and the wider T0, T2, T3 added
 2026-11-05; the network stages N0-N3 added the same day. Written from the owner's request (2026-11-04): "add it as separate plan
 that's look like a legit good plan and memory is the main purpose and goal so it's good to have", after the risk
 review's items C1, C2 and C3 (plan 36, "The full risk review"). Every "today" below was read in the source at `main`

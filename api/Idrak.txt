@@ -1051,6 +1051,44 @@ public sealed class Idrak.Layers.ExactGELU : Idrak.Abstraction.Module
   public static Idrak.Abstraction.Tensor Apply(Idrak.Abstraction.Tensor x)
   public static Idrak.Abstraction.Tensor Erf(Idrak.Abstraction.Tensor x)
 
+public sealed class Idrak.Layers.ExpertCache
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Device Host { get; }
+  public bool ColdOnCpu { get; }
+  public bool HoldsAll { get; }
+  public bool IsBuilt(int e)
+  public bool IsResident(int e)
+  public bool Lazy { get; }
+  public int Built { get; }
+  public int Capacity { get; }
+  public int Experts { get; }
+  public int Resident { get; }
+  public long CopiedBytes { get; }
+  public long CpuRows { get; }
+  public long EvictedBytes { get; }
+  public long Hits { get; }
+  public long HostRoutings { get; }
+  public long Misses { get; }
+  public long Uses(int e)
+  public override string ToString()
+
+public static class Idrak.Layers.ExpertTraffic
+  public static Idrak.Layers.ExpertTrafficCounts Read()
+
+public sealed record Idrak.Layers.ExpertTrafficCounts : System.IEquatable<Idrak.Layers.ExpertTrafficCounts>
+  public ExpertTrafficCounts(long Hits, long Misses, long CopiedBytes, long EvictedBytes, long HostRoutings, long CpuRows, int Resident, int Cold)
+  public Idrak.Layers.ExpertTrafficCounts Since(Idrak.Layers.ExpertTrafficCounts before)
+  public bool IsEmpty { get; }
+  public int Cold { get; init; }
+  public int Resident { get; init; }
+  public long CopiedBytes { get; init; }
+  public long CpuRows { get; init; }
+  public long EvictedBytes { get; init; }
+  public long Hits { get; init; }
+  public long HostRoutings { get; init; }
+  public long Misses { get; init; }
+  public string Describe(int tokens)
+
 public sealed class Idrak.Layers.FeedForward : Idrak.Abstraction.Module
   public FeedForward(Idrak.Layers.Linear? gate, Idrak.Layers.Linear up, Idrak.Layers.Linear down, Idrak.Abstraction.Generation.FeedForwardActivation activation)
   public FeedForward(int dim, int hidden, bool gated, Idrak.Abstraction.Generation.FeedForwardActivation activation, bool bias = false, Idrak.Abstraction.Device? device = null, System.Random? random = null)
@@ -1199,6 +1237,8 @@ public sealed class Idrak.Layers.MaxPool2d : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.MixtureOfExperts : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.IHostRoundTrip, Idrak.Layers.Abstractions.IRoutedLayer
   public Idrak.Abstraction.Tensor? LoadBalancingLoss { get; }
+  public Idrak.Layers.ExpertCache OffloadExperts(Idrak.Abstraction.Device device, int deviceExperts, bool coldOnCpu = false, Idrak.Abstraction.Device? host = null)
+  public Idrak.Layers.ExpertCache? Cache { get; }
   public Idrak.Layers.FeedForward? SharedExpert { get; }
   public Idrak.Layers.Linear Router { get; }
   public Idrak.Layers.Linear? SharedExpertGate { get; }
@@ -1566,10 +1606,12 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public Idrak.Abstraction.Device? Device { get; init; }
   public Idrak.Abstraction.Device? HostDevice { get; init; }
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
+  public Idrak.Models.Abstractions.ExpertPlan? Experts { get; init; }
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
   public bool KeepPacked { get; init; }
+  public bool LazyExperts { get; init; }
   public bool LazyLayers { get; init; }
   public float? InitStd { get; init; }
   public int Seed { get; init; }
@@ -1599,6 +1641,54 @@ public static class Idrak.Models.Abstractions.EncoderHeads
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Models.Abstractions.IEncoderHeadKind kind)
+
+public sealed record Idrak.Models.Abstractions.ExpertPlacementRequest : System.IEquatable<Idrak.Models.Abstractions.ExpertPlacementRequest>
+  public ExpertPlacementRequest(Idrak.Abstraction.Device Device, int ExpertLayers, int Experts, int ExpertsPerToken, long ExpertBytes, long OtherBytes, long? AvailableBytes, long? CacheBytes, bool ColdOnCpu = false)
+  public Idrak.Abstraction.Device Device { get; init; }
+  public bool ColdOnCpu { get; init; }
+  public bool Fits { get; }
+  public int DeviceExperts { get; }
+  public int ExpertLayers { get; init; }
+  public int Experts { get; init; }
+  public int ExpertsPerToken { get; init; }
+  public long ExpertBytes { get; init; }
+  public long ExpertsBytes { get; }
+  public long OtherBytes { get; init; }
+  public long? AvailableBytes { get; init; }
+  public long? CacheBytes { get; init; }
+
+public static class Idrak.Models.Abstractions.ExpertPlacements
+  public const string Auto = "auto"
+  public const string CacheVariable = "IDRAK_MOE_DEVICE_EXPERTS_MB"
+  public const string ColdCopy = "copy"
+  public const string ColdCpu = "cpu"
+  public const string ColdVariable = "IDRAK_MOE_COLD"
+  public const string EnvironmentVariable = "IDRAK_MOE_EXPERTS"
+  public const string Offload = "offload"
+  public const string Resident = "resident"
+  public static Idrak.Models.Abstractions.ExpertPlan OffloadPlan(Idrak.Models.Abstractions.ExpertPlacementRequest request, string placement)
+  public static Idrak.Models.Abstractions.IExpertPlacement Get(string name)
+  public static Idrak.Models.Abstractions.IExpertPlacement? Default(string name)
+  public static Idrak.Models.Abstractions.IExpertPlacement? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool DefaultColdOnCpu { get; }
+  public static bool ParseCold(string? value, string where)
+  public static bool Unregister(string name)
+  public static long? DefaultCacheBytes { get; }
+  public static long? ParseCacheMegabytes(string? value, string where)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IExpertPlacement placement)
+
+public sealed record Idrak.Models.Abstractions.ExpertPlan : System.IEquatable<Idrak.Models.Abstractions.ExpertPlan>
+  public ExpertPlan(string Placement, bool Offload, int DeviceExperts, bool ColdOnCpu, string Reason)
+  public bool ColdOnCpu { get; init; }
+  public bool Offload { get; init; }
+  public int DeviceExperts { get; init; }
+  public override string ToString()
+  public string Placement { get; init; }
+  public string Reason { get; init; }
 
 public class Idrak.Models.Abstractions.GgufArchitecture : Idrak.Models.Abstractions.IGgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
@@ -1684,6 +1774,9 @@ public interface Idrak.Models.Abstractions.IConfigWritingArchitecture : Idrak.Mo
 
 public interface Idrak.Models.Abstractions.IEncoderHeadKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead>
   public System.Collections.Generic.IReadOnlyList<string> Weights { get; }
+
+public interface Idrak.Models.Abstractions.IExpertPlacement : Idrak.Abstraction.IKind
+  public Idrak.Models.Abstractions.ExpertPlan Place(Idrak.Models.Abstractions.ExpertPlacementRequest request)
 
 public interface Idrak.Models.Abstractions.IGgufArchitecture
   public bool InterleavedQueryKeys { get; }
@@ -2111,6 +2204,7 @@ public sealed record Idrak.Models.Abstractions.WeightPlan : System.IEquatable<Id
 public static class Idrak.Models.AutoWeights
   public const double DefaultHeadroom = 0.1
   public const int DefaultContext = 4096
+  public static Idrak.Models.Abstractions.ExpertPlacementRequest ExpertRequest(Idrak.Abstraction.Generation.DecoderSpec spec, string format, int context, Idrak.Abstraction.Device device, long? available, long? cacheBytes, bool coldOnCpu, double headroom = 0.1)
   public static Idrak.Models.Abstractions.WeightPlacementRequest PlacementRequest(Idrak.Abstraction.Generation.DecoderSpec spec, string format, int context, Idrak.Abstraction.Device device, long? available, int? deviceLayers, double headroom = 0.1)
   public static Idrak.Models.WeightsChoice Choose(Idrak.Abstraction.Generation.DecoderSpec spec, int context, long? available, bool offload, double headroom = 0.1, System.Collections.Generic.IReadOnlyList<string>? formats = null, string? model = null)
   public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
@@ -2310,6 +2404,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Abstraction.Generation.StoredWeightsSummary? KeptWeights { get; }
   public Idrak.Layers.Sequential Network { get; }
+  public Idrak.Models.Abstractions.ExpertPlan? ExpertPlacement { get; }
   public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
   public Idrak.Models.Abstractions.WeightPlan? Placement { get; }
   public Idrak.Models.PackedWeightCacheUse? PackedCache { get; }
@@ -2353,6 +2448,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public bool Deferred { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
+  public bool? ColdExpertsOnCpu { get; init; }
   public bool? FollowMemory { get; init; }
   public bool? KeepPacked { get; init; }
   public bool? LazyLayers { get; init; }
@@ -2363,9 +2459,11 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public int? DeviceLayers { get; init; }
   public int? MaxPositions { get; init; }
   public long? AutoWeightsBudget { get; init; }
+  public long? DeviceExpertBytes { get; init; }
   public string ElementTypeSource { get; init; }
   public string? Architecture { get; init; }
   public string? ElementType { get; init; }
+  public string? ExpertPlacement { get; init; }
   public string? HeadFormatName { get; init; }
   public string? MergeAdapter { get; init; }
   public string? PackedCacheFolder { get; init; }

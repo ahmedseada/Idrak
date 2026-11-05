@@ -170,6 +170,37 @@ public static class AutoWeights
         return new WeightPlacementRequest(device, spec.Layers, layerBytes, fixedBytes, layerCache, working, available, deviceLayers, device.Backend.Offload is not null);
     }
 
+    /// <summary>
+    /// What an expert placement is asked for <paramref name="spec"/>'s experts loaded as <paramref name="format"/> on
+    /// <paramref name="device"/> (<see cref="ExpertPlacementRequest"/>, plan 37 R1), counted from the spec before any weight
+    /// is read:
+    /// - one expert's projections in the format's bytes a weight (as <see cref="PlacementRequest"/> counts them);
+    /// - everything else the run holds on the device: the other weights, every layer's float32 key/value cache for
+    ///   <paramref name="context"/> tokens, a step's scores and <paramref name="headroom"/> of the weights.
+    /// <paramref name="available"/> is the device's free memory (or a budget), <paramref name="cacheBytes"/> the user's
+    /// limit on the experts kept there, if any.
+    /// </summary>
+    public static ExpertPlacementRequest ExpertRequest(DecoderSpec spec, string format, int context, Device device, long? available, long? cacheBytes, bool coldOnCpu,
+        double headroom = DefaultHeadroom)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(format);
+        ArgumentNullException.ThrowIfNull(device);
+        string counted = Formats.Contains(format) ? format : "bfloat16";
+        double perWeight = counted switch
+        {
+            "float32" => 4,
+            "bfloat16" => 2,
+            "int8" => 1.0625,
+            _ => 0.625,
+        };
+        int expertLayers = Enumerable.Range(0, spec.Layers).Count(spec.IsExpertLayer);
+        long expertBytes = (long)((long)spec.Dim * spec.ExpertHidden * (spec.Gated ? 3 : 2) * perWeight);
+        long weights = WeightBytes(spec, counted);
+        long other = Math.Max(0, weights - (long)expertLayers * spec.Experts * expertBytes) + WorkingBytes(spec, context, weights, headroom);
+        return new ExpertPlacementRequest(device, expertLayers, spec.Experts, spec.ExpertsPerToken, expertBytes, other, available, cacheBytes, coldOnCpu);
+    }
+
     /// <summary>Bytes as gigabytes with one decimal ("8.1 GB", invariant culture).</summary>
     public static string Gigabytes(long bytes) => (bytes / 1e9).ToString("F1", CultureInfo.InvariantCulture) + " GB";
 }

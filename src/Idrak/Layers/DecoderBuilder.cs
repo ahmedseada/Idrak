@@ -307,12 +307,61 @@ public static class DecoderBuilder
                 Linear Float(string name, int outputs) => Linear.FromWeights(Tensor($"{name}.weight", [spec.Dim, outputs],
                     () => Initial(spec.Dim * outputs, MathF.Sqrt(6f / (spec.Dim + outputs)))));
 
-                Module feedForward = spec.IsExpertLayer(i)
-                    ? new MixtureOfExperts(Float($"{p}.mlp.router", spec.Experts),
-                        [.. Enumerable.Range(0, spec.Experts).Select(j => Dense($"{p}.mlp.experts.{j}", spec.ExpertHidden))], spec.ExpertsPerToken, spec.NormalizeTopK,
-                        spec.SharedExpertFfDim > 0 ? Dense($"{p}.mlp.shared", spec.SharedExpertFfDim) : null,
-                        spec.SharedExpertFfDim > 0 ? Float($"{p}.mlp.shared_gate", 1) : null)
-                    : Dense($"{p}.mlp", spec.FfDim);
+                // A mixture's experts (plan 37, R1): where the layer is, or (an expert placement that offloads) made on the host
+                // with a cache on the device; with a lazy build, placeholders each read the first time the router picks it.
+                MixtureOfExperts Mixture()
+                {
+                    var layerDevice = device;
+                    var host = hostDevice;
+                    bool apart = options.Experts is { Offload: true } && layerDevice != host;
+                    bool lazyExperts = options.LazyExperts && weights is not null;
+                    FeedForward Expert(int j, Device on)
+                    {
+                        var outer = device;
+                        device = on;
+                        try
+                        {
+                            return Dense($"{p}.mlp.experts.{j}", spec.ExpertHidden);
+                        }
+                        finally
+                        {
+                            device = outer;
+                        }
+                    }
+
+                    // Made in the order the weights are read: the router, the experts, the shared expert, its gate.
+                    var router = Float($"{p}.mlp.router", spec.Experts);
+                    FeedForward[] experts = [.. Enumerable.Range(0, spec.Experts).Select(j => lazyExperts ? ExpertPlaceholder() : Expert(j, apart ? host : layerDevice))];
+                    var shared = spec.SharedExpertFfDim > 0 ? Dense($"{p}.mlp.shared", spec.SharedExpertFfDim) : null;
+                    var sharedGate = spec.SharedExpertFfDim > 0 ? Float($"{p}.mlp.shared_gate", 1) : null;
+                    var mixture = new MixtureOfExperts(router, experts, spec.ExpertsPerToken, spec.NormalizeTopK, shared, sharedGate);
+                    if (lazyExperts)
+                    {
+                        mixture.LazyExperts(layerDevice, host, apart ? options.Experts!.DeviceExperts : spec.Experts, apart && options.Experts!.ColdOnCpu, Expert);
+                    }
+                    else if (apart)
+                    {
+                        mixture.OffloadExperts(layerDevice, options.Experts!.DeviceExperts, options.Experts.ColdOnCpu, host);
+                    }
+
+                    return mixture;
+                }
+
+                // An expert not read yet: its projections' shapes on the deferred device, holding no memory.
+                FeedForward ExpertPlaceholder()
+                {
+                    using (DeferredTensors.Build())
+                    {
+                        var on = DeferredTensors.Device;
+                        Linear Unread(int inputs, int outputs) => Linear.FromWeights(
+                            Idrak.Abstraction.Tensor.Persistent(DeferredTensors.Placeholder(inputs * outputs), [inputs, outputs], on, requiresGrad: true),
+                            spec.FeedForwardBias ? Idrak.Abstraction.Tensor.Persistent(DeferredTensors.Placeholder(outputs), [outputs], on, requiresGrad: true) : null);
+                        return new FeedForward(spec.Gated ? Unread(spec.Dim, spec.ExpertHidden) : null, Unread(spec.Dim, spec.ExpertHidden), Unread(spec.ExpertHidden, spec.Dim),
+                            spec.Activation);
+                    }
+                }
+
+                Module feedForward = spec.IsExpertLayer(i) ? Mixture() : Dense($"{p}.mlp", spec.FfDim);
                 return new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
                     spec.PostNorms ? Normalization($"{p}.post_attn_norm", spec.Dim) : null,
                     spec.PostNorms ? Normalization($"{p}.post_mlp_norm", spec.Dim) : null,

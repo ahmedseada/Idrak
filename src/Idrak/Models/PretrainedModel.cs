@@ -266,6 +266,32 @@ public sealed record PretrainedOptions
     public int? DeviceLayers { get; init; }
 
     /// <summary>
+    /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1):
+    /// - "resident": every expert on the device, as before.
+    /// - "offload": the most used experts of each layer in a cache on the device, the rest in system memory, copied in
+    ///   when the router picks them (or computed by the CPU, <see cref="ColdExpertsOnCpu"/>).
+    /// - "auto": resident when the model fits the device's measured free memory, else offload.
+    /// - or a placement of one's own.
+    /// Null takes <see cref="ExpertPlacements.DefaultName"/> (IDRAK_MOE_EXPERTS; auto). On the CPU every expert stays
+    /// resident. With <see cref="LazyLayers"/>, each expert is read the first time the router picks it.
+    /// <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
+    /// </summary>
+    public string? ExpertPlacement { get; init; }
+
+    /// <summary>
+    /// The bytes of experts an offloading <see cref="ExpertPlacement"/> keeps on the device, or null for
+    /// <see cref="ExpertPlacements.DefaultCacheBytes"/> (IDRAK_MOE_DEVICE_EXPERTS_MB; sized from the measured free memory
+    /// when not set).
+    /// </summary>
+    public long? DeviceExpertBytes { get; init; }
+
+    /// <summary>
+    /// Whether an offloaded cold expert is computed by the CPU from system memory instead of copied to the device when
+    /// the router picks it; null takes <see cref="ExpertPlacements.DefaultColdOnCpu"/> (IDRAK_MOE_COLD; copy).
+    /// </summary>
+    public bool? ColdExpertsOnCpu { get; init; }
+
+    /// <summary>
     /// The element type the run computes in (plan 37, T0): "auto" (picked per run) or "float32"; null takes
     /// <see cref="ElementTypes.EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else auto. Until plan 37's T2 auto picks
     /// float32, so every result is as before. <see cref="PretrainedModel.ElementType"/> says what was chosen and how.
@@ -486,14 +512,43 @@ public sealed class PretrainedModel : IDisposable
         var elementType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource);
         ElementTypes.Report(elementType, options.Device ?? Abstraction.Device.Default);
 
+        // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
+        // placement, which then counts only the experts kept on the device.
+        ExpertPlan? expertPlan = null;
+        string loadFormat = options.PackedFormatName ?? (options.Int8 ? "int8" : options.Int4 ? "int4" : options.BFloat16 ? "bfloat16" : "float32");
+        int loadContext = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
+        ExpertPlacementRequest? expertRequest = null;
+        if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture)
+        {
+            expertRequest = AutoWeights.ExpertRequest(spec, loadFormat, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
+                options.DeviceExpertBytes ?? ExpertPlacements.DefaultCacheBytes, options.ColdExpertsOnCpu ?? ExpertPlacements.DefaultColdOnCpu, options.AutoWeightsHeadroom);
+            expertPlan = ExpertPlacements.Get(options.ExpertPlacement ?? ExpertPlacements.DefaultName).Place(expertRequest);
+            if (expertPlan.Offload && placementTarget.Type == DeviceType.Cpu)
+            {
+                expertPlan = expertPlan with { Offload = false, DeviceExperts = spec.Experts, Reason = $"every expert on {placementTarget} (the CPU's memory is the system's)" };
+            }
+
+            if (expertPlan.Offload)
+            {
+                notes.Add($"experts {expertPlan}.");
+            }
+        }
+
         WeightPlan? plan = null;
         WeightPlacementRequest? placedRequest = null;
         if (placement is not null)
         {
-            string placedFormat = options.PackedFormatName ?? (options.Int8 ? "int8" : options.Int4 ? "int4" : options.BFloat16 ? "bfloat16" : "float32");
-            int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
+            string placedFormat = loadFormat;
+            int context = loadContext;
             var request = AutoWeights.PlacementRequest(spec, placedFormat, context, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceLayers ?? WeightPlacements.DefaultDeviceLayers, options.AutoWeightsHeadroom);
+            if (expertPlan is { Offload: true } && expertRequest is not null)
+            {
+                // A layer holds only the experts kept on the device: the others live in system memory.
+                long apart = (long)expertRequest.ExpertLayers * (spec.Experts - expertPlan.DeviceExperts) * expertRequest.ExpertBytes / Math.Max(1, spec.Layers);
+                request = request with { LayerBytes = Math.Max(0, request.LayerBytes - apart) };
+            }
+
             plan = placement.Place(request);
             placedRequest = request;
             if (plan.Split && architecture is INetworkBuildingArchitecture)
@@ -530,7 +585,7 @@ public sealed class PretrainedModel : IDisposable
         var lazyReader = lazy ? format.Open(folder) : null;
         var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
-            LazyLayers = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep };
+            LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -625,6 +680,7 @@ public sealed class PretrainedModel : IDisposable
         model._loadBytes = reader.BytesRead;
         model.Weights = weightsChoice;
         model.Placement = plan;
+        model.ExpertPlacement = expertPlan;
         model.ElementType = elementType;
         model.KeptWeights = buildWeights.StoredSummary;                      // weights kept as stored or expanded (plan 37, Q0)
         if (model.KeptWeights is { } keptWeights)
@@ -857,6 +913,14 @@ public sealed class PretrainedModel : IDisposable
     /// the CPU (which layers compute where) or streamed from system memory, with what was measured; null on the CPU.
     /// </summary>
     public WeightPlan? Placement { get; private set; }
+
+    /// <summary>
+    /// Where the load placed a mixture-of-experts model's experts (<see cref="PretrainedOptions.ExpertPlacement"/>, plan 37
+    /// R1): every one on the device, or the most used in a device cache and the rest in system memory, with what was
+    /// measured; null for a model without experts. Each layer's cache is its <c>MixtureOfExperts.Cache</c>, and what they
+    /// did is <see cref="Layers.ExpertTraffic"/>.
+    /// </summary>
+    public ExpertPlan? ExpertPlacement { get; private set; }
 
     /// <summary>
     /// The element type the load chose for the run and how (<see cref="PretrainedOptions.ElementType"/>): "element type:

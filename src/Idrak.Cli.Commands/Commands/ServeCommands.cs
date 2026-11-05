@@ -107,6 +107,9 @@ internal sealed class ServeCommand : Command
               --device-layers N      decoder layers kept on the GPU when a model does not fit it; the rest are
                                      computed by the CPU from system memory (auto: as the GPU's free memory allows;
                                      IDRAK_DEVICE_LAYERS, IDRAK_WEIGHT_PLACEMENT)
+              --moe-experts P        where a mixture-of-experts model's experts live: resident, offload (the most used
+                                     on the GPU, the rest in system memory) or auto (the default; IDRAK_MOE_EXPERTS,
+                                     IDRAK_MOE_DEVICE_EXPERTS_MB, IDRAK_MOE_COLD)
               --dtype TYPE           the element type the run computes in: auto (the default, picked per run) or
                                      float32 (IDRAK_DEFAULT_DTYPE)
         """;
@@ -167,7 +170,7 @@ internal sealed class ServeCommand : Command
           idrak serve qwen --mcp --transport http        # MCP for clients that connect to it (address and token printed)
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.DtypeOption, "--tools", .. McpServeCommand.TransportOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, ModelChoices.DtypeOption, "--tools", .. McpServeCommand.TransportOptions];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", .. McpServeCommand.TransportFlags];
 

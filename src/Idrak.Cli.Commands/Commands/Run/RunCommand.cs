@@ -69,7 +69,7 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.DtypeOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, ModelChoices.DtypeOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
         Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
@@ -137,6 +137,7 @@ internal sealed class RunCommand : Command
         }
 
         var trafficBefore = Idrak.Abstraction.Devices.OffloadTraffic.Read();   // what crosses the bus while answering (plan 37, W0)
+        var expertsBefore = Idrak.Layers.ExpertTraffic.Read();                  // what the experts placed apart did (plan 37, R1)
         ChatAnswer answer;
         try
         {
@@ -149,6 +150,7 @@ internal sealed class RunCommand : Command
         }
 
         var traffic = Idrak.Abstraction.Devices.OffloadTraffic.Read().Since(trafficBefore);
+        var expertTraffic = Idrak.Layers.ExpertTraffic.Read().Since(expertsBefore);
         var memory = context.Verbose ? loaded.Memory() : default;
         if (context.Verbose && !context.Json)
         {
@@ -156,6 +158,11 @@ internal sealed class RunCommand : Command
             if (!traffic.IsEmpty)
             {
                 context.ErrorOutput.WriteLine(traffic.Describe(answer.GeneratedTokens));
+            }
+
+            if (!expertTraffic.IsEmpty)
+            {
+                context.ErrorOutput.WriteLine(expertTraffic.Describe(answer.GeneratedTokens));
             }
 
             foreach (string line in LoadedChat.MemoryLines(memory.Parts, memory.Usage))

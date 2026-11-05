@@ -3,6 +3,7 @@
 
 using Idrak.Abstraction.Operations;
 using Idrak.Layers.Abstractions;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Layers;
 
@@ -86,8 +87,8 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
             throw new ArgumentException($"The shared expert's gate must be [{router.InFeatures}, 1], with a shared expert.");
         }
 
-        (Router, Experts, ExpertsPerToken, NormalizeTopK, SharedExpert, SharedExpertGate) =
-            (router, experts, expertsPerToken, normalizeTopK, sharedExpert, sharedExpertGate);
+        _experts = [.. experts];
+        (Router, ExpertsPerToken, NormalizeTopK, SharedExpert, SharedExpertGate) = (router, expertsPerToken, normalizeTopK, sharedExpert, sharedExpertGate);
         router.Name = "router";
         for (int j = 0; j < experts.Count; j++)
         {
@@ -109,7 +110,67 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
     public Linear Router { get; }
 
     /// <summary>The experts ("experts.j").</summary>
-    public IReadOnlyList<FeedForward> Experts { get; }
+    public IReadOnlyList<FeedForward> Experts => _experts;
+
+    // The experts, in router order: an expert cache (R1) moves them between memories and, for a lazy load, puts each in
+    // the place of its placeholder when it is first read.
+    private readonly FeedForward[] _experts;
+
+    /// <summary>
+    /// The experts' placement apart (plan 37, R1, <see cref="ExpertPlacements"/>): at most <see cref="ExpertCache.Capacity"/>
+    /// of them on the device, the rest in system memory (or not read yet); null while every expert stays where it was
+    /// made (resident).
+    /// </summary>
+    public ExpertCache? Cache { get; private set; }
+
+    /// <summary>
+    /// Places the experts apart (plan 37, R1): at most <paramref name="deviceExperts"/> of them on
+    /// <paramref name="device"/>, the rest on <paramref name="host"/> (system memory, the CPU when null).
+    /// <para>
+    /// Every expert moves to the host now. During inference the router's picks copy the experts in (the least picked one
+    /// going back first when the cache is full); with <paramref name="coldOnCpu"/>, a cold expert's rows are computed on
+    /// the host instead. The results are the same bit for bit as with every expert on the device. While the cache does
+    /// not hold every expert, the layer routes on the host (counted, <see cref="ExpertCache.HostRoutings"/>), so a step
+    /// through it is not recorded. Training with experts placed apart is refused.
+    /// </para>
+    /// </summary>
+    /// <param name="device">Where resident experts compute (the device the layer's input comes from).</param>
+    /// <param name="deviceExperts">The experts kept on the device at most (1 to their count).</param>
+    /// <param name="coldOnCpu">Compute a cold expert's rows on the host instead of copying it in.</param>
+    /// <param name="host">Where cold experts live: the CPU when null.</param>
+    /// <returns>The cache.</returns>
+    public ExpertCache OffloadExperts(Device device, int deviceExperts, bool coldOnCpu = false, Device? host = null)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        host ??= Device.Cpu;
+        foreach (var expert in _experts)
+        {
+            expert.To(host);
+        }
+
+        return Cache = new ExpertCache(_experts, device, host, deviceExperts, coldOnCpu, null);
+    }
+
+    // A lazy load's experts (R1 with W2's lazy loading): each is a placeholder holding no memory until the router first picks
+    // it; `build` then reads it from the checkpoint onto the device (or the host, for the CPU to compute it).
+    internal ExpertCache LazyExperts(Device device, Device host, int deviceExperts, bool coldOnCpu, Func<int, Device, FeedForward> build) =>
+        Cache = new ExpertCache(_experts, device, host, deviceExperts, coldOnCpu, build);
+
+    /// <inheritdoc />
+    protected override void MoveTo(Device device)
+    {
+        if (Cache is not { } cache)
+        {
+            base.MoveTo(device);
+            return;
+        }
+
+        // The cache keeps its cold experts where they are: the router, the shared expert and the resident experts move.
+        Router.To(device);
+        SharedExpert?.To(device);
+        SharedExpertGate?.To(device);
+        cache.Retarget(device);
+    }
 
     /// <summary>Experts each token is routed to.</summary>
     public int ExpertsPerToken { get; }
@@ -168,12 +229,21 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         int dim = Router.InFeatures, tokens = input.Size / dim, experts = Experts.Count, k = ExpertsPerToken;
         var device = input.Device;
         var backend = input.Backend;
+        var cache = Cache;
+        if (cache is not null && IsTraining && Autograd.IsEnabled)
+        {
+            throw new NotSupportedException("This mixture-of-experts layer's experts are placed apart for inference (MixtureOfExperts.Cache, IDRAK_MOE_EXPERTS): training moves no weights between memories; load it with every expert resident to train.");
+        }
+
+        // Experts placed apart (R1) route on the device only once every one is resident: until then the host's routing says
+        // which to copy in.
+        bool allResident = cache is null || cache.HoldsAll;
         bool kernels = backend.RoutesExperts;
-        bool expertKernels = kernels && !Autograd.IsEnabled && ExpertsOnDevice(input);   // the experts run through the device's operations
+        bool expertKernels = allResident && kernels && !Autograd.IsEnabled && ExpertsOnDevice(input);   // the experts run through the device's operations
         bool onDevice = expertKernels && RoutesOnDevice;
         if (!onDevice && ComputeGraph.IsCapturing)
         {
-            throw new NotSupportedException("Mixture-of-experts routing reads the router's choices back to the host here (the device has no routing kernels, or the experts or the pass need the host routing), which a recorded graph cannot; the step runs as it is.");
+            throw new NotSupportedException("Mixture-of-experts routing reads the router's choices back to the host here (the device has no routing kernels, the experts or the pass need the host routing, or not every expert placed apart is on the device yet), which a recorded graph cannot; the step runs as it is.");
         }
 
         var x = input.Reshape(tokens, dim);
@@ -192,6 +262,25 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         var routed = probabilities.ToArray();
         Tensor.Traced("route_on_host", probabilities, readStart);                    // the host read, for a census of them
         var (choices, weights) = Route(routed, tokens, experts, k, NormalizeTopK);
+        if (cache is not null)
+        {
+            cache.Count(choices);
+            if (!allResident)
+            {
+                if (kernels && RoutesOnDevice)
+                {
+                    cache.CountHostRouting();                                         // routed on the host for the cache's sake
+                }
+
+                if (cache.Lazy && !Enumerable.Range(0, experts).Any(cache.IsBuilt))
+                {
+                    cache.OnHost(choices[0]);                                         // one expert read, so the experts' format is known
+                }
+
+                expertKernels = kernels && !Autograd.IsEnabled && ExpertsOnDevice(input);
+            }
+        }
+
         if (expertKernels)
         {
             // The host's routing, uploaded and run through the same expert operations as the device's (plan 37, R0).
@@ -225,13 +314,18 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
             inOrder &= row == slot;
         }
 
+        if (cache is { ColdOnCpu: true })
+        {
+            cache.Promote([.. Enumerable.Range(0, experts).Where(e => counts[e] > 0)]);
+        }
+
         var outputs = new List<Tensor>(experts);
         for (int e = 0; e < experts; e++)
         {
             if (counts[e] > 0)
             {
                 var rows = counts[e] == tokens ? x : x.EmbeddingLookup(Tensor.Indices(tokenOfRow.AsSpan(starts[e], counts[e]), device));
-                outputs.Add(Experts[e].Forward(rows));
+                outputs.Add(cache is null ? Experts[e].Forward(rows) : CachedExpert(cache, e, rows));
             }
         }
 
@@ -277,15 +371,28 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
             return false;
         }
 
+        // Experts placed apart (R1): the cache makes them resident before the operations read them, so only their formats
+        // count here, those read so far (a lazy load's placeholders stand for experts not read yet).
+        var cache = Cache;
         int hidden = Experts[0].Up.OutFeatures;
         var activation = Experts[0].Activation;
-        foreach (var expert in Experts)
+        for (int e = 0; e < _experts.Length; e++)
         {
+            var expert = _experts[e];
+            if (cache is not null && !cache.IsBuilt(e))
+            {
+                continue;
+            }
+
             if (expert.Gate is not { } gate || expert.Activation != activation || !Linear.PlainFloat(gate) || !Linear.PlainFloat(expert.Up) || !Linear.PlainFloat(expert.Down)
-                || gate.OutFeatures != hidden || expert.Up.OutFeatures != hidden || expert.Down.InFeatures != hidden
-                || gate.Weight.Device != input.Device || expert.Up.Weight.Device != input.Device || expert.Down.Weight.Device != input.Device
+                || gate.OutFeatures != hidden || expert.Up.OutFeatures != hidden || expert.Down.InFeatures != hidden)
+            {
+                return false;
+            }
+
+            if (cache is null && (gate.Weight.Device != input.Device || expert.Up.Weight.Device != input.Device || expert.Down.Weight.Device != input.Device
                 || gate.Bias is { } gb && gb.Device != input.Device || expert.Up.Bias is { } ub && ub.Device != input.Device
-                || expert.Down.Bias is { } db && db.Device != input.Device)
+                || expert.Down.Bias is { } db && db.Device != input.Device))
             {
                 return false;
             }
@@ -336,24 +443,16 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
             }
 
             rows = x.EmbeddingLookup(tokenOfRow);                                     // [slots, dim], expert by expert
-            var pairs = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[experts];
-            var downs = new (Storage Weight, Storage? Bias)[experts];
-            for (int e = 0; e < experts; e++)
-            {
-                var expert = Experts[e];
-                pairs[e] = (expert.Gate!.Weight.Storage, expert.Gate.Bias?.Storage, expert.Up.Weight.Storage, expert.Up.Bias?.Storage);
-                downs[e] = (expert.Down.Weight.Storage, expert.Down.Bias?.Storage);
-            }
-
-            start = Telemetry.Start(TelemetryLevel.Operations);
             gated = Tensor.Empty([slots, hidden], device, track: false);
-            backend.ExpertGatedPair(rows.Storage, offsets.Storage, pairs, gated.Storage, slots, dim, hidden, (int)Experts[0].Activation);
-            Tensor.Traced("expert_gated_pair", gated, start);
-
-            start = Telemetry.Start(TelemetryLevel.Operations);
             outputs = Tensor.Empty([slots, dim], device, track: false);
-            backend.ExpertMatMul(gated.Storage, offsets.Storage, downs, outputs.Storage, slots, hidden, dim);
-            Tensor.Traced("expert_matmul", outputs, start);
+            if (Cache is { } cache && routed is not null)
+            {
+                CachedExpertOperations(cache, rows, gated, outputs, Grouped(routed.Value.Choices, experts, k).Offsets, offsets);
+            }
+            else
+            {
+                ExpertOperations(backend, rows, offsets, gated, outputs, Enumerable.Range(0, experts).ToArray());
+            }
 
             slotOrder = outputs.EmbeddingLookup(slotRow);                             // [slots, dim], token by token
             var output = weights.MatMul(slotOrder.Reshape(tokens, k, dim));           // Σ weight · expert output, [tokens, 1, dim]
@@ -378,6 +477,132 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
             outputs?.Dispose();
             slotOrder?.Dispose();
         }
+    }
+
+    // The experts' gated pairs and down projections over their rows of `rows` (grouped by expert as `offsets` says) into
+    // `gated` and `outputs`: each expert e takes the weights of experts[e], an expert whose rows are none any resident one's.
+    private void ExpertOperations(Backend backend, Tensor rows, Tensor offsets, Tensor gated, Tensor outputs, int[] weightsOf)
+    {
+        int dim = Router.InFeatures, slots = rows.Shape[0], hidden = Experts[0].Up.OutFeatures;
+        var pairs = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[weightsOf.Length];
+        var downs = new (Storage Weight, Storage? Bias)[weightsOf.Length];
+        for (int e = 0; e < weightsOf.Length; e++)
+        {
+            var expert = _experts[weightsOf[e]];
+            pairs[e] = (expert.Gate!.Weight.Storage, expert.Gate.Bias?.Storage, expert.Up.Weight.Storage, expert.Up.Bias?.Storage);
+            downs[e] = (expert.Down.Weight.Storage, expert.Down.Bias?.Storage);
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        backend.ExpertGatedPair(rows.Storage, offsets.Storage, pairs, gated.Storage, slots, dim, hidden, (int)Experts[0].Activation);
+        Tensor.Traced("expert_gated_pair", gated, start);
+
+        start = Telemetry.Start(TelemetryLevel.Operations);
+        backend.ExpertMatMul(gated.Storage, offsets.Storage, downs, outputs.Storage, slots, hidden, dim);
+        Tensor.Traced("expert_matmul", outputs, start);
+    }
+
+    // The experts of a host-routed step through a cache (R1). The picked experts go in expert order, in waves of at most the
+    // cache's capacity, each wave made resident and then run over its own rows: the offsets are clamped to the wave's range,
+    // so every other expert has no rows. With the cache's ColdOnCpu, a cold expert breaks the waves and its rows are
+    // computed on the host, written into `outputs` at their place. Every row is computed by the same operations on the same
+    // weights as with every expert resident, so the results are those bit for bit.
+    private void CachedExpertOperations(ExpertCache cache, Tensor rows, Tensor gated, Tensor outputs, int[] offsetValues, Tensor offsets)
+    {
+        int experts = _experts.Length, dim = Router.InFeatures;
+        var backend = rows.Backend;
+        var needed = Enumerable.Range(0, experts).Where(e => offsetValues[e + 1] > offsetValues[e]).ToList();
+        if (cache.ColdOnCpu)
+        {
+            cache.Promote(needed);
+        }
+
+        var waves = new List<List<int>>();
+        var cold = new List<int>();
+        var wave = new List<int>();
+        foreach (int e in needed)
+        {
+            if (cache.ColdOnCpu && !cache.IsResident(e))
+            {
+                if (wave.Count > 0)
+                {
+                    waves.Add(wave);
+                    wave = [];
+                }
+
+                cold.Add(e);
+                continue;
+            }
+
+            if (wave.Count == cache.Capacity)
+            {
+                waves.Add(wave);
+                wave = [];
+            }
+
+            wave.Add(e);
+        }
+
+        if (wave.Count > 0)
+        {
+            waves.Add(wave);
+        }
+
+        foreach (var w in waves)
+        {
+            cache.Ensure(w);
+            int first = offsetValues[w[0]], end = offsetValues[w[^1] + 1];
+            bool whole = waves.Count == 1 && cold.Count == 0;
+            var waveOffsets = whole ? offsets : Tensor.Indices(offsetValues.Select(o => Math.Clamp(o, first, end)).ToArray(), rows.Device);
+            try
+            {
+                var weightsOf = new int[experts];
+                for (int e = 0; e < experts; e++)
+                {
+                    weightsOf[e] = w.Contains(e) ? e : w[0];                          // no rows in this wave: any resident expert's weights
+                }
+
+                ExpertOperations(backend, rows, waveOffsets, gated, outputs, weightsOf);
+            }
+            finally
+            {
+                if (!whole)
+                {
+                    waveOffsets.Dispose();
+                }
+            }
+        }
+
+        foreach (int e in cold)
+        {
+            int first = offsetValues[e], count = offsetValues[e + 1] - first;
+            var y = OnHost(cache, e, rows.Narrow(0, first, count));
+            backend.UploadRange(y, outputs.Storage, first * dim);
+        }
+    }
+
+    // Expert e over `rows` through a cache (the loop path): copied in and run where the rows are, or with the cache's
+    // ColdOnCpu and the expert cold, run on the host.
+    private Tensor CachedExpert(ExpertCache cache, int e, Tensor rows)
+    {
+        if (cache.ColdOnCpu && !cache.IsResident(e))
+        {
+            return Tensor.From(OnHost(cache, e, rows), rows.Shape, rows.Device);
+        }
+
+        cache.Ensure([e]);
+        return _experts[e].Forward(rows);
+    }
+
+    // Expert e's output values for `rows` [count, dim] computed on the cache's host (a cold expert with ColdOnCpu).
+    private float[] OnHost(ExpertCache cache, int e, Tensor rows)
+    {
+        var expert = cache.OnHost(e);
+        using var scope = new TensorScope();
+        var hostRows = Tensor.From(rows.ToArray(), rows.Shape, cache.Host);
+        var values = expert.Forward(hostRows).ToArray();
+        cache.CountCpuRows(rows.Shape[0]);
+        return values;
     }
 
     // The rows grouped by expert as RouteTopK writes them, from the host routing's choices: each expert's first row (and
@@ -417,7 +642,7 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
     {
         ArgumentNullException.ThrowIfNull(backend);
         var weight = Experts[0].Up.Weight;
-        return !(RoutesOnDevice && backend.RoutesExperts && ReferenceEquals(weight.Backend, backend) && ExpertsOnDevice(weight));
+        return !(RoutesOnDevice && backend.RoutesExperts && (Cache is null || Cache.HoldsAll) && ReferenceEquals(weight.Backend, backend) && ExpertsOnDevice(weight));
     }
 
     // The chosen experts' probabilities as [tokens, 1, k], with gradients to the router: gathered from the softmax and,

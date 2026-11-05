@@ -188,6 +188,21 @@ public sealed record DecoderBuildOptions
     public bool LazyLayers { get; init; }
 
     /// <summary>
+    /// Where a mixture-of-experts model's experts live (plan 37, R1, <see cref="ExpertPlacements"/>). With
+    /// <see cref="ExpertPlan.Offload"/> and a device other than the host, each mixture-of-experts layer keeps at most
+    /// <see cref="ExpertPlan.DeviceExperts"/> experts on the device and makes the others on <see cref="HostDevice"/>
+    /// (Idrak's <c>MixtureOfExperts.Cache</c>). Null (the default): every expert where its layer is.
+    /// </summary>
+    public ExpertPlan? Experts { get; init; }
+
+    /// <summary>
+    /// Read each expert of a mixture-of-experts layer the first time the router picks it (plan 37, R1 with W2's lazy
+    /// loading): until then it is a placeholder holding no memory, so experts never picked are never read. Needs weights
+    /// to read from, which must stay readable while the model is used. False (the default): every expert read with its layer.
+    /// </summary>
+    public bool LazyExperts { get; init; }
+
+    /// <summary>
     /// Keep float projections whose weights the source stores in a format of their own (a GGUF block format, F8 or I8 with
     /// scales) in that format (plan 37, Q0: <see cref="IWeightSource.ReadStored"/>, frozen <c>StoredWeight</c>s whose
     /// products equal the float32 weights' bit for bit), where the device multiplies it; off, they are expanded to float32
