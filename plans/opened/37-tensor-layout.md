@@ -123,13 +123,6 @@ software driver (llvmpipe, installed in the cloud container; Idrak's Vulkan grou
 of this plan is proven before it lands. The owner tests `cuda` and `hip` on real cards, from the exact commands each
 piece hands over. llvmpipe proves results, never speed: speed is measured only on the owner's devices.
 
-**The standard measurement set (the owner, 2026-11-05):** every stage that claims memory or speed is measured before
-and after with the library's own tools, `idrak run <model> <prompt> --profile --bench --verbose` (memory, tokens per
-second, the bus line), outputs under `test-output\`, on the owner's card, on two real models, Qwen3 0.6B and Qwen3 1.7B,
-each run three ways: **GPU only** (`IDRAK_WEIGHT_PLACEMENT=device`), **CPU only** (`-d cpu`), and the stage's own
-placement (`split`, `stream`, `auto`, a dtype, a cache type); for the offloading stages a model larger than the card is
-added. Each piece hands the owner these exact commands; the sessions' llvmpipe numbers are never used for speed.
-
 W comes first: it turns today's failure or crawl on a model larger than the device into a run at a usable speed. Then
 V: views pay off with float32 alone. Then T0, T1 (exact indices are a correctness fix), then Q0 (the largest memory
 gain for low-bit models, built on T0's block formats), then T2 with the KV cache types, T3 with int2 and the other
