@@ -16,15 +16,16 @@ namespace Idrak.Gpu.Vulkan;
 // kernel the driver rejects is dropped. Devices without cooperative matrices, and IDRAK_VULKAN_MATRIX=0, keep every
 // product as it was.
 //
-// Reduced precision. When the thread's MixedPrecision is not float32 (the user opted in: MixedPrecision.BFloat16, or
-// Float8, which takes the same path here as on CUDA GPUs without FP8), the float32 products and the prompt-sized packed
-// products have one more candidate: a single-pass cooperative-matrix kernel (VulkanKernels.Coop.cs: operands rounded
-// once, one product per step, float32 sums). Its operands are bfloat16 where the device reports VK_KHR_shader_bfloat16
-// with shaderBFloat16Type and shaderBFloat16CooperativeMatrix and lists a bfloat16 shape (bfloat16 A and B, float32 C
-// and result, subgroup scope, one the kernels tile); else 16-bit floats after the power-of-two scaling (within
-// bfloat16's error bound). A bfloat16 kernel the driver rejects falls back to the 16-bit float one. It is measured
-// against the float32 choice for the same shape (a tuning key of its own, so float32 choices are untouched) and used
-// only where faster. With MixedPrecision at float32 none of this runs.
+// Reduced precision. When the thread's MixedPrecision asks for bfloat16 or float16 (a run computing in that type, or the
+// user's IDRAK_MATMUL), the float32 products and the prompt-sized packed products have one more candidate: a single-pass
+// cooperative-matrix kernel (VulkanKernels.Coop.cs: operands rounded once, one product per step, float32 sums) with
+// operands of exactly that type: bfloat16 where the device reports VK_KHR_shader_bfloat16 with shaderBFloat16Type and
+// shaderBFloat16CooperativeMatrix and lists a bfloat16 shape (bfloat16 A and B, float32 C and result, subgroup scope, one
+// the kernels tile); 16-bit floats after the power-of-two scaling for float16. A type is never multiplied in another's
+// place: a bfloat16 run on a device without bfloat16 matrices, or whose driver rejects that kernel, runs the float32
+// products, and the device's native types (NativeTypesReported) say so; fp8, which has no kernel here, runs float32
+// too. The candidate is measured against the float32 choice for the same shape (a tuning key of its own, so float32
+// choices are untouched) and used only where faster. With MixedPrecision at float32 none of this runs.
 internal sealed unsafe partial class VulkanBackend
 {
     /// <summary>What a device offers of cooperative matrices, as the products use them.</summary>
@@ -49,9 +50,9 @@ internal sealed unsafe partial class VulkanBackend
     internal static bool EmulatedBFloat16 { get; set; }
 
     /// <summary>
-    /// Tests and benchmarks only: the operands of the reduced-precision products (Float16 or BFloat16) instead of the
-    /// device's choice; a type the device does not have leaves them off. Null: bfloat16 where the device has it, else
-    /// 16-bit floats.
+    /// Tests and benchmarks only: the operands of the reduced-precision products (Float16 or BFloat16) instead of the type
+    /// the thread's MixedPrecision asks for; a type the device does not have leaves them off. Null: that type's operands
+    /// (bfloat16 for BFloat16, float16 for Float16), never another's.
     /// </summary>
     internal static VulkanKernels.CoopPrecision? MixedOperandsOverride { get; set; }
 
@@ -288,9 +289,12 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    // The reduced-precision product of `format` (null: float32) when the thread's MixedPrecision asks for reduced
-    // precision: bfloat16 operands where the device has them (else, or when the driver rejects that kernel, 16-bit floats
-    // after scaling). Null in float32 mode and without cooperative matrices.
+    // The reduced-precision product of `format` (null: float32 weights) in the type the thread's MixedPrecision asks for:
+    // bfloat16 operands for BFloat16, 16-bit float operands (after scaling) for Float16, and never another type in its
+    // place (a run computing in bfloat16 never multiplies in float16; fp8, which has no kernel here, gets none). Null in
+    // float32 mode, without cooperative matrices, and where the device has no kernel of that type or its driver rejects
+    // it: the product then runs the float32 kernels, as the native types say (NativeTypesReported lists a 16-bit type only
+    // when the driver accepted its product kernel). MixedOperandsOverride (tests, benchmarks) names the operands itself.
     private VulkanKernel? MixedKernel(VulkanKernels.PackedFormat? format)
     {
         var precision = MixedPrecision.Current;
@@ -299,13 +303,14 @@ internal sealed unsafe partial class VulkanBackend
             return null;
         }
 
-        // Float16 asked (a run computing in float16, plan 37 T2): 16-bit float operands, never bfloat16 ones.
-        return (precision == MatMulPrecision.Float16 ? VulkanKernels.CoopPrecision.Float16 : MixedOperandsOverride) switch
+        VulkanKernels.CoopPrecision? operands = MixedOperandsOverride ?? precision switch
         {
-            VulkanKernels.CoopPrecision.BFloat16 => CoopKernel(format, VulkanKernels.CoopPrecision.BFloat16),
-            VulkanKernels.CoopPrecision.Float16 => CoopKernel(format, VulkanKernels.CoopPrecision.Float16),
-            _ => CoopKernel(format, VulkanKernels.CoopPrecision.BFloat16) ?? CoopKernel(format, VulkanKernels.CoopPrecision.Float16),
+            MatMulPrecision.BFloat16 => VulkanKernels.CoopPrecision.BFloat16,
+            MatMulPrecision.Float16 => VulkanKernels.CoopPrecision.Float16,
+            _ => null,
         };
+
+        return operands is VulkanKernels.CoopPrecision.BFloat16 or VulkanKernels.CoopPrecision.Float16 ? CoopKernel(format, operands.Value) : null;
     }
 
     /// <summary>
@@ -316,15 +321,36 @@ internal sealed unsafe partial class VulkanBackend
         ? base.TensorCoresUnavailable()
         : "the device computes matrix products in float32, or with MixedPrecision on cooperative matrices where measured faster";
 
-    // The element types the products compute natively here (plan 37, T2), from what the device reported when it was
-    // created: bfloat16 where it lists bfloat16 cooperative matrices, float16 where it has float16 ones; float32 always.
-    private (IReadOnlyList<ElementType> Types, string Report) NativeTypesReported() => _matrix switch
+    // The element types the products compute natively here (plan 37, T2): a 16-bit type where the device reported
+    // cooperative matrices of it when it was created and its driver accepted the product kernel of it (built here once
+    // and kept for the products, so a 16-bit run builds nothing again); float32 always. A type whose kernel the driver
+    // rejects is not listed, so a run selecting it is said to compute in float32, which is what its products then do.
+    private (IReadOnlyList<ElementType> Types, string Report) NativeTypesReported()
     {
-        null => ([ElementType.Float32], "no cooperative matrices with 16-bit operands reported"),
-        { BFloat16Shape: { } b } m => ([ElementType.BFloat16, ElementType.Float16, ElementType.Float32],
-            $"cooperative matrices: bfloat16 {b} and float16 {m.Shape} operands, float32 sums{(m.Emulated > 0 ? " (emulated, tests)" : "")}"),
-        { } m => ([ElementType.Float16, ElementType.Float32], $"cooperative matrices: float16 {m.Shape} operands, float32 sums, no bfloat16 ones{(m.Emulated > 0 ? " (emulated, tests)" : "")}"),
-    };
+        if (_matrix is not { } m)
+        {
+            return ([ElementType.Float32], "no cooperative matrices with 16-bit operands reported");
+        }
+
+        string emulated = m.Emulated > 0 ? " (emulated, tests)" : "";
+        bool bfloat16 = m.BFloat16Shape is not null && CoopKernel(null, VulkanKernels.CoopPrecision.BFloat16) is not null;
+        bool float16 = CoopKernel(null, VulkanKernels.CoopPrecision.Float16) is not null;
+        var types = new List<ElementType>(3);
+        if (bfloat16)
+        {
+            types.Add(ElementType.BFloat16);
+        }
+
+        if (float16)
+        {
+            types.Add(ElementType.Float16);
+        }
+
+        types.Add(ElementType.Float32);
+        string bf = m.BFloat16Shape is { } b ? $"bfloat16 {b} operands{(bfloat16 ? "" : " (the driver rejected the product kernel)")}" : "no bfloat16 ones";
+        string f16 = $"float16 {m.Shape} operands{(float16 ? "" : " (the driver rejected the product kernel)")}";
+        return (types, $"cooperative matrices: {bf}, {f16}, float32 sums{emulated}");
+    }
 
     /// <summary>The cooperative matrices in one line, for benchmark headers.</summary>
     internal string DescribeMatrixUnits() => _matrix switch
