@@ -531,6 +531,10 @@ internal static class Help
         "      --color WHEN    auto, always or never (NO_COLOR still wins); --plain: no Unicode or progress line\n" +
         "      --offline       use only what is cached; a download is an error\n" +
         "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
+        "      --id-dtype T    the type ids and indices are stored in: auto (the smallest that holds them) or an integer\n" +
+        "                      type such as uint16 or int32 (IDRAK_ID_DTYPE)\n" +
+        "      --sum-dtype T   the type operations sum in: auto (the fastest within IDRAK_SUM_TOLERANCE) or a type the\n" +
+        "                      device reports (IDRAK_SUM_DTYPE)\n" +
         "      --packed-cache X  on, off or a folder: int8 and int4 weights kept between loads and read back instead of\n" +
         "                      quantized again (default on, in the cache folder; IDRAK_PACKED_CACHE, IDRAK_PACKED_CACHE_DIR)\n" +
         "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +

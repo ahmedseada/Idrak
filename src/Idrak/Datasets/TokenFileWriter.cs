@@ -24,11 +24,12 @@ public enum TokenDocuments
 public sealed record TokenFileWriterOptions
 {
     /// <summary>
-    /// How ids are stored, or null for the smallest type that holds the tokenizer's ids and the separator
-    /// (<see cref="TokenFileRecord.Smallest"/>). The type is recorded beside the file (<see cref="TokenFileRecord"/>), where
-    /// <see cref="TokenFileSource"/> reads it.
+    /// The type ids are stored in: any registered integer type of whole bytes (<see cref="TokenFileRecord.IsIdType"/>), or
+    /// null for <see cref="Abstraction.ElementTypes.IdEnvironmentVariable"/> when set, else the smallest that holds the
+    /// tokenizer's ids and the separator (<see cref="Abstraction.ElementTypes.ChooseIds"/>, rule 74). The type is recorded
+    /// beside the file (<see cref="TokenFileRecord"/>), where <see cref="TokenFileSource"/> reads it.
     /// </summary>
-    public TokenType? Type { get; init; }
+    public Abstraction.ElementType? Type { get; init; }
 
     /// <summary>An id written after every document (a document's end, "&lt;/s&gt;" for example), or null for none.</summary>
     public int? Separator { get; init; }
@@ -45,13 +46,13 @@ public sealed record TokenFileWriterOptions
 /// <param name="Documents">Documents encoded.</param>
 /// <param name="Tokens">Ids written (separators included).</param>
 /// <param name="Bytes">The text's bytes read.</param>
-/// <param name="Type">How the ids are stored (the one asked, else the smallest that holds them).</param>
+/// <param name="Type">The type the ids are stored in (the one asked, else the smallest that holds them).</param>
 /// <param name="Record">The record written beside the file (<see cref="TokenFileRecord"/>).</param>
-public sealed record TokenFileResult(string Path, long Documents, long Tokens, long Bytes, TokenType Type, string Record);
+public sealed record TokenFileResult(string Path, long Documents, long Tokens, long Bytes, Abstraction.ElementType Type, string Record);
 
 /// <summary>
 /// Encodes text files into a token file for pretraining (read back by <see cref="TokenFileSource"/>): each document's
-/// ids, then the separator, little-endian in the type asked or else the smallest that holds the tokenizer's ids, in
+/// ids, then the separator, little-endian in the integer type asked or else the smallest that holds the tokenizer's ids, in
 /// the files' order, and the type in a record beside the file (<see cref="TokenFileRecord"/>). Documents are encoded on
 /// every processor in batches and written in order; ids that do not fit the type asked are refused before anything is
 /// written.
@@ -62,7 +63,10 @@ public static class TokenFileWriter
 
     /// <summary>Writes the ids of <paramref name="inputs"/>' documents to <paramref name="output"/>.</summary>
     /// <exception cref="FileNotFoundException">An input is missing.</exception>
-    /// <exception cref="ArgumentException">The tokenizer's ids (or the separator) do not fit <see cref="TokenFileWriterOptions.Type"/>, or no type holds them.</exception>
+    /// <exception cref="ArgumentException">
+    /// <see cref="TokenFileWriterOptions.Type"/> is not an integer type of whole bytes, or the tokenizer's ids (or the
+    /// separator) do not fit it or the type <see cref="Abstraction.ElementTypes.IdEnvironmentVariable"/> names.
+    /// </exception>
     public static TokenFileResult Write(string output, IReadOnlyList<string> inputs, ITokenizer tokenizer, TokenFileWriterOptions? options = null,
         IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -76,20 +80,25 @@ public static class TokenFileWriter
         }
 
         long needed = Math.Max(tokenizer.VocabularySize - 1L, options.Separator ?? 0);
-        TokenType type;
+        Abstraction.ElementType type;
         if (options.Type is { } asked)
         {
-            if (needed > TokenFileRecord.Largest(asked))
+            if (!TokenFileRecord.IsIdType(asked))
             {
-                throw new ArgumentException($"The tokenizer's ids (up to {needed}) do not fit {asked}; ask {TokenFileRecord.Smallest(Math.Min(needed, uint.MaxValue))} "
-                                            + "or no type (the smallest that holds them).", nameof(options));
+                throw new ArgumentException($"Token ids are stored in an integer type of whole bytes, not {asked.Name}.", nameof(options));
+            }
+
+            if (!asked.Holds(0, needed))
+            {
+                string smallest = Abstraction.ElementTypes.IdTypes.FirstOrDefault(t => t.Holds(0, needed))?.Name ?? "none registered";
+                throw new ArgumentException($"The tokenizer's ids (up to {needed}) do not fit {asked.Name}; ask {smallest} or no type (the smallest that holds them).", nameof(options));
             }
 
             type = asked;
         }
         else
         {
-            type = needed <= uint.MaxValue ? TokenFileRecord.Smallest(needed) : throw new ArgumentException($"No token type holds the tokenizer's ids (up to {needed}).", nameof(options));
+            type = Abstraction.ElementTypes.ChooseIds(needed, 0, source: "TokenFileWriterOptions.Type").Type;   // IDRAK_ID_DTYPE, else the smallest
         }
 
         foreach (string input in inputs)
@@ -100,7 +109,8 @@ public static class TokenFileWriter
             }
         }
 
-        int width = TokenFileRecord.Width(type);
+        int width = (int)type.ByteCount(1);
+        long low = (long)Int128.Max(type.MinValue, long.MinValue), high = (long)Int128.Min(type.MaxValue, long.MaxValue);
         long documents = 0, tokens = 0, bytes = 0;
         var parallel = new ParallelOptions { MaxDegreeOfParallelism = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads, CancellationToken = cancellationToken };
         string? folder = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output));
@@ -121,24 +131,27 @@ public static class TokenFileWriter
                 var ids = encoded[i];
                 int n = ids.Count + (options.Separator is null ? 0 : 1);
                 byte[] buffer = ArrayPool<byte>.Shared.Rent(n * width);
+                int[] values = ArrayPool<int>.Shared.Rent(n);
                 try
                 {
-                    var span = buffer.AsSpan(0, n * width);
                     for (int k = 0; k < ids.Count; k++)
                     {
-                        Put(span, k, ids[k], type);
+                        values[k] = ids[k];
                     }
 
                     if (options.Separator is int separator)
                     {
-                        Put(span, ids.Count, separator, type);
+                        values[ids.Count] = separator;
                     }
 
+                    var span = buffer.AsSpan(0, n * width);
+                    Store(values.AsSpan(0, n), type, low, high, span);
                     stream.Write(span);
                 }
                 finally
                 {
                     ArrayPool<byte>.Shared.Return(buffer);
+                    ArrayPool<int>.Shared.Return(values);
                 }
 
                 tokens += n;
@@ -211,30 +224,49 @@ public static class TokenFileWriter
         string record = TokenFileRecord.PathOf(System.IO.Path.GetFullPath(output));
         var described = new System.Text.Json.Nodes.JsonObject
         {
-            ["format"] = TokenFileRecord.Format, ["type"] = type.ToString(), ["tokens"] = tokens, ["documents"] = documents, ["separator"] = options.Separator,
+            ["format"] = TokenFileRecord.Format, ["type"] = type.Name, ["tokens"] = tokens, ["documents"] = documents, ["separator"] = options.Separator,
             ["vocabulary"] = tokenizer.VocabularySize,
         };
         File.WriteAllText(record, described.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
         return new TokenFileResult(System.IO.Path.GetFullPath(output), documents, tokens, bytes, type, record);
     }
 
-    private static void Put(Span<byte> span, int index, int id, TokenType type)
+    // The ids as `type` stores them: little-endian integers of its width (two's complement when signed), each checked
+    // against its range [low, high] (a tokenizer id past its vocabulary is refused, naming it).
+    private static void Store(ReadOnlySpan<int> ids, Abstraction.ElementType type, long low, long high, Span<byte> destination)
     {
-        if (type == TokenType.UInt8)
+        int width = destination.Length / Math.Max(1, ids.Length);
+        for (int i = 0; i < ids.Length; i++)
         {
-            span[index] = checked((byte)id);
-        }
-        else if (type == TokenType.UInt16)
-        {
-            BinaryPrimitives.WriteUInt16LittleEndian(span[(index * 2)..], checked((ushort)id));
-        }
-        else if (type == TokenType.Int32)
-        {
-            BinaryPrimitives.WriteInt32LittleEndian(span[(index * 4)..], id);
-        }
-        else
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(span[(index * 4)..], checked((uint)id));
+            long v = ids[i];
+            if (v < low || v > high)
+            {
+                throw new ArgumentException($"The tokenizer gave the id {v}, which {type.Name} does not hold ([{low}, {high}]).");
+            }
+
+            var at = destination.Slice(i * width, width);
+            switch (width)
+            {
+                case 1:
+                    at[0] = (byte)v;
+                    break;
+                case 2:
+                    BinaryPrimitives.WriteUInt16LittleEndian(at, (ushort)v);
+                    break;
+                case 4:
+                    BinaryPrimitives.WriteUInt32LittleEndian(at, (uint)v);
+                    break;
+                case 8:
+                    BinaryPrimitives.WriteInt64LittleEndian(at, v);
+                    break;
+                default:
+                    for (int b = 0; b < width; b++)
+                    {
+                        at[b] = b < 8 ? (byte)(v >> (8 * b)) : (byte)(v < 0 ? 0xFF : 0);
+                    }
+
+                    break;
+            }
         }
     }
 }

@@ -53,6 +53,10 @@ internal static partial class Messages
             "      --color WHEN    الألوان: auto أو always أو never (و NO_COLOR يغلب)؛ --plain: بلا رموز Unicode ولا سطر تقدم\n" +
             "      --offline       استخدام المخزن فقط؛ وأي تنزيل خطأ\n" +
             "      --threads N     عدد خيوط المعالج؛ --seed N: بذرة واحدة لأخذ العينات والخلط والتهيئة\n" +
+            "      --id-dtype T    نوع تخزين المعرفات والفهارس: auto (أصغر نوع يسعها) أو نوع صحيح مثل uint16 أو int32\n" +
+            "                      (IDRAK_ID_DTYPE)\n" +
+            "      --sum-dtype T   نوع الجمع في العمليات: auto (الأسرع ضمن IDRAK_SUM_TOLERANCE) أو نوع يذكره الجهاز\n" +
+            "                      (IDRAK_SUM_DTYPE)\n" +
             "      --packed-cache X  on أو off أو مجلد: أوزان int8 و int4 تحفظ بين مرات التحميل وتقرأ بدل تكميمها من جديد\n" +
             "                      (الافتراضي on في مجلد التخزين المؤقت؛ IDRAK_PACKED_CACHE و IDRAK_PACKED_CACHE_DIR)\n" +
             "      --timeout D     التوقف بعد مدة (30s أو 5m أو 1h30m)\n" +
@@ -274,8 +278,10 @@ internal static partial class Messages
         ["Memory    process {0} MiB, managed {1} MiB"] = "الذاكرة   العملية {0} MiB، والمدارة {1} MiB",
 
         // Command summaries (idrak help, idrak help COMMAND).
-        ["Datasets: show, count, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel"] =
-            "مجموعات البيانات: عرض وعد وتنزيل وبناء (ومعاينة وتحقق وإحصاءات وتحويل وإزالة تكرار وتقسيم وعينات ومزج ونص عشوائي وفحص خطوط وصفحات مصطنعة وصوت وسمات mel)",
+        ["Datasets: show, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel, code"] =
+            "مجموعات البيانات: عرض وتنزيل وبناء (ومعاينة وإحصاءات وتحويل وتقسيم ومزج ونص عشوائي وفحص خطوط وصفحات مصطنعة وصوت وسمات mel وشيفرة)",
+        ["Turn a code repository into pretraining rows and proven coding tasks (task families, a manifest)"] =
+            "تحويل مستودع شيفرة إلى صفوف للتدريب المسبق ومهام برمجية مثبتة (عائلات مهام وملف manifest)",
         ["Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl"] =
             "تحويل ملفات صوت وإعادة أخذ عيناتها وتقطيعها إلى مجلد ملفات WAV مع ملف manifest.jsonl",
         ["Log-mel features of sound files as .npy (a model's input features), with the options used"] =

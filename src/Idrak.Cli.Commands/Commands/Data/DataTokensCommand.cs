@@ -36,8 +36,9 @@ internal sealed class DataTokensCommand : Command
               --documents D      blocks (documents between lines of ---, as idrak data text writes, the default), lines
                                  (each line a document) or files (each file a document)
               --separator TOKEN  the token written after every document (</s> when the tokenizer has it; none to write none)
-              --type T           how ids are stored: auto (the smallest that holds the tokenizer's ids: u8 up to 256,
-                                 u16 up to 65,536, else u32; the default), u8, u16, i32 or u32
+              --type T           the integer type ids are stored in: auto (IDRAK_ID_DTYPE, else the smallest that holds
+                                 the tokenizer's ids: uint8 up to 256, uint16 up to 65,536, ...; the default) or any
+                                 registered integer type of whole bytes (uint16, int32, uint32, ...; u16 for short)
               --workers N        threads encoding documents (one per processor)
           -o, --out FILE         the token file to write
 
@@ -62,7 +63,7 @@ internal sealed class DataTokensCommand : Command
         }
 
         var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
-        TokenType? type = ParseType("--type", context.Option("--type"));
+        var type = ParseType("--type", context.Option("--type"));
         var documents = (context.Option("--documents") ?? "blocks").ToLowerInvariant() switch
         {
             "blocks" => TokenDocuments.Blocks,
@@ -104,14 +105,14 @@ internal sealed class DataTokensCommand : Command
             $"{result.Tokens:N0} tokens of {result.Documents:N0} documents ({total / 1048576.0:F1} MB of text) in {watch.Elapsed.TotalSeconds:F1} s, written to {result.Path}"));
         context.WriteJson(new JsonObject
         {
-            ["path"] = result.Path, ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["bytes"] = result.Bytes, ["type"] = result.Type.ToString(),
+            ["path"] = result.Path, ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["bytes"] = result.Bytes, ["type"] = result.Type.Name,
             ["separator"] = separator, ["seconds"] = Math.Round(watch.Elapsed.TotalSeconds, 3),
         });
         return ExitCodes.Ok;
     }
 
-    /// <summary>A token type option: null (not given) or auto for the file's own choice, else u8, u16, i32 or u32.</summary>
-    internal static TokenType? ParseType(string option, string? text)
+    /// <summary>A token type option: null (not given) or auto for the file's own choice, else a registered integer type (u16 for short).</summary>
+    internal static Idrak.Abstraction.ElementType? ParseType(string option, string? text)
     {
         if (text is null || text.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
@@ -122,9 +123,9 @@ internal sealed class DataTokensCommand : Command
         {
             return TokenFileRecord.Parse(text);
         }
-        catch (ArgumentException)
+        catch (ArgumentException e)
         {
-            throw new UsageException($"{option} is auto, u8, u16, i32 or u32, not '{text}'.");
+            throw new UsageException($"{option}: {e.Message} Or auto.");
         }
     }
 }

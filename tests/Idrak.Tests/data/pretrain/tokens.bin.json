@@ -3,6 +3,6 @@
  "format": "idrak-tokens/1",
  "separator": 2,
  "tokens": 25515,
- "type": "UInt16",
+ "type": "uint16",
  "vocabulary": 512
 }

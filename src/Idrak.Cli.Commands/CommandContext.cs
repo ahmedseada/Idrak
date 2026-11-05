@@ -20,7 +20,14 @@ internal sealed class CommandContext : IDisposable
 {
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions =
-        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render", "--packed-cache"];
+        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render", "--packed-cache",
+         IdTypeOption, SumTypeOption];
+
+    /// <summary>The run's id type (<see cref="ElementTypes.ChooseIds"/>): auto or an integer type of whole bytes.</summary>
+    internal const string IdTypeOption = "--id-dtype";
+
+    /// <summary>The run's sum type (<see cref="SumTypes.Choose"/>): auto or a type the device reports for the operation.</summary>
+    internal const string SumTypeOption = "--sum-dtype";
     internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain", "--profile"];
 
     /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
@@ -43,6 +50,9 @@ internal sealed class CommandContext : IDisposable
     private readonly HashSet<string> _flags;
     private Device? _device;
     private TextWriter? _log;
+
+    // The variables --id-dtype and --sum-dtype set for this command, and the values they had before (put back at Dispose).
+    private readonly List<(string Name, string? Before)> _variables = [];
     private TextWriter? _outputFile;
     private CancellationTokenSource? _timeoutSource;
 
@@ -78,6 +88,37 @@ internal sealed class CommandContext : IDisposable
         {
             int threads = IntOption("--threads", 0);
             ComputeResources.MaxCpuThreads = threads > 0 ? threads : throw new UsageException("--threads needs a number above 0.");
+        }
+
+        // --id-dtype and --sum-dtype: the types ids are stored in and operations sum in, given to the library's choices
+        // (ElementTypes.ChooseIds, SumTypes.Choose) through the variables they read, so the option wins over the variable
+        // and child processes (cluster ranks) take it too; put back when the command ends.
+        if (Option(IdTypeOption) is { } ids)
+        {
+            if (!ids.Trim().Equals(ElementTypes.Auto, StringComparison.OrdinalIgnoreCase) && !(ElementTypes.Find(ids) is { } idType && ElementTypes.IdTypes.Contains(idType)))
+            {
+                throw new UsageException($"{IdTypeOption} is auto or an integer type of whole bytes ({string.Join(", ", ElementTypes.IdTypes.Select(t => t.Name))}), not '{ids}'.");
+            }
+        }
+
+        if (Option(SumTypeOption) is { } sums)
+        {
+            if (!sums.Trim().Equals(SumTypes.Auto, StringComparison.OrdinalIgnoreCase) && ElementTypes.Find(sums) is null)
+            {
+                throw new UsageException($"{SumTypeOption} is auto or a registered type ({string.Join(", ", ElementTypes.Names)}), not '{sums}'; "
+                                         + "each device takes one it reports for the operation.");
+            }
+        }
+
+        // Both checked before either is set: a refused option leaves the process as it was.
+        if (Option(IdTypeOption) is { } idValue)
+        {
+            SetVariable(ElementTypes.IdEnvironmentVariable, idValue);
+        }
+
+        if (Option(SumTypeOption) is { } sumValue)
+        {
+            SetVariable(SumTypes.EnvironmentVariable, sumValue);
         }
 
         // --packed-cache on|off|DIR: whether a load keeps its int8 and int4 weights between loads, and where (the library's settings).
@@ -276,11 +317,24 @@ internal sealed class CommandContext : IDisposable
     /// <summary>Closes the <c>--log</c> file.</summary>
     public void Dispose()
     {
+        for (int i = _variables.Count - 1; i >= 0; i--)
+        {
+            Environment.SetEnvironmentVariable(_variables[i].Name, _variables[i].Before);
+        }
+
+        _variables.Clear();
         _log?.Dispose();
         _log = null;
         _outputFile?.Dispose();
         _outputFile = null;
         _timeoutSource?.Dispose();
+    }
+
+    // Sets a variable for this command, keeping the value it had to put back.
+    private void SetVariable(string name, string value)
+    {
+        _variables.Add((name, Environment.GetEnvironmentVariable(name)));
+        Environment.SetEnvironmentVariable(name, value);
     }
 
     /// <summary>A table with aligned columns (text mode).</summary>

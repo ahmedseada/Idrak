@@ -96,10 +96,27 @@ internal abstract partial class DesktopTests : Tests
             Check((long)encoded["documents"]! == 96 && File.Exists(tokens + ".json"), "96 documents, and the description beside it");
             // No --type: the smallest id type that holds the vocabulary of 512 (uint16), recorded beside the file for its readers.
             var record = JsonNode.Parse(File.ReadAllText(tokens + ".json"))!;
-            Check((string?)encoded["type"] == "UInt16" && (string?)record["type"] == "UInt16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25515
+            Check((string?)encoded["type"] == "uint16" && (string?)record["type"] == "uint16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25515
                   && record["tokenizer"] is not null, $"auto picks uint16 for 512 ids and records it with the tokenizer: {record}");
             var (narrow, _, narrowError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--type", "u8", "-o", Path.Combine(folder, "u8.bin"));
-            Check(narrow == 2 && narrowError.Contains("do not fit UInt8", StringComparison.Ordinal), $"--type u8 for 512 ids is refused: {narrowError}");
+            Check(narrow == 2 && narrowError.Contains("do not fit uint8", StringComparison.Ordinal) && narrowError.Contains("ask uint16", StringComparison.Ordinal),
+                $"--type u8 for 512 ids is refused naming the smallest that holds them: {narrowError}");
+            // IDRAK_ID_DTYPE is the id type when --type names none: the same ids, 4 bytes each.
+            string wide = Path.Combine(folder, "u32.bin");
+            WithVariables(new Dictionary<string, string?> { [Idrak.Abstraction.ElementTypes.IdEnvironmentVariable] = "uint32" },
+                () => TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "-o", wide));
+            Check(new FileInfo(wide).Length == 25515L * 4 && (string?)JsonNode.Parse(File.ReadAllText(wide + ".json"))!["type"] == "uint32", "IDRAK_ID_DTYPE=uint32 stores the ids in uint32");
+            // --id-dtype, a common option, is the same choice for the command (over the variable), put back when it ends.
+            string? idBefore = Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable);
+            string wider = Path.Combine(folder, "i64.bin");
+            TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "int64", "-o", wider);
+            Check(new FileInfo(wider).Length == 25515L * 8 && Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable) == idBefore,
+                "--id-dtype int64 stores the ids in int64, and the variable is as it was after the command");
+            var (badIds, _, badIdsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "bf16", "-o", wider);
+            var (badSums, _, badSumsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--sum-dtype", "nosuch", "-o", wider);
+            Check(badIds == 2 && badIdsError.Contains("--id-dtype", StringComparison.Ordinal) && badIdsError.Contains("uint16", StringComparison.Ordinal)
+                  && badSums == 2 && badSumsError.Contains("--sum-dtype", StringComparison.Ordinal) && badSumsError.Contains("float32", StringComparison.Ordinal),
+                $"--id-dtype bf16 and --sum-dtype nosuch are refused naming the types: {badIdsError} | {badSumsError}");
             var (code, _, error) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--separator", "<nope>", "-o", tokens);
             Check(code == 2 && error.Contains("no token '<nope>'", StringComparison.Ordinal), $"an unknown separator: {error}");
             (code, _, error) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--trainer", "nope", "-o", tokenizer);

@@ -301,7 +301,7 @@ def main():
     tokens = np.asarray(tokens, dtype=np.uint16)
     tokens.tofile(os.path.join(out, "tokens.bin"))
     # The record beside it, as `idrak data tokens` writes it: readers take the ids' type from it.
-    dump_json(os.path.join(out, "tokens.bin.json"), {"format": "idrak-tokens/1", "type": "UInt16", "tokens": int(tokens.size), "documents": len(docs),
+    dump_json(os.path.join(out, "tokens.bin.json"), {"format": "idrak-tokens/1", "type": "uint16", "tokens": int(tokens.size), "documents": len(docs),
                                                      "separator": ids["</s>"], "vocabulary": tok.get_vocab_size()})
 
     model_dir = os.path.join(out, "tiny-llama")

@@ -187,16 +187,14 @@ public enum Idrak.Datasets.TokenDocuments : int
 
 public static class Idrak.Datasets.TokenFileRecord
   public const string Format = "idrak-tokens/1"
-  public static Idrak.Datasets.TokenType Parse(string text)
-  public static Idrak.Datasets.TokenType Smallest(long largest)
-  public static Idrak.Datasets.TokenType? ReadType(string tokenFile)
-  public static int Width(Idrak.Datasets.TokenType type)
-  public static long Largest(Idrak.Datasets.TokenType type)
+  public static Idrak.Abstraction.ElementType Parse(string text)
+  public static Idrak.Abstraction.ElementType? ReadType(string tokenFile)
+  public static bool IsIdType(Idrak.Abstraction.ElementType type)
   public static string PathOf(string tokenFile)
 
 public sealed record Idrak.Datasets.TokenFileResult : System.IEquatable<Idrak.Datasets.TokenFileResult>
-  public Idrak.Datasets.TokenType Type { get; init; }
-  public TokenFileResult(string Path, long Documents, long Tokens, long Bytes, Idrak.Datasets.TokenType Type, string Record)
+  public Idrak.Abstraction.ElementType Type { get; init; }
+  public TokenFileResult(string Path, long Documents, long Tokens, long Bytes, Idrak.Abstraction.ElementType Type, string Record)
   public long Bytes { get; init; }
   public long Documents { get; init; }
   public long Tokens { get; init; }
@@ -206,7 +204,7 @@ public sealed record Idrak.Datasets.TokenFileResult : System.IEquatable<Idrak.Da
 public sealed class Idrak.Datasets.TokenFileSource : Idrak.Abstraction.Data.ISampleSource, System.IDisposable
   public System.Collections.Generic.IReadOnlyList<int> FeatureShape { get; }
   public System.Collections.Generic.IReadOnlyList<int> TargetShape { get; }
-  public TokenFileSource(string path, int length, int? stride = null, Idrak.Datasets.TokenType? type = null)
+  public TokenFileSource(string path, int length, int? stride = null, Idrak.Abstraction.ElementType? type = null)
   public int Count { get; }
   public int Length { get; }
   public int Stride { get; }
@@ -218,17 +216,11 @@ public static class Idrak.Datasets.TokenFileWriter
   public static Idrak.Datasets.TokenFileResult Write(string output, System.Collections.Generic.IReadOnlyList<string> inputs, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Datasets.TokenFileWriterOptions? options = null, System.IProgress<long>? progress = null, System.Threading.CancellationToken cancellationToken = default)
 
 public sealed record Idrak.Datasets.TokenFileWriterOptions : System.IEquatable<Idrak.Datasets.TokenFileWriterOptions>
+  public Idrak.Abstraction.ElementType? Type { get; init; }
   public Idrak.Datasets.TokenDocuments Documents { get; init; }
-  public Idrak.Datasets.TokenType? Type { get; init; }
   public TokenFileWriterOptions()
   public int Workers { get; init; }
   public int? Separator { get; init; }
-
-public enum Idrak.Datasets.TokenType : int
-  Int32 = 1
-  UInt16 = 0
-  UInt32 = 2
-  UInt8 = 3
 
 public sealed record Idrak.Diagnostics.BackendInfo : System.IEquatable<Idrak.Diagnostics.BackendInfo>
   public BackendInfo(string Kind, string Display, int Count, string? UnavailableReason)

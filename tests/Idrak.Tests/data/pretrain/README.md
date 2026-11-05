@@ -10,7 +10,7 @@ the same bytes on the same machine and library versions; other machines or versi
 | `tokenizer-full/` | the same merging until no pair is left (minimum frequency 1, vocabulary 4096): 1,628 merges through many count ties |
 | `metaspace/` | the same with the `Metaspace` pre-tokenizer (`▁`, prepend always, split) |
 | `tokens.bin` | every document encoded with `tokenizer/` and followed by `</s>`, uint16 little-endian (25,515 tokens) |
-| `tokens.bin.json` | the record beside it (format `idrak-tokens/1`, as `idrak data tokens` writes): the ids are `UInt16`; readers take the type from it |
+| `tokens.bin.json` | the record beside it (format `idrak-tokens/1`, as `idrak data tokens` writes): the ids are `uint16`; readers take the type from it |
 | `tiny-llama/` | a `LlamaForCausalLM` (hidden 32, 2 layers, 4 heads, 2 key-value heads, head size 8, feed-forward 64, vocabulary 512, 64 positions, tied embeddings), every weight from one seeded generator; the tokenizer, and a ChatML template that walks content parts (an image part is `<image>`), the template created models get |
 | `step/step.json` | training on the first four 32-token windows of `tokens.bin` (33 ids each, at 0, 32, 64, 96: `TokenFileSource(path, 32)`'s windows 0 to 3), every parameter trained, the loss the mean cross entropy over all 128 positions; the window ids and the losses before each of three updates |
 | `step/grads-step1.safetensors` | every parameter's gradient at step 1 (transformers' names; linear weights `[out, in]`) |

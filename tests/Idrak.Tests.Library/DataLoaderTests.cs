@@ -812,7 +812,7 @@ internal abstract partial class Tests
             const int T = 16;
             ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw, T),
                 "a token file with no record and no type is refused naming the settings that give it", "no record of its id type", "--token-type", "\"token_type\"");
-            using (var windows = new TokenFileSource(raw, T, stride: 10, type: TokenType.UInt16))
+            using (var windows = new TokenFileSource(raw, T, stride: 10, type: Idrak.Abstraction.ElementType.UInt16))
             {
                 Check(windows.TokenCount == 1000 && windows.Count == (1000 - T - 1) / 10 + 1, $"{windows.Count} windows of {windows.TokenCount} tokens");
                 var x = new List<float>();
@@ -841,24 +841,36 @@ internal abstract partial class Tests
 
             string raw32 = Path.Combine(folder, "train32.bin");
             File.WriteAllBytes(raw32, [.. tokens.SelectMany(t => BitConverter.GetBytes((uint)t + 70000u))]);
-            using (var windows = new TokenFileSource(raw32, T, type: TokenType.UInt32))
+            using (var windows = new TokenFileSource(raw32, T, type: Idrak.Abstraction.ElementType.UInt32))
             {
                 Check(windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "32-bit token ids");
             }
 
-            Throws<InvalidDataException>(() => _ = new TokenFileSource(raw, 2000, type: TokenType.UInt16), "a window longer than the file");
+            Throws<InvalidDataException>(() => _ = new TokenFileSource(raw, 2000, type: Idrak.Abstraction.ElementType.UInt16), "a window longer than the file");
 
-            // The record beside a file says its type; a type that differs is refused naming both.
+            // The record beside a file says its type (here in the casing records had before the registry's names); a type that
+            // differs is refused naming both.
             File.WriteAllText(TokenFileRecord.PathOf(raw32), $"{{\"format\": \"{TokenFileRecord.Format}\", \"type\": \"UInt32\"}}");
             using (var windows = new TokenFileSource(raw32, T))
             {
                 Check(windows.TokenCount == 1000 && windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "the record's type, with no type given");
             }
 
-            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw32, T, type: TokenType.UInt16), "a type the record contradicts", "UInt32", "UInt16");
-            Check(TokenFileRecord.Smallest(255) == TokenType.UInt8 && TokenFileRecord.Smallest(256) == TokenType.UInt16 && TokenFileRecord.Smallest(65535) == TokenType.UInt16
-                  && TokenFileRecord.Smallest(65536) == TokenType.UInt32 && TokenFileRecord.Width(TokenType.UInt8) == 1,
-                "the smallest token type that holds the ids (rule 74)");
+            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw32, T, type: Idrak.Abstraction.ElementType.UInt16), "a type the record contradicts", "uint32", "uint16");
+
+            // Any registered integer type of whole bytes: int16 ids (no type the old closed list had), by the record's name.
+            string raw16 = Path.Combine(folder, "train16.bin");
+            File.WriteAllBytes(raw16, [.. tokens.SelectMany(t => BitConverter.GetBytes((short)(t % 30000 - 15000)))]);
+            File.WriteAllText(TokenFileRecord.PathOf(raw16), $"{{\"format\": \"{TokenFileRecord.Format}\", \"type\": \"int16\"}}");
+            using (var windows = new TokenFileSource(raw16, T))
+            {
+                Check(windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] % 30000 - 15000, "int16 token ids, the type from the registry");
+            }
+
+            Check(ReferenceEquals(TokenFileRecord.Parse("u16"), Idrak.Abstraction.ElementType.UInt16) && ReferenceEquals(TokenFileRecord.Parse("UInt32"), Idrak.Abstraction.ElementType.UInt32)
+                  && ReferenceEquals(TokenFileRecord.Parse("int64"), Idrak.Abstraction.ElementType.Int64), "token types by the registry's names and short names");
+            ThrowsNaming<ArgumentException>(() => TokenFileRecord.Parse("float32"), "a float type is not an id type", "integer type", "uint8", "uint16");
+            Throws<ArgumentException>(() => _ = new TokenFileSource(raw, T, type: Idrak.Abstraction.ElementType.Int4), "int4 is not whole bytes");
 
             // Images [N, 2, 3] as float32 and int64 class labels; float64 targets [N, 2]; uint8 features.
             const int N = 40;

@@ -138,7 +138,7 @@ internal abstract partial class DesktopTests : Tests
     {
         string path = Path.Combine(folder, "windows8.bin");
         File.WriteAllBytes(path, File.ReadAllBytes(PretrainData("tokens.bin"))[..(257 * 2)]);
-        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\", \"type\": \"UInt16\"}}");   // the fixture's ids
+        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\", \"type\": \"{Idrak.Abstraction.ElementType.UInt16.Name}\"}}");   // the fixture's ids
         return path;
     }
 

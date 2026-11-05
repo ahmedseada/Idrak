@@ -56,8 +56,8 @@ internal sealed class PretrainCommand : Command
         Options:
           -C, --config FILE        the run's stages and settings (pretrain.json); the options below then change it
               --tokens FILE        a token file to train on (repeat for several; one stage)
-              --token-type T       how the token files store ids, for files without the record idrak data tokens writes
-                                   beside them: u8, u16, i32 or u32 (auto: the record's)
+              --token-type T       the integer type token files store ids in, for files without the record idrak data
+                                   tokens writes beside them: uint16, int32, ... (u16 for short; auto: the record's)
               --data FILE          conversation records to train on (messages or sharegpt JSON Lines; repeat)
               --images DIR|ZIP     where the records' images are
               --audio DIR|ZIP      where the records' sounds are (an audio-language model's records)
