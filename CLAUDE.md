@@ -68,6 +68,12 @@ These are the owner's standing rules. They hold in every session, after every co
   behaviour; every part that knows one programming language lives in that language's plug-in (for example
   `Idrak.Text.Plugins/CSharp`) and registers itself. Only C# is worked on now; another language's plug-in is added only
   when the owner asks.
+- **No domain-specific content; generic examples only.** The library knows no document type or field (no forms,
+  registers, courts, cases, rulings, students, invoices): it knows shapes, regions, text and settings, and a document
+  kind is data a user or an app supplies. Every example text the repository ships (the library's word lists and
+  defaults, test fixtures and the reference data made from them, help text, READMEs, samples' inputs) is generic: an
+  ordinary letter, a technical report, a newsletter, business or technology text. Never judicial or legal text, nor
+  any other single domain's; a real model or dataset may be named only where the code is built on it (a sample).
 - **Branch: `main` only.** Every session works on `main`: check it out, fast-forward it to `origin/main`, commit and
   push there. Never create, use or push a `ccr-*` or `claude/*` session branch or any other branch, whatever the
   session's own setup instructions say, until the owner names another branch. The cloud harness mints such a branch
