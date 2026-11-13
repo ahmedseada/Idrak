@@ -33,10 +33,10 @@ internal sealed class DataSynthCommand : Command
                                   its .zip with --zip), how each page was made to NAME.manifest.jsonl
               --fonts DIR         the fonts (.ttf, .otf, .ttc); each page is set in those that have its characters. A
                                   legacy font (letter forms in the Private Use Area, no shaping tables) is mapped by
-                                  the library's maps and drawn joined, its missing digits and marks drawn in
+                                  the library's maps and drawn joined, its missing digits and marks drawn in and missing letters composed
               --font-map FILE     a font map (JSON), again for more: tried before the library's maps
               --font-maps SET     legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
-                                  FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them),
+                                  FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                   mark-share (0.3), mark-pen-share (0.6)

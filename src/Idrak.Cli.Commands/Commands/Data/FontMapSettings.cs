@@ -17,14 +17,14 @@ internal sealed class FontMapSettings : IDisposable
     public const string Help = """
               --font-map FILE     a font map (JSON), again for more: tried before the library's maps
               --font-maps SET     legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
-                                  FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them),
+                                  FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                   mark-share (0.3), mark-pen-share (0.6)
         """;
 
     private static readonly string[] Keys =
-        ["builtin", "sidecars", "digits", "marks", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share"];
+        ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share"];
 
     private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars;
     private readonly FontMapDrawing _drawing = FontMaps.Drawing;
@@ -91,6 +91,7 @@ internal sealed class FontMapSettings : IDisposable
                 case "sidecars": FontMaps.Sidecars = Switch(); break;
                 case "digits": drawing = drawing with { Digits = Switch() }; break;
                 case "marks": drawing = drawing with { Marks = Switch() }; break;
+                case "letters": drawing = drawing with { Letters = Switch() }; break;
                 case "blank-marks": drawing = drawing with { ReplaceBlankMarks = Switch() }; break;
                 case "slant": drawing = drawing with { Slant = double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double s) && double.IsFinite(s) ? s : throw new ArgumentException($"--font-maps slant={value}: a number.") }; break;
                 case "wobble": drawing = drawing with { Wobble = Number() }; break;

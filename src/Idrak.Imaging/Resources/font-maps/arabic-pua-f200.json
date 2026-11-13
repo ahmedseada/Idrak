@@ -227,6 +227,7 @@
     {"feature": "rlig", "components": ["U+0644.init", "U+0625.fina"], "glyph": "U+F2E2"},
     {"feature": "rlig", "components": ["U+0644.medi", "U+0627.fina"], "glyph": "U+F2DD"},
     {"feature": "rlig", "components": ["U+0644.init", "U+0627.fina"], "glyph": "U+F2DC"},
+    {"feature": "liga", "components": ["U+0627", "U+0644.init", "U+0644.medi", "U+0647.fina"], "glyph": "U+F201"},
     {"feature": "ccmp", "components": ["U+0651", "U+064E"], "glyph": "U+F2FA", "place": "above"},
     {"feature": "ccmp", "components": ["U+0651", "U+064F"], "glyph": "U+F2FB", "place": "above"},
     {"feature": "ccmp", "components": ["U+0651", "U+064B"], "glyph": "U+F2FC", "place": "above"},

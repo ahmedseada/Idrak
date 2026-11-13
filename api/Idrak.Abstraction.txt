@@ -1052,9 +1052,11 @@ public readonly record struct Idrak.Abstraction.Data.FontMapComponent : System.I
 public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<Idrak.Abstraction.Data.FontMapDrawing>
   public FontMapDrawing()
   public bool Digits { get; init; }
+  public bool Letters { get; init; }
   public bool Marks { get; init; }
   public bool ReplaceBlankMarks { get; init; }
   public const string DigitsVariable = "IDRAK_FONT_MAP_DIGITS"
+  public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS"
   public const string MarksVariable = "IDRAK_FONT_MAP_MARKS"
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }

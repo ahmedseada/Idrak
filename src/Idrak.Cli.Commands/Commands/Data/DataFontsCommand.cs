@@ -40,7 +40,7 @@ internal sealed class DataFontsCommand : Command
               --harfbuzz FILE   HarfBuzz's shaping of the lines in the fonts (that tool's JSON)
               --font-map FILE   a font map (JSON), again for more: tried before the library's maps
               --font-maps SET   legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
-                                FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them),
+                                FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                 blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                 digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                 mark-share (0.3), mark-pen-share (0.6)

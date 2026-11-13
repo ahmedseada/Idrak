@@ -256,7 +256,8 @@ internal sealed class MappedFontFace : IFontFace
     private readonly List<int> _ownMarks;                                   // the font's own marks with ink (they size drawn marks)
     private readonly List<(DrawnSet Set, int Index, int Glyph)> _drawn;     // drawn glyphs: their set, their index in it, their glyph id
     private readonly int[] _letters;                                         // the letters' plain glyphs (they size drawn glyphs of "letters")
-    private readonly Lazy<(GlyphOutline Outline, int Advance)[]> _drawnGlyphs;
+    private readonly List<(ComposedForm Recipe, int Body, int Glyph)> _composed;   // composed glyphs: their recipe, the font's glyph they start from, their id
+    private readonly Lazy<(GlyphOutline Outline, int Advance)[]> _drawnGlyphs;     // the drawn and composed glyphs, after the font's own
     private readonly Lazy<byte[]> _gsub, _gdef, _gpos;
 
     public MappedFontFace(IFontFace inner, FontMap map, GlyphResolver resolver, Dictionary<int, int[]> forms, FontMapDrawing drawing)
@@ -270,6 +271,7 @@ internal sealed class MappedFontFace : IFontFace
         _ligatures = [];
         _ownMarks = [];
         _drawn = [];
+        _composed = [];
         var ligatureGlyphs = new HashSet<int>();
 
         foreach (var (code, glyphs) in forms)
@@ -358,6 +360,45 @@ internal sealed class MappedFontFace : IFontFace
                 }
 
                 next++;
+            }
+        }
+
+        // Letters the font lacks, composed from its own glyphs in every form the recipe's letter has (only when its plain
+        // form can be made): new glyphs after the drawn ones, with the single substitutions of their forms.
+        if (drawing.Letters)
+        {
+            foreach (var letter in DrawnGlyphData.Library.Composed)
+            {
+                if (cmap.ContainsKey(letter.CodePoint) || inner.Glyph(letter.CodePoint) != 0)
+                {
+                    continue;
+                }
+
+                int Body(int f) => letter.Of(FontMap.Forms[f]) is { } r && forms.TryGetValue(r.From, out var g) ? g[Index(r.FromForm ?? FontMap.Forms[f])] : 0;
+                if (Body(0) == 0)
+                {
+                    continue;
+                }
+
+                var glyphs = new int[FontMap.Forms.Count];
+                for (int f = 0; f < glyphs.Length; f++)
+                {
+                    if (Body(f) is int body and not 0)
+                    {
+                        _composed.Add((letter.Of(FontMap.Forms[f])!, body, next));
+                        glyphs[f] = next++;
+                    }
+                }
+
+                forms[letter.CodePoint] = glyphs;
+                cmap[letter.CodePoint] = glyphs[0];
+                for (int f = 1; f < glyphs.Length; f++)
+                {
+                    if (glyphs[f] != 0)
+                    {
+                        _singles.Add((FontMap.Forms[f], glyphs[0], glyphs[f]));
+                    }
+                }
             }
         }
 
@@ -474,11 +515,12 @@ internal sealed class MappedFontFace : IFontFace
         return 0;
     }
 
-    // Each drawn set sized from the font's own glyphs of its kind, drawn once; the glyphs in glyph id order.
+    // Each drawn set sized from the font's own glyphs of its kind, drawn once, then the composed letters; the glyphs in
+    // glyph id order after the font's own.
     private (GlyphOutline, int)[] DrawGlyphs()
     {
-        var result = new (GlyphOutline, int)[_drawn.Count];
-        if (_drawn.Count == 0)
+        var result = new (GlyphOutline, int)[GlyphCount - _inner.GlyphCount];
+        if (result.Length == 0)
         {
             return result;
         }
@@ -487,18 +529,23 @@ internal sealed class MappedFontFace : IFontFace
         var digits = Size(_map.Measure.Select(c => _cmap.TryGetValue(c, out int g) ? g : _inner.Glyph(c)).Where(g => g != 0 && g < _inner.GlyphCount))
             ?? Size(_letters) ?? new DrawnSize(upem * 0.33, upem * 0.6, upem * 0.07, upem * 0.03);
         var letters = Size(_letters) ?? digits;
+        var ownMarks = _ownMarks.Select(g => InkMeasure.Of(_inner.Outline(g), upem, _map.AnchorWindow)).OfType<InkStats>().ToList();
+        DrawnSize MarkSize(string measure)
+        {
+            var basis = measure == "letters" ? letters : digits;
+            double side = ownMarks.Count > 0 ? InkMeasure.Median([.. ownMarks.Select(i => Math.Max(i.Width, i.Height))]) : _drawing.MarkShare * basis.Height;
+            double pen = ownMarks.Count > 0 ? InkMeasure.Median([.. ownMarks.Select(i => i.Thickness)]) : _drawing.MarkPenShare * basis.Pen;
+            side = _drawing.MarkSize ?? side;
+            pen = _drawing.MarkPen ?? pen;
+            return new DrawnSize(Math.Max(1, side - pen), Math.Max(1, side - pen), pen, 0);
+        }
+
         foreach (var set in _drawn.Select(d => d.Set).Distinct())
         {
             DrawnSize size;
             if (set.Mark)
             {
-                var own = _ownMarks.Select(g => InkMeasure.Of(_inner.Outline(g), upem, _map.AnchorWindow)).OfType<InkStats>().ToList();
-                var basis = set.Measure == "letters" ? letters : digits;
-                double side = own.Count > 0 ? InkMeasure.Median([.. own.Select(i => Math.Max(i.Width, i.Height))]) : _drawing.MarkShare * basis.Height;
-                double pen = own.Count > 0 ? InkMeasure.Median([.. own.Select(i => i.Thickness)]) : _drawing.MarkPenShare * basis.Pen;
-                side = _drawing.MarkSize ?? side;
-                pen = _drawing.MarkPen ?? pen;
-                size = new DrawnSize(Math.Max(1, side - pen), Math.Max(1, side - pen), pen, 0);
+                size = MarkSize(set.Measure);
             }
             else
             {
@@ -520,6 +567,19 @@ internal sealed class MappedFontFace : IFontFace
                     result[_drawn[k].Glyph - _inner.GlyphCount] = drawn[_drawn[k].Index];
                 }
             }
+        }
+
+        // Composed letters: the font's glyph, its dots as the recipe says, its strokes drawn at the marks' size.
+        foreach (var (recipe, body, glyph) in _composed)
+        {
+            GlyphOutline? strokes = null;
+            if (recipe.Strokes.Length > 0)
+            {
+                var stroke = new DrawnSet("composed", Mark: true, "marks", [new DrawnGlyph(0, recipe.Place, recipe.Strokes)]);
+                strokes = StrokeDrawing.Draw(stroke, MarkSize("marks"), _drawing, DrawnGlyphData.Library.DiscSides)[0].Outline;
+            }
+
+            result[glyph - _inner.GlyphCount] = (Composition.Compose(_inner.Outline(body), recipe, strokes, upem, _map.AnchorGap, _map.AnchorWindow), _inner.Advance(body));
         }
 
         return result;

@@ -488,6 +488,7 @@ internal static class EnvironmentVariables
         new("IDRAK_FONT_MAP_SIDECARS", Fonts, "on", "0, off, false or no: a map beside a font (FONT.map.json) is not applied (--font-maps sidecars=off)", FontCommands),
         new("IDRAK_FONT_MAP_DIGITS", Fonts, "on", "0, off, false or no: Latin digits are not drawn into mapped fonts that lack them (--font-maps digits=off)", FontCommands),
         new("IDRAK_FONT_MAP_MARKS", Fonts, "on", "0, off, false or no: combining marks are not drawn into mapped fonts that lack them (--font-maps marks=off)", FontCommands),
+        new("IDRAK_FONT_MAP_LETTERS", Fonts, "on", "0, off, false or no: letters mapped fonts lack are not composed from their own glyphs (--font-maps letters=off)", FontCommands),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
         new("IDRAK_CODE_MAX_FILE_BYTES", Code, "1048576", "The largest file a code extraction reads, in bytes (larger ones are often generated)", CodeData),

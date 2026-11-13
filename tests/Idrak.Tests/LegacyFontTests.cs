@@ -207,7 +207,7 @@ internal abstract partial class DesktopTests
 
         // Turned off, nothing is drawn; a font that maps its own marks keeps them.
         var mcs = RawFace("MCS-HAND");
-        var plain = Remap(mcs, FontMaps.Drawing with { Digits = false, Marks = false });
+        var plain = Remap(mcs, FontMaps.Drawing with { Digits = false, Marks = false, Letters = false });
         Check(plain.Glyph('5') == 0 && plain.Glyph(0x0653) == 0 && plain.GlyphCount == mcs.GlyphCount, $"drawing off: '5' is {plain.Glyph('5')}, {plain.GlyphCount} glyphs");
         var mapped = MappedFace("MCS-HAND");
         Check(Enumerable.Range(0x064B, 8).All(c => mapped.Glyph(c) < mcs.GlyphCount), "MCS-HAND keeps its own marks");
@@ -356,6 +356,98 @@ internal abstract partial class DesktopTests
         var ink = new float[600 * 80];
         TextRenderer.Draw(block, 10, 10, ink, 600, 80);
         return ink;
+    }
+
+    // The PUA layout's map without some characters (a font that lacks them), read from the library's data.
+    private static FontMap LayoutWithout(Func<int, bool> drop)
+    {
+        using var stream = typeof(OpenTypeFormat).Assembly.GetManifestResourceStream("Idrak.Imaging.font-maps.arabic-pua-f200.json")!;
+        var json = JsonNode.Parse(stream)!.AsObject();
+        json["name"] = "pua-without";
+        static int Code(string text) => Convert.ToInt32(text[2..].Split('.')[0], 16);
+        foreach (string section in (string[])["letters", "characters", "marks"])
+        {
+            var obj = json[section]!.AsObject();
+            foreach (string key in obj.Select(p => p.Key).Where(k => drop(Code(k))).ToList())
+            {
+                obj.Remove(key);
+            }
+        }
+
+        var aliases = json["aliases"]!.AsObject();
+        foreach (string key in aliases.Select(p => p.Key).Where(k => drop(Code(k)) || drop(Code((string)aliases[k]!))).ToList())
+        {
+            aliases.Remove(key);
+        }
+
+        var ligatures = json["ligatures"]!.AsArray();
+        foreach (var lig in ligatures.Where(l => l!["components"]!.AsArray().Any(c => drop(Code((string)c!)))).ToList())
+        {
+            ligatures.Remove(lig);
+        }
+
+        return FontMap.Parse(Encoding.UTF8.GetBytes(json.ToJsonString()), "pua-without.map.json");
+    }
+
+    private static void LegacyFontsCompose(Device device)
+    {
+        foreach (string name in LegacyFonts)
+        {
+            var raw = RawFace(name);
+            var face = MappedFace(name);
+            ShapedGlyph[] Shape(IFontFace font, string text) => TextShapers.Shape(font, text, new TextRun(0, text.Length, "Arab", true));
+
+            // The Allah ligature (liga) where the font has it.
+            var allah = Shape(face, "الله");
+            Check(allah.Length == 1 && allah[0].Glyph == raw.Glyph(0xF201), $"{name}: الله is {string.Join(" ", allah.Select(g => g.Glyph))}, the ligature {raw.Glyph(0xF201)}");
+
+            // Letters the font lacks are composed from its own forms: پ from ب with three dots, ی from ى and dotless ي, in every form.
+            foreach (int letter in (int[])[0x067E, 0x0686, 0x0698, 0x06A4, 0x06A9, 0x06AF, 0x06CC, 0x0671])
+            {
+                Check(raw.Glyph(letter) == 0 && face.Glyph(letter) >= raw.GlyphCount && !face.Outline(face.Glyph(letter)).IsEmpty, $"{name}: U+{letter:X4} is glyph {face.Glyph(letter)}");
+            }
+
+            var peh = Shape(face, "پپپ").Select(g => g.Glyph).Reverse().ToArray();
+            var beh = Shape(face, "ببب").Select(g => g.Glyph).Reverse().ToArray();
+            Check(peh.Distinct().Count() == 3 && peh.All(g => g >= raw.GlyphCount), $"{name}: پپپ is {string.Join(" ", peh)}");
+            for (int i = 0; i < 3; i++)
+            {
+                int composed = Composition.Split(face.Outline(peh[i])).Count, body = Composition.Split(face.Outline(beh[i])).Count;
+                Check(composed == body + 2 && face.Advance(peh[i]) == face.Advance(beh[i]), $"{name}: پ form {i} has {composed} contours, ب {body} (one dot becomes three)");
+            }
+
+            var yeh = Shape(face, "ییی").Select(g => g.Glyph).Reverse().ToArray();
+            var ya = Shape(face, "ييي").Select(g => g.Glyph).Reverse().ToArray();
+            Check(Composition.Split(face.Outline(yeh[0])).Count < Composition.Split(face.Outline(ya[0])).Count
+                  && face.Outline(yeh[2]).Points.Span.SequenceEqual(face.Outline(Shape(face, "بى").First().Glyph).Points.Span),
+                $"{name}: ی is dotless in its initial form and alef maksura's final form at the end");
+        }
+
+        // A font without the hamza seats and the Arabic-Indic digits: أ ؤ ئ are its seat with a hamza drawn on it (Unicode's
+        // decomposition, the hamza placed through the anchors), لأ the lam-alef with the hamza, the digits drawn.
+        var mcs = RawFace("MCS-HAND");
+        var without = FontMaps.Apply(mcs, LayoutWithout(c => c is 0x0622 or 0x0623 or 0x0624 or 0x0625 or 0x0626 or >= 0x0660 and <= 0x0669 or >= 0x06F0 and <= 0x06F9
+            or >= 0xFE81 and <= 0xFE8C or >= 0xFEF5 and <= 0xFEFA));
+        foreach (var (text, seat) in new[] { ("أ", 0xF241), ("ؤ", 0xF2CB), ("إ", 0xF241) })
+        {
+            var g = TextShapers.Shape(without, text, new TextRun(0, text.Length, "Arab", true));
+            var seatGlyph = g.SingleOrDefault(x => x.Glyph == mcs.Glyph(seat));
+            var hamza = g.SingleOrDefault(x => x.Glyph >= mcs.GlyphCount);
+            bool below = text == "إ";
+            var ink = InkMeasure.Of(mcs.Outline(mcs.Glyph(seat)), mcs.Metrics.UnitsPerEm, 130)!.Value;
+            var (_, minY, _, maxY) = without.Outline(hamza.Glyph).Bounds();
+            Check(g.Length == 2 && seatGlyph.Glyph != 0 && hamza.Glyph != 0 && (below ? maxY + hamza.YOffset <= ink.Bottom : minY + hamza.YOffset >= ink.Top),
+                $"{text}: {string.Join(" ", g.Select(x => $"{x.Glyph}({x.XOffset},{x.YOffset})"))}");
+        }
+
+        var lamHamza = TextShapers.Shape(without, "لأ", new TextRun(0, 2, "Arab", true));
+        Check(lamHamza.Any(x => x.Glyph == mcs.Glyph(0xF2DC)) && lamHamza.Any(x => x.Glyph >= mcs.GlyphCount), $"لأ: {string.Join(" ", lamHamza.Select(x => x.Glyph))}");
+        Check(Enumerable.Range(0x0660, 10).All(c => without.Glyph(c) >= mcs.GlyphCount) && Enumerable.Range(0x06F0, 10).All(c => without.Glyph(c) >= mcs.GlyphCount),
+            "the Arabic-Indic digits are drawn when the font lacks them");
+
+        // Turned off, nothing is composed.
+        var plain = Remap(mcs, FontMaps.Drawing with { Letters = false });
+        Check(plain.Glyph(0x067E) == 0, "letters off: پ is not composed");
     }
 
     private static void LegacyFontsSynth(Device device)

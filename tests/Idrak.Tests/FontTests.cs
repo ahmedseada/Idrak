@@ -20,6 +20,7 @@ internal abstract partial class DesktopTests : Tests
         ("fonts: legacy fonts shape joined Arabic: initial, medial and final forms, each lam-alef one ligature, Arabic-Indic digits, marks with no width placed on their base's ink (the font's own marks kept, inkless ones drawn)", LegacyFontsShape),
         ("fonts: legacy fonts get the Latin digits and the combining marks they lack, drawn at the height and pen measured from their own digits, every contour clockwise, the same per seed; off when turned off; the Unicode fonts keep their own", LegacyFontsDrawGlyphs),
         ("fonts: fonts no map fits answer, measure, carry tables and draw exactly as read; a map beside a font maps it (off when turned off, refused naming the file when it fits nothing); bad maps refused naming the key; the font mapper contract", LegacyFontsLeaveOthersAlone),
+        ("fonts: legacy fonts: the Allah ligature; letters they lack (پ چ ژ ڤ ک گ ی ٱ) composed from their own forms in every form; a font without the hamza seats or the Arabic-Indic digits gets the seat with a hamza placed on it, the lam-alef with its hamza, and drawn digits", LegacyFontsCompose),
         ("fonts: idrak data synth draws pages from the legacy fonts alone (Latin and Arabic-Indic digits too) and with the Unicode fonts, leaving nothing out; --font-maps settings checked and put back", LegacyFontsSynth),
     ];
 

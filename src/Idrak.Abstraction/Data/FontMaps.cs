@@ -529,8 +529,8 @@ public sealed class FontMap
 
 /// <summary>
 /// How glyphs a mapped font lacks are drawn into it (the library's drawn glyphs, data shipped with Idrak.Imaging): the
-/// Latin digits 0 to 9 (legacy fonts write numbers in their own digits only) and combining marks, as pen strokes thickened
-/// into round-ended strokes. A font keeps every glyph it has: only a character the mapped font does not answer (or answers
+/// Latin and Arabic-Indic digits (legacy fonts write numbers in their own digits only) and combining marks, as pen strokes
+/// thickened into round-ended strokes, and letters composed from the font's own glyphs. A font keeps every glyph it has: only a character the mapped font does not answer (or answers
 /// with a mark that has no ink, under <see cref="ReplaceBlankMarks"/>) is drawn. Each size left null is measured from the
 /// font itself: the digits' height, pen and width from its own digits (else its letters), the marks' size and pen from its
 /// own marks (else a share of the digits' or letters' height and pen).
@@ -543,11 +543,20 @@ public sealed record FontMapDrawing
     /// <summary>The variable that turns the drawn marks off: "IDRAK_FONT_MAP_MARKS".</summary>
     public const string MarksVariable = "IDRAK_FONT_MAP_MARKS";
 
-    /// <summary>Whether the drawn glyphs of kind "base" (the Latin digits) are added (on unless <see cref="DigitsVariable"/> turns them off).</summary>
+    /// <summary>The variable that turns the composed letters off: "IDRAK_FONT_MAP_LETTERS".</summary>
+    public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS";
+
+    /// <summary>Whether the drawn glyphs of kind "base" (the Latin and Arabic-Indic digits) are added (on unless <see cref="DigitsVariable"/> turns them off).</summary>
     public bool Digits { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(DigitsVariable));
 
     /// <summary>Whether the drawn glyphs of kind "mark" are added (on unless <see cref="MarksVariable"/> turns them off).</summary>
     public bool Marks { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(MarksVariable));
+
+    /// <summary>
+    /// Whether letters the font lacks are composed from its own glyphs (another letter's form with its dots replaced, or a
+    /// stroke added), in every form (on unless <see cref="LettersVariable"/> turns it off).
+    /// </summary>
+    public bool Letters { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(LettersVariable));
 
     /// <summary>Whether a mark the font maps to a glyph with no ink is drawn as if missing (on).</summary>
     public bool ReplaceBlankMarks { get; init; } = true;

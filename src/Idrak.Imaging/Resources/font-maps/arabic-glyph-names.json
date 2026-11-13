@@ -228,6 +228,7 @@
     {"feature": "rlig", "components": ["U+0644.init", "U+0625.fina"], "glyph": ["hamzahunderlamelef", "hamzahunderlamalef"]},
     {"feature": "rlig", "components": ["U+0644.medi", "U+0627.fina"], "glyph": ["fnlamalef", "fnlamelef"]},
     {"feature": "rlig", "components": ["U+0644.init", "U+0627.fina"], "glyph": ["lamelef", "lamalef"]},
+    {"feature": "liga", "components": ["U+0627", "U+0644.init", "U+0644.medi", "U+0647.fina"], "glyph": ["Allah"]},
     {"feature": "ccmp", "components": ["U+0651", "U+064E"], "glyph": ["fahtanonshaddah"], "place": "above"},
     {"feature": "ccmp", "components": ["U+0651", "U+064F"], "glyph": ["dammahonshaddah"], "place": "above"},
     {"feature": "ccmp", "components": ["U+0651", "U+064B"], "glyph": ["fathatanonshaddah"], "place": "above"},

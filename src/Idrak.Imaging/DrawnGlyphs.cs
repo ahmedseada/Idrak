@@ -251,6 +251,19 @@ internal sealed record DrawnGlyph(int CodePoint, FontMarkPlace Place, DrawnStrok
 internal sealed record DrawnSet(string Name, bool Mark, string Measure, DrawnGlyph[] Glyphs);
 
 /// <summary>
+/// One form of a composed letter: another letter's glyph in a form (its own form when <see cref="FromForm"/> is null),
+/// its dots replaced by <see cref="Dots"/> copies of the font's own dot (null: kept), and strokes drawn above or below it.
+/// </summary>
+internal sealed record ComposedForm(int From, string? FromForm, int? Dots, string Arrange, DrawnStroke[] Strokes, FontMarkPlace Place);
+
+/// <summary>A letter composed from the font's own glyphs: the same recipe in every form, or one per form.</summary>
+internal sealed record ComposedLetter(int CodePoint, ComposedForm? Every, IReadOnlyDictionary<string, ComposedForm> Forms)
+{
+    /// <summary>The recipe of <paramref name="form"/>, or null when the letter is not composed in it.</summary>
+    public ComposedForm? Of(string form) => Forms.TryGetValue(form, out var f) ? f : Every;
+}
+
+/// <summary>
 /// The library's drawn glyphs (data shipped with Idrak.Imaging, drawn-glyphs.json): sets of glyphs, each a list of pen
 /// strokes on a unit box, that a mapped font lacking them gets, drawn at the font's own measured size and weight. The C#
 /// knows only the stroke kinds; which characters and shapes is data.
@@ -269,7 +282,9 @@ internal sealed class DrawnGlyphData
         return Parse(bytes, "Idrak.Imaging/" + name);
     });
 
-    private DrawnGlyphData(int discSides, DrawnSet[] sets) => (DiscSides, Sets) = (discSides, sets);
+    private static readonly string[] Arrangements = ["row", "up", "down"];
+
+    private DrawnGlyphData(int discSides, DrawnSet[] sets, ComposedLetter[] composed) => (DiscSides, Sets, Composed) = (discSides, sets, composed);
 
     /// <summary>The library's drawn glyphs, read once.</summary>
     public static DrawnGlyphData Library => LibraryData.Value;
@@ -279,6 +294,9 @@ internal sealed class DrawnGlyphData
 
     /// <summary>The sets, in order.</summary>
     public DrawnSet[] Sets { get; }
+
+    /// <summary>The letters composed from a font's own glyphs when it lacks them, in order.</summary>
+    public ComposedLetter[] Composed { get; }
 
     /// <summary>Reads drawn glyphs from their JSON; <paramref name="source"/> names them in messages.</summary>
     public static DrawnGlyphData Parse(ReadOnlyMemory<byte> utf8, string source)
@@ -330,7 +348,65 @@ internal sealed class DrawnGlyphData
             sets.Add(new DrawnSet(name, kind == "mark", measure, [.. glyphs]));
         }
 
-        return new DrawnGlyphData(sides, [.. sets]);
+        var composed = new List<ComposedLetter>();
+        if (root.TryGetProperty("compose", out var compose))
+        {
+            foreach (var letter in compose.EnumerateObject())
+            {
+                string key = $"compose.{letter.Name}";
+                if (!FontMap.TryCodePoint(letter.Name, out int code))
+                {
+                    throw Bad(key, "is not a character as U+XXXX");
+                }
+
+                var forms = new Dictionary<string, ComposedForm>(StringComparer.Ordinal);
+                if (letter.Value.TryGetProperty("forms", out var perForm))
+                {
+                    foreach (var f in perForm.EnumerateObject())
+                    {
+                        forms[FontMap.Forms.Contains(f.Name) ? f.Name : throw Bad($"{key}.forms.{f.Name}", $"is not a form ({string.Join(", ", FontMap.Forms)})")] =
+                            Recipe(f.Value, $"{key}.forms.{f.Name}", Bad);
+                    }
+                }
+
+                var every = letter.Value.TryGetProperty("from", out _) ? Recipe(letter.Value, key, Bad) : null;
+                composed.Add(every is null && forms.Count == 0 ? throw Bad(key, "needs \"from\" or \"forms\"") : new ComposedLetter(code, every, forms));
+            }
+        }
+
+        return new DrawnGlyphData(sides, [.. sets], [.. composed]);
+    }
+
+    private static ComposedForm Recipe(JsonElement e, string key, Func<string, string, InvalidDataException> bad)
+    {
+        string from = e.TryGetProperty("from", out var f) ? f.GetString() ?? "" : throw bad($"{key}.from", "is missing");
+        int dot = from.IndexOf('.', StringComparison.Ordinal);
+        string? form = dot < 0 ? null : from[(dot + 1)..];
+        if (!FontMap.TryCodePoint(dot < 0 ? from : from[..dot], out int code) || (form is not null && !FontMap.Forms.Contains(form)))
+        {
+            throw bad($"{key}.from", $"is '{from}': a letter as U+XXXX, or U+XXXX.form");
+        }
+
+        int? dots = e.TryGetProperty("dots", out var d) ? d.TryGetInt32(out int n) && n is >= 0 and <= 4 ? n : throw bad($"{key}.dots", "must be 0 to 4") : null;
+        string arrange = e.TryGetProperty("arrange", out var a) ? a.GetString() ?? "" : "row";
+        if (Array.IndexOf(Arrangements, arrange) < 0)
+        {
+            throw bad($"{key}.arrange", $"is '{arrange}' (valid: {string.Join(", ", Arrangements)})");
+        }
+
+        var strokes = new List<DrawnStroke>();
+        if (e.TryGetProperty("strokes", out var list))
+        {
+            foreach (var stroke in list.EnumerateArray())
+            {
+                strokes.Add(Stroke(stroke, key, bad));
+            }
+        }
+
+        var place = e.TryGetProperty("place", out var p)
+            ? p.GetString() switch { "above" => FontMarkPlace.Above, "below" => FontMarkPlace.Below, _ => throw bad($"{key}.place", "is not above or below") }
+            : FontMarkPlace.Above;
+        return new ComposedForm(code, form, dots, arrange, [.. strokes], place);
     }
 
     private static DrawnStroke Stroke(JsonElement stroke, string key, Func<string, string, InvalidDataException> bad)
@@ -483,5 +559,147 @@ internal static class StrokeDrawing
 
         var outline = points == 0 ? GlyphOutline.Empty : new GlyphOutline(verbs, xy);
         return (outline, mark || points == 0 ? 0 : (int)Math.Round(maxX + sideBearing, MidpointRounding.ToEven));
+    }
+}
+
+/// <summary>
+/// Letters made from a font's own glyphs: a glyph's contours split, its dots (small contours wound like its body)
+/// replaced by copies of one of them arranged in a row or a triangle where they were, and strokes added on its ink.
+/// </summary>
+internal static class Composition
+{
+    // A dot is at most this share of the em on its larger side (a share of the glyph would miss a narrow form's dot).
+    private const double DotShare = 0.18;
+
+    /// <summary>The composed outline: <paramref name="body"/>'s contours, its dots as <paramref name="recipe"/> says, and <paramref name="strokes"/> (a mark's outline at its origin) placed on its ink.</summary>
+    public static GlyphOutline Compose(GlyphOutline body, ComposedForm recipe, GlyphOutline? strokes, int unitsPerEm, int gap, int window)
+    {
+        var contours = Split(body);
+        var result = new List<(OutlineVerb[] Verbs, float[] Points)>();
+        if (recipe.Dots is int count && contours.Count > 1)
+        {
+            double side = unitsPerEm;
+            var main = contours.MaxBy(c => Math.Abs(Area(c.Points)));
+            double largest = Math.Abs(Area(main.Points));
+            int sign = Math.Sign(Area(main.Points));
+            var dots = contours.Where(c => Math.Sign(Area(c.Points)) == sign && Math.Abs(Area(c.Points)) < largest && Size(c.Points) <= DotShare * side).ToList();
+            result.AddRange(contours.Where(c => !dots.Contains(c)));
+            if (dots.Count > 0 && count > 0)
+            {
+                // Copies of the first dot, centred where the dots were: in a row, or a triangle with its point up or down.
+                var template = dots[0];
+                var (tx, ty) = Centre(template.Points);
+                double cx = dots.Average(d => Centre(d.Points).X), cy = dots.Average(d => Centre(d.Points).Y);
+                double step = 1.25 * Size(template.Points);
+                foreach (var (dx, dy) in Places(count, recipe.Arrange, step))
+                {
+                    result.Add((template.Verbs, Moved(template.Points, cx + dx - tx, cy + dy - ty)));
+                }
+            }
+        }
+        else
+        {
+            result.AddRange(contours);
+        }
+
+        if (strokes is { IsEmpty: false } && InkMeasure.Of(body, unitsPerEm, window) is { } ink)
+        {
+            var (sx0, sy0, sx1, sy1) = strokes.Bounds();
+            double dx = ink.CenterX - (sx0 + sx1) / 2;
+            double dy = recipe.Place == FontMarkPlace.Below ? ink.MinY - gap - sy1 : ink.MaxY + gap - sy0;
+            result.AddRange(Split(strokes).Select(c => (c.Verbs, Moved(c.Points, dx, dy))));
+        }
+
+        return result.Count == 0 ? GlyphOutline.Empty
+            : new GlyphOutline([.. result.SelectMany(c => c.Verbs)], [.. result.SelectMany(c => c.Points)]);
+    }
+
+    private static IEnumerable<(double X, double Y)> Places(int count, string arrange, double step) => (count, arrange) switch
+    {
+        (1, _) => [(0, 0)],
+        (2, _) => [(-step / 2, 0), (step / 2, 0)],
+        (3, "up") => [(0, step * 0.43), (-step / 2, -step * 0.43), (step / 2, -step * 0.43)],
+        (3, "down") => [(-step / 2, step * 0.43), (step / 2, step * 0.43), (0, -step * 0.43)],
+        _ => Enumerable.Range(0, count).Select(i => ((i - (count - 1) / 2.0) * step, 0.0)),
+    };
+
+    /// <summary>The contours of an outline, each its verbs (from its move to its close) and their points.</summary>
+    public static List<(OutlineVerb[] Verbs, float[] Points)> Split(GlyphOutline outline)
+    {
+        var verbs = outline.Verbs.Span;
+        var points = outline.Points.Span;
+        var result = new List<(OutlineVerb[], float[])>();
+        int start = 0, p = 0, pointStart = 0;
+        for (int v = 0; v < verbs.Length; v++)
+        {
+            if (verbs[v] == OutlineVerb.Move && v > start)
+            {
+                result.Add((verbs[start..v].ToArray(), points[pointStart..p].ToArray()));
+                start = v;
+                pointStart = p;
+            }
+
+            p += verbs[v] switch { OutlineVerb.Move or OutlineVerb.Line => 2, OutlineVerb.Quadratic => 4, OutlineVerb.Cubic => 6, _ => 0 };
+        }
+
+        if (verbs.Length > start)
+        {
+            result.Add((verbs[start..].ToArray(), points[pointStart..p].ToArray()));
+        }
+
+        return result;
+    }
+
+    private static double Area(float[] p)
+    {
+        double sum = 0;
+        int n = p.Length / 2;
+        for (int i = 0; i < n; i++)
+        {
+            int j = (i + 1) % n;
+            sum += (double)p[2 * i] * p[2 * j + 1] - (double)p[2 * j] * p[2 * i + 1];
+        }
+
+        return sum / 2;
+    }
+
+    private static double Size(float[] p)
+    {
+        float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            minX = Math.Min(minX, p[i]);
+            maxX = Math.Max(maxX, p[i]);
+            minY = Math.Min(minY, p[i + 1]);
+            maxY = Math.Max(maxY, p[i + 1]);
+        }
+
+        return Math.Max(maxX - minX, maxY - minY);
+    }
+
+    private static (double X, double Y) Centre(float[] p)
+    {
+        float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            minX = Math.Min(minX, p[i]);
+            maxX = Math.Max(maxX, p[i]);
+            minY = Math.Min(minY, p[i + 1]);
+            maxY = Math.Max(maxY, p[i + 1]);
+        }
+
+        return ((minX + maxX) / 2.0, (minY + maxY) / 2.0);
+    }
+
+    private static float[] Moved(float[] p, double dx, double dy)
+    {
+        var moved = new float[p.Length];
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            moved[i] = (float)Math.Round(p[i] + dx, MidpointRounding.ToEven);
+            moved[i + 1] = (float)Math.Round(p[i + 1] + dy, MidpointRounding.ToEven);
+        }
+
+        return moved;
     }
 }
