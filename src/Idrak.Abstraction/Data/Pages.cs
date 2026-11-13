@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Runtime.CompilerServices;
+using Idrak.Abstraction.Text;
 
 namespace Idrak.Abstraction.Data;
 
@@ -115,6 +116,31 @@ public sealed record PageStyle
     /// default) and that pose's own keys. A layout reads its own keys and leaves the others; none by default.
     /// </summary>
     public IReadOnlyDictionary<string, string> Options { get; init; } = PageOptions.None;
+
+    /// <summary>
+    /// The handwriting habits the page's body is written with (<see cref="TextHabits"/>); null, the default: the text as
+    /// given, and every page as it was.
+    /// </summary>
+    public ITextHabits? Habits { get; init; }
+
+    /// <summary>Every habit's chance (0 to 1), over each habit's own; null, the default: each its own (0 unless its data gives one).</summary>
+    public double? HabitChance { get; init; }
+
+    /// <summary>A habit's chance by its name (0 to 1), over <see cref="HabitChance"/>.</summary>
+    public IReadOnlyDictionary<string, double> HabitChances { get; init; } = new Dictionary<string, double>();
+
+    /// <summary>What a page's label says when habits change its text: what is drawn (the default) or the source's spelling.</summary>
+    public PageLabel Label { get; init; }
+}
+
+/// <summary>What a drawn page's label says when the text was varied for drawing (handwriting habits).</summary>
+public enum PageLabel
+{
+    /// <summary>Exactly what is drawn: the label matches the image.</summary>
+    Drawn,
+
+    /// <summary>The source's spelling, while the image shows the varied text.</summary>
+    Source,
 }
 
 /// <summary>A drawn part of a page: what it is, its text and its box (pixels).</summary>

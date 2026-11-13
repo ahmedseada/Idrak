@@ -355,7 +355,8 @@ public static class SyntheticPages
     /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
         ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
-         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose"];
+         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose",
+         "habits", "habit-chance", "habit.NAME", "label"];
 
     // The keys of StyleKeys that go into the style's options for the layouts that read them.
     private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose"];
@@ -378,7 +379,10 @@ public static class SyntheticPages
     /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size); for every layout,
     /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
     /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
-    /// checked by the kinds that take it).
+    /// checked by the kinds that take it); habits (none, the
+    /// default; a <see cref="Idrak.Abstraction.Text.TextHabits"/> name or a rules file), habit-chance (every habit's
+    /// chance) and habit.NAME (one habit's), and label (drawn, the default: the label says what is drawn; source: the
+    /// input's spelling).
     /// </summary>
     /// <exception cref="ArgumentException">A key not known, or a value out of its range; the message names them.</exception>
     public static PageStyle Style(PageStyle style, string? settings)
@@ -398,6 +402,13 @@ public static class SyntheticPages
 
             float Chance() => PageOptions.Chance(what, value);
             int Pixels() => (int)Range(64, 20000).Min;
+            if (key.StartsWith("habit.", StringComparison.Ordinal) && key.Length > 6)
+            {
+                string habit = key[6..];                                   // keys come lower case (PageOptions.Split), as habit names are
+                style = style with { HabitChances = new Dictionary<string, double>(style.HabitChances, StringComparer.Ordinal) { [habit] = Chance() } };
+                continue;
+            }
+
             style = key switch
             {
                 "width" => style with { Width = Pixels() },
@@ -414,6 +425,17 @@ public static class SyntheticPages
                 "header-font" => style with { OtherHeaderFont = Chance() },
                 "crop" => style with { Crop = Chance() },
                 "crop-padding" => style with { CropPadding = Range(0, 2000) },
+                "habits" => style with { Habits = Habits(value) },
+                "habit-chance" => style with { HabitChance = Chance() },
+                "label" => style with
+                {
+                    Label = value.ToLowerInvariant() switch
+                    {
+                        "drawn" => PageLabel.Drawn,
+                        "source" => PageLabel.Source,
+                        _ => throw new ArgumentException($"Page setting label is drawn or source, not '{value}'."),
+                    },
+                },
                 "color" => style with
                 {
                     Color = bool.TryParse(value, out bool color) ? color : throw new ArgumentException($"Page setting color is true or false, not '{value}'."),
@@ -505,6 +527,12 @@ public static class SyntheticPages
         var pose = GlyphPoses.Get(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
         _ = pose.Read(PageOptions.Only(options, pose.Keys));
     }
+
+    // The habits a page setting names: none, a registered set, or a rules file.
+    private static Idrak.Abstraction.Text.ITextHabits? Habits(string value) =>
+        value.Equals("none", StringComparison.OrdinalIgnoreCase) ? null
+        : Idrak.Abstraction.Text.TextHabits.Find(value) ?? (File.Exists(value) ? Idrak.Abstraction.Text.RuleTextHabits.Read(value)
+            : throw new ArgumentException($"Page setting habits is none, a registered set ({string.Join(", ", Idrak.Abstraction.Text.TextHabits.Names)}) or a rules file, not '{value}'."));
 
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>
     public static IReadOnlyList<IFontFace> Fonts(string folder) => FontFormats.ReadFolder(folder);
@@ -714,6 +742,17 @@ public static class SyntheticPages
             throw new InvalidDataException($"{where}: the answer's page text is empty.");
         }
 
+        // Handwriting habits vary the body as drawn, from a generator of their own (the page's other choices stay as they
+        // were); with none, nothing is drawn and the page is as before.
+        var source = body;
+        if (options.Style.Habits is { } habits)
+        {
+            var habitRandom = new Random(PageSeed(seed, record, -1));
+            var habitStyle = options.Style;
+            double? Chance(string name) => habitStyle.HabitChances.TryGetValue(name, out double c) ? c : habitStyle.HabitChance;
+            body = [.. body.Select(l => habits.Apply(l, habitRandom, Chance))];
+        }
+
         var content = new PageContent
         {
             HeaderStart = Block(parts.HeaderStart, "headerStart"), HeaderCenter = Block(parts.HeaderCenter, "headerCenter"),
@@ -740,7 +779,33 @@ public static class SyntheticPages
 
         var steps = Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty;
         var image = steps.IsEmpty ? drawn : steps.Apply(drawn);
-        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), description, scanName) { Shapes = shapes };
+        string label = options.Style.Label == PageLabel.Source ? Unvaried(rendered.Text, body, source) : rendered.Text;
+        return new SyntheticPage(image, label, answer.With(label), seed, layoutName, steps.ToString(), description, scanName) { Shapes = shapes };
+    }
+
+    // The drawn text with each body line habits changed back to its source (the drawn text keeps paragraphs whole, in order).
+    private static string Unvaried(string drawn, string[] body, string[] source)
+    {
+        if (ReferenceEquals(body, source))
+        {
+            return drawn;
+        }
+
+        var lines = drawn.Split('\n');
+        for (int i = 0, next = 0; i < lines.Length; i++)
+        {
+            for (int j = next; j < body.Length; j++)
+            {
+                if (lines[i] == body[j])
+                {
+                    lines[i] = source[j];
+                    next = j + 1;
+                    break;
+                }
+            }
+        }
+
+        return string.Join('\n', lines);
     }
 
     // The record number a page's shape draw is hashed with (PageSeed), apart from every real record's.

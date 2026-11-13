@@ -1,0 +1,18 @@
+{
+  "name": "arabic-handwriting",
+  "summary": "Habits of Arabic handwriting: hamza and madda left off alef, final ya written as alef maksura, ta marbuta as ha, dhah as dad, vowel marks left out (every chance 0 until a page's settings give one)",
+  "rules": [
+    // A hamza or madda on or under alef left off: the most common habit in handwritten Arabic.
+    { "name": "alef-hamza-above", "from": "أ", "to": "ا" },
+    { "name": "alef-hamza-below", "from": "إ", "to": "ا" },
+    { "name": "alef-madda", "from": "آ", "to": "ا" },
+    // A final ya written without its dots, as alef maksura (in Egypt nearly always).
+    { "name": "final-ya", "from": "ي", "to": "ى", "where": ["final", "isolated"] },
+    // A final ta marbuta written without its dots, as ha.
+    { "name": "ta-marbuta", "from": "ة", "to": "ه", "where": ["final", "isolated"] },
+    // Dhah written as dad, a confusion of the two emphatic letters common in dialect speakers' writing.
+    { "name": "dhah-as-dad", "from": "ظ", "to": "ض" },
+    // Vowel marks, tanween, shadda and sukun left out: most handwriting writes none.
+    { "name": "no-harakat", "from": ["ً", "ٌ", "ٍ", "َ", "ُ", "ِ", "ّ", "ْ"], "to": "" }
+  ]
+}

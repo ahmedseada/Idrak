@@ -192,6 +192,16 @@ public static class Conformance
         Check(format ?? FillInMiddleFormats.Get(name), new FillInMiddleFormatSuite(tokenizer, reference), options);
 
     /// <summary>
+    /// Checks the text habits registered as <paramref name="name"/> (or <paramref name="habits"/>, when given;
+    /// <see cref="TextHabitsSuite"/>) on <paramref name="texts"/>: nothing changes at chance 0, the same seed gives the
+    /// same texts, at chance 1 the texts the habits hold for change and <paramref name="untouched"/> does not, the same
+    /// from several threads, and the library's set of that name agrees when an app's is checked.
+    /// </summary>
+    public static ConformanceReport CheckTextHabits(string name, IReadOnlyList<string> texts, string untouched, Idrak.Abstraction.Text.ITextHabits? habits = null,
+        ContractCheckOptions? options = null) =>
+        Check(habits ?? Idrak.Abstraction.Text.TextHabits.Get(name), new TextHabitsSuite(texts, untouched, habits is null ? null : Idrak.Abstraction.Text.TextHabits.Default(name)), options);
+
+    /// <summary>
     /// Checks the font mapper registered as <paramref name="name"/> (or <paramref name="mapper"/>, when given;
     /// <see cref="FontMapperSuite"/>) on <paramref name="legacy"/>, a font <paramref name="map"/> fits, and
     /// <paramref name="unicode"/>, one that answers the map's letters itself: the legacy font fits and answers each letter

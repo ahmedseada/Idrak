@@ -23,6 +23,7 @@ internal abstract partial class DesktopTests : Tests
         ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
         ("synthetic data: page settings text sets the style's sizes and chances and the shapes layout's options (pen, binding and their keys), refusing unknown keys (naming every valid one) and values out of range; shape profiles are drawn per page and checked first; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
         ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans, shapes and page settings given; a missing records file or font folder, or a bad setting or shape profile, is a usage error", SyntheticCli),
+        ("synthetic data: handwriting habits are an option, off by default (the same bytes and labels); at chance 1 the label is the drawn text (label=drawn) or the source's (label=source) over the same image; habit.NAME, rules files, bad settings refused; the habits contract", SyntheticHabits),
     ];
 
     private static string SyntheticFolder(string name)

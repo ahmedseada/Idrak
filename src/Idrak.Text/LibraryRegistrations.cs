@@ -16,7 +16,8 @@ namespace Idrak.Text;
 /// advisor ("image reader" in <see cref="SettingAdvisors"/>), and the feature caches ("memory" and "disk" in
 /// <see cref="FeatureCaches"/>), the chat-prompt environment ("prompts" in <see cref="EnvironmentKinds"/>) and the text
 /// rewards ("metric", "regex", "json", "length", "judge", "sum" in <see cref="RewardFunctions"/>, Plan 27 R3) and the plain-process
-/// command sandbox ("process" in <see cref="CommandSandboxes"/>, R4), which the coding tools run commands in. The engine's text and
+/// command sandbox ("process" in <see cref="CommandSandboxes"/>, R4), which the coding tools run commands in, and the
+/// handwriting habits shipped as data ("arabic-handwriting" in <see cref="Idrak.Abstraction.Text.TextHabits"/>). The engine's text and
 /// chat model kinds need no registry: <c>GenerativeModels</c> adds them to an engine. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once per registry, before that registry is first used.
 /// </summary>
@@ -53,6 +54,19 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         else if (registry == typeof(CommandSandboxes))
         {
             CommandSandboxes.Register(new ProcessCommandSandbox());
+        }
+        else if (registry == typeof(Idrak.Abstraction.Text.TextHabits))
+        {
+            // The handwriting habits shipped as data: every Resources/habits/*.json.
+            const string prefix = "Idrak.Text.habits.";
+            var assembly = typeof(LibraryRegistrations).Assembly;
+            foreach (string name in assembly.GetManifestResourceNames().Where(n => n.StartsWith(prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+            {
+                using var stream = assembly.GetManifestResourceStream(name)!;
+                var bytes = new byte[stream.Length];
+                stream.ReadExactly(bytes);
+                Idrak.Abstraction.Text.TextHabits.Register(Idrak.Abstraction.Text.RuleTextHabits.Parse(bytes, "Idrak.Text/" + name[prefix.Length..]));
+            }
         }
     }
 }

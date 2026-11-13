@@ -1489,6 +1489,10 @@ public sealed record Idrak.Abstraction.Data.PageContent : System.IEquatable<Idra
   public string? Subject { get; init; }
   public string? Title { get; init; }
 
+public enum Idrak.Abstraction.Data.PageLabel : int
+  Drawn = 0
+  Source = 1
+
 public static class Idrak.Abstraction.Data.PageLayouts
   public static Idrak.Abstraction.Data.IPageLayout Get(string name)
   public static Idrak.Abstraction.Data.IPageLayout? Default(string name)
@@ -1520,8 +1524,12 @@ public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.
   public (float, float) LineSpacing { get; init; }
   public (float, float) Margin { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
+  public Idrak.Abstraction.Data.PageLabel Label { get; init; }
+  public Idrak.Abstraction.Text.ITextHabits? Habits { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> HabitChances { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
   public bool Color { get; init; }
+  public double? HabitChance { get; init; }
   public float BlueSignature { get; init; }
   public float Crop { get; init; }
   public float Emblem { get; init; }
@@ -7388,6 +7396,46 @@ public static class Idrak.Abstraction.TensorViews
   public static long MaterializedBytes { get; }
   public static long Scratch { get; }
   public static long ScratchBytes { get; }
+
+public interface Idrak.Abstraction.Text.ITextHabits : Idrak.Abstraction.IKind
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> Chances { get; }
+  public string Apply(string text, System.Random random, System.Func<string, double?>? chance = null)
+
+public sealed class Idrak.Abstraction.Text.RuleTextHabits : Idrak.Abstraction.IKind, Idrak.Abstraction.Text.ITextHabits
+  public RuleTextHabits(string name, string summary, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Text.TextHabitRule> rules)
+  public System.Collections.Generic.IReadOnlyDictionary<string, double> Chances { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Text.TextHabitRule> Rules { get; }
+  public static Idrak.Abstraction.Text.RuleTextHabits Parse(System.ReadOnlyMemory<byte> utf8, string source)
+  public static Idrak.Abstraction.Text.RuleTextHabits Read(string path)
+  public string Apply(string text, System.Random random, System.Func<string, double?>? chance = null)
+  public string Name { get; }
+  public string Summary { get; }
+
+[Flags] public enum Idrak.Abstraction.Text.TextHabitPlace : int
+  Any = 15
+  Final = 4
+  Initial = 1
+  Isolated = 8
+  Medial = 2
+
+public sealed record Idrak.Abstraction.Text.TextHabitRule : System.IEquatable<Idrak.Abstraction.Text.TextHabitRule>
+  public Idrak.Abstraction.Text.TextHabitPlace Where { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> From { get; init; }
+  public TextHabitRule(string Name, System.Collections.Generic.IReadOnlyList<string> From, string To, Idrak.Abstraction.Text.TextHabitPlace Where, double Chance)
+  public double Chance { get; init; }
+  public string Name { get; init; }
+  public string To { get; init; }
+
+public static class Idrak.Abstraction.Text.TextHabits
+  public static Idrak.Abstraction.Text.ITextHabits Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Text.ITextHabits? Default(string name)
+  public static Idrak.Abstraction.Text.ITextHabits? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Text.ITextHabits habits)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public static class Idrak.Abstraction.Text.UnicodeNormalization
   public const string UnicodeVersion = "18.0.0"

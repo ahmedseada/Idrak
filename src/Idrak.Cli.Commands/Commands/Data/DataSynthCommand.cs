@@ -70,7 +70,11 @@ internal sealed class DataSynthCommand : Command
                                   3..18), blue-pen (a chance), cell-align (start, center, end, mixed), stroke (a share
                                   of the text size), least-size (the smallest a region's text is set, a share of size);
                                   for every layout: pose (none, drift: each glyph drawn a little differently),
-                                  pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure (ranges)
+                                  pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure (ranges); habits
+                                  (none, the default; a habits name such as arabic-handwriting, or a rules file: the
+                                  body written with a hand's habits), habit-chance (every habit's chance, 0 unless
+                                  given), habit.NAME (one habit's), label (drawn, the default: the label says what is
+                                  drawn; source: the input's spelling while the image shows the habit)
               --records NAME      the input's record format: sharegpt, messages or text (found from the input)
               --full-text KEY     the answer's key holding the page text (the first full_text..., else the longest text)
               --prompt TEXT       the question of records made from plain text ("Extract the text.")

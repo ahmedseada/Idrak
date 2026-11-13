@@ -153,6 +153,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextBinding(string name, Idrak.Abstraction.Data.ITextBinding? binding = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckTextHabits(string name, System.Collections.Generic.IReadOnlyList<string> texts, string untouched, Idrak.Abstraction.Text.ITextHabits? habits = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextLineSegmenter(System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage> segmenter, System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextMatcher(Idrak.Abstraction.Testing.TextMatchSearch matcher, Idrak.Abstraction.Testing.TextMatchSearch? reference = null, bool wordBoundaries = true, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTopology(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -633,6 +634,12 @@ public sealed class Idrak.Abstraction.Testing.TextBindingSuite : Idrak.Abstracti
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Data.ITextBinding implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+public sealed class Idrak.Abstraction.Testing.TextHabitsSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Text.ITextHabits>
+  public TextHabitsSuite(System.Collections.Generic.IReadOnlyList<string> texts, string untouched, Idrak.Abstraction.Text.ITextHabits? reference = null)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Text.ITextHabits implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed class Idrak.Abstraction.Testing.TextLineSegmenterSuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>>
   public System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>? Reference { get; }
