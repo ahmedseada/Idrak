@@ -1030,6 +1030,7 @@ public sealed class Idrak.Abstraction.Data.FontMap
   public System.Collections.Generic.IReadOnlyList<int> Measure { get; }
   public System.Collections.Generic.IReadOnlyList<string> DetectWithoutTables { get; }
   public System.Collections.Generic.IReadOnlyList<string> Scripts { get; }
+  public const string PairFeature = "PAIR"
   public double DetectShare { get; }
   public int AnchorGap { get; }
   public int AnchorWindow { get; }
@@ -1058,8 +1059,10 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public const string DigitsVariable = "IDRAK_FONT_MAP_DIGITS"
   public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS"
   public const string MarksVariable = "IDRAK_FONT_MAP_MARKS"
+  public const string PairsVariable = "IDRAK_FONT_MAP_PAIRS"
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }
+  public double Pairs { get; init; }
   public double PenScaleHigh { get; init; }
   public double PenScaleLow { get; init; }
   public double Slant { get; init; }
@@ -1081,6 +1084,7 @@ public sealed record Idrak.Abstraction.Data.FontMapLigature : System.IEquatable<
   public Idrak.Abstraction.Data.FontMarkPlace? Place { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Glyph { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapComponent> Components { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Fonts { get; init; }
   public string Feature { get; init; }
 
 public sealed record Idrak.Abstraction.Data.FontMapMark : System.IEquatable<Idrak.Abstraction.Data.FontMapMark>

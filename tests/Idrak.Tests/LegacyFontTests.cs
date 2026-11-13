@@ -492,4 +492,105 @@ internal abstract partial class DesktopTests
             Directory.Delete(folder, recursive: true);
         }
     }
+
+    // A word holding a pair: its two letters, then a joining letter when the second is in its medial form.
+    private static string PairWord(FontMapLigature pair) =>
+        char.ConvertFromUtf32(pair.Components[0].CodePoint) + char.ConvertFromUtf32(pair.Components[1].CodePoint) + (pair.Components[1].Form == "medi" ? "م" : "");
+
+    private static void LegacyFontsPairs(Device device)
+    {
+        var pairs = FontMaps.Get(PuaMap).Ligatures.Where(l => l.Feature == FontMap.PairFeature).ToList();
+        Check(pairs.Count >= 40 && pairs.All(p => p.Components.Count == 2), $"{pairs.Count} letter pairs in the layout");
+        foreach (string name in LegacyFonts)
+        {
+            var raw = RawFace(name);
+            var face = MappedFace(name);
+            var mine = pairs.Where(p => p.Fonts.Count == 0 || p.Fonts.Contains(face.Family, StringComparer.OrdinalIgnoreCase)).ToList();
+            Check(pairs.Count - mine.Count == (name == "FS_Hand_Style" ? 1 : 0), $"{name}: {mine.Count} of {pairs.Count} pairs are its own");
+            foreach (var pair in mine)
+            {
+                int glyph = raw.Glyph(pair.Glyph[0].Value);
+                string word = PairWord(pair);
+                var run = new TextRun(0, word.Length, "Arab", true);
+                var on = TextShapers.Shape(face, word, run, ["+" + FontMap.PairFeature]);
+                var off = TextShapers.Shape(face, word, run);
+                Check(glyph != 0 && !raw.Outline(glyph).IsEmpty && on.Any(g => g.Glyph == glyph) && !off.Any(g => g.Glyph == glyph) && off.Length == on.Length + 1,
+                    $"{name}: {word} ({pair.Glyph[0]}) with pairs {string.Join(" ", on.Select(g => g.Glyph))}, without {string.Join(" ", off.Select(g => g.Glyph))}");
+            }
+        }
+
+        // On a page: the same text whether pairs are joined or not; the choice per page, the same for the same seed.
+        var content = new PageContent { Body = ["بجانب لحم مجلس نحن تحت يمين في بيت لجنة تمام", "خمسة لمس ممر لبن تين حمل جمل"], Language = "ar" };
+        var style = new PageStyle { Fonts = [MappedFace("MCS-HAND")], Fallbacks = [SubsetFace()] };
+        var before = FontMaps.Drawing;
+        try
+        {
+            FontMaps.Drawing = before with { Pairs = 1 };
+            var joined = PageLayouts.Get("plain").Render(content, style, 3);
+            FontMaps.Drawing = before with { Pairs = 0 };
+            var apart = PageLayouts.Get("plain").Render(content, style, 3);
+            Check(joined.Text == apart.Text && joined.Description.Contains(", pairs", StringComparison.Ordinal) && !apart.Description.Contains(", pairs", StringComparison.Ordinal)
+                  && !joined.Image.Pixels.AsSpan().SequenceEqual(apart.Image.Pixels), "pairs on and off: the same text, other ink");
+            FontMaps.Drawing = before with { Pairs = 0.5 };
+            var chosen = Enumerable.Range(1, 24).Select(seed => PageLayouts.Get("letter").Render(content, style, seed).Description.Contains(", pairs", StringComparison.Ordinal)).ToList();
+            var again = Enumerable.Range(1, 24).Select(seed => PageLayouts.Get("letter").Render(content, style, seed).Description.Contains(", pairs", StringComparison.Ordinal)).ToList();
+            Check(chosen.SequenceEqual(again) && chosen.Count(c => c) is > 4 and < 20, $"at 0.5, {chosen.Count(c => c)} of 24 pages join pairs, the same again");
+        }
+        finally
+        {
+            FontMaps.Drawing = before;
+        }
+    }
+
+    // The signed area of a contour's points (control points included).
+    private static double ContourArea(float[] p)
+    {
+        double sum = 0;
+        for (int i = 0, n = p.Length / 2; i < n; i++)
+        {
+            int j = (i + 1) % n;
+            sum += (double)p[2 * i] * p[2 * j + 1] - (double)p[2 * j] * p[2 * i + 1];
+        }
+
+        return sum / 2;
+    }
+
+    private static (float X0, float Y0, float X1, float Y1) ContourBox(float[] p)
+    {
+        float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            (x0, y0, x1, y1) = (Math.Min(x0, p[i]), Math.Min(y0, p[i + 1]), Math.Max(x1, p[i]), Math.Max(y1, p[i + 1]));
+        }
+
+        return (x0, y0, x1, y1);
+    }
+
+    private static void LegacyFontsKehehGaf(Device device)
+    {
+        foreach (string name in LegacyFonts)
+        {
+            var face = MappedFace(name);
+            float em = face.Metrics.UnitsPerEm;
+            foreach (string form in FontMap.Forms)
+            {
+                var kaf = Composition.Split(face.Outline(ShapedForm(face, 0x0643, form)));
+                var keheh = Composition.Split(face.Outline(ShapedForm(face, 0x06A9, form)));
+                var gaf = Composition.Split(face.Outline(ShapedForm(face, 0x06AF, form)));
+                var main = kaf.MaxBy(c => Math.Abs(ContourArea(c.Points)));
+                var box = ContourBox(main.Points);
+                int marks = kaf.Count(c => c != main && Math.Sign(ContourArea(c.Points)) == Math.Sign(ContourArea(main.Points))
+                    && ContourBox(c.Points) is var b && b.X0 >= box.X0 && b.Y0 >= box.Y0 && b.X1 <= box.X1 && b.Y1 <= box.Y1);
+                Check(keheh.Count == kaf.Count - marks, $"{name} {form}: ک has {keheh.Count} contours, kaf {kaf.Count} with {marks} inner marks");
+                Check(gaf.Count == keheh.Count + 1, $"{name} {form}: گ has {gaf.Count} contours, ک {keheh.Count}: one bar more");
+                var bar = ContourBox(gaf[^1].Points);
+                var body = ContourBox(keheh.MaxBy(c => Math.Abs(ContourArea(c.Points))).Points);
+                double length = Math.Sqrt(Math.Pow(bar.X1 - bar.X0, 2) + Math.Pow(bar.Y1 - bar.Y0, 2));
+                Check((bar.Y0 + bar.Y1) / 2 > (body.Y0 + body.Y1) / 2 && length >= 0.12 * em, $"{name} {form}: گ's bar {bar} over the body {body}, {length / em:F2} em long");
+            }
+        }
+
+        Check(MappedFace("mohareb-hand") is var m && Composition.Split(m.Outline(ShapedForm(m, 0x0643, "isol"))).Count > Composition.Split(m.Outline(ShapedForm(m, 0x06A9, "isol"))).Count,
+            "mohareb-hand: its kaf's inner mark is left out of ک");
+    }
 }

@@ -764,6 +764,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_MP3_BITRATE`, `IDRAK_MP3_RATE`, `IDRAK_MP3_CHANNELS`, `IDRAK_MP3_QUALITY`, `IDRAK_MP3_LOWPASS`, `IDRAK_MP3_FRAMES_PER_TASK` | the MP3 encoder `speak -o x.mp3` writes with: the bit rate in kbit/s (128 stereo, 64 mono), the rate (the sound's), joint, stereo or mono, the effort a granule (fast, standard, high), the low-pass in Hz, the frames an encoding task takes |
 | `IDRAK_AUDIO_CLEAN` | The audio pipeline `transcribe` runs the sound through, files and `--live` (`--audio-clean` wins; `none` turns it off) |
 | `IDRAK_FONT_MAPS`, `IDRAK_FONT_MAP_SIDECARS`, `IDRAK_FONT_MAP_DIGITS`, `IDRAK_FONT_MAP_MARKS`, `IDRAK_FONT_MAP_LETTERS` | Legacy fonts (letter forms in the Private Use Area, no shaping tables) used directly: the library's font maps, a `FONT.map.json` beside a font, the digits and combining marks drawn into mapped fonts that lack them, and the letters composed from their own glyphs (each on; `0` or `off` turns it off; `--font-maps` wins in `data synth` and `data fonts`) |
+| `IDRAK_FONT_MAP_PAIRS` | The chance (0 to 1; `0.5`) a page drawn in a mapped legacy font joins the font's own letter pairs, drawn per page from its seed (`0` or `off`: never; `--font-maps pairs=` wins) |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |

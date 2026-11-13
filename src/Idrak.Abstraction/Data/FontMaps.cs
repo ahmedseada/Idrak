@@ -90,7 +90,11 @@ public sealed record FontMapLetter(IReadOnlyDictionary<string, IReadOnlyList<Fon
 /// <param name="Components">The characters it replaces, each in its form.</param>
 /// <param name="Glyph">The ligature's glyph (alternatives, the first found wins).</param>
 /// <param name="Place">Where the ligature sits when it is a mark (a stacked mark: <see cref="FontMarkPlace.Above"/>); null for a base.</param>
-public sealed record FontMapLigature(string Feature, IReadOnlyList<FontMapComponent> Components, IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlace? Place);
+public sealed record FontMapLigature(string Feature, IReadOnlyList<FontMapComponent> Components, IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlace? Place)
+{
+    /// <summary>The font families (as their name table gives them, ignoring case) the ligature is made for; empty for every font the map fits.</summary>
+    public IReadOnlyList<string> Fonts { get; init; } = [];
+}
 
 /// <summary>A mark of a <see cref="FontMap"/>: its glyph, which gets no width and the mark class, and where it sits on its base.</summary>
 /// <param name="Glyph">The mark's glyph (alternatives).</param>
@@ -115,7 +119,9 @@ public sealed record FontMapMark(IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlac
 /// ({"isol": "U+F24C", "init": "U+F249", ...}), or a list of the letter's names (["baa"]) its forms are found by (required).</description></item>
 /// <item><term>characters</term><description>other characters to glyphs ({"U+0660": "U+F230"}).</description></item>
 /// <item><term>aliases</term><description>characters that take another's form ({"U+FE8E": "U+0627.fina"}).</description></item>
-/// <item><term>ligatures</term><description>[{"feature": "rlig", "components": ["U+0644.init", "U+0627.fina"], "glyph": "U+F2DC", "place": "above" (for a stacked mark)}].</description></item>
+/// <item><term>ligatures</term><description>[{"feature": "rlig", "components": ["U+0644.init", "U+0627.fina"], "glyph": "U+F2DC", "place": "above" (for a stacked mark),
+/// "fonts": ["Family"] (only for these font families, where fonts sharing a layout draw a code differently)}]. Ligatures under
+/// <see cref="PairFeature"/> are a hand's letter pairs: a page turns them on at a chance (<see cref="FontMapDrawing.Pairs"/>).</description></item>
 /// <item><term>marks</term><description>{"U+064E": {"glyph": "U+F2F2", "place": "above" | "below" | "none"}}: no width, the mark class, placed on their base's ink.</description></item>
 /// <item><term>fallbacks</term><description>a glyph to use when one is missing, by the missing one as written ({"U+F264": "U+F263"}).</description></item>
 /// <item><term>anchors</term><description>how marks are placed: {"gap": units between ink and mark (60), "window": half the width, in units, where a base's ink is measured (130)}.</description></item>
@@ -127,12 +133,19 @@ public sealed record FontMapMark(IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlac
 /// </summary>
 public sealed class FontMap
 {
+    /// <summary>
+    /// The feature a map's letter-pair ligatures are given under ("PAIR", a private tag no font has of its own): off unless a
+    /// page turns it on, at the chance <see cref="FontMapDrawing.Pairs"/>, so a hand joins those pairs on some pages and not
+    /// on others.
+    /// </summary>
+    public const string PairFeature = "PAIR";
+
     /// <summary>The positional forms a letter may have (OpenType feature tags).</summary>
     public static readonly IReadOnlyList<string> Forms = ["isol", "init", "medi", "fina"];
 
     private static readonly string[] TopKeys = ["name", "summary", "scripts", "detect", "prefixes", "letters", "characters", "aliases", "ligatures", "marks", "fallbacks", "anchors", "measure"];
     private static readonly string[] DetectKeys = ["share", "minGlyphs", "withoutTables"];
-    private static readonly string[] LigatureKeys = ["feature", "components", "glyph", "place"];
+    private static readonly string[] LigatureKeys = ["feature", "components", "glyph", "place", "fonts"];
     private static readonly string[] MarkKeys = ["glyph", "place"];
     private static readonly string[] AnchorKeys = ["gap", "window"];
     private static readonly string[] Places = ["above", "below", "none"];
@@ -482,7 +495,11 @@ public sealed class FontMap
                 var components = comps.EnumerateArray().Select(e => Checked(Component(Text(e, $"{key}.components"), $"{key}.components"), $"{key}.components")).ToList();
                 var glyph = l.TryGetProperty("glyph", out var g) ? Glyphs(g, $"{key}.glyph") : throw Bad($"{key}.glyph", "is missing");
                 FontMarkPlace? place = l.TryGetProperty("place", out var p) ? Place(p, $"{key}.place") : null;
-                ligatures.Add(new FontMapLigature(feature, components, glyph, place));
+                IReadOnlyList<string> fonts = !l.TryGetProperty("fonts", out var families) ? []
+                    : families.ValueKind == JsonValueKind.Array && families.GetArrayLength() > 0
+                        ? [.. families.EnumerateArray().Select(e => Text(e, $"{key}.fonts"))]
+                        : throw Bad($"{key}.fonts", "must be a list of font family names ([\"Family\"])");
+                ligatures.Add(new FontMapLigature(feature, components, glyph, place) { Fonts = fonts });
             }
         }
 
@@ -546,6 +563,17 @@ public sealed record FontMapDrawing
     /// <summary>The variable that turns the composed letters off: "IDRAK_FONT_MAP_LETTERS".</summary>
     public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS";
 
+    /// <summary>The variable that sets the chance a page joins letter pairs (<see cref="Pairs"/>; 0 to 1, or off): "IDRAK_FONT_MAP_PAIRS".</summary>
+    public const string PairsVariable = "IDRAK_FONT_MAP_PAIRS";
+
+    /// <summary>
+    /// The chance (0 to 1) a page drawn in a mapped font writes the font's letter-pair ligatures (<see cref="FontMap.PairFeature"/>):
+    /// drawn per page from the page's seed, so a hand joins those pairs on some pages and writes the letters apart on
+    /// others. 0.5 by default: half the pages each way, so both shapes are seen as often (0 turns it off, 1 joins them
+    /// always); <see cref="PairsVariable"/> sets it ("0", "off", "false" or "no" turn it off).
+    /// </summary>
+    public double Pairs { get; init; } = Chance(Environment.GetEnvironmentVariable(PairsVariable), 0.5);
+
     /// <summary>Whether the drawn glyphs of kind "base" (the Latin and Arabic-Indic digits) are added (on unless <see cref="DigitsVariable"/> turns them off).</summary>
     public bool Digits { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(DigitsVariable));
 
@@ -596,6 +624,12 @@ public sealed record FontMapDrawing
 
     /// <summary>The seed of the hand's wobble: the same seed draws the same outlines on every machine (7).</summary>
     public int Seed { get; init; } = 7;
+
+    // A chance from a variable: off for a switch turned off, the number when it is one from 0 to 1, else the default.
+    private static double Chance(string? text, double otherwise) =>
+        ComputeResources.SwitchedOff(text) ? 0
+        : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && v is >= 0 and <= 1 ? v
+        : otherwise;
 }
 
 /// <summary>

@@ -61,7 +61,7 @@ internal sealed class ShapesLayout : IPageLayout
         float margin = width * c.Between(style.Margin);
         var font = c.Font();
         float size = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        var body = Style(style, font, size, spacing, content.Language);
+        var body = Style(style, font, size, spacing, content.Language, Pairs(seed));
         float strokeWidth = Math.Max(1f, size * c.Between(strokeShare));
         bool blue = c.Chance(bluePen);
         float topShare = c.Between(0.5f, 0.9f);
@@ -205,7 +205,7 @@ internal sealed class ShapesLayout : IPageLayout
         var image = canvas.Compose(paper, darkness, blueInk, style.Color);
         string described = profile.Name == "custom" ? "written" : profile.Name;
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Posed(glyphs)}");
+            $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Paired(body)}{Posed(glyphs)}");
         return new RenderedPage(image, string.Join("\n", label), blocks, description);
     }
 
@@ -691,7 +691,7 @@ internal sealed class ShapesLayout : IPageLayout
         var image = canvas.Compose(p.Paper, p.Darkness, p.BlueInk, p.Style.Color);
         string described = p.Profile.Name == "custom" ? "written" : p.Profile.Name;
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"shapes: {described} [{p.Pipeline}], pen {p.Pen.Name}, bind {p.Binding.Name}, {Describe(p.Body)}, spacing {p.Spacing:F2}, stroke {p.StrokeWidth:F1}px, margin {p.Margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {label.Count} with text, composed{(p.Sections ? ", sections" : "")}{(p.Blue ? ", blue pen" : "")}{Posed(p.Glyphs)}");
+            $"shapes: {described} [{p.Pipeline}], pen {p.Pen.Name}, bind {p.Binding.Name}, {Describe(p.Body)}, spacing {p.Spacing:F2}, stroke {p.StrokeWidth:F1}px, margin {p.Margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {label.Count} with text, composed{(p.Sections ? ", sections" : "")}{(p.Blue ? ", blue pen" : "")}{Paired(p.Body)}{Posed(p.Glyphs)}");
         return new RenderedPage(image, string.Join("\n", lines), blocks, description);
     }
 

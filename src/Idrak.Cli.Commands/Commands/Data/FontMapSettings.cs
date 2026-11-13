@@ -20,11 +20,12 @@ internal sealed class FontMapSettings : IDisposable
                                   FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
-                                  mark-share (0.3), mark-pen-share (0.6)
+                                  mark-share (0.3), mark-pen-share (0.6), pairs (the chance a page joins letter pairs; 0.5)
         """;
 
     private static readonly string[] Keys =
-        ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share"];
+        ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share",
+         "pairs"];
 
     private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars;
     private readonly FontMapDrawing _drawing = FontMaps.Drawing;
@@ -102,6 +103,7 @@ internal sealed class FontMapSettings : IDisposable
                 case "mark-size": drawing = drawing with { MarkSize = Number() }; break;
                 case "mark-pen": drawing = drawing with { MarkPen = Number() }; break;
                 case "mark-share": drawing = drawing with { MarkShare = Number() }; break;
+                case "pairs": drawing = drawing with { Pairs = Number() is var chance && chance <= 1 ? chance : throw new ArgumentException($"--font-maps pairs={value}: a chance from 0 to 1.") }; break;
                 default: drawing = drawing with { MarkPenShare = Number() }; break;
             }
         }

@@ -404,6 +404,12 @@ internal sealed class MappedFontFace : IFontFace
 
         foreach (var lig in map.Ligatures)
         {
+            // A ligature made for some font families only: where fonts sharing a layout draw the code differently.
+            if (lig.Fonts.Count > 0 && !lig.Fonts.Contains(inner.Family, StringComparer.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var components = lig.Components.Select(FormGlyph).ToArray();
             int glyph = resolver.Resolve(lig.Glyph);
             // A ligature of glyphs one of which is drawn is left out: the drawn glyphs are placed by anchors instead.

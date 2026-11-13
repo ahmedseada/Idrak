@@ -1,13 +1,13 @@
 {
-  "summary": "Glyphs drawn into fonts the legacy font support maps, for characters they lack: pen strokes on a unit box (u across, v up), thickened into round-ended strokes of one winding; and letters composed from another letter's own form glyphs (its dots replaced by copies of the font's own dot, or a stroke added above or below)",
+  "summary": "Glyphs drawn into fonts the legacy font support maps, for characters they lack: pen strokes on a unit box (u across, v up), thickened into round-ended strokes of one winding; and letters composed from another letter's own form glyphs (its dots replaced by copies of the font's own dot, or a stroke added above or below; strip leaves out a form's separate inner marks, bar top adds a bar parallel to its top stroke, measured from it)",
   "discSides": 10,
   "compose": {
     "U+067E": { "from": "U+0628", "dots": 3, "arrange": "down" },
     "U+0686": { "from": "U+062C", "dots": 3, "arrange": "down" },
     "U+0698": { "from": "U+0632", "dots": 3, "arrange": "up" },
     "U+06A4": { "from": "U+0641", "dots": 3, "arrange": "up" },
-    "U+06A9": { "from": "U+0643" },
-    "U+06AF": { "from": "U+0643", "place": "above", "strokes": [{ "poly": [[0.0, 0.0], [1.0, 0.35]] }] },
+    "U+06A9": { "from": "U+0643", "strip": true },
+    "U+06AF": { "from": "U+0643", "strip": true, "bar": "top" },
     "U+06CC": { "forms": { "isol": { "from": "U+0649" }, "fina": { "from": "U+0649" }, "init": { "from": "U+064A", "dots": 0 }, "medi": { "from": "U+064A", "dots": 0 } } },
     "U+0671": { "from": "U+0627", "place": "above", "strokes": [{ "spline": [[0.95, 0.55], [0.70, 0.85], [0.45, 0.60], [0.60, 0.35], [0.95, 0.50], [0.05, 0.45]] }] }
   },

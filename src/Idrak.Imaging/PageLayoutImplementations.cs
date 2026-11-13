@@ -199,8 +199,27 @@ internal static class PageDrawing
     internal static bool Direction(PageContent content) =>
         content.RightToLeft ?? Bidi.Resolve(content.ReadingOrder().Replace('\n', ' ')).RightToLeft;
 
-    internal static TextStyle Style(PageStyle style, IFontFace font, float size, float spacing, string? language) =>
-        new(font, size) { Fallbacks = style.Fallbacks, LineSpacing = spacing, Language = language };
+    internal static TextStyle Style(PageStyle style, IFontFace font, float size, float spacing, string? language, bool pairs = false) =>
+        new(font, size) { Fallbacks = style.Fallbacks, LineSpacing = spacing, Language = language, Features = pairs && HasPairs(font) ? PairsOn : null };
+
+    // The feature that writes a mapped font's letter pairs, asked for on the pages that join them.
+    private static readonly string[] PairsOn = ["+" + FontMap.PairFeature];
+
+    // The part number of a page's letter-pair choice (Mix): hashed from the layout's seed, never drawn from its Random.
+    internal const int PairSeed = 6;
+
+    // Whether the page of `seed` joins letter pairs: at the font maps' chance (FontMapDrawing.Pairs), the same for the same seed.
+    internal static bool Pairs(int seed)
+    {
+        double chance = FontMaps.Drawing.Pairs;
+        return chance > 0 && Mix(seed, PairSeed) / (double)int.MaxValue < chance;
+    }
+
+    // Whether a face is a mapped legacy font whose map has letter pairs.
+    private static bool HasPairs(IFontFace font) => FontMaps.MappedBy(font) is { } map && map.Ligatures.Any(l => l.Feature == FontMap.PairFeature);
+
+    // A page whose text joins letter pairs says so in its description; one that does not says nothing more.
+    internal static string Paired(TextStyle style) => style.Features is null ? "" : ", pairs";
 
     // A block of lines laid out in `width`, each line a paragraph.
     internal static TextBlock Block(IEnumerable<string> lines, TextStyle style, float width, TextAlignment alignment, bool rtl) =>
@@ -261,10 +280,11 @@ internal sealed class LetterLayout : IPageLayout
         var bodyFont = c.Font();
         var headerFont = c.Chance(style.OtherHeaderFont) ? c.Font() : bodyFont;
         float bodySize = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        var body = Style(style, bodyFont, bodySize, spacing, content.Language);
-        var header = Style(style, headerFont, bodySize * c.Between(0.8f, 1.0f), c.Between(1.0f, 1.3f), content.Language);
-        var title = Style(style, headerFont, bodySize * c.Between(1.1f, 1.4f), 1.1f, content.Language);
-        var footer = Style(style, bodyFont, bodySize * c.Between(0.6f, 0.8f), 1.1f, content.Language);
+        bool pairs = Pairs(seed);
+        var body = Style(style, bodyFont, bodySize, spacing, content.Language, pairs);
+        var header = Style(style, headerFont, bodySize * c.Between(0.8f, 1.0f), c.Between(1.0f, 1.3f), content.Language, pairs);
+        var title = Style(style, headerFont, bodySize * c.Between(1.1f, 1.4f), 1.1f, content.Language, pairs);
+        var footer = Style(style, bodyFont, bodySize * c.Between(0.6f, 0.8f), 1.1f, content.Language, pairs);
         bool justify = c.Chance(style.Justify);
 
         // The parts, laid out first so the page's height follows from them.
@@ -388,7 +408,7 @@ internal sealed class LetterLayout : IPageLayout
 
         var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"letter: body {Describe(body)}, header {Describe(header)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{(emblem ? ", emblem" : "")}{(rule ? ", rule" : "")}{(stamp ? ", stamp" : "")}{(blueSignature ? ", blue signature" : "")}{Posed(glyphs)}");
+            $"letter: body {Describe(body)}, header {Describe(header)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{(emblem ? ", emblem" : "")}{(rule ? ", rule" : "")}{(stamp ? ", stamp" : "")}{(blueSignature ? ", blue signature" : "")}{Paired(body)}{Posed(glyphs)}");
         return new RenderedPage(image, content.ReadingOrder(), blocks, description);
     }
 }
@@ -416,7 +436,7 @@ internal sealed class PlainLayout : IPageLayout
         float margin = width * c.Between(style.Margin), inner = width - 2 * margin;
         var font = c.Font();
         float size = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        var body = Style(style, font, size, spacing, content.Language);
+        var body = Style(style, font, size, spacing, content.Language, Pairs(seed));
         bool justify = c.Chance(style.Justify);
         var parts = new List<(string Kind, IReadOnlyList<string> Lines, TextStyle Style, TextAlignment Alignment)>
         {
@@ -453,6 +473,6 @@ internal sealed class PlainLayout : IPageLayout
 
         var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
         return new RenderedPage(image, content.ReadingOrder(), blocks,
-            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{Posed(glyphs)}"));
+            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{Paired(body)}{Posed(glyphs)}"));
     }
 }

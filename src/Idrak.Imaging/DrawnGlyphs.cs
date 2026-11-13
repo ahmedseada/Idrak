@@ -254,7 +254,14 @@ internal sealed record DrawnSet(string Name, bool Mark, string Measure, DrawnGly
 /// One form of a composed letter: another letter's glyph in a form (its own form when <see cref="FromForm"/> is null),
 /// its dots replaced by <see cref="Dots"/> copies of the font's own dot (null: kept), and strokes drawn above or below it.
 /// </summary>
-internal sealed record ComposedForm(int From, string? FromForm, int? Dots, string Arrange, DrawnStroke[] Strokes, FontMarkPlace Place);
+internal sealed record ComposedForm(int From, string? FromForm, int? Dots, string Arrange, DrawnStroke[] Strokes, FontMarkPlace Place)
+{
+    /// <summary>Whether the body's separate marks are left out: contours wound as its main one and lying inside its box (a kaf's inner mark), holes kept.</summary>
+    public bool Strip { get; init; }
+
+    /// <summary>Whether a bar parallel to the body's top stroke is added above it, its length, slant and pen measured from that stroke.</summary>
+    public bool Bar { get; init; }
+}
 
 /// <summary>A letter composed from the font's own glyphs: the same recipe in every form, or one per form.</summary>
 internal sealed record ComposedLetter(int CodePoint, ComposedForm? Every, IReadOnlyDictionary<string, ComposedForm> Forms)
@@ -406,7 +413,9 @@ internal sealed class DrawnGlyphData
         var place = e.TryGetProperty("place", out var p)
             ? p.GetString() switch { "above" => FontMarkPlace.Above, "below" => FontMarkPlace.Below, _ => throw bad($"{key}.place", "is not above or below") }
             : FontMarkPlace.Above;
-        return new ComposedForm(code, form, dots, arrange, [.. strokes], place);
+        bool strip = e.TryGetProperty("strip", out var s) && (s.ValueKind is JsonValueKind.True or JsonValueKind.False ? s.GetBoolean() : throw bad($"{key}.strip", "is true or false"));
+        bool bar = e.TryGetProperty("bar", out var b) && (b.ValueKind == JsonValueKind.String && b.GetString() == "top" ? true : throw bad($"{key}.bar", "is \"top\" (a bar parallel to the top stroke)"));
+        return new ComposedForm(code, form, dots, arrange, [.. strokes], place) { Strip = strip, Bar = bar };
     }
 
     private static DrawnStroke Stroke(JsonElement stroke, string key, Func<string, string, InvalidDataException> bad)
@@ -575,6 +584,15 @@ internal static class Composition
     public static GlyphOutline Compose(GlyphOutline body, ComposedForm recipe, GlyphOutline? strokes, int unitsPerEm, int gap, int window)
     {
         var contours = Split(body);
+        if (recipe.Strip && contours.Count > 1)
+        {
+            // The body's separate marks: contours wound as its main one, smaller, and inside its box (holes are wound the other way).
+            var main = contours.MaxBy(c => Math.Abs(Area(c.Points)));
+            int sign = Math.Sign(Area(main.Points));
+            var (mx0, my0, mx1, my1) = Box(main.Points);
+            contours = [.. contours.Where(c => c == main || Math.Sign(Area(c.Points)) != sign || !Inside(Box(c.Points), (mx0, my0, mx1, my1)))];
+        }
+
         var result = new List<(OutlineVerb[] Verbs, float[] Points)>();
         if (recipe.Dots is int count && contours.Count > 1)
         {
@@ -600,6 +618,15 @@ internal static class Composition
         else
         {
             result.AddRange(contours);
+        }
+
+        if (recipe.Bar && contours.Count > 0 && InkMeasure.Of(body, unitsPerEm, window) is { } stroked)
+        {
+            var main = contours.MaxBy(c => Math.Abs(Area(c.Points)));
+            if (TopBar(main.Points, stroked.Thickness, Math.Sign(Area(main.Points))) is { } bar)
+            {
+                result.Add(bar);
+            }
         }
 
         if (strokes is { IsEmpty: false } && InkMeasure.Of(body, unitsPerEm, window) is { } ink)
@@ -649,6 +676,136 @@ internal static class Composition
 
         return result;
     }
+
+    // A bar parallel to a contour's top stroke, above it: the stroke's direction the main axis of the contour's points in
+    // its top band (a near-upright stroke takes a gentle rising slant instead), its length theirs along it, its pen the
+    // glyph's; round-ended, wound as the contour.
+    private static (OutlineVerb[] Verbs, float[] Points)? TopBar(float[] contour, double pen, int sign)
+    {
+        var (x0, y0, x1, y1) = Box(contour);
+        double band = y1 - Math.Max((y1 - y0) * 0.22, pen * 1.5);
+        double sx = 0, sy = 0;
+        int n = 0;
+        for (int i = 0; i < contour.Length; i += 2)
+        {
+            if (contour[i + 1] >= band)
+            {
+                (sx, sy, n) = (sx + contour[i], sy + contour[i + 1], n + 1);
+            }
+        }
+
+        if (n < 2 || !(pen > 0))
+        {
+            return null;
+        }
+
+        double mx = sx / n, my = sy / n, cxx = 0, cyy = 0, cxy = 0;
+        for (int i = 0; i < contour.Length; i += 2)
+        {
+            if (contour[i + 1] >= band)
+            {
+                double dx0 = contour[i] - mx, dy0 = contour[i + 1] - my;
+                (cxx, cyy, cxy) = (cxx + dx0 * dx0, cyy + dy0 * dy0, cxy + dx0 * dy0);
+            }
+        }
+
+        double angle = 0.5 * PortableMath.Atan2(2 * cxy, cxx - cyy);
+        double ux = PortableMath.Cos(angle), uy = PortableMath.Sin(angle);
+        if (ux < 0)
+        {
+            (ux, uy) = (-ux, -uy);
+        }
+
+        double length;
+        if (Math.Abs(uy) > 0.85)
+        {
+            // An upright top (a stem): a short bar rising gently, as a hand adds one.
+            (ux, uy) = (1 / Math.Sqrt(1 + 0.35 * 0.35), 0.35 / Math.Sqrt(1 + 0.35 * 0.35));
+            length = Math.Max(4 * pen, 0.3 * (y1 - y0));
+        }
+        else
+        {
+            double low = double.MaxValue, high = double.MinValue;
+            for (int i = 0; i < contour.Length; i += 2)
+            {
+                if (contour[i + 1] >= band)
+                {
+                    double along = (contour[i] - mx) * ux + (contour[i + 1] - my) * uy;
+                    (low, high) = (Math.Min(low, along), Math.Max(high, along));
+                }
+            }
+
+            length = Math.Max(2 * pen, high - low);
+        }
+
+        // Above the stroke's middle line by its half, a gap and the bar's half: about two pens.
+        double nx = -uy, ny = ux;
+        if (ny < 0)
+        {
+            (nx, ny) = (-nx, -ny);
+        }
+
+        double cx = mx + nx * 2.2 * pen, cy = my + ny * 2.2 * pen, half = Math.Max(0, length / 2 - pen / 2), r = pen / 2;
+        const int Cap = 8;
+        var points = new List<float>(4 * (Cap + 1));
+        void Add(double x, double y)
+        {
+            points.Add((float)Math.Round(x, MidpointRounding.ToEven));
+            points.Add((float)Math.Round(y, MidpointRounding.ToEven));
+        }
+
+        // One side, the round end at the far end, the other side, the round end at the near end.
+        for (int end = 0; end < 2; end++)
+        {
+            double ex = cx + (end == 0 ? half : -half) * ux, ey = cy + (end == 0 ? half : -half) * uy;
+            double start = PortableMath.Atan2(end == 0 ? -ux : ux, end == 0 ? uy : -uy);
+            for (int k = 0; k <= Cap; k++)
+            {
+                double a = start + Math.PI * k / Cap;
+                Add(ex + r * PortableMath.Cos(a), ey + r * PortableMath.Sin(a));
+            }
+        }
+
+        var p = points.ToArray();
+        if (Math.Sign(Area(p)) != sign)
+        {
+            var reversed = new float[p.Length];
+            for (int i = 0; i < p.Length; i += 2)
+            {
+                reversed[p.Length - 2 - i] = p[i];
+                reversed[p.Length - 1 - i] = p[i + 1];
+            }
+
+            p = reversed;
+        }
+
+        var verbs = new OutlineVerb[p.Length / 2 + 1];
+        verbs[0] = OutlineVerb.Move;
+        for (int i = 1; i < p.Length / 2; i++)
+        {
+            verbs[i] = OutlineVerb.Line;
+        }
+
+        verbs[^1] = OutlineVerb.Close;
+        return (verbs, p);
+    }
+
+    private static (float X0, float Y0, float X1, float Y1) Box(float[] p)
+    {
+        float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            minX = Math.Min(minX, p[i]);
+            maxX = Math.Max(maxX, p[i]);
+            minY = Math.Min(minY, p[i + 1]);
+            maxY = Math.Max(maxY, p[i + 1]);
+        }
+
+        return (minX, minY, maxX, maxY);
+    }
+
+    private static bool Inside((float X0, float Y0, float X1, float Y1) inner, (float X0, float Y0, float X1, float Y1) outer) =>
+        inner.X0 >= outer.X0 && inner.Y0 >= outer.Y0 && inner.X1 <= outer.X1 && inner.Y1 <= outer.Y1;
 
     private static double Area(float[] p)
     {
