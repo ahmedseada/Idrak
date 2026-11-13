@@ -1224,12 +1224,13 @@ public interface Idrak.Abstraction.Data.IFontFormat
   public bool Accepts(System.ReadOnlySpan<byte> header)
   public string Name { get; }
 
+public interface Idrak.Abstraction.Data.IFontMapper : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.IFontFace? Map(Idrak.Abstraction.Data.IFontFace face, Idrak.Abstraction.Data.FontMap map, bool detect, Idrak.Abstraction.Data.FontMapDrawing drawing)
+
 public interface Idrak.Abstraction.Data.IGlyphPose : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Data.GlyphPose Pose(in Idrak.Abstraction.Data.GlyphPoseInput glyph, Idrak.Abstraction.Data.GlyphPoseSettings settings)
   public Idrak.Abstraction.Data.GlyphPoseBounds Bounds(Idrak.Abstraction.Data.GlyphPoseSettings settings)
   public Idrak.Abstraction.Data.GlyphPoseSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-public interface Idrak.Abstraction.Data.IFontMapper : Idrak.Abstraction.IKind
-  public Idrak.Abstraction.Data.IFontFace? Map(Idrak.Abstraction.Data.IFontFace face, Idrak.Abstraction.Data.FontMap map, bool detect, Idrak.Abstraction.Data.FontMapDrawing drawing)
 
 public interface Idrak.Abstraction.Data.IImageCodec
   public Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
@@ -1523,10 +1524,10 @@ public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.
   public (float, float) Ink { get; init; }
   public (float, float) LineSpacing { get; init; }
   public (float, float) Margin { get; init; }
-  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
   public Idrak.Abstraction.Data.PageLabel Label { get; init; }
   public Idrak.Abstraction.Text.ITextHabits? Habits { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, double> HabitChances { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
   public bool Color { get; init; }
   public double? HabitChance { get; init; }

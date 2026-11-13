@@ -11,9 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 197 | 19 | 67 | 283 | 0 |
-| `Idrak.Abstraction` | 193 | 19 | 64 | 276 | 0 |
-| `Idrak.Abstraction` | 194 | 19 | 65 | 278 | 1 |
+| `Idrak.Abstraction` | 199 | 19 | 70 | 288 | 0 |
 | `Idrak` | 59 | 5 | 23 | 87 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -85,16 +83,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.CommandSandboxes` | registry | public | — |  | process | Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, noise, resize, +3 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.GlyphPoses` | registry | public | — |  | drift, none | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.GlyphPoses` | registry | public | — |  | drift, none | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentationKind` | interface | public | — | Augmentations.FunctionKind, Augmentations.GuardedKind |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MappedFontFace, OpenTypeFace |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Imaging, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Data.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, NetpbmEncoder, PngEncoder |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IImageTransform` | interface | public | — | ImageTransforms.GuardedTransform, LibraryImageTransforms.Transform |  | Abstraction, AspNetCore, Audio, Imaging, Mcp, Text | Abstraction |
@@ -266,9 +264,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSession` | interface | public | — | ProcessCommandSession |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, AttentionPositionBiases.BuiltInKind, +128 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +183 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +108 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +165 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +187 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +38 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -321,7 +317,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
 | `Idrak.Abstraction.Text.ITextHabits` | interface | public | — | RuleTextHabits, TextHabits.GuardedHabits |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Text.TextHabits` | registry | public | — |  | arabic-handwriting | Text | **Text** (move) |
+| `Idrak.Abstraction.Text.TextHabits` | registry | public | — |  | arabic-handwriting | Text | Abstraction |
 | `Idrak.Abstraction.Training.IGroupedOptimizer` | interface | public | — | GroupedOptimizer |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Training.IInPlaceOptimizer` | interface | public | — | Adam, AdamW, AdamW8Bit, Sgd |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.ILearningRateSchedule` | interface | public | — | LearningRateSchedules.BuiltInSchedule |  | Abstraction, Audio, Reinforcement, Text | Abstraction |

@@ -132,8 +132,8 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckEnvironmentKind<TObservation, TAction>(Idrak.Abstraction.Reinforcement.IEnvironmentKind kind, System.Func<System.Random, TObservation, TAction> act, System.Collections.Generic.IReadOnlyDictionary<string, string>? kindOptions = null, int maxSteps = 64, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Generation.IFeatureCache cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFillInMiddleFormat(string name, Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IFillInMiddleFormat? format = null, Idrak.Abstraction.Generation.IFillInMiddleFormat? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
-  public static Idrak.Abstraction.Testing.ConformanceReport CheckGlyphPose(string name, Idrak.Abstraction.Data.IGlyphPose? pose = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool identity = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFontMapper(string name, Idrak.Abstraction.Data.IFontFace legacy, Idrak.Abstraction.Data.FontMap map, Idrak.Abstraction.Data.IFontFace unicode, Idrak.Abstraction.Data.IFontMapper? mapper = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckGlyphPose(string name, Idrak.Abstraction.Data.IGlyphPose? pose = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool identity = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckKeywordIndex(Idrak.Abstraction.Testing.KeywordIndexUnderTest index, Idrak.Abstraction.Testing.KeywordIndexUnderTest? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckLearningRateSchedule(string name, Idrak.Abstraction.Training.ILearningRateSchedule? schedule = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -290,6 +290,13 @@ public sealed class Idrak.Abstraction.Testing.FillInMiddleFormatSuite : Idrak.Ab
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.IFillInMiddleFormat implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
+public sealed class Idrak.Abstraction.Testing.FontMapperSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IFontMapper>
+  public FontMapperSuite(Idrak.Abstraction.Data.IFontFace legacy, Idrak.Abstraction.Data.FontMap map, Idrak.Abstraction.Data.IFontFace unicode)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.IFontMapper implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public sealed class Idrak.Abstraction.Testing.GlyphPoseSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IGlyphPose>
   public GlyphPoseSuite(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool identity = false)
   public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>> Settings { get; }
@@ -298,12 +305,6 @@ public sealed class Idrak.Abstraction.Testing.GlyphPoseSuite : Idrak.Abstraction
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Data.IGlyphPose implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
-public sealed class Idrak.Abstraction.Testing.FontMapperSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IFontMapper>
-  public FontMapperSuite(Idrak.Abstraction.Data.IFontFace legacy, Idrak.Abstraction.Data.FontMap map, Idrak.Abstraction.Data.IFontFace unicode)
-  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
-  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
-  public override string Name { get; }
-  public override void Run(Idrak.Abstraction.Data.IFontMapper implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed record Idrak.Abstraction.Testing.ImageFamilySample : System.IEquatable<Idrak.Abstraction.Testing.ImageFamilySample>
   public ImageFamilySample(string Path, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? Images = null, System.Collections.Generic.IReadOnlyList<float[]>? Expected = null, float Tolerance = 0.0001f, string? Error = null)
@@ -634,6 +635,7 @@ public sealed class Idrak.Abstraction.Testing.TextBindingSuite : Idrak.Abstracti
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Data.ITextBinding implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public sealed class Idrak.Abstraction.Testing.TextHabitsSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Text.ITextHabits>
   public TextHabitsSuite(System.Collections.Generic.IReadOnlyList<string> texts, string untouched, Idrak.Abstraction.Text.ITextHabits? reference = null)
   public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
