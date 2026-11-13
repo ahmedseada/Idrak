@@ -107,10 +107,17 @@ public sealed record PageStyle
 
     /// <summary>The paper kept around a cut page's parts, in pixels (a range: each page its own).</summary>
     public (float Min, float Max) CropPadding { get; init; } = (8, 24);
+
+    /// <summary>
+    /// Settings a layout reads by key (keys ignore case), values as text: the "shapes" layout's <c>shapes</c> (a shape
+    /// profile's name or text), <c>pen</c>, <c>bind</c>, <c>blue-pen</c>, <c>cell-align</c>, <c>stroke</c>, <c>least-size</c> and the chosen
+    /// pen's and text binding's own keys. A layout reads its own keys and leaves the others; none by default.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Options { get; init; } = PageOptions.None;
 }
 
 /// <summary>A drawn part of a page: what it is, its text and its box (pixels).</summary>
-/// <param name="Kind">"header", "title", "subject", "body", "signature", "footer", "stamp" or "rule".</param>
+/// <param name="Kind">"header", "title", "subject", "body", "signature", "footer", "stamp" or "rule"; "shape" (a drawn shape's box) or "region" (a region a shape made, with its text).</param>
 /// <param name="Text">Its text in reading order (empty for a drawing).</param>
 /// <param name="X">Its left edge.</param>
 /// <param name="Y">Its top edge.</param>
@@ -140,8 +147,10 @@ public interface IPageLayout
 
 /// <summary>
 /// The page layouts, by name. Built in (Idrak.Imaging): "letter" (an official letter: a header of three places, a rule,
-/// subject, body, signature block, an optional stamp, footer) and "plain" (header lines, title, body, footer, no ornament).
-/// Register another with <see cref="Register"/>.
+/// subject, body, signature block, an optional stamp, footer), "plain" (header lines, title, body, footer, no ornament)
+/// and "shapes" (shapes drawn by a pen, <see cref="Shapes"/> and <see cref="Pens"/>, the body's lines set in the regions
+/// they make, <see cref="TextBindings"/>; it reads <see cref="PageStyle.Options"/>). Register another with
+/// <see cref="Register"/>.
 /// </summary>
 public static class PageLayouts
 {

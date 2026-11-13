@@ -21,8 +21,8 @@ internal abstract partial class DesktopTests : Tests
         ("synthetic data: page parts fill their slots (digits, number, pick, field, date, hijri, line), drop a line whose field is missing, use the language's digits when drawn, keep a part out at chance 0; unknown keys and slots are refused", SyntheticParts),
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
         ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
-        ("synthetic data: page settings text sets the style's sizes and chances, refusing unknown keys and values out of range; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
-        ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans and page settings given; a missing records file or font folder, or a bad setting, is a usage error", SyntheticCli),
+        ("synthetic data: page settings text sets the style's sizes and chances and the shapes layout's options (pen, binding and their keys), refusing unknown keys (naming every valid one) and values out of range; shape profiles are drawn per page and checked first; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
+        ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans, shapes and page settings given; a missing records file or font folder, or a bad setting or shape profile, is a usage error", SyntheticCli),
     ];
 
     private static string SyntheticFolder(string name)
@@ -334,6 +334,18 @@ internal abstract partial class DesktopTests : Tests
             Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
         }
 
+        // The shapes layout's settings go into the style's options; every pen's and binding's key is known.
+        var shaped = SyntheticPages.Style(style, "pen=ballpoint, pen-wobble=0.2..0.4, bind=sequence, take=1:rest, blank=0.1, blank-at=3..18, blue-pen=0.3, cell-align=center, stroke=0.06");
+        Check(shaped.Options.Count == 9 && shaped.Options["pen"] == "ballpoint" && shaped.Options["take"] == "1:rest" && shaped.Options["blank-at"] == "3..18" && shaped.Options["PEN-WOBBLE"] == "0.2..0.4"
+              && shaped.Width == style.Width && style.Options.Count == 0, $"the shapes layout's settings in the options: {string.Join(", ", shaped.Options)}");
+        Check(SyntheticPages.StyleKeys.Contains("cell-align") && new[] { "pen-wobble", "pen-tilt", "take", "blank", "blank-at" }.All(SyntheticPages.KindStyleKeys().Contains),
+            $"the keys: {string.Join(", ", SyntheticPages.StyleKeys)}; the kinds': {string.Join(", ", SyntheticPages.KindStyleKeys())}");
+        ThrowsNaming<ArgumentException>(() => SyntheticPages.Style(style, "nope=1"), "an unknown key", "width", "cell-align", "pen-wobble", "blank-at");
+        foreach (string bad in new[] { "pen=nope", "bind=nope", "blue-pen=2", "cell-align=sideways", "pen-wobble=abc", "pen-pressure=0.95", "take=0", "take=rest:rest", "blank=1.5", "blank-at=0", "stroke=5", "least-size=2" })
+        {
+            Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
+        }
+
         var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] };
         foreach (string newLine in new[] { "\n", "\r\n" })
         {
@@ -352,6 +364,19 @@ internal abstract partial class DesktopTests : Tests
         Check(Ink(whole.Image) > 0 && Ink(cut.Image) == Ink(whole.Image), $"the cut page keeps every stroke: {Ink(cut.Image)} of {Ink(whole.Image)} dark pixels");
         Check(cut.Image.Width < whole.Image.Width / 2, $"a short line is cut to its ink, not to its column: {cut.Image.Width} of {whole.Image.Width} pixels wide");
         Check(SyntheticPages.Make(Short, plain with { Style = plain.Style with { CropPadding = (1, 2) } }).Image.Pixels.SequenceEqual(whole.Image.Pixels), "without crop, the padding changes nothing");
+
+        // Shape profiles: one drawn per page from a seed of its own (a letter page is drawn as it was), given to the layout.
+        Check(whole.Shapes == "none" && SyntheticPages.Make(Short, plain with { Shapes = ["grid", "boxed"] }).Image.Pixels.SequenceEqual(whole.Image.Pixels),
+            "shapes leave a plain page as it was");
+        var shapes = plain with { Layouts = ["shapes"], Shapes = ["grid=auto x 2", "boxed"], Style = SyntheticPages.Style(plain.Style, "pen=ballpoint,cell-align=start") };
+        var drawn = Enumerable.Range(0, 6).Select(v => SyntheticPages.Make(Short, shapes, variant: v)).ToList();
+        Check(drawn.All(p => p.Layout == "shapes" && p.Text == "Body text." && p.Description.StartsWith("shapes:", StringComparison.Ordinal) && p.Description.Contains("pen ballpoint", StringComparison.Ordinal))
+              && drawn.Select(p => p.Shapes).Distinct().Count() == 2, $"the shapes drawn per page: {string.Join(", ", drawn.Select(p => p.Shapes))}");
+        Throws<ArgumentException>(() => SyntheticPages.Make(Short, shapes with { Shapes = ["grid=3x4,nope=1"] }), "a profile with an unknown option, refused before the first page");
+        Throws<NotSupportedException>(() => SyntheticPages.Make(Short, shapes with { Shapes = ["nope"] }), "an unknown profile");
+        Throws<ArgumentException>(() => SyntheticPages.Make(Short, shapes with { Shapes = [] }), "no profile");
+        Throws<ArgumentException>(() => SyntheticPages.Make(Short, shapes with { Style = shapes.Style with { Options = new Dictionary<string, string> { ["pen-wobble"] = "x", ["pen"] = "ballpoint" } } }),
+            "a bad pen setting given in code, refused before the first page");
 
     }
 
@@ -389,6 +414,15 @@ internal abstract partial class DesktopTests : Tests
             Check(File.ReadAllLines(Path.Combine(folder, "b", "pages.jsonl")).SequenceEqual(File.ReadAllLines(Path.Combine(folder, "a", "pages.jsonl"))),
                 "the same seed, the same records");
 
+            var shaped = SynthCli(["data", "synth", input, "-o", Path.Combine(folder, "s", "pages.jsonl"), "-n", "1", "--layout", "shapes", "--scan", "none",
+                "--shapes", "grid=auto x 3..5,heavy-every=2,heavy-width=1.5..2.5", "--shapes", "ruled", "--fonts", fonts,
+                "--page", "width=620,height=877,size=14..18,pen=ballpoint,blank=0.2,take=1:rest", "--seed", "3", "-j"]);
+            Check(shaped.Code == 0, $"--shapes: exit {shaped.Code}: {shaped.Err}");
+            var shapedManifest = File.ReadAllLines((string)JsonNode.Parse(shaped.Out)!["manifest"]!).Select(l => JsonNode.Parse(l)!).ToList();
+            Check(shapedManifest.Count == 3 && shapedManifest.All(m => (string)m["layout"]! == "shapes" && (string)m["shapes"]! is "grid=auto x 3..5,heavy-every=2,heavy-width=1.5..2.5" or "ruled"
+                    && ((string)m["page"]!).Contains("pen ballpoint", StringComparison.Ordinal)),
+                $"the shapes and pen recorded in the manifest: {string.Join(" | ", shapedManifest.Select(m => m["shapes"]))}");
+
             foreach (var (args, why) in new (string[], string)[]
             {
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl")], "no --fonts"),
@@ -396,6 +430,9 @@ internal abstract partial class DesktopTests : Tests
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", Path.Combine(folder, "nope")], "a missing fonts folder"),
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--page", "nope=1"], "an unknown page setting"),
                 (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--scan", "nope"], "an unknown scan profile"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--shapes", "nope"], "an unknown shape profile"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--shapes", "grid=3x4,nope=1"], "a shape profile with an unknown option"),
+                (["data", "synth", input, "-o", Path.Combine(folder, "c.jsonl"), "--fonts", fonts, "--page", "pen-wobble=abc"], "a bad pen setting"),
             })
             {
                 var bad = SynthCli(args);

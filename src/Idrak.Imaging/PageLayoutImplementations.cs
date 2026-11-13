@@ -73,6 +73,57 @@ internal sealed class PageCanvas : IDisposable
         OutlineRasterizers.Get().Fill(new GlyphOutline([.. verbs], [.. points]), 1f, cx, cy, layer, Width, Height);
     }
 
+    /// <summary>
+    /// An outline (pixels, y up as outlines are: points (x, -y)) laid on <paramref name="layer"/> at <paramref name="share"/>
+    /// of full ink (a pen's pressure, a tint's tone): ink over ink, as the rasterizer composites.
+    /// </summary>
+    public void Fill(Span<float> layer, GlyphOutline outline, float share)
+    {
+        if (outline.IsEmpty || !(share > 0))
+        {
+            return;
+        }
+
+        var fill = OutlineRasterizers.Get();
+        if (share >= 1f)
+        {
+            fill.Fill(outline, 1f, 0, 0, layer, Width, Height);
+            return;
+        }
+
+        // Its coverage in a box of its own first (pooled), then laid on at the share, row by row.
+        var (minX, minY, maxX, maxY) = outline.Bounds();
+        int left = Math.Max(0, (int)MathF.Floor(minX) - 1), right = Math.Min(Width, (int)MathF.Ceiling(maxX) + 2);
+        int top = Math.Max(0, (int)MathF.Floor(-maxY) - 1), bottom = Math.Min(Height, (int)MathF.Ceiling(-minY) + 2);
+        if (right <= left || bottom <= top)
+        {
+            return;
+        }
+
+        int w = right - left, h = bottom - top;
+        float[] own = ArrayPool<float>.Shared.Rent(w * h);
+        try
+        {
+            var coverage = own.AsSpan(0, w * h);
+            coverage.Clear();
+            fill.Fill(outline, 1f, -left, -top, coverage, w, h);
+            for (int row = 0; row < h; row++)
+            {
+                var source = coverage.Slice(row * w, w);
+                var target = layer.Slice((top + row) * Width + left, w);
+                for (int x = 0; x < w; x++)
+                {
+                    float c = source[x] * share, t = target[x];
+                    target[x] = t + c - t * c;
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(own);
+        }
+    }
+
     /// <summary>The page: paper of the given colour, the ink layer laid on at its darkness, the blue layer in its colour.</summary>
     public ImageData Compose((float R, float G, float B) paper, float darkness, (float R, float G, float B) blue, bool color)
     {
@@ -162,6 +213,16 @@ internal static class PageDrawing
         color ? (1f, c.Between(0.97f, 1f), c.Between(0.92f, 1f)) : (1f, 1f, 1f);
 
     internal static (float R, float G, float B) BlueInk(Choices c) => (c.Between(0.05f, 0.2f), c.Between(0.15f, 0.3f), c.Between(0.45f, 0.7f));
+
+    // A seed of its own for each part of a page's choices, from the page's seed and the part's number (SplitMix64; the
+    // same in every process), so one part's draws never move another's.
+    internal static int Mix(int seed, int part)
+    {
+        ulong z = ((ulong)(uint)seed << 32 | (uint)part) + 0x9E3779B97F4A7C15UL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        return (int)((z ^ (z >> 31)) & int.MaxValue);
+    }
 }
 
 /// <summary>

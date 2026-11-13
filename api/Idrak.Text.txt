@@ -1522,6 +1522,7 @@ public sealed record Idrak.Text.SyntheticPage : System.IEquatable<Idrak.Text.Syn
   public string Layout { get; init; }
   public string Profile { get; init; }
   public string Scan { get; init; }
+  public string Shapes { get; init; }
   public string Text { get; init; }
 
 public sealed record Idrak.Text.SyntheticPageOptions : System.IEquatable<Idrak.Text.SyntheticPageOptions>
@@ -1529,6 +1530,7 @@ public sealed record Idrak.Text.SyntheticPageOptions : System.IEquatable<Idrak.T
   public Idrak.Text.SyntheticPageParts Parts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Layouts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Scans { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Shapes { get; init; }
   public System.DateTime DateFrom { get; init; }
   public System.DateTime DateTo { get; init; }
   public bool Zip { get; init; }
@@ -1569,6 +1571,7 @@ public static class Idrak.Text.SyntheticPages
   public static Idrak.Text.SyntheticPage Make(string answer, Idrak.Text.SyntheticPageOptions options, int record = 0, int variant = 0, string where = "the answer")
   public static Idrak.Text.SyntheticPagesResult Write(string input, string output, Idrak.Text.SyntheticPageOptions options, System.IProgress<Idrak.Text.SyntheticPagesProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fonts(string folder)
+  public static System.Collections.Generic.IReadOnlyList<string> KindStyleKeys()
   public static System.Collections.Generic.IReadOnlyList<string> StyleKeys { get; }
   public static int Count(string input, Idrak.Text.SyntheticPageOptions options)
 

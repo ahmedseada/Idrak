@@ -190,6 +190,14 @@ public sealed record SyntheticPageOptions
     /// </summary>
     public IReadOnlyList<string> Scans { get; init; } = ["none", "clean", "office", "old", "pale", "worn", "fax", "handled", "marked", "damaged", "scanner", "aged", "copied", "photo", "wrecked", "mixed", "mixed", "mixed"];
 
+    /// <summary>
+    /// The shape profiles (<see cref="ShapeProfiles"/>: a name, or a profile written as text; "none" for no shapes), one
+    /// drawn per page from a seed of its own (so adding them moves no other choice), given to the layout as its
+    /// <c>shapes</c> option: the "shapes" layout draws them, the others leave them. A name given twice is drawn twice as
+    /// often.
+    /// </summary>
+    public IReadOnlyList<string> Shapes { get; init; } = ["none"];
+
     /// <summary>The share of pages drawn in grey (else as the style says).</summary>
     public double Grey { get; init; } = 0.3;
 
@@ -252,6 +260,18 @@ public sealed record SyntheticPageOptions
             _ = SyntheticPages.Profile(scan);
         }
 
+        if (Shapes.Count == 0)
+        {
+            throw new ArgumentException("Synthetic pages need at least one shape profile (\"none\" for no shapes).");
+        }
+
+        foreach (string shapes in Shapes)
+        {
+            _ = ShapeProfiles.Resolve(shapes);
+        }
+
+        SyntheticPages.CheckOptions(Style.Options);
+
         if (Style.Crop is < 0 or > 1 || !(Style.CropPadding.Min >= 0 && Style.CropPadding.Min <= Style.CropPadding.Max))
         {
             throw new ArgumentOutOfRangeException(nameof(Style), $"Crop is a chance from 0 to 1 ({Style.Crop}) and its padding a range of pixels from 0 ({Style.CropPadding}).");
@@ -288,7 +308,11 @@ public sealed record SyntheticPageOptions
 /// <param name="Scan">The scan's steps ("" for none).</param>
 /// <param name="Profile">The scan profile drawn for it ("none", "clean", ..., or a profile's text).</param>
 /// <param name="Description">What the layout chose (font, sizes, ornaments).</param>
-public sealed record SyntheticPage(ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description, string Profile);
+public sealed record SyntheticPage(ImageData Image, string Text, string Answer, int Seed, string Layout, string Scan, string Description, string Profile)
+{
+    /// <summary>The shape profile drawn for it ("none", "grid", ..., or a profile's text), given to its layout as the <c>shapes</c> option.</summary>
+    public string Shapes { get; init; } = "none";
+}
 
 /// <summary>How far making synthetic pages has come.</summary>
 /// <param name="Pages">Pages made.</param>
@@ -328,36 +352,46 @@ public static class SyntheticPages
     public static IScanProfile? Profile(string nameOrText) =>
         nameOrText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? null : ScanProfiles.Resolve(nameOrText);
 
-    /// <summary>The keys <see cref="Style"/> reads.</summary>
+    /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
-        ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding"];
+        ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
+         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size"];
+
+    // The keys of StyleKeys that go into the style's options for the layouts that read them.
+    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size"];
+
+    /// <summary>The keys of the registered pens (<see cref="Pens"/>) and text bindings (<see cref="TextBindings"/>), which <see cref="Style"/> also reads, each once.</summary>
+    public static IReadOnlyList<string> KindStyleKeys() => [.. Pens.AllKeys().Concat(TextBindings.AllKeys()).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
     /// <c>KEY=VALUE,...</c>: width and height (pixels), size (the body's pixels per em), spacing (line height
     /// multiples), margin (a share of the width), ink (darkness, 0 to 1) and crop-padding (pixels) as ranges
     /// <c>MIN..MAX</c> or one value; justify, rule, emblem, stamp, blue-signature, header-font and crop (a page cut to
-    /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false.
+    /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false. The "shapes" layout's
+    /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a registered pen and text
+    /// binding), blue-pen (a chance), cell-align (start, center, end or mixed), stroke (the stroke's width, a share of the
+    /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size), and every key a
+    /// registered pen or text binding takes (<see cref="KindStyleKeys"/>, each value
+    /// checked by the kinds that take it).
     /// </summary>
     /// <exception cref="ArgumentException">A key not known, or a value out of its range; the message names them.</exception>
     public static PageStyle Style(PageStyle style, string? settings)
     {
         ArgumentNullException.ThrowIfNull(style);
-        foreach (string raw in (settings ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        Dictionary<string, string>? options = null;
+        foreach (var (key, value) in PageOptions.Split(settings))
         {
-            int eq = raw.IndexOf('=');
-            string key = (eq < 0 ? raw : raw[..eq]).Trim().ToLowerInvariant(), value = eq < 0 ? "" : raw[(eq + 1)..].Trim();
-            (float Min, float Max) Range(float least, float most)
+            string what = $"Page setting {key}";
+            (float Min, float Max) Range(float least, float most) => PageOptions.Range(what, value, least, most);
+            if (OptionStyleKeys.Contains(key, StringComparer.Ordinal) || IsKindKey(key))
             {
-                int dots = value.IndexOf("..", StringComparison.Ordinal);
-                string a = dots < 0 ? value : value[..dots], b = dots < 0 ? value : value[(dots + 2)..];
-                return float.TryParse(a, NumberStyles.Float, CultureInfo.InvariantCulture, out float min) && float.TryParse(b, NumberStyles.Float, CultureInfo.InvariantCulture, out float max)
-                    && min >= least && max <= most && min <= max
-                    ? (min, max)
-                    : throw new ArgumentException($"Page setting {key} is a value or a range MIN..MAX from {least.ToString(CultureInfo.InvariantCulture)} to {most.ToString(CultureInfo.InvariantCulture)}, not '{value}'.");
+                CheckOption(key, value);
+                (options ??= new Dictionary<string, string>(style.Options, StringComparer.OrdinalIgnoreCase))[key] = value;
+                continue;
             }
 
-            float Chance() => Range(0, 1).Min;
+            float Chance() => PageOptions.Chance(what, value);
             int Pixels() => (int)Range(64, 20000).Min;
             style = key switch
             {
@@ -379,11 +413,78 @@ public static class SyntheticPages
                 {
                     Color = bool.TryParse(value, out bool color) ? color : throw new ArgumentException($"Page setting color is true or false, not '{value}'."),
                 },
-                _ => throw new ArgumentException($"Unknown page setting '{key}' (known: {string.Join(", ", StyleKeys)})."),
+                _ => throw new ArgumentException($"Unknown page setting '{key}' (known: {string.Join(", ", StyleKeys.Concat(KindStyleKeys()))})."),
             };
         }
 
-        return style;
+        return options is null ? style : style with { Options = options };
+    }
+
+    // Whether a registered pen or text binding takes the key.
+    private static bool IsKindKey(string key) => KindStyleKeys().Contains(key, StringComparer.OrdinalIgnoreCase);
+
+    // A "shapes" layout setting checked as the layout reads it; a pen's or binding's key by every kind that takes it.
+    private static void CheckOption(string key, string value)
+    {
+        string what = $"Page setting {key}";
+        switch (key)
+        {
+            case "pen":
+                _ = Pens.Find(value) ?? throw new ArgumentException($"{what} is a registered pen ({string.Join(", ", Pens.Names)}), not '{value}'.");
+                return;
+            case "bind":
+                _ = TextBindings.Find(value) ?? throw new ArgumentException($"{what} is a registered text binding ({string.Join(", ", TextBindings.Names)}), not '{value}'.");
+                return;
+            case "blue-pen":
+                _ = PageOptions.Chance(what, value);
+                return;
+            case "cell-align":
+                _ = PageOptions.Choice(what, value, "start", "center", "end", "mixed");
+                return;
+            case "stroke":
+                _ = PageOptions.Range(what, value, 0.005f, 1);
+                return;
+            case "least-size":
+                _ = PageOptions.Number(what, value, 0, 1);
+                return;
+        }
+
+        var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
+        foreach (string name in Pens.Names)
+        {
+            var pen = Pens.Get(name);
+            if (pen.Keys.Contains(key))
+            {
+                _ = pen.Read(one);
+            }
+        }
+
+        foreach (string name in TextBindings.Names)
+        {
+            var binding = TextBindings.Get(name);
+            if (binding.Keys.Contains(key))
+            {
+                _ = binding.Read(one);
+            }
+        }
+    }
+
+    // The options a style holds for the layouts, checked before the first page: each known key's value, the pen's and
+    // the binding's own keys read by them.
+    internal static void CheckOptions(IReadOnlyDictionary<string, string> options)
+    {
+        foreach (var (key, value) in options)
+        {
+            if (OptionStyleKeys.Contains(key.ToLowerInvariant(), StringComparer.Ordinal))
+            {
+                CheckOption(key.ToLowerInvariant(), value);
+            }
+        }
+
+        var pen = Pens.Get(options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
+        _ = pen.Read(PageOptions.Only(options, pen.Keys));
+        var binding = TextBindings.Get(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
+        _ = binding.Read(PageOptions.Only(options, binding.Keys));
     }
 
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>
@@ -475,7 +576,7 @@ public static class SyntheticPages
                         string about = Json(new JsonObject
                         {
                             ["image"] = name, ["record"] = index, ["variant"] = variant, ["where"] = record.Where, ["seed"] = page.Seed,
-                            ["layout"] = page.Layout, ["profile"] = page.Profile, ["scan"] = page.Scan, ["page"] = page.Description,
+                            ["layout"] = page.Layout, ["profile"] = page.Profile, ["shapes"] = page.Shapes, ["scan"] = page.Scan, ["page"] = page.Description,
                             ["width"] = page.Image.Width, ["height"] = page.Image.Height, ["channels"] = page.Image.Channels,
                         });
                         made[j] = (bytes, line, about);
@@ -603,7 +704,10 @@ public static class SyntheticPages
 
         var style = options.Style;
         var fonts = FontsFor(style.Fonts, content.ReadingOrder(), where);
-        var pageStyle = style with { Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey };
+        // The shapes from a seed of their own, so the page's other draws stay as they were.
+        string shapes = options.Shapes[new Random(PageSeed(seed, ShapesDraw, 0)).Next(options.Shapes.Count)];
+        var pageOptions = new Dictionary<string, string>(style.Options, StringComparer.OrdinalIgnoreCase) { ["shapes"] = shapes };
+        var pageStyle = style with { Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey, Options = pageOptions };
         var rendered = PageLayouts.Get(layoutName).Render(content, pageStyle, layoutSeed);
         var drawn = rendered.Image;
         string description = rendered.Description;
@@ -617,8 +721,11 @@ public static class SyntheticPages
 
         var steps = Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty;
         var image = steps.IsEmpty ? drawn : steps.Apply(drawn);
-        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), description, scanName);
+        return new SyntheticPage(image, rendered.Text, answer.With(rendered.Text), seed, layoutName, steps.ToString(), description, scanName) { Shapes = shapes };
     }
+
+    // The record number a page's shape draw is hashed with (PageSeed), apart from every real record's.
+    private const int ShapesDraw = unchecked((int)0x9E37_5A9E);
 
     // The box around a page's drawn parts with padding drawn from its range, within the page; null when nothing was drawn.
     private static (int X, int Y, int Width, int Height)? Bounds(RenderedPage page, (float Min, float Max) padding, Random random)

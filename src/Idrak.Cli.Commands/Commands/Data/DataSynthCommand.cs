@@ -36,7 +36,8 @@ internal sealed class DataSynthCommand : Command
                                   (JSON: "headerStart", "headerCenter", "headerEnd", "titles", "subjects", "signatures",
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone
           -n, --count N           pages per record (3)
-              --layout NAME       a page layout, again for more (letter and plain; a name twice is drawn twice as often)
+              --layout NAME       a page layout, again for more (letter, plain, and shapes: shapes drawn by a pen, the
+                                  text in the regions they make; a name twice is drawn twice as often)
               --scan PROFILE      a look, again for more, one drawn per page: a name (none: as drawn, clean, office, old,
                                   pale: faint ink, worn: broken strokes, fax, handled: wrinkles, folds, smudges, marked:
                                   pen strikes, crosses, highlighter, damaged: tears, holes, scratches, ripped and
@@ -46,10 +47,20 @@ internal sealed class DataSynthCommand : Command
                                   joined with + for several on one page ("damaged+marked"), or one written as text,
                                   "rotate=-1.5..1.5@0.2,fade=0.3..0.7@0.5,taped=1..2@0.5" (all of them, mixed three
                                   times; a name twice, twice as often)
+              --shapes PROFILE    the shapes of the shapes layout, again for more, one drawn per page: a name (none:
+                                  no shapes, grid: a grid fitted to the text, ruled: a line under each line, boxed: a
+                                  box around the text) or one written as text, steps NAME[=VALUE][@CHANCE] with their
+                                  options, "grid=auto x 18,widths=1:4:1*16,heavy-every=4,heavy-width=2..3" (shapes:
+                                  line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch; none)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
                                   color, rule, emblem, stamp, blue-signature, header-font, crop (a chance
-                                  the page is cut to its text), crop-padding (pixels; ranges as MIN..MAX)
+                                  the page is cut to its text), crop-padding (pixels; ranges as MIN..MAX); for the
+                                  shapes layout: pen (ideal, ballpoint), pen-wobble, pen-jitter, pen-pressure,
+                                  pen-overshoot, pen-tilt (ranges), bind (sequence), take (units per region, as
+                                  1:rest), blank (the chance a region is left empty), blank-at (which, from 1, as
+                                  3..18), blue-pen (a chance), cell-align (start, center, end, mixed), stroke (a share
+                                  of the text size), least-size (the smallest a region's text is set, a share of size)
               --records NAME      the input's record format: sharegpt, messages or text (found from the input)
               --full-text KEY     the answer's key holding the page text (the first full_text..., else the longest text)
               --prompt TEXT       the question of records made from plain text ("Extract the text.")
@@ -65,10 +76,11 @@ internal sealed class DataSynthCommand : Command
           idrak data synth train.jsonl -o synthetic/pages.jsonl --fonts fonts --parts parts.json -n 3
           idrak synth letters.txt -o pages.jsonl --fonts fonts --answer-key full_text --scan old --scan office
           idrak data synth train.jsonl -o trial.jsonl --fonts fonts --limit 5 --page "size=20..28,stamp=0.5" --zip
+          idrak data synth rows.txt -o rows.jsonl --fonts fonts --layout shapes --shapes grid --page pen=ballpoint
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
-        ["--out", "--fonts", "--parts", "--count", "--layout", "--scan", "--grey", "--page", "--records", "--full-text", "--prompt", "--answer-key",
+        ["--out", "--fonts", "--parts", "--count", "--layout", "--scan", "--shapes", "--grey", "--page", "--records", "--full-text", "--prompt", "--answer-key",
          "--image-format", "--quality", "--workers", "--limit"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--zip"];
@@ -104,6 +116,7 @@ internal sealed class DataSynthCommand : Command
 
             // A profile written as text holds commas; names may be given as a list.
             var scans = context.Options("--scan").SelectMany(s => s.Contains('=') ? [s] : s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToList();
+            var shapes = context.Options("--shapes").SelectMany(s => s.Contains('=') ? [s] : s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).ToList();
             options = defaults with
             {
                 Style = SyntheticPages.Style(defaults.Style, context.Option("--page")),
@@ -111,6 +124,7 @@ internal sealed class DataSynthCommand : Command
                 Variants = context.IntOption("--count", defaults.Variants),
                 Layouts = layouts.Count > 0 ? layouts : defaults.Layouts,
                 Scans = scans.Count > 0 ? scans : defaults.Scans,
+                Shapes = shapes.Count > 0 ? shapes : defaults.Shapes,
                 Grey = context.Option("--grey") is { } grey ? double.Parse(grey, NumberStyles.Float, CultureInfo.InvariantCulture) : defaults.Grey,
                 Seed = context.Seed ?? 0,
                 Format = context.Option("--records"),

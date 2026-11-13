@@ -6,6 +6,7 @@
 Idrak.Text | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Text | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Text | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
+Idrak.Text | Idrak.Generation.TokenIds | (the type) | token ids as a model's input, made one way (the run's id type, else the type the device's embedding gather reads) for the generators and for fine-tuning's, pipeline pretraining's and the answer scorer's batches; internal while the ids factory's choice is not yet a contract (plan 37)
 Idrak.Cli.Commands | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli.Commands | Idrak.Gpu.Hip.GcnKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli.Commands | Idrak.Gpu.Hip.GcnKernels | DefaultTarget() | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public (gcn: the target printed for, hip:0's when there is one)

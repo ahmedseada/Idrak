@@ -10,7 +10,8 @@ namespace Idrak.Imaging;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
-/// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer and the reading orders (bidi, runs). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
+/// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer, the reading orders (bidi, runs), the page layouts
+/// (letter, plain, shapes), the shapes, shape profiles, pens and text bindings the "shapes" layout draws with. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
 /// </summary>
 internal sealed class LibraryRegistrations : ILibraryRegistrations
@@ -39,12 +40,39 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
             ReadingOrders.Register(new Shaping.BidiReadingOrder());
             ReadingOrders.Register(new Shaping.RunsReadingOrder());
         },
-        [typeof(PageLayouts)] = () =>                                            // letter, plain
+        [typeof(PageLayouts)] = () =>                                            // letter, plain, shapes
         {
             PageLayouts.Register(new LetterLayout());
             PageLayouts.Register(new PlainLayout());
+            PageLayouts.Register(new ShapesLayout());
         },
+        [typeof(Shapes)] = RegisterShapes,                                       // line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch
+        [typeof(ShapeProfiles)] = RegisterShapeProfiles,                         // none, grid, ruled, boxed
+        [typeof(Pens)] = () =>                                                   // ideal, ballpoint
+        {
+            Pens.Register(new IdealPen());
+            Pens.Register(new BallpointPen());
+        },
+        [typeof(TextBindings)] = () => TextBindings.Register(new SequenceBinding()),
     };
+
+    private static void RegisterShapes()
+    {
+        foreach (var shape in (IShape[])[new LineShape(), new PolylineShape(), new PolygonShape(), new BoxShape(), new GridShape(), new CircleShape(), new EllipseShape(),
+                     new ArcShape(), new ArrowShape(), new FillShape(), new HatchShape()])
+        {
+            Shapes.Register(shape);
+        }
+    }
+
+    // Generic page looks, each written as a profile.
+    private static void RegisterShapeProfiles()
+    {
+        ShapeProfiles.Register(new ShapeProfile("none", "", "no shapes: the text set in rows, nothing drawn"));
+        ShapeProfiles.Register(new ShapeProfile("grid", "grid=auto x auto", "a grid fitted to the text: a row a line, a column a unit of its longest line"));
+        ShapeProfiles.Register(new ShapeProfile("ruled", "grid=auto x 1,inner=rows,border=bottom", "a line under every text line: a region a line"));
+        ShapeProfiles.Register(new ShapeProfile("boxed", "grid=auto x 1,inner=off", "a box around the text: a region a line"));
+    }
 
     private static void RegisterImageCodecs()
     {

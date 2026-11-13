@@ -966,6 +966,11 @@ public static class Idrak.Abstraction.Data.Augmentations
   public static void Register(string name, Idrak.Abstraction.Data.AugmentationFactory create)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed record Idrak.Abstraction.Data.BoundText : System.IEquatable<Idrak.Abstraction.Data.BoundText>
+  public BoundText(System.Collections.Generic.IReadOnlyList<string> Texts, System.Collections.Generic.IReadOnlyList<string> Label)
+  public System.Collections.Generic.IReadOnlyList<string> Label { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Texts { get; init; }
+
 public readonly record struct Idrak.Abstraction.Data.BoundingBox : System.IEquatable<Idrak.Abstraction.Data.BoundingBox>
   public BoundingBox(float X, float Y, float Width, float Height)
   public Idrak.Abstraction.Data.BoundingBox Clip(float width, float height)
@@ -1075,6 +1080,11 @@ public interface Idrak.Abstraction.Data.IPageLayout
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Abstraction.Data.IPen : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.PenSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public float Stray(Idrak.Abstraction.Data.PenSettings settings, float width)
+  public void Stroke(System.ReadOnlySpan<Idrak.Abstraction.Data.PenPoint> path, bool closed, Idrak.Abstraction.Data.PenSettings settings, int seed, Idrak.Abstraction.Data.PenStroke stroke)
+
 public interface Idrak.Abstraction.Data.IReadingOrder
   public string FromColumns(string columns, bool rightToLeft)
   public string Name { get; }
@@ -1103,6 +1113,18 @@ public interface Idrak.Abstraction.Data.IScanProfile
   public Idrak.Abstraction.Data.ImageTransformPipeline Sample(int seed)
   public string Name { get; }
   public string Summary { get; }
+
+public interface Idrak.Abstraction.Data.IShape : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public (default) System.Collections.Generic.IReadOnlySet<string> WholeKeys { get; }
+  public Idrak.Abstraction.Data.ShapePlan Plan(Idrak.Abstraction.Data.ShapeStep step, Idrak.Abstraction.Data.ShapeContext context)
+  public void Check(Idrak.Abstraction.Data.ShapeStep step)
+
+public interface Idrak.Abstraction.Data.IShapeProfile : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.ShapePipeline Sample(int seed)
+
+public interface Idrak.Abstraction.Data.ITextBinding : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.BoundText Bind(System.Collections.Generic.IReadOnlyList<string> lines, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeRegion> regions, Idrak.Abstraction.Data.TextBindingSettings settings, int seed)
+  public Idrak.Abstraction.Data.TextBindingSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
 public interface Idrak.Abstraction.Data.ITextShaper
   public Idrak.Abstraction.Data.ShapedGlyph[] Shape(Idrak.Abstraction.Data.IFontFace font, string text, Idrak.Abstraction.Data.TextRun run, System.Collections.Generic.IReadOnlyCollection<string>? features = null)
@@ -1299,6 +1321,20 @@ public static class Idrak.Abstraction.Data.PageLayouts
   public static void Register(Idrak.Abstraction.Data.IPageLayout layout)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Abstraction.Data.PageOptions
+  public static (float, float) Range(string what, string value, float least, float most)
+  public static System.Collections.Generic.IReadOnlyDictionary<string, string> None { get; }
+  public static System.Collections.Generic.IReadOnlyDictionary<string, string> Only(System.Collections.Generic.IReadOnlyDictionary<string, string> options, System.Collections.Generic.IReadOnlySet<string> keys)
+  public static System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<string, string>> Split(string? settings)
+  public static System.Collections.Generic.IReadOnlyList<string> List(string what, string value)
+  public static System.Collections.Generic.IReadOnlySet<int> Indexes(string what, string value, int least, int most)
+  public static bool Switch(string what, string value)
+  public static float Chance(string what, string value)
+  public static float Number(string what, string value, float least, float most)
+  public static float[] Numbers(string what, string value, float least, float most)
+  public static int Integer(string what, string value, int least, int most)
+  public static string Choice(string what, string value, scoped params System.ReadOnlySpan<string> choices)
+
 public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.Abstraction.Data.PageStyle>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PageStyle()
   public (float, float) BodySize { get; init; }
@@ -1306,6 +1342,7 @@ public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.
   public (float, float) Ink { get; init; }
   public (float, float) LineSpacing { get; init; }
   public (float, float) Margin { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
   public bool Color { get; init; }
   public float BlueSignature { get; init; }
@@ -1318,6 +1355,41 @@ public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.
   public int Height { get; init; }
   public int Width { get; init; }
   public required System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fonts { get; init; }
+
+public readonly record struct Idrak.Abstraction.Data.PenPoint : System.IEquatable<Idrak.Abstraction.Data.PenPoint>
+  public PenPoint(float X, float Y, float Width, float Ink = 1f)
+  public float Ink { get; init; }
+  public float Width { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+
+public class Idrak.Abstraction.Data.PenSettings
+  public PenSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public static Idrak.Abstraction.Data.PenSettings None { get; }
+
+public sealed class Idrak.Abstraction.Data.PenStroke : System.IDisposable
+  public PenStroke(int capacity = 64)
+  public System.ReadOnlySpan<Idrak.Abstraction.Data.PenPoint> Points { get; }
+  public bool Closed { get; set; }
+  public float MeanInk()
+  public int Count { get; }
+  public void Add(in Idrak.Abstraction.Data.PenPoint point)
+  public void Clear()
+  public void Dispose()
+
+public static class Idrak.Abstraction.Data.Pens
+  public const string Ideal = "ideal"
+  public static Idrak.Abstraction.Data.IPen Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IPen? Default(string name)
+  public static Idrak.Abstraction.Data.IPen? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IPen pen)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public readonly record struct Idrak.Abstraction.Data.PixelBox : System.IEquatable<Idrak.Abstraction.Data.PixelBox>
   public Idrak.Abstraction.Data.BoundingBox ToBoundingBox()
@@ -1387,6 +1459,128 @@ public static class Idrak.Abstraction.Data.ScanProfiles
   public static void Register(Idrak.Abstraction.Data.IScanProfile profile)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Abstraction.Data.ShapeArea
+  public (float, float, float, float) Bounds()
+  public ShapeArea(float[] points, float tone)
+  public System.ReadOnlyMemory<float> Points { get; }
+  public float Tone { get; }
+
+public sealed record Idrak.Abstraction.Data.ShapeContext : System.IEquatable<Idrak.Abstraction.Data.ShapeContext>
+  public Idrak.Abstraction.Data.ShapeContext Place(Idrak.Abstraction.Data.ShapeStep step)
+  public ShapeContext()
+  public bool GrowsDown { get; init; }
+  public bool RightToLeft { get; init; }
+  public float Bottom { get; }
+  public float Flatness { get; init; }
+  public float Height { get; init; }
+  public float LineHeight { get; init; }
+  public float Right { get; }
+  public float StrokeWidth { get; init; }
+  public float TextSize { get; init; }
+  public float Width { get; init; }
+  public float X { get; init; }
+  public float XAt(float share)
+  public float Y { get; init; }
+  public float YAt(float share)
+  public int Lines { get; init; }
+  public int MostUnits { get; init; }
+  public int Seed { get; init; }
+
+public sealed class Idrak.Abstraction.Data.ShapePath
+  public (float, float, float, float) Bounds()
+  public ShapePath(float[] points, bool closed = false, float width = 1f, float[]? dash = null, float tone = 1f)
+  public System.ReadOnlyMemory<float> Dash { get; }
+  public System.ReadOnlyMemory<float> Points { get; }
+  public bool Closed { get; }
+  public float Tone { get; }
+  public float Width { get; }
+  public int Count { get; }
+
+public sealed class Idrak.Abstraction.Data.ShapePipeline : System.IEquatable<Idrak.Abstraction.Data.ShapePipeline>
+  public Idrak.Abstraction.Data.ShapePipeline Then(Idrak.Abstraction.Data.ShapePipeline? next)
+  public ShapePipeline(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Data.ShapeStep> steps)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeStep> Steps { get; }
+  public System.Text.Json.Nodes.JsonNode? ToJson()
+  public bool Equals(Idrak.Abstraction.Data.ShapePipeline? other)
+  public bool IsEmpty { get; }
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public static Idrak.Abstraction.Data.ShapePipeline Empty { get; }
+  public static Idrak.Abstraction.Data.ShapePipeline FromJson(System.Text.Json.Nodes.JsonNode? json)
+  public static Idrak.Abstraction.Data.ShapePipeline Parse(string? text)
+  public static void Check(Idrak.Abstraction.Data.IShape shape, Idrak.Abstraction.Data.ShapeStep step)
+
+public sealed class Idrak.Abstraction.Data.ShapePlan
+  public ShapePlan(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapePath> paths, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeArea>? areas = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeRegion>? regions = null)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeArea> Areas { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapePath> Paths { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeRegion> Regions { get; }
+  public bool IsEmpty { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.Data.ShapePlan Empty { get; }
+
+public sealed class Idrak.Abstraction.Data.ShapeProfile : Idrak.Abstraction.Data.IShapeProfile, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.ShapePipeline Sample(int seed)
+  public ShapeProfile(string name, string text, string? summary = null)
+  public System.Collections.Generic.IReadOnlyList<string> ShapeNames { get; }
+  public override string ToString()
+  public string Name { get; }
+  public string Summary { get; }
+  public string Text { get; }
+
+public static class Idrak.Abstraction.Data.ShapeProfiles
+  public static Idrak.Abstraction.Data.IShapeProfile Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IShapeProfile Resolve(string nameOrText)
+  public static Idrak.Abstraction.Data.IShapeProfile? Default(string name)
+  public static Idrak.Abstraction.Data.IShapeProfile? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IShapeProfile profile)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Data.ShapeRegion : System.IEquatable<Idrak.Abstraction.Data.ShapeRegion>
+  public ShapeRegion(int Group, int Index, float X, float Y, float Width, float Height)
+  public float Height { get; init; }
+  public float Width { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+  public int Group { get; init; }
+  public int Index { get; init; }
+
+public sealed class Idrak.Abstraction.Data.ShapeStep : System.IEquatable<Idrak.Abstraction.Data.ShapeStep>
+  public (float, float) At()
+  public (float, float) Pair(string key, (float, float) otherwise, float least, float most)
+  public (float, float) Range(string key, (float, float) otherwise, float least, float most)
+  public (float, float) Size()
+  public Idrak.Abstraction.Data.ShapeStep With(string key, string value)
+  public ShapeStep(string name, string? value = null, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public System.Collections.Generic.IReadOnlyList<string>? List(string key)
+  public bool Equals(Idrak.Abstraction.Data.ShapeStep? other)
+  public bool Has(string key)
+  public bool InLast()
+  public bool Switch(string key, bool otherwise)
+  public float Margin()
+  public float Number(string key, float otherwise, float least, float most)
+  public float Tone(float otherwise = 1f)
+  public float WidthFactor()
+  public float[] Dash()
+  public float[]? Numbers(string key, float least, float most)
+  public float[]? Points(string key, int least)
+  public int Integer(string key, int otherwise, int least, int most)
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public string Choice(string key, string otherwise, scoped params System.ReadOnlySpan<string> choices)
+  public string Name { get; }
+  public string? Option(string key, string? otherwise = null)
+  public string? Value { get; }
+  public void CheckCommon()
+  public void ThrowIfUnknownOptions(System.Collections.Generic.IReadOnlySet<string> keys)
+
 public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquatable<Idrak.Abstraction.Data.ShapedGlyph>
   public ShapedGlyph(int Glyph, int Cluster, int XAdvance, int YAdvance, int XOffset, int YOffset)
   public int Cluster { get; init; }
@@ -1395,6 +1589,36 @@ public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquat
   public int XOffset { get; init; }
   public int YAdvance { get; init; }
   public int YOffset { get; init; }
+
+public static class Idrak.Abstraction.Data.Shapes
+  public static Idrak.Abstraction.Data.IShape Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IShape? Default(string name)
+  public static Idrak.Abstraction.Data.IShape? Find(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.OptionKeys CommonKeys { get; }
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IShape shape)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public class Idrak.Abstraction.Data.TextBindingSettings
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public TextBindingSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static Idrak.Abstraction.Data.TextBindingSettings None { get; }
+
+public static class Idrak.Abstraction.Data.TextBindings
+  public const string Sequence = "sequence"
+  public static Idrak.Abstraction.Data.ITextBinding Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.ITextBinding? Default(string name)
+  public static Idrak.Abstraction.Data.ITextBinding? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.ITextBinding binding)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public enum Idrak.Abstraction.Data.TextClusters : int
   Characters = 1

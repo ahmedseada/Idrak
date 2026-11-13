@@ -200,6 +200,41 @@ public static class Conformance
         Check(order ?? ReadingOrders.Get(name), new ReadingOrderSuite(order is null ? null : ReadingOrders.Default(name), invertible), options);
 
     /// <summary>
+    /// Checks a shape (<see cref="ShapeSuite"/>): the same plan for the same step and context, regions inside the box
+    /// asked for and not overlapping, widths honoured from the start side, paths inside the box give or take their
+    /// stroke, and an option it does not take refused; on <paramref name="steps"/> (its name alone when none: give steps
+    /// for a shape that needs options, such as a polyline's points).
+    /// </summary>
+    public static ConformanceReport CheckShape(string name, IShape? shape = null, IReadOnlyList<ShapeStep>? steps = null, ContractCheckOptions? options = null) =>
+        Check(shape ?? Shapes.Get(name), new ShapeSuite(steps is { Count: > 0 } ? steps : [new ShapeStep(name)]), options);
+
+    /// <summary>
+    /// Checks a pen (<see cref="PenSuite"/>): the same stroke for the same seed, every point within what it declares it
+    /// strays, widths above 0 and inks from 0 to 1, and with <paramref name="exact"/> the path itself; with its defaults and
+    /// each of <paramref name="settings"/>.
+    /// </summary>
+    public static ConformanceReport CheckPen(string name, IPen? pen = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, bool exact = false,
+        ContractCheckOptions? options = null) =>
+        Check(pen ?? Pens.Get(name), new PenSuite(settings, exact), options);
+
+    /// <summary>
+    /// Checks a text binding (<see cref="TextBindingSuite"/>): a text per region, the same for the same seed, the texts
+    /// units of the lines in order, and the label exactly the drawn text a line a group; with its defaults and each of
+    /// <paramref name="settings"/>.
+    /// </summary>
+    public static ConformanceReport CheckTextBinding(string name, ITextBinding? binding = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null,
+        ContractCheckOptions? options = null) =>
+        Check(binding ?? TextBindings.Get(name), new TextBindingSuite(settings), options);
+
+    /// <summary>
+    /// Checks a page layout (<see cref="PageLayoutSuite"/>) drawing <paramref name="contents"/> in <paramref name="style"/>
+    /// (its fonts the caller's): the same seed draws the same page, the text is exactly the drawn text, and every part
+    /// with text is inside the page and inked. Four random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    public static ConformanceReport CheckPageLayout(string name, PageStyle style, IReadOnlyList<PageContent> contents, IPageLayout? layout = null, ContractCheckOptions? options = null) =>
+        Check(layout ?? PageLayouts.Get(name), new PageLayoutSuite(style, contents), options ?? new ContractCheckOptions { RandomCases = 4 });
+
+    /// <summary>
     /// Checks a network recipe (Idrak's <c>NetworkRecipes</c>, given as <see cref="NetworkRecipeUnderTest"/>;
     /// <see cref="NetworkRecipeSuite"/>): the same seed gives the same weights and predictions, the predictions are finite
     /// and keep the batch, and, given a <paramref name="reference"/> (the library's recipe of that name), the same

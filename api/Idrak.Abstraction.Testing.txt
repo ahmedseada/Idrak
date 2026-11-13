@@ -138,6 +138,8 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckLinkProfile(Idrak.Abstraction.Cluster.ILinkProfile profile, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckNetworkRecipe(string recipe, Idrak.Abstraction.Testing.NetworkRecipeUnderTest builder, Idrak.Abstraction.Testing.NetworkRecipeUnderTest? reference = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.NetworkRecipeSample>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckOptimizerKind(string name, Idrak.Abstraction.Training.IOptimizerKind? kind = null, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckPageLayout(string name, Idrak.Abstraction.Data.PageStyle style, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageContent> contents, Idrak.Abstraction.Data.IPageLayout? layout = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckPen(string name, Idrak.Abstraction.Data.IPen? pen = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool exact = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPolicyLoss(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, Idrak.Abstraction.Reinforcement.IPolicyLoss? reference = null, bool needsReference = false, bool needsValues = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPreferencePairSource(Idrak.Abstraction.Reinforcement.IPreferencePairSource source, System.Collections.Generic.IReadOnlyDictionary<string, string>? sourceOptions = null, Idrak.Abstraction.Reinforcement.IPreferencePairSource? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPretrained(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IPretrainedTokenizer? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -145,8 +147,10 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckReadingOrder(string name, Idrak.Abstraction.Data.IReadingOrder? order = null, bool invertible = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRewardFunction(Idrak.Abstraction.Reinforcement.IRewardFunction reward, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> samples, System.Collections.Generic.IReadOnlyDictionary<string, string>? rewardOptions = null, Idrak.Abstraction.Reinforcement.IRewardFunction? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.IRopeScaling? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckShape(string name, Idrak.Abstraction.Data.IShape? shape = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeStep>? steps = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckTextBinding(string name, Idrak.Abstraction.Data.ITextBinding? binding = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextLineSegmenter(System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage> segmenter, System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextMatcher(Idrak.Abstraction.Testing.TextMatchSearch matcher, Idrak.Abstraction.Testing.TextMatchSearch? reference = null, bool wordBoundaries = true, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTopology(Idrak.Abstraction.Cluster.IClusterTopology topology, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -364,6 +368,24 @@ public sealed class Idrak.Abstraction.Testing.OptimizerKindSuite : Idrak.Abstrac
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Training.IOptimizerKind implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
+public sealed class Idrak.Abstraction.Testing.PageLayoutSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IPageLayout>
+  public Idrak.Abstraction.Data.PageStyle Style { get; }
+  public PageLayoutSuite(Idrak.Abstraction.Data.PageStyle style, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageContent> contents)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageContent> Contents { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.IPageLayout implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.PenSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IPen>
+  public PenSuite(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool exact = false)
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>> Settings { get; }
+  public bool Exact { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.IPen implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public sealed class Idrak.Abstraction.Testing.PolicyLossSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Reinforcement.IPolicyLoss>
   public PolicyLossSuite(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, Idrak.Abstraction.Reinforcement.IPolicyLoss? reference = null)
   public bool NeedsReference { get; init; }
@@ -526,6 +548,14 @@ public sealed class Idrak.Abstraction.Testing.SequencePoolerSuite : Idrak.Abstra
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.ISequencePooler implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
+public sealed class Idrak.Abstraction.Testing.ShapeSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IShape>
+  public ShapeSuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeStep> steps)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeStep> Steps { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.IShape implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
 public sealed class Idrak.Abstraction.Testing.SpeechRecognizerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Testing.SpeechRecognizerUnderTest>
   public SpeechRecognizerSuite(int? silenceMaxChars = null)
   public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
@@ -578,6 +608,14 @@ public sealed class Idrak.Abstraction.Testing.StressReport
   public override string ToString()
   public string Subject { get; }
   public void ThrowIfFailed()
+
+public sealed class Idrak.Abstraction.Testing.TextBindingSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.ITextBinding>
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>> Settings { get; }
+  public TextBindingSuite(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.ITextBinding implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed class Idrak.Abstraction.Testing.TextLineSegmenterSuite : Idrak.Abstraction.Testing.ContractSuite<System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>>
   public System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>? Reference { get; }
