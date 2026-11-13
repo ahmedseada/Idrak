@@ -581,7 +581,28 @@ internal abstract partial class DesktopTests
                 var box = ContourBox(main.Points);
                 int marks = kaf.Count(c => c != main && Math.Sign(ContourArea(c.Points)) == Math.Sign(ContourArea(main.Points))
                     && ContourBox(c.Points) is var b && b.X0 >= box.X0 && b.Y0 >= box.Y0 && b.X1 <= box.X1 && b.Y1 <= box.Y1);
-                Check(keheh.Count == kaf.Count - marks, $"{name} {form}: ک has {keheh.Count} contours, kaf {kaf.Count} with {marks} inner marks");
+                var innerMarks = kaf.Where(c => c != main && Math.Sign(ContourArea(c.Points)) == Math.Sign(ContourArea(main.Points))
+                    && ContourBox(c.Points) is var b && b.X0 >= box.X0 && b.Y0 >= box.Y0 && b.X1 <= box.X1 && b.Y1 <= box.Y1).ToList();
+                Check(innerMarks.Count == marks && !keheh.Any(c => innerMarks.Any(m => m.Points.AsSpan().SequenceEqual(c.Points))),
+                    $"{name} {form}: ک keeps none of kaf's {marks} inner marks");
+
+                // A stem the strip left upright gets the letter's own slanted top stroke; elsewhere ک is kaf less its marks.
+                var top = Composition.TopStroke(main.Points, InkMeasure.Of(face.Outline(ShapedForm(face, 0x0643, form)), (int)em, 130)!.Value.Thickness);
+                bool drawn = marks > 0 && top is { Upright: true };
+                Check(drawn ? keheh.Count > kaf.Count - marks : keheh.Count == kaf.Count - marks,
+                    $"{name} {form}: ک has {keheh.Count} contours, kaf {kaf.Count} with {marks} inner marks, {(drawn ? "a slanted top drawn" : "nothing drawn")}");
+                if (drawn)
+                {
+                    // Its top now reaches beyond the stem (lam's top is the stem alone), and گ's bar runs parallel to the drawn stroke.
+                    double pen = InkMeasure.Of(face.Outline(ShapedForm(face, 0x0643, form)), (int)em, 130)!.Value.Thickness;
+                    double kehehTop = TopSpan(face, ShapedForm(face, 0x06A9, form)), lamTop = TopSpan(face, ShapedForm(face, 0x0644, form));
+                    Check(kehehTop >= lamTop + pen && lamTop < 2 * pen, $"{name} {form}: ک's top spans {kehehTop:F0} units, ل's {lamTop:F0} (the stem), the pen {pen:F0}");
+                    var strokePoints = keheh.Where(c => !kaf.Any(k => k.Points.AsSpan().SequenceEqual(c.Points))).SelectMany(c => c.Points).ToArray();
+                    double strokeAngle = Axis(strokePoints), barAngle = Axis(gaf[^1].Points);
+                    double difference = Math.Abs(strokeAngle - barAngle) % 180;
+                    Check(Math.Min(difference, 180 - difference) < 4, $"{name} {form}: گ's bar at {barAngle:F1}°, the drawn top stroke at {strokeAngle:F1}°");
+                }
+
                 Check(gaf.Count == keheh.Count + 1, $"{name} {form}: گ has {gaf.Count} contours, ک {keheh.Count}: one bar more");
                 var bar = ContourBox(gaf[^1].Points);
                 var body = ContourBox(keheh.MaxBy(c => Math.Abs(ContourArea(c.Points))).Points);
@@ -590,7 +611,121 @@ internal abstract partial class DesktopTests
             }
         }
 
-        Check(MappedFace("mohareb-hand") is var m && Composition.Split(m.Outline(ShapedForm(m, 0x0643, "isol"))).Count > Composition.Split(m.Outline(ShapedForm(m, 0x06A9, "isol"))).Count,
-            "mohareb-hand: its kaf's inner mark is left out of ک");
+        // The drawn stroke keeps the letter at its own height: ک no taller than kaf's tallest form and a pen (the stroke ends
+        // half a pen over it, its round end half a pen more), within the one pixel ink is read at (256 pixels per em).
+        var mohareb = MappedFace("mohareb-hand");
+        int upem = mohareb.Metrics.UnitsPerEm;
+        double tallest = FontMap.Forms.Max(f => InkMeasure.Of(mohareb.Outline(ShapedForm(mohareb, 0x0643, f)), upem, 130)!.Value.MaxY);
+        double pen0 = InkMeasure.Of(mohareb.Outline(ShapedForm(mohareb, 0x0643, "isol")), upem, 130)!.Value.Thickness;
+        foreach (string form in (string[])["isol", "fina"])
+        {
+            double top = InkMeasure.Of(mohareb.Outline(ShapedForm(mohareb, 0x06A9, form)), upem, 130)!.Value.MaxY;
+            Check(top <= tallest + pen0 + upem / 256.0, $"mohareb-hand {form}: ک's ink reaches {top:F0}, kaf's tallest form {tallest:F0}, the pen {pen0:F0}");
+        }
+
+        // ک never reads as ل: in every font and form, the two glyphs' inks overlap on at most 80% of their union.
+        foreach (string name in LegacyFonts)
+        {
+            var face = MappedFace(name);
+            foreach (string form in FontMap.Forms)
+            {
+                double overlap = InkOverlap(face, ShapedForm(face, 0x06A9, form), ShapedForm(face, 0x0644, form));
+                Check(overlap <= 0.8, $"{name} {form}: ک and ل share {overlap:P0} of their ink");
+            }
+        }
+    }
+
+    // The ink of a glyph at 256 pixels per em, origin at a fixed place: rows of booleans.
+    private static bool[,] InkGrid(IFontFace face, int glyph)
+    {
+        const int Size = 640;
+        float scale = 256f / face.Metrics.UnitsPerEm;
+        var coverage = new float[Size * Size];
+        OutlineRasterizers.Get().Fill(face.Outline(glyph), scale, 160, 420, coverage, Size, Size);
+        var grid = new bool[Size, Size];
+        for (int y = 0; y < Size; y++)
+        {
+            for (int x = 0; x < Size; x++)
+            {
+                grid[y, x] = coverage[y * Size + x] > 0.43f;
+            }
+        }
+
+        return grid;
+    }
+
+    // The share of two glyphs' ink (the union) both cover.
+    private static double InkOverlap(IFontFace face, int a, int b)
+    {
+        var (ga, gb) = (InkGrid(face, a), InkGrid(face, b));
+        int both = 0, either = 0;
+        for (int y = 0; y < ga.GetLength(0); y++)
+        {
+            for (int x = 0; x < ga.GetLength(1); x++)
+            {
+                both += ga[y, x] && gb[y, x] ? 1 : 0;
+                either += ga[y, x] || gb[y, x] ? 1 : 0;
+            }
+        }
+
+        return either == 0 ? 1 : (double)both / either;
+    }
+
+    // How wide, in font units, a glyph's ink is in the top fifth of its height.
+    private static double TopSpan(IFontFace face, int glyph)
+    {
+        var grid = InkGrid(face, glyph);
+        int top = -1, bottom = -1;
+        for (int y = 0; y < grid.GetLength(0) && top < 0; y++)
+        {
+            for (int x = 0; x < grid.GetLength(1); x++)
+            {
+                top = grid[y, x] ? y : top;
+            }
+        }
+
+        for (int y = grid.GetLength(0) - 1; y >= 0 && bottom < 0; y--)
+        {
+            for (int x = 0; x < grid.GetLength(1); x++)
+            {
+                bottom = grid[y, x] ? y : bottom;
+            }
+        }
+
+        int left = int.MaxValue, right = -1;
+        for (int y = top; y >= 0 && y <= top + (bottom - top) / 5; y++)
+        {
+            for (int x = 0; x < grid.GetLength(1); x++)
+            {
+                if (grid[y, x])
+                {
+                    (left, right) = (Math.Min(left, x), Math.Max(right, x));
+                }
+            }
+        }
+
+        return right < 0 ? 0 : (right - left + 1) * face.Metrics.UnitsPerEm / 256.0;
+    }
+
+    // The direction (degrees, -90 to 90) of the main axis of a set of points.
+    private static double Axis(float[] p)
+    {
+        double mx = 0, my = 0;
+        int n = p.Length / 2;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            (mx, my) = (mx + p[i], my + p[i + 1]);
+        }
+
+        (mx, my) = (mx / n, my / n);
+        double cxx = 0, cyy = 0, cxy = 0;
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            double dx = p[i] - mx, dy = p[i + 1] - my;
+            (cxx, cyy, cxy) = (cxx + dx * dx, cyy + dy * dy, cxy + dx * dy);
+        }
+
+        double angle = 0.5 * Math.Atan2(2 * cxy, cxx - cyy) * 180 / Math.PI;
+        return angle > 90 ? angle - 180 : angle < -90 ? angle + 180 : angle;
     }
 }

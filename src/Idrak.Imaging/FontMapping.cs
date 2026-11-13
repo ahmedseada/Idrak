@@ -257,6 +257,7 @@ internal sealed class MappedFontFace : IFontFace
     private readonly List<(DrawnSet Set, int Index, int Glyph)> _drawn;     // drawn glyphs: their set, their index in it, their glyph id
     private readonly int[] _letters;                                         // the letters' plain glyphs (they size drawn glyphs of "letters")
     private readonly List<(ComposedForm Recipe, int Body, int Glyph)> _composed;   // composed glyphs: their recipe, the font's glyph they start from, their id
+    private readonly Dictionary<int, int[]> _letterForms;                    // each letter's glyph in each form (a composed recipe measures its source letter)
     private readonly Lazy<(GlyphOutline Outline, int Advance)[]> _drawnGlyphs;     // the drawn and composed glyphs, after the font's own
     private readonly Lazy<byte[]> _gsub, _gdef, _gpos;
 
@@ -272,6 +273,7 @@ internal sealed class MappedFontFace : IFontFace
         _ownMarks = [];
         _drawn = [];
         _composed = [];
+        _letterForms = forms;
         var ligatureGlyphs = new HashSet<int>();
 
         foreach (var (code, glyphs) in forms)
@@ -575,9 +577,17 @@ internal sealed class MappedFontFace : IFontFace
             }
         }
 
-        // Composed letters: the font's glyph, its dots as the recipe says, its strokes drawn at the marks' size.
+        // Composed letters: the font's glyph, its dots as the recipe says, its strokes drawn at the marks' size; a stem left
+        // bare gets its letter's own slanted top stroke, measured once per letter.
+        var slants = new Dictionary<int, SlantedTop?>();
         foreach (var (recipe, body, glyph) in _composed)
         {
+            SlantedTop? slanted = null;
+            if (recipe.Upright.Length > 0 && !slants.TryGetValue(recipe.From, out slanted))
+            {
+                slants[recipe.From] = slanted = Slant(recipe.From);
+            }
+
             GlyphOutline? strokes = null;
             if (recipe.Strokes.Length > 0)
             {
@@ -585,10 +595,45 @@ internal sealed class MappedFontFace : IFontFace
                 strokes = StrokeDrawing.Draw(stroke, MarkSize("marks"), _drawing, DrawnGlyphData.Library.DiscSides)[0].Outline;
             }
 
-            result[glyph - _inner.GlyphCount] = (Composition.Compose(_inner.Outline(body), recipe, strokes, upem, _map.AnchorGap, _map.AnchorWindow), _inner.Advance(body));
+            result[glyph - _inner.GlyphCount] = (Composition.Compose(_inner.Outline(body), recipe, strokes, upem, _map.AnchorGap, _map.AnchorWindow, slanted,
+                DrawnGlyphData.Library.DiscSides), _inner.Advance(body));
         }
 
         return result;
+    }
+
+    // A letter's own slanted top stroke: over its forms whose top stroke is slanted, the mean direction, the median length
+    // and the median pen (of all its forms), and the tallest top of its forms; null when none is slanted.
+    private SlantedTop? Slant(int letter)
+    {
+        if (!_letterForms.TryGetValue(letter, out var glyphs))
+        {
+            return null;
+        }
+
+        int upem = _inner.Metrics.UnitsPerEm;
+        var pens = new List<double>();
+        var lengths = new List<double>();
+        double sx = 0, sy = 0, tallest = double.NegativeInfinity;
+        foreach (int g in glyphs.Where(g => g != 0 && g < _inner.GlyphCount).Distinct())
+        {
+            var outline = _inner.Outline(g);
+            if (InkMeasure.Of(outline, upem, _map.AnchorWindow) is not { } ink || Composition.MainContour(outline) is not { } main)
+            {
+                continue;
+            }
+
+            pens.Add(ink.Thickness);
+            tallest = Math.Max(tallest, ink.MaxY);
+            if (Composition.TopStroke(main, ink.Thickness) is { Upright: false } top)
+            {
+                (sx, sy) = (sx + top.Ux, sy + top.Uy);
+                lengths.Add(top.Length);
+            }
+        }
+
+        double norm = Math.Sqrt(sx * sx + sy * sy);
+        return lengths.Count == 0 || norm == 0 ? null : new SlantedTop(sx / norm, sy / norm, InkMeasure.Median(lengths), InkMeasure.Median(pens)) { Top = tallest };
     }
 
     // The typical size of a font's glyphs: of those at least half as tall as the tallest, the median ink height, width

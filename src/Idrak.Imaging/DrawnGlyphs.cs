@@ -261,6 +261,21 @@ internal sealed record ComposedForm(int From, string? FromForm, int? Dots, strin
 
     /// <summary>Whether a bar parallel to the body's top stroke is added above it, its length, slant and pen measured from that stroke.</summary>
     public bool Bar { get; init; }
+
+    /// <summary>
+    /// Strokes drawn where the body's top stroke stands upright and <see cref="Strip"/> left out an inner mark (a bare stem
+    /// would read as another letter): on a frame at the stem's top whose u axis runs along the font's own slanted top
+    /// stroke of the letter (its direction and length, measured from the letter's forms whose top is slanted), v across it,
+    /// drawn with that letter's pen. <see cref="Bar"/> then runs parallel to them.
+    /// </summary>
+    public DrawnStroke[] Upright { get; init; } = [];
+}
+
+/// <summary>A letter's own slanted top stroke, measured from its forms whose top is slanted: its direction (pointing up), length and pen.</summary>
+internal readonly record struct SlantedTop(double Ux, double Uy, double Length, double Pen)
+{
+    /// <summary>The tallest top of the letter's forms (font units): a drawn stroke ends there, so the letter keeps its height.</summary>
+    public double Top { get; init; } = double.PositiveInfinity;
 }
 
 /// <summary>A letter composed from the font's own glyphs: the same recipe in every form, or one per form.</summary>
@@ -415,7 +430,21 @@ internal sealed class DrawnGlyphData
             : FontMarkPlace.Above;
         bool strip = e.TryGetProperty("strip", out var s) && (s.ValueKind is JsonValueKind.True or JsonValueKind.False ? s.GetBoolean() : throw bad($"{key}.strip", "is true or false"));
         bool bar = e.TryGetProperty("bar", out var b) && (b.ValueKind == JsonValueKind.String && b.GetString() == "top" ? true : throw bad($"{key}.bar", "is \"top\" (a bar parallel to the top stroke)"));
-        return new ComposedForm(code, form, dots, arrange, [.. strokes], place) { Strip = strip, Bar = bar };
+        var upright = new List<DrawnStroke>();
+        if (e.TryGetProperty("upright", out var up))
+        {
+            if (up.ValueKind != JsonValueKind.Array)
+            {
+                throw bad($"{key}.upright", "is a list of strokes (on the frame of the font's slanted top stroke)");
+            }
+
+            foreach (var stroke in up.EnumerateArray())
+            {
+                upright.Add(Stroke(stroke, $"{key}.upright", bad));
+            }
+        }
+
+        return new ComposedForm(code, form, dots, arrange, [.. strokes], place) { Strip = strip, Bar = bar, Upright = [.. upright] };
     }
 
     private static DrawnStroke Stroke(JsonElement stroke, string key, Func<string, string, InvalidDataException> bad)
@@ -489,7 +518,7 @@ internal static class StrokeDrawing
 
     // Every segment a quad of the stroke's width and a disc at every other point and the last, all clockwise (y up), so
     // overlaps fill once under the nonzero rule.
-    private static void Capsules(List<(double X, double Y)> path, double width, int sides, List<(double X, double Y)[]> contours)
+    internal static void Capsules(List<(double X, double Y)> path, double width, int sides, List<(double X, double Y)[]> contours)
     {
         double r = width / 2;
         for (int i = 0; i + 1 < path.Count; i++)
@@ -581,9 +610,11 @@ internal static class Composition
     private const double DotShare = 0.18;
 
     /// <summary>The composed outline: <paramref name="body"/>'s contours, its dots as <paramref name="recipe"/> says, and <paramref name="strokes"/> (a mark's outline at its origin) placed on its ink.</summary>
-    public static GlyphOutline Compose(GlyphOutline body, ComposedForm recipe, GlyphOutline? strokes, int unitsPerEm, int gap, int window)
+    public static GlyphOutline Compose(GlyphOutline body, ComposedForm recipe, GlyphOutline? strokes, int unitsPerEm, int gap, int window,
+        SlantedTop? slanted = null, int discSides = 10)
     {
         var contours = Split(body);
+        int before = contours.Count;
         if (recipe.Strip && contours.Count > 1)
         {
             // The body's separate marks: contours wound as its main one, smaller, and inside its box (holes are wound the other way).
@@ -620,10 +651,69 @@ internal static class Composition
             result.AddRange(contours);
         }
 
+        // A stem left bare by the strip (its top upright): the letter's own slanted top stroke drawn on it, joined at the stem's top.
+        (double X, double Y, double Ux, double Uy, double Length, double Pen)? drawnTop = null;
+        if (recipe.Upright.Length > 0 && contours.Count < before && slanted is { } top && contours.Count > 0)
+        {
+            var main = contours.MaxBy(c => Math.Abs(Area(c.Points)));
+            if (TopStroke(main.Points, top.Pen) is { Upright: true })
+            {
+                var p = main.Points;
+                int highest = 1;
+                for (int i = 3; i < p.Length; i += 2)
+                {
+                    highest = p[i] > p[highest] ? i : highest;
+                }
+
+                // Joined to the stem where the stroke then ends at the letter's own height (half a pen over its tallest form), not
+                // lower than the stem's middle.
+                var (_, stemBottom, _, _) = Box(p);
+                double stemTop = p[highest] - top.Pen / 2;
+                double oy = Math.Clamp(top.Top + top.Pen / 2 - top.Length * top.Uy, (stemBottom + p[highest]) / 2, stemTop);
+                double length = Math.Min(top.Length, Math.Max(top.Pen, (top.Top + top.Pen / 2 - oy) / top.Uy));   // no taller than the letter
+                top = top with { Length = length };
+                double ox = p[highest - 1], nx = -top.Uy, ny = top.Ux;
+                var drawn = new List<(double X, double Y)[]>();
+                foreach (var stroke in recipe.Upright)
+                {
+                    var path = stroke.Path().Select(q => (ox + (q.U * top.Ux + q.V * nx) * top.Length, oy + (q.U * top.Uy + q.V * ny) * top.Length)).ToList();
+                    StrokeDrawing.Capsules(path, top.Pen, discSides, drawn);
+                }
+
+                int sign = Math.Sign(Area(main.Points));
+                foreach (var contour in drawn)
+                {
+                    var points = new float[2 * contour.Length];
+                    for (int k = 0; k < contour.Length; k++)
+                    {
+                        points[2 * k] = (float)Math.Round(contour[k].X, MidpointRounding.ToEven);
+                        points[2 * k + 1] = (float)Math.Round(contour[k].Y, MidpointRounding.ToEven);
+                    }
+
+                    result.Add(Polygon(Math.Sign(Area(points)) == sign ? points : Reversed(points)));
+                }
+
+                drawnTop = (ox, oy, top.Ux, top.Uy, top.Length, top.Pen);
+            }
+        }
+
         if (recipe.Bar && contours.Count > 0 && InkMeasure.Of(body, unitsPerEm, window) is { } stroked)
         {
             var main = contours.MaxBy(c => Math.Abs(Area(c.Points)));
-            if (TopBar(main.Points, stroked.Thickness, Math.Sign(Area(main.Points))) is { } bar)
+            int sign = Math.Sign(Area(main.Points));
+            if (drawnTop is { } t)
+            {
+                // Parallel to the drawn stroke, above it by about two pens, as long as it.
+                double nx = -t.Uy, ny = t.Ux;
+                if (ny < 0)
+                {
+                    (nx, ny) = (-nx, -ny);
+                }
+
+                double cx = t.X + t.Ux * t.Length / 2 + nx * 2.2 * t.Pen, cy = t.Y + t.Uy * t.Length / 2 + ny * 2.2 * t.Pen;
+                result.Add(BarContour(cx, cy, t.Ux, t.Uy, Math.Max(0, t.Length / 2 - t.Pen / 2), t.Pen / 2, sign));
+            }
+            else if (TopBar(main.Points, stroked.Thickness, sign) is { } bar)
             {
                 result.Add(bar);
             }
@@ -649,6 +739,13 @@ internal static class Composition
         (3, "down") => [(-step / 2, step * 0.43), (step / 2, step * 0.43), (0, -step * 0.43)],
         _ => Enumerable.Range(0, count).Select(i => ((i - (count - 1) / 2.0) * step, 0.0)),
     };
+
+    /// <summary>The points of an outline's largest contour (by area), or null for an empty outline.</summary>
+    internal static float[]? MainContour(GlyphOutline outline)
+    {
+        var contours = Split(outline);
+        return contours.Count == 0 ? null : contours.MaxBy(c => Math.Abs(Area(c.Points))).Points;
+    }
 
     /// <summary>The contours of an outline, each its verbs (from its move to its close) and their points.</summary>
     public static List<(OutlineVerb[] Verbs, float[] Points)> Split(GlyphOutline outline)
@@ -745,7 +842,13 @@ internal static class Composition
             (nx, ny) = (-nx, -ny);
         }
 
-        double cx = mx + nx * 2.2 * pen, cy = my + ny * 2.2 * pen, half = Math.Max(0, length / 2 - pen / 2), r = pen / 2;
+        double cx = mx + nx * 2.2 * pen, cy = my + ny * 2.2 * pen;
+        return BarContour(cx, cy, ux, uy, Math.Max(0, length / 2 - pen / 2), pen / 2, sign);
+    }
+
+    // A round-ended bar: its middle, direction, half length (between the ends' centres) and radius; wound as `sign`.
+    private static (OutlineVerb[] Verbs, float[] Points) BarContour(double cx, double cy, double ux, double uy, double half, double r, int sign)
+    {
         const int Cap = 8;
         var points = new List<float>(4 * (Cap + 1));
         void Add(double x, double y)
@@ -767,18 +870,12 @@ internal static class Composition
         }
 
         var p = points.ToArray();
-        if (Math.Sign(Area(p)) != sign)
-        {
-            var reversed = new float[p.Length];
-            for (int i = 0; i < p.Length; i += 2)
-            {
-                reversed[p.Length - 2 - i] = p[i];
-                reversed[p.Length - 1 - i] = p[i + 1];
-            }
+        return Polygon(Math.Sign(Area(p)) != sign ? Reversed(p) : p);
+    }
 
-            p = reversed;
-        }
-
+    // A closed polygon of straight lines through the points.
+    private static (OutlineVerb[] Verbs, float[] Points) Polygon(float[] p)
+    {
         var verbs = new OutlineVerb[p.Length / 2 + 1];
         verbs[0] = OutlineVerb.Move;
         for (int i = 1; i < p.Length / 2; i++)
@@ -788,6 +885,73 @@ internal static class Composition
 
         verbs[^1] = OutlineVerb.Close;
         return (verbs, p);
+    }
+
+    private static float[] Reversed(float[] p)
+    {
+        var reversed = new float[p.Length];
+        for (int i = 0; i < p.Length; i += 2)
+        {
+            reversed[p.Length - 2 - i] = p[i];
+            reversed[p.Length - 1 - i] = p[i + 1];
+        }
+
+        return reversed;
+    }
+
+    /// <summary>
+    /// The top stroke of a glyph's main contour: the main axis of its points in the top band (the top 22% of its height, at
+    /// least a pen and a half), pointing up (or right when level), the stroke's whole length along that axis (the extent of
+    /// the contour's points in its upper half within a pen of the axis line, the band's extent at least), and whether it stands upright
+    /// (more than 0.85 of it vertical). Null for a contour too small to tell.
+    /// </summary>
+    internal static (double Ux, double Uy, double Length, bool Upright)? TopStroke(float[] contour, double pen)
+    {
+        var (_, y0, _, y1) = Box(contour);
+        double band = y1 - Math.Max((y1 - y0) * 0.22, pen * 1.5);
+        double sx = 0, sy = 0;
+        int n = 0;
+        for (int i = 0; i < contour.Length; i += 2)
+        {
+            if (contour[i + 1] >= band)
+            {
+                (sx, sy, n) = (sx + contour[i], sy + contour[i + 1], n + 1);
+            }
+        }
+
+        if (n < 2)
+        {
+            return null;
+        }
+
+        double mx = sx / n, my = sy / n, cxx = 0, cyy = 0, cxy = 0;
+        for (int i = 0; i < contour.Length; i += 2)
+        {
+            if (contour[i + 1] >= band)
+            {
+                double dx = contour[i] - mx, dy = contour[i + 1] - my;
+                (cxx, cyy, cxy) = (cxx + dx * dx, cyy + dy * dy, cxy + dx * dy);
+            }
+        }
+
+        double angle = 0.5 * PortableMath.Atan2(2 * cxy, cxx - cyy);
+        double ux = PortableMath.Cos(angle), uy = PortableMath.Sin(angle);
+        if (uy < 0 || (uy == 0 && ux < 0))
+        {
+            (ux, uy) = (-ux, -uy);
+        }
+
+        double low = double.MaxValue, high = double.MinValue;
+        for (int i = 0; i < contour.Length; i += 2)
+        {
+            double along = (contour[i] - mx) * ux + (contour[i + 1] - my) * uy, across = Math.Abs((contour[i + 1] - my) * ux - (contour[i] - mx) * uy);
+            if (contour[i + 1] >= band || (across <= pen && contour[i + 1] >= (y0 + y1) / 2))
+            {
+                (low, high) = (Math.Min(low, along), Math.Max(high, along));
+            }
+        }
+
+        return (ux, uy, high - low, Math.Abs(uy) > 0.85);
     }
 
     private static (float X0, float Y0, float X1, float Y1) Box(float[] p)
