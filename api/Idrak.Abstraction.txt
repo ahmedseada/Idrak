@@ -1762,6 +1762,7 @@ public sealed class Idrak.Abstraction.Data.ShapeStep : System.IEquatable<Idrak.A
   public float Margin()
   public float Number(string key, float otherwise, float least, float most)
   public float Tone(float otherwise = 1f)
+  public float Vertical()
   public float WidthFactor()
   public float? FlowHeight()
   public float[] Dash()

@@ -60,8 +60,9 @@ internal sealed class DataSynthCommand : Command
                                   box around the text) or one written as text, steps NAME[=VALUE][@CHANCE] with their
                                   options, "grid=auto x 18,widths=1:4:1*16,heavy-every=4,heavy-width=2..3" (shapes:
                                   line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text;
-                                  any takes flow=down to stack down the page, lines=N|rest, holds=paragraphs; also
-                                  text-grid-text, framed, circled; none)
+                                  any takes flow=down to stack down the page, lines=N|rest, holds=paragraphs,
+                                  valign=center|top|bottom|SHARE (where paragraphs sit); also text-grid-text, framed,
+                                  circled; none)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
                                   color, rule, emblem, stamp, blue-signature, header-font, crop (a chance

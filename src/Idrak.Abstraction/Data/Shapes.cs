@@ -446,6 +446,21 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
     /// <summary>Whether the step's regions hold wrapped paragraphs (<c>holds=paragraphs</c>) rather than one line of units each (<c>holds=lines</c>, the default).</summary>
     public bool HoldsParagraphs() => Choice("holds", "lines", "lines", "paragraphs") == "paragraphs";
 
+    /// <summary>
+    /// Where wrapped paragraphs sit down their region (<c>valign</c>), a share of the room left: <c>center</c> (0.5, the
+    /// default), <c>top</c> (0), <c>bottom</c> (1) or a share from 0 to 1. In a ring or an ellipse, 0 is as high as the
+    /// lines still fit it and 1 as low.
+    /// </summary>
+    /// <exception cref="ArgumentException">Neither a named place nor a share from 0 to 1.</exception>
+    public float Vertical() => Option("valign") switch
+    {
+        null => 0.5f,
+        var text when text.Trim().Equals("center", StringComparison.OrdinalIgnoreCase) => 0.5f,
+        var text when text.Trim().Equals("top", StringComparison.OrdinalIgnoreCase) => 0,
+        var text when text.Trim().Equals("bottom", StringComparison.OrdinalIgnoreCase) => 1,
+        var text => PageOptions.Number(What("valign") + " (center, top, bottom or a share from 0 to 1)", text, 0, 1),
+    };
+
     /// <summary>Reads every common option (<see cref="Shapes.CommonKeys"/>), throwing on a bad one, and that the shape's box stays inside the box it is placed in.</summary>
     /// <exception cref="ArgumentException">A bad common option.</exception>
     public void CheckCommon()
@@ -467,6 +482,7 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
         _ = FlowHeight();
         _ = Lines();
         _ = HoldsParagraphs();
+        _ = Vertical();
     }
 
     /// <summary>Throws unless every option is one the shape takes: one of <paramref name="keys"/> or a common one (<see cref="Shapes.CommonKeys"/>), naming them.</summary>
@@ -690,7 +706,8 @@ public sealed class ShapePipeline : IEquatable<ShapePipeline>
 /// region the step before made), <c>margin</c>, <c>width</c> (a factor of the stroke width), <c>dash</c>
 /// (solid|dashed|dotted), <c>tone</c>, <c>flow</c> (page|down: stacked below the parts before it, its height from what it
 /// holds), <c>gap</c> (below a stacked step, line heights), <c>height</c> (a stacked step's own, line heights),
-/// <c>lines</c> (N|rest: how many of the page's lines it takes) and <c>holds</c> (lines|paragraphs). Built in also:
+/// <c>lines</c> (N|rest: how many of the page's lines it takes), <c>holds</c> (lines|paragraphs) and <c>valign</c>
+/// (center|top|bottom|a share: where wrapped paragraphs sit down their region). Built in also:
 /// <c>text</c> (no lines drawn, one region of wrapped paragraphs). Register another with <see cref="Register"/>; one under a library name shadows
 /// the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
@@ -701,8 +718,8 @@ public static class Shapes
 
     static Shapes() => LibraryDefaults.Ensure(typeof(Shapes));
 
-    /// <summary>The options every shape takes besides its own: at, size, in, margin, width, dash, tone, flow, gap, height, lines, holds.</summary>
-    public static OptionKeys CommonKeys { get; } = new("at", "size", "in", "margin", "width", "dash", "tone", "flow", "gap", "height", "lines", "holds");
+    /// <summary>The options every shape takes besides its own: at, size, in, margin, width, dash, tone, flow, gap, height, lines, holds, valign.</summary>
+    public static OptionKeys CommonKeys { get; } = new("at", "size", "in", "margin", "width", "dash", "tone", "flow", "gap", "height", "lines", "holds", "valign");
 
     /// <summary>Registers <paramref name="shape"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     /// <exception cref="ArgumentException">A name with ',' or '=', or one that is a common option's key.</exception>

@@ -628,7 +628,8 @@ internal sealed class ShapesLayout : IPageLayout
             var region = usable[i].Region;
             if (paragraphs[i] is { Count: > 0 } held)
             {
-                var placed = FillParagraphs(p, region, held, justify: aim < p.Style.Justify, out int kept);
+                float vertical = usable[i].Owner >= 0 ? steps[usable[i].Owner].Vertical() : 0.5f;
+                var placed = FillParagraphs(p, region, held, justify: aim < p.Style.Justify, vertical, out int kept);
                 if (placed is null)
                 {
                     continue;                                       // nothing fits at the least size: the region stays empty
@@ -799,11 +800,21 @@ internal sealed class ShapesLayout : IPageLayout
             {
                 // The least height whose first paragraph region holds its share of the lines: the region's height less
                 // what its text needs only grows with the step's height (a wider region needs fewer lines), so bisect it.
+                // A round region is tried as it will be filled (kept clear of the pen, its lines shortened to the ellipse
+                // where they sit, placed as valign puts them): whether the text fits at the body's size only grows with it.
                 var share = slice.GetRange(0, Math.Max(1, slice.Count / held));
+                var round = probe.Regions.First(r => r.Paragraphs).Round ? new RoundText(share, p.Body, p.Glyphs, p.Rtl) : null;
+                float vertical = step.Vertical();
                 float Spare(float h)
                 {
                     var region = At(h).Regions.First(r => r.Paragraphs);
-                    return region.Height - (Need(p, share, region.Width - 2 * p.Stray, region.Round) + 2 * p.Stray);
+                    if (round is not null)
+                    {
+                        var kept = Kept(region, p.Stray);
+                        return kept.Width >= LeastRegion && kept.Height >= LeastRegion && round.Place(kept, vertical) is not null ? 0 : -1;
+                    }
+
+                    return region.Height - (Need(p, share, region.Width - 2 * p.Stray) + 2 * p.Stray);
                 }
 
                 float low = p.LineHeight, high = p.LineHeight * 3;
@@ -884,24 +895,27 @@ internal sealed class ShapesLayout : IPageLayout
     // The room kept round paragraphs' ink: a pixel and the most the glyph pose moves a glyph (its reach taken as 1.5 ems).
     private static float Room(Setup p, float size) => p.Glyphs.Reach(size, size * 1.5f) + 1;
 
-    // The height paragraphs need at the body's size in `width` (a round region needs more, its lines shortened).
-    private static float Need(Setup p, IReadOnlyList<string> paragraphs, float width, bool round)
+    // The height paragraphs need at the body's size in a rectangle `width` wide.
+    private static float Need(Setup p, IReadOnlyList<string> paragraphs, float width)
     {
         float room = Room(p, p.Size);
-        float usable = (round ? width * 0.75f : width) - 2 * room;
+        float usable = width - 2 * room;
         if (!(usable > 1))
         {
             return float.MaxValue / 4;
         }
 
         var block = TextLayout.Layout(string.Join("\n", paragraphs), p.Body, usable, TextAlignment.Start, p.Rtl);
-        float need = InkBox(block, out _).Height + 2 * room;
-        return round ? need * 1.3f : need;
+        return InkBox(block, out _).Height + 2 * room;
     }
+
+    // A region kept clear of the pen's reach on every side, as the page fills it.
+    private static ShapeRegion Kept(ShapeRegion r, float stray) =>
+        r with { X = r.X + stray, Y = r.Y + stray, Width = r.Width - 2 * stray, Height = r.Height - 2 * stray };
 
     // Paragraphs set inside a region at the body's size, or smaller down to the least size; when even that does not fit,
     // the last paragraph is left out and the rest tried again. Null when none fits.
-    private static List<(TextBlock Block, float X, float Y)>? FillParagraphs(Setup p, ShapeRegion region, IReadOnlyList<string> paragraphs, bool justify, out int kept)
+    private static List<(TextBlock Block, float X, float Y)>? FillParagraphs(Setup p, ShapeRegion region, IReadOnlyList<string> paragraphs, bool justify, float vertical, out int kept)
     {
         for (int count = paragraphs.Count; count > 0; count--)
         {
@@ -909,7 +923,7 @@ internal sealed class ShapesLayout : IPageLayout
             for (float size = p.Size; size >= Math.Max(2f, p.Size * p.LeastSize) - 1e-3f; size *= 0.92f)
             {
                 var style = p.Body with { Size = size };
-                var placed = region.Round ? Round(p, region, some, style) : Rectangle(p, region, some, style, justify);
+                var placed = region.Round ? new RoundText(some, style, p.Glyphs, p.Rtl).Place(region, vertical) : Rectangle(p, region, some, style, justify, vertical);
                 if (placed is not null)
                 {
                     kept = count;
@@ -922,8 +936,9 @@ internal sealed class ShapesLayout : IPageLayout
         return null;
     }
 
-    // Paragraphs wrapped in a rectangular region, their ink (and the pose's reach) inside it, centred.
-    private static List<(TextBlock, float, float)>? Rectangle(Setup p, ShapeRegion region, List<string> paragraphs, TextStyle style, bool justify)
+    // Paragraphs wrapped in a rectangular region, their ink (and the pose's reach) inside it, centred across and placed
+    // down it at `vertical` (a share of the room left: 0 top, 0.5 centred, 1 bottom).
+    private static List<(TextBlock, float, float)>? Rectangle(Setup p, ShapeRegion region, List<string> paragraphs, TextStyle style, bool justify, float vertical)
     {
         float room = Room(p, style.Size), width = region.Width - 2 * room;
         if (!(width > 1))
@@ -949,31 +964,90 @@ internal sealed class ShapesLayout : IPageLayout
             return null;
         }
 
-        return [(block, region.X + (region.Width - ink.Width) / 2 - ink.Left, region.Y + (region.Height - ink.Height) / 2 - ink.Top)];
+        return [(block, region.X + (region.Width - ink.Width) / 2 - ink.Left, region.Y + (region.Height - ink.Height) * vertical - ink.Top)];
+    }
+}
+
+/// <summary>
+/// Paragraphs set in the ellipse inscribed in a region: each line as many words as fit the ellipse's width at its height
+/// (its ink and the pose's reach included), centred across; the lines' block centred down the ellipse, or moved up or
+/// down by a share of how far it can go and still fit. Each run of words is laid out and measured once, whatever region
+/// it is tried in (the least ring that holds the text is searched with the same words many times).
+/// </summary>
+internal sealed class RoundText
+{
+    private readonly string[][] _words;
+    private readonly TextStyle _style;
+    private readonly GlyphPainter _glyphs;
+    private readonly bool _rtl;
+    private readonly float _lineHeight;
+    private readonly float _spill;
+    private readonly Dictionary<(int Paragraph, int Next, int Count), (TextBlock Block, float Left, float Top, float Width, float Height, float Need)> _runs = [];
+
+    /// <summary>The paragraphs (each one line of the text) in <paramref name="style"/>, drawn by <paramref name="glyphs"/>.</summary>
+    public RoundText(IReadOnlyList<string> paragraphs, TextStyle style, GlyphPainter glyphs, bool rtl)
+    {
+        _words = [.. paragraphs.Select(t => t.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))];
+        _style = style;
+        _glyphs = glyphs;
+        _rtl = rtl;
+        _lineHeight = style.Font.Metrics.LineHeight * style.Scale(style.Font) * style.LineSpacing;
+
+        // How far a line's ink reaches above and below its line box.
+        var probe = ShapesLayout.InkBox(TextLayout.Layout(string.Join(" ", paragraphs), style, float.PositiveInfinity, TextAlignment.Start, rtl), out float probeReach);
+        _spill = Math.Max(0, (probe.Height + 2 * glyphs.Reach(style.Size, probeReach) - _lineHeight) / 2);
     }
 
-    // Paragraphs in the ellipse inscribed in a region: each line as many words as fit the ellipse's width at its height
-    // (its ink and the pose's reach included), centred, the lines centred down the ellipse.
-    private static List<(TextBlock, float, float)>? Round(Setup p, ShapeRegion region, List<string> paragraphs, TextStyle style)
+    /// <summary>The height of one line.</summary>
+    public float LineHeight => _lineHeight;
+
+    /// <summary>
+    /// The lines placed in <paramref name="region"/>'s ellipse (each block with where its origin goes), the block at
+    /// <paramref name="vertical"/>: 0.5 centred, 0 as high as it still fits, 1 as low, a share between; null when the
+    /// text does not fit even centred.
+    /// </summary>
+    public List<(TextBlock Block, float X, float Y)>? Place(ShapeRegion region, float vertical)
+    {
+        var centred = Lines(region, 0);
+        if (centred is null || vertical == 0.5f)
+        {
+            return centred;
+        }
+
+        // How far the block can move that way and still fit: the room shrinks the further it goes, so bisect it.
+        float sign = vertical < 0.5f ? -1 : 1, low = 0, high = region.Height / 2;
+        for (int k = 0; k < 16; k++)
+        {
+            float middle = (low + high) / 2;
+            if (Lines(region, sign * middle) is not null)
+            {
+                low = middle;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return Lines(region, sign * low * Math.Abs(vertical - 0.5f) * 2) ?? centred;
+    }
+
+    // The lines with the block's middle `shift` below the ellipse's centre; null when a line does not fit.
+    private List<(TextBlock Block, float X, float Y)>? Lines(ShapeRegion region, float shift)
     {
         float cx = region.X + region.Width / 2, cy = region.Y + region.Height / 2, a = region.Width / 2, b = region.Height / 2;
-        float lineHeight = style.Font.Metrics.LineHeight * style.Scale(style.Font) * style.LineSpacing;
-        var words = paragraphs.Select(t => t.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).ToList();
-        // How far a line's ink reaches above and below its line box.
-        var probe = InkBox(TextLayout.Layout(string.Join(" ", paragraphs), style, float.PositiveInfinity, TextAlignment.Start, p.Rtl), out float probeReach);
-        float spill = Math.Max(0, (probe.Height + 2 * p.Glyphs.Reach(style.Size, probeReach) - lineHeight) / 2);
         int lines = 1;
         for (int attempt = 0; attempt < 6; attempt++)
         {
-            float top = cy - lines * lineHeight / 2;
+            float top = cy - lines * _lineHeight / 2 + shift;
             var placed = new List<(TextBlock, float, float)>();
             int line = 0;
-            foreach (var paragraph in words)
+            for (int paragraph = 0; paragraph < _words.Length; paragraph++)
             {
-                int next = 0;
-                while (next < paragraph.Length)
+                int next = 0, count = _words[paragraph].Length;
+                while (next < count)
                 {
-                    float y0 = top + line * lineHeight - spill, y1 = top + (line + 1) * lineHeight + spill;
+                    float y0 = top + line * _lineHeight - _spill, y1 = top + (line + 1) * _lineHeight + _spill;
                     float d = Math.Max(Math.Abs(y0 - cy), Math.Abs(y1 - cy));
                     if (d >= b)
                     {
@@ -981,26 +1055,19 @@ internal sealed class ShapesLayout : IPageLayout
                     }
 
                     float room = 2 * a * MathF.Sqrt(1 - d * d / (b * b));
-                    (TextBlock Block, (float Left, float Top, float Width, float Height) Ink)? best = null;
                     int take = 0;
-                    for (int k = 1; next + k <= paragraph.Length; k++)
+                    for (int k = 1; next + k <= count && Run(paragraph, next, k).Need <= room; k++)
                     {
-                        var block = TextLayout.Layout(string.Join(" ", paragraph, next, k), style, float.PositiveInfinity, TextAlignment.Start, p.Rtl);
-                        var ink = InkBox(block, out float reach);
-                        if (ink.Width + 2 * p.Glyphs.Reach(style.Size, reach) > room)
-                        {
-                            break;
-                        }
-
-                        (best, take) = ((block, ink), k);
+                        take = k;
                     }
 
-                    if (best is not { } fit)
+                    if (take == 0)
                     {
                         return null;
                     }
 
-                    placed.Add((fit.Block, cx - fit.Ink.Width / 2 - fit.Ink.Left, top + line * lineHeight + (lineHeight - fit.Ink.Height) / 2 - fit.Ink.Top));
+                    var fit = Run(paragraph, next, take);
+                    placed.Add((fit.Block, cx - fit.Width / 2 - fit.Left, top + line * _lineHeight + (_lineHeight - fit.Height) / 2 - fit.Top));
                     next += take;
                     line++;
                 }
@@ -1015,5 +1082,19 @@ internal sealed class ShapesLayout : IPageLayout
         }
 
         return null;
+    }
+
+    // The words `next` .. `next + count` of a paragraph on one line: the block, its ink box and the width it needs.
+    private (TextBlock Block, float Left, float Top, float Width, float Height, float Need) Run(int paragraph, int next, int count)
+    {
+        if (!_runs.TryGetValue((paragraph, next, count), out var run))
+        {
+            var block = TextLayout.Layout(string.Join(" ", _words[paragraph], next, count), _style, float.PositiveInfinity, TextAlignment.Start, _rtl);
+            var ink = ShapesLayout.InkBox(block, out float reach);
+            run = (block, ink.Left, ink.Top, ink.Width, ink.Height, ink.Width + 2 * _glyphs.Reach(_style.Size, reach));
+            _runs[(paragraph, next, count)] = run;
+        }
+
+        return run;
     }
 }
