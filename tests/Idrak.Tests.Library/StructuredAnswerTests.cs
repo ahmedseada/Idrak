@@ -128,9 +128,9 @@ internal abstract partial class Tests
             return;
         }
 
-        const string answer = "```json\n{\"court\": \"محكمة النقض\", \"year\": 2021, \"parties\": [\"أحمد\", \"\"], \"note\": null}\n```";
+        const string answer = "```json\n{\"office\": \"مكتب الرياض\", \"year\": 2021, \"members\": [\"أحمد\", \"\"], \"note\": null}\n```";
         Check(AnswerTexts.Get(AnswerTexts.Raw).Text(answer) == answer, "raw keeps the answer");
-        Check(AnswerTexts.Get(AnswerTexts.Values).Text(answer) == "محكمة النقض\n2021\nأحمد", AnswerTexts.Get(AnswerTexts.Values).Text(answer));
+        Check(AnswerTexts.Get(AnswerTexts.Values).Text(answer) == "مكتب الرياض\n2021\nأحمد", AnswerTexts.Get(AnswerTexts.Values).Text(answer));
         Check(AnswerTexts.Of("{\"a\": \"x\", \"b\": \"y", AnswerTexts.Values) == "x y", "repaired JSON's values, normalized");
         Check(AnswerTexts.Of("  plain\n\ttext ", AnswerTexts.Values) == "plain text", "an answer without JSON as it is, normalized");
         Check(AnswerTexts.Of("""{"output": "a", "rules": "b", "output": "c"}""", AnswerTexts.Values) == "c b", "a repeated key's last value (was an ArgumentException out of the metric)");

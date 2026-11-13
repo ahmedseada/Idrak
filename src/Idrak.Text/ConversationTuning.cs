@@ -138,7 +138,7 @@ public sealed record ConversationTuningResult(string Folder, bool Stopped, TimeS
 /// {
 ///     Evaluation = "val.json", Images = "images.zip", Preparation = TuningImages.Parse("max_width=1024"), Metric = TuningMetrics.CharacterErrorRate,
 /// });
-/// var result = tuning.Train("adapters/legal", baseModel: "google/gemma-3-4b-it", progress: new Progress&lt;FineTuningProgress&gt;(p => Console.WriteLine(p.Loss)));
+/// var result = tuning.Train("adapters/letters", baseModel: "google/gemma-3-4b-it", progress: new Progress&lt;FineTuningProgress&gt;(p => Console.WriteLine(p.Loss)));
 /// </code>
 /// </example>
 public sealed class ConversationTuning : IDisposable

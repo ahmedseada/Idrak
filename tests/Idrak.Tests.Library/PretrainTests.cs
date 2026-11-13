@@ -195,8 +195,8 @@ internal abstract partial class Tests
             string records = Path.Combine(folder, "records.jsonl");
             File.WriteAllLines(records,
             [
-                """{"messages": [{"role": "user", "content": "read the scan"}, {"role": "assistant", "content": "the court decision 12/05/1446"}]}""",
-                """{"messages": [{"role": "user", "content": "اقرأ"}, {"role": "assistant", "content": "وزارة العدل المحكمة"}]}""",
+                """{"messages": [{"role": "user", "content": "read the scan"}, {"role": "assistant", "content": "the team report 12/05/1446"}]}""",
+                """{"messages": [{"role": "user", "content": "اقرأ"}, {"role": "assistant", "content": "شركة النور للتقنية"}]}""",
                 """{"conversations": [{"from": "human", "value": "write"}, {"from": "gpt", "value": "a page with lines of text"}]}""",
             ]);
             using (var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device }))

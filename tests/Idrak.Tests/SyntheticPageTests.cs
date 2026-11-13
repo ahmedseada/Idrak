@@ -35,7 +35,7 @@ internal abstract partial class DesktopTests : Tests
 
     private const string PartsJson = """
         {
-          "headerStart": [["المملكة العربية السعودية", "وزارة العدل"], ["{pick:المحكمة العامة|المحكمة الجزائية}"]],
+          "headerStart": [["شركة النور للتقنية", "إدارة المشاريع"], ["{pick:الفرع الرئيسي|فرع الرياض}"]],
           "headerEnd": [["الرقم: {digits:5}", "التاريخ: {hijri} هـ"]],
           "subjects": ["الموضوع: {field:subject}"],
           "signatures": [["مدير الإدارة"]],
@@ -63,9 +63,9 @@ internal abstract partial class DesktopTests : Tests
             ["id"] = $"r{i}",
         });
 
-        string fenced = "```json\n" + SyntheticPages.Json(new JsonObject { ["subject"] = "طلب نسخة", ["document_number"] = "4521", ["full_text_extract"] = "سعادة رئيس المحكمة المحترم\nنفيدكم بأن المدعي تقدم بطلب نسخة من الحكم رقم 4521." }) + "\n```";
-        string indented = "{\n    \"full_text_extract\": \"قرار رقم 77 لعام 1446\\nيعتمد ما يلي.\",\n    \"date\": \"1446/05/02\"\n}";
-        string plain = "{\"full_text_extract\": \"The court met on 3 May 2025 and heard the claim.\", \"court\": \"General\", \"pages\": [1, 2]}";
+        string fenced = "```json\n" + SyntheticPages.Json(new JsonObject { ["subject"] = "طلب نسخة", ["document_number"] = "4521", ["full_text_extract"] = "سعادة مدير المشروع المحترم\nنفيدكم بأن الفريق تقدم بطلب نسخة من التقرير رقم 4521." }) + "\n```";
+        string indented = "{\n    \"full_text_extract\": \"تعميم رقم 77 لعام 1446\\nيعتمد ما يلي.\",\n    \"date\": \"1446/05/02\"\n}";
+        string plain = "{\"full_text_extract\": \"The team met on 3 May 2025 and reviewed the plan.\", \"office\": \"General\", \"pages\": [1, 2]}";
         string path = Path.Combine(folder, "train.jsonl");
         File.WriteAllLines(path, [Record(0, fenced), Record(1, indented), Record(2, plain)], new UTF8Encoding(false));
         return path;
@@ -96,7 +96,7 @@ internal abstract partial class DesktopTests : Tests
                 string json = answer.StartsWith("```json\n", StringComparison.Ordinal) ? answer["```json\n".Length..^"\n```".Length] : answer;
                 var fields = JsonNode.Parse(json)!.AsObject();
                 string text = (string)fields["full_text_extract"]!;
-                Check(text.Contains((i / 2) switch { 0 => "سعادة رئيس المحكمة المحترم", 1 => "قرار رقم 77 لعام 1446", _ => "The court met on 3 May 2025" }, StringComparison.Ordinal),
+                Check(text.Contains((i / 2) switch { 0 => "سعادة مدير المشروع المحترم", 1 => "تعميم رقم 77 لعام 1446", _ => "The team met on 3 May 2025" }, StringComparison.Ordinal),
                     $"record {i}: the body drawn and in the answer");
                 Check(text.Contains("مدير الإدارة", StringComparison.Ordinal) && text.Contains("الرقم: ", StringComparison.Ordinal) && text.Contains("هاتف ", StringComparison.Ordinal),
                     $"record {i}: the header, signature and footer drawn and in the answer");
@@ -111,7 +111,7 @@ internal abstract partial class DesktopTests : Tests
                               && !text.Contains("الموضوع", StringComparison.Ordinal), $"the answer indented by four spaces stays so; no subject field, no subject line: {json}");
                         break;
                     default:
-                        Check(json.StartsWith("{\"full_text_extract\": \"", StringComparison.Ordinal) && json.EndsWith("\", \"court\": \"General\", \"pages\": [1, 2]}", StringComparison.Ordinal),
+                        Check(json.StartsWith("{\"full_text_extract\": \"", StringComparison.Ordinal) && json.EndsWith("\", \"office\": \"General\", \"pages\": [1, 2]}", StringComparison.Ordinal),
                             $"the one-line answer keeps its spaces after commas and colons, its keys in order: {json}");
                         break;
                 }
@@ -350,7 +350,7 @@ internal abstract partial class DesktopTests : Tests
         var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] };
         foreach (string newLine in new[] { "\n", "\r\n" })
         {
-            string answer = "{" + newLine + "  \"full_text\": \"Body text.\"," + newLine + "  \"court\": \"General\"" + newLine + "}";
+            string answer = "{" + newLine + "  \"full_text\": \"Body text.\"," + newLine + "  \"office\": \"General\"" + newLine + "}";
             Check(SyntheticPages.Make(answer, options).Answer == answer, $"an answer with {(newLine.Length == 1 ? "\\n" : "\\r\\n")} comes back as it was, line endings included");
         }
 
