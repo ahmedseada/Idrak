@@ -298,6 +298,19 @@
     "U+0652": {"glyph": "U+F2F4", "place": "above"},
     "U+0670": {"glyph": "U+F2F2", "place": "above"}
   },
+  "shortMarks": [
+    {"glyph": "U+F2F2", "short": "U+F2E4", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2F3", "short": "U+F2E5", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2F4", "short": "U+F2E6", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2F5", "short": "U+F2E7", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2F6", "short": "U+F2E8", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2F7", "short": "U+F2E9", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2FA", "short": "U+F2EC", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2FB", "short": "U+F2ED", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2FC", "short": "U+F2EE", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2FD", "short": "U+F2EF", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]},
+    {"glyph": "U+F2FE", "short": "U+F2F0", "fonts": ["MCS HAND", "arbfonts.com mohareb hand"]}
+  ],
   "fallbacks": {
     "U+F264": "U+F263"
   }

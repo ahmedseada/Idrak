@@ -1027,6 +1027,7 @@ public sealed class Idrak.Abstraction.Data.FontMap
   public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef>> Fallbacks { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>> Prefixes { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapLigature> Ligatures { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapShortMark> ShortMarks { get; }
   public System.Collections.Generic.IReadOnlyList<int> Measure { get; }
   public System.Collections.Generic.IReadOnlyList<string> DetectWithoutTables { get; }
   public System.Collections.Generic.IReadOnlyList<string> Scripts { get; }
@@ -1064,6 +1065,7 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public const string PairsVariable = "IDRAK_FONT_MAP_PAIRS"
   public const string SecondStyleVariable = "IDRAK_FONT_MAP_STYLE2"
   public const string WordsVariable = "IDRAK_FONT_MAP_WORDS"
+  public const string ShortMarksVariable = "IDRAK_FONT_MAP_SHORT_MARKS"
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }
   public double Pairs { get; init; }
@@ -1078,6 +1080,7 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public double? DigitWidth { get; init; }
   public double? MarkPen { get; init; }
   public double? MarkSize { get; init; }
+  public double? ShortMarks { get; init; }
   public int Seed { get; init; }
 
 public sealed record Idrak.Abstraction.Data.FontMapLetter : System.IEquatable<Idrak.Abstraction.Data.FontMapLetter>
@@ -1097,6 +1100,12 @@ public sealed record Idrak.Abstraction.Data.FontMapMark : System.IEquatable<Idra
   public FontMapMark(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Glyph, Idrak.Abstraction.Data.FontMarkPlace Place)
   public Idrak.Abstraction.Data.FontMarkPlace Place { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Glyph { get; init; }
+
+public sealed record Idrak.Abstraction.Data.FontMapShortMark : System.IEquatable<Idrak.Abstraction.Data.FontMapShortMark>
+  public FontMapShortMark(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Glyph, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Short)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Glyph { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Short { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Fonts { get; init; }
 
 public static class Idrak.Abstraction.Data.FontMappers
   public const string OpenType = "opentype"

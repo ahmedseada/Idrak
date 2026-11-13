@@ -21,12 +21,14 @@ internal sealed class FontMapSettings : IDisposable
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                   mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
-                                  joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each)
+                                  joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each),
+                                  short-marks (auto: lower marks on bases under the height they clear; a share of the
+                                  tall letters' height; off)
         """;
 
     private static readonly string[] Keys =
         ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share",
-         "pairs", "style2", "words"];
+         "pairs", "style2", "words", "short-marks"];
 
     private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars;
     private readonly FontMapDrawing _drawing = FontMaps.Drawing;
@@ -107,6 +109,8 @@ internal sealed class FontMapSettings : IDisposable
                 case "pairs": drawing = drawing with { Pairs = Number() is var chance && chance <= 1 ? chance : throw new ArgumentException($"--font-maps pairs={value}: a chance from 0 to 1.") }; break;
                 case "style2": drawing = drawing with { SecondStyle = Number() is var second && second <= 1 ? second : throw new ArgumentException($"--font-maps style2={value}: a chance from 0 to 1.") }; break;
                 case "words": drawing = drawing with { Words = Number() is var words && words <= 1 ? words : throw new ArgumentException($"--font-maps words={value}: a chance from 0 to 1.") }; break;
+                case "short-marks": drawing = drawing with { ShortMarks = value is "auto" or "on" ? null : value is "off" or "false" or "no" ? 0
+                    : Number() is var share && share <= 1 ? share : throw new ArgumentException($"--font-maps short-marks={value}: auto, off or a share from 0 to 1.") }; break;
                 default: drawing = drawing with { MarkPenShare = Number() }; break;
             }
         }

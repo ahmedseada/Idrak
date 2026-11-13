@@ -604,6 +604,76 @@ internal abstract partial class DesktopTests
         }
     }
 
+    private static void LegacyFontsShortMarks(Device device)
+    {
+        _ = device;
+        var map = FontMaps.Get(PuaMap);
+        Check(map.ShortMarks.Count == 11, $"{map.ShortMarks.Count} marks with alternates over short bases in the layout");
+        string beh = "\u0628", alef = "\u0627", fatha = "\u064E", shadda = "\u0651";
+        foreach (string name in LegacyFonts)
+        {
+            var raw = RawFace(name);
+            var auto = (MappedFontFace)Remap(raw, FontMaps.Drawing with { ShortMarks = null });
+            var off = (MappedFontFace)Remap(raw, FontMaps.Drawing with { ShortMarks = 0 });
+            int upem = raw.Metrics.UnitsPerEm;
+            ShapedGlyph[] Shape(IFontFace face, string text) => TextShapers.Shape(face, text, new TextRun(0, text.Length, "Arab", true));
+            int Mark(IFontFace face, string text) => Shape(face, text).Single(g => g.XAdvance == 0).Glyph;      // the one glyph with no width
+
+            if (name == "FS_Hand_Style")
+            {
+                // Its marks and their alternates have no ink: none is used, every word shapes as with the alternates off.
+                Check(auto.Short is null && off.Short is null, $"{name}: no short alternates (its marks have no ink)");
+                foreach (string word in new[] { beh + fatha, alef + fatha, beh + shadda + fatha })
+                {
+                    Check(Shape(auto, word).SequenceEqual(Shape(off, word)), $"{name}: {word} shapes as with short-marks off");
+                }
+
+                continue;
+            }
+
+            // Measured: beh (its top under the alternates' height) is short, alef (a tall letter) is not.
+            var shortBases = auto.Short;
+            int behGlyph = ShapedForm(auto, 0x0628, "isol"), alefGlyph = ShapedForm(auto, 0x0627, "isol");
+            Check(shortBases is not null && shortBases.Glyphs.Contains(behGlyph) && !shortBases.Glyphs.Contains(alefGlyph) && off.Short is null,
+                $"{name}: short below {shortBases?.Height:F0} units: beh {behGlyph}, not alef {alefGlyph}");
+
+            int first = raw.Glyph(0xF2F2), second = raw.Glyph(0xF2E4), combined = raw.Glyph(0xF2FA), combinedShort = raw.Glyph(0xF2EC);
+            Check(Mark(auto, beh + fatha) == second && Mark(auto, alef + fatha) == first && Mark(off, beh + fatha) == first,
+                $"{name}: fatha after beh {Mark(auto, beh + fatha)} (the alternate {second}), after alef {Mark(auto, alef + fatha)} ({first}), off {Mark(off, beh + fatha)}");
+            Check(Mark(auto, beh + shadda + fatha) == combinedShort && Mark(auto, alef + shadda + fatha) == combined && Mark(off, beh + shadda + fatha) == combined,
+                $"{name}: shadda and fatha after beh {Mark(auto, beh + shadda + fatha)} (the alternate {combinedShort}), after alef {Mark(auto, alef + shadda + fatha)} ({combined})");
+
+            // Placed by its ink: the alternate's ink bottom sits where the first glyph's would over the same base.
+            double Bottom(IFontFace face, string word)
+            {
+                var mark = Shape(face, word).Single(g => g.XAdvance == 0);
+                return mark.YOffset + InkMeasure.Of(face.Outline(mark.Glyph), upem, map.AnchorWindow)!.Value.MinY;
+            }
+
+            Check(Math.Abs(Bottom(auto, beh + fatha) - Bottom(off, beh + fatha)) <= 1,
+                $"{name}: the fatha's ink bottom over beh at {Bottom(auto, beh + fatha):F0} units with its alternate, {Bottom(off, beh + fatha):F0} without");
+        }
+
+        // On a page: the same text with the alternates and without.
+        var content = new PageContent { Body = ["بَّ تَمَّ مُدَّة جَمِيلَة", "اَلْكِتَاب لَمَّا"], Language = "ar" };
+        var before = FontMaps.Drawing;
+        try
+        {
+            FontMaps.Drawing = before with { ShortMarks = null };
+            var style = new PageStyle { Fonts = [MappedFace("MCS-HAND")], Fallbacks = [SubsetFace()] };
+            var with = PageLayouts.Get("plain").Render(content, style, 3);
+            FontMaps.Drawing = before with { ShortMarks = 0 };
+            style = new PageStyle { Fonts = [MappedFace("MCS-HAND")], Fallbacks = [SubsetFace()] };
+            var without = PageLayouts.Get("plain").Render(content, style, 3);
+            Check(with.Text == without.Text && with.Description == without.Description && !with.Image.Pixels.AsSpan().SequenceEqual(without.Image.Pixels),
+                "short-marks on and off: the same text and description, other ink");
+        }
+        finally
+        {
+            FontMaps.Drawing = before;
+        }
+    }
+
     // The signed area of a contour's points (control points included).
     private static double ContourArea(float[] p)
     {

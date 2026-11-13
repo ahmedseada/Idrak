@@ -491,6 +491,7 @@ internal static class EnvironmentVariables
         new("IDRAK_FONT_MAP_PAIRS", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font joins the font's letter pairs (drawn per page from its seed; 0 or off: never) (--font-maps pairs=0.3)", FontCommands),
         new("IDRAK_FONT_MAP_STYLE2", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font writes its second style of letter pairs (drawn per page from its seed; 0 or off: never; --font-maps style2=)", FontCommands),
         new("IDRAK_FONT_MAP_WORDS", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font writes the words the font draws whole as one glyph (drawn per page from its seed; 0 or off: never; --font-maps words=)", FontCommands),
+        new("IDRAK_FONT_MAP_SHORT_MARKS", Fonts, "auto", "Which bases take a mapped font's lower marks drawn for short letters: auto (bases under the height the font's own lower marks clear), a share (0 to 1) of the tall letters' height, or 0 or off: never (--font-maps short-marks=off)", FontCommands),
         new("IDRAK_FONT_MAP_LETTERS", Fonts, "on", "0, off, false or no: letters mapped fonts lack are not composed from their own glyphs (--font-maps letters=off)", FontCommands),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),

@@ -259,7 +259,9 @@ internal sealed class MappedFontFace : IFontFace
     private readonly List<(ComposedForm Recipe, int Body, int Glyph)> _composed;   // composed glyphs: their recipe, the font's glyph they start from, their id
     private readonly Dictionary<int, int[]> _letterForms;                    // each letter's glyph in each form (a composed recipe measures its source letter)
     private readonly Lazy<(GlyphOutline Outline, int Advance)[]> _drawnGlyphs;     // the drawn and composed glyphs, after the font's own
+    private readonly List<(int From, int To)> _short;                       // marks placed above and their alternates over short bases
     private readonly Lazy<byte[]> _gsub, _gdef, _gpos;
+    private readonly Lazy<ShortBases?> _shortBases;
 
     public MappedFontFace(IFontFace inner, FontMap map, GlyphResolver resolver, Dictionary<int, int[]> forms, FontMapDrawing drawing)
     {
@@ -433,6 +435,31 @@ internal sealed class MappedFontFace : IFontFace
             }
         }
 
+        // Marks' alternates over short bases: a mark placed above and its alternate, both the font's own and inked.
+        _short = [];
+        if (drawing.ShortMarks != 0)
+        {
+            foreach (var alternate in map.ShortMarks)
+            {
+                if (alternate.Fonts.Count > 0 && !alternate.Fonts.Contains(inner.Family, StringComparer.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int from = resolver.Resolve(alternate.Glyph), to = resolver.Resolve(alternate.Short);
+                if (from == 0 || to == 0 || from == to || from >= inner.GlyphCount || to >= inner.GlyphCount || _places.GetValueOrDefault(from) != FontMarkPlace.Above
+                    || inner.Outline(from).IsEmpty || inner.Outline(to).IsEmpty || _short.Exists(x => x.From == from) || cmap.ContainsValue(to))
+                {
+                    continue;
+                }
+
+                _places.TryAdd(to, FontMarkPlace.Above);
+                _short.Add((from, to));
+            }
+
+            _short.Sort();
+        }
+
         _cmap = cmap.ToFrozenDictionary();
         GlyphCount = next;
         _classes = new byte[next];
@@ -468,7 +495,9 @@ internal sealed class MappedFontFace : IFontFace
         _bases = [.. bases];
 
         _drawnGlyphs = new(DrawGlyphs);
-        _gsub = new(() => FontMapTables.Substitutions(_map.Scripts, _singles, _ligatures));
+        _shortBases = new(MeasureShortBases);
+        _gsub = new(() => FontMapTables.Substitutions(_map.Scripts, _singles, _ligatures,
+            _shortBases.Value is { } shortBases ? (_short, shortBases.Glyphs, [.. Enumerable.Range(1, _classes.Length - 1).Where(g => _classes[g] == 3)]) : null));
         _gdef = new(() => FontMapTables.Definitions(_classes));
         _gpos = new(Positions);
     }
@@ -657,6 +686,65 @@ internal sealed class MappedFontFace : IFontFace
             Math.Max(0, InkMeasure.Median([.. tall.Select(m => (m.Ink.MinX + _inner.Advance(m.Glyph) - m.Ink.MaxX) / 2)])));
     }
 
+    /// <summary>The bases marks take their short alternates on and the height they are measured against (null: no alternates used).</summary>
+    internal ShortBases? Short => _shortBases.Value;
+
+    // The bases whose ink top (around the middle, where marks sit) is at most the measured height: the median ink bottom of
+    // the font's short alternates less the anchor gap (the height they were drawn to clear; the median, as a font may draw
+    // a stacked combination taller in both sets), or a share of the tall
+    // letters' height (the 90th percentile of the bases' ink tops). Null when no alternate is used or no base is short.
+    private ShortBases? MeasureShortBases()
+    {
+        if (_short.Count == 0)
+        {
+            return null;
+        }
+
+        int upem = _inner.Metrics.UnitsPerEm;
+        var tops = new List<(int Glyph, double Top)>(_bases.Count);
+        foreach (int glyph in _bases)
+        {
+            if (InkMeasure.Of(Outline(glyph), upem, _map.AnchorWindow) is { } ink)
+            {
+                tops.Add((glyph, ink.Top));
+            }
+        }
+
+        if (tops.Count == 0)
+        {
+            return null;
+        }
+
+        double height;
+        if (_drawing.ShortMarks is { } share)
+        {
+            var sorted = tops.Select(t => t.Top).Order().ToList();
+            height = share * sorted[Math.Min(sorted.Count - 1, (int)(0.9 * sorted.Count))];
+        }
+        else
+        {
+            var bottoms = new List<double>(_short.Count);
+            foreach (var (_, to) in _short)
+            {
+                if (InkMeasure.Of(_inner.Outline(to), upem, _map.AnchorWindow) is { } ink)
+                {
+                    bottoms.Add(ink.MinY);
+                }
+            }
+
+            if (bottoms.Count == 0)
+            {
+                return null;
+            }
+
+            bottoms.Sort();
+            height = bottoms[bottoms.Count / 2] - _map.AnchorGap;
+        }
+
+        List<int> glyphs = [.. tops.Where(t => t.Top <= height).Select(t => t.Glyph).Order()];
+        return glyphs.Count == 0 ? null : new ShortBases(height, glyphs);
+    }
+
     // Mark-to-base and mark-to-mark anchors from the ink: a mark's at its ink's centre, bottom for one above and top for
     // one below; a base's over (or under) its ink around its middle, the map's gap away; a mark under one of its side
     // stacks on it the same way.
@@ -720,9 +808,20 @@ internal sealed class MappedFontFace : IFontFace
 /// <summary>Writes the OpenType layout tables a mapped face carries (big-endian, offsets from each table's start).</summary>
 internal static class FontMapTables
 {
-    /// <summary>GSUB: a single substitution lookup per form feature, a ligature lookup per feature (marks' ligatures apart).</summary>
+    /// <summary>
+    /// The feature the marks' alternates over short bases are given under ("mset", mark positioning by substitution: on by
+    /// default in Arabic shaping, in the last stage, after the forms and the letter pairs).
+    /// </summary>
+    public const string ShortFeature = "mset";
+
+    /// <summary>
+    /// GSUB: a single substitution lookup per form feature, a ligature lookup per feature (marks' ligatures apart), then the
+    /// marks' alternates over short bases: a chained context (a mark right after a short base, up to two marks between)
+    /// applying a single substitution that no feature lists.
+    /// </summary>
     public static byte[] Substitutions(IReadOnlyList<string> scripts, List<(string Feature, int From, int To)> singles,
-        List<(string Feature, int[] Components, int Glyph, bool Mark)> ligatures)
+        List<(string Feature, int[] Components, int Glyph, bool Mark)> ligatures,
+        (List<(int From, int To)> Pairs, List<int> Bases, List<int> Marks)? shortMarks = null)
     {
         var lookups = new List<(string Feature, int Type, int Flags, Action<TableWriter, int> Write)>();
         foreach (var group in ligatures.Where(l => l.Mark).GroupBy(l => l.Feature, StringComparer.Ordinal))
@@ -744,6 +843,13 @@ internal static class FontMapTables
         {
             var list = group.ToList();
             lookups.Add((group.Key, 4, 8, (w, at) => Ligatures(w, at, list)));   // marks between the components are passed over
+        }
+
+        if (shortMarks is { } shortSet)
+        {
+            int single = lookups.Count + 1;
+            lookups.Add((ShortFeature, 6, 0, (w, at) => ShortContext(w, at, shortSet.Pairs, shortSet.Bases, shortSet.Marks, single)));
+            lookups.Add(("", 1, 0, (w, at) => Singles(w, at, shortSet.Pairs)));
         }
 
         return Layout(scripts, lookups);
@@ -808,7 +914,7 @@ internal static class FontMapTables
     // The script, feature and lookup lists, every script's default language system listing every feature.
     private static byte[] Layout(IReadOnlyList<string> scripts, List<(string Feature, int Type, int Flags, Action<TableWriter, int> Write)> lookups)
     {
-        var features = lookups.Select((l, i) => (l.Feature, Index: i)).GroupBy(l => l.Feature, StringComparer.Ordinal)
+        var features = lookups.Select((l, i) => (l.Feature, Index: i)).Where(l => l.Feature.Length > 0).GroupBy(l => l.Feature, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => (Tag: g.Key, Lookups: g.Select(x => x.Index).ToList())).ToList();
         var w = new TableWriter();
         w.U32(0x00010000);
@@ -938,6 +1044,73 @@ internal static class FontMapTables
 
         w.Offset(coverage, st);
         Coverage(w, [.. sets.Select(s => s.First)]);
+    }
+
+    // ChainContextSubst format 2: a mark of `pairs` (input class 1) after a short base (backtrack class 1), right after it
+    // or with one or two marks (backtrack class 2) between, takes the lookup `single` at its place.
+    private static void ShortContext(TableWriter w, int st, List<(int From, int To)> pairs, List<int> bases, List<int> marks, int single)
+    {
+        w.U16(2);
+        int coverage = w.Reserve(), backtrack = w.Reserve(), input = w.Reserve();
+        w.U16(0);                                                               // no lookahead
+        w.U16(2);                                                               // class sets: class 0 none, class 1
+        w.U16(0);
+        int set = w.Reserve();
+
+        int at = w.Position;
+        w.Offset(set, st);
+        w.U16(3);
+        var rules = new[] { w.Reserve(), w.Reserve(), w.Reserve() };
+        for (int between = 0; between < rules.Length; between++)
+        {
+            w.Offset(rules[between], at);
+            w.U16(between + 1);                                                 // the backtrack, nearest first
+            for (int k = 0; k < between; k++)
+            {
+                w.U16(2);
+            }
+
+            w.U16(1);
+            w.U16(1);                                                           // the input: the mark alone
+            w.U16(0);                                                           // no lookahead
+            w.U16(1);
+            w.U16(0);
+            w.U16(single);
+        }
+
+        w.Offset(coverage, st);
+        Coverage(w, [.. pairs.Select(p => p.From)]);
+        w.Offset(backtrack, st);
+        Classes(w, [.. bases.Select(g => (g, 1)), .. marks.Select(g => (g, 2))]);
+        w.Offset(input, st);
+        Classes(w, [.. pairs.Select(p => (p.From, 1))]);
+    }
+
+    // ClassDef format 2 from glyphs and their classes (glyphs in no two classes).
+    private static void Classes(TableWriter w, List<(int Glyph, int Class)> classes)
+    {
+        classes.Sort();
+        var ranges = new List<(int Start, int End, int Class)>();
+        foreach (var (glyph, cls) in classes)
+        {
+            if (ranges.Count > 0 && ranges[^1].End == glyph - 1 && ranges[^1].Class == cls)
+            {
+                ranges[^1] = (ranges[^1].Start, glyph, cls);
+            }
+            else if (ranges.Count == 0 || ranges[^1].End < glyph)
+            {
+                ranges.Add((glyph, glyph, cls));
+            }
+        }
+
+        w.U16(2);
+        w.U16(ranges.Count);
+        foreach (var (start, end, cls) in ranges)
+        {
+            w.U16(start);
+            w.U16(end);
+            w.U16(cls);
+        }
     }
 
     // MarkBasePos and MarkMarkPos share a layout: marks (with their class and anchor), then targets (an anchor per class).
@@ -1070,3 +1243,6 @@ internal sealed class TableWriter
         }
     }
 }
+
+/// <summary>The bases a mapped face's marks take their short alternates on: the ink height they are measured against (font units) and the glyphs, in order.</summary>
+internal sealed record ShortBases(double Height, List<int> Glyphs);

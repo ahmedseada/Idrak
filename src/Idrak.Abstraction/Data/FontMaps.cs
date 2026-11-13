@@ -102,6 +102,19 @@ public sealed record FontMapLigature(string Feature, IReadOnlyList<FontMapCompon
 public sealed record FontMapMark(IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlace Place);
 
 /// <summary>
+/// A mark glyph's alternate over short bases (a font's second, lower set of marks, drawn for letters that do not reach the
+/// tall letters' height): a mark placed above whose glyph is <see cref="Glyph"/> becomes <see cref="Short"/> when it follows
+/// a short base, which the mapper measures per font (<see cref="FontMapDrawing.ShortMarks"/>).
+/// </summary>
+/// <param name="Glyph">The mark's glyph, a mark's or a stacked mark ligature's (alternatives, the first found wins).</param>
+/// <param name="Short">Its alternate over short bases (alternatives).</param>
+public sealed record FontMapShortMark(IReadOnlyList<FontGlyphRef> Glyph, IReadOnlyList<FontGlyphRef> Short)
+{
+    /// <summary>The font families (as their name table gives them, ignoring case) the alternate is used in; empty for every font the map fits.</summary>
+    public IReadOnlyList<string> Fonts { get; init; } = [];
+}
+
+/// <summary>
 /// A font map: rules, as data, that make a "legacy" font usable directly, without converting the file: one whose letters
 /// sit under other code points (the Private Use Area) or are found by their glyph names, with no Unicode character map for
 /// them and no shaping tables. A <see cref="IFontMapper"/> applies it to an <see cref="IFontFace"/> and gives back a
@@ -125,6 +138,9 @@ public sealed record FontMapMark(IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlac
 /// under <see cref="WordFeature"/> words it draws whole: a page turns each on at its chance (<see cref="FontMapDrawing.Pairs"/>,
 /// <see cref="FontMapDrawing.SecondStyle"/>, <see cref="FontMapDrawing.Words"/>).</description></item>
 /// <item><term>marks</term><description>{"U+064E": {"glyph": "U+F2F2", "place": "above" | "below" | "none"}}: no width, the mark class, placed on their base's ink.</description></item>
+/// <item><term>shortMarks</term><description>[{"glyph": "U+F2F2", "short": "U+F2E4", "fonts": ["Family"]}]: a mark placed above (a
+/// mark's or a stacked mark ligature's glyph) and its alternate over short bases, used where the font draws both with ink
+/// (and only in these font families when "fonts" is given); short bases are measured per font (<see cref="FontMapDrawing.ShortMarks"/>).</description></item>
 /// <item><term>fallbacks</term><description>a glyph to use when one is missing, by the missing one as written ({"U+F264": "U+F263"}).</description></item>
 /// <item><term>anchors</term><description>how marks are placed: {"gap": units between ink and mark (60), "window": half the width, in units, where a base's ink is measured (130)}.</description></item>
 /// <item><term>measure</term><description>characters whose glyphs size the drawn glyphs of kind "base" (the font's own digits): their ink height, stroke and width.</description></item>
@@ -158,10 +174,11 @@ public sealed class FontMap
     /// <summary>The positional forms a letter may have (OpenType feature tags).</summary>
     public static readonly IReadOnlyList<string> Forms = ["isol", "init", "medi", "fina"];
 
-    private static readonly string[] TopKeys = ["name", "summary", "scripts", "detect", "prefixes", "letters", "characters", "aliases", "ligatures", "marks", "fallbacks", "anchors", "measure"];
+    private static readonly string[] TopKeys = ["name", "summary", "scripts", "detect", "prefixes", "letters", "characters", "aliases", "ligatures", "marks", "shortMarks", "fallbacks", "anchors", "measure"];
     private static readonly string[] DetectKeys = ["share", "minGlyphs", "withoutTables"];
     private static readonly string[] LigatureKeys = ["feature", "components", "glyph", "place", "fonts"];
     private static readonly string[] MarkKeys = ["glyph", "place"];
+    private static readonly string[] ShortMarkKeys = ["glyph", "short", "fonts"];
     private static readonly string[] AnchorKeys = ["gap", "window"];
     private static readonly string[] Places = ["above", "below", "none"];
 
@@ -205,6 +222,9 @@ public sealed class FontMap
 
     /// <summary>The marks, by code point.</summary>
     public IReadOnlyDictionary<int, FontMapMark> Marks { get; private set; } = new Dictionary<int, FontMapMark>();
+
+    /// <summary>The marks' alternates over short bases, in order.</summary>
+    public IReadOnlyList<FontMapShortMark> ShortMarks { get; private set; } = [];
 
     /// <summary>The glyph used when one is missing, by the missing one as written.</summary>
     public IReadOnlyDictionary<string, IReadOnlyList<FontGlyphRef>> Fallbacks { get; private set; } = new Dictionary<string, IReadOnlyList<FontGlyphRef>>();
@@ -520,6 +540,31 @@ public sealed class FontMap
 
         Ligatures = ligatures;
 
+        var shortMarks = new List<FontMapShortMark>();
+        if (root.TryGetProperty("shortMarks", out var shorts))
+        {
+            if (shorts.ValueKind != JsonValueKind.Array)
+            {
+                throw Bad("shortMarks", "must be a list of {glyph, short}");
+            }
+
+            int index = 0;
+            foreach (var m in shorts.EnumerateArray())
+            {
+                string key = $"shortMarks[{index++}]";
+                Keys(m, key, ShortMarkKeys);
+                var glyph = m.TryGetProperty("glyph", out var g) ? Glyphs(g, $"{key}.glyph") : throw Bad($"{key}.glyph", "is missing");
+                var low = m.TryGetProperty("short", out var l) ? Glyphs(l, $"{key}.short") : throw Bad($"{key}.short", "is missing");
+                IReadOnlyList<string> fonts = !m.TryGetProperty("fonts", out var families) ? []
+                    : families.ValueKind == JsonValueKind.Array && families.GetArrayLength() > 0
+                        ? [.. families.EnumerateArray().Select(e => Text(e, $"{key}.fonts"))]
+                        : throw Bad($"{key}.fonts", "must be a list of font family names ([\"Family\"])");
+                shortMarks.Add(new FontMapShortMark(glyph, low) { Fonts = fonts });
+            }
+        }
+
+        ShortMarks = shortMarks;
+
         var fallbacks = new Dictionary<string, IReadOnlyList<FontGlyphRef>>(StringComparer.Ordinal);
         if (root.TryGetProperty("fallbacks", out var fall))
         {
@@ -610,6 +655,19 @@ public sealed record FontMapDrawing
     /// </summary>
     public double Words { get; init; } = Chance(Environment.GetEnvironmentVariable(WordsVariable), 0.5);
 
+    /// <summary>The variable that sets which bases are short for marks (<see cref="ShortMarks"/>; auto, off, or a share from 0 to 1): "IDRAK_FONT_MAP_SHORT_MARKS".</summary>
+    public const string ShortMarksVariable = "IDRAK_FONT_MAP_SHORT_MARKS";
+
+    /// <summary>
+    /// Which bases take a map's marks' alternates over short bases (<see cref="FontMap.ShortMarks"/>): a base whose ink
+    /// top (around its middle, where marks sit) is at most a height measured per font. Null (auto, the default): the median
+    /// ink bottom of the font's own short alternates less the map's anchor gap, the height the font's maker drew them to
+    /// clear; a share from 0 to 1: that share of the font's tall letters' height (the 90th percentile of its bases' ink
+    /// tops); 0 turns the alternates off, every mark as before. <see cref="ShortMarksVariable"/> sets it ("auto", a share,
+    /// or "0", "off", "false" or "no").
+    /// </summary>
+    public double? ShortMarks { get; init; } = Share(Environment.GetEnvironmentVariable(ShortMarksVariable));
+
     /// <summary>Whether the drawn glyphs of kind "base" (the Latin and Arabic-Indic digits) are added (on unless <see cref="DigitsVariable"/> turns them off).</summary>
     public bool Digits { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(DigitsVariable));
 
@@ -660,6 +718,12 @@ public sealed record FontMapDrawing
 
     /// <summary>The seed of the hand's wobble: the same seed draws the same outlines on every machine (7).</summary>
     public int Seed { get; init; } = 7;
+
+    // A share from a variable: 0 for a switch turned off, the number when it is one from 0 to 1, else null (measured).
+    private static double? Share(string? text) =>
+        ComputeResources.SwitchedOff(text) ? 0
+        : double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && v is >= 0 and <= 1 ? v
+        : null;
 
     // A chance from a variable: off for a switch turned off, the number when it is one from 0 to 1, else the default.
     private static double Chance(string? text, double otherwise) =>
