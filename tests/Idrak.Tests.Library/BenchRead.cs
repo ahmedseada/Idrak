@@ -14,8 +14,8 @@ using Idrak.Text.Generation;
 // A page read profiled (plan 17, H3) through the library's profiler (Profiler, ProfileProbes, ProfileWriters): the app's
 // flow (the prepared page for the preview, then the read, greedy) on each device IDRAK_DEVICES names (default the CPU).
 // What the read is:
-//   IDRAK_BENCH_MODEL       a checkpoint folder, or a Hugging Face id ("bakrianoo/arabic-legal-documents-ocr-1.0": the copy the
-//                           app downloaded, from the same cache; HF_TOKEN for gated ones) (default tests' vlm/tiny-gemma3)
+//   IDRAK_BENCH_MODEL       a checkpoint folder, or a Hugging Face id ("your-org/your-ocr-model": a copy already downloaded, from
+//                           the same cache; HF_TOKEN for gated ones) (default tests' vlm/tiny-gemma3)
 //   IDRAK_BENCH_PAGE        an image file (default the seeded 1,654 x 2,339 scan of --bench-image, JPEG)
 //   IDRAK_BENCH_TRANSFORMS  the card's pipeline (default grayscale,max_width=1024,contrast=1.5)
 //   IDRAK_BENCH_PROMPT      the instruction (default "Extract details to JSON.")

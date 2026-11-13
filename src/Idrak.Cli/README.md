@@ -245,7 +245,7 @@ other than `text`, `json_schema`, `logprobs`, `top_logprobs`, `logit_bias`, a `t
 
 #### Images
 
-A vision-language model (Gemma 3 and its fine-tunes, such as the OCR model `bakrianoo/arabic-legal-documents-ocr-1.0`)
+A vision-language model (Gemma 3 and its fine-tunes, such as an OCR fine-tune, `your-org/your-ocr-model` below)
 reads images on three routes, with the same preprocessing as `idrak run --image` (the model's
 `preprocessor_config.json`, the EXIF orientation of photos, grey when asked): `image_url` content parts on
 `POST /v1/chat/completions` (data URLs: `data:image/jpeg;base64,...`), a `multipart/form-data` upload on
@@ -275,7 +275,7 @@ answer is in `choices[0].message.content`. With `stream` = `true` Postman shows 
 route works the same way with Body → raw → JSON.
 
 ```bash
-idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
+idrak serve ocr=your-org/your-ocr-model -d cuda:0 -w bf16 --grayscale
 curl http://127.0.0.1:7317/v1/chat/upload -F image=@scan.jpg -F "prompt=Extract the text." -F max_tokens=2048 -F temperature=0
 curl http://127.0.0.1:7317/v1/chat/completions -H "Content-Type: application/json" -d '{"model": "ocr", "temperature": 0,
   "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,'"$(base64 -w0 scan.jpg)"'"}},

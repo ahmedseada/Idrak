@@ -38,9 +38,9 @@ internal sealed class AliasSetCommand : Command
         Examples:
           idrak alias set qwen Qwen/Qwen3-0.6B -w int8 -k int8
           idrak c qwen
-          idrak alias set ocr bakrianoo/arabic-legal-documents-ocr-1.0 -w int8 --grayscale
-          idrak alias set ocr-crops bakrianoo/arabic-legal-documents-ocr-1.0 --grayscale --vision-option do_pan_and_scan=true
-          idrak alias set ocr-card bakrianoo/arabic-legal-documents-ocr-1.0 --image-transform grayscale,max_width=1024,contrast=1.5
+          idrak alias set ocr your-org/your-ocr-model -w int8 --grayscale
+          idrak alias set ocr-crops your-org/your-ocr-model --grayscale --vision-option do_pan_and_scan=true
+          idrak alias set ocr-card your-org/your-ocr-model --image-transform grayscale,max_width=1024,contrast=1.5
         """;
 
     public override IReadOnlyCollection<string> ValueOptions => ["--weights", "--kv", Shared.ModelChoices.VisionOption, Shared.ModelChoices.ImageTransformOption];

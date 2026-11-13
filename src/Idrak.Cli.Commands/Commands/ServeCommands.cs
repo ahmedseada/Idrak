@@ -164,7 +164,7 @@ internal sealed class ServeCommand : Command
           idrak serve qwen -p 11434                      # for clients that expect the chat API on port 11434
           idrak s qwen phi -p 8080 --api-key $KEY        # two models on one port
           idrak serve tiny=./tiny.gguf -d vulkan:0 -k int8 --keep-alive 30m --cors http://localhost:3000
-          idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
+          idrak serve ocr=your-org/your-ocr-model -d cuda:0 -w bf16 --grayscale
           idrak serve ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
           idrak serve qwen --mcp --transport http        # MCP for clients that connect to it (address and token printed)
