@@ -24,8 +24,8 @@ internal sealed class DataTextCommand : Command
         -n N [--unit pages|lines|words] [-l CODE] -o OUT.txt [options]
 
         Writes N documents of random text, each drawn later as one page: pages of several lines, single lines, or single
-        words. The text has the words, names, numbers, dates and punctuation of official letters, not meaningful
-        sentences. The file is plain text with the documents between lines of ---, which idrak data synth reads.
+        words. The text has the words, names, numbers, dates and punctuation of ordinary letters, reports and news, not
+        meaningful sentences. The file is plain text with the documents between lines of ---, which idrak data synth reads.
 
         Options:
           -n, --count N           how many pages, lines or words (100)

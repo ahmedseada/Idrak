@@ -23,8 +23,8 @@ public interface IRandomTextSource
 }
 
 /// <summary>
-/// The random text sources, by language tag. Built in: "ar" (Arabic in the words of official and legal letters, with
-/// names, places, Hijri years, dates and amounts) and "en" (the same in English). Any other language is a pools file
+/// The random text sources, by language tag. Built in: "ar" (Arabic in the words of ordinary letters, reports and news,
+/// with names, places, Hijri years, dates and amounts) and "en" (the same in English). Any other language is a pools file
 /// (<see cref="PooledTextSource.Read"/>) or a word list (<see cref="PooledTextSource.FromWords"/>) registered under its
 /// tag (<see cref="Register"/>).
 /// </summary>

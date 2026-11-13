@@ -71,14 +71,14 @@ internal abstract partial class DesktopTests : Tests
         Throws<NotSupportedException>(() => RandomTextSources.Get("xx"), "an unknown language");
 
         var french = PooledTextSource.FromJson(JsonNode.Parse("""
-            {"name": "fr", "pools": {"nom": ["tribunal", "décision", "créance"], "verbe": ["rend", "ordonne"]},
+            {"name": "fr", "pools": {"nom": ["rapport", "réunion", "projet"], "verbe": ["publie", "prépare"]},
              "patterns": [["=le", "nom", "verbe"], ["#date"]], "punctuation": [","], "years": [2000, 2010]}
             """)!.AsObject());
         RandomTextSources.Register(french);
         try
         {
             var lines = RandomText.Documents(RandomTextSources.Get("fr"), new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 20, LineWords = (3, 6) }).ToList();
-            Check(lines.All(l => l.Split(' ').All(w => w.TrimEnd(',', '.') is "le" or "tribunal" or "décision" or "créance" or "rend" or "ordonne" || w.Contains('/'))),
+            Check(lines.All(l => l.Split(' ').All(w => w.TrimEnd(',', '.') is "le" or "rapport" or "réunion" or "projet" or "publie" or "prépare" || w.Contains('/'))),
                 $"French from its pools: {lines[0]}");
             Check(RandomTextSources.Get("ar").Name == "ar", "and Arabic as it was");
         }
