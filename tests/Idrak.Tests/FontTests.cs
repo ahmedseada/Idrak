@@ -16,6 +16,11 @@ internal abstract partial class DesktopTests : Tests
         ("fonts: CFF outlines (Type 2 charstrings with local and global subroutines) give fontTools' glyph bounds, the TrueType font's renders (and FreeType's within its coarser cubic flattening), and the same character map and shaping as the TrueType font", FontCffMatches),
         ("fonts: a CFF2 font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
         ("fonts: a font's layout features for a script (Amiri's joining forms, rlig, mark); idrak data fonts checks characters, features and every line against HarfBuzz's references, and says what a font lacks or cannot read", FontCheckCommand),
+        ("fonts: legacy fonts (FS_Hand_Style, MCS-HAND, mohareb-hand) are found by the library's PUA layout and mapped: every letter in every form it gives, through the made GSUB; mohareb's khaa falls back to its final form; FS_Hand_Style's glyph names give the same forms and lam-alefs", LegacyFontsMapped),
+        ("fonts: legacy fonts shape joined Arabic: initial, medial and final forms, each lam-alef one ligature, Arabic-Indic digits, marks with no width placed on their base's ink (the font's own marks kept, inkless ones drawn)", LegacyFontsShape),
+        ("fonts: legacy fonts get the Latin digits and the combining marks they lack, drawn at the height and pen measured from their own digits, every contour clockwise, the same per seed; off when turned off; the Unicode fonts keep their own", LegacyFontsDrawGlyphs),
+        ("fonts: fonts no map fits answer, measure, carry tables and draw exactly as read; a map beside a font maps it (off when turned off, refused naming the file when it fits nothing); bad maps refused naming the key; the font mapper contract", LegacyFontsLeaveOthersAlone),
+        ("fonts: idrak data synth draws pages from the legacy fonts alone (Latin and Arabic-Indic digits too) and with the Unicode fonts, leaving nothing out; --font-maps settings checked and put back", LegacyFontsSynth),
     ];
 
     private static void FontReaderMatchesFontTools(Device device)
@@ -287,7 +292,9 @@ internal abstract partial class DesktopTests : Tests
             // The sample leaves out the lines with ﷲ and ﷺ, which Cairo and Reem Kufi have no glyph for (a page with them would be left out).
             File.WriteAllLines(lines, references.Select(r => (string)r!["text"]!).Distinct().Where(t => !t.Contains('\uFDF2') && !t.Contains('\uFDFA')),
                 new System.Text.UTF8Encoding(false));
-            var (code, output, error) = SynthCli(["data", "fonts", FontData("arabic"), "--lines", lines, "--harfbuzz", FontData("arabic/shaping.json"), "-j"]);
+            // The three fonts the references are for (the folder holds the legacy fixtures too).
+            var (code, output, error) = SynthCli(["data", "fonts", FontData("arabic/amiri.ttf"), FontData("arabic/cairo.ttf"), FontData("arabic/reem-kufi.ttf"), "--lines", lines,
+                "--harfbuzz", FontData("arabic/shaping.json"), "-j"]);
             var fonts = System.Text.Json.Nodes.JsonNode.Parse(output)!["fonts"]!.AsArray();
             Check(code == 0 && fonts.Count == 3, $"exit {code}, {fonts.Count} fonts: {error}");
             foreach (var font in fonts)

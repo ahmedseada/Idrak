@@ -28,7 +28,8 @@ internal sealed class DataFontsCommand : Command
         Reads every font (.ttf, .otf, .ttc, folders searched through) and says for each: whether it reads, which
         characters of the sample it has no glyph for (a page with one of them is left out), its layout features for the
         script, and for a joining script (Arabic) whether it has the joining forms (init, medi, fina), the
-        lam-alef ligatures (rlig) and mark positioning (mark). With --harfbuzz, every line of the references is shaped
+        lam-alef ligatures (rlig) and mark positioning (mark). A legacy font a font map makes usable is checked as
+        mapped, and the map and its file are named. With --harfbuzz, every line of the references is shaped
         here too and compared glyph for glyph (glyphs, clusters, advances, offsets).
 
         Options:
@@ -37,6 +38,12 @@ internal sealed class DataFontsCommand : Command
               --lines FILE      the sample: a text file, a line a shaping (blank lines and --- passed over)
               --write-lines F   write the sample's lines, for tools/fonts/harfbuzz_reference.py
               --harfbuzz FILE   HarfBuzz's shaping of the lines in the fonts (that tool's JSON)
+              --font-map FILE   a font map (JSON), again for more: tried before the library's maps
+              --font-maps SET   legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
+                                FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them),
+                                blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
+                                digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
+                                mark-share (0.3), mark-pen-share (0.6)
 
         Comparing with HarfBuzz takes three steps (Python with pip install uharfbuzz for the second):
           idrak data fonts DIR --write-lines lines.txt
@@ -49,7 +56,7 @@ internal sealed class DataFontsCommand : Command
           idrak data fonts fonts -l en --script Latn
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--language", "--script", "--lines", "--write-lines", "--harfbuzz"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--language", "--script", "--lines", "--write-lines", "--harfbuzz", .. FontMapSettings.Options];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-l"] = "--language" };
 
@@ -85,6 +92,7 @@ internal sealed class DataFontsCommand : Command
             context.Write(string.Create(CultureInfo.InvariantCulture, $"{lines.Count:N0} lines written to {written}"));
         }
 
+        using var fontMaps = FontMapSettings.Apply(context);
         var references = context.Option("--harfbuzz") is { } hb ? Read(hb) : null;
         var needed = new SortedSet<int>(lines.SelectMany(l => l.EnumerateRunes()).Where(r => !Rune.IsWhiteSpace(r) && !Rune.IsControl(r)
             && Rune.GetUnicodeCategory(r) != UnicodeCategory.Format).Select(r => r.Value));
@@ -124,8 +132,14 @@ internal sealed class DataFontsCommand : Command
                     ["positioning"] = new JsonArray([.. positioning.Select(t => (JsonNode)t)]),
                     ["lacking"] = new JsonArray([.. lacking.Select(t => (JsonNode)t)]),
                 };
+                var map = FontMaps.MappedBy(face);
+                if (map is not null)
+                {
+                    report["mapped"] = new JsonObject { ["map"] = map.Name, ["file"] = map.Source };
+                }
 
                 string line = $"{relative}{(faces.Count > 1 ? $" #{index}" : "")}: {face.Family} {face.Style}, {face.GlyphCount:N0} glyphs";
+                line += map is null ? "" : $"; mapped by {map.Name} ({map.Source})";
                 line += missing.Count == 0 ? $"; has every character of the sample ({needed.Count})"
                     : $"; lacks {missing.Count} of {needed.Count} characters: {string.Join(" ", missing.Take(12).Select(cp => $"U+{cp:X4} {char.ConvertFromUtf32(cp)}"))}{(missing.Count > 12 ? " ..." : "")}";
                 if (joining)

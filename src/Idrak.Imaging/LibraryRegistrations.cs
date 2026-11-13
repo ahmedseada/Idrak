@@ -10,9 +10,10 @@ namespace Idrak.Imaging;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
-/// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer, the reading orders (bidi, runs), the page layouts
-/// (letter, plain, shapes), the shapes, shape profiles, pens and text bindings the "shapes" layout draws with, and the glyph poses every layout
-/// writes its text with. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
+/// the "images" sample source, the "opentype" font format and font mapper, the library's font maps (legacy layouts, as data), the "coverage"
+/// outline rasterizer, the reading orders (bidi, runs), the page layouts (letter, plain, shapes), the shapes, shape profiles, pens and text
+/// bindings the "shapes" layout draws with, and the glyph poses every layout writes its text with. <c>LibraryDefaults.Ensure</c> (in
+/// Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
 /// </summary>
 internal sealed class LibraryRegistrations : ILibraryRegistrations
@@ -34,6 +35,8 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         },                            // png, jpeg, bmp, netpbm (asked newest first)
         [typeof(SampleSources)] = () => SampleSources.Register(new ImagesSource()),
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
+        [typeof(FontMappers)] = () => FontMappers.Register(new OpenTypeFontMapper()),       // a map's forms, ligatures and marks as OpenType tables
+        [typeof(FontMaps)] = RegisterFontMaps,                                   // the legacy layouts the library ships, as data
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
         [typeof(ReadingOrders)] = () =>                                          // bidi (UAX #9), runs
@@ -85,6 +88,21 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         foreach (var codec in (IImageCodec[])[new NetpbmCodec(), new BmpCodec(), new JpegCodec(), new PngCodec()])
         {
             ImageCodecs.Register(codec);
+        }
+    }
+
+    // The library's font maps: every Resources/font-maps/*.json, read once when FontMaps is first used, in name order
+    // (FontMaps asks the newest first: the last registered is tried first).
+    private static void RegisterFontMaps()
+    {
+        const string prefix = "Idrak.Imaging.font-maps.";
+        var assembly = typeof(LibraryRegistrations).Assembly;
+        foreach (string name in assembly.GetManifestResourceNames().Where(n => n.StartsWith(prefix, StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        {
+            using var stream = assembly.GetManifestResourceStream(name)!;
+            var bytes = new byte[stream.Length];
+            stream.ReadExactly(bytes);
+            FontMaps.Register(FontMap.Parse(bytes, "Idrak.Imaging/" + name[prefix.Length..]));
         }
     }
 

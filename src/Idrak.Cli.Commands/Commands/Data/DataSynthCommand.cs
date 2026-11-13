@@ -31,7 +31,15 @@ internal sealed class DataSynthCommand : Command
         Options:
           -o, --out FILE          the records written (.jsonl); the images go to the folder of its name beside it (or
                                   its .zip with --zip), how each page was made to NAME.manifest.jsonl
-              --fonts DIR         the fonts (.ttf, .otf, .ttc); each page is set in those that have its characters
+              --fonts DIR         the fonts (.ttf, .otf, .ttc); each page is set in those that have its characters. A
+                                  legacy font (letter forms in the Private Use Area, no shaping tables) is mapped by
+                                  the library's maps and drawn joined, its missing digits and marks drawn in
+              --font-map FILE     a font map (JSON), again for more: tried before the library's maps
+              --font-maps SET     legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
+                                  FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them),
+                                  blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
+                                  digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
+                                  mark-share (0.3), mark-pen-share (0.6)
               --parts FILE        header, subject, signature and footer parts, with slots such as {digits:6} or {hijri}
                                   (JSON: "headerStart", "headerCenter", "headerEnd", "titles", "subjects", "signatures",
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone
@@ -83,7 +91,7 @@ internal sealed class DataSynthCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
         ["--out", "--fonts", "--parts", "--count", "--layout", "--scan", "--shapes", "--grey", "--page", "--records", "--full-text", "--prompt", "--answer-key",
-         "--image-format", "--quality", "--workers", "--limit"];
+         "--image-format", "--quality", "--workers", "--limit", .. FontMapSettings.Options];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--zip"];
 
@@ -104,6 +112,7 @@ internal sealed class DataSynthCommand : Command
             throw new UsageException($"The fonts folder {fontsFolder} is not there.");
         }
 
+        using var fontMaps = FontMapSettings.Apply(context);
         var fonts = SyntheticPages.Fonts(fontsFolder);
         if (fonts.Count == 0)
         {

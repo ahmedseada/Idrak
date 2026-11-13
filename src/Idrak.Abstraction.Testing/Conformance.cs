@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Data;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Reinforcement;
@@ -189,6 +190,18 @@ public static class Conformance
     public static ConformanceReport CheckFillInMiddleFormat(string name, IPretrainedTokenizer tokenizer, IFillInMiddleFormat? format = null,
         IFillInMiddleFormat? reference = null, ContractCheckOptions? options = null) =>
         Check(format ?? FillInMiddleFormats.Get(name), new FillInMiddleFormatSuite(tokenizer, reference), options);
+
+    /// <summary>
+    /// Checks the font mapper registered as <paramref name="name"/> (or <paramref name="mapper"/>, when given;
+    /// <see cref="FontMapperSuite"/>) on <paramref name="legacy"/>, a font <paramref name="map"/> fits, and
+    /// <paramref name="unicode"/>, one that answers the map's letters itself: the legacy font fits and answers each letter
+    /// with the font's glyph, each form is reached through the made substitutions, a map of glyph ids answers its glyphs,
+    /// the other font is not mapped and stays the same face, the same answers from several threads, and bad maps are
+    /// refused naming the key.
+    /// </summary>
+    public static ConformanceReport CheckFontMapper(string name, IFontFace legacy, FontMap map, IFontFace unicode, IFontMapper? mapper = null,
+        ContractCheckOptions? options = null) =>
+        Check(mapper ?? FontMappers.Get(name), new FontMapperSuite(legacy, map, unicode), options);
 
     /// <summary>
     /// Checks the reading order registered as <paramref name="name"/> (or <paramref name="order"/>, when given;

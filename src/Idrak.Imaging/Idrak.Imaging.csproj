@@ -14,6 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The legacy font support's data: the font maps (rules, no font) and the drawn glyphs' strokes. -->
+    <EmbeddedResource Include="Resources\font-maps\*.json" LogicalName="Idrak.Imaging.font-maps.%(Filename)%(Extension)" WithCulture="false" />
+    <EmbeddedResource Include="Resources\drawn-glyphs.json" LogicalName="Idrak.Imaging.drawn-glyphs.json" WithCulture="false" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Idrak.Abstraction.Devices" />
   </ItemGroup>
 

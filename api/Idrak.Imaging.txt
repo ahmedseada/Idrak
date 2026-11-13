@@ -83,6 +83,12 @@ public enum Idrak.Imaging.JpegSubsampling : int
 public static class Idrak.Imaging.OpenTypeFeatures
   public static (System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.IReadOnlyList<string>) Of(Idrak.Abstraction.Data.IFontFace font, string script, string? language = null)
 
+public sealed class Idrak.Imaging.OpenTypeFontMapper : Idrak.Abstraction.Data.IFontMapper, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.IFontFace? Map(Idrak.Abstraction.Data.IFontFace face, Idrak.Abstraction.Data.FontMap map, bool detect, Idrak.Abstraction.Data.FontMapDrawing drawing)
+  public OpenTypeFontMapper()
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed class Idrak.Imaging.OpenTypeFormat : Idrak.Abstraction.Data.IFontFormat
   public OpenTypeFormat()
   public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }

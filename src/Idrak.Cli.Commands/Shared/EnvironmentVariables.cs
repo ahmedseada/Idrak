@@ -74,7 +74,10 @@ internal static class EnvironmentVariables
 
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
-        Cluster = "Cluster", Code = "Code data";
+        Cluster = "Cluster", Code = "Code data", Fonts = "Fonts";
+
+    // Read by FontMaps and FontMapDrawing (Idrak.Abstraction): the legacy font support, wherever fonts are read.
+    private static readonly string[] FontCommands = ["data synth", "data fonts"];
 
     // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code names them in its help, its flags win.
     private static readonly string[] CodeData = ["data code"];
@@ -481,6 +484,10 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),
         new("IDRAK_CODING_LANGUAGES", Sandbox, "all", "The coding languages the coding tools and agent work with (programs, folders skipped, prompt lines): all registered, detected in the workspace, none, or names such as csharp,typescript", SandboxRun),
         new("IDRAK_OOM_POLICY", Precision, "split", "What a training step that runs out of memory does (OutOfMemoryPolicies): split (cut into twice as many parts after each failure, their gradients added up), none (the failure is thrown), or a plug-in's", OnDevice),
+        new("IDRAK_FONT_MAPS", Fonts, "on", "0, off, false or no: the library's font maps are not matched against fonts read, so a legacy font is used as it is (--font-maps builtin=off)", FontCommands),
+        new("IDRAK_FONT_MAP_SIDECARS", Fonts, "on", "0, off, false or no: a map beside a font (FONT.map.json) is not applied (--font-maps sidecars=off)", FontCommands),
+        new("IDRAK_FONT_MAP_DIGITS", Fonts, "on", "0, off, false or no: Latin digits are not drawn into mapped fonts that lack them (--font-maps digits=off)", FontCommands),
+        new("IDRAK_FONT_MAP_MARKS", Fonts, "on", "0, off, false or no: combining marks are not drawn into mapped fonts that lack them (--font-maps marks=off)", FontCommands),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
         new("IDRAK_CODE_MAX_FILE_BYTES", Code, "1048576", "The largest file a code extraction reads, in bytes (larger ones are often generated)", CodeData),
