@@ -11,7 +11,8 @@ namespace Idrak.Imaging;
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
 /// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer, the reading orders (bidi, runs), the page layouts
-/// (letter, plain, shapes), the shapes, shape profiles, pens and text bindings the "shapes" layout draws with. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
+/// (letter, plain, shapes), the shapes, shape profiles, pens and text bindings the "shapes" layout draws with, and the glyph poses every layout
+/// writes its text with. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
 /// </summary>
 internal sealed class LibraryRegistrations : ILibraryRegistrations
@@ -54,6 +55,11 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
             Pens.Register(new BallpointPen());
         },
         [typeof(TextBindings)] = () => TextBindings.Register(new SequenceBinding()),
+        [typeof(GlyphPoses)] = () =>                                             // none, drift
+        {
+            GlyphPoses.Register(new NonePose());
+            GlyphPoses.Register(new DriftPose());
+        },
     };
 
     private static void RegisterShapes()

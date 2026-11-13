@@ -1021,6 +1021,53 @@ public sealed class Idrak.Abstraction.Data.GlyphOutline
   public bool IsEmpty { get; }
   public static readonly Idrak.Abstraction.Data.GlyphOutline Empty
 
+public readonly record struct Idrak.Abstraction.Data.GlyphPose : System.IEquatable<Idrak.Abstraction.Data.GlyphPose>
+  public GlyphPose(float Dx, float Dy, float Scale, float Shear, float Rotation, float Ink)
+  public bool IsIdentity { get; }
+  public float Dx { get; init; }
+  public float Dy { get; init; }
+  public float Ink { get; init; }
+  public float Rotation { get; init; }
+  public float Scale { get; init; }
+  public float Shear { get; init; }
+  public static Idrak.Abstraction.Data.GlyphPose Identity { get; }
+
+public readonly record struct Idrak.Abstraction.Data.GlyphPoseBounds : System.IEquatable<Idrak.Abstraction.Data.GlyphPoseBounds>
+  public GlyphPoseBounds(float Move, float Scale, float Shear, float Rotation, float Ink)
+  public float Ink { get; init; }
+  public float Move { get; init; }
+  public float Reach(float size, float reach)
+  public float Rotation { get; init; }
+  public float Scale { get; init; }
+  public float Shear { get; init; }
+  public static Idrak.Abstraction.Data.GlyphPoseBounds None { get; }
+
+public readonly record struct Idrak.Abstraction.Data.GlyphPoseInput : System.IEquatable<Idrak.Abstraction.Data.GlyphPoseInput>
+  public GlyphPoseInput(int Line, float X, int Cluster, float Size, int Seed)
+  public float Size { get; init; }
+  public float X { get; init; }
+  public int Cluster { get; init; }
+  public int Line { get; init; }
+  public int Seed { get; init; }
+
+public class Idrak.Abstraction.Data.GlyphPoseSettings
+  public GlyphPoseSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public static Idrak.Abstraction.Data.GlyphPoseSettings None { get; }
+
+public static class Idrak.Abstraction.Data.GlyphPoses
+  public const string None = "none"
+  public static Idrak.Abstraction.Data.IGlyphPose Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IGlyphPose? Default(string name)
+  public static Idrak.Abstraction.Data.IGlyphPose? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IGlyphPose pose)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public interface Idrak.Abstraction.Data.IAugmentation
   public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
   public string Name { get; }
@@ -1053,6 +1100,11 @@ public interface Idrak.Abstraction.Data.IFontFormat
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Read(System.ReadOnlyMemory<byte> file, string name)
   public bool Accepts(System.ReadOnlySpan<byte> header)
   public string Name { get; }
+
+public interface Idrak.Abstraction.Data.IGlyphPose : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.GlyphPose Pose(in Idrak.Abstraction.Data.GlyphPoseInput glyph, Idrak.Abstraction.Data.GlyphPoseSettings settings)
+  public Idrak.Abstraction.Data.GlyphPoseBounds Bounds(Idrak.Abstraction.Data.GlyphPoseSettings settings)
+  public Idrak.Abstraction.Data.GlyphPoseSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
 public interface Idrak.Abstraction.Data.IImageCodec
   public Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)

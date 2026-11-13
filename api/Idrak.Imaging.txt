@@ -118,6 +118,7 @@ public readonly record struct Idrak.Imaging.PlacedGlyph : System.IEquatable<Idra
   public float Scale { get; init; }
   public float X { get; init; }
   public float Y { get; init; }
+  public int Cluster { get; init; }
   public int Glyph { get; init; }
 
 public sealed class Idrak.Imaging.RandomFlip : Idrak.Abstraction.Data.IAugmentation, Idrak.Abstraction.Data.ISampleTransform

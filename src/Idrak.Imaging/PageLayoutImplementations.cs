@@ -214,6 +214,12 @@ internal static class PageDrawing
 
     internal static (float R, float G, float B) BlueInk(Choices c) => (c.Between(0.05f, 0.2f), c.Between(0.15f, 0.3f), c.Between(0.45f, 0.7f));
 
+    // The part number of a page's glyph poses (Mix): their seed is hashed from the layout's, never drawn from its Random.
+    internal const int GlyphSeed = 5;
+
+    // A posed page's description names its pose; a page as set says nothing more.
+    internal static string Posed(GlyphPainter glyphs) => glyphs.IsIdentity ? "" : $", pose {glyphs.Name}";
+
     // A seed of its own for each part of a page's choices, from the page's seed and the part's number (SplitMix64; the
     // same in every process), so one part's draws never move another's.
     internal static int Mix(int seed, int part)
@@ -246,6 +252,7 @@ internal sealed class LetterLayout : IPageLayout
             throw new ArgumentException("A page needs at least one font.", nameof(style));
         }
 
+        var glyphs = GlyphPainter.Read(style.Options, Mix(seed, GlyphSeed));
         var c = new Choices(style, seed);
         bool rtl = Direction(content);
         int width = style.Width;
@@ -344,7 +351,7 @@ internal sealed class LetterLayout : IPageLayout
         var blocks = new List<PageBlock>();
         foreach (var (kind, text, block, x, top, blue) in placed)
         {
-            TextRenderer.Draw(block, x, top, blue ? canvas.Blue : canvas.Ink, width, height);
+            glyphs.Draw(block, x, top, blue ? canvas.Blue : canvas.Ink, width, height);
             blocks.Add(new PageBlock(kind, text, x, top, block.Width, block.Height));
         }
 
@@ -375,13 +382,13 @@ internal sealed class LetterLayout : IPageLayout
         {
             float footerTop = height - margin * 0.6f - footerBlock.Height;
             canvas.Rectangle(canvas.Ink, margin, footerTop - bodySize * 0.5f, inner, 1.5f);
-            TextRenderer.Draw(footerBlock, margin, footerTop, canvas.Ink, width, height);
+            glyphs.Draw(footerBlock, margin, footerTop, canvas.Ink, width, height);
             blocks.Add(new PageBlock("footer", string.Join("\n", content.Footer), margin, footerTop, inner, footerBlock.Height));
         }
 
         var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"letter: body {Describe(body)}, header {Describe(header)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{(emblem ? ", emblem" : "")}{(rule ? ", rule" : "")}{(stamp ? ", stamp" : "")}{(blueSignature ? ", blue signature" : "")}");
+            $"letter: body {Describe(body)}, header {Describe(header)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{(emblem ? ", emblem" : "")}{(rule ? ", rule" : "")}{(stamp ? ", stamp" : "")}{(blueSignature ? ", blue signature" : "")}{Posed(glyphs)}");
         return new RenderedPage(image, content.ReadingOrder(), blocks, description);
     }
 }
@@ -402,6 +409,7 @@ internal sealed class PlainLayout : IPageLayout
             throw new ArgumentException("A page needs at least one font.", nameof(style));
         }
 
+        var glyphs = GlyphPainter.Read(style.Options, Mix(seed, GlyphSeed));
         var c = new Choices(style, seed);
         bool rtl = Direction(content);
         int width = style.Width;
@@ -439,12 +447,12 @@ internal sealed class PlainLayout : IPageLayout
         var blocks = new List<PageBlock>();
         foreach (var (kind, text, block, top) in placed)
         {
-            TextRenderer.Draw(block, margin, top, canvas.Ink, width, height);
+            glyphs.Draw(block, margin, top, canvas.Ink, width, height);
             blocks.Add(new PageBlock(kind, text, margin, top, inner, block.Height));
         }
 
         var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
         return new RenderedPage(image, content.ReadingOrder(), blocks,
-            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}"));
+            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{Posed(glyphs)}"));
     }
 }

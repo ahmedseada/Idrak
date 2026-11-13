@@ -218,6 +218,15 @@ public static class Conformance
         Check(pen ?? Pens.Get(name), new PenSuite(settings, exact), options);
 
     /// <summary>
+    /// Checks a glyph pose (<see cref="GlyphPoseSuite"/>): the same pose for the same input (one pose a cluster), every
+    /// pose within the bounds its settings declare, neighbouring clusters changing only smoothly, and with
+    /// <paramref name="identity"/> every pose the identity; with its defaults and each of <paramref name="settings"/>.
+    /// </summary>
+    public static ConformanceReport CheckGlyphPose(string name, IGlyphPose? pose = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, bool identity = false,
+        ContractCheckOptions? options = null) =>
+        Check(pose ?? GlyphPoses.Get(name), new GlyphPoseSuite(settings, identity), options);
+
+    /// <summary>
     /// Checks a text binding (<see cref="TextBindingSuite"/>): a text per region, the same for the same seed, the texts
     /// units of the lines in order, and the label exactly the drawn text a line a group; with its defaults and each of
     /// <paramref name="settings"/>.

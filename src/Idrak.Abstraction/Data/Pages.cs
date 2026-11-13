@@ -111,7 +111,8 @@ public sealed record PageStyle
     /// <summary>
     /// Settings a layout reads by key (keys ignore case), values as text: the "shapes" layout's <c>shapes</c> (a shape
     /// profile's name or text), <c>pen</c>, <c>bind</c>, <c>blue-pen</c>, <c>cell-align</c>, <c>stroke</c>, <c>least-size</c> and the chosen
-    /// pen's and text binding's own keys. A layout reads its own keys and leaves the others; none by default.
+    /// pen's and text binding's own keys; every built-in layout's <c>pose</c> (a glyph pose, <see cref="GlyphPoses"/>; none by
+    /// default) and that pose's own keys. A layout reads its own keys and leaves the others; none by default.
     /// </summary>
     public IReadOnlyDictionary<string, string> Options { get; init; } = PageOptions.None;
 }

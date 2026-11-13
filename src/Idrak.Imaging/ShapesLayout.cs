@@ -12,7 +12,7 @@ namespace Idrak.Imaging;
 /// (<see cref="PageStyle.Options"/>, once per page): <c>shapes</c> (a shape profile's name or text; "grid"), <c>pen</c>
 /// ("ideal") and the pen's keys, <c>bind</c> ("sequence") and the binding's keys, <c>blue-pen</c> (the chance the pen and
 /// the writing are blue; 0), <c>cell-align</c> (start, center, end or mixed; mixed), <c>stroke</c> (the stroke's width,
-/// a share of the text size; 0.05..0.09) and <c>least-size</c> (the smallest a region's text is set, a share of the body's
+/// a share of the text size; 0.05..0.09), <c>pose</c> and its keys (the glyph pose every layout writes with; none) and <c>least-size</c> (the smallest a region's text is set, a share of the body's
 /// size; 0.4). The profile is sampled from the page's seed, every step planned in the page inside its margins (paper kept
 /// at the page's corners), the text bound to the regions, each region's text set in the page's font at the body's size or
 /// smaller so its ink stays inside the region (a text that would need to be smaller than least-size is left out: its
@@ -51,6 +51,7 @@ internal sealed class ShapesLayout : IPageLayout
         string align = Option(options, "cell-align") is { } alignText ? PageOptions.Choice("Page setting cell-align", alignText, Alignments) : "mixed";
         var strokeShare = Option(options, "stroke") is { } strokeText ? PageOptions.Range("Page setting stroke", strokeText, 0.005f, 1) : (0.05f, 0.09f);
         float leastSize = Option(options, "least-size") is { } leastText ? PageOptions.Number("Page setting least-size", leastText, 0, 1) : 0.4f;
+        var glyphs = GlyphPainter.Read(options, Mix(seed, GlyphSeed));
 
         // The page's choices: the same draws in the same order on every page.
         var c = new Choices(style, seed);
@@ -162,7 +163,7 @@ internal sealed class ShapesLayout : IPageLayout
             }
 
             var region = usable[i];
-            var (block, inkLeft, inkTop, inkWidth, inkHeight) = Fit(text, body, region.Width, region.Height, rtl);
+            var (block, inkLeft, inkTop, inkWidth, inkHeight) = Fit(text, body, region.Width, region.Height, rtl, glyphs);
             if (block.Style.Size < size * leastSize)
             {
                 continue;                                           // too small to read: the region stays empty
@@ -173,7 +174,7 @@ internal sealed class ShapesLayout : IPageLayout
             float x = at switch { "start" => rtl ? freeX : 0, "end" => rtl ? 0 : freeX, _ => freeX / 2 };
             x = Math.Clamp(x + (float)(offX - 0.5) * Math.Min(freeX, size) * 0.3f, 0, freeX);
             float y = Math.Clamp(freeY / 2 + (float)(offY - 0.5) * freeY * 0.4f, 0, freeY);
-            TextRenderer.Draw(block, region.X + x - inkLeft, region.Y + y - inkTop, layer, width, height);
+            glyphs.Draw(block, region.X + x - inkLeft, region.Y + y - inkTop, layer, width, height);
             texts.Add((region, text));
         }
 
@@ -197,7 +198,7 @@ internal sealed class ShapesLayout : IPageLayout
         var image = canvas.Compose(paper, darkness, blueInk, style.Color);
         string described = profile.Name == "custom" ? "written" : profile.Name;
         string description = string.Create(CultureInfo.InvariantCulture,
-            $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}");
+            $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Posed(glyphs)}");
         return new RenderedPage(image, string.Join("\n", label), blocks, description);
     }
 
@@ -346,8 +347,9 @@ internal sealed class ShapesLayout : IPageLayout
     }
 
     // The text set on one line at the body's size, or smaller so that its ink (and its advance box), with a pixel round
-    // it, fits the region; returns the block and the ink box's left, top, width and height relative to the block.
-    private static (TextBlock Block, float Left, float Top, float Width, float Height) Fit(string text, TextStyle body, float width, float height, bool rtl)
+    // it and the most the page's glyph pose moves it, fits the region; returns the block and the ink box's left, top,
+    // width and height relative to the block.
+    private static (TextBlock Block, float Left, float Top, float Width, float Height) Fit(string text, TextStyle body, float width, float height, bool rtl, GlyphPainter glyphs)
     {
         var style = body;
         TextBlock block = null!;
@@ -355,7 +357,13 @@ internal sealed class ShapesLayout : IPageLayout
         for (int attempt = 0; attempt < 6; attempt++)
         {
             block = TextLayout.Layout(text, style, float.PositiveInfinity, TextAlignment.Start, rtl);
-            ink = InkBox(block);
+            ink = InkBox(block, out float reach);
+            if (!glyphs.IsIdentity)
+            {
+                float pad = glyphs.Reach(style.Size, reach);
+                ink = (ink.Left - pad, ink.Top - pad, ink.Width + 2 * pad, ink.Height + 2 * pad);
+            }
+
             float scale = Math.Min(width / ink.Width, height / ink.Height);
             if (scale >= 1f)
             {
@@ -369,10 +377,11 @@ internal sealed class ShapesLayout : IPageLayout
     }
 
     // The box around a block's advance and its glyphs' outlines (control points included), a pixel wider on every side
-    // for the edge pixels the rasterizer touches.
-    private static (float Left, float Top, float Width, float Height) InkBox(TextBlock block)
+    // for the edge pixels the rasterizer touches; `reach`, the farthest an outline's box reaches from its pen origin.
+    internal static (float Left, float Top, float Width, float Height) InkBox(TextBlock block, out float reach)
     {
         float x0 = 0, y0 = 0, x1 = block.Width, y1 = block.Height;
+        reach = 0;
         foreach (var line in block.Lines)
         {
             foreach (var g in line.Glyphs)
@@ -388,6 +397,8 @@ internal sealed class ShapesLayout : IPageLayout
                 x1 = Math.Max(x1, g.X + maxX * g.Scale);
                 y0 = Math.Min(y0, g.Y - maxY * g.Scale);
                 y1 = Math.Max(y1, g.Y - minY * g.Scale);
+                float rx = Math.Max(Math.Abs(minX), Math.Abs(maxX)) * g.Scale, ry = Math.Max(Math.Abs(minY), Math.Abs(maxY)) * g.Scale;
+                reach = Math.Max(reach, MathF.Sqrt(rx * rx + ry * ry));
             }
         }
 

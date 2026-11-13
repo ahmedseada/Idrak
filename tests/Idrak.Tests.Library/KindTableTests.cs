@@ -203,6 +203,8 @@ internal abstract partial class Tests
             ("ShapeProfiles", None, ShapeProfiles.Names,
                 $"Shape profile '{None}' is not registered (registered: {Listed(ShapeProfiles.Names)}); add it with ShapeProfiles.Register, or write one as text (ShapeProfile).",
                 () => ShapeProfiles.Get(None)),
+            ("GlyphPoses", None, GlyphPoses.Names, $"Glyph pose '{None}' is not registered (registered: {Listed(GlyphPoses.Names)}); add it with GlyphPoses.Register.",
+                () => GlyphPoses.Get(None)),
             ("Pens", None, Pens.Names, $"Pen '{None}' is not registered (registered: {Listed(Pens.Names)}); add it with Pens.Register.", () => Pens.Get(None)),
             ("TextBindings", None, TextBindings.Names, $"Text binding '{None}' is not registered (registered: {Listed(TextBindings.Names)}); add it with TextBindings.Register.",
                 () => TextBindings.Get(None)),

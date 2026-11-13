@@ -355,13 +355,17 @@ public static class SyntheticPages
     /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
         ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
-         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size"];
+         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose"];
 
     // The keys of StyleKeys that go into the style's options for the layouts that read them.
-    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size"];
+    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose"];
 
-    /// <summary>The keys of the registered pens (<see cref="Pens"/>) and text bindings (<see cref="TextBindings"/>), which <see cref="Style"/> also reads, each once.</summary>
-    public static IReadOnlyList<string> KindStyleKeys() => [.. Pens.AllKeys().Concat(TextBindings.AllKeys()).Distinct(StringComparer.OrdinalIgnoreCase)];
+    /// <summary>
+    /// The keys of the registered pens (<see cref="Pens"/>), text bindings (<see cref="TextBindings"/>) and glyph poses
+    /// (<see cref="GlyphPoses"/>), which <see cref="Style"/> also reads, each once.
+    /// </summary>
+    public static IReadOnlyList<string> KindStyleKeys() =>
+        [.. Pens.AllKeys().Concat(TextBindings.AllKeys()).Concat(GlyphPoses.AllKeys()).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
@@ -371,8 +375,9 @@ public static class SyntheticPages
     /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false. The "shapes" layout's
     /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a registered pen and text
     /// binding), blue-pen (a chance), cell-align (start, center, end or mixed), stroke (the stroke's width, a share of the
-    /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size), and every key a
-    /// registered pen or text binding takes (<see cref="KindStyleKeys"/>, each value
+    /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size); for every layout,
+    /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
+    /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
     /// checked by the kinds that take it).
     /// </summary>
     /// <exception cref="ArgumentException">A key not known, or a value out of its range; the message names them.</exception>
@@ -447,6 +452,9 @@ public static class SyntheticPages
             case "least-size":
                 _ = PageOptions.Number(what, value, 0, 1);
                 return;
+            case "pose":
+                _ = GlyphPoses.Find(value) ?? throw new ArgumentException($"{what} is a registered glyph pose ({string.Join(", ", GlyphPoses.Names)}), not '{value}'.");
+                return;
         }
 
         var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
@@ -467,6 +475,15 @@ public static class SyntheticPages
                 _ = binding.Read(one);
             }
         }
+
+        foreach (string name in GlyphPoses.Names)
+        {
+            var pose = GlyphPoses.Get(name);
+            if (pose.Keys.Contains(key))
+            {
+                _ = pose.Read(one);
+            }
+        }
     }
 
     // The options a style holds for the layouts, checked before the first page: each known key's value, the pen's and
@@ -485,6 +502,8 @@ public static class SyntheticPages
         _ = pen.Read(PageOptions.Only(options, pen.Keys));
         var binding = TextBindings.Get(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
         _ = binding.Read(PageOptions.Only(options, binding.Keys));
+        var pose = GlyphPoses.Get(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
+        _ = pose.Read(PageOptions.Only(options, pose.Keys));
     }
 
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>

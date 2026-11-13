@@ -53,7 +53,11 @@ public sealed record TextStyle(IFontFace Font, float Size)
 }
 
 /// <summary>A glyph placed on a line: its font, glyph, pen position (the baseline at y, pixels) and scale (pixels per font unit).</summary>
-public readonly record struct PlacedGlyph(IFontFace Font, int Glyph, float X, float Y, float Scale);
+public readonly record struct PlacedGlyph(IFontFace Font, int Glyph, float X, float Y, float Scale)
+{
+    /// <summary>Its cluster: the index in its paragraph of the first character it was shaped from (a mark shares its base's).</summary>
+    public int Cluster { get; init; }
+}
 
 /// <summary>One line of a laid-out block: its text (in reading order), where it sits and its glyphs in drawing order.</summary>
 public sealed class TextLine
@@ -332,7 +336,7 @@ public static class TextLayout
             foreach (var g in glyphs)
             {
                 bool space = g.Cluster < p.Length && p[g.Cluster] is ' ' or '\t' or ' ';
-                placed.Add((new PlacedGlyph(font, g.Glyph, x + g.XOffset * s, baseline - g.YOffset * s, s), space, g.XAdvance * s));
+                placed.Add((new PlacedGlyph(font, g.Glyph, x + g.XOffset * s, baseline - g.YOffset * s, s) { Cluster = g.Cluster }, space, g.XAdvance * s));
                 x += g.XAdvance * s;
             }
         }
