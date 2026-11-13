@@ -28,7 +28,7 @@ public sealed record PageContent
     /// <summary>A subject line; null for none.</summary>
     public string? Subject { get; init; }
 
-    /// <summary>The body's paragraphs.</summary>
+    /// <summary>The body's paragraphs (an empty one is a section break, which the "shapes" layout reads with its <c>sections=blank</c> setting).</summary>
     public IReadOnlyList<string> Body { get; init; } = [];
 
     /// <summary>The signature block's lines (a name and a title), at the end side.</summary>

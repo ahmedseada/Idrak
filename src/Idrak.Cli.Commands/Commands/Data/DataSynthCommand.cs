@@ -59,7 +59,9 @@ internal sealed class DataSynthCommand : Command
                                   no shapes, grid: a grid fitted to the text, ruled: a line under each line, boxed: a
                                   box around the text) or one written as text, steps NAME[=VALUE][@CHANCE] with their
                                   options, "grid=auto x 18,widths=1:4:1*16,heavy-every=4,heavy-width=2..3" (shapes:
-                                  line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch; none)
+                                  line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text;
+                                  any takes flow=down to stack down the page, lines=N|rest, holds=paragraphs; also
+                                  text-grid-text, framed, circled; none)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
                                   color, rule, emblem, stamp, blue-signature, header-font, crop (a chance
@@ -68,7 +70,8 @@ internal sealed class DataSynthCommand : Command
                                   pen-overshoot, pen-tilt (ranges), bind (sequence), take (units per region, as
                                   1:rest), blank (the chance a region is left empty), blank-at (which, from 1, as
                                   3..18), blue-pen (a chance), cell-align (start, center, end, mixed), stroke (a share
-                                  of the text size), least-size (the smallest a region's text is set, a share of size);
+                                  of the text size), least-size (the smallest a region's text is set, a share of size),
+                                  sections (blank: empty lines split the text into sections, one a step);
                                   for every layout: pose (none, drift: each glyph drawn a little differently),
                                   pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure (ranges); habits
                                   (none, the default; a habits name such as arabic-handwriting, or a rules file: the

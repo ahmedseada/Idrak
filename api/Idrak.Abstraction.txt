@@ -1729,6 +1729,8 @@ public static class Idrak.Abstraction.Data.ShapeProfiles
 
 public readonly record struct Idrak.Abstraction.Data.ShapeRegion : System.IEquatable<Idrak.Abstraction.Data.ShapeRegion>
   public ShapeRegion(int Group, int Index, float X, float Y, float Width, float Height)
+  public bool Paragraphs { get; init; }
+  public bool Round { get; init; }
   public float Height { get; init; }
   public float Width { get; init; }
   public float X { get; init; }
@@ -1741,18 +1743,23 @@ public sealed class Idrak.Abstraction.Data.ShapeStep : System.IEquatable<Idrak.A
   public (float, float) Pair(string key, (float, float) otherwise, float least, float most)
   public (float, float) Range(string key, (float, float) otherwise, float least, float most)
   public (float, float) Size()
+  public (int, bool)? Lines()
   public Idrak.Abstraction.Data.ShapeStep With(string key, string value)
   public ShapeStep(string name, string? value = null, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
   public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
   public System.Collections.Generic.IReadOnlyList<string>? List(string key)
   public bool Equals(Idrak.Abstraction.Data.ShapeStep? other)
+  public bool FlowsDown()
   public bool Has(string key)
+  public bool HoldsParagraphs()
   public bool InLast()
   public bool Switch(string key, bool otherwise)
+  public float Gap()
   public float Margin()
   public float Number(string key, float otherwise, float least, float most)
   public float Tone(float otherwise = 1f)
   public float WidthFactor()
+  public float? FlowHeight()
   public float[] Dash()
   public float[]? Numbers(string key, float least, float most)
   public float[]? Points(string key, int least)

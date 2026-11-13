@@ -355,11 +355,11 @@ public static class SyntheticPages
     /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
         ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
-         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose",
+         "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections",
          "habits", "habit-chance", "habit.NAME", "label"];
 
     // The keys of StyleKeys that go into the style's options for the layouts that read them.
-    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose"];
+    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections"];
 
     /// <summary>
     /// The keys of the registered pens (<see cref="Pens"/>), text bindings (<see cref="TextBindings"/>) and glyph poses
@@ -376,7 +376,8 @@ public static class SyntheticPages
     /// its drawn parts, <see cref="PageStyle.Crop"/>) as chances (0 to 1); color as true or false. The "shapes" layout's
     /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a registered pen and text
     /// binding), blue-pen (a chance), cell-align (start, center, end or mixed), stroke (the stroke's width, a share of the
-    /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size); for every layout,
+    /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size), sections (none, or
+    /// blank: the text's empty lines split it into sections, one a step that takes text; off by default); for every layout,
     /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
     /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
     /// checked by the kinds that take it); habits (none, the
@@ -473,6 +474,9 @@ public static class SyntheticPages
                 return;
             case "least-size":
                 _ = PageOptions.Number(what, value, 0, 1);
+                return;
+            case "sections":
+                _ = PageOptions.Choice(what, value, "none", "blank");
                 return;
             case "pose":
                 _ = GlyphPoses.Find(value) ?? throw new ArgumentException($"{what} is a registered glyph pose ({string.Join(", ", GlyphPoses.Names)}), not '{value}'.");
@@ -737,6 +741,11 @@ public static class SyntheticPages
             Block([.. alternatives.Select(a => (IReadOnlyList<string>)[a])], part) is [var line] ? line : null;
 
         var body = answer.PageText.Replace("\r", "", StringComparison.Ordinal).Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+        if (body.Length > 0 && options.Style.Options.TryGetValue("sections", out var split) && split.Equals("blank", StringComparison.OrdinalIgnoreCase))
+        {
+            body = Sections(answer.PageText);                           // empty lines kept, one between sections, only when asked
+        }
+
         if (body.Length == 0)
         {
             throw new InvalidDataException($"{where}: the answer's page text is empty.");
@@ -810,6 +819,27 @@ public static class SyntheticPages
 
     // The record number a page's shape draw is hashed with (PageSeed), apart from every real record's.
     private const int ShapesDraw = unchecked((int)0x9E37_5A9E);
+
+    // The text's lines with one empty line where a run of empty lines split it (none at its ends).
+    private static string[] Sections(string text)
+    {
+        var lines = new List<string>();
+        foreach (string raw in text.Replace("\r", "", StringComparison.Ordinal).Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.Length > 0 || (lines.Count > 0 && lines[^1].Length > 0))
+            {
+                lines.Add(line);
+            }
+        }
+
+        while (lines.Count > 0 && lines[^1].Length == 0)
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return [.. lines];
+    }
 
     // The box around a page's drawn parts with padding drawn from its range, within the page; null when nothing was drawn.
     private static (int X, int Y, int Width, int Height)? Bounds(RenderedPage page, (float Min, float Max) padding, Random random)

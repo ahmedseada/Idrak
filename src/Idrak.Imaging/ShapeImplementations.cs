@@ -230,7 +230,7 @@ internal sealed class PolygonShape : IShape
         // The square inside the polygon's inner circle, scaled to its box, less the stroke and the padding.
         float inner = (float)PortableMath.Cos(Math.PI / sides) / MathF.Sqrt(2);
         float inset = ShapeGeometry.Half(step, context) + ShapeGeometry.Pad(step, context, 0.15f);
-        var region = ShapeGeometry.Region(0, 0, cx - rx * inner, cy - ry * inner, cx + rx * inner, cy + ry * inner, inset, inset, inset, inset);
+        var region = ShapeGeometry.Region(0, 0, cx - rx * inner, cy - ry * inner, cx + rx * inner, cy + ry * inner, inset, inset, inset, inset) with { Paragraphs = step.HoldsParagraphs() };
         return new ShapePlan([ShapeGeometry.Path(step, points, closed: true)], null, [region]);
     }
 }
@@ -293,7 +293,7 @@ internal sealed class BoxShape : IShape
         }
 
         float inset = ShapeGeometry.Half(step, context) + ShapeGeometry.Pad(step, context, 0.15f) + 0.3f * r;
-        var region = ShapeGeometry.Region(0, 0, context.X, context.Y, context.Right, context.Bottom, inset, inset, inset, inset);
+        var region = ShapeGeometry.Region(0, 0, context.X, context.Y, context.Right, context.Bottom, inset, inset, inset, inset) with { Paragraphs = step.HoldsParagraphs() };
         return new ShapePlan(paths, null, [region]);
     }
 
@@ -520,6 +520,7 @@ internal sealed class GridShape : IShape
         // A cell's region: inside the half widths of the lines around it, and the padding.
         float half = ShapeGeometry.Half(step, context);
         var regions = new List<ShapeRegion>(rows * cols);
+        bool paragraphs = step.HoldsParagraphs();
         for (int r = 0; r < rows; r++)
         {
             for (int c = 0; c < cols; c++)
@@ -527,7 +528,7 @@ internal sealed class GridShape : IShape
                 float a = xs[c], b = xs[c + 1];
                 float startInset = half * colWidth[c] + pad, endInset = half * colWidth[c + 1] + pad;
                 regions.Add(ShapeGeometry.Region(r, c, Math.Min(a, b), ys[r], Math.Max(a, b), ys[r + 1],
-                    context.RightToLeft ? endInset : startInset, half * rowWidth[r] + pad, context.RightToLeft ? startInset : endInset, half * rowWidth[r + 1] + pad));
+                    context.RightToLeft ? endInset : startInset, half * rowWidth[r] + pad, context.RightToLeft ? startInset : endInset, half * rowWidth[r + 1] + pad) with { Paragraphs = paragraphs });
             }
         }
 
@@ -599,7 +600,10 @@ internal sealed class CircleShape : IShape
         float cx = context.X + context.Width / 2, cy = context.Y + context.Height / 2;
         var ring = ShapeGeometry.Arc(context, cx, cy, r, r, 0, 360, closed: true);
         float side = r / MathF.Sqrt(2), inset = ShapeGeometry.Half(step, context) + ShapeGeometry.Pad(step, context, 0.15f);
-        return new ShapePlan([ShapeGeometry.Path(step, ring, closed: true)], null, [ShapeGeometry.Region(0, 0, cx - side, cy - side, cx + side, cy + side, inset, inset, inset, inset)]);
+        var region = step.HoldsParagraphs()
+            ? ShapeGeometry.Region(0, 0, cx - r, cy - r, cx + r, cy + r, inset, inset, inset, inset) with { Paragraphs = true, Round = true }
+            : ShapeGeometry.Region(0, 0, cx - side, cy - side, cx + side, cy + side, inset, inset, inset, inset);
+        return new ShapePlan([ShapeGeometry.Path(step, ring, closed: true)], null, [region]);
     }
 }
 
@@ -627,7 +631,10 @@ internal sealed class EllipseShape : IShape
         float rx = a * context.Width / 2, ry = b * context.Height / 2, cx = context.X + context.Width / 2, cy = context.Y + context.Height / 2;
         var ring = ShapeGeometry.Arc(context, cx, cy, rx, ry, 0, 360, closed: true);
         float sx = rx / MathF.Sqrt(2), sy = ry / MathF.Sqrt(2), inset = ShapeGeometry.Half(step, context) + ShapeGeometry.Pad(step, context, 0.15f);
-        return new ShapePlan([ShapeGeometry.Path(step, ring, closed: true)], null, [ShapeGeometry.Region(0, 0, cx - sx, cy - sy, cx + sx, cy + sy, inset, inset, inset, inset)]);
+        var region = step.HoldsParagraphs()
+            ? ShapeGeometry.Region(0, 0, cx - rx, cy - ry, cx + rx, cy + ry, inset, inset, inset, inset) with { Paragraphs = true, Round = true }
+            : ShapeGeometry.Region(0, 0, cx - sx, cy - sy, cx + sx, cy + sy, inset, inset, inset, inset);
+        return new ShapePlan([ShapeGeometry.Path(step, ring, closed: true)], null, [region]);
     }
 }
 
@@ -773,5 +780,34 @@ internal sealed class HatchShape : IShape
         }
 
         return new ShapePlan(paths);
+    }
+}
+
+/// <summary>
+/// "text": paragraphs of the page's text in its box, no line drawn: one region holding wrapped paragraphs (a step's lines,
+/// each a paragraph), aligned as a page's body (start, or justified at the style's chance); stacked (<c>flow=down</c>) its
+/// height is what its paragraphs need.
+/// </summary>
+internal sealed class TextShape : IShape
+{
+    private static readonly OptionKeys Own = new("pad");
+
+    public string Name => "text";
+
+    public string Summary => "paragraphs of the page's text in its box, no line drawn: one region of wrapped paragraphs (pad: text sizes; 0)";
+
+    public IReadOnlySet<string> Keys => Own;
+
+    public void Check(ShapeStep step)
+    {
+        ShapeGeometry.NoValue(step);
+        _ = step.Number("pad", 0, 0, 20);
+    }
+
+    public ShapePlan Plan(ShapeStep step, ShapeContext context)
+    {
+        float pad = ShapeGeometry.Pad(step, context, 0);
+        var region = ShapeGeometry.Region(0, 0, context.X, context.Y, context.Right, context.Bottom, pad, pad, pad, pad) with { Paragraphs = true };
+        return new ShapePlan([], null, [region]);
     }
 }

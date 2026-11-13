@@ -19,36 +19,54 @@ internal abstract partial class Tests
         ("pages: the layouts by name; an unknown name and a style with no font are refused; an app's layout replaces the library's of its name only", PageRegistry),
     ];
 
+    // A company's letter to a client about a delivery schedule: Arabic with Latin digits, a date, a long wrapping
+    // paragraph, a lam-alef (لا), hamzas (أ, ء) and taa marbutas (ة).
     internal static readonly PageContent ArabicLetter = new()
     {
-        HeaderStart = ["المملكة العربية السعودية", "وزارة العدل"],
-        HeaderEnd = ["الرقم: 12/345", "التاريخ: 1447/03/12"],
-        Subject = "الموضوع: طلب نسخة من الحكم",
+        HeaderStart = ["شركة النور للتوريدات", "إدارة خدمة العملاء"],
+        HeaderEnd = ["الرقم: 12/345", "التاريخ: 2026/03/12"],
+        Subject = "الموضوع: موعد تسليم الطلبية",
         Body =
         [
-            "سعادة رئيس المحكمة العامة المحترم، السلام عليكم ورحمة الله وبركاته، وبعد: نفيدكم بأن المدعي تقدم بطلب نسخة من الحكم الصادر في القضية رقم 4521 لعام 1446 هـ.",
-            "نأمل التكرم بالاطلاع والإفادة، شاكرين لكم حسن تعاونكم.",
+            "عزيزنا العميل، تحية طيبة وبعد: يسرنا إبلاغكم بأن طلبيتكم رقم 4521 المسجلة لدينا في عام 2026 قد أصبحت جاهزة للشحن، وسيتم تسليمها خلال ثلاثة أيام عمل من تاريخ هذا الخطاب إلى العنوان المسجل لدينا.",
+            "نشكر لكم ثقتكم بنا، ونسعد بخدمتكم دائما.",
         ],
-        Signature = ["مدير الإدارة", "أحمد بن سعد"],
+        Signature = ["مدير خدمة العملاء", "سارة بن أحمد"],
         Footer = ["العنوان: الرياض، هاتف 0112345678"],
         Language = "ar",
     };
 
+    // A short technical status report: a project, a milestone number, a date.
     internal static readonly PageContent EnglishLetter = new()
     {
-        HeaderStart = ["Ministry of Justice", "General Court"],
+        HeaderStart = ["Platform Engineering", "Release Team"],
         HeaderEnd = ["No. 12/345", "Date: 2026-03-12"],
-        Subject = "Subject: a copy of the judgment",
-        Body = ["Dear Sir, we would be grateful to receive a copy of the judgment issued in case 4521 of 2025, for the claimant's records.", "Kind regards."],
-        Signature = ["Head of Department", "A. Saad"],
-        Footer = ["Riyadh, phone 0112345678"],
+        Subject = "Subject: status of milestone 7",
+        Body = ["The storage migration reached milestone 7 of 2026 on schedule: 4521 of the planned volumes now run on the new cluster, and the rest follow next week.", "Next report in two weeks."],
+        Signature = ["Release Manager", "A. Saad"],
+        Footer = ["Platform Engineering, extension 0112345678"],
+        Language = "en",
+    };
+
+    // A newsletter: a title and a few short paragraphs, no header or signature.
+    internal static readonly PageContent Newsletter = new()
+    {
+        Title = "Community Garden News",
+        Body =
+        [
+            "Spring planting starts on 4 April: bring gloves and a friend.",
+            "The new compost bins are next to the north gate.",
+            "Volunteers meet every Saturday at 9, rain or shine.",
+            "Thank you to the 27 families who joined this year.",
+        ],
+        Footer = ["Issue 12, March 2026"],
         Language = "en",
     };
 
     internal static void TextLayoutLines(Device device)
     {
         var face = SubsetFace();
-        string paragraph = "The quick brown fox jumps over the lazy dog while the court reads the claim and the answer in turn, line by line.";
+        string paragraph = "The quick brown fox jumps over the lazy dog while the team reviews the plan and the notes in turn, line by line.";
         var style = new TextStyle(face, 24);
         float width = 300;
         var block = TextLayout.Layout(paragraph, style, width);

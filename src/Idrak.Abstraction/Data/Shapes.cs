@@ -123,7 +123,18 @@ public sealed record ShapeContext
 /// <param name="Y">Its top edge.</param>
 /// <param name="Width">Its width.</param>
 /// <param name="Height">Its height.</param>
-public readonly record struct ShapeRegion(int Group, int Index, float X, float Y, float Width, float Height);
+public readonly record struct ShapeRegion(int Group, int Index, float X, float Y, float Width, float Height)
+{
+    /// <summary>
+    /// Whether it holds wrapped paragraphs (a step's <c>holds=paragraphs</c>, a <c>text</c> step) rather than one line of
+    /// units: its text is a step's lines, each a paragraph, wrapped to its width; each drawn paragraph is one line of the
+    /// page's text.
+    /// </summary>
+    public bool Paragraphs { get; init; }
+
+    /// <summary>Whether it is the ellipse inscribed in its box (a circle's or an ellipse's): paragraph lines are shortened to fit it at each line's height.</summary>
+    public bool Round { get; init; }
+}
 
 /// <summary>
 /// An ideal path a pen strokes: a polyline of points (pixels), open or closed, its width (a factor of the stroke
@@ -408,6 +419,33 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
     /// <summary>How dark the shape is drawn, a share of the ink (<c>tone</c>); <paramref name="otherwise"/> when not given.</summary>
     public float Tone(float otherwise = 1) => Number("tone", otherwise, 0, 1);
 
+    /// <summary>
+    /// Whether the step is stacked below the parts before it down the page (<c>flow=down</c>), its height from what it
+    /// holds, rather than placed in the page by <c>at</c> and <c>size</c> (<c>flow=page</c>, the default).
+    /// </summary>
+    public bool FlowsDown() => Choice("flow", "page", "page", "down") == "down";
+
+    /// <summary>The space left below a stacked step, in text line heights (<c>gap</c>; 0.6).</summary>
+    public float Gap() => Number("gap", 0.6f, 0, 50);
+
+    /// <summary>A stacked step's height, in text line heights (<c>height</c>); null: from what it holds.</summary>
+    public float? FlowHeight() => Has("height") ? Number("height", 1, 0.1f, 1000) : null;
+
+    /// <summary>
+    /// How many of the page's lines, in order, the step takes (<c>lines=N</c>, or <c>lines=rest</c>: what the other steps
+    /// leave); null when not given (a step making a fixed number of groups takes one line a group, one whose groups follow
+    /// the text, or that holds paragraphs, the rest).
+    /// </summary>
+    public (int Count, bool Remainder)? Lines() => Option("lines") switch
+    {
+        null => null,
+        var text when text.Equals("rest", StringComparison.OrdinalIgnoreCase) => (0, true),
+        var text => (PageOptions.Integer(What("lines"), text, 0, 1_000_000), false),
+    };
+
+    /// <summary>Whether the step's regions hold wrapped paragraphs (<c>holds=paragraphs</c>) rather than one line of units each (<c>holds=lines</c>, the default).</summary>
+    public bool HoldsParagraphs() => Choice("holds", "lines", "lines", "paragraphs") == "paragraphs";
+
     /// <summary>Reads every common option (<see cref="Shapes.CommonKeys"/>), throwing on a bad one, and that the shape's box stays inside the box it is placed in.</summary>
     /// <exception cref="ArgumentException">A bad common option.</exception>
     public void CheckCommon()
@@ -424,6 +462,11 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
         _ = WidthFactor();
         _ = Dash();
         _ = Tone();
+        _ = FlowsDown();
+        _ = Gap();
+        _ = FlowHeight();
+        _ = Lines();
+        _ = HoldsParagraphs();
     }
 
     /// <summary>Throws unless every option is one the shape takes: one of <paramref name="keys"/> or a common one (<see cref="Shapes.CommonKeys"/>), naming them.</summary>
@@ -645,7 +688,10 @@ public sealed class ShapePipeline : IEquatable<ShapePipeline>
 /// <c>hatch</c>. Every shape also takes the common options (<see cref="CommonKeys"/>): <c>at=X:Y</c> and <c>size=W:H</c>
 /// (shares of the box it is placed in, X from the start side), <c>in=page|last</c> (<c>last</c>: drawn once inside each
 /// region the step before made), <c>margin</c>, <c>width</c> (a factor of the stroke width), <c>dash</c>
-/// (solid|dashed|dotted) and <c>tone</c>. Register another with <see cref="Register"/>; one under a library name shadows
+/// (solid|dashed|dotted), <c>tone</c>, <c>flow</c> (page|down: stacked below the parts before it, its height from what it
+/// holds), <c>gap</c> (below a stacked step, line heights), <c>height</c> (a stacked step's own, line heights),
+/// <c>lines</c> (N|rest: how many of the page's lines it takes) and <c>holds</c> (lines|paragraphs). Built in also:
+/// <c>text</c> (no lines drawn, one region of wrapped paragraphs). Register another with <see cref="Register"/>; one under a library name shadows
 /// the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
 public static class Shapes
@@ -655,8 +701,8 @@ public static class Shapes
 
     static Shapes() => LibraryDefaults.Ensure(typeof(Shapes));
 
-    /// <summary>The options every shape takes besides its own: at, size, in, margin, width, dash, tone.</summary>
-    public static OptionKeys CommonKeys { get; } = new("at", "size", "in", "margin", "width", "dash", "tone");
+    /// <summary>The options every shape takes besides its own: at, size, in, margin, width, dash, tone, flow, gap, height, lines, holds.</summary>
+    public static OptionKeys CommonKeys { get; } = new("at", "size", "in", "margin", "width", "dash", "tone", "flow", "gap", "height", "lines", "holds");
 
     /// <summary>Registers <paramref name="shape"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     /// <exception cref="ArgumentException">A name with ',' or '=', or one that is a common option's key.</exception>

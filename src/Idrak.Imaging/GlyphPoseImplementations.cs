@@ -35,9 +35,9 @@ internal sealed class NonePose : IGlyphPose
 /// "drift": a hand's writing along a line. The baseline, the slant, the turn and the size drift slowly with the distance
 /// along the line (smooth noise, each line its own), the slant about a page's own (pose-slant: a range of slants, x per
 /// unit of height), the baseline by up to pose-baseline (ems), the turn by up to pose-rotate (degrees), the size by up to
-/// pose-size (a ratio) and the ink by up to pose-pressure (a share); each cluster adds a little noise of its own to its
-/// size, its ink and (within a quarter of pose-baseline) its place along the line, never to its height, slant or turn,
-/// so joined letters stay joined. The amplitudes are drawn per page from their ranges.
+/// pose-size (a ratio, on the glyph's height: its width stays) and the ink by up to pose-pressure (a share); each cluster
+/// adds a little noise of its own to its size and its ink, never to its place, slant or turn, so joined letters stay
+/// joined. The amplitudes are drawn per page from their ranges.
 /// </summary>
 internal sealed class DriftPose : IGlyphPose
 {
@@ -46,11 +46,11 @@ internal sealed class DriftPose : IGlyphPose
     private static readonly Settings Defaults = new(PageOptions.None, (-0.05f, 0.05f), (0f, 0.04f), (0f, 0.04f), (0f, 1.2f), (0f, 0.2f));
 
     // The channels of the smooth noise and of a cluster's own.
-    private const int Baseline = 0, Slant = 1, Turn = 2, Size = 3, Ink = 4, Along = 5;
+    private const int Baseline = 0, Slant = 1, Turn = 2, Size = 3, Ink = 4;
 
     public string Name => "drift";
 
-    public string Summary => "a hand's writing: the baseline, slant, turn and size drift along each line, a little noise per cluster in size, ink and place (pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure: ranges)";
+    public string Summary => "a hand's writing: the baseline, slant, turn and size drift along each line, a little noise per cluster in size and ink (pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure: ranges)";
 
     public IReadOnlySet<string> Keys => Own;
 
@@ -106,7 +106,7 @@ internal sealed class DriftPose : IGlyphPose
         double bound = Math.Max(Math.Abs(s.Slant.Min), Math.Abs(s.Slant.Max)), span = s.Slant.Max - s.Slant.Min;
 
         double dy = baseAmp * size * Smooth(seed, line, along, Baseline);
-        double dx = 0.25 * baseAmp * size * Noise(seed, line, glyph.Cluster, Along);
+        const double dx = 0;                                        // no move along the line: joined letters stay joined
         double shear = Math.Clamp(slant + 0.25 * span * Smooth(seed, line, along, Slant), -bound, bound);
         double turn = turnAmp * Smooth(seed, line, along, Turn);
         double scale = 1 + sizeAmp * (0.6 * Smooth(seed, line, along, Size) + 0.4 * Noise(seed, line, glyph.Cluster, Size));
@@ -263,10 +263,11 @@ internal sealed class GlyphPainter
             _points[source.Length] = points = new float[source.Length];
         }
 
+        // The size scales the glyph's height only: its width stays, so a joining stroke meets its neighbour's.
         float k = pose.Scale * scale;
         for (int i = 0; i < source.Length; i += 2)
         {
-            float u = source[i] * k, v = source[i + 1] * k;
+            float u = source[i] * scale, v = source[i + 1] * k;
             u += pose.Shear * v;
             points[i] = u * cos - v * sin + pose.Dx;
             points[i + 1] = u * sin + v * cos - pose.Dy;

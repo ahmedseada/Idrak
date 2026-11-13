@@ -132,7 +132,7 @@ internal abstract partial class Tests
         Check(clusters > 0, "the text has clusters of a base and a mark");
 
         // A joined word: as many ink pieces drifted as set.
-        var word = TextLayout.Layout("المحكمة", new TextStyle(face, 90), float.PositiveInfinity, TextAlignment.Start, rightToLeft: true);
+        var word = TextLayout.Layout("المستقبل", new TextStyle(face, 90), float.PositiveInfinity, TextAlignment.Start, rightToLeft: true);
         int set = InkPieces(word, new GlyphPainter(GlyphPoses.Get(GlyphPoses.None), GlyphPoseSettings.None, 1));
         for (int seed = 1; seed <= 8; seed++)
         {

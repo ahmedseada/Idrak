@@ -13,7 +13,7 @@ namespace Idrak.Abstraction.Data;
 /// </summary>
 /// <param name="Dx">The move to the right, in pixels.</param>
 /// <param name="Dy">The move down, in pixels.</param>
-/// <param name="Scale">The size, a ratio (1: as set).</param>
+/// <param name="Scale">The size, a ratio (1: as set); drawn on the glyph's height, its width kept so joined letters stay joined.</param>
 /// <param name="Shear">The slant: x moves by this times the height above the baseline (0: upright).</param>
 /// <param name="Rotation">The turn, in radians, counterclockwise as seen (0: none).</param>
 /// <param name="Ink">How much ink, 0 to 1 (1: full).</param>

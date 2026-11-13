@@ -50,8 +50,8 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
             PageLayouts.Register(new PlainLayout());
             PageLayouts.Register(new ShapesLayout());
         },
-        [typeof(Shapes)] = RegisterShapes,                                       // line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch
-        [typeof(ShapeProfiles)] = RegisterShapeProfiles,                         // none, grid, ruled, boxed
+        [typeof(Shapes)] = RegisterShapes,                                       // line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text
+        [typeof(ShapeProfiles)] = RegisterShapeProfiles,                         // none, grid, ruled, boxed, text-grid-text, framed, circled
         [typeof(Pens)] = () =>                                                   // ideal, ballpoint
         {
             Pens.Register(new IdealPen());
@@ -68,7 +68,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
     private static void RegisterShapes()
     {
         foreach (var shape in (IShape[])[new LineShape(), new PolylineShape(), new PolygonShape(), new BoxShape(), new GridShape(), new CircleShape(), new EllipseShape(),
-                     new ArcShape(), new ArrowShape(), new FillShape(), new HatchShape()])
+                     new ArcShape(), new ArrowShape(), new FillShape(), new HatchShape(), new TextShape()])
         {
             Shapes.Register(shape);
         }
@@ -81,6 +81,10 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         ShapeProfiles.Register(new ShapeProfile("grid", "grid=auto x auto", "a grid fitted to the text: a row a line, a column a unit of its longest line"));
         ShapeProfiles.Register(new ShapeProfile("ruled", "grid=auto x 1,inner=rows,border=bottom", "a line under every text line: a region a line"));
         ShapeProfiles.Register(new ShapeProfile("boxed", "grid=auto x 1,inner=off", "a box around the text: a region a line"));
+        ShapeProfiles.Register(new ShapeProfile("text-grid-text", "text,lines=2,flow=down,grid=auto x auto,flow=down,text,lines=1,flow=down",
+            "two lines of paragraphs, a grid of the lines between (a row a line), a closing line of paragraph, stacked down the page"));
+        ShapeProfiles.Register(new ShapeProfile("framed", "box,holds=paragraphs,flow=down,pad=0.6", "a box around every line of the text, set as wrapped paragraphs"));
+        ShapeProfiles.Register(new ShapeProfile("circled", "circle,holds=paragraphs,flow=down,pad=0.3", "a ring with the text written inside it, its lines shortened to the ring"));
     }
 
     private static void RegisterImageCodecs()
