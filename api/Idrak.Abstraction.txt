@@ -1064,8 +1064,8 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public const string MarksVariable = "IDRAK_FONT_MAP_MARKS"
   public const string PairsVariable = "IDRAK_FONT_MAP_PAIRS"
   public const string SecondStyleVariable = "IDRAK_FONT_MAP_STYLE2"
-  public const string WordsVariable = "IDRAK_FONT_MAP_WORDS"
   public const string ShortMarksVariable = "IDRAK_FONT_MAP_SHORT_MARKS"
+  public const string WordsVariable = "IDRAK_FONT_MAP_WORDS"
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }
   public double Pairs { get; init; }
