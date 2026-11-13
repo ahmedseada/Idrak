@@ -199,11 +199,47 @@ internal static class PageDrawing
     internal static bool Direction(PageContent content) =>
         content.RightToLeft ?? Bidi.Resolve(content.ReadingOrder().Replace('\n', ' ')).RightToLeft;
 
-    internal static TextStyle Style(PageStyle style, IFontFace font, float size, float spacing, string? language, bool pairs = false) =>
-        new(font, size) { Fallbacks = style.Fallbacks, LineSpacing = spacing, Language = language, Features = pairs && HasPairs(font) ? PairsOn : null };
+    internal static TextStyle Style(PageStyle style, IFontFace font, float size, float spacing, string? language, IReadOnlyList<string>? hand = null) =>
+        new(font, size) { Fallbacks = style.Fallbacks, LineSpacing = spacing, Language = language, Features = Asked(font, hand) };
 
-    // The feature that writes a mapped font's letter pairs, asked for on the pages that join them.
-    private static readonly string[] PairsOn = ["+" + FontMap.PairFeature];
+    // The hand's features a page asks for that the font's map has, each turned on ("+PAIR"); null for none.
+    private static string[]? Asked(IFontFace font, IReadOnlyList<string>? hand)
+    {
+        if (hand is null || hand.Count == 0 || FontMaps.MappedBy(font) is not { } map)
+        {
+            return null;
+        }
+
+        var on = hand.Where(tag => map.Ligatures.Any(l => l.Feature == tag)).Select(tag => "+" + tag).ToArray();
+        return on.Length == 0 ? null : on;
+    }
+
+    // The part numbers of a page's second-style and whole-word choices (Mix), as PairSeed is the pairs'.
+    internal const int SecondStyleSeed = 7, WordSeed = 8;
+
+    // The hand's features of the page of `seed`: letter pairs, their second style and whole words, each at its own chance
+    // (FontMapDrawing.Pairs, SecondStyle, Words) from its own part of the seed, the same for the same seed.
+    internal static string[] Hand(int seed)
+    {
+        var drawing = FontMaps.Drawing;
+        var on = new List<string>(3);
+        if (Pairs(seed))
+        {
+            on.Add(FontMap.PairFeature);
+        }
+
+        if (drawing.SecondStyle > 0 && Mix(seed, SecondStyleSeed) / (double)int.MaxValue < drawing.SecondStyle)
+        {
+            on.Add(FontMap.SecondStyleFeature);
+        }
+
+        if (drawing.Words > 0 && Mix(seed, WordSeed) / (double)int.MaxValue < drawing.Words)
+        {
+            on.Add(FontMap.WordFeature);
+        }
+
+        return [.. on];
+    }
 
     // The part number of a page's letter-pair choice (Mix): hashed from the layout's seed, never drawn from its Random.
     internal const int PairSeed = 6;
@@ -215,11 +251,15 @@ internal static class PageDrawing
         return chance > 0 && Mix(seed, PairSeed) / (double)int.MaxValue < chance;
     }
 
-    // Whether a face is a mapped legacy font whose map has letter pairs.
-    private static bool HasPairs(IFontFace font) => FontMaps.MappedBy(font) is { } map && map.Ligatures.Any(l => l.Feature == FontMap.PairFeature);
-
-    // A page whose text joins letter pairs says so in its description; one that does not says nothing more.
-    internal static string Paired(TextStyle style) => style.Features is null ? "" : ", pairs";
+    // A page whose text joins letter pairs, writes their second style or whole words says so in its description; one that
+    // does none says nothing more.
+    internal static string Paired(TextStyle style) => style.Features is null ? "" : string.Concat(style.Features.Select(f => f[1..] switch
+    {
+        FontMap.PairFeature => ", pairs",
+        FontMap.SecondStyleFeature => ", second style",
+        FontMap.WordFeature => ", words",
+        _ => "",
+    }));
 
     // A block of lines laid out in `width`, each line a paragraph.
     internal static TextBlock Block(IEnumerable<string> lines, TextStyle style, float width, TextAlignment alignment, bool rtl) =>
@@ -280,7 +320,7 @@ internal sealed class LetterLayout : IPageLayout
         var bodyFont = c.Font();
         var headerFont = c.Chance(style.OtherHeaderFont) ? c.Font() : bodyFont;
         float bodySize = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        bool pairs = Pairs(seed);
+        var pairs = Hand(seed);
         var body = Style(style, bodyFont, bodySize, spacing, content.Language, pairs);
         var header = Style(style, headerFont, bodySize * c.Between(0.8f, 1.0f), c.Between(1.0f, 1.3f), content.Language, pairs);
         var title = Style(style, headerFont, bodySize * c.Between(1.1f, 1.4f), 1.1f, content.Language, pairs);
@@ -436,7 +476,7 @@ internal sealed class PlainLayout : IPageLayout
         float margin = width * c.Between(style.Margin), inner = width - 2 * margin;
         var font = c.Font();
         float size = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        var body = Style(style, font, size, spacing, content.Language, Pairs(seed));
+        var body = Style(style, font, size, spacing, content.Language, Hand(seed));
         bool justify = c.Chance(style.Justify);
         var parts = new List<(string Kind, IReadOnlyList<string> Lines, TextStyle Style, TextAlignment Alignment)>
         {

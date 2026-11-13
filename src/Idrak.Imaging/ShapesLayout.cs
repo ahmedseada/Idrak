@@ -61,7 +61,7 @@ internal sealed class ShapesLayout : IPageLayout
         float margin = width * c.Between(style.Margin);
         var font = c.Font();
         float size = c.Between(style.BodySize), spacing = c.Between(style.LineSpacing);
-        var body = Style(style, font, size, spacing, content.Language, Pairs(seed));
+        var body = Style(style, font, size, spacing, content.Language, Hand(seed));
         float strokeWidth = Math.Max(1f, size * c.Between(strokeShare));
         bool blue = c.Chance(bluePen);
         float topShare = c.Between(0.5f, 0.9f);

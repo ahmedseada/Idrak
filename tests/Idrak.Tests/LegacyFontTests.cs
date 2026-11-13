@@ -542,6 +542,68 @@ internal abstract partial class DesktopTests
         }
     }
 
+    private static void LegacyFontsSecondStyleAndWords(Device device)
+    {
+        var map = FontMaps.Get(PuaMap);
+        var second = map.Ligatures.Where(l => l.Feature == FontMap.SecondStyleFeature).ToList();
+        var words = map.Ligatures.Where(l => l.Feature == FontMap.WordFeature).ToList();
+        Check(second.Count == 5 && words.Count == 2, $"{second.Count} second-style pairs, {words.Count} words in the layout");
+        string[] pair = ["+" + FontMap.PairFeature], style2 = ["+" + FontMap.SecondStyleFeature], both = [.. pair, .. style2], word = ["+" + FontMap.WordFeature];
+        foreach (string name in LegacyFonts)
+        {
+            var raw = RawFace(name);
+            var face = MappedFace(name);
+            ShapedGlyph[] Shape(string text, string[]? features) => TextShapers.Shape(face, text, new TextRun(0, text.Length, "Arab", true), features);
+            foreach (var lig in second)
+            {
+                int glyph = raw.Glyph(lig.Glyph[0].Value);
+                string text = string.Concat(lig.Components.Select(c => char.ConvertFromUtf32(c.CodePoint)));
+                var first = map.Ligatures.FirstOrDefault(l => l.Feature == FontMap.PairFeature && l.Components.SequenceEqual(lig.Components));
+                Check(glyph != 0 && !raw.Outline(glyph).IsEmpty && Shape(text, style2).Single().Glyph == glyph && Shape(text, both).Single().Glyph == glyph,
+                    $"{name}: {text} in its second style is {lig.Glyph[0]}, the second style winning over the first");
+                var plain = Shape(text, pair);
+                Check(first is null ? plain.Length == 2 : plain.Single().Glyph == raw.Glyph(first.Glyph[0].Value) && plain.Single().Glyph != glyph,
+                    $"{name}: {text} with the first style only: {string.Join(" ", plain.Select(g => g.Glyph))}");
+            }
+
+            foreach (var lig in words)
+            {
+                int glyph = raw.Glyph(lig.Glyph[0].Value);
+                string text = string.Concat(lig.Components.Select(c => char.ConvertFromUtf32(c.CodePoint)));
+                Check(glyph != 0 && Shape(text, word).Single().Glyph == glyph && Shape(text, null).Length == 3,
+                    $"{name}: the word {text} drawn whole is {lig.Glyph[0]}, letter by letter without words");
+            }
+
+            Check(Shape("لمحة", word).Length == 4, $"{name}: لمحة (its hah medial) is no whole word");
+        }
+
+        // On a page: the same text with the second style and the words on or off; each chosen per page, the same for a seed.
+        var content = new PageContent { Body = ["لمح الفريق التقرير ثم لم يتأخر", "وتم النشر بمقر الشركة لمح"], Language = "ar" };
+        var style = new PageStyle { Fonts = [MappedFace("MCS-HAND")], Fallbacks = [SubsetFace()] };
+        var before = FontMaps.Drawing;
+        try
+        {
+            FontMaps.Drawing = before with { Pairs = 0, SecondStyle = 1, Words = 1 };
+            var on = PageLayouts.Get("plain").Render(content, style, 3);
+            FontMaps.Drawing = before with { Pairs = 0, SecondStyle = 0, Words = 0 };
+            var off = PageLayouts.Get("plain").Render(content, style, 3);
+            Check(on.Text == off.Text && on.Description.Contains(", second style, words", StringComparison.Ordinal) && !off.Description.Contains("second style", StringComparison.Ordinal)
+                  && !off.Description.Contains("words", StringComparison.Ordinal) && !on.Image.Pixels.AsSpan().SequenceEqual(off.Image.Pixels),
+                $"second style and words on and off: the same text, other ink ({on.Description} / {off.Description})");
+            FontMaps.Drawing = before with { Pairs = 0.5, SecondStyle = 0.5, Words = 0.5 };
+            string Chosen(int seed) => PageLayouts.Get("letter").Render(content, style, seed).Description;
+            var first = Enumerable.Range(1, 24).Select(Chosen).ToList();
+            var again = Enumerable.Range(1, 24).Select(Chosen).ToList();
+            int seconds = first.Count(d => d.Contains("second style", StringComparison.Ordinal)), wholes = first.Count(d => d.Contains(", words", StringComparison.Ordinal));
+            Check(first.SequenceEqual(again) && seconds is > 4 and < 20 && wholes is > 4 and < 20,
+                $"at 0.5, {seconds} of 24 pages write the second style and {wholes} whole words, the same again");
+        }
+        finally
+        {
+            FontMaps.Drawing = before;
+        }
+    }
+
     // The signed area of a contour's points (control points included).
     private static double ContourArea(float[] p)
     {

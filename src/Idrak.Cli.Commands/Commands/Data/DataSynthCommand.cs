@@ -39,7 +39,8 @@ internal sealed class DataSynthCommand : Command
                                   FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
-                                  mark-share (0.3), mark-pen-share (0.6)
+                                  mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
+                                  joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each)
               --parts FILE        header, subject, signature and footer parts, with slots such as {digits:6} or {hijri}
                                   (JSON: "headerStart", "headerCenter", "headerEnd", "titles", "subjects", "signatures",
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone

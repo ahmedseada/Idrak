@@ -1031,6 +1031,8 @@ public sealed class Idrak.Abstraction.Data.FontMap
   public System.Collections.Generic.IReadOnlyList<string> DetectWithoutTables { get; }
   public System.Collections.Generic.IReadOnlyList<string> Scripts { get; }
   public const string PairFeature = "PAIR"
+  public const string SecondStyleFeature = "PAI2"
+  public const string WordFeature = "WORD"
   public double DetectShare { get; }
   public int AnchorGap { get; }
   public int AnchorWindow { get; }
@@ -1060,13 +1062,17 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS"
   public const string MarksVariable = "IDRAK_FONT_MAP_MARKS"
   public const string PairsVariable = "IDRAK_FONT_MAP_PAIRS"
+  public const string SecondStyleVariable = "IDRAK_FONT_MAP_STYLE2"
+  public const string WordsVariable = "IDRAK_FONT_MAP_WORDS"
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }
   public double Pairs { get; init; }
   public double PenScaleHigh { get; init; }
   public double PenScaleLow { get; init; }
+  public double SecondStyle { get; init; }
   public double Slant { get; init; }
   public double Wobble { get; init; }
+  public double Words { get; init; }
   public double? DigitHeight { get; init; }
   public double? DigitPen { get; init; }
   public double? DigitWidth { get; init; }

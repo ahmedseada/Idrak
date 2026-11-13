@@ -121,7 +121,9 @@ public sealed record FontMapMark(IReadOnlyList<FontGlyphRef> Glyph, FontMarkPlac
 /// <item><term>aliases</term><description>characters that take another's form ({"U+FE8E": "U+0627.fina"}).</description></item>
 /// <item><term>ligatures</term><description>[{"feature": "rlig", "components": ["U+0644.init", "U+0627.fina"], "glyph": "U+F2DC", "place": "above" (for a stacked mark),
 /// "fonts": ["Family"] (only for these font families, where fonts sharing a layout draw a code differently)}]. Ligatures under
-/// <see cref="PairFeature"/> are a hand's letter pairs: a page turns them on at a chance (<see cref="FontMapDrawing.Pairs"/>).</description></item>
+/// <see cref="PairFeature"/> are a hand's letter pairs, under <see cref="SecondStyleFeature"/> its second style of some pairs,
+/// under <see cref="WordFeature"/> words it draws whole: a page turns each on at its chance (<see cref="FontMapDrawing.Pairs"/>,
+/// <see cref="FontMapDrawing.SecondStyle"/>, <see cref="FontMapDrawing.Words"/>).</description></item>
 /// <item><term>marks</term><description>{"U+064E": {"glyph": "U+F2F2", "place": "above" | "below" | "none"}}: no width, the mark class, placed on their base's ink.</description></item>
 /// <item><term>fallbacks</term><description>a glyph to use when one is missing, by the missing one as written ({"U+F264": "U+F263"}).</description></item>
 /// <item><term>anchors</term><description>how marks are placed: {"gap": units between ink and mark (60), "window": half the width, in units, where a base's ink is measured (130)}.</description></item>
@@ -139,6 +141,19 @@ public sealed class FontMap
     /// on others.
     /// </summary>
     public const string PairFeature = "PAIR";
+
+    /// <summary>
+    /// The feature a map's second-style letter pairs are given under ("PAI2", private): a hand's other way of writing some
+    /// pairs, used instead of the first style on the pages that ask for it, at the chance <see cref="FontMapDrawing.SecondStyle"/>.
+    /// Its ligatures come before the first style's in the map, so where both are on the second style wins.
+    /// </summary>
+    public const string SecondStyleFeature = "PAI2";
+
+    /// <summary>
+    /// The feature a map's whole-word ligatures are given under ("WORD", private): one glyph for a word the font draws whole,
+    /// on the pages that ask for it, at the chance <see cref="FontMapDrawing.Words"/>.
+    /// </summary>
+    public const string WordFeature = "WORD";
 
     /// <summary>The positional forms a letter may have (OpenType feature tags).</summary>
     public static readonly IReadOnlyList<string> Forms = ["isol", "init", "medi", "fina"];
@@ -573,6 +588,27 @@ public sealed record FontMapDrawing
     /// always); <see cref="PairsVariable"/> sets it ("0", "off", "false" or "no" turn it off).
     /// </summary>
     public double Pairs { get; init; } = Chance(Environment.GetEnvironmentVariable(PairsVariable), 0.5);
+
+    /// <summary>The variable that sets the chance a page writes the second style of letter pairs (<see cref="SecondStyle"/>): "IDRAK_FONT_MAP_STYLE2".</summary>
+    public const string SecondStyleVariable = "IDRAK_FONT_MAP_STYLE2";
+
+    /// <summary>
+    /// The chance (0 to 1) a page drawn in a mapped font writes the font's second style of letter pairs
+    /// (<see cref="FontMap.SecondStyleFeature"/>) instead of the first: drawn per page from its seed, apart from
+    /// <see cref="Pairs"/>. 0.5 by default, as for the pairs: both styles seen as often (0 turns it off);
+    /// <see cref="SecondStyleVariable"/> sets it.
+    /// </summary>
+    public double SecondStyle { get; init; } = Chance(Environment.GetEnvironmentVariable(SecondStyleVariable), 0.5);
+
+    /// <summary>The variable that sets the chance a page writes whole-word ligatures (<see cref="Words"/>): "IDRAK_FONT_MAP_WORDS".</summary>
+    public const string WordsVariable = "IDRAK_FONT_MAP_WORDS";
+
+    /// <summary>
+    /// The chance (0 to 1) a page drawn in a mapped font writes the font's whole-word ligatures (<see cref="FontMap.WordFeature"/>)
+    /// where its text holds those words: drawn per page from its seed. 0.5 by default, so a word is seen whole and spelled out
+    /// as often (0 turns it off); <see cref="WordsVariable"/> sets it.
+    /// </summary>
+    public double Words { get; init; } = Chance(Environment.GetEnvironmentVariable(WordsVariable), 0.5);
 
     /// <summary>Whether the drawn glyphs of kind "base" (the Latin and Arabic-Indic digits) are added (on unless <see cref="DigitsVariable"/> turns them off).</summary>
     public bool Digits { get; init; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(DigitsVariable));

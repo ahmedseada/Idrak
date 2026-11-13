@@ -489,6 +489,8 @@ internal static class EnvironmentVariables
         new("IDRAK_FONT_MAP_DIGITS", Fonts, "on", "0, off, false or no: Latin digits are not drawn into mapped fonts that lack them (--font-maps digits=off)", FontCommands),
         new("IDRAK_FONT_MAP_MARKS", Fonts, "on", "0, off, false or no: combining marks are not drawn into mapped fonts that lack them (--font-maps marks=off)", FontCommands),
         new("IDRAK_FONT_MAP_PAIRS", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font joins the font's letter pairs (drawn per page from its seed; 0 or off: never) (--font-maps pairs=0.3)", FontCommands),
+        new("IDRAK_FONT_MAP_STYLE2", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font writes its second style of letter pairs (drawn per page from its seed; 0 or off: never; --font-maps style2=)", FontCommands),
+        new("IDRAK_FONT_MAP_WORDS", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font writes the words the font draws whole as one glyph (drawn per page from its seed; 0 or off: never; --font-maps words=)", FontCommands),
         new("IDRAK_FONT_MAP_LETTERS", Fonts, "on", "0, off, false or no: letters mapped fonts lack are not composed from their own glyphs (--font-maps letters=off)", FontCommands),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
