@@ -6,7 +6,7 @@ same bytes on the same machine and library versions (`manifest.json` records the
 
 | File | What |
 |---|---|
-| `tiny-bert/config.json`, `tiny-bert/model.safetensors` | the model (337 KB, float32): the committed WordPiece tokenizer's 1,861 tokens, 2 layers of width 32, 4 heads, feed-forward 64 (exact GELU), 64 positions, 2 token types, LayerNorm epsilon 1e-12; one checkpoint with the tensors of `BertModel` (under `bert.`, the pooler included), `BertForMaskedLM` (`cls.predictions.`, the decoder tied to the word embeddings) and `BertForSequenceClassification` (`classifier.`, 3 labels); config.json names `BertForMaskedLM` |
+| `tiny-bert/config.json`, `tiny-bert/model.safetensors` | the model (337 KB, float32): the committed WordPiece tokenizer's 1,862 tokens, 2 layers of width 32, 4 heads, feed-forward 64 (exact GELU), 64 positions, 2 token types, LayerNorm epsilon 1e-12; one checkpoint with the tensors of `BertModel` (under `bert.`, the pooler included), `BertForMaskedLM` (`cls.predictions.`, the decoder tied to the word embeddings) and `BertForSequenceClassification` (`classifier.`, 3 labels); config.json names `BertForMaskedLM` |
 | `reference.safetensors`, `reference.json` | transformers' outputs (eager attention, float32): for three single texts and a padded batch of three text pairs with token types, the ids, type ids and lengths, the last hidden states, the pooled output, the masked-LM logits at two positions per sequence, the classification logits, and the mean and first-token sentence vectors scaled to length 1 |
 | `manifest.json` | the versions (Python, torch, transformers 5.18.0, tokenizers, safetensors) and each file's size and SHA-256 |
 | `real/` | written only by `--real` (the owner's run, below): the real models' references |

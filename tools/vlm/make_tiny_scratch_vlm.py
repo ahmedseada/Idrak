@@ -49,7 +49,7 @@ SEED = 2027
 
 RECORDS = [
     {"messages": [{"role": "user", "content": [{"type": "image", "path": "images/image.png"}, {"type": "text", "text": "Read the scan."}]},
-                  {"role": "assistant", "content": "the court decision 12/05/1446"}]},
+                  {"role": "assistant", "content": "the team report 12/05/1446"}]},
     {"messages": [{"role": "system", "content": "You read pages."},
                   {"role": "user", "content": [{"type": "text", "text": "What is in this image?"}, {"type": "image", "path": "images/image-palette.png"}]},
                   {"role": "assistant", "content": "a page with lines of text"}]},

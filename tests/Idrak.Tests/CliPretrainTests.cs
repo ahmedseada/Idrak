@@ -96,7 +96,7 @@ internal abstract partial class DesktopTests : Tests
             Check((long)encoded["documents"]! == 96 && File.Exists(tokens + ".json"), "96 documents, and the description beside it");
             // No --type: the smallest id type that holds the vocabulary of 512 (uint16), recorded beside the file for its readers.
             var record = JsonNode.Parse(File.ReadAllText(tokens + ".json"))!;
-            Check((string?)encoded["type"] == "uint16" && (string?)record["type"] == "uint16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25515
+            Check((string?)encoded["type"] == "uint16" && (string?)record["type"] == "uint16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25422
                   && record["tokenizer"] is not null, $"auto picks uint16 for 512 ids and records it with the tokenizer: {record}");
             var (narrow, _, narrowError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--type", "u8", "-o", Path.Combine(folder, "u8.bin"));
             Check(narrow == 2 && narrowError.Contains("do not fit uint8", StringComparison.Ordinal) && narrowError.Contains("ask uint16", StringComparison.Ordinal),
@@ -105,12 +105,12 @@ internal abstract partial class DesktopTests : Tests
             string wide = Path.Combine(folder, "u32.bin");
             WithVariables(new Dictionary<string, string?> { [Idrak.Abstraction.ElementTypes.IdEnvironmentVariable] = "uint32" },
                 () => TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "-o", wide));
-            Check(new FileInfo(wide).Length == 25515L * 4 && (string?)JsonNode.Parse(File.ReadAllText(wide + ".json"))!["type"] == "uint32", "IDRAK_ID_DTYPE=uint32 stores the ids in uint32");
+            Check(new FileInfo(wide).Length == 25422L * 4 && (string?)JsonNode.Parse(File.ReadAllText(wide + ".json"))!["type"] == "uint32", "IDRAK_ID_DTYPE=uint32 stores the ids in uint32");
             // --id-dtype, a common option, is the same choice for the command (over the variable), put back when it ends.
             string? idBefore = Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable);
             string wider = Path.Combine(folder, "i64.bin");
             TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "int64", "-o", wider);
-            Check(new FileInfo(wider).Length == 25515L * 8 && Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable) == idBefore,
+            Check(new FileInfo(wider).Length == 25422L * 8 && Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable) == idBefore,
                 "--id-dtype int64 stores the ids in int64, and the variable is as it was after the command");
             var (badIds, _, badIdsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "bf16", "-o", wider);
             var (badSums, _, badSumsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--sum-dtype", "nosuch", "-o", wider);

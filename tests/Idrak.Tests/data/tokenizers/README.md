@@ -15,10 +15,10 @@ offsets and tokenizers' code-point offsets (a character outside the BMP counts t
 | `unigram/` | SentencePiece Unigram, 1,000 pieces, T5's layout (pad 0, eos 1, unk 2, no bos), control symbols `<cls>` `<sep>`, user-defined `<mask>`, the `nmt_nfkc` charsmap (179,200 trie bytes) |
 | `unigram-bytes/` | SentencePiece Unigram with byte fallback (256 `<0xNN>` pieces), digits split, and a user rule compiled to a small charsmap (`user_defined`, 30 entries: tatweel removed, Arabic-Indic and Persian digits to ASCII, alef and yeh forms, two ligatures, `AA` → `aa`) |
 | `bpe/` | SentencePiece BPE, Llama-2's layout: byte fallback, digits split, `identity` normalization (no charsmap), extra whitespace kept, whitespace-only pieces allowed |
-| `wordpiece-uncased/`, `wordpiece-cased/` | WordPiece, 1,861 and 2,472 pieces (see below), as `BertTokenizerFast` writes them |
+| `wordpiece-uncased/`, `wordpiece-cased/` | WordPiece, 1,862 and 2,474 pieces (see below), as `BertTokenizerFast` writes them |
 | `known-differences.json` | the corpus lines where sentencepiece and tokenizers disagree on the same model (below) |
 | `real/` | written only by `--real` (the owner's run, below): the real models' references |
-| `bpe-baseline.json` | not from the script: phase L0's proof that BPE did not change. What `BpeTokenizer.Load` gave at e53acb8, before the tokenizer model registry, on every `tokenizer.json` under `tests/Idrak.Tests/data` (SHA-256 of the ids, refusals and decoded texts of 888 texts); the test `tokenizers: every BPE fixture loads …` checks it |
+| `bpe-baseline.json` | not from the script: phase L0's proof that BPE did not change. What `BpeTokenizer.Load` gave at e53acb8, before the tokenizer model registry, on every `tokenizer.json` under `tests/Idrak.Tests/data` (SHA-256 of the ids, refusals and decoded texts of 888 texts); the test `tokenizers: every BPE fixture loads …` checks it. Recomputed with the same hashing and `BpeTokenizer.Load` when `../pretrain/corpus.txt` and its tokenizers were regenerated from generic text (the tool first reproduced the earlier hashes byte for byte from the earlier inputs) |
 
 Each SentencePiece folder holds:
 
@@ -47,11 +47,11 @@ come first. The tokenizer and its references are still tokenizers' own.
 
 ## Where sentencepiece and tokenizers disagree (`known-differences.json`)
 
-21 lines; each path is held to its own reference. The kinds:
+22 lines; each path is held to its own reference. The kinds:
 
 - **Unknown pieces decode differently** (`unigram`, same ids): sentencepiece writes ` ⁇ ` for `<unk>`, tokenizers skips it
   as a special token.
-- **Viterbi ties** (`unigram`, 300 `a`s): the two libraries split a run of equal-score pieces at different places.
+- **Viterbi ties** (`unigram`, 300 `a`s and a run of tatweels): the two libraries split a run of equal-score pieces at different places.
 - **Special-token text** (all three): tokenizers matches `</s>`, `<unk>`, `<cls>` written in the text as added tokens;
   sentencepiece never matches control symbols in text.
 - **Precompiled by grapheme** (`unigram-bytes`): tokenizers' `Precompiled` replaces a whole grapheme cluster by the first

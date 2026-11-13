@@ -2,7 +2,7 @@
  "documents": 96,
  "format": "idrak-tokens/1",
  "separator": 2,
- "tokens": 25515,
+ "tokens": 25422,
  "type": "uint16",
  "vocabulary": 512
 }

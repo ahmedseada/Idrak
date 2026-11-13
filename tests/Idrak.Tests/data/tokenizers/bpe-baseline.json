@@ -1,5 +1,5 @@
 {
-  "about": "Plan 24, phase L0: what BpeTokenizer.Load gave at e53acb8 (before the tokenizer model registry), as SHA-256 of every text\u0027s id count and ids (int32 little-endian) and of every decoded text (UTF-8, NUL after each); a text the tokenizer refuses adds \u0022!\u0022, the exception\u0027s type and message and a NUL to the ids instead, over the texts below then the lines of pretrain/corpus.txt.",
+  "about": "Plan 24, phase L0: what BpeTokenizer.Load gave at e53acb8 (before the tokenizer model registry), as SHA-256 of every text\u0027s id count and ids (int32 little-endian) and of every decoded text (UTF-8, NUL after each); a text the tokenizer refuses adds \u0022!\u0022, the exception\u0027s type and message and a NUL to the ids instead, over the texts below then the lines of pretrain/corpus.txt. Recomputed with the same hashing and BpeTokenizer.Load when pretrain/corpus.txt and the tokenizers made from it were regenerated from generic text (the recomputing tool first gave this file\u0027s earlier hashes, byte for byte, from the earlier inputs).",
   "texts": [
     "",
     " ",
@@ -26,96 +26,96 @@
   "corpus": "pretrain/corpus.txt",
   "fixtures": {
     "audio/audio-language/model/tokenizer.json": {
-      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "6dc828688fa20c63ade7a1ce01447980ece11d456871a0507c30d0c76c39f81f",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "audio/ctc/model-conv/tokenizer.json": {
-      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
-      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+      "ids": "d9a58f422b3ef4a2187bb3c963b5bbec2592ca32bf4408957d7b6d5f877a32c6",
+      "decoded": "45d229f978121b909b3f359a0cdf1ad82ab5c746edbd061a419951bfcd7e3259"
     },
     "audio/ctc/model/tokenizer.json": {
-      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
-      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+      "ids": "d9a58f422b3ef4a2187bb3c963b5bbec2592ca32bf4408957d7b6d5f877a32c6",
+      "decoded": "45d229f978121b909b3f359a0cdf1ad82ab5c746edbd061a419951bfcd7e3259"
     },
     "audio/seq2seq/model-untied/tokenizer.json": {
-      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
-      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+      "ids": "d9a58f422b3ef4a2187bb3c963b5bbec2592ca32bf4408957d7b6d5f877a32c6",
+      "decoded": "45d229f978121b909b3f359a0cdf1ad82ab5c746edbd061a419951bfcd7e3259"
     },
     "audio/seq2seq/model/tokenizer.json": {
-      "ids": "7d236fbdccb9849132bc69fd6590056d31b530606ca8d230adc68838eb3cdcd1",
-      "decoded": "be50c144ba5fea1242fccc8c93c44e55fba58878ba88444b79441502a0aff961"
+      "ids": "d9a58f422b3ef4a2187bb3c963b5bbec2592ca32bf4408957d7b6d5f877a32c6",
+      "decoded": "45d229f978121b909b3f359a0cdf1ad82ab5c746edbd061a419951bfcd7e3259"
     },
     "audio/tiny-whisper/tokenizer.json": {
-      "ids": "6dc14e47ffccf647987301aeaf45f7a07b9fbf987b6debd574bd308f2dab4b82",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "3b18b1b458edea8475d400671a3d34a45baadef8ca2fa507f9a77e99086a0518",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "audio/tts/model/tokenizer.json": {
-      "ids": "e5eea8fd7c8a59105b6cf0b687ffbc738d078ab36f7cc75179de0aeca2650b2b",
+      "ids": "363f831cf434013d350f2353b81daa7bf5d1e2e2e0c8c40147db9542e7835422",
       "decoded": "e4f35b17c76f39e30436e89a59a2e37058ed28895dae802652e4393deabf5d57"
     },
     "gguf/tiny-llama-hf/tokenizer.json": {
-      "ids": "17776d71fe6e8b5f5da0e8d77af4981f994c5d7ee772990b8061a088eed6ef09",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "5147c81bfa11aac94030f03f1661ec0ec25ba86f49585525e9cebad8b9c58e6c",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "gguf/tiny-qwen3-q8-hf/tokenizer.json": {
-      "ids": "17776d71fe6e8b5f5da0e8d77af4981f994c5d7ee772990b8061a088eed6ef09",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "5147c81bfa11aac94030f03f1661ec0ec25ba86f49585525e9cebad8b9c58e6c",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "pretrain/metaspace/tokenizer.json": {
-      "ids": "ceb2db5629d6934fef614ed34925cdbbe3c66bc1d46a798942b9d6d4b72c69fb",
-      "decoded": "3b72b67dbd920f278160f95bf3fa36fd94808f10d695a1b40c7612ee754d47ed"
+      "ids": "d290d87e932c764b0699524488bed30ac24193fd8b6498377c1adf68b815d21f",
+      "decoded": "70148449f9c5159bb67cfd7431907da54e898be707372665f86dfa72188860a8"
     },
     "pretrain/tiny-llama/tokenizer.json": {
-      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "6dc828688fa20c63ade7a1ce01447980ece11d456871a0507c30d0c76c39f81f",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "pretrain/tokenizer-full/tokenizer.json": {
-      "ids": "d45f1b2d80f1a3e97df793a3d716eaa5d02f166006f5afd95393d23251acedf0",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "e1d9479bb5daa177279e332ec83695529eb3f5c06f8747505c519144218981c4",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "pretrain/tokenizer/tokenizer.json": {
-      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "6dc828688fa20c63ade7a1ce01447980ece11d456871a0507c30d0c76c39f81f",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-llava/tiny-llava-full/tokenizer.json": {
-      "ids": "d37c595a2129f86b8c27cb6029d9816d695f7cfe62bb36647b95d31fa9cd7dd3",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "b4dd000f1b06c80e8683e30b5494e91833e5bd2a632a91435e006fd77566af87",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-llava/tiny-llava/tokenizer.json": {
-      "ids": "d37c595a2129f86b8c27cb6029d9816d695f7cfe62bb36647b95d31fa9cd7dd3",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "b4dd000f1b06c80e8683e30b5494e91833e5bd2a632a91435e006fd77566af87",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-qwen/tiny-qwen2-vl-flat/tokenizer.json": {
-      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "2da177ed91d2df9c78ac53b51d9feed0b3b63f9748a48164eb8912a2c2159cd5",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-qwen/tiny-qwen2-vl/tokenizer.json": {
-      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "2da177ed91d2df9c78ac53b51d9feed0b3b63f9748a48164eb8912a2c2159cd5",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-qwen/tiny-qwen2.5-vl-flat/tokenizer.json": {
-      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "2da177ed91d2df9c78ac53b51d9feed0b3b63f9748a48164eb8912a2c2159cd5",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-qwen/tiny-qwen2.5-vl/tokenizer.json": {
-      "ids": "a5e13ebbffe6ca1a9569794ab15309e539d5bd097e8743cab544f47571a1a381",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "2da177ed91d2df9c78ac53b51d9feed0b3b63f9748a48164eb8912a2c2159cd5",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm-scratch/tiny-idrak-vision/tokenizer.json": {
-      "ids": "a2d100f6945d04b84c1c4daf049ab7b830076951f0cb86f8406315cef9872524",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "6dc828688fa20c63ade7a1ce01447980ece11d456871a0507c30d0c76c39f81f",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm/tiny-gemma3-pre452/tokenizer.json": {
-      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "15473f924c4dc6a972466a7cbb7420f6b2a10ef509b3e587118f6432b97b52a7",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm/tiny-gemma3-v5/tokenizer.json": {
-      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "15473f924c4dc6a972466a7cbb7420f6b2a10ef509b3e587118f6432b97b52a7",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     },
     "vlm/tiny-gemma3/tokenizer.json": {
-      "ids": "41c227c3414565d8287450c8f0ec7351958c9eaf283c77327dc43cbc7fda0cf6",
-      "decoded": "26f115c86b58c55e6539feacb0dcc148c798611419574ceb1e69ff9f9018e76c"
+      "ids": "15473f924c4dc6a972466a7cbb7420f6b2a10ef509b3e587118f6432b97b52a7",
+      "decoded": "225a27764abbf00d1ea90735bd2551b27e4e2931c06271fd94f419998469a01b"
     }
   }
 }

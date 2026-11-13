@@ -2,40 +2,40 @@
  "documents": 96,
  "files": {
   "corpus.txt": {
-   "bytes": 75437,
-   "sha256": "0f146a9262e77504a7c2e59223ccd0511e008ff658e3ef52e1679b20849f3848"
+   "bytes": 75908,
+   "sha256": "ffff9aa35c28c0afa31df3036de0ac81e76bb04ba29333ef46845ade8f808401"
   },
   "metaspace/tokenizer.json": {
-   "bytes": 31859,
-   "sha256": "1a5f7060863da8f4f6659318b4e75314b089abf186dd0763a973d74cb51b6b94"
+   "bytes": 32115,
+   "sha256": "828539a981259945d4a6b775c2ab4fa12e8d2d45d51a45e8406d4be4604b683d"
   },
   "metaspace/train.json": {
-   "bytes": 32061,
-   "sha256": "3853222b9e931fa17e53d30af223e183261a0fbcc446427567579253b9748aab"
+   "bytes": 32196,
+   "sha256": "7171b21db661ca707c965c17ed7e0c9012af6dd91c0e4d73965af0cbb344a6ef"
   },
   "step/adamw-folded/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "5d06fa140b299363b02309b9b739df44192562478e56a4c80350002d5b163347"
+   "sha256": "830719609f304aaf74ad59df89b599e0c56895dd2fb48f29cd41c4905e181704"
   },
   "step/adamw/state-step3.safetensors": {
    "bytes": 284272,
-   "sha256": "d619a1650d822320a6562e26b51ac8bdcf30d3a736c12adfda9dcefde3242b65"
+   "sha256": "3b71138caf475b9f28843728793067500d8525510c0d88611e7caf0f833b2ead"
   },
   "step/adamw/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "c8f0ff82b39117caab3ea47b0042e978e5c141eaf30479a74923ce855429184e"
+   "sha256": "b4f997b49d3f8c66cf3510e368eab055778350c79b1f795d41106d8b114ea676"
   },
   "step/grads-step1.safetensors": {
    "bytes": 141952,
-   "sha256": "fd4a1c0b6ed5d0d0587b07bd967102360592f5041be1ec9f63550cf3ea677e2f"
+   "sha256": "fb08da6021224fa8c0de43b1660b036480903b379084c52c41f70fd4176b4c87"
   },
   "step/step.json": {
-   "bytes": 2189,
-   "sha256": "885402f99f418bdb7fe96b81038f130376c16f7178a888bad1cc9d4246ef5128"
+   "bytes": 2191,
+   "sha256": "53019419a2373c1ea34af81e20c31d181109c8141f360e1464f8e7a8e9a601ea"
   },
   "step/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "79b206cc322a2bf3d1a9cf3c3ff0ae833e68f79850bf3aa124f38983637a0f6b"
+   "sha256": "1f174bd254a7b3ec28ec334c8bd324795b8b577f57889bd09d907b5e7d2a583e"
   },
   "tiny-llama/config.json": {
    "bytes": 689,
@@ -54,36 +54,36 @@
    "sha256": "8d81139b071ef8c0bf69a0c4cf1815d6092fa518ecf9a84aba73d66060c15f8a"
   },
   "tiny-llama/tokenizer.json": {
-   "bytes": 23467,
-   "sha256": "2bd463e6f4b65548dcc250fbe5ac5354d21b096cb3e8085f4fbc2402c3a055a4"
+   "bytes": 23355,
+   "sha256": "feb2bd2648aaf9ca289ffdfed0bc7ce3aa81bf5265a85511ccaf285832d0bc4a"
   },
   "tiny-llama/tokenizer_config.json": {
    "bytes": 743,
    "sha256": "8df23a8456782cd1c6f82c8464280b7eb5c085e87257ece98e45feee3b828ca6"
   },
   "tokenizer-full/tokenizer.json": {
-   "bytes": 119369,
-   "sha256": "d140b20c528a659aca1f1560d914f1855116f495eaaadd019d435190895d003c"
+   "bytes": 118835,
+   "sha256": "bbac07aa04369d46403d9f65b0ee771a32a844e321c32e520d19d2caae7580d3"
   },
   "tokenizer-full/train.json": {
-   "bytes": 108173,
-   "sha256": "bbd63642704adb4d82cb4c98bcee53d9d0325debea483e044b2e814e01f4f346"
+   "bytes": 107725,
+   "sha256": "b81a425f600129d32f9c300544aba499d5b948a72c8b77c7ba37742356f61538"
   },
   "tokenizer/tokenizer.json": {
-   "bytes": 23467,
-   "sha256": "2bd463e6f4b65548dcc250fbe5ac5354d21b096cb3e8085f4fbc2402c3a055a4"
+   "bytes": 23355,
+   "sha256": "feb2bd2648aaf9ca289ffdfed0bc7ce3aa81bf5265a85511ccaf285832d0bc4a"
   },
   "tokenizer/train.json": {
-   "bytes": 29298,
-   "sha256": "d155e537c5d629854acbf16f13d997c2e795aa819cb756b5f6dfde75306f5576"
+   "bytes": 29023,
+   "sha256": "eb6f98d041219d83ee530715a0ab649ba68261ba604c9262b0afa77c0395ad83"
   },
   "tokens.bin": {
-   "bytes": 51030,
-   "sha256": "8964b87be156f9bb4ffffb7f91b2e8b341f98964967ee178cbe53e3f74dbaf32"
+   "bytes": 50844,
+   "sha256": "e3d27e4d156835254ad5b40de5667f5405ade518eeafb52cf69ca33376132161"
   },
   "tokens.bin.json": {
    "bytes": 124,
-   "sha256": "4e1fbe3fa45f18373b4eaab48aada630e7a3f7bf8216bee15a0faad9edd83750"
+   "sha256": "ac9e2aff8fb4e051fde7419010d07d12b23273a52e2976b0f363c5d665d02b98"
   }
  },
  "special_tokens": {
@@ -98,14 +98,14 @@
  },
  "summary": {
   "adamw_losses": [
-   10.123273849487305,
-   9.620139122009277,
-   9.139143943786621
+   10.614142417907715,
+   10.109224319458008,
+   9.62304401397705
   ],
   "sgd_losses": [
-   10.123273849487305,
-   6.98718786239624,
-   5.883623123168945
+   10.614142417907715,
+   7.407173156738281,
+   5.643162250518799
   ]
  },
  "tensors": {
@@ -1067,10 +1067,10 @@
    }
   }
  },
- "tokens": 25515,
+ "tokens": 25422,
  "versions": {
   "numpy": "2.5.3",
-  "python": "3.13.16",
+  "python": "3.13.18",
   "safetensors": "0.8.0",
   "tokenizers": "0.23.3",
   "torch": "2.14.1+cu130",

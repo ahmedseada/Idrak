@@ -1,28 +1,28 @@
 {
  "align": {
   "losses": [
-   10.71990966796875,
-   10.531038284301758,
-   10.36257266998291
+   10.531176567077637,
+   10.243731498718262,
+   10.210232734680176
   ],
   "trained": [
    "vision_tower.",
    "multi_modal_projector."
   ],
-  "trained_tokens": 57
+  "trained_tokens": 53
  },
  "joint": {
   "losses": [
-   10.71990966796875,
-   8.476461410522461,
-   6.900251388549805
+   10.531176567077637,
+   8.227800369262695,
+   7.440549373626709
   ],
   "trained": [
    "vision_tower.",
    "multi_modal_projector.",
    "language_model."
   ],
-  "trained_tokens": 57
+  "trained_tokens": 53
  },
  "loss": "mean cross entropy over the three records' trained tokens (the answer and <|im_end|>)",
  "optimizer": "sgd, no momentum, decay or clipping",

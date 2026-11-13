@@ -1,92 +1,92 @@
 {
  "files": {
   "bf16/bf16.json": {
-   "bytes": 3280,
-   "sha256": "ea3da6c5ddafa98edd27869d70bf262c829b23b8b72abe2c2e17e569983b7374"
+   "bytes": 3277,
+   "sha256": "554cecc93b31bb436f6f75e3045f675576f7bfcf2597e0d3ebd34f2094c1e0c1"
   },
   "bf16/grads-step1.safetensors": {
    "bytes": 141952,
-   "sha256": "cc6bbca489545abb6b228087d72b8805ad96616049af1cecf75ffd538e1f7b94"
+   "sha256": "3a837fefe0cacc360d6222c2622d9b9e16f06bf0d4c5621e07938d2d20710c6a"
   },
   "bf16/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "54db15f00bd15d1cfdc58b5204340dfa09aa79695d70abfea9885a7ff4807797"
+   "sha256": "42aaec6202975ef976f32999488a519eb3fa8c72df0dbe51987b70d122c6a4e4"
   },
   "ddp/adamw-folded/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "6bfcfd86a7c62b7fc867dfdb86c1fca027b57bdcb89aca326e15b0f4b2e18cfd"
+   "sha256": "61bb650624b07877d06cdb39d83a143709c4a2844b2967fcccfc08075014c377"
   },
   "ddp/adamw/state-step3.safetensors": {
    "bytes": 284272,
-   "sha256": "109a3506d2f3a1892ca9f8e06a7e627084d2e9662149c34ef80d4284241c45ca"
+   "sha256": "06c5ca4c203c9efc4a965a8ab7bfb5e6f3a534b0149a3375fd64fff0b0a39629"
   },
   "ddp/adamw/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "b241592fd94de6c7eb7c072e4960c3a877832fde6538c5f8f49422254a95a09f"
+   "sha256": "b9fe0ff1fe9aa743b87bf55c9600b8b4d8efc32d14702babc02810874c442312"
   },
   "ddp/ddp.json": {
-   "bytes": 4977,
-   "sha256": "c9a9c8172d000d2cdf571cc66e4ba25c0ddb6238cf12b8379ddbadd33c6de0c2"
+   "bytes": 4981,
+   "sha256": "8396f78a1535898d0b8b06509b024f8af760f09cd3bb0e2fb9b36b1dd0f578f9"
   },
   "ddp/grads-step1.safetensors": {
    "bytes": 141952,
-   "sha256": "3dd4d619c6ecbe7dc0b3fa6fb84d86ae66382176176b9a5f6b7a22b4606ba1cc"
+   "sha256": "979f094054a167821f684f2b19b0cd505205e65d02099397bedad9e19d0914ea"
   },
   "ddp/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "ee9bb80a43f3517fb842b2bc96d0b47f1847e4e99fff8303e185a0a6ebd3a8f4"
+   "sha256": "592708968eff53d336b49fb456a2440329e972ec80c7f3ea8935e6dc93267861"
   },
   "single/adamw-folded/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "d7aca0afe18f53611d91e9449bb4bef887d2beb7a14c5c978a6389de775ecad3"
+   "sha256": "7fc9197946d4269830ae66c8c8d0afda3957e34441941b9332ef74ce497cdae8"
   },
   "single/adamw/state-step3.safetensors": {
    "bytes": 284272,
-   "sha256": "e5f86a8dfb04d1c3ceed3d76ee46f66a15b3c11c0d51c42058ae7b9768d5d19f"
+   "sha256": "3dace635b5ce3720ca2426d9eeeef3c4e8ee0d5a120c071c034b8f9f65e76eed"
   },
   "single/adamw/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "65304dcbd4891bb5818318e83e7f66f9299d2ae97192c4005bfd3eacb7bb55a4"
+   "sha256": "d0fe1c68c8924fdb05b84a6275194a23da34bbe0321741e5049091d7147c8455"
   },
   "single/grads-step1.safetensors": {
    "bytes": 141952,
-   "sha256": "8e2b9133122bf591e31d00ae70be95ee3aac62bd37928ab803b34f0c541ab3b3"
+   "sha256": "f703138f6e407a8a73df417a5448cba2adeaa48d25ba01498080f4198e496b43"
   },
   "single/single.json": {
-   "bytes": 3254,
-   "sha256": "8b151d1818d4348cca272cdf4a8a1f51d482b3bf8a478ed4e4795c78d686cd72"
+   "bytes": 3251,
+   "sha256": "c294f59268d06ce7ea9f86ba4c671a3e710d27f3c31f6a2663590699eb9f7986"
   },
   "single/weights-step3.safetensors": {
    "bytes": 141952,
-   "sha256": "01ce0ed3e6cf89cc478e0ada09e24d9ddcd83017a694a32196ebcc1b933132f1"
+   "sha256": "415592e3372c5a3cc558aa08e9b924f7c8506c7b6e2a7578673b44f1ead54172"
   }
  },
  "sources": {
   "model": "../pretrain/tiny-llama/",
   "model_sha256": "5115cb60c35b5ef6da9438522f7ba2dc41a05ae07db7c4a646fd7f5abe51fb87",
   "tokens": "../pretrain/tokens.bin",
-  "tokens_sha256": "8964b87be156f9bb4ffffb7f91b2e8b341f98964967ee178cbe53e3f74dbaf32"
+  "tokens_sha256": "e3d27e4d156835254ad5b40de5667f5405ade518eeafb52cf69ca33376132161"
  },
  "summary": {
   "bf16_sgd_losses": [
-   10.219715118408203,
-   7.948556184768677,
-   6.587860345840454
+   10.578339099884033,
+   8.331581115722656,
+   6.903719663619995
   ],
   "ddp_adamw_losses": [
-   10.219715118408203,
-   9.829851150512695,
-   9.449811935424805
+   10.578339099884033,
+   10.197713851928711,
+   9.825183868408203
   ],
   "ddp_sgd_losses": [
-   10.219715118408203,
-   7.9487082958221436,
-   6.587892055511475
+   10.578339099884033,
+   8.331515789031982,
+   6.903677701950073
   ],
   "single_sgd_losses": [
-   10.219715118408203,
-   7.9487080574035645,
-   6.587892532348633
+   10.578339576721191,
+   8.33151626586914,
+   6.9036784172058105
   ]
  },
  "tensors": {
@@ -2007,7 +2007,7 @@
  },
  "versions": {
   "numpy": "2.5.3",
-  "python": "3.13.16",
+  "python": "3.13.18",
   "safetensors": "0.8.0",
   "torch": "2.14.1+cu130",
   "transformers": "5.19.0"

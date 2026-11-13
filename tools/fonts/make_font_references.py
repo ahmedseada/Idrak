@@ -38,7 +38,7 @@ OUT = os.path.join(ROOT, "tests", "Idrak.Tests", "data", "fonts")
 SOURCE = sys.argv[1] if len(sys.argv) > 1 else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT = os.path.join(OUT, "dejavu-sans-subset.ttf")
 
-# Arabic letters, marks, digits and punctuation; Latin letters, digits and the punctuation of legal texts; é (a composite).
+# Arabic letters, marks, digits and punctuation; Latin letters, digits and the punctuation of ordinary letters; é (a composite).
 CODE_POINTS = (
     list(range(0x0621, 0x063B)) + list(range(0x0640, 0x0653)) + list(range(0x0660, 0x066A))
     + [0x060C, 0x061B, 0x061F, 0x0670, 0x0671, 0x067E, 0x0686, 0x06A4, 0x06AF, 0x06CC]

@@ -17,7 +17,7 @@ embeddings are the features (unscaled) and `<end_of_image>`; an image's 4 tokens
 | `tuning.json` | each record's rendered and expanded text, ids, trained mask (the answer and `<|im_end|>`, not the newline after) and image blocks |
 | `reference/` | per image its pixel values, tower output and features; the first record's logits |
 | `steps.json` | the training runs' settings and losses (before each update) |
-| `joint/` | SGD at 0.05 (no momentum, decay or clipping), every parameter trained, one step = the three records, the mean cross entropy over their 57 trained tokens: every gradient at step 1 (checkpoint names, linear weights `[out, in]`), the weights after three steps |
+| `joint/` | SGD at 0.05 (no momentum, decay or clipping), every parameter trained, one step = the three records, the mean cross entropy over their 53 trained tokens: every gradient at step 1 (checkpoint names, linear weights `[out, in]`), the weights after three steps |
 | `align/` | the same with only the tower and the projector trained |
 
 ## How the C# tests read it

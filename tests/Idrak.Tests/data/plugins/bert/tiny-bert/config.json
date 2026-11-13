@@ -33,5 +33,5 @@
   "transformers_version": "5.18.0",
   "type_vocab_size": 2,
   "use_cache": true,
-  "vocab_size": 1861
+  "vocab_size": 1862
 }

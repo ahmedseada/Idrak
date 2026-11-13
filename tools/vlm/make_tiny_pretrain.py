@@ -73,14 +73,14 @@ CHAT_TEMPLATE = (
     "{{- '<|im_start|>assistant\\n' -}}\n"
     "{%- endif -%}\n")
 
-ARABIC = ("وزارة العدل المحكمة القاضي الدعوى الحكم الطلب الموضوع التاريخ السيد المحترم رقم القرار الجلسة الشاهد "
+ARABIC = ("شركة النور التقرير المشروع الاجتماع الفريق الطلب الموضوع التاريخ السيد المحترم رقم الخطة الجلسة الزائر "
           "العقد البيع الشراء الأرض المنزل المبلغ الريال الشهر السنة اليوم المدينة الرياض جدة مكة الشرقية الكتاب "
-          "الخطاب المرفق النسخة الأصل التوقيع الختم الإدارة العامة الشؤون القانونية النظام المادة الفقرة البند "
-          "الموافقة الرفض التنفيذ الاستئناف الطعن المدعي المدعى عليه الوكيل الشركة المؤسسة الفرع").split()
-ENGLISH = ("the court judge case ruling request subject date mister honorable number decision session witness contract "
+          "الخطاب المرفق النسخة الأصل التوقيع الختم الإدارة العامة الشؤون الفنية النظام المادة الفقرة البند "
+          "الموافقة الاعتذار التنفيذ المراجعة النشرة العميل الخدمة المنتج الموظف الشركة المؤسسة الفرع").split()
+ENGLISH = ("the team report project meeting request subject date mister honorable number plan session visitor contract "
            "sale purchase land house amount riyal month year day city office letter attachment copy original signature "
-           "stamp general administration legal affairs system article paragraph clause approval refusal execution "
-           "appeal claim plaintiff defendant agent company establishment branch page line scan read write").split()
+           "stamp general administration technical affairs system article paragraph clause approval refusal delivery "
+           "review update customer service agent company establishment branch page line scan read write").split()
 PUNCTUATION = [".", ",", ":", ";", "؟", "،", "(", ")", "-", "/"]
 
 

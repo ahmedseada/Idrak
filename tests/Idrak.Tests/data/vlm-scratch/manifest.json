@@ -2,11 +2,11 @@
  "files": {
   "align/grads-step1.safetensors": {
    "bytes": 49976,
-   "sha256": "7121fd6b296f799b2ac751182f483106f729db804a75755985c85222db4763d9"
+   "sha256": "65495b2f1e183485fea7bf1307ad5e7b24abe2df60f97ba03a49db2fb4ec5021"
   },
   "align/weights-step3.safetensors": {
    "bytes": 192312,
-   "sha256": "1a881e21bf9f43bcdbac723d4d81cc9588bebd3ead91590ce557d9db10f32ea3"
+   "sha256": "e7f41b56643cc50b0f51b65337bdbdb062dc602aaa2fe883d457edfc7eaaf8b7"
   },
   "images/image-palette.png": {
    "bytes": 1323,
@@ -18,15 +18,15 @@
   },
   "joint/grads-step1.safetensors": {
    "bytes": 192312,
-   "sha256": "3cef88edbd579adf7e38a2b187c9b3ba98fba48d75351054121b1454edcb4d87"
+   "sha256": "ee6189b9c4185ae3e19903d1eee84ebaa7f2b60eae147cef05c577b25c64b326"
   },
   "joint/weights-step3.safetensors": {
    "bytes": 192312,
-   "sha256": "c4f9148a1d45892e83a32ba67364cd143c063a7dcdcf425341687c42b9864798"
+   "sha256": "3c92948b7870496a1416124345f368d5af2f0c24f3f1c71b76d43835a91b0cd0"
   },
   "records.jsonl": {
-   "bytes": 722,
-   "sha256": "5446ef0b0e1278d06bc7318870f1fd8949461e65d7004e012412790a4feb6c0b"
+   "bytes": 719,
+   "sha256": "68b95374550bddcfd4c6f84e3470e63957900a52816efeaf1a2405364aa11685"
   },
   "reference/image-features.npy": {
    "bytes": 640,
@@ -53,12 +53,12 @@
    "sha256": "9efe1ef233e31f970d2428359a5050a6719189d56568f2fb9698710600d02aa8"
   },
   "reference/record0-logits.npy": {
-   "bytes": 106624,
-   "sha256": "04ab5e7998343033f2e370111d5dfa8e36ee92486519d8589f080b07d015c5a4"
+   "bytes": 94336,
+   "sha256": "31ab5b8ce23f0bc912426e1eed34bf9af93444eba9ec968c96189d4bc8bd3a74"
   },
   "steps.json": {
-   "bytes": 587,
-   "sha256": "65e4e424947391d68c2708f9d687fdfd2b30655b81f6cbf43031d1b78a239205"
+   "bytes": 590,
+   "sha256": "2644a844db6240271032cc414c48903f50a0b92fb3bb13084f9a84c22b89b909"
   },
   "tiny-idrak-vision/config.json": {
    "bytes": 1128,
@@ -81,28 +81,28 @@
    "sha256": "8d81139b071ef8c0bf69a0c4cf1815d6092fa518ecf9a84aba73d66060c15f8a"
   },
   "tiny-idrak-vision/tokenizer.json": {
-   "bytes": 23467,
-   "sha256": "2bd463e6f4b65548dcc250fbe5ac5354d21b096cb3e8085f4fbc2402c3a055a4"
+   "bytes": 23355,
+   "sha256": "feb2bd2648aaf9ca289ffdfed0bc7ce3aa81bf5265a85511ccaf285832d0bc4a"
   },
   "tiny-idrak-vision/tokenizer_config.json": {
-   "bytes": 687,
-   "sha256": "dbc08277e58d64bd337ff48f9a31c796329862273e2cbfa13694dc73e5d8b7cd"
+   "bytes": 744,
+   "sha256": "51b8bd91336ae98323b5a5f82da385ecf72ebe7b1dacdbd5f2f2fe18cd6e9b72"
   },
   "tuning.json": {
-   "bytes": 5072,
-   "sha256": "9be5610b9e32f2068aa90c340fe980d44adc53d3593a82c0e48a782d3f7d2145"
+   "bytes": 4956,
+   "sha256": "67a7f0e43c6bcdf8652d769c3ab76e703a4d82d590a56df1d0105e29c150ff55"
   }
  },
  "summary": {
   "align_losses": [
-   10.71990966796875,
-   10.531038284301758,
-   10.36257266998291
+   10.531176567077637,
+   10.243731498718262,
+   10.210232734680176
   ],
   "joint_losses": [
-   10.71990966796875,
-   8.476461410522461,
-   6.900251388549805
+   10.531176567077637,
+   8.227800369262695,
+   7.440549373626709
   ]
  },
  "tensors": {
@@ -2489,7 +2489,7 @@
  },
  "versions": {
   "numpy": "2.5.3",
-  "python": "3.13.16",
+  "python": "3.13.18",
   "safetensors": "0.8.0",
   "tokenizers": "0.23.3",
   "torch": "2.14.1+cu130",

@@ -248,7 +248,7 @@ internal abstract partial class Tests
             Check(model.Architecture == BertPlugin.BertForMaskedLM && model.Pooler == SequencePoolers.First
                 && model.Heads.Keys.Order(StringComparer.Ordinal).SequenceEqual([EncoderHeads.MaskedLanguageModel, EncoderHeads.Pooler, EncoderHeads.SequenceClassification]),
                 $"BertForMaskedLM with the pooler, the masked-LM head and the classifier the checkpoint holds ({model.Pooler}; {string.Join(", ", model.Heads.Keys)})");
-            Check(model.Encoder is SequenceEncoder { Blocks.Count: 2, TypeVocabulary: 2, MaxPositions: 64, Width: 32, Vocabulary: 1861 } encoder
+            Check(model.Encoder is SequenceEncoder { Blocks.Count: 2, TypeVocabulary: 2, MaxPositions: 64, Width: 32, Vocabulary: 1862 } encoder
                 && encoder.Blocks.All(b => b is TransformerEncoderLayer { Placement: NormPlacement.After }), $"two post-norm blocks: {model.Encoder}");
             var tokenizer = model.Tokenizer ?? throw new InvalidOperationException("the folder's tokenizer was not read");
             int width = model.Encoder.Width, vocabulary = model.Encoder.Vocabulary;
