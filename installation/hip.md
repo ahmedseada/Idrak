@@ -2,7 +2,7 @@
 
 The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/done/8-hip.md)) needs no SDK, as CUDA needs no CUDA Toolkit:
 only the HIP runtime the graphics driver installs (Windows) or ROCm's runtime library (Linux). Its kernels are Idrak's
-own GCN code, written in C# and assembled by Idrak ([plan 35](../plans/opened/35-gcn.md)). Memory, uploads, downloads,
+own GCN code, written in C# and assembled by Idrak. Memory, uploads, downloads,
 copies and fills run on the GPU, and so do the row operations (RMS norm with and without gain, layer norm fused, its
 training forward and gradients, softmax, log-softmax, the scaled masked softmax, log-softmax top-k) and the element-wise
 ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the row-vector add), the matrix products

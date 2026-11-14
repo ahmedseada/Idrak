@@ -80,7 +80,7 @@ dependency.
 | `Idrak.Video.Plugins` | The video model families as plug-ins. |
 | `Idrak.Data.Plugins` | Document formats as plug-ins on `Idrak.Data`, Office first ([plan 28](plans/opened/28-documents.md)). |
 | `Idrak.HarfBuzz` | HarfBuzz as a second text shaper ([plug-in plan 1](plans/opened/plugins/1-harfbuzz.md)). |
-| `Idrak.CoreML` | Apple's Neural Engine through Core ML ([Apple plan](plans/opened/5-apple.md), step 5). |
+| `Idrak.CoreML` | Apple's Neural Engine through Core ML. |
 | `Idrak.Extensions` | Extensions and helpers over the library's contracts that apps share. |
 
 ---

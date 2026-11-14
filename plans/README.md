@@ -6,7 +6,6 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 
 | Plan | File |
 |---|---|
-| Apple plan | [opened/5-apple.md](opened/5-apple.md) |
 | Plan 20: Idrak.Diffusion (image generation by denoising) | [opened/20-diffusion.md](opened/20-diffusion.md) |
 | Plan 28: documents (a document contract, PDF built in, Office as a plug-in later) | [opened/28-documents.md](opened/28-documents.md) |
 | Plan 29: fine-tuning Whisper on your own speech (built, the owner's runs open) | [opened/29-whisper-tuning.md](opened/29-whisper-tuning.md) |
@@ -14,9 +13,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 31: an audio processing pipeline (filters, dynamics, noise and repair, live, rnnoise; built, the owner's runs open) | [opened/31-audio-processing.md](opened/31-audio-processing.md) |
 | Plan 32: an Opus codec plug-in (`IAudioCodec`, speech only; draft, paused after O0) | [opened/32-opus.md](opened/32-opus.md) |
 | Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone as an app; Android first) | [opened/34-mobile.md](opened/34-mobile.md) |
-| Plan 35: GCN kernels for HIP (AMD's PTX: written in C#, assembled by Idrak, no hipRTC or SDK; planned, nothing built) | [opened/35-gcn.md](opened/35-gcn.md) |
 | Plan 36: `idrak data code`, a tool that turns a code repository into training, tuning and reinforcement data (language-neutral, C# as the only plug-in; G-1, G-1b, G0, G1 built, G2-G7 open) | [opened/36-csharp-agent-dataset.md](opened/36-csharp-agent-dataset.md) |
-| Plan 37: tensor layout, views, element types, packed weights and 64-bit sizes (memory first; weight placement, CPU views, element types and integer indices, int8/fp8 gradient compression and memory-sized pipeline stages built) | [opened/37-tensor-layout.md](opened/37-tensor-layout.md) |
 | Plan 38: handwriting fonts from images (a glyph sheet or real scans traced into a font `data synth` uses; planned, nothing built) | [opened/38-handwriting-fonts.md](opened/38-handwriting-fonts.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
