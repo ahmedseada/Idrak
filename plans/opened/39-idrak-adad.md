@@ -30,14 +30,36 @@ The first version of the Idrak.Adad package: the Adad design built and tested in
      head streamed to the device (`UploadTransposed16`), the element-type descriptions (`ScaledBlock`, `SuperBlock`,
      `GridBlock`, the GGUF descriptions and encoders), `idrak trace --stacks`.
 
+3. **No `name`, in any scenario, case or stage.** The package never runs, measures or falls back to a kernel chosen by
+   a format's name (the proof's `name` route: Idrak's int8, int4 and bfloat16 packed formats and their kernels). So:
+   - its lanes setting has no `name` value, and its measured lanes never include a named kernel as a candidate (the
+     proof's `RoutedNamed`, which timed a format's own kernel against the generic lanes, is not carried over);
+   - on the Adad devices every weight is kept as stored rows (`StoredWeight`): int8 and bfloat16 too, never the named
+     packed formats; a packed weight of a named format handed to an Adad device fails loudly naming the format (Idrak's
+     own int4 has no description: it fails until it is described);
+   - the tied bfloat16 head is the embedding table's own stored rows (`[vocab, dim]` is the head's `[outputs, inputs]`),
+     shared with the embedding, read by the Adad lanes; never today's bfloat16 head (under the proof's routes it was, and
+     its decode step took the named kernel: CPU 4.6 ms against the generic lane's 34 ms over the named layout).
+4. **Only what proved fast and efficient.** The package keeps the lanes the proof's final benches chose (the "measured
+   lane" lines of `test-output\apply\dec-*-cuda-*-adad.txt` and `cpu-*-cpu-*-adad.txt`, and the profiles of the last round)
+   and drops the experiments that never won:
+
+   | Device | Kept (chosen in the final benches) | Dropped (never chosen) |
+   |---|---|---|
+   | CUDA prompts | the tensor rows: bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, super-blocks and grids decoded as the tiles load or widened rows, 128- and 64-row tiles, one launch for a group | the native kind (Adad's GemmMma port, its x packs and shape table), the raw int8 lane, the direct lane, the simple matrix-unit kernel, Adad's block route on CUDA (dp4a few rows, s8 tiles) |
+   | CUDA decode | the few-row lanes from the description (warp a column), grouped (`_many`), and the fused gated and residual + norm passes where they measure faster | Adad's thread-a-row block gemv |
+   | CUDA without bfloat16 products | the f32 tile from the description (the generic product a float32 run needs) | |
+   | CPU | the row lane, the tiles lane (panels widened in the product), the widened-once lane, Adad's block route (s8 dots, the k-quants' fused unpack, the grids) | the panel lane |
+
+   A measurement still picks among the kept lanes per shape at run time; the generic route (`IDRAK_ROUTES=generic`, no
+   measurement) is not carried over, nor a lanes setting: the devices always measure among their lanes.
+
 ## The package
 
 ```
 src/Idrak.Adad/
   Idrak.Adad.csproj                 net10.0, references Idrak.Abstraction and Idrak.Gpu; packable as Idrak.Adad
   LibraryRegistrations.cs           [assembly: LibraryRegistrations(...)]: DeviceProviders.Register(adad-cpu, adad-cuda)
-  AdadOptions.cs                    the lanes setting (was ProductRoute): Generic | Measured | All (default All = the
-                                    proof's "adad"); IDRAK_ADAD_LANES; AdadOptions.Use(...) scope for tests
   AdadChoices.cs                    the measured choices said once per shape (was ProductRoutes.Chose / Choices)
   Faster.cs                         the CPU's measurement (moved as it is)
   Cpu/
@@ -51,15 +73,13 @@ src/Idrak.Adad/
     AdadCudaBackend.cs              : CudaBackend; the overrides of the stored products and their capabilities
     AdadCudaBackend.Typed.cs        was CudaBackend.Typed.cs
     AdadCudaBackend.Many.cs         was CudaBackend.Many.cs
-    AdadCudaBackend.Super.cs        was CudaBackend.Super.cs
-    AdadCudaBackend.NativeRaw.cs    was CudaBackend.NativeRaw.cs
-    AdadCudaBackend.NativeDirect.cs was CudaBackend.NativeDirect.cs
+    AdadCudaBackend.Super.cs        was CudaBackend.Super.cs (the native and direct lanes left out)
     AdadCudaBackend.TensorRows.cs   was CudaBackend.TensorRows.cs
-    AdadKernels.Typed.cs            was PtxKernels.Typed.cs        (internal static partial class AdadKernels)
-    AdadKernels.Blocks.cs           was PtxKernels.Blocks.cs
-    AdadKernels.Super.cs            was PtxKernels.Super.cs
-    AdadKernels.NativeMma.cs        was PtxKernels.NativeMma.cs (with PtxBuilder)
+    AdadKernels.Typed.cs            was PtxKernels.Typed.cs (the f32 tile and the few-row kernels; TypedMma left out)
+    AdadKernels.Super.cs            was PtxKernels.Super.cs (widenings, few-row products, decoders)
     AdadKernels.Epilogues.cs        was PtxKernels.Epilogues.cs
+    (not carried: CudaBackend.NativeRaw.cs, .NativeDirect.cs, PtxKernels.NativeMma.cs but its PtxBuilder, which stays in
+     core with BlockDecode and TableWords as generator helpers; PtxKernels.Blocks.cs, the CUDA block route)
     AdadKernels.TensorRows.cs       the modules of the transposed tensor-core kernels (bf16w, f16w, int8w, the block
                                     and decoded modules), built with core's generator (PtxKernels.TensorCoreGemm)
   README.md                         what the devices are, how to pick them, the setting, what they run
