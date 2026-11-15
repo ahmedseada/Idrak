@@ -7,21 +7,37 @@ using System.Text;
 namespace Idrak.Gpu.Cuda;
 
 /// <summary>A kernel's text with numbered registers (ported from Adad's PtxBuilder): each R / RD / F / P a new register, declared in Finish.</summary>
-internal sealed class PtxBuilder
+internal sealed class PtxBuilder(string prefix = "")
 {
     private readonly StringBuilder _body = new();
     private int _r, _rd, _f, _p, _h;
 
-    public string R() => string.Create(CultureInfo.InvariantCulture, $"%r{_r++}");
+    // Registers are %{prefix}r0, %{prefix}rd0, …: a prefix keeps a builder's registers apart from those of a kernel written
+    // by hand that its lines are emitted into (Take, Registers).
+    private readonly string _prefix = prefix;
 
-    public string RD() => string.Create(CultureInfo.InvariantCulture, $"%rd{_rd++}");
+    public string R() => string.Create(CultureInfo.InvariantCulture, $"%{_prefix}r{_r++}");
 
-    public string F() => string.Create(CultureInfo.InvariantCulture, $"%f{_f++}");
+    public string RD() => string.Create(CultureInfo.InvariantCulture, $"%{_prefix}rd{_rd++}");
 
-    public string P() => string.Create(CultureInfo.InvariantCulture, $"%p{_p++}");
+    public string F() => string.Create(CultureInfo.InvariantCulture, $"%{_prefix}f{_f++}");
+
+    public string P() => string.Create(CultureInfo.InvariantCulture, $"%{_prefix}p{_p++}");
 
     /// <summary>A 16-bit register (a half's bits, a byte to store).</summary>
-    public string H() => string.Create(CultureInfo.InvariantCulture, $"%h{_h++}");
+    public string H() => string.Create(CultureInfo.InvariantCulture, $"%{_prefix}h{_h++}");
+
+    /// <summary>The lines written since the last Take (for another kernel's body), and none kept.</summary>
+    public string Take()
+    {
+        string lines = _body.ToString();
+        _body.Clear();
+        return lines;
+    }
+
+    /// <summary>The declarations of every register handed out so far (for another kernel's register section).</summary>
+    public string Registers() => string.Create(CultureInfo.InvariantCulture,
+        $"    .reg .pred %{_prefix}p<{Math.Max(1, _p)}>;\n    .reg .b32 %{_prefix}r<{Math.Max(1, _r)}>;\n    .reg .b64 %{_prefix}rd<{Math.Max(1, _rd)}>;\n    .reg .f32 %{_prefix}f<{Math.Max(1, _f)}>;\n    .reg .b16 %{_prefix}h<{Math.Max(1, _h)}>;\n");
 
     public void L(string line) => _body.Append("    ").Append(line).Append('\n');
 

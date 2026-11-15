@@ -440,6 +440,8 @@ internal sealed unsafe partial class CudaBackend
         PtxKernels.BlockLayout.Of(type, scales is not null) is not null && RunBlocks(x, weight, scales, y, m, n, k);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    // Timed warm: these lanes read contiguous rows, and warm repeats chose the lanes that were faster in the passes (cold
+    // timings here cost bfloat16, int8 and q4_0 prompts 6%, measured).
     private int MeasureStoredRoute(TuneKey key, int[] candidates, TypedDecode d, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) =>
         Tune(key, candidates, 0, c => RunStoredLane(c, d, x, weight, scales, y, m, n, k));
 

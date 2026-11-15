@@ -121,10 +121,16 @@ internal static partial class PtxKernels
             TensorCoreGemm(sb, false, true, 0, lowRank: true, bf16B: true);     // dx = g · Wᵀ (+ dt · Aᵀ) over bfloat16 weights
             // The routes' stored weights (a row an output) read in place: bfloat16 and int8 with a scale an output, alone or
             // 2-3 sharing their input (CudaBackend.TensorRows.cs).
-            TensorCoreGemm(sb, false, true, 0, bf16B: true);
-            TensorCoreGemm(sb, false, true, 0, bf16B: true, multi: true);
-            TensorCoreGemm(sb, false, true, 0, int8B: true);
-            TensorCoreGemm(sb, false, true, 0, int8B: true, multi: true);
+            // Each with 128- and 64-row tiles (measured per shape: few outputs fill the device with 64-row tiles, unsplit).
+            foreach (int tileM in new[] { TensorTile, 64 })
+            {
+                TensorCoreGemm(sb, false, true, 0, bf16B: true, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, bf16B: true, multi: true, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, f16B: true, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, f16B: true, multi: true, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, int8B: true, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, int8B: true, multi: true, tileM: tileM);
+            }
             foreach (int packed in new[] { 2, 3 })
             {
                 TensorCoreGemm(sb, false, false, 0, packed: packed, lowRank: true);
@@ -179,8 +185,30 @@ internal static partial class PtxKernels
     {
         var (_, kernels, source) = Module("tensor rows " + d.Code, sb =>
         {
-            TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code);
-            TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code, multi: true);
+            foreach (int tileM in new[] { TensorTile, 64 })
+            {
+                TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code, multi: true, tileM: tileM);
+            }
+        });
+        return (kernels, source);
+    }
+
+    /// <summary>
+    /// The tensor rows over a super-block or grid description's weights as stored (TensorCoreGemm's decodeB: 8 values at a
+    /// time by the description's decoder as each tile loads), one product and 2-3 sharing their input, 128- and 64-row tiles
+    /// (gemm_tc_nt_{code}[_multi][_m64]_f32), after the description's tables: the module's kernel names and source.
+    /// </summary>
+    internal static (string[] Names, string Source) TensorRowsDecodedModule(string code, string tables, BlockDecode decode)
+    {
+        var (_, kernels, source) = Module("tensor rows " + code, sb =>
+        {
+            sb.Append(tables);
+            foreach (int tileM in new[] { TensorTile, 64 })
+            {
+                TensorCoreGemm(sb, false, true, 0, decodeB: decode, blockName: code, tileM: tileM);
+                TensorCoreGemm(sb, false, true, 0, decodeB: decode, blockName: code, multi: true, tileM: tileM);
+            }
         });
         return (kernels, source);
     }
@@ -259,11 +287,20 @@ internal static partial class PtxKernels
     // output as the file holds them (StoredWeight), read in place; multi's products share ldb (the words of a row of k).
     //
     // int8B (B transposed, …_nt_int8w_f32 and …_multi_f32): B is int8 codes [n][k], four a word along k (ldb = k / 4, k a
-    // multiple of 4), with a scale an output in p_aux applied in the epilogue as int8w's column scales: the routes' int8
-    // weights as stored (a row of codes and a scale an output), widened into the bfloat16 tile as they are loaded.
+    // multiple of 16: 16 codes a thread a load), with a scale an output in p_aux applied in the epilogue as int8w's column
+    // scales: the routes' int8 weights as stored (a row of codes and a scale an output), widened into the bfloat16 tile as
+    // they are loaded. Without the low-rank stage, bf16B and f16B (…_nt_f16w_f32: float16 weights as stored, x rounded to
+    // float16 as its tile is stored, float16 products: the native float16 kind's arithmetic) load 8 values a thread a load
+    // (k a multiple of 8). These and blockB also come with 64-row tiles (…_m64_f32).
     private static void TensorCoreGemm(StringBuilder sb, bool ta, bool tb, int mode, int packed = 0, bool multi = false, int tileM = TensorTile,
-        bool lowRank = false, bool bf16B = false, bool residual = false, bool half = false, bool int8B = false, ScaledBlock? blockB = null, string? blockName = null)
+        bool lowRank = false, bool bf16B = false, bool residual = false, bool half = false, bool int8B = false, ScaledBlock? blockB = null, string? blockName = null, bool f16B = false,
+        BlockDecode? decodeB = null)
     {
+        // A described block's values decoded as each tile loads (decodeB: super-blocks, grid codebooks), 8 at a time by its
+        // decoder, whose registers (z-prefixed) are declared with the kernel's.
+        var zb = decodeB is null ? null : new PtxBuilder("z");
+        // 16-bit B rows as stored, 8 values (16 bytes) a thread a load: bfloat16 without the low-rank stage, and float16.
+        bool halvesB = bf16B && !lowRank || f16B;
         if (half && (mode != 0 || packed != 0 || multi || tileM != TensorTile || lowRank || bf16B || residual))
         {
             throw new ArgumentException("The float16 products take float operands as stored or transposed, with no epilogue, packing or low-rank stage.");
@@ -284,13 +321,20 @@ internal static partial class PtxKernels
             throw new ArgumentException("Blocks of B (blockB) are scaled blocks of 32 values (8-bit codes, or 4-bit in ggml's split order), named, alone, with no low-rank stage or residual.");
         }
 
-        if ((bf16B || int8B || blockB is not null) && (!tb || ta || mode != 0 || packed != 0 || bf16B && int8B || int8B && (lowRank || residual) || tileM != TensorTile))
+        int rowsModes = (bf16B ? 1 : 0) + (int8B ? 1 : 0) + (f16B ? 1 : 0) + (blockB is not null ? 1 : 0) + (decodeB is not null ? 1 : 0);
+        if (decodeB is not null && (blockName is null || decodeB.Values % 32 != 0))
         {
-            throw new ArgumentException("bfloat16 or int8 B words need B transposed, A as stored, no epilogue, no other packing and 128-row tiles (int8: no low-rank stage or residual).");
+            throw new ArgumentException("Decoded blocks of B (decodeB) are named and span whole k tiles of 32.");
+        }
+
+        if (rowsModes > 0 && (!tb || ta || mode != 0 || packed != 0 || half || rowsModes > 1 || (int8B || f16B || blockB is not null || decodeB is not null) && (lowRank || residual)
+            || lowRank && tileM != TensorTile))
+        {
+            throw new ArgumentException("B rows as stored (bfloat16, float16, int8, blocks) need B transposed, A as stored, no epilogue and no other packing (float16, int8 and blocks: no low-rank stage or residual; the low-rank stage: 128-row tiles).");
         }
 
         string name = $"gemm_tc_{(ta ? 't' : 'n')}{(tb ? 't' : 'n')}{mode switch { 1 => "_gelu", 2 => "_gelugrad", _ => "" }}"
-                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(int8B ? "_int8w" : "")}{(blockB is not null ? "_" + blockName : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(residual ? "_res" : "")}{(lowRank ? "_lr" : "")}{(half ? "_f16" : "")}_f32";
+                      + $"{packed switch { 1 => "_int8w", 2 => "_int4w", 3 => "_bf16w", _ => "" }}{(bf16B ? "_bf16w" : "")}{(f16B ? "_f16w" : "")}{(int8B ? "_int8w" : "")}{(blockB is not null || decodeB is not null ? "_" + blockName : "")}{(multi ? "_multi" : "")}{(tileM == 64 ? "_m64" : "")}{(residual ? "_res" : "")}{(lowRank ? "_lr" : "")}{(half ? "_f16" : "")}_f32";
         int mts = tileM / 32, warpRowShift = (int)Math.Log2(tileM / 2);          // m16 slices per warp; the warp's first row
         int cpw = packed switch { 1 => 4, 2 => 8, _ => 2 }, tileWords = TensorTile / cpw, wordRows = TensorThreads / tileWords;
         int wordsPerThread = TensorK * tileWords / TensorThreads;
@@ -347,7 +391,7 @@ internal static partial class PtxKernels
                 .reg .b64 %rd<32>;
                 .reg .b32 %lr<8>;
                 .reg .b64 %lrd<8>;
-                .reg .pred %plr;{{(blockB is not null ? """
+                .reg .pred %plr;{{(decodeB is not null ? "\n//DECODE_REGISTERS" : "")}}{{(blockB is not null ? """
 
                                 .reg .b32 %bq<18>;
                                 .reg .b32 %tq<4>;
@@ -498,7 +542,21 @@ internal static partial class PtxKernels
         }
 
         Coordinates(a, "%r13", "%r14", "%r15", "%r11", "%rd9", "%r58");
-        if (blockB is { } coords)
+        if (decodeB is not null)
+        {
+            // Decoded blocks along k (ldb = bytes a row: k / Values blocks): four threads a row's 32 values of the tile, 8 each
+            // (one decode), rows %r16 and %r16 + 64; %r18 = their shared-memory address (16 bytes of bfloat16).
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
+                    shr.u32 %r16, %r4, 2;
+                    and.b32 %r17, %r4, 3;
+                    mul.lo.u32 %r18, %r16, {NarrowStride};
+                    shl.b32 %r19, %r17, 4;
+                    add.u32 %r18, %r18, %r19;
+                    add.u32 %r18, %r18, %r12;
+                    cvt.u64.u32 %rd10, %r59;
+                """);
+        }
+        else if (blockB is { } coords)
         {
             // Scaled blocks of 32 along k (ldb = bytes a row: k / 32 blocks): as int8B, a thread's 4 values of a row's block
             // (%r17 = which 4), 4 rows; %bq12 = the byte of its codes in a block, %bq13 = their bit shift (4-bit codes: the
@@ -536,13 +594,29 @@ internal static partial class PtxKernels
         }
         else if (int8B)
         {
-            // int8 B [n][k] (4 codes a word along k; ldb = words per row): %r16 = row in the tile (of 32; + 32 i), %r17 = word in
-            // the row's 8, %r18 = its shared-memory address in the [n][k] tile (its 4 values one 8-byte store).
+            // int8 B [n][k] (4 codes a word along k; ldb = words per row, k a multiple of 16): two threads a row's 32 codes, 16
+            // each (one 16-byte load); %r16 = row in the tile, %r17 = which 16, %r18 = their shared-memory address in the [n][k]
+            // tile (32 bytes of bfloat16, two 16-byte stores).
             s.AppendLine(CultureInfo.InvariantCulture, $"""
-                    shr.u32 %r16, %r4, 3;
-                    and.b32 %r17, %r4, 7;
+                    shr.u32 %r16, %r4, 1;
+                    and.b32 %r17, %r4, 1;
                     mul.lo.u32 %r18, %r16, {NarrowStride};
-                    shl.b32 %r19, %r17, 3;
+                    shl.b32 %r19, %r17, 5;
+                    add.u32 %r18, %r18, %r19;
+                    add.u32 %r18, %r18, %r12;
+                    mul.wide.u32 %rd10, %r59, 4;
+                """);
+        }
+        else if (halvesB)
+        {
+            // 16-bit B [n][k] as stored (pairs a word along k; ldb = words per row, k a multiple of 8): four threads a row's 32
+            // values, 8 each (one 16-byte load), 64 rows a pass and two passes; %r16 = row in the pass, %r17 = which 8, %r18 =
+            // their shared-memory address (copied as they are: the tile holds 16-bit pairs).
+            s.AppendLine(CultureInfo.InvariantCulture, $"""
+                    shr.u32 %r16, %r4, 2;
+                    and.b32 %r17, %r4, 3;
+                    mul.lo.u32 %r18, %r16, {NarrowStride};
+                    shl.b32 %r19, %r17, 4;
                     add.u32 %r18, %r18, %r19;
                     add.u32 %r18, %r18, %r12;
                     mul.wide.u32 %rd10, %r59, 4;
@@ -775,7 +849,7 @@ internal static partial class PtxKernels
                 }
 
                 s.AppendLine(CultureInfo.InvariantCulture, $"""
-                        cvt.rn.bf16x2.f32 %r36, {staging}{2 * r + 1}, {staging}{2 * r};
+                        cvt.rn.{(f16B ? "f16x2" : "bf16x2")}.f32 %r36, {staging}{2 * r + 1}, {staging}{2 * r};
                         st.shared.b32 [%r35+{r * t.RowStep * t.Stride}], %r36;
                     """);
             }
@@ -879,33 +953,66 @@ internal static partial class PtxKernels
             }
         }
 
-        // int8 B [n][k]: rows n0 + %r16 + 32 i, the word of k k0 + 4 %r17; zero past the matrix (k a multiple of 4).
+        // int8 B [n][k]: row n0 + %r16, the 16 codes from k0 + 16 %r17 (one 16-byte load); zero past the matrix (k a multiple of 16).
         void LoadInt8Rows()
         {
             s.AppendLine("""
                     add.u32 %r31, %r10, %r16;
-                    shl.b32 %r32, %r17, 2;
+                    shl.b32 %r32, %r17, 4;
                     add.u32 %r32, %r32, %r30;
                     setp.lt.u32 %p1, %r32, %r3;
+                    setp.lt.u32 %p3, %r31, %r2;
+                    and.pred %p4, %p3, %p1;
                     cvt.u64.u32 %rd11, %r31;
                     mul.lo.u64 %rd11, %rd11, %rd10;
                     cvt.u64.u32 %rd12, %r32;
                     add.u64 %rd11, %rd11, %rd12;
                     add.u64 %rd11, %rd11, %rd2;
-                    shl.b64 %rd13, %rd10, 5;
+                    mov.b32 %gw0, 0;
+                    mov.b32 %gw1, 0;
+                    mov.b32 %gw2, 0;
+                    mov.b32 %gw3, 0;
+                    @%p4 ld.global.v4.b32 {%gw0, %gw1, %gw2, %gw3}, [%rd11];
                 """);
-            for (int i = 0; i < 4; i++)
+        }
+
+        // 16-bit B [n][k] as stored: rows n0 + %r16 (+ 64), the 8 values from k0 + 8 %r17 (one 16-byte load each); zero past the
+        // matrix (k a multiple of 8).
+        void LoadHalves()
+        {
+            s.AppendLine("""
+                    add.u32 %r31, %r10, %r16;
+                    shl.b32 %r32, %r17, 3;
+                    add.u32 %r32, %r32, %r30;
+                    setp.lt.u32 %p1, %r32, %r3;
+                    cvt.u64.u32 %rd11, %r31;
+                    mul.lo.u64 %rd11, %rd11, %rd10;
+                    mul.wide.u32 %rd12, %r32, 2;
+                    add.u64 %rd11, %rd11, %rd12;
+                    add.u64 %rd11, %rd11, %rd2;
+                    shl.b64 %rd13, %rd10, 6;
+                """);
+            for (int i = 0; i < 2; i++)
             {
-                s.AppendLine(CultureInfo.InvariantCulture, $"""
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""
                         setp.lt.u32 %p3, %r31, %r2;
                         and.pred %p4, %p3, %p1;
-                        mov.b32 %gw{i}, 0;
-                        @%p4 ld.global.b32 %gw{i}, [%rd11];
-                        add.u32 %r31, %r31, 32;
+                        mov.b32 %gw{{4 * i}}, 0;
+                        mov.b32 %gw{{4 * i + 1}}, 0;
+                        mov.b32 %gw{{4 * i + 2}}, 0;
+                        mov.b32 %gw{{4 * i + 3}}, 0;
+                        @%p4 ld.global.v4.b32 {%gw{{4 * i}}, %gw{{4 * i + 1}}, %gw{{4 * i + 2}}, %gw{{4 * i + 3}}}, [%rd11];
+                        add.u32 %r31, %r31, 64;
                         add.u64 %rd11, %rd11, %rd13;
                     """);
             }
         }
+
+        void StoreHalves() => s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                add.u32 %r35, %r18, %r34;
+                st.shared.v4.b32 [%r35], {%gw0, %gw1, %gw2, %gw3};
+                st.shared.v4.b32 [%r35+{{64 * NarrowStride}}], {%gw4, %gw5, %gw6, %gw7};
+            """);
 
         // Scaled blocks: of rows n0 + %r16 + 32 i, the block of k0 (k0 a multiple of 32), its scale and the two halfwords of the
         // thread's 4 codes (%bq 3i, 3i + 1, 3i + 2), zero past the matrix; decoded after the tile's products (StoreBlockRows).
@@ -999,37 +1106,84 @@ internal static partial class PtxKernels
             }
         }
 
-        // Each word's 4 codes as bfloat16 (exact: |code| <= 128), two pairs, one 8-byte store a word.
+        // The 16 codes as bfloat16 (exact: |code| <= 128), in pairs: two 16-byte stores of two words' codes each.
         void StoreInt8Rows()
         {
             s.AppendLine("    add.u32 %r35, %r18, %r34;");
-            for (int i = 0; i < 4; i++)
+            string[] pairs = ["%r36", "%r37", "%r38", "%r57"];
+            for (int half = 0; half < 2; half++)
             {
+                for (int w = 0; w < 2; w++)
+                {
+                    for (int j = 0; j < 4; j++)
+                    {
+                        s.AppendLine(CultureInfo.InvariantCulture, $"""
+                                bfe.s32 %r36, %gw{2 * half + w}, {j * 8}, 8;
+                                cvt.rn.f32.s32 %gx{4 * w + j}, %r36;
+                            """);
+                    }
+                }
+
+                for (int q = 0; q < 4; q++)
+                {
+                    s.AppendLine(CultureInfo.InvariantCulture, $"    cvt.rn.bf16x2.f32 {pairs[q]}, %gx{2 * q + 1}, %gx{2 * q};");
+                }
+
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""    st.shared.v4.b32 [%r35+{{16 * half}}], {%r36, %r37, %r38, %r57};""");
+            }
+        }
+
+        // Decoded blocks: the 8 values of rows n0 + %r16 (+ 64) from k0 + 8 %r17, decoded by the description's decoder (a row past
+        // the matrix reads the last one and is zeroed: every load stays in the weight), rounded to bfloat16 pairs in %gw0-7.
+        void LoadDecoded(BlockDecode decode)
+        {
+            for (int i = 0; i < 2; i++)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"""
+                        add.u32 %r31, %r10, %r16;
+                        add.u32 %r31, %r31, {64 * i};
+                        setp.lt.u32 %p4, %r31, %r2;
+                        sub.u32 %r32, %r2, 1;
+                        min.u32 %r33, %r31, %r32;
+                        cvt.u64.u32 %rd11, %r33;
+                        mul.lo.u64 %rd11, %rd11, %rd10;
+                        shr.u32 %r32, %r30, {(int)Math.Log2(decode.Values)};
+                        mul.wide.u32 %rd12, %r32, {decode.Bytes};
+                        add.u64 %rd11, %rd11, %rd12;
+                        add.u64 %rd11, %rd11, %rd2;
+                        and.b32 %r32, %r30, {decode.Values - 1};
+                        shl.b32 %r36, %r17, 3;
+                        add.u32 %r32, %r32, %r36;
+                    """);
+                var values = decode.Eight(zb!, "%rd11", "%r32");
+                s.Append(zb!.Take());
                 for (int j = 0; j < 4; j++)
                 {
                     s.AppendLine(CultureInfo.InvariantCulture, $"""
-                            bfe.s32 %r36, %gw{i}, {j * 8}, 8;
-                            cvt.rn.f32.s32 %gx{j}, %r36;
+                            cvt.rn.bf16x2.f32 %gw{4 * i + j}, {values[2 * j + 1]}, {values[2 * j]};
+                            selp.b32 %gw{4 * i + j}, %gw{4 * i + j}, 0, %p4;
                         """);
                 }
-
-                s.AppendLine(CultureInfo.InvariantCulture, $$"""
-                        cvt.rn.bf16x2.f32 %r36, %gx1, %gx0;
-                        cvt.rn.bf16x2.f32 %r37, %gx3, %gx2;
-                        st.shared.v2.b32 [%r35+{{i * 32 * NarrowStride}}], {%r36, %r37};
-                    """);
             }
         }
 
         void LoadB()
         {
-            if (blockB is { } loaded)
+            if (decodeB is { } decoding)
+            {
+                LoadDecoded(decoding);
+            }
+            else if (blockB is { } loaded)
             {
                 LoadBlockRows(loaded);
             }
             else if (int8B)
             {
                 LoadInt8Rows();
+            }
+            else if (halvesB)
+            {
+                LoadHalves();
             }
             else if (packed == 0)
             {
@@ -1043,13 +1197,21 @@ internal static partial class PtxKernels
 
         void StoreB()
         {
-            if (blockB is { } stored)
+            if (decodeB is not null)
+            {
+                StoreHalves();
+            }
+            else if (blockB is { } stored)
             {
                 StoreBlockRows(stored);
             }
             else if (int8B)
             {
                 StoreInt8Rows();
+            }
+            else if (halvesB)
+            {
+                StoreHalves();
             }
             else if (packed == 0)
             {
@@ -1109,7 +1271,7 @@ internal static partial class PtxKernels
                     for (int nt = 0; nt < 4; nt++)
                     {
                         int c = (mt * 4 + nt) * 4, fb = (nt / 2) * 4 + (nt % 2) * 2;
-                        s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"    mma.sync.aligned.m16n8k16.row.col.f32.{(half ? "f16.f16" : "bf16.bf16")}.f32 {{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}}, ")
+                        s.AppendLine(string.Create(CultureInfo.InvariantCulture, $"    mma.sync.aligned.m16n8k16.row.col.f32.{(half || f16B ? "f16.f16" : "bf16.bf16")}.f32 {{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}}, ")
                                      + string.Create(CultureInfo.InvariantCulture, $"{{%fa{4 * mt}, %fa{4 * mt + 1}, %fa{4 * mt + 2}, %fa{4 * mt + 3}}}, {{%fb{fb}, %fb{fb + 1}}}, ")
                                      + string.Create(CultureInfo.InvariantCulture, $"{{%c{c}, %c{c + 1}, %c{c + 2}, %c{c + 3}}};"));
                     }
@@ -1172,6 +1334,11 @@ internal static partial class PtxKernels
                 ret;
             }
             """);
+        if (zb is not null)
+        {
+            s.Replace("//DECODE_REGISTERS", zb.Registers());
+        }
+
         if (multi)
         {
             // Every read of the scales (and the epilogue's auxiliary pointer) takes the selected product's.

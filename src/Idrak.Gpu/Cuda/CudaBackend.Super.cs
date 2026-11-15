@@ -148,12 +148,27 @@ internal sealed unsafe partial class CudaBackend
         {
             if (ProductRoutes.Current != ProductRoute.Generic && BFloat16Products && NativeKernel() is not null && NativePack(DecodeOf(ElementType.Float32)!) is not null)
             {
-                bool rows = TensorRowsSource(w.ElementType, null, m, k) is not null;
-                int[] lanes = NativeDirectLane(w.ElementType, null, m, k) ? rows ? [0, 1, 2, 3] : [0, 1, 2] : rows ? [0, 1, 3] : [0, 1];
-                var key = new TuneKey(TuneOp.ProductRoute, 3000 + SuperIds.GetOrAdd(w.ElementType.Name, static _ => SuperIds.Count), TuneSizes.Class(m), n, k, lanes.Length);
-                if (!TryTuned(key, lanes, 0, out lane))
+                // 3 the tensor rows decoding the values as the tiles load, 4 over the rows widened for the call.
+                var lanes = new List<int>(5) { 0, 1 };
+                if (NativeDirectLane(w.ElementType, null, m, k))
                 {
-                    lane = MeasureSuper(key, lanes, f, x, w, y, m, n, k);
+                    lanes.Add(2);
+                }
+
+                if (TensorRowsSource(w.ElementType, null, m, k) is not null)
+                {
+                    lanes.Add(3);
+                }
+
+                if (TensorRowsSource(w.ElementType, null, m, k, widen: true) is not null)
+                {
+                    lanes.Add(4);
+                }
+
+                var key = new TuneKey(TuneOp.ProductRoute, 3000 + SuperIds.GetOrAdd(w.ElementType.Name, static _ => SuperIds.Count), TuneSizes.Class(m), n, k, lanes.Count);
+                if (!TryTuned(key, lanes.ToArray(), 0, out lane))
+                {
+                    lane = MeasureSuper(key, lanes.ToArray(), f, x, w, y, m, n, k);
                 }
             }
 
@@ -164,7 +179,8 @@ internal sealed unsafe partial class CudaBackend
         {
             SayStored(w.ElementType, m, n, k, few ? "few-row lane (from the super-block description)" : lane switch
             {
-                3 => "tensor rows (widened to bfloat16 rows from the description; k split in the kernel)",
+                4 => "tensor rows (widened to bfloat16 rows from the description; k split in the kernel)",
+                3 => "tensor rows (the description's values decoded as each tile loads; k split in the kernel)",
                 2 => "native bfloat16 kind (decoded in the kernel)",
                 1 => "native bfloat16 kind (rows widened from the description)",
                 _ => "widened to float32 from the description, the float32 product",
@@ -175,14 +191,19 @@ internal sealed unsafe partial class CudaBackend
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
+    // Timed cold (each run after the L2 cache is flushed): a super-block or grid decoder gathers scattered bytes for every 8
+    // values (sub-scales, signs, grid indexes), which warm repeats serve from the cache while a pass reads them from device
+    // memory; warm timings chose decoding per tile where widening once was faster in the passes (q6_k, iq3_xxs prompts 7%).
     private int MeasureSuper(TuneKey key, int[] lanes, SuperFunctions f, Storage x, Storage w, Storage y, int m, int n, int k) =>
-        Tune(key, lanes, 0, c => RunSuperLane(c, f, x, w, y, m, n, k));
+        Tune(key, lanes, 0, c => RunSuperLane(c, f, x, w, y, m, n, k), cold: true);
 
-    // A prompt-sized lane: 1 the native kind, 2 the native kind decoding in the kernel, 3 the tensor rows (where they run),
-    // else the weights widened to float32 and the float32 product.
+    // A prompt-sized lane: 1 the native kind, 2 the native kind decoding in the kernel, 3 the tensor rows decoding as the
+    // tiles load, 4 the tensor rows over widened rows (where they run), else the weights widened to float32 and the float32
+    // product.
     private void RunSuperLane(int lane, SuperFunctions f, Storage x, Storage w, Storage y, int m, int n, int k)
     {
-        if (lane == 1 && SuperNative(f, x, w, y, m, n, k) || lane == 2 && RunNativeDirect(x, w, null, y, m, n, k) || lane == 3 && RunTensorRows(x, w, null, y, m, n, k))
+        if (lane == 1 && SuperNative(f, x, w, y, m, n, k) || lane == 2 && RunNativeDirect(x, w, null, y, m, n, k) || lane == 3 && RunTensorRows(x, w, null, y, m, n, k)
+            || lane == 4 && RunTensorRows(x, w, null, y, m, n, k, widen: true))
         {
             return;
         }

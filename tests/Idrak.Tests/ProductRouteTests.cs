@@ -14,16 +14,17 @@ internal abstract partial class DesktopTests : Tests
     [
         ("product routes: bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (a code table) weights give the product of their values (as ggml decodes them) under the name, generic, measured and adad routes (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms, and under adad for int8, q8_0, q4_0 and iq4_nl also within x's rounding to q8_0's codes)", ProductRoutesNear),
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept as Adad keeps them, stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
-        ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16 and int8 rows as stored, the other formats' widened to bfloat16 rows) alone and as one launch over a group sharing x (bfloat16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
+        ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
         ("product routes: the block route (adad) gives the product of x quantized to q8_0 (Adad's encoder) and the weights' values on the CPU (with its s8 dot lane) and CUDA, for int8 (a scale a row), q8_0, q4_0 and iq4_nl weights, and on the CPU Q4_K and Q6_K (scaled sub-blocks and minimums) and IQ2_XXS and IQ3_XXS (grid codebooks) (1, 3, 8, 9, 70 and 130 rows; within float32's bound for k terms)", ProductRoutesBlocks),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
-        ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130) and the native kind in a bfloat16 run (70, 130), give the product of their values (the native kind's: x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
+        ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
         ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
         ("product routes: the fused epilogues of stored weights (CUDA, few rows): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the adad route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
+        ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
         ("product routes: IDRAK_ROUTES reads name, generic, measured and adad (any case, blank is name) and refuses anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
     ];
 
@@ -254,9 +255,9 @@ internal abstract partial class DesktopTests : Tests
 
                     foreach (var (lane, m) in new[] { 0, 1, 2, 3, 4 }.SelectMany(lane => new[] { 9, 70, 130 }.Select(m => (lane, m))))
                     {
-                        if (lane == 3 && format != "int8" || lane == 4 && format == "float16")
+                        if (lane == 3 && format != "int8")
                         {
-                            continue;                                       // the raw lane reads signed 8-bit codes only; float16 keeps its own kind
+                            continue;                                       // the raw lane reads signed 8-bit codes only
                         }
 
                         bool native = lane > 0;
@@ -300,7 +301,7 @@ internal abstract partial class DesktopTests : Tests
                                 // The raw lane multiplies int8 codes exactly (each output's scale applied to its sum).
                                 // The tensor rows too over int8 (codes widened exactly, the scale applied to each output's sum); over
                                 // the other formats they read the weights widened to bfloat16, as the native kind.
-                                bool f16Kind = lane == 1 && format == "float16", rawCodes = lane == 3 || lane == 4 && format == "int8";
+                                bool f16Kind = lane is 1 or 4 && format == "float16", rawCodes = lane == 3 || lane == 4 && format == "int8";
                                 double sum = 0, magnitude = 0;
                                 for (int r = 0; r < k; r++)
                                 {
@@ -331,7 +332,7 @@ internal abstract partial class DesktopTests : Tests
         UnderRoute(ProductRoute.Measured, () =>
         {
             int k = 256;
-            foreach (string format in new[] { "bfloat16", "int8", "q8_0", "q4_0", "q4_k", "iq2_xxs" })
+            foreach (string format in new[] { "bfloat16", "float16", "int8", "q8_0", "q4_0", "q4_k", "iq2_xxs" })
             {
                 var weights = new[] { 128, 256, 70 }.Select(n => (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, device)).ToArray();
                 try
@@ -343,15 +344,18 @@ internal abstract partial class DesktopTests : Tests
                     }).ToArray();
                     foreach (int count in new[] { 2, 3 })
                     {
-                        foreach (int m in new[] { 9, 130, 300 })
+                        foreach (var (m, tile) in new[] { (9, 128), (130, 64), (300, 128), (300, 64) })
                         {
                             var x = RouteValues(random, (long)m * k);
                             using var mixed = MixedPrecision.BFloat16();
+                            Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = tile;
                             using var scope = new TensorScope();
                             var input = Tensor.From(x, [m, k], device);
                             var outputs = weights.Take(count).Select(w => Tensor.Empty([m, w.Columns], device)).ToArray();
                             var products = weights.Take(count).Select((w, j) => (w.StoredValues.Storage, w.Scales?.Storage, outputs[j].Storage, w.Columns)).ToArray();
-                            if (!cuda.StoredTensorRowsMany(input.Storage, m, k, products))
+                            bool grouped = cuda.StoredTensorRowsMany(input.Storage, m, k, products);
+                            Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = null;
+                            if (!grouped)
                             {
                                 Check(false, $"{device}: {format}, {count} weights, {m} rows: the tensor rows take no group ({cuda.TypedUnavailableReason})");
                                 continue;
@@ -369,9 +373,11 @@ internal abstract partial class DesktopTests : Tests
                                         double sum = 0, magnitude = 0;
                                         for (int r = 0; r < k; r++)
                                         {
-                                            // Weights read as stored (bfloat16, int8 codes and scales) or widened to bfloat16 rows.
-                                            float wv = format is "bfloat16" or "int8" ? w[r * n + c] : BitConverter.Int32BitsToSingle(BFloat16Bits.Round(w[r * n + c]) << 16);
-                                            double term = (double)BitConverter.Int32BitsToSingle(BFloat16Bits.Round(x[i * k + r]) << 16) * wv;
+                                            // Weights read as stored (bfloat16, float16, int8 codes and scales) or widened to bfloat16 rows;
+                                            // x rounded to bfloat16, or to float16 for float16's products.
+                                            float wv = format is "bfloat16" or "float16" or "int8" ? w[r * n + c] : BitConverter.Int32BitsToSingle(BFloat16Bits.Round(w[r * n + c]) << 16);
+                                            float xv = format == "float16" ? (float)(Half)x[i * k + r] : BitConverter.Int32BitsToSingle(BFloat16Bits.Round(x[i * k + r]) << 16);
+                                            double term = (double)xv * wv;
                                             sum += term;
                                             magnitude += Math.Abs(term);
                                         }
@@ -646,7 +652,10 @@ internal abstract partial class DesktopTests : Tests
                     w = expanded.ToArray();
                 }
 
-                foreach (var (native, m, direct) in new[] { (false, 1, false), (false, 5, false), (false, 70, false), (false, 130, false), (true, 70, false), (true, 130, false), (true, 70, true), (true, 130, true) })
+                // rows: 0 none, 3 the tensor rows decoding as the tiles load, 4 over widened rows (each with both row tiles).
+                foreach (var (native, m, direct, rows) in new[] { (false, 1, false, 0), (false, 5, false, 0), (false, 70, false, 0), (false, 130, false, 0), (true, 70, false, 0),
+                             (true, 130, false, 0), (true, 70, true, 0), (true, 130, true, 0), (true, 70, false, 3), (true, 300, false, 3), (true, 70, false, 4), (true, 300, false, 4) })
+                foreach (int tile in rows == 0 ? [0] : new[] { 128, 64 })
                 {
                     if (direct && GridFormats.Contains(format))
                     {
@@ -660,8 +669,20 @@ internal abstract partial class DesktopTests : Tests
                     {
                         var input = Tensor.From(x, [m, k], device);
                         var output = Tensor.Empty([m, n], device);
-                        if (!(direct ? cuda.StoredNativeDirect(weight.Type, input.Storage, weight.StoredValues.Storage, null, output.Storage, m, n, k)
-                                : cuda.StoredSuperLane(weight.Type, input.Storage, weight.StoredValues.Storage, output.Storage, m, n, k, native)))
+                        Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = tile == 0 ? null : tile;
+                        bool ran;
+                        try
+                        {
+                            ran = rows > 0 ? cuda.StoredTensorRows(input.Storage, weight.StoredValues.Storage, null, output.Storage, m, n, k, widen: rows == 4)
+                                : direct ? cuda.StoredNativeDirect(weight.Type, input.Storage, weight.StoredValues.Storage, null, output.Storage, m, n, k)
+                                : cuda.StoredSuperLane(weight.Type, input.Storage, weight.StoredValues.Storage, output.Storage, m, n, k, native);
+                        }
+                        finally
+                        {
+                            Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = null;
+                        }
+
+                        if (!ran)
                         {
                             Check(false, $"{device}: {format}'s lanes do not run ({cuda.TypedUnavailableReason})");
                             return;
@@ -693,7 +714,7 @@ internal abstract partial class DesktopTests : Tests
                             double error = Math.Abs(y[i * n + j] - sum);
                             if (!(error <= bound))
                             {
-                                Check(false, $"{device}: {format} [{k}, {n}], {m} rows{(native ? ", the native kind" : "")}: y[{i}, {j}] = {y[i * n + j]}, the product {sum} (error {error:E2} past {bound:E2})");
+                                Check(false, $"{device}: {format} [{k}, {n}], {m} rows{(rows == 3 ? $", the tensor rows decoding ({tile}-row tiles)" : rows == 4 ? $", the tensor rows widened ({tile}-row tiles)" : native ? ", the native kind" : "")}: y[{i}, {j}] = {y[i * n + j]}, the product {sum} (error {error:E2} past {bound:E2})");
                             }
                         }
                     }
@@ -1050,6 +1071,108 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(merged > 0, $"some pass on {device} wrote token-major");
+    }
+
+    // Every described super-block and grid type, also those with no encoder here (Q2_K, Q3_K, Q5_K), from random blocks as
+    // ggml stores them (their scales set to small floats): the CUDA tensor rows decoding the values as each tile loads, and
+    // over the rows widened for the call, with 128- and 64-row tiles, against x and the values as ggml decodes them, both
+    // rounded to bfloat16.
+    private static void ProductRoutesEveryBlockType(Device device)
+    {
+        if (device.Backend is not Idrak.Gpu.Cuda.CudaBackend cuda)
+        {
+            Skip($"the tensor rows are CUDA's (not {device})");
+            return;
+        }
+
+        var random = new Random(97);
+        const int k = 512, n = 130, m = 70;
+        int ran = 0;
+        foreach (string name in new[] { "q2_k", "q3_k", "q4_k", "q5_k", "q6_k", "iq2_xxs", "iq3_xxs" })
+        {
+            var type = ElementTypes.Find(name);
+            if (type is null || type.Super is null && type.Grid is null)
+            {
+                Check(false, $"{name}: no super-block or grid description ({type?.Describe() ?? "not registered"})");
+                continue;
+            }
+
+            int values = type.Super?.Values ?? type.Grid!.Values, bytes = type.Super?.Bytes ?? type.Grid!.Bytes;
+            int[] scales = type.Super is { } super ? [super.ScaleOffset, super.MinOffset] : [type.Grid!.ScaleOffset];
+            int blocks = n * (k / values);
+            var raw = new byte[blocks * bytes];
+            random.NextBytes(raw);
+            for (int b = 0; b < blocks; b++)
+            {
+                foreach (int offset in scales.Where(o => o >= 0))
+                {
+                    System.Buffers.Binary.BinaryPrimitives.WriteHalfLittleEndian(raw.AsSpan(b * bytes + offset), (Half)(random.NextSingle() * 0.02f - 0.01f));
+                }
+            }
+
+            var decoded = new float[n * k];
+            type.Decode(raw, decoded);                                      // n rows of k values, as stored
+            using var weight = StoredWeight.FromStored(type, raw, k, n, null, device);
+            foreach (bool widen in new[] { false, true })
+            {
+                foreach (int tile in new[] { 128, 64 })
+                {
+                    var x = RouteValues(random, (long)m * k);
+                    float[] y;
+                    using (var scope = new TensorScope())
+                    using (MixedPrecision.BFloat16())
+                    {
+                        var input = Tensor.From(x, [m, k], device);
+                        var output = Tensor.Empty([m, n], device);
+                        Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = tile;
+                        bool took;
+                        try
+                        {
+                            took = cuda.StoredTensorRows(input.Storage, weight.StoredValues.Storage, null, output.Storage, m, n, k, widen);
+                        }
+                        finally
+                        {
+                            Idrak.Gpu.Cuda.CudaBackend.RowsTileOverride = null;
+                        }
+
+                        if (!took)
+                        {
+                            Check(false, $"{device}: the tensor rows ({(widen ? "widened" : "decoding")}) do not take {name} ({cuda.TypedUnavailableReason})");
+                            continue;
+                        }
+
+                        y = output.ToArray();
+                    }
+
+                    bool wrong = false;
+                    for (int i = 0; i < m && !wrong; i++)
+                    {
+                        for (int j = 0; j < n && !wrong; j++)
+                        {
+                            double sum = 0, magnitude = 0;
+                            for (int r = 0; r < k; r++)
+                            {
+                                double term = (double)BitConverter.Int32BitsToSingle(BFloat16Bits.Round(x[i * k + r]) << 16)
+                                              * BitConverter.Int32BitsToSingle(BFloat16Bits.Round(decoded[j * k + r]) << 16);
+                                sum += term;
+                                magnitude += Math.Abs(term);
+                            }
+
+                            double error = Math.Abs(y[i * n + j] - sum), bound = k * Math.Pow(2, -23) * magnitude + 1e-30;
+                            if (!(error <= bound))
+                            {
+                                Check(false, $"{device}: {name}, the tensor rows {(widen ? "widened" : "decoding")} ({tile}-row tiles): y[{i}, {j}] = {y[i * n + j]}, the product {sum} (error {error:E2} past {bound:E2})");
+                                wrong = true;
+                            }
+                        }
+                    }
+
+                    ran++;
+                }
+            }
+        }
+
+        Check(ran == 7 * 4, $"{device}: {ran} of {7 * 4} tensor-row runs");
     }
 
     private static void ProductRoutesSetting(Device device)

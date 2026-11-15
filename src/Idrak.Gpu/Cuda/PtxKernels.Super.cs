@@ -535,17 +535,31 @@ internal static partial class PtxKernels
         }
     }
 
-    /// <summary>The module for <paramref name="g"/>: its tables in read-only global memory, the widenings and the few-row products.</summary>
-    internal static string GridModule(GridBlock g)
+    /// <summary>The tables GridEight reads, in read-only global memory (a module's).</summary>
+    internal static string GridTables(GridBlock g)
     {
-        var names = GridNames(g);
-        var sb = new StringBuilder(NativeHeader);
+        var sb = new StringBuilder();
         sb.Append(CultureInfo.InvariantCulture, $".global .align 4 .b32 grid_sub[{g.SubScales.Count * 2}] = {{{string.Join(", ", PieceWords(g.SubScales))}}};\n");
         sb.Append(CultureInfo.InvariantCulture, $".global .align 4 .b32 grid_entry[{g.Entries.Count * 2}] = {{{string.Join(", ", PieceWords(g.Entries))}}};\n");
         sb.Append(CultureInfo.InvariantCulture, $".global .align 4 .b32 grid_sign[{g.Signs.Count * 2}] = {{{string.Join(", ", PieceWords(g.Signs))}}};\n");
         sb.Append(CultureInfo.InvariantCulture, $".global .align 8 .b8 grid_values[{g.Grid.Count}] = {{{string.Join(", ", g.Grid.Select(v => (byte)(sbyte)v))}}};\n");
         sb.Append(CultureInfo.InvariantCulture, $".global .align 4 .b8 grid_masks[{g.SignTable.Count}] = {{{string.Join(", ", g.SignTable)}}};\n");
-        var decode = new BlockDecode(g.Values, g.Bytes, (b, block, w) => GridEight(b, g, block, w));
+        return sb.ToString();
+    }
+
+    /// <summary>A grid description's decoder of 8 values (GridEight), for the widenings, the few-row products and the tensor rows.</summary>
+    internal static BlockDecode GridDecode(GridBlock g) => new(g.Values, g.Bytes, (b, block, w) => GridEight(b, g, block, w));
+
+    /// <summary>A super-block description's decoder of 8 values (SuperEight), for the widenings and the tensor rows.</summary>
+    internal static BlockDecode SuperDecode(SuperBlock s) => new(s.Values, s.Bytes, (b, block, w) => SuperEight(b, s, block, w));
+
+    /// <summary>The module for <paramref name="g"/>: its tables in read-only global memory, the widenings and the few-row products.</summary>
+    internal static string GridModule(GridBlock g)
+    {
+        var names = GridNames(g);
+        var sb = new StringBuilder(NativeHeader);
+        sb.Append(GridTables(g));
+        var decode = GridDecode(g);
         sb.Append(BlockWiden(decode, names[0], bf16: false));
         sb.Append(BlockWiden(decode, names[1], bf16: true));
         int rows = TypedGemvRows.Length;
