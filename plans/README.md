@@ -15,6 +15,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone as an app; Android first) | [opened/34-mobile.md](opened/34-mobile.md) |
 | Plan 36: `idrak data code`, a tool that turns a code repository into training, tuning and reinforcement data (language-neutral, C# as the only plug-in; G-1, G-1b, G0, G1 built, G2-G7 open) | [opened/36-csharp-agent-dataset.md](opened/36-csharp-agent-dataset.md) |
 | Plan 38: handwriting fonts from images (a glyph sheet or real scans traced into a font `data synth` uses; planned, nothing built) | [opened/38-handwriting-fonts.md](opened/38-handwriting-fonts.md) |
+| Plan 39: Idrak.Adad, the proof's Adad design as its own devices (`adad-cpu`, `adad-cuda`; planned, nothing built) | [opened/39-idrak-adad.md](opened/39-idrak-adad.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 
