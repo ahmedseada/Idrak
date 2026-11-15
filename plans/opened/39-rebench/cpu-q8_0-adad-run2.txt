@@ -1,0 +1,25 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+Qwen/Qwen3-0.6B on cpu (CPU (24 threads, 8-wide SIMD)): 596.0M parameters, weights q8_0, KV cache float32
+  prompt 128 tokens, 32 generated, 2 run(s) after a warm-up
+  measured lane: cpu: q8_0 128x1024->1024: tiles (panels widened in the product) (row 0.906 ms, panel 1.763 ms, today's 0.748 ms, block 2.197 ms, tiles 0.363 ms)
+  measured lane: cpu: q8_0 128x1024->2048: tiles (panels widened in the product) (row 2.046 ms, panel 4.751 ms, today's 1.424 ms, block 4.075 ms, tiles 0.996 ms)
+  measured lane: cpu: q8_0 128x1024->3072: tiles (panels widened in the product) (row 1.837 ms, panel 4.949 ms, today's 1.552 ms, block 0.879 ms, tiles 0.803 ms)
+  measured lane: cpu: q8_0 128x2048->1024: block route (x as q8_0, s8 dot) (row 1.773 ms, panel 5.042 ms, today's 1.273 ms, block 0.67 ms, tiles 0.741 ms)
+  measured lane: cpu: q8_0 128x3072->1024: block route (x as q8_0, s8 dot) (row 2.989 ms, panel 3.747 ms, today's 2.156 ms, block 0.876 ms, tiles 1.295 ms)
+  measured lane: cpu: q8_0 1x1024->1024: block route (x as q8_0, s8 dot) (row 0.039 ms, panel 0.235 ms, block 0.024 ms)
+  measured lane: cpu: q8_0 1x1024->151936: block route (x as q8_0, s8 dot) (row 3.663 ms, panel 33.18 ms, block 2.596 ms)
+  measured lane: cpu: q8_0 1x1024->2048: block route (x as q8_0, s8 dot) (row 0.077 ms, panel 0.466 ms, block 0.04 ms)
+  measured lane: cpu: q8_0 1x1024->3072: block route (x as q8_0, s8 dot) (row 0.114 ms, panel 0.691 ms, block 0.058 ms)
+  measured lane: cpu: q8_0 1x2048->1024: block route (x as q8_0, s8 dot) (row 0.081 ms, panel 0.41 ms, block 0.04 ms)
+  measured lane: cpu: q8_0 1x3072->1024: block route (x as q8_0, s8 dot) (row 0.083 ms, panel 0.518 ms, block 0.059 ms)
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              534    tokens/s  128 tokens
+generation          62.7   tokens/s  32 tokens
+prompt GFLOP/s      637    GFLOP/s   2 x parameters per token
+generation GFLOP/s  74.8   GFLOP/s   2 x parameters per token
+weights memory      921    MiB       on the device after loading
+memory in use       921    MiB       after the runs
+memory peak         969    MiB       the most in use on the device since the start
+KV cache            35.0   MiB       a generation's caches at their largest, window 161, grown 0 times

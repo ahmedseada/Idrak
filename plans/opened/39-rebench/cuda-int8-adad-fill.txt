@@ -1,0 +1,25 @@
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+Qwen/Qwen3-0.6B on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)): 596.0M parameters, weights int8, KV cache bfloat16
+  prompt 512 tokens, 128 generated, 3 run(s) after a warm-up
+  measured lane: cuda: int8 1x1024->151936 mixed bfloat16: few-row lane (block route slower)
+  measured lane: cuda: int8 1x2048->1024 mixed bfloat16: few-row lane (block route slower)
+  measured lane: cuda: int8 1x3072->1024 mixed bfloat16: few-row lane (block route slower)
+  measured lane: cuda: int8 512x1024->1024 mixed bfloat16: tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)
+  measured lane: cuda: int8 512x1024->2048 mixed bfloat16: tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)
+  measured lane: cuda: int8 512x1024->3072 mixed bfloat16: tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)
+  measured lane: cuda: int8 512x1024->4096 mixed bfloat16: a group of 3, in one tensor-row launch
+  measured lane: cuda: int8 512x1024->6144 mixed bfloat16: a group of 2, in one tensor-row launch
+  measured lane: cuda: int8 512x2048->1024 mixed bfloat16: tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)
+  measured lane: cuda: int8 512x3072->1024 mixed bfloat16: tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)
+  measured lane: cuda: native bfloat16 tensor kernel: rows of 64 B, 3 stages, 256 columns, swizzled (9 of 9 shapes accepted)
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              47428  tokens/s  512 tokens
+generation          613    tokens/s  128 tokens
+prompt GFLOP/s      56539  GFLOP/s   2 x parameters per token
+generation GFLOP/s  730    GFLOP/s   2 x parameters per token
+weights memory      887    MiB       on the device after loading
+memory in use       991    MiB       after the runs
+memory peak         1116   MiB       the most in use on the device since the start
+KV cache            70.0   MiB       a generation's caches at their largest, window 641, grown 0 times

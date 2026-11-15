@@ -1,13 +1,11 @@
 # The proof: what it followed, how it was done, what it proved
 
-> **Status: under correction.** A blind review (2026-11-15) found errors this record still has to fix: the CUDA tuning
-> keys of the stored-weight lanes (`2000`, `3000`, `4000`, `5000`, `9700` + an id given in first-use order) were the
-> same for every type in a one-type bench process, so in a shared tuning folder a later type reused an earlier type's
-> lane choices; the CPU's lane choices are in-process only (`StoredLanes`, `s_lanes`) and are not kept by
-> `IDRAK_TUNING_CACHE`, so the CPU's fill and warm runs are two independent measurements (q8_0's 39.3 tok/s run chose
-> the row lane on every decode shape: a measurement that picked a slower lane, not noise); `results-dec-warm.txt` was
-> made by a build before commit `cf77ceeb`; the CUDA bf16 head chose the named kernel at decode too. Until this banner
-> is removed, the tables below are not an acceptance bar.
+> **Status: corrected after a blind review (2026-11-15); the owner marks it final.** The review found: the CUDA tuning
+> keys of the stored-weight lanes were shared across types (a later type in a shared folder reused an earlier type's
+> choices); the CPU's lane choices are measured anew in every process; round 13's CUDA table came from a build before
+> `cf77ceeb`; the CUDA bf16 head chose the named kernel at decode too. Each is recorded below where it applies. The
+> acceptance table is now the re-bench of `cf77ceeb`, each type measured on its own ("What it proved"); the earlier
+> tables are kept only as superseded history.
 
 A record of the routes experiment on branch `migration`, for the session that builds Idrak.Adad (plan 39). It states
 only what the proof built, measured and proved, with where each fact comes from. What the proof did not prove is listed
@@ -24,6 +22,30 @@ at the end as not proved; nothing there may be taken as proved.
   profiles `*.txt` beside them); earlier rounds `test-output\routes*\`, `test-output\final\results.txt`.
 - The running notes of every round: the memory note `routes-experiment` (the session's own record, written as each round
   ended).
+- Plan 39's earlier versions (commits `2be7627d`, `7e7248fc`, `1e504c50`) are superseded and must not be followed; the
+  current one is the one beside this record.
+- The re-bench of the committed proof (`cf77ceeb`), each type measured on its own: `test-output\rebench\`, pushed as
+  `plans/opened/39-rebench/` (the script `rebench.sh`, every run's log with its "measured lane:" lines, each type's CUDA
+  tuning file `tuning-cuda-{type}/` and CPU tuning file `tuning-cpu-{type}.tsv`, `results.txt`).
+
+## Words used here
+
+- **Lane**: one way a device multiplies x by a stored weight (a kernel or a short pipeline of kernels). CUDA's lanes are
+  numbered as `StoredMeasured`'s candidates (below); the CPU's are named (row, panel, today's path, tiles, block route).
+- **Few-row lane**: the product for a decoding step (at most 8 rows of x), one warp a column (CUDA) or a row of the weight
+  a step (CPU).
+- **Kind, native kind**: a type the GPU's matrix unit takes as it is (bfloat16, float16: the `NativeKind` table); the
+  "native kind" lane is Adad's GemmMma kernel ported (CUDA lane 2).
+- **A row an output**: the stored weight's layout, `[outputs, inputs]`, one row of k values for each output (the file's
+  order); the tensor rows' "nt" kernels read it.
+- **Fill run, warm run**: on a fresh tuning folder the first run measures the choices while it is timed (fill); the second
+  run reads them (warm). The CPU keeps no lane choices between runs (below), so on the CPU both are fresh measurements.
+- **Cold timing**: each timed run after the L2 cache is flushed (`Tune`'s `cold: true`); warm timing: back-to-back runs.
+- **Clearly faster**: the CPU's named-against-generic choice keeps the named kernel unless the generic product is 3%
+  faster (`CpuBackend.Typed.cs`); `Tune` keeps its fallback unless a candidate measures faster (its threshold is in
+  `CudaBackend.Tuning.cs`).
+- **"today's path"** (CPU): the lane that widens the weight once into panels and runs the float32 product; in the code it
+  is the expanded lane (`ExpandedLaneId`, label "today's path (widened once, float32 product)"); it is one lane.
 
 ## What it followed (the design)
 
@@ -47,8 +69,9 @@ In Idrak this became:
   sub-scales). The GGUF types described (`src/Idrak/Models/GgufElementTypes.cs`): Q8_0, Q4_0, IQ4_NL (scaled blocks);
   Q2_K, Q3_K, Q4_K, Q5_K, Q6_K (super-blocks); IQ2_XXS, IQ3_XXS (grids). Each description decodes to the same bits as
   ggml's decoder (tests: "product routes: the k-quants' super-block descriptions ... decode random blocks to the same bits
-  as ggml's decoders"). Encoders exist for Q4_0, IQ4_NL, Q4_K, Q6_K, IQ2_XXS, IQ3_XXS (and q8_0, int8, bfloat16, float16);
-  Q2_K, Q3_K, Q5_K have none.
+  as ggml's decoders"). Encoders exist for Q4_0, IQ4_NL, Q4_K, Q6_K, IQ2_XXS, IQ3_XXS (and q8_0, int8, bfloat16, float16):
+  Idrak's own simple encoders ("a simple encoder, not ggml's searching quantize_row_*_ref"); Q2_K, Q3_K, Q5_K have none.
+  Every benched weight was quantized by these encoders from the bfloat16 checkpoint; no GGUF file made by ggml was benched.
 - **Weights kept as the file stores them** under the generic, measured and adad routes: `StoredWeight`, a row of an
   output's values (int8: codes and a scale an output; bfloat16, float16, every described type as stored), packed from the
   file's rows without a float32 copy of the matrix (`StoredPacking.cs`, `IWeightSource.ReadOutputRows`, `WeightRows`).
@@ -68,15 +91,20 @@ In Idrak this became:
 
 ## What was built
 
-### CPU (`src/Idrak.Abstraction/Devices/Cpu/CpuBackend.Lanes.cs`, `.Blocks.cs`, `.Typed.cs`, `Faster.cs`)
+### CPU (`src/Idrak.Abstraction/Devices/Cpu/CpuBackend.Lanes.cs`, `.Blocks.cs`, `.Typed.cs`; `src/Idrak.Abstraction/Devices/Faster.cs`)
 
-- Row lane (a row of stored values a step), panel lane (transposed B), "today's path" lane (the weight widened once from
-  its description into the tiled product's panels, then the CPU's float32 product: `CpuMatMul.MultiplyPanels`, bit for bit
-  the same sums as over B [k, n], tested), tiles lane (panels widened inside the product: `MultiplyPanelsFrom`, tested bit
-  for bit), expanded lane (measured only above 8 rows; its buffer rented).
+- Row lane (a row of stored values a step), panel lane (transposed B), "today's path" lane (the expanded lane: the weight
+  widened once from its description into the tiled product's panels, then the CPU's float32 product:
+  `CpuMatMul.MultiplyPanels`, bit for bit the same sums as over B [k, n], tested; measured only above 8 rows; its buffer
+  rented), tiles lane (panels widened inside the product: `MultiplyPanelsFrom`, tested bit for bit).
+- The CPU's packed int8 and bfloat16 products (`Int8MatMulKernel`, `BFloat16MatMulKernel` in `CpuBackend.Typed.cs`): under
+  the routes, the named kernel against the generic product (`NamedLane`, `MeasureLane`); the proof turned the pre-proof
+  overrides in `CpuBackend.Quantized.cs` into private `Int8Direct`/`BFloat16Direct`, which these call.
 - Adad's block route (`adad` only): x quantized into the weights' 8-bit blocks, integer dots with AVX-VNNI-INT8; for the
   k-quants a fused SIMD unpack and dot (`Codes32`); for the grids their block route (`GemvGrid`, `UnpackGridRow`).
-- The lane per shape measured with `Faster.Time`.
+- The lane per shape measured with `Faster.Time`, kept only in the process (`StoredLanes`, `s_lanes`: static dictionaries):
+  every run measures again. The CPU's own cut-overs for its other operations are kept in `IDRAK_CPU_TUNING_FILE` or
+  `<cache>/cpu/tuning.tsv` (`CpuTuning.cs`), not in `IDRAK_TUNING_CACHE`.
 
 ### CUDA (`src/Idrak.Gpu/Cuda/CudaBackend.Typed.cs`, `.Many.cs`, `.Super.cs`, `.NativeRaw.cs`, `.NativeDirect.cs`, `.TensorRows.cs`; generators `PtxKernels.Typed.cs`, `.Blocks.cs`, `.Super.cs`, `.NativeMma.cs`, `.Epilogues.cs`, and modes added to `PtxKernels.TensorCore.cs`)
 
@@ -89,15 +117,32 @@ The candidates of `StoredMeasured`, by number:
 - 3: Adad's block route (`adad` only): dp4a few rows, s8 `mma` tiles.
 - 4: the direct native lane (x staged from float32, W decoded per chunk in the kernel).
 - 5: the raw int8 lane (int8 codes read as stored, widened in registers).
-- 6: the tensor rows (`CudaBackend.TensorRows.cs`): Idrak's tensor-core GEMM generator (`TensorCoreGemm`) given modes that
-  read the stored rows (`gemm_tc_nt_*`): bfloat16 and float16 rows copied as stored (`bf16B`, `f16B`: 16 bytes a thread),
-  int8 codes widened with a scale an output (`int8B`), 32-value scaled blocks decoded as each tile loads (`blockB`, a
-  module per description), super-blocks and grids decoded as each tile loads (`decodeB`, with the description's decoder)
-  or their rows widened to bfloat16 first; 128- and 64-row tiles, the tile and the k splits measured per shape; k split in
-  the kernel with an ordered sum.
+- 6: the tensor rows (`CudaBackend.TensorRows.cs`): Idrak's tensor-core GEMM generator (`TensorCoreGemm`) reading the
+  stored rows. The generator already had a `bf16B` mode before the proof (LoRA's `dx = g · Wᵀ`, kernel
+  `gemm_tc_nt_bf16w_lr_f32`, at `cf7b8c48`); the proof added, as generator flags → kernel names: `bf16B` without the
+  low-rank stage → `gemm_tc_nt_bf16w_f32`; `f16B` → `gemm_tc_nt_f16w_f32`; `int8B` → `gemm_tc_nt_int8w_f32` (codes widened,
+  a scale an output in the epilogue); `blockB` → `gemm_tc_nt_{code}_f32` (32-value scaled blocks decoded as each tile
+  loads, a module per description); `decodeB` → `gemm_tc_nt_{code}_f32` (super-blocks and grids decoded by the
+  description's decoder); each with `_multi` (a group) and `_m64` (64-row tiles); 16-byte loads for `bf16B`, `f16B` and
+  `int8B`. The added module entries are at `PtxKernels.TensorCore.cs` lines 122-133 (`cf77ceeb`); the pre-proof
+  `gemm_tc_nt_f32`, `gemm_tc_nt_gelugrad_f32` and the `_lr` kernels are core's own. Super-block and grid rows may instead be
+  widened to bfloat16 first (the widened source). The tile and the k splits are measured per shape; k is split in the
+  kernel with an ordered sum.
+- What the tensor rows depend on in the native kind's code: lane 6 picks its 16-bit modes with `NativeKind.BF16/F16.Holds`,
+  widens other typed descriptions with the native kind's pack kernel (`NativePack(d, BF16).W`, `LaunchPack`,
+  `NativePadded`, `NativePackGrid`); `SharedInput` (the only way into `TensorRowsGroup`) returns false unless
+  `NativeKernel(kind)` and `NativePack(...)` load; `StoredSuper` measures its lanes 3 and 4 only where the native kernel and
+  pack load. So the native kind's table, pack kernels and loading gate the tensor rows whichever lane is chosen (every
+  adad log shows the native kind measured: "9 of 9 shapes accepted").
 
 Super-block and grid weights take their own lanes (`StoredSuper`): 0 the few-row kernel or the f32 product, 1 native,
 2 direct, 3 tensor rows decoding, 4 tensor rows over widened rows.
+
+The keys the CUDA lane choices are kept under: `(adad ? 2000 : 1000) + TypedIds` (`StoredMeasured`), `3000 + SuperIds`
+(`StoredSuper`), `4000/5000 + EpilogueIds` (the fused epilogues), `9700 + GroupIds` (the group launch), each id given in
+first-use order inside one process: in a bench of one type every type gets id 0, so in a tuning folder shared by several
+types a later type reads an earlier type's stored choice wherever the shape and the candidate count match, without
+measuring its own (the final benches' folders hold only ids 0).
 
 Groups: products sharing x (q/k/v, gate/up) through `StoredMatMulManyKernel`: on few rows one launch of the `_many`
 few-row kernels; on prompts one launch of the tensor rows' `_multi` kernel measured against each product's own lane
@@ -135,10 +180,13 @@ few-row kernels; on prompts one launch of the tensor rows' `_multi` kernel measu
    that version; never NuGet), once the owner asked for it; before that the benches ran `dotnet run --no-build`.
 5. **Bench.** `idrak bench Qwen/Qwen3-0.6B -w {type} -d {cuda|cpu}`; CUDA `--prompt-tokens 512 --tokens 128 -n 3`, CPU
    `--prompt-tokens 128 --tokens 32 -n 2`; both routes (`IDRAK_ROUTES=adad` and `name`) share one tuning folder per
-   device (`IDRAK_TUNING_CACHE`). From round 11: on a fresh folder a fill run, then a warm run, and the warm run is the
-   result (earlier rounds read one run on a shared folder; round 5 used one folder per route, later found wrong).
-6. **A number out of line is traced before it counts.** Examples: the fused residual-norm conversion (generation 643 →
-   343); q6_k and iq3_xxs slower after decoding in the kernel (warm timing hid the decoders' scattered reads).
+   device (`IDRAK_TUNING_CACHE`, which holds CUDA's choices; the CPU's lane choices are not kept, see above). From round
+   11: on a fresh folder a fill run, then a warm run, and the warm run is the result (earlier rounds read one run on a
+   shared folder; round 5 used one folder per route, later found wrong). The folders of rounds 11-13 were shared by all
+   types (see the keys above).
+6. **A number out of line is traced before it counts.** Examples: the fused residual-norm conversion (int8 adad
+   generation had fallen from 643 in an earlier round to 343; after the fix 626); q6_k and iq3_xxs slower after decoding
+   in the kernel (attributed to warm timing hiding the decoders' scattered reads; see the caveat under "Measurement facts").
 7. **Recorded and reported**: the round's numbers in `test-output`, the round in the memory note, the report to the owner.
 
 ## The tools used, and exactly how
@@ -277,8 +325,8 @@ it, it says so.
 - **The routes behind a switch, `name` by default** (`IDRAK_ROUTES`). Effect: every bench ran both routes on the same
   build, and today's behaviour is unchanged unless a run asks for a route.
 - **Weights kept as the file stores them under the routes** (`StoredWeight`, a row an output). Why: Adad keeps every weight
-  as stored; it also keeps a type at its file size on the device. Measured: device memory for q8_0 2,590 → 921 MiB, q4_0
-  2,590 → 637 MiB (`test-output\routes*\`).
+  as stored; it also keeps a type at its file size on the device. Measured (the bench's "weights memory" line): q8_0
+  2,590 → 921 MiB, q4_0 2,590 → 637 MiB (`test-output\routes*\`).
 - **int8 kept with today's codes and a scale an output.** The reason was not written down at the time. Effect: the
   routes multiply the same quantized values as `name`; only the layout and the arithmetic differ.
 - **Results judged within float32's bound, not bit for bit against `name`.** Why: the lanes sum in another order than
@@ -289,20 +337,26 @@ it, it says so.
 
 ### How a lane is chosen
 
-- **Measured at run time per product shape, on the real operands**, once, kept in the tuning cache (CUDA `Tune`; the CPU
-  `Faster.Time`, Adad's `Measure.Faster` ported). `Tune`'s fallback is lane 0 (the f32 tile or the few-row lane): another
-  lane is taken only where it measures faster.
+- **Measured at run time per product shape, on the real operands**, once: on CUDA with `Tune`, kept in the tuning folder
+  (but keyed without the type: see "The keys" above, so a later type in a shared folder reused an earlier type's choice);
+  on the CPU with `Faster.Time` (Adad's `Measure.Faster` ported), kept only in the process. `Tune`'s fallback is lane 0
+  (the f32 tile or the few-row lane): another lane is taken only where it measures faster.
 - **A new lane is added as a candidate, never replacing one.** Why: a lane that loses on one shape or card may win on
-  another; the measurement decides. So the proof kept lanes that lost (the direct lane, the native kind once the tensor
-  rows existed) as candidates.
+  another; the measurement decides. So the proof kept lanes that lost (the direct lane, which lost every shape) as
+  candidates; the native kind, after the tensor rows existed, still won some products' own measurements (the re-bench).
 - **Under `measured`, the named kernels of Idrak's packed int8 and bfloat16 formats were candidates** (CUDA `RoutedNamed`,
   CPU `NamedLane`/`MeasureLane`), as the route's definition says ("the faster of the generic product and the format's own
   kernel"). This is one of the places the proof used `name`; see below.
-- **Fused epilogues measured against the composition, the composition the fallback.** Measured: on this card the fused
-  passes were slower (a barrier, an atomic and a serial tail against cheap launches), so the composition ran.
-- **Cold timing only for the super-block and grid decoders.** Measured both ways: cold timing everywhere cost bf16, int8,
-  q4_0 about 6%; cold for the gathering decoders only restored q6_k and iq3_xxs (warm repeats served their scattered byte
-  reads from the cache, while a pass reads them from device memory).
+- **Fused epilogues measured against the composition, the composition the fallback.** Measured in round 7: on this card
+  the fused passes were slower (a barrier, an atomic and a serial tail against cheap launches), so the composition ran.
+  In the final round's folder the stored choices for some decode shapes are fused (`4000 1 3072 1024 0 = 1`,
+  `5000 1 1024 2048 * = 1`), measured once by the first type and read by the others (the keys above).
+- **Cold timing only for the super-block and grid decoders.** Measured: cold timing everywhere gave bf16, int8, q4_0 about
+  6% less; cold for the gathering decoders only gave q6_k and iq3_xxs back their earlier numbers. The reason given was that
+  warm repeats serve the decoders' scattered byte reads from the cache. Caveat (found later): each of these was a
+  different fresh folder (3–5% apart), and with the shared keys q6_k and iq3_xxs read q4_k's and iq2_xxs's choices in the
+  warm-timed run (they ran after them) but measured their own in the cold-timed run (they ran first): the change is not
+  separable from the run order.
 - **64-row tiles as a candidate beside 128.** Why: the down projection (1,024 outputs) gave 32 tiles of 128 × 128 for 70
   SMs, so the 128-row kernel had to split k; with 64-row tiles the measurement moved it onto the tensor rows.
 - **`norm_rope_heads`' block size measured** (32, 64, 128, 256) instead of fixed at 256. Why: a head of 128 values left most
@@ -347,15 +401,19 @@ it, it says so.
 - The named candidates of the packed int8 and bfloat16 formats (above: CUDA `RoutedNamed`, CPU `NamedLane`).
 - **The tied bfloat16 head kept today's bfloat16 head** (with `Embedding.FromHead`). Why: the stored head held a second copy
   of the table (+297 MiB); today's head shares the embedding's bits. Measured: bf16 weights 1,454 → 1,157 MiB, speed the
-  same. The cost seen later: its CPU decode step chose the named kernel (4.6 ms; the generic lane over the named layout
-  took 34 ms).
+  same. Seen later: its decode step chose the named kernel on the CPU (4.6 ms; the generic lane over the named layout took
+  34 ms) and on CUDA too ("cuda: bf16 1x1024->151936 mixed bfloat16: named", `dec-warm-cuda-bf16-adad.txt`); its prompt
+  product ran `gemm_tc_nn_bf16w`. So every bf16 `adad` number includes named kernels for the head. (float16, whose head is
+  a stored copy, peak 1,578 MiB, took the few-row lane and reached 433 tok/s.)
 
 ### How the benches were run
 
 - **One model, one machine:** Qwen/Qwen3-0.6B; an RTX 5070 Ti (70 SMs, compute 12.0) and its CPU (24 threads, AVX-VNNI-INT8).
 - **CUDA** `--prompt-tokens 512 --tokens 128 -n 3`; **CPU** `--prompt-tokens 128 --tokens 32 -n 2`.
-- **Both routes share one tuning folder per device.** Why: an earlier CPU "win" came from a stale cache holding `name`
-  back; per-route folders also changed the CPU's cut-overs for every operation (attention 2× between folders).
+- **Both routes share one tuning folder per device.** Why (as recorded at the time): an earlier CPU "win" came from a
+  stale cache holding `name` back; per-route folders also changed the CPU's cut-overs for every operation (attention 2×
+  between folders). Caveat: the code does not move the CPU's cut-overs with `IDRAK_TUNING_CACHE` (`CpuTuning.cs`), so for
+  the CPU the recorded cause cannot be the folder; it was not re-checked.
 - **A fresh folder: a fill run, then a warm run; the warm run is the result.** Why: the fill run measures while it is
   timed; fresh folders differ by about 3–5% on CUDA prompts.
 - **A number out of line is traced or re-run before it counts** (the residual-norm regression; q6_k and iq3_xxs; q8_0's
@@ -363,48 +421,128 @@ it, it says so.
 
 ## What it proved
 
-### CUDA, Qwen3-0.6B, 512-token prompt and 128 generated tokens, tok/s (`results-dec-warm.txt`; q6_k and iq3_xxs after cold timing: `results-gather.txt`)
+### The acceptance table: the committed proof re-benched, each type measured on its own (`test-output\rebench\`)
 
-| Type | adad prompt | name prompt | adad gen | name gen | adad peak MiB | name peak MiB |
-|---|---|---|---|---|---|---|
-| bf16 | 48,016 | 46,191 | 438 | 403 | 1,282 | 1,282 |
-| f16 | 47,756 | 35,503 | 433 | 258 | 1,578 | 2,715 |
-| int8 | 49,136 | 48,530 | 626 | 444 | 1,012 | 1,012 |
-| q8_0 | 43,826 | 36,438 | 526 | 258 | 1,046 | 2,715 |
-| q4_0 | 45,660 | 35,904 | 553 | 258 | 761 | 2,715 |
-| iq4_nl | 43,986 | 36,386 | 524 | 258 | 761 | 2,715 |
-| q4_k | 42,871 | 36,295 | 494 | 258 | 761 | 2,715 |
-| q6_k | 41,753 | 36,383 | 509 | 258 | 908 | 2,715 |
-| iq2_xxs | 42,184 | 35,877 | 478 | 258 | 594 | 2,715 |
-| iq3_xxs | 40,064 | 36,247 | 448 | 258 | 665 | 2,715 |
+Code: commit `cf77ceeb` (no code change after it), CLI 0.4.1-dev.2611151417 built from it. CUDA: a fresh tuning folder
+per type (`tuning-cuda-{type}`), shared by both routes, runs in the order adad fill, name fill, adad warm, name warm; the
+warm runs below. CPU: a fresh CPU tuning file per type (`IDRAK_CPU_TUNING_FILE`), two runs per route (adad, name, adad,
+name); the CPU's lane choices are measured anew in each run. Script `test-output\rebench\rebench.sh`; every run's log
+beside it (`cuda-{type}-{route}-{fill|warm}.txt`, `cpu-{type}-{route}-run{1|2}.txt`); summary `results.txt`.
 
-At the start of this session (`results-before-warm.txt`): bf16 adad 17,368 / name 18,056 prompt; int8 16,713 / 18,335;
-f16 17,309 / 16,200; q4_0 16,742 / 16,198; adad generation bf16 365, int8 343 (the residual-norm regression).
+**CUDA, Qwen3-0.6B, 512-token prompt and 128 generated tokens, tok/s, warm runs** (weights: the bench's "weights memory"
+line, MiB; peak: "memory peak", MiB)
 
-### CPU, 128-token prompt and 32 generated tokens, tok/s (`results-cpu-warm.txt`, `results-cpu-fill.txt`; noise about 10%)
+| Type | adad prompt | name prompt | adad gen | name gen | adad weights | name weights | adad peak | name peak |
+|---|---|---|---|---|---|---|---|---|
+| bf16 | 47,854 | 43,825 | 430 | 395 | 1,157 | 1,157 | 1,282 | 1,282 |
+| f16 | 47,214 | 35,649 | 426 | 252 | 1,454 | 2,590 | 1,578 | 2,715 |
+| int8 | 48,735 | 46,818 | 614 | 437 | 887 | 887 | 1,012 | 1,012 |
+| q8_0 | 42,953 | 35,131 | 520 | 253 | 921 | 2,590 | 1,046 | 2,715 |
+| q4_0 | 43,727 | 35,915 | 569 | 252 | 637 | 2,590 | 761 | 2,715 |
+| iq4_nl | 43,810 | 35,023 | 536 | 253 | 637 | 2,590 | 760 | 2,715 |
+| q4_k | 42,612 | 35,908 | 486 | 253 | 637 | 2,590 | 767 | 2,715 |
+| q6_k | 40,618 | 35,557 | 499 | 252 | 783 | 2,590 | 914 | 2,715 |
+| iq2_xxs | 40,268 | 35,648 | 470 | 252 | 464 | 2,590 | 594 | 2,715 |
+| iq3_xxs | 39,004 | 35,664 | 463 | 252 | 535 | 2,590 | 665 | 2,715 |
 
-| Type | adad prompt (warm / fill) | name prompt (warm / fill) | adad gen | name gen |
+The fill runs (same files) were within 3.3% of the warm runs on CUDA, two of them (iq2_xxs, iq3_xxs) faster than the
+warm run (`results.txt`). The bf16 rows include named
+kernels (the tied head: below).
+
+**CPU, 128-token prompt and 32 generated tokens, tok/s, both runs** (weights and peak equal between the routes but for
+bf16 and int8's peaks, `results.txt`)
+
+| Type | adad prompt (run 1 / 2) | name prompt (run 1 / 2) | adad gen (run 1 / 2) | name gen (run 1 / 2) |
 |---|---|---|---|---|
-| bf16 | 476 / 393 | 305 / 282 | 45.5 | 33.2 |
-| int8 | 437 / 525 | 357 / 332 | 71.8 | 49.6 |
-| q8_0 | 544 / 525 | 155 / 169 | 62.8–64.9 | 8.97 |
-| q4_0 | 492 / 547 | 160 / 130 | 38.4 | 8.19 |
-| q4_k | 445 / 536 | 159 / 157 | 28.8 | 8.54 |
+| bf16 | 475 / 377 | 269 / 272 | 44.4 / 44.4 | 31.7 / 30.9 |
+| int8 | 465 / 507 | 348 / 319 | 70.1 / 69.3 | 46.7 / 42.5 |
+| q8_0 | 483 / 534 | 139 / 151 | 52.1 / 62.7 | 8.73 / 8.84 |
+| q4_0 | 496 / 467 | 148 / 145 | 37.3 / 37.8 | 8.21 / 8.20 |
+| q4_k | 484 / 560 | 155 / 158 | 29.5 / 29.0 | 8.26 / 8.29 |
 
-(q8_0's warm generation read 39.3 once; two re-runs gave 63.5 and 64.9: noise.)
+### Which lanes each type chose in the re-bench (CUDA: each type's own tuning file and the warm logs' "measured lane:" lines; CPU: each run's log)
 
-### Which lanes the final benches chose (the "measured lane" lines of `dec-*-cuda-*-adad.txt`, `cpu-*-cpu-*-adad.txt`, and the last profiles)
+How to read a CUDA tuning entry (`TuneKey(Op, Variant, A, B, C, D, ...)`, `CudaBackend.Tuning.cs`): a product's entry
+(variant 2000, or 3000 for super-blocks and grids) is `m n k candidates = lane`, n the outputs and k the inputs (so
+`2000 512 1024 2048 5 = 6` is the 2048→1024 product); a group's (9700) is `m k n0 n1 n2 = 0|1`; a fused pass's (4000
+gated gate/up, 5000 residual + norm) is `m n k detail = 0|1`. Qwen3-0.6B's products: q 1024→2048, k and v 1024→1024,
+o 2048→1024, gate and up 1024→3072, down 3072→1024, the head 1024→151936; q/k/v and gate/up share their input (groups).
 
-- CUDA prompts: the tensor rows for every type (bf16, f16, int8 rows as stored; q8_0, q4_0, iq4_nl blocks decoded; the
-  k-quants and grids decoded or widened, as measured), the group launches, the down projection included.
-- CUDA decode: the few-row lanes, grouped (`_many`), with the fused gated and residual-norm passes where measured faster
-  ("few-row lane (block route slower)" on every block type).
-- CPU: the tiles lane, Adad's block route, the row lane, the "today's path" lane.
-- Never chosen in the final benches: the native kind (lane 2), the raw int8 lane (5), the direct lane (4), `TypedMma` (1),
-  the CUDA block route (3), the CPU panel lane. Earlier: the native kind, `TypedMma` and the raw int8 lane were chosen for
-  some shapes before the tensor rows existed; the direct lane lost every shape it was measured on (round 7); the CUDA block
-  route reached 31–32 TFLOPS without bfloat16 products in round 2, while the native kind won under them; the panel lane's
-  earlier choices were not recorded.
+CUDA lane numbers (`StoredMeasured`, the stored value is the lane's number): 0 the few-row lane or the f32 tile,
+1 `TypedMma`, 2 the native kind, 3 the block route, 4 direct, 5 raw int8, 6 the tensor rows. `StoredSuper` (super-blocks,
+grids): 0 few-row or f32, 1 the native kind (rows widened), 2 direct, 3 the tensor rows decoding as the tiles load, 4 the
+tensor rows over rows widened for the call. A group (`TensorRowsGroup`): 1 = one tensor-rows launch for the whole group,
+over the type's tensor-rows source as it loads (`TensorRowsSource(type, scales, m, k)`: the rows as stored, the blocks
+decoded, the super-blocks and grids decoded as the tiles load; never widened), 0 = each product by its own lane. A fused
+pass: 1 = the fused pass, 0 = the composition.
+
+Prompt (m = 512), each product's own choice, then the groups:
+
+| Type | q | k, v | o | gate, up | down | group q/k/v | group gate/up |
+|---|---|---|---|---|---|---|---|
+| bf16 | 2 | 6 | 6 | 6 | 6 | 1 | 1 |
+| f16 | 2 | 6 | 6 | 6 | 6 | 1 | 1 |
+| int8 | 6 | 6 | 6 | 6 | 6 | 1 | 1 |
+| q8_0 | 2 | 6 | 6 | 6 | 6 | 1 | 1 |
+| q4_0 | 2 | 6 | 6 | 6 | 6 | 1 | 1 |
+| iq4_nl | 2 | 6 | 6 | 2 | 6 | 1 | 1 |
+| q4_k | 1 | 1 | 4 | 4 | 4 | 1 | 0 |
+| q6_k | 1 | 1 | 4 | 4 | 4 | 1 | 0 |
+| iq2_xxs | 1 | 4 | 4 | 4 | 4 | 1 | 0 |
+| iq3_xxs | 1 | 4 | 4 | 4 | 4 | 0 | 0 |
+
+So what ran in the prompt pass (a product in a group whose group launch was chosen ran in the group launch, not by its
+own choice):
+
+- bf16, f16, int8, q8_0, q4_0, iq4_nl: the tensor rows everywhere (lane 6 for o and down, the group launch for q/k/v and
+  for gate/up). Their own choice of the native kind (q; iq4_nl's gate/up too) never ran.
+- q4_k, q6_k, iq2_xxs: q/k/v in the group launch (the super-blocks or grids decoded as the tiles load); gate/up, o and
+  down the tensor rows over widened rows (`StoredSuper` 4). Their own choice of the native kind for q (and k, v for the
+  k-quants) never ran.
+- iq3_xxs: q by the native kind (`StoredSuper` 1; log: "cuda: iq3_xxs 512x1024->2048: native bfloat16 kind"), k, v, gate,
+  up, o, down the tensor rows over widened rows.
+
+Decode (m = 1), every type: the few-row lane (lane 0; the logs' "few-row lane" for the o and down products and the head)
+but for the bf16 head (named, below); the fused passes: gated gate/up (4000 `1 3072 1024`) 1 for bf16, f16, int8, q8_0,
+q4_k, q6_k, iq2_xxs and 0 for q4_0, iq4_nl, iq3_xxs; residual + norm after o (5000 `1 1024 2048`) 1 for every type.
+
+The CPU (each run's own measurement):
+
+| Type | Prompt (128 rows), run 1 / run 2 | Decode (1 row), run 1 / run 2 |
+|---|---|---|
+| bf16 | tiles for the k/v, q, gate/up shapes; o and down "today's path" / tiles | row lane / row lane; the head named in both |
+| int8 | tiles, but gate/up, o, down "today's path" / tiles but o, down "today's path" | row lane, but the down product the block route / row lane |
+| q8_0 | tiles, but down "today's path" / tiles, but o and down the block route | the block route / the block route |
+| q4_0 | tiles, but o and down "today's path" / tiles | row lane / row lane |
+| q4_k | tiles, but o and down "today's path" / the same | the block route / the block route |
+
+Summary of the evidence:
+
+- **Ran on CUDA**: the tensor rows (lane 6; `StoredSuper` 4; the group launch over every type's source, including the
+  super-blocks and grids decoded as the tiles load), the native kind once (iq3_xxs's q), the few-row lanes and both fused
+  decode passes (each where its entry is 1).
+- **Chosen by a product's own measurement but never run** (its group launch won): the native kind for q in bf16, f16,
+  q8_0, q4_0, iq4_nl, q4_k, q6_k, iq2_xxs, for k and v in q4_k and q6_k, for gate/up in iq4_nl.
+- **Never chosen on CUDA**: lanes 1 (`TypedMma`), 3 (the block route), 4 (direct), 5 (raw int8); `StoredSuper` 2
+  (direct) and 3 (as a product's own lane; its kernels run in the group launch).
+- **Chosen on the CPU**: the tiles lane, "today's path", the row lane, Adad's block route (q8_0 and q4_k on every decode
+  shape in both runs, q8_0's o and down prompts in run 2, int8's down decode in run 1), the named kernel for bf16's head.
+  **Never chosen**: the panel lane.
+- The earlier rounds' lane lists were made with keys shared across types and are superseded by this one.
+
+### Earlier measurements (superseded: lane choices shared across types, mixed builds)
+
+- Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from
+  `results-gather.txt`, the `cf77ceeb` build): bf16 adad 48,016 / name 46,191 prompt; f16 47,756 / 35,503; int8 49,136 /
+  48,530; q8_0 43,826 / 36,438; q4_0 45,660 / 35,904; iq4_nl 43,986 / 36,386; q4_k 42,871 / 36,295; q6_k 41,753 / 36,383;
+  iq2_xxs 42,184 / 35,877; iq3_xxs 40,064 / 36,247. In the `results-gather.txt` run (adad only, `cf77ceeb`): bf16 46,462,
+  int8 46,770, q4_0 43,158, q4_k 41,971.
+- At the start of this session (`results-before-warm.txt`): bf16 adad 17,368 / name 18,056 prompt; int8 16,713 / 18,335;
+  f16 17,309 / 16,200; q4_0 16,742 / 16,198; adad generation bf16 365, int8 343 (the residual-norm regression).
+- The CPU rounds before the re-bench (`results-cpu-warm.txt`, `results-cpu-fill.txt`, made before the `5a056e27` commit):
+  two independent measurements each, their lanes differing between runs.
+- The lane list those rounds gave ("never chosen: the native kind ...") was wrong for the native kind: with the shared
+  keys, later types read the first type's choices.
 
 ### Where the proof used `name`
 
@@ -419,15 +557,19 @@ f16 17,309 / 16,200; q4_0 16,742 / 16,198; adad generation bf16 365, int8 343 (t
 ## Measurement facts learned
 
 - A fresh tuning folder's first run under-reports; the warm run of a filled folder is the result. Fresh folders differ by
-  about 3–5% on CUDA prompts: the final build gave bf16 46,462 on a fresh folder and 47,390 on the previous round's folder,
-  whose choices had given 48,016 with the previous build (the two builds measure bf16 the same way; they differ only in
-  timing the gathering decoders cold).
+  about 3–5% on CUDA prompts: the final build gave bf16 46,462 on a fresh folder and 47,390 on the previous round's folder
+  (read on the console, in no file), whose choices had given 48,016 with the previous build (the two builds measure bf16
+  the same way; they differ only in timing the gathering decoders cold).
+- The CUDA lane choices were keyed without the type (above): in the shared folders of rounds 11-13, types after the first
+  reused earlier types' choices. The CPU's lane choices are measured anew in every run, and one run's measurement can pick
+  the slower lane (q8_0 above).
 - `Tune` does not measure while profiling or during graph capture (`CanMeasure`); a profile on an unfilled folder shows
   fallback choices.
 - Warm timings fit lanes that read contiguous rows; the super-block and grid decoders, which gather scattered bytes, need
   cold timings (measured both ways: cold everywhere cost bf16, int8, q4_0 about 6%; cold for the gathering decoders only
   fixed q6_k 38,952 → 41,753 and iq3_xxs 38,317 → 40,064).
-- CPU benches move about 10% run to run (the unchanged `name` route moved as much).
+- CPU benches move run to run (the unchanged `name` route moved about 10%; `adad`'s prompts between the fill and warm runs
+  17–20% for int8 and q4_k, where the two runs chose different lanes).
 
 ## Not proved (must not be taken as proved)
 
@@ -458,6 +600,11 @@ has to show. In particular: without `RoutedNamed` and today's tied bfloat16 head
 packed-format weights or the tied head on the Adad lanes alone.
 
 ### Not measured
+
+- **Each type's own lane choices in rounds 11-13 on CUDA**: with the shared keys, a type that ran after another with the
+  same shapes and candidate counts did not measure its own choices (the re-bench in `test-output\rebench\` measures each
+  type in its own folder).
+- **A GGUF file made by ggml**: every benched weight was quantized by Idrak's own simple encoders.
 
 - **Any other GPU or CPU.** Every number is from one machine (an RTX 5070 Ti, 70 SMs, compute 12.0, and its 24-thread CPU
   with AVX-VNNI-INT8). Which lane wins, and by how much, may differ elsewhere; a CPU without AVX-VNNI-INT8 has no block

@@ -1,0 +1,53 @@
+idrak-tuning 5
+device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+driver: CUDA 13030; 32.0.16.1088
+library: 0.4.1+59aa46112a2c65acab4bf1b00c8cfe3b4fba64aa; kernels 29d753baeebe4de8
+PackedSplits 100 512 1024 1024 0 0 0 = 4
+PackedSplits 100 512 1024 2048 0 0 0 = 4
+PackedSplits 100 512 1024 3072 0 0 0 = 4
+PackedSplits 100 512 2048 1024 0 0 0 = 1
+PackedSplits 100 512 3072 1024 0 0 0 = 2
+PackedSplits 600 512 1024 1024 0 0 0 = 2
+PackedSplits 600 512 1024 2048 0 0 0 = 2
+PackedSplits 600 512 1024 3072 0 0 0 = 2
+PackedSplits 600 512 2048 1024 0 0 0 = 1
+PackedSplits 600 512 3072 1024 0 0 0 = 1
+PackedTile 300 512 1024 1024 0 0 0 = 64
+PackedTile 300 512 1024 2048 0 0 0 = 128
+PackedTile 300 512 1024 3072 0 0 0 = 128
+PackedTile 300 512 2048 1024 0 0 0 = 128
+PackedTile 300 512 3072 1024 0 0 0 = 128
+PackedTile 1300 512 1024 2048 1024 1024 0 = 128
+PackedTile 1300 512 1024 3072 3072 0 0 = 128
+PackedMultiSplits 100 512 1024 2048 1024 1024 0 = 1
+PackedMultiSplits 100 512 1024 3072 3072 0 0 = 1
+PackedMultiSplits 600 512 1024 2048 1024 1024 0 = 1
+TensorSplits 0 512 1024 3072 1024 0 0 = 4
+TensorSplits 0 512 2048 1024 2048 0 0 = 1
+DecodeSplits 2 16 640 128 0 0 0 = 8
+DecodeMinChunk 2 16 640 128 8 0 0 = 1
+ProductRoute 2000 1 1024 2048 2 0 0 = 0
+ProductRoute 2000 1 1024 3072 2 0 0 = 0
+ProductRoute 2000 1 151936 1024 2 0 0 = 0
+ProductRoute 2000 512 1024 1024 6 0 0 = 6
+ProductRoute 2000 512 1024 2048 6 0 0 = 6
+ProductRoute 2000 512 1024 3072 6 0 0 = 6
+ProductRoute 2000 512 2048 1024 6 0 0 = 2
+ProductRoute 2000 512 3072 1024 6 0 0 = 6
+ProductRoute 4000 1 3072 1024 0 0 0 = 0
+ProductRoute 5000 1 1024 2048 0 0 0 = 1
+ProductRoute 9000 2048 2048 2048 9 0 0 = 4
+ProductRoute 9100 512 1024 1024 9 0 0 = 130
+ProductRoute 9100 512 1024 2048 9 0 0 = 130
+ProductRoute 9100 512 1024 3072 9 0 0 = 130
+ProductRoute 9100 512 2048 1024 9 0 0 = 129
+ProductRoute 9100 512 3072 1024 9 0 0 = 65
+ProductRoute 9300 512 1024 1024 4 0 0 = 4
+ProductRoute 9300 512 1024 2048 4 0 0 = 4
+ProductRoute 9300 512 1024 3072 4 0 0 = 4
+ProductRoute 9300 512 2048 1024 4 0 0 = 2
+ProductRoute 9300 512 3072 1024 4 0 0 = 1
+ProductRoute 9700 512 1024 2048 1024 1024 0 = 1
+ProductRoute 9700 512 1024 3072 3072 0 0 = 1
+RowThreads 0 128 32 0 0 0 0 = 64
+RowThreads 0 128 16384 0 0 0 0 = 64
