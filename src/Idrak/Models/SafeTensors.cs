@@ -486,6 +486,28 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore, IStor
         return values;
     }
 
+    /// <inheritdoc cref="IBFloat16TensorStore.ReadBFloat16Rows"/>
+    /// <exception cref="ArgumentException">The rows are not the tensor's, or the destination cannot hold them.</exception>
+    public bool ReadBFloat16Rows(string name, int first, int count, Span<ushort> destination)
+    {
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}'.");
+        if (info.Type != SafeTensorType.BF16 || !BitConverter.IsLittleEndian || info.Shape.Length != 2)
+        {
+            return false;
+        }
+
+        int rows = info.Shape[0], columns = info.Shape[1];
+        if (first < 0 || count < 0 || first + count > rows || destination.Length < (long)count * columns)
+        {
+            throw new ArgumentException($"Rows [{first}, {first + count}) of '{name}' [{rows}, {columns}] into {destination.Length} values.", nameof(destination));
+        }
+
+        var bits = destination[..checked(count * columns)];
+        ReadTimed(_files[info.File].SafeFileHandle, MemoryMarshal.AsBytes(bits), info.Offset + (long)first * columns * 2);
+        BFloat16Weight.CopyStoredBits(bits, bits);                                  // NaNs made quiet, as rounding makes them
+        return true;
+    }
+
     /// <inheritdoc cref="IBFloat16TensorStore.ReadBFloat16"/>
     /// <exception cref="ArgumentException">The tensor is not a matrix, or the destination or stride cannot hold the result.</exception>
     public unsafe bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride)
@@ -521,6 +543,25 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore, IStor
         // Chunks of stored rows are read through one pooled buffer and copied (or scattered, transposed) into the result
         // as 16-bit values: the stored order is never held whole, and nothing is widened to float32 and rounded back.
         var handle = _files[info.File].SafeFileHandle;
+        if (!transposed && stride == columns)
+        {
+            // As stored, row after row: read straight into the result, then its NaNs made quiet in place (as the copy below
+            // makes them, so the bits are the float32 path's).
+            int total = checked(rows * columns);
+            ReadTimed(handle, MemoryMarshal.AsBytes(destination[..total]), info.Offset);
+            fixed (ushort* read = destination)
+            {
+                nint at = (nint)read;
+                Idrak.Abstraction.Devices.HostParallel.For(total, 1 << 16, (i0, i1) =>
+                {
+                    var bits = new Span<ushort>((ushort*)at + i0, i1 - i0);
+                    BFloat16Weight.CopyStoredBits(bits, bits);
+                });
+            }
+
+            return true;
+        }
+
         int chunkRows = Math.Max(1, (1 << 22) / columns);                              // 8 MB of 16-bit values
         byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((int)Math.Min(info.Length, (long)chunkRows * columns * 2));
         try

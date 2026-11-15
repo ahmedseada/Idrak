@@ -29,6 +29,11 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
     internal static int ParallelThreshold => CpuTuning.ParallelElements;
 
     private readonly Dictionary<int, Stack<float[]>> _pool = [];
+
+    // When each size of the pool was last taken or given back (a count of pool events): the least recently used sizes go
+    // first when a miss frees cached blocks (ReleaseCachedFor).
+    private readonly Dictionary<int, long> _poolUsed = [];
+    private long _poolClock;
     private readonly MemoryAccountant _memory;
     private readonly string? _name;
 
@@ -61,6 +66,7 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
             }
 
             _pool.Clear();
+            _poolUsed.Clear();
         }
     }
 
@@ -76,7 +82,7 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         StridedInputs = new HashSet<Operations.Operation>                    // views (plan 37, V1 and V1b)
         {
             Operations.Ops.StridedCopy, Operations.Ops.BatchedMatMul, Operations.Ops.BatchedMatMulStrided, Operations.Ops.AttentionTiledStrided,
-            Operations.Ops.AttentionTiledStridedBackward,
+            Operations.Ops.AttentionTiledStridedBackward, Operations.Ops.KeyValueWriteStrided,
         },
         IndexType = ElementType.Int32,                                       // indices, token ids and offsets (plan 37, T1)
         StoresAnyFormat = true,                                              // weights kept as stored, every type (plan 37, Q0)
@@ -137,18 +143,26 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
             if (_pool.TryGetValue(length, out var bucket) && bucket.Count > 0)
             {
                 data = bucket.Pop();
+                _poolUsed[length] = ++_poolClock;
                 _memory.Reused(bytes);
             }
         }
 
         if (data is null)
         {
-            // A miss while the pool holds at least as much in other sizes: those blocks go first (rule 77). Shapes that
-            // repeat (a training step) keep hitting their sizes; shapes that change (lines of other widths, page after
-            // page) would otherwise leave every earlier size cached and grow the process until the machine runs out.
-            if (releaseCache || _memory.Usage.Cached >= bytes)
+            // A miss while the pool holds at least as much in other sizes: as much of those goes first, the least recently
+            // used sizes first (rule 77), so the process does not grow. Shapes that repeat (a training step, a prompt pass's
+            // layers) keep hitting their sizes; shapes that change (lines of other widths, page after page) would otherwise
+            // leave every earlier size cached and grow the process until the machine runs out. Emptying the whole pool on
+            // every such miss (as before) also dropped the sizes still in use: a prompt pass interleaves a dozen sizes a
+            // layer, so each layer allocated its activations anew (a CPU bfloat16 pass, about 1 GB of fresh arrays).
+            if (releaseCache)
             {
                 ReleaseCachedMemory();
+            }
+            else if (_memory.Usage.Cached >= bytes)
+            {
+                ReleaseCachedFor(bytes);
             }
 
             data = zeroed ? new float[length] : GC.AllocateUninitializedArray<float>(length);
@@ -188,7 +202,44 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
             }
 
             bucket.Push(data);
+            _poolUsed[data.Length] = ++_poolClock;
             _memory.Returned((long)data.Length * sizeof(float));
+        }
+    }
+
+    // Frees cached blocks, the sizes least recently taken or given back first, until at least `bytes` are freed (or the
+    // pool is empty). A few sizes at most: each round finds the oldest by a scan, nothing allocated.
+    private void ReleaseCachedFor(long bytes)
+    {
+        lock (_pool)
+        {
+            long freed = 0;
+            while (freed < bytes)
+            {
+                int oldest = -1;
+                long stamp = long.MaxValue;
+                foreach (var (length, bucket) in _pool)
+                {
+                    if (bucket.Count > 0 && _poolUsed.GetValueOrDefault(length) < stamp)
+                    {
+                        (oldest, stamp) = (length, _poolUsed.GetValueOrDefault(length));
+                    }
+                }
+
+                if (oldest < 0)
+                {
+                    return;
+                }
+
+                var blocks = _pool[oldest];
+                long each = (long)oldest * sizeof(float);
+                while (blocks.Count > 0 && freed < bytes)
+                {
+                    blocks.Pop();
+                    _memory.Freed(each);
+                    freed += each;
+                }
+            }
         }
     }
 

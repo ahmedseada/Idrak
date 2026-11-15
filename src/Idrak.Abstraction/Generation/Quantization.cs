@@ -32,6 +32,33 @@ public readonly ref struct PackRequest(ReadOnlySpan<float> values, int rows, int
 }
 
 /// <summary>
+/// Reads output rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of float weights
+/// [inputs, outputs] into <paramref name="destination"/>, each of inputs values: the matrix's columns, in the order a file
+/// storing it [outputs, inputs] holds them. False, having written nothing, when they cannot be read so.
+/// </summary>
+/// <param name="first">The first output row.</param>
+/// <param name="count">The rows.</param>
+/// <param name="destination">At least <paramref name="count"/> rows of values.</param>
+public delegate bool WeightRows(int first, int count, Span<float> destination);
+
+/// <summary>
+/// A packed format that packs float weights from their output rows read a block at a time (<see cref="WeightRows"/>), as
+/// a format keeping a row an output does (the element types' stored formats, the product routes' int8 and bfloat16): a
+/// checkpoint's matrix is then packed with no float32 copy of it and no transposition
+/// (<see cref="PackedWeightFormats.PackRows(IPackedFormat, WeightRows, int, int, Device)"/>), the same weights the format
+/// makes from the values.
+/// </summary>
+public interface IRowPackedFormat
+{
+    /// <summary>The weights [<paramref name="inputs"/>, <paramref name="outputs"/>] packed from <paramref name="rows"/>, or null when they cannot be read so (nothing made).</summary>
+    /// <param name="rows">Reads output rows.</param>
+    /// <param name="inputs">Input features (values a row).</param>
+    /// <param name="outputs">Output features (rows).</param>
+    /// <param name="device">Where the packed weights are created.</param>
+    IPackedWeight? CreateFromRows(WeightRows rows, int inputs, int outputs, Device device);
+}
+
+/// <summary>
 /// A packed weight format, registered by its <see cref="IKind.Name"/> in <see cref="PackedWeightFormats"/> ("int8", "int4",
 /// "bfloat16", or one of your own): how float weights are packed (<see cref="IKind{TRequest, T}.Create"/>), so options and
 /// tools choose the format by name (<c>DecoderBuildOptions.PackedFormatName</c>).
@@ -279,6 +306,13 @@ public static class PackedWeightFormats
             throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
         }
 
+        // The generic and measured routes (ProductRoutes) keep int8 and bfloat16 weights as Adad keeps every weight: stored
+        // in the file's layout, a row of codes an output, their products by the device's lanes for the type's description.
+        if (ProductRoutes.Current != ProductRoute.Name && (ReferenceEquals(format, BuiltIn[PackedFormat.Int8]) || ReferenceEquals(format, BuiltIn[PackedFormat.BFloat16])))
+        {
+            return StoredPackedFormat.Routed(format.Name, values, rows, columns, device);
+        }
+
         var weight = format.Create(new PackRequest(values, rows, columns, device));
         if (weight.Rows != rows || weight.Columns != columns)
         {
@@ -288,6 +322,34 @@ public static class PackedWeightFormats
 
         return weight;
     }
+
+    /// <summary>
+    /// Packs weights [<paramref name="inputs"/>, <paramref name="outputs"/>] read as their output rows
+    /// (<see cref="WeightRows"/>, a block at a time) in <paramref name="format"/>, where the format packs from rows
+    /// (<see cref="IRowPackedFormat"/>; the product routes' int8 and bfloat16): the weights
+    /// <see cref="Pack(IPackedFormat, ReadOnlySpan{float}, int, int, Device)"/> makes from their values, with no float32
+    /// copy of the matrix. Null when the format packs only from values or the rows cannot be read so (nothing made): the
+    /// caller packs the values.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The format made weights of another shape.</exception>
+    public static IPackedWeight? PackRows(IPackedFormat format, WeightRows rows, int inputs, int outputs, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        ArgumentNullException.ThrowIfNull(rows);
+        var weight = ProductRoutes.Current != ProductRoute.Name && (ReferenceEquals(format, BuiltIn[PackedFormat.Int8]) || ReferenceEquals(format, BuiltIn[PackedFormat.BFloat16]))
+            ? StoredPackedFormat.RoutedRows(format.Name, rows, inputs, outputs, device)
+            : format is IRowPackedFormat byRows ? byRows.CreateFromRows(rows, inputs, outputs, device) : null;
+        if (weight is not null && (weight.Rows != inputs || weight.Columns != outputs))
+        {
+            weight.Dispose();
+            throw new InvalidOperationException($"The '{format.Name}' format made [{weight.Rows}, {weight.Columns}] weights for [{inputs}, {outputs}] rows.");
+        }
+
+        return weight;
+    }
+
+    /// <summary><see cref="PackRows(IPackedFormat, WeightRows, int, int, Device)"/> in the format registered as <paramref name="format"/>.</summary>
+    public static IPackedWeight? PackRows(string format, WeightRows rows, int inputs, int outputs, Device device) => PackRows(Get(format), rows, inputs, outputs, device);
 
     /// <summary>
     /// Registers <paramref name="format"/> under its <see cref="IKind.Name"/> (names ignore case), so options and tools can
@@ -307,7 +369,7 @@ public static class PackedWeightFormats
     /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
     public static IPackedFormat Get(ReadOnlySpan<char> format) =>
         Registry.TryGet(format, out var found) ? found
-            : throw new NotRegisteredException(nameof(PackedWeightFormats), format.ToString(), Registry.Names,
+            : StoredPackedFormat.Of(format) ?? throw new NotRegisteredException(nameof(PackedWeightFormats), format.ToString(), Registry.Names,
                 $"No packed format '{format}' is registered ({string.Join(", ", Registry.Names)}); add it with PackedWeightFormats.Register.");
 
     /// <summary>The library's format <paramref name="format"/>, whatever an app registered over it; null when the library has none.</summary>
@@ -1280,6 +1342,34 @@ public sealed class BFloat16Weight : PackedWeight, IKernelPackedWeight
     public static unsafe BFloat16Weight? FromRows(int rows, int columns, Device device, Func<int, int, Span<float>, bool> read, bool transposed = false)
     {
         ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(device);
+        if (device.IsGpu)
+        {
+            // A block of rows read, rounded and sent up at a time (FromStoredRows): no host copy of the whole weights.
+            float[] values = System.Buffers.ArrayPool<float>.Shared.Rent(Math.Max(1, Math.Min(rows, (1 << 22) / Math.Max(1, columns)) * columns));
+            try
+            {
+                return FromStoredRows(rows, columns, device, (first, count, bits) =>
+                {
+                    var block = values.AsSpan(0, count * columns);
+                    if (!read(first, count, block))
+                    {
+                        return false;
+                    }
+
+                    for (int i = 0; i < block.Length; i++)
+                    {
+                        bits[i] = Round(block[i]);
+                    }
+
+                    return true;
+                }, transposed);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<float>.Shared.Return(values);
+            }
+        }
         int block = Math.Max(1, Math.Min(rows, (1 << 22) / Math.Max(1, columns)));   // about 16 MB of float32 a block
         float[] buffer = System.Buffers.ArrayPool<float>.Shared.Rent(block * columns);      // returned in finally
         try
@@ -1334,6 +1424,134 @@ public sealed class BFloat16Weight : PackedWeight, IKernelPackedWeight
         finally
         {
             System.Buffers.ArrayPool<float>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>
+    /// bfloat16 weights from a matrix [<paramref name="sourceRows"/>, <paramref name="sourceColumns"/>] of bfloat16 bits
+    /// that <paramref name="read"/> gives a block of rows at a time (a checkpoint's tensor as stored, each value as
+    /// <see cref="CopyStoredBits"/> gives it): the weights [sourceRows, sourceColumns], or their transpose when
+    /// <paramref name="transposed"/> (a tied head from its table), the bits <see cref="FromBits"/> makes from the whole
+    /// matrix. In host memory the blocks are written in place; on another device each block goes up from one pooled host
+    /// buffer of a block (about 8 MB) to its place, a transposed one transposed on the device
+    /// (<see cref="Backend.UploadTransposed16"/>), so the whole weights are never held in host memory; a device that does
+    /// not transpose takes them through <see cref="FromBits"/>'s host copy. Null when <paramref name="read"/> cannot read
+    /// the first block.
+    /// </summary>
+    /// <param name="sourceRows">The rows of the matrix read.</param>
+    /// <param name="sourceColumns">Its columns.</param>
+    /// <param name="device">Where the weights are created.</param>
+    /// <param name="read">Reads rows [first, first + count) of bits row-major into the span it gets; false when it cannot, which only the first block may answer.</param>
+    /// <param name="transposed">Make the weights of the transpose, [sourceColumns, sourceRows].</param>
+    /// <exception cref="InvalidDataException">A block after the first could not be read.</exception>
+    public static unsafe BFloat16Weight? FromStoredRows(int sourceRows, int sourceColumns, Device device, Func<int, int, Span<ushort>, bool> read, bool transposed = false)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(read);
+        int rows = transposed ? sourceColumns : sourceRows, columns = transposed ? sourceRows : sourceColumns;
+        int stride = (columns + 1) / 2 * 2, block = Math.Max(1, Math.Min(Math.Max(1, sourceRows), (1 << 22) / Math.Max(1, sourceColumns)));
+        // A block of the source's rows (padded to the stride where they are sent as they are), not of the result's.
+        ushort[] buffer = System.Buffers.ArrayPool<ushort>.Shared.Rent(Math.Max(2, block * (transposed ? sourceColumns : Math.Max(sourceColumns, stride)) + 1));
+        try
+        {
+            // In host memory (or a device that does not transpose): the blocks placed straight into the weights' bits.
+            bool streams = device.IsGpu && (!transposed || device.Backend.UploadsTransposed16);
+            if (!streams)
+            {
+                return FromBits(rows, columns, device, (bits, at) =>
+                {
+                    fixed (ushort* target = bits)
+                    {
+                        ushort* pinned = target;
+                        for (int r0 = 0; r0 < sourceRows; r0 += block)
+                        {
+                            int n = Math.Min(block, sourceRows - r0), start = r0;
+                            if (!read(r0, n, buffer.AsSpan(0, n * sourceColumns)))
+                            {
+                                return r0 == 0 ? false : throw new InvalidDataException($"Rows [{r0}, {r0 + n}) of [{sourceRows}, {sourceColumns}] could not be read after the rows before them.");
+                            }
+
+                            ushort[] values = buffer;
+                            if (transposed)
+                            {
+                                HostParallel.For(sourceColumns, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / n), (c0, c1) =>
+                                {
+                                    for (int c = c0; c < c1; c++)
+                                    {
+                                        ushort* row = pinned + (long)c * at + start;
+                                        for (int r = 0; r < n; r++)
+                                        {
+                                            row[r] = values[r * sourceColumns + c];
+                                        }
+                                    }
+                                });
+                            }
+                            else
+                            {
+                                for (int r = 0; r < n; r++)
+                                {
+                                    values.AsSpan(r * sourceColumns, sourceColumns).CopyTo(new Span<ushort>(pinned + (long)(start + r) * at, sourceColumns));
+                                }
+                            }
+                        }
+                    }
+
+                    return true;
+                });
+            }
+
+            var packed = Tensor.Empty([rows * stride / 2], device, zeroed: stride != columns, track: false);
+            try
+            {
+                for (int r0 = 0; r0 < sourceRows; r0 += block)
+                {
+                    int n = Math.Min(block, sourceRows - r0);
+                    if (!read(r0, n, buffer.AsSpan(0, n * sourceColumns)))
+                    {
+                        if (r0 == 0)
+                        {
+                            packed.Dispose();
+                            return null;
+                        }
+
+                        throw new InvalidDataException($"Rows [{r0}, {r0 + n}) of [{sourceRows}, {sourceColumns}] could not be read after the rows before them.");
+                    }
+
+                    if (transposed)
+                    {
+                        if (!device.Backend.UploadTransposed16(buffer.AsSpan(0, n * sourceColumns), n, sourceColumns, packed.Storage, stride, r0))
+                        {
+                            throw new InvalidOperationException($"{device} stopped transposing 16-bit values on upload.");
+                        }
+
+                        continue;
+                    }
+
+                    // Rows as they are: each row padded to the stride (its padding zero), then sent to its place.
+                    var rowsOut = buffer.AsSpan(0, n * stride);
+                    if (stride != columns)
+                    {
+                        for (int r = n - 1; r >= 0; r--)
+                        {
+                            buffer.AsSpan(r * columns, columns).CopyTo(rowsOut.Slice(r * stride, columns));
+                            rowsOut[r * stride + columns] = 0;
+                        }
+                    }
+
+                    device.Backend.UploadRange(MemoryMarshal.Cast<ushort, float>(rowsOut), packed.Storage, r0 * stride / 2);
+                }
+
+                return new BFloat16Weight(packed, rows, columns);
+            }
+            catch
+            {
+                packed.Dispose();
+                throw;
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<ushort>.Shared.Return(buffer);
         }
     }
 

@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing.Devices;
 internal static class OperationCalls
 {
     // The operations this file knows; Ops.All.Count when it is current.
-    public const int Count = 164;
+    public const int Count = 168;
 
     // The parameter names of each operation (after the backend), by operation index.
     public static readonly string[][] Parameters =
@@ -184,6 +184,10 @@ internal static class OperationCalls
         ["source", "destination"],
         ["x", "weight", "scales", "zeros", "y", "m", "n", "k", "layout"],
         ["weight", "scales", "zeros", "w", "n", "k", "layout"],
+        ["source", "sourceLayout", "cache", "position", "heads", "steps", "capacity", "dim"],
+        ["x", "m", "k", "products"],
+        ["activation", "x", "m", "k", "products", "hidden"],
+        ["x", "weight", "scales", "y", "m", "n", "k", "residual", "sum", "gain", "normalized", "eps", "offset"],
     ];
 
     // Registers, for devices of `kind`, a kernel per operation that reports each call to `recorder` with its arguments
@@ -2356,6 +2360,61 @@ internal static class OperationCalls
                 recorder.Exit(call);
             }
         })),
+        Kernels.Register(Ops.KeyValueWriteStrided, kind, (OperationKernels.KeyValueWriteStrided)((Backend backend, Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim) =>
+        {
+            var call = recorder.Enter(backend, Ops.KeyValueWriteStrided, [source, sourceLayout, cache, position, heads, steps, capacity, dim]);
+            try
+            {
+                backend.KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.StoredMatMulMany, kind, (OperationKernels.StoredMatMulMany)((Backend backend, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) =>
+        {
+            var call = recorder.Enter(backend, Ops.StoredMatMulMany, [x, m, k, Array.ConvertAll(products.ToArray(), t => new object?[] { t.Item1, t.Item2, t.Item3, t.Item4 })]);
+            try
+            {
+                var result = backend.StoredMatMulManyKernel(x, m, k, products);
+                CallRecorder.Returned(call, result);
+                return result;
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.StoredMatMulGatedPair, kind, (OperationKernels.StoredMatMulGatedPair)((Backend backend, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden) =>
+        {
+            var call = recorder.Enter(backend, Ops.StoredMatMulGatedPair, [activation, x, m, k, Array.ConvertAll(products.ToArray(), t => new object?[] { t.Item1, t.Item2, t.Item3, t.Item4 }), hidden]);
+            try
+            {
+                var result = backend.StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden);
+                CallRecorder.Returned(call, result);
+                return result;
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.StoredMatMulAddRmsNorm, kind, (OperationKernels.StoredMatMulAddRmsNorm)((Backend backend, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset) =>
+        {
+            var call = recorder.Enter(backend, Ops.StoredMatMulAddRmsNorm, [x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset]);
+            try
+            {
+                var result = backend.StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+                CallRecorder.Returned(call, result);
+                return result;
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
     ];
 
     // Runs `operation` on `backend` through the dispatcher (Backend.Name(...)) with arguments as Intercept records them;
@@ -2825,6 +2884,15 @@ internal static class OperationCalls
                 case 163:
                     backend.ExpandStored((Storage)a[0]!, (Storage?)a[1], (Storage?)a[2], (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (StoredScales)a[6]!);
                     return null;
+                case 164:
+                    backend.KeyValueWriteStrided((Storage)a[0]!, (TensorLayout)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!);
+                    return null;
+                case 165:
+                    return backend.StoredMatMulMany((Storage)a[0]!, (int)a[1]!, (int)a[2]!, Array.ConvertAll((object?[][])a[3]!, t => ((Storage)t[0]!, (Storage?)t[1], (Storage)t[2]!, (int)t[3]!)));
+                case 166:
+                    return backend.StoredMatMulGatedPair((int)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!, Array.ConvertAll((object?[][])a[4]!, t => ((Storage)t[0]!, (Storage?)t[1], (Storage)t[2]!, (int)t[3]!)), (Storage)a[5]!);
+                case 167:
+                    return backend.StoredMatMulAddRmsNorm((Storage)a[0]!, (Storage)a[1]!, (Storage?)a[2], (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (float)a[11]!, (float)a[12]!);
                 default:
                     throw new NotSupportedException($"{operation} is not known to this version of the testing kit.");
             }

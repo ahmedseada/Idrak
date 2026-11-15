@@ -9,7 +9,9 @@ namespace Idrak.Cli.Commands.Developer;
 
 /// <summary>
 /// <c>idrak trace [options] [--] COMMAND ...</c>: runs another idrak command in this process with Idrak's telemetry
-/// (Idrak.Diagnostics) subscribed: printed live, or written to a JSON Lines file with <c>--out</c>.
+/// (Idrak.Diagnostics) subscribed: printed live, or written to a JSON Lines file with <c>--out</c>. With <c>--stacks</c>
+/// it samples the command's stacks instead (Stacks.TraceStacks: a child process with the .NET runtime's tracing on), and
+/// <c>--read</c> reports a stacks trace made before.
 /// </summary>
 internal sealed class TraceCommand : Command
 {
@@ -37,10 +39,12 @@ internal sealed class TraceCommand : Command
 
     public override string Name => "trace";
 
-    public override string Summary => "Runs an idrak command with telemetry printed live or written to JSON Lines";
+    public override string Summary => "Runs an idrak command with telemetry printed live or written to JSON Lines, or samples its stacks (--stacks)";
 
     public override string Usage =>
-        "[-o FILE.jsonl] [--levels LIST] [--sync] [--] COMMAND [arguments] [options]\n\n" +
+        "[-o FILE.jsonl] [--levels LIST] [--sync] [--] COMMAND [arguments] [options]\n" +
+        "       --stacks [-o FILE.nettrace] [report options] [--] COMMAND [arguments] [options]\n" +
+        "       --read FILE.nettrace [report options]\n\n" +
         "Runs COMMAND (any idrak command) with Idrak's telemetry subscribed: training epochs and batches, every layer's\n" +
         "forward pass, inference calls, tool calls, engine events and an app's overrides falling back, printed as they\n" +
         "happen (to the error output with --json), or written to FILE.jsonl with --out. Put '--' before COMMAND when it has\n" +
@@ -56,19 +60,48 @@ internal sealed class TraceCommand : Command
         "                      mcp (MCP sessions, requests, tool calls, refusals, cancellations sent), all\n" +
         "                      (default: all but operations and gradients)\n" +
         "      --sync          synchronize the device before each timing (true GPU times, slower)\n\n" +
+        "Stacks (--stacks): where every thread's time went, from the .NET runtime's own sampling of COMMAND (run as a child\n" +
+        "process): the time running .NET code, outside it (native calls such as a GPU driver's, and the runtime itself), spinning,\n" +
+        "stopped by the runtime (garbage collections) and waiting (locks, events, idle thread pools); the methods by their own\n" +
+        "time and by their total time (with what they call); the allocations by type and the code that made them. The trace\n" +
+        "(.nettrace) and its stacks for a viewer (.speedscope.json, https://www.speedscope.app) are written under\n" +
+        "test-output/trace (or -o FILE.nettrace); --read reports it again with other options, without running again.\n" +
+        "      --stacks        sample the stacks of COMMAND (instead of the telemetry)\n" +
+        "      --read FILE     report a trace made before (no COMMAND)\n" +
+        "      --focus TEXT    a method (any part of its name, any case): its callers, its callees and the time inside it\n" +
+        "      --from S, --to S  only the moments between S and S seconds after the run's start (the timeline shows the phases)\n" +
+        "      --timeline      the run in slices: threads busy and stopped, the method running most  (--slices N, default 20)\n" +
+        "      --by-thread     each thread: busy time, its kinds of time, the method it ran most\n" +
+        "      --compare FILE  against an earlier trace: each kind of time and the methods whose own time changed most\n" +
+        "      --waits         count waiting and stopped time in the method tables too (by default busy time only)\n" +
+        "      --all-frames    list the .NET libraries' methods in the total-time table too\n" +
+        "      --top N         rows a table shows (default 15)\n\n" +
         "Examples:\n" +
         "  idrak trace -- onnx check model.onnx -d vulkan:0\n" +
         "  idrak trace -o train.jsonl --levels training,batches -- train network.json --data houses.csv\n" +
-        "  idrak trace --levels operations --sync -- bench --kernels matmul";
+        "  idrak trace --levels operations --sync -- bench --kernels matmul\n" +
+        "  idrak trace --stacks -- bench Qwen/Qwen3-0.6B -w q4_0 -d cpu --prompt-tokens 128 --tokens 32\n" +
+        "  idrak trace --read test-output/trace/bench-20261115-120000.nettrace --timeline --focus Linear --from 4\n" +
+        "  idrak trace --stacks -o test-output/trace/after.nettrace --compare test-output/trace/before.nettrace -- bench Qwen/Qwen3-0.6B -d cpu";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--levels"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--levels", .. Stacks.TraceStacks.ValueOptions];
 
-    public override IReadOnlyCollection<string> Flags => ["--sync"];
+    public override IReadOnlyCollection<string> Flags => ["--sync", .. Stacks.TraceStacks.Flags];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
+        if (Stacks.TraceStacks.Asked(context))
+        {
+            return Stacks.TraceStacks.Run(context, Forwarded);
+        }
+
+        if (Stacks.TraceStacks.Stray(context) is { } stray)
+        {
+            throw new UsageException($"{stray} is a stacks report's option: give --stacks (or --read FILE) with it.");
+        }
+
         if (context.Positional.Count == 0)
         {
             throw new UsageException("Missing the COMMAND to trace (e.g. idrak trace -- onnx check model.onnx).");
@@ -86,18 +119,7 @@ internal sealed class TraceCommand : Command
 
         var levels = ParseLevels(context.Option("--levels"));
         string? path = context.Option("--out") is { } given ? Path.GetFullPath(given) : null;
-
-        // The common options given to trace go to the traced command.
-        var args = new List<string>(context.Positional);
-        foreach (string option in CommandContext.CommonValueOptions)
-        {
-            args.AddRange(context.Options(option).SelectMany(v => new[] { option, v }));
-        }
-
-        foreach (string flag in new[] { "--json", "--quiet", "--verbose" }.Where(context.Flag))
-        {
-            args.Add(flag);
-        }
+        var args = Forwarded(context);
 
         var counter = new Counter(levels);
         var configuration = Telemetry.Configure().Hook(counter).SynchronizeForTiming(context.Flag("--sync"));
@@ -151,6 +173,23 @@ internal sealed class TraceCommand : Command
         }
 
         return exit;
+    }
+
+    // The traced command's arguments: its own, then the common options given to trace.
+    private static List<string> Forwarded(CommandContext context)
+    {
+        var args = new List<string>(context.Positional);
+        foreach (string option in CommandContext.CommonValueOptions)
+        {
+            args.AddRange(context.Options(option).SelectMany(v => new[] { option, v }));
+        }
+
+        foreach (string flag in new[] { "--json", "--quiet", "--verbose" }.Where(context.Flag))
+        {
+            args.Add(flag);
+        }
+
+        return args;
     }
 
     internal static TelemetryLevel ParseLevels(string? text)

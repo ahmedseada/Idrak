@@ -480,6 +480,7 @@ internal static partial class Messages
         // idrak bench: the kernel benchmarks' warm-up, cold and warm values.
         ["kernels on {0} ({1}): {2}; the median of {3} timed calls each"] = "النوى على {0} ({1}): {2}؛ القيمة وسيط {3} استدعاءات مقيسة لكل قياس",
         [", small shapes"] = "، بأشكال صغيرة",
+        ["; products of typed weights by the {0} route ({1})"] = "؛ ضرب الأوزان المخزنة بأنواعها بمسار {0} ({1})",
         ["  warm-up: until {0} rounds of at least {1} agree within {2:0.##}% and nothing is compiled, at most {3} or {4} calls; Cold: the first call"] =
             "  الإحماء: حتى تتفق {0} جولات مدة كل منها {1} على الأقل في حدود {2:0.##}% ولا يترجم شيء، بحد أقصى {3} أو {4} استدعاء؛ Cold: الاستدعاء الأول",
         ["    {0} {1} warm, {2} cold{3}; settled after {4} warm-up calls"] = "    دافئ {0} {1}، بارد {2}{3}؛ استقر بعد {4} استدعاء إحماء",

@@ -48,6 +48,19 @@ internal enum TuneOp : byte
     /// choice (<c>depth &lt;&lt; 8 | splits</c>). Kept in HIP's own cache files (tuning/hip/), which share this format.
     /// </summary>
     HipPackedProduct,
+
+    /// <summary>
+    /// The route of a product of int8 or bfloat16 weights under <see cref="ProductRoute.Measured"/> (CudaBackend.Typed.cs):
+    /// 0 the format's own kernels, 1 the generic product (variant: the format; then rows (by class above 8), n and k).
+    /// </summary>
+    ProductRoute,
+
+    /// <summary>
+    /// Threads a block of a one-block-a-row kernel whose rows are short (variant: the kernel, 0 norm_rope_heads_f32; then the
+    /// row length and the rows' class): the kernels spread a row over any block size, and a head of 64 or 128 values leaves
+    /// most of a 256-thread block idle.
+    /// </summary>
+    RowThreads,
 }
 
 /// <summary>

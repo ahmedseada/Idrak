@@ -227,7 +227,7 @@ public sealed partial class GgufFile : IDisposable
     }
 
     // A built-in type's blocks (see BuiltInTypes).
-    internal static unsafe void DequantizeBuiltIn(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
+    internal static void DequantizeBuiltIn(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
     {
         int blocks = values.Length / blockValues;
         if (type == 0)
@@ -236,8 +236,25 @@ public sealed partial class GgufFile : IDisposable
             return;
         }
 
-        // Blocks are independent: split them across threads. The workers cannot capture spans, so they read and write the
-        // pinned memory through pointers (no copies of the input or the output).
+        if (type is not (1 or 30) && blocks <= 1024)
+        {
+            // One chunk (a stored product's tile, a row): on this thread, with no parallel loop or closure to make.
+            for (int b = 0; b < blocks; b++)
+            {
+                DequantizeBlock(type, raw.Slice(b * blockBytes, blockBytes), values.Slice(b * blockValues, blockValues));
+            }
+
+            return;
+        }
+
+        DequantizeBuiltInParallel(type, blockValues, blockBytes, raw, values);
+    }
+
+    // DequantizeBuiltIn's threads: blocks are independent, split across them. The workers cannot capture spans, so they read
+    // and write the pinned memory through pointers (no copies of the input or the output).
+    private static unsafe void DequantizeBuiltInParallel(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
+    {
+        int blocks = values.Length / blockValues;
         fixed (byte* input = raw)
         fixed (float* output = values)
         {
@@ -336,9 +353,28 @@ public sealed partial class GgufFile : IDisposable
             case 8:                                                 // Q8_0: d, 32 signed bytes
             {
                 float d = Half(x);
-                for (int j = 0; j < 32; j++)
+                var codes = MemoryMarshal.Cast<byte, sbyte>(x.Slice(2, 32));
+                int j = 0;
+                if (System.Numerics.Vector.IsHardwareAccelerated && System.Numerics.Vector<sbyte>.Count <= 32)
                 {
-                    y[j] = (sbyte)x[2 + j] * d;
+                    // Whole vectors: each code widened to float32 (exact), then times d, one rounding as below.
+                    int width = System.Numerics.Vector<sbyte>.Count, quarter = System.Numerics.Vector<int>.Count;
+                    var scale = new System.Numerics.Vector<float>(d);
+                    for (; j <= 32 - width; j += width)
+                    {
+                        System.Numerics.Vector.Widen(new System.Numerics.Vector<sbyte>(codes[j..]), out System.Numerics.Vector<short> low, out System.Numerics.Vector<short> high);
+                        System.Numerics.Vector.Widen(low, out System.Numerics.Vector<int> a, out System.Numerics.Vector<int> b);
+                        System.Numerics.Vector.Widen(high, out System.Numerics.Vector<int> c, out System.Numerics.Vector<int> e);
+                        (System.Numerics.Vector.ConvertToSingle(a) * scale).CopyTo(y[j..]);
+                        (System.Numerics.Vector.ConvertToSingle(b) * scale).CopyTo(y[(j + quarter)..]);
+                        (System.Numerics.Vector.ConvertToSingle(c) * scale).CopyTo(y[(j + 2 * quarter)..]);
+                        (System.Numerics.Vector.ConvertToSingle(e) * scale).CopyTo(y[(j + 3 * quarter)..]);
+                    }
+                }
+
+                for (; j < 32; j++)
+                {
+                    y[j] = codes[j] * d;
                 }
 
                 return;

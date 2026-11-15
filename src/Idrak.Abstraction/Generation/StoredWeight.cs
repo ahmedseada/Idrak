@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Abstraction.Formats;
@@ -52,6 +54,73 @@ public sealed class StoredWeight : PackedWeight, IRecordable
         try
         {
             values = TensorScope.Untrack(Tensor.FromBytes(stored, type, [columns, rows], device));
+            return WithScales(values, scaling, layout, rows, columns, device);
+        }
+        catch
+        {
+            values?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Writes a weight's stored bytes in place (true), or says it cannot (false: nothing is made).</summary>
+    /// <param name="stored">The bytes <see cref="FromStored"/> takes, to fill.</param>
+    public delegate bool StoredFill(Span<byte> stored);
+
+    /// <summary>
+    /// The weight [<paramref name="rows"/>, <paramref name="columns"/>] (inputs, outputs) whose stored bytes (as
+    /// <see cref="FromStored"/> takes them: <paramref name="columns"/> rows of <paramref name="rows"/> values of
+    /// <paramref name="type"/>) <paramref name="fill"/> writes: into the weight's own memory where the device's memory is
+    /// the host's (<see cref="IHostStorage"/>: the CPU), else into one host buffer uploaded once, so the bytes are never
+    /// made twice. Null, having kept nothing, when <paramref name="fill"/> says it cannot.
+    /// </summary>
+    /// <exception cref="ArgumentException">The type has no conversion to float32, a row is not whole blocks or bytes, the scales do not fit.</exception>
+    public static StoredWeight? FromFill(ElementType type, int rows, int columns, StoredScaling? scaling, Device device, StoredFill fill)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(fill);
+        CheckRows(type, rows);
+        var layout = CheckScaling(scaling, rows, columns);
+        int bytes = checked((int)type.ByteCount((long)rows * columns));
+        Tensor? values = null;
+        try
+        {
+            values = TensorScope.Untrack(Tensor.Empty([columns, rows], device, type));
+            var storage = values.Storage;
+            bool filled;
+            if (storage is IHostStorage host)
+            {
+                var target = MemoryMarshal.AsBytes(host.HostMemory);
+                target[bytes..].Clear();                                           // the last word's padding
+                filled = fill(target[..bytes]);
+            }
+            else
+            {
+                int words = storage.Length * sizeof(float);
+                byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, words));
+                try
+                {
+                    var target = buffer.AsSpan(0, words);
+                    target[bytes..].Clear();
+                    filled = fill(target[..bytes]);
+                    if (filled)
+                    {
+                        values.Backend.Upload(MemoryMarshal.Cast<byte, float>(target), storage);
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+
+            if (!filled)
+            {
+                values.Dispose();
+                return null;
+            }
+
             return WithScales(values, scaling, layout, rows, columns, device);
         }
         catch

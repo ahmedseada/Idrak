@@ -220,6 +220,13 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
             return Tensor.MatMulMany(input, weights, biases);
         }
 
+        // Stored weights of one type (ProductRoutes: the file's layout): the few-row products in one device pass where the
+        // device has one (StoredMatMulManyKernel), each output as its own product computes it.
+        if (!Autograd.IsEnabled && layers.Length is > 1 and <= 3 && input.Backend.StoredMatMulManyAvailable(rows) && Linear.MatMulStoredMany(input, layers) is { } stored)
+        {
+            return stored;
+        }
+
         // Packed weights of one built-in kind (int8, int4, bfloat16): one pass where the device has one (few rows; for
         // prompts, one tensor-core launch over all the layers' columns). Formats of one's own have no Format and no such
         // pass: each layer runs its own product.

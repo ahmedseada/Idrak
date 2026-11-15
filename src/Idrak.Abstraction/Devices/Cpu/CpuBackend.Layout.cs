@@ -149,6 +149,11 @@ internal sealed partial class CpuBackend
         return packed;
     }
 
+    // Every tiled attention pass here writes each row where AttentionVariant.OutputRow puts it (token-major with Merged),
+    // at any head size and with any window or cap.
+    public override bool MergesAttention(Operations.Operation operation, int dim, AttentionVariant variant) =>
+        operation == Operations.Ops.AttentionTiled || operation == Operations.Ops.AttentionBFloat16 || operation == Operations.Ops.AttentionInt8;
+
     public override void AttentionTiledStridedKernel(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values,
         TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale,
         AttentionVariant variant = default)
@@ -184,6 +189,30 @@ internal sealed partial class CpuBackend
         finally
         {
             ReturnRows(qRows, kRows, vRows);
+        }
+    }
+
+    public override void KeyValueWriteStridedKernel(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        long[]? rows = null;
+        try
+        {
+            rows = Rows(sourceLayout, heads * steps, dim);
+            int pos = (int)D(position)[0];
+            float[] sv = D(source), cv = D(cache);
+            for (int h = 0; h < heads; h++)
+            {
+                for (int s = 0; s < steps; s++)
+                {
+                    int r = h * steps + s;
+                    long from = rows?[r] ?? (long)r * dim;
+                    sv.AsSpan((int)from, dim).CopyTo(cv.AsSpan((h * capacity + pos + s) * dim, dim));
+                }
+            }
+        }
+        finally
+        {
+            ReturnRows(rows);
         }
     }
 

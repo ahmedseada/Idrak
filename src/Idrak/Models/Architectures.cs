@@ -444,6 +444,50 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return read;
     }
 
+    // A weight the file stores [outputs, inputs] (read transposed), nothing added on reading (an adapter): its file rows are
+    // its output rows.
+    private string? AsOutputRows(string name, IReadOnlyList<int> shape)
+    {
+        if (Deferred || shape.Count != 2 || !architecture.Transposed(name) || Stored(name, shape) is not { } stored
+            || Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(stored[..^".weight".Length]))
+        {
+            return null;
+        }
+
+        return stored;
+    }
+
+    public bool ReadOutputRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination)
+    {
+        if (AsOutputRows(name, shape) is not { } stored)
+        {
+            return false;
+        }
+
+        long start = Stopwatch.GetTimestamp();
+        bool read = reader.ReadRows(stored, first, count, destination);
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        return read;
+    }
+
+    public bool ReadOutputBFloat16(string name, IReadOnlyList<int> shape, Span<ushort> destination)
+    {
+        if (reader is not IBFloat16TensorStore bits16 || AsOutputRows(name, shape) is not { } stored || reader.FormatOf(stored) != WeightFormat.BFloat16)
+        {
+            return false;
+        }
+
+        if (destination.IsEmpty)
+        {
+            return true;
+        }
+
+        long start = Stopwatch.GetTimestamp();
+        bool read = bits16.ReadBFloat16(stored, false, destination, shape[0]);   // as stored: a row of inputs an output
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        return read;
+    }
+
     public string? IdentityOf(string name, IReadOnlyList<int> shape) =>
         !Deferred && Stored(name, shape) is { } stored
         && (Adapter is null || !stored.EndsWith(".weight", StringComparison.Ordinal) || !Adapter.Updates(stored[..^".weight".Length]))
@@ -612,6 +656,27 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             && Adapter.Updates(stored[..^".weight".Length]);
         if (!merged && shape.Count == 2 && reader is IBFloat16TensorStore bits16 && reader.FormatOf(stored) == WeightFormat.BFloat16)
         {
+            // On a device: a block of the stored rows at a time, transposed there where the layout needs it (FromStoredRows), so
+            // the weights are never whole in host memory.
+            var storedShape = reader.ShapeOf(stored);
+            if (device.IsGpu && storedShape.Length == 2)
+            {
+                long begun16 = Stopwatch.GetTimestamp(), reading16 = 0;
+                var streamed = BFloat16Weight.FromStoredRows(storedShape[0], storedShape[1], device, (first, count, bits) =>
+                {
+                    long start = Stopwatch.GetTimestamp();
+                    bool read = bits16.ReadBFloat16Rows(stored, first, count, bits);
+                    reading16 += Stopwatch.GetTimestamp() - start;
+                    return read;
+                }, storedTransposed != transposed);
+                _readTicks += reading16;
+                _uploadTicks += Stopwatch.GetTimestamp() - begun16 - reading16;       // the device memory, uploads and transposes
+                if (streamed is not null)
+                {
+                    return streamed;
+                }
+            }
+
             int rows = transposed ? shape[1] : shape[0], columns = transposed ? shape[0] : shape[1];
             long begun = Stopwatch.GetTimestamp(), reading = 0;
             var weight = BFloat16Weight.FromBits(rows, columns, device, (Span<ushort> bits, int stride) =>

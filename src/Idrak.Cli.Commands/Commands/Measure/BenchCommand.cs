@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Devices;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -325,6 +326,13 @@ internal sealed class BenchCommand : Command
         }
 
         progress.Clear();
+        if (ProductRoutes.Current is ProductRoute.Measured or ProductRoute.Adad)
+        {
+            foreach (var (product, lane) in ProductRoutes.Choices.OrderBy(c => c.Key, StringComparer.Ordinal))
+            {
+                context.Write($"  measured lane: {product}: {lane}");
+            }
+        }
 
         var drafted = context.Option("--draft") is { } draftName
             ? BenchDraft(context, draftName, run, generator, prompt, options, Median(generated), repeats, promptTokens + tokens + 1, document)
@@ -484,7 +492,7 @@ internal sealed class BenchCommand : Command
 
     private static List<BenchResult> BenchKernels(CommandContext context, BenchRun run, JsonObject document)
     {
-        var kernels = (context.Option("--kernels") ?? string.Join(',', KernelBench.Names))
+        var kernels = (context.Option("--kernels") ?? string.Join(',', KernelBench.DefaultNames))
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(k => k.ToLowerInvariant()).ToList();
         string? unknown = kernels.FirstOrDefault(k => !KernelBench.Names.Contains(k));
         if (kernels.Count == 0 || unknown is not null)
@@ -500,7 +508,8 @@ internal sealed class BenchCommand : Command
             : ["int8", "int4", "bfloat16"];
         var device = run.Device;
         context.Write(Messages.T("kernels on {0} ({1}): {2}; the median of {3} timed calls each", device, device.Name, string.Join(", ", kernels), repeats)
-            + (small ? Messages.T(", small shapes") : ""));
+            + (small ? Messages.T(", small shapes") : "")
+            + Messages.T("; products of typed weights by the {0} route ({1})", ProductRoutes.Current.ToString().ToLowerInvariant(), ProductRoutes.EnvironmentVariable));
         context.Write(Messages.T("  warm-up: until {0} rounds of at least {1} agree within {2:0.##}% and nothing is compiled, at most {3} or {4} calls; Cold: the first call",
             settle.Rounds, Span(settle.Round), settle.Tolerance * 100, Span(settle.Budget), settle.MaxCalls));
         List<BenchResult> results;
@@ -549,6 +558,7 @@ internal sealed class BenchCommand : Command
             },
             ["small"] = small,
             ["packed_formats"] = new JsonArray([.. formats.Select(f => (JsonNode)f)]),
+            ["routes"] = ProductRoutes.Current.ToString().ToLowerInvariant(),
         };
         return results;
     }

@@ -244,8 +244,71 @@ public sealed partial class Linear
     /// with gain, in one device pass (inference: not recorded): the output projection of a block, its residual addition
     /// and the next normalization. Null when the layer or the shapes do not fit or the device has no fused version.
     /// </summary>
+    // The stored weights' gate/up pair and act(gate) · up in one pass (StoredMatMulGatedPairKernel), or null.
+    private static Tensor? MatMulStoredGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
+    {
+        int k = input.Shape[^1], m = input.Size / Math.Max(1, k);
+        if (Autograd.IsEnabled || gate.PackedWeight is not StoredWeight g || up.PackedWeight is not StoredWeight u || g.Type != u.Type || g.Rows != k || u.Rows != k
+            || g.Columns != u.Columns || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null || up.Adapter is not null
+            || m > input.Backend.Capabilities.FewRows || g.Device != input.Device || u.Device != input.Device
+            || input.Backend.StoredEpilogueFused(0, activation, g.Type, m, g.Columns, k) == false)
+        {
+            return null;                                             // the composition: the grouped products, then the activation
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        int n = g.Columns;
+        var gateOut = Tensor.Empty([m * n], input.Device, track: false);
+        var upOut = Tensor.Empty([m * n], input.Device, track: false);
+        var hidden = Tensor.Empty([.. input.Shape[..^1], n], input.Device);
+        bool done = input.Backend.StoredMatMulGatedPair(activation, input.Storage, m, k,
+            [(g.StoredValues.Storage, g.Scales?.Storage, gateOut.Storage, n), (u.StoredValues.Storage, u.Scales?.Storage, upOut.Storage, n)], hidden.Storage);
+        gateOut.Dispose();                                           // stream-ordered: freed after the kernel read them
+        upOut.Dispose();
+        if (!done)
+        {
+            hidden.Dispose();
+            return null;
+        }
+
+        return Tensor.Traced("matmul_gated_pair_stored", hidden, start);
+    }
+
+    // The stored weight's product, residual + it and its RMS normalization in one pass (StoredMatMulAddRmsNormKernel), or null.
+    private static (Tensor Sum, Tensor Normalized)? MatMulStoredAddRmsNorm(Tensor x, Layers.Linear layer, StoredWeight weight, Tensor residual, Layers.RMSNorm norm)
+    {
+        int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = weight.Columns;
+        if (Autograd.IsEnabled || layer.Bias is not null || layer.Adapter is not null || weight.Rows != k || m > x.Backend.Capabilities.FewRows || residual.Size != m * n
+            || residual.Shape[^1] != n || norm.Features != n || weight.Device != x.Device || residual.Device != x.Device || norm.Gain.Device != x.Device
+            || x.Backend.StoredEpilogueFused(1, weight.Scales is null ? 0 : 1, weight.Type, m, n, k) == false)
+        {
+            return null;                                             // the composition: the product, then the addition and norm
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Tensor.Empty(residual.Shape, x.Device, track: false);
+        var sum = Tensor.Empty(residual.Shape, x.Device);
+        var normalized = Tensor.Empty(residual.Shape, x.Device);
+        bool done = x.Backend.StoredMatMulAddRmsNorm(x.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
+            norm.Gain.Storage, normalized.Storage, norm.Epsilon, norm.Offset);
+        y.Dispose();                                                 // stream-ordered: freed after the kernel read it
+        if (!done)
+        {
+            sum.Dispose();
+            normalized.Dispose();
+            return null;
+        }
+
+        return (sum, Tensor.Traced("matmul_add_rms_norm_stored", normalized, start));
+    }
+
     internal static (Tensor Sum, Tensor Normalized)? MatMulPackedAddRmsNorm(Tensor x, Layers.Linear layer, Tensor residual, Layers.RMSNorm norm)
     {
+        if (layer.PackedWeight is StoredWeight stored)
+        {
+            return MatMulStoredAddRmsNorm(x, layer, stored, residual, norm);
+        }
+
         using var offload = x.Device.Backend.Offload is null ? default : Offloading.EnterMany([layer, norm], x);   // no array without offloading
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
@@ -329,6 +392,11 @@ public sealed partial class Linear
     /// </summary>
     internal static Tensor? MatMulPackedGatedPair(Tensor input, Layers.Linear gate, Layers.Linear up, int activation)
     {
+        if (gate.PackedWeight is StoredWeight && up.PackedWeight is StoredWeight)
+        {
+            return MatMulStoredGatedPair(input, gate, up, activation);
+        }
+
         using var offload = input.Device.Backend.Offload is null ? default : Offloading.EnterMany([gate, up], input);   // no array without offloading
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
@@ -363,6 +431,52 @@ public sealed partial class Linear
         }
 
         return Tensor.Traced("matmul_gated_pair_packed", hidden, start);
+    }
+
+    /// <summary>
+    /// The layers' stored products (StoredWeight, one element type, no biases or adapters) of one input in one device pass
+    /// (few rows, not recorded: StoredMatMulManyKernel), or null when the layers do not fit or the device has no such pass.
+    /// </summary>
+    internal static Tensor[]? MatMulStoredMany(Tensor input, IReadOnlyList<Layers.Linear> layers)
+    {
+        int k = input.Shape[^1], m = input.Size / Math.Max(1, k);
+        var weights = new StoredWeight[layers.Count];
+        for (int j = 0; j < layers.Count; j++)
+        {
+            if (layers[j].PackedWeight is not StoredWeight w || layers[j].Bias is not null || layers[j].Adapter is not null || w.Rows != k
+                || w.Device != input.Device || j > 0 && w.Type != weights[0].Type)
+            {
+                return null;
+            }
+
+            weights[j] = w;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var outputs = new Tensor[layers.Count];
+        var products = new (Storage Values, Storage? Scales, Storage Output, int Columns)[layers.Count];
+        for (int j = 0; j < layers.Count; j++)
+        {
+            outputs[j] = Tensor.Empty([.. input.Shape[..^1], weights[j].Columns], input.Device);
+            products[j] = (weights[j].StoredValues.Storage, weights[j].Scales?.Storage, outputs[j].Storage, weights[j].Columns);
+        }
+
+        if (!input.Backend.StoredMatMulMany(input.Storage, m, k, products))
+        {
+            foreach (var output in outputs)
+            {
+                output.Dispose();
+            }
+
+            return null;
+        }
+
+        for (int j = 0; j < outputs.Length; j++)
+        {
+            outputs[j] = Tensor.Traced("matmul_stored_many", outputs[j], start);
+        }
+
+        return outputs;
     }
 
     /// <summary>

@@ -103,4 +103,17 @@ public interface IBFloat16TensorStore : ITensorStore
     /// <param name="destination">At least (result rows - 1) · stride + result columns values.</param>
     /// <param name="stride">The distance between the starts of the result's rows, at least its columns.</param>
     bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride);
+
+    /// <summary>
+    /// Copies rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the 2-D tensor
+    /// <paramref name="name"/> [rows, columns], stored as bfloat16, as their 16-bit values (as stored: rows of columns
+    /// values, each as <c>BFloat16Weight.CopyStoredBits</c> gives it) into <paramref name="destination"/>, so a weight is
+    /// made a block of rows at a time (<c>BFloat16Weight.FromStoredRows</c>) without the whole matrix in host memory.
+    /// Returns false, having written nothing, when the store cannot (the default).
+    /// </summary>
+    /// <param name="name">The tensor.</param>
+    /// <param name="first">The first row.</param>
+    /// <param name="count">The rows.</param>
+    /// <param name="destination">At least <paramref name="count"/> rows of the tensor's columns.</param>
+    bool ReadBFloat16Rows(string name, int first, int count, Span<ushort> destination) => false;
 }

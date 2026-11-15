@@ -18957,6 +18957,352 @@ public abstract partial class Backend
         CpuBackend.Instance.ExpandStored(h[weight], h.Maybe(scales), h.Maybe(zeros), h[w], n, k, layout);
     }
 
+    /// <summary>
+    /// <see cref="KeyValueWrite"/> with the source read through its layout (plan 37, V1b): row r (of
+    /// <paramref name="dim"/> elements) of the source [heads, steps, dim] is the r-th run of dim elements of
+    /// <paramref name="sourceLayout"/> over <paramref name="source"/> in its row-major order (keys or values split from a
+    /// projection and permuted, read where they are), written into the [heads, capacity, dim] cache at the device-side
+    /// position as <see cref="KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
+    /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.KeyValueWriteStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>KeyValueWriteStridedKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void KeyValueWriteStrided(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        if (source.Typed || cache.Typed || position.Typed)
+        {
+            KeyValueWriteStridedValues(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        if (_kernels is null && _moves is null)
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteStridedGuarded(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        else
+        {
+            KeyValueWriteStridedRegistered(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // KeyValueWriteStrided with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteStridedValues(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.KeyValueWriteStrided, OperationIndex.KeyValueWriteStrided);
+        var sourceValue = valueConversions.In(source);
+        var cacheValue = valueConversions.In(cache);
+        var positionValue = valueConversions.In(position);
+        KeyValueWriteStridedRun(sourceValue, sourceLayout, cacheValue, positionValue, heads, steps, capacity, dim);
+        valueConversions.Done();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteStridedRun(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteStridedGuarded(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        else
+        {
+            KeyValueWriteStridedRegistered(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteStridedRegistered(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.KeyValueWriteStrided) is OperationKernels.KeyValueWriteStrided kernel)
+        {
+            kernel(this, source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                KeyValueWriteStridedGuarded(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            }
+            else
+            {
+                KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.KeyValueWriteStrided))
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.KeyValueWriteStrided);
+        try
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(this, failure);
+            KeyValueWriteStridedOnHost(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // KeyValueWriteStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteStridedGuarded(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        try
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWriteStrided))
+        {
+            FellBack(Ops.KeyValueWriteStrided.Name, refused, "the host");
+            KeyValueWriteStridedOnHost(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // The host fallback of KeyValueWriteStrided (the default body of KeyValueWriteStridedKernel), for RetryOnHost.
+    private void KeyValueWriteStridedOnHost(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, nameof(KeyValueWriteStrided));
+        CpuBackend.Instance.KeyValueWriteStrided(h[source], sourceLayout, h[cache], h[position], heads, steps, capacity, dim);
+    }
+
+    /// <summary>
+    /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
+    /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one element type, each n_j rows of k
+    /// values with a scale a row or none (<see cref="StoredMatMulKernel"/>'s layout), each output as its own product
+    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// </summary>
+    /// <param name="x">The input [m, k].</param>
+    /// <param name="m">Rows of x.</param>
+    /// <param name="k">Columns of x, values of a weight row.</param>
+    /// <param name="products">Each weight's values and scales (or none), its output [m, n_j] and n_j.</param>
+    /// <remarks>Runs <see cref="Ops.StoredMatMulMany"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulManyKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool StoredMatMulMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        if (x.Typed)
+        {
+            return StoredMatMulManyValues(x, m, k, products);
+        }
+
+        return _kernels is null && _moves is null ? StoredMatMulManyKernel(x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyRegistered(x, m, k, products);
+    }
+
+    // StoredMatMulMany with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulManyValues(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.StoredMatMulMany, OperationIndex.StoredMatMulMany);
+        var xValue = valueConversions.In(x);
+        var returned = StoredMatMulManyRun(xValue, m, k, products);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulManyRun(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        return _kernels is null && _moves is null ? StoredMatMulManyKernel(x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyRegistered(x, m, k, products);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulManyRegistered(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.StoredMatMulMany) is OperationKernels.StoredMatMulMany kernel)
+        {
+            return kernel(this, x, m, k, products);
+        }
+
+        return RefusedKernelsFallBack ? StoredMatMulManyGuarded(x, m, k, products) : StoredMatMulManyKernel(x, m, k, products);
+    }
+
+    // StoredMatMulMany on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulManyGuarded(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        try
+        {
+            return StoredMatMulManyKernel(x, m, k, products);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StoredMatMulMany))
+        {
+            FellBack(Ops.StoredMatMulMany.Name, refused, "the caller's path");
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// A feed-forward block's gate and up products of stored weights (StoredMatMulManyKernel's two, of equal widths) and
+    /// hidden = act(gate) · up (activation 0 SiLU, 1 tanh GELU, 2 ReLU) in one pass. False where the device has no such pass.
+    /// </summary>
+    /// <param name="activation">0 SiLU, 1 tanh GELU, 2 ReLU.</param>
+    /// <param name="x">The input [m, k].</param>
+    /// <param name="m">Rows of x.</param>
+    /// <param name="k">Columns of x.</param>
+    /// <param name="products">The gate's then the up's values, scales, output [m, n] and n.</param>
+    /// <param name="hidden">act(gate) · up [m, n].</param>
+    /// <remarks>Runs <see cref="Ops.StoredMatMulGatedPair"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulGatedPairKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool StoredMatMulGatedPair(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    {
+        if (x.Typed || hidden.Typed)
+        {
+            return StoredMatMulGatedPairValues(activation, x, m, k, products, hidden);
+        }
+
+        return _kernels is null && _moves is null ? StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairRegistered(activation, x, m, k, products, hidden);
+    }
+
+    // StoredMatMulGatedPair with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulGatedPairValues(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.StoredMatMulGatedPair, OperationIndex.StoredMatMulGatedPair);
+        var xValue = valueConversions.In(x);
+        var hiddenValue = valueConversions.In(hidden);
+        var returned = StoredMatMulGatedPairRun(activation, xValue, m, k, products, hiddenValue);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulGatedPairRun(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    {
+        return _kernels is null && _moves is null ? StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairRegistered(activation, x, m, k, products, hidden);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulGatedPairRegistered(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.StoredMatMulGatedPair) is OperationKernels.StoredMatMulGatedPair kernel)
+        {
+            return kernel(this, activation, x, m, k, products, hidden);
+        }
+
+        return RefusedKernelsFallBack ? StoredMatMulGatedPairGuarded(activation, x, m, k, products, hidden) : StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden);
+    }
+
+    // StoredMatMulGatedPair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulGatedPairGuarded(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden)
+    {
+        try
+        {
+            return StoredMatMulGatedPairKernel(activation, x, m, k, products, hidden);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StoredMatMulGatedPair))
+        {
+            FellBack(Ops.StoredMatMulGatedPair.Name, refused, "the caller's path");
+            return default;
+        }
+    }
+
+    /// <summary>
+    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
+    /// where the device has no such pass.
+    /// </summary>
+    /// <param name="x">The input [m, k].</param>
+    /// <param name="weight">W's values.</param>
+    /// <param name="scales">W's scales a row, or null.</param>
+    /// <param name="y">The product [m, n].</param>
+    /// <param name="m">Rows of x.</param>
+    /// <param name="n">Rows of W.</param>
+    /// <param name="k">Columns of x.</param>
+    /// <param name="residual">Added to y [m, n].</param>
+    /// <param name="sum">residual + y [m, n].</param>
+    /// <param name="gain">The norm's gain [n].</param>
+    /// <param name="normalized">The normalized sum [m, n].</param>
+    /// <param name="eps">The norm's epsilon.</param>
+    /// <param name="offset">Added to the gain.</param>
+    /// <remarks>Runs <see cref="Ops.StoredMatMulAddRmsNorm"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>StoredMatMulAddRmsNormKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool StoredMatMulAddRmsNorm(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        if (x.Typed || (scales is not null && scales.Typed) || y.Typed || residual.Typed || sum.Typed || gain.Typed || normalized.Typed)
+        {
+            return StoredMatMulAddRmsNormValues(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        }
+
+        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormRegistered(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+    }
+
+    // StoredMatMulAddRmsNorm with a value storage of another type than float32: each one the kernel does not take converted once for the
+    // call, counted, and converted back when the kernel changed it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulAddRmsNormValues(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        using var valueConversions = new ValueConversions(this, Ops.StoredMatMulAddRmsNorm, OperationIndex.StoredMatMulAddRmsNorm);
+        var xValue = valueConversions.In(x);
+        var scalesValue = valueConversions.Maybe(scales);
+        var yValue = valueConversions.In(y);
+        var residualValue = valueConversions.In(residual);
+        var sumValue = valueConversions.In(sum);
+        var gainValue = valueConversions.In(gain);
+        var normalizedValue = valueConversions.In(normalized);
+        var returned = StoredMatMulAddRmsNormRun(xValue, weight, scalesValue, yValue, m, n, k, residualValue, sumValue, gainValue, normalizedValue, eps, offset);
+        valueConversions.Done();
+        return returned;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulAddRmsNormRun(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        return _kernels is null && _moves is null ? StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? StoredMatMulAddRmsNormGuarded(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormRegistered(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulAddRmsNormRegistered(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.StoredMatMulAddRmsNorm) is OperationKernels.StoredMatMulAddRmsNorm kernel)
+        {
+            return kernel(this, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        }
+
+        return RefusedKernelsFallBack ? StoredMatMulAddRmsNormGuarded(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+    }
+
+    // StoredMatMulAddRmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool StoredMatMulAddRmsNormGuarded(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
+        try
+        {
+            return StoredMatMulAddRmsNormKernel(x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StoredMatMulAddRmsNorm))
+        {
+            FellBack(Ops.StoredMatMulAddRmsNorm.Name, refused, "the caller's path");
+            return default;
+        }
+    }
+
     private delegate void MaxPoolBackwardOwn(Storage dy, Storage argmax, Storage dx, int count);
 
     private delegate void MaxPoolBackward2Own(Storage dy, Storage argmax, Storage dx, in ConvGeometry g);
@@ -19129,6 +19475,10 @@ public abstract partial class Backend
         own[OperationIndex.ConvertElements] = Overrides(b.ConvertElementsKernel);
         own[OperationIndex.StoredMatMul] = Overrides(b.StoredMatMulKernel);
         own[OperationIndex.ExpandStored] = Overrides(b.ExpandStoredKernel);
+        own[OperationIndex.KeyValueWriteStrided] = Overrides(b.KeyValueWriteStridedKernel);
+        own[OperationIndex.StoredMatMulMany] = Overrides(b.StoredMatMulManyKernel);
+        own[OperationIndex.StoredMatMulGatedPair] = Overrides(b.StoredMatMulGatedPairKernel);
+        own[OperationIndex.StoredMatMulAddRmsNorm] = Overrides(b.StoredMatMulAddRmsNormKernel);
         return own;
     }
 }

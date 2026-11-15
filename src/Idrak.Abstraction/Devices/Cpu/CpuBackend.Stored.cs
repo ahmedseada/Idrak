@@ -21,6 +21,12 @@ internal sealed partial class CpuBackend
 {
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
     {
+        // The generic and measured routes (ProductRoutes): the lanes over the stored layout (CpuBackend.Lanes.cs).
+        if (ProductRoutes.Current != ProductRoute.Name && StoredRouted(x, weight, scales, zeros, y, m, n, k, layout))
+        {
+            return;
+        }
+
         var rows = StoredRows.Of(weight, scales, zeros, layout, n, k);
         float[] xv = D(x), yv = D(y);
         if (m == 0 || n == 0)

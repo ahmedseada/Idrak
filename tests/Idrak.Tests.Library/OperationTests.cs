@@ -146,7 +146,7 @@ internal abstract partial class Tests
     internal static readonly string[] DevicePlumbing =
     [
         "CreateHostStaging", "TensorCoresUnavailable", "ReuseQuantizedOperands", "PrefersComposedAttention", "Copy", "Copy2D",
-        "ResetPeakMemoryUsage", "LiveStorages", "UploadRange", "Dispose",
+        "ResetPeakMemoryUsage", "LiveStorages", "UploadRange", "Dispose", "UploadTransposed16", "StoredMatMulManyAvailable", "StoredEpilogueFused", "MergesAttention",
     ];
 
     internal static void OperationsMatchBackend(Device device)

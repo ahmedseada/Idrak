@@ -68,6 +68,7 @@ public sealed class KeyValueCache : IDisposable
         RowStartsLayout = layout as IRowStartsLayout;
         SlidingWindowLayout = layout as ISlidingWindowLayout;
         FusedWriteLayout = layout as IFusedWriteLayout;
+        MergedHeadsLayout = layout as IMergedHeadsLayout;
         HeadDim = headDim;
         int width = layout.RowWidth(headDim);
         if (width <= 0)
@@ -101,6 +102,9 @@ public sealed class KeyValueCache : IDisposable
 
     /// <summary>The layout's fused writes from the projection kernel, or null when it takes none (tested once, when the cache is made).</summary>
     public IFusedWriteLayout? FusedWriteLayout { get; }
+
+    /// <summary>The layout's attention written token-major for an output projection, or null when it has none (tested once, when the cache is made).</summary>
+    public IMergedHeadsLayout? MergedHeadsLayout { get; }
 
     /// <summary>
     /// Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16; a format of one's

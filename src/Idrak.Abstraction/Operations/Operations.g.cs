@@ -177,9 +177,13 @@ internal static class OperationIndex
     public const int ConvertElements = 161;
     public const int StoredMatMul = 162;
     public const int ExpandStored = 163;
+    public const int KeyValueWriteStrided = 164;
+    public const int StoredMatMulMany = 165;
+    public const int StoredMatMulGatedPair = 166;
+    public const int StoredMatMulAddRmsNorm = 167;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 164;
+    public const int Count = 168;
 }
 
 /// <summary>
@@ -1486,6 +1490,41 @@ public static class OperationKernels
     /// points), in float32, as the stores compute them when they read the weights as float32.
     /// </summary>
     public delegate void ExpandStored(Backend backend, Storage weight, Storage? scales, Storage? zeros, Storage w, int n, int k, StoredScales layout);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.KeyValueWriteStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.KeyValueWrite"/> with the source read through its layout (plan 37, V1b): row r (of
+    /// <paramref name="dim"/> elements) of the source [heads, steps, dim] is the r-th run of dim elements of
+    /// <paramref name="sourceLayout"/> over <paramref name="source"/> in its row-major order (keys or values split from a
+    /// projection and permuted, read where they are), written into the [heads, capacity, dim] cache at the device-side
+    /// position as <see cref="Backend.KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
+    /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    public delegate void KeyValueWriteStrided(Backend backend, Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.StoredMatMulMany"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
+    /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one element type, each n_j rows of k
+    /// values with a scale a row or none (<see cref="Backend.StoredMatMulKernel"/>'s layout), each output as its own product
+    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// </summary>
+    public delegate bool StoredMatMulMany(Backend backend, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.StoredMatMulGatedPair"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// A feed-forward block's gate and up products of stored weights (StoredMatMulManyKernel's two, of equal widths) and
+    /// hidden = act(gate) · up (activation 0 SiLU, 1 tanh GELU, 2 ReLU) in one pass. False where the device has no such pass.
+    /// </summary>
+    public delegate bool StoredMatMulGatedPair(Backend backend, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, Storage hidden);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.StoredMatMulAddRmsNorm"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
+    /// where the device has no such pass.
+    /// </summary>
+    public delegate bool StoredMatMulAddRmsNorm(Backend backend, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset);
 }
 
 /// <summary>
@@ -2629,6 +2668,37 @@ public static partial class Ops
     /// </summary>
     public static readonly Operation<OperationKernels.ExpandStored> ExpandStored = new("ExpandStored", OperationIndex.ExpandStored, KernelSource.Host);
 
+    /// <summary>
+    /// <see cref="Backend.KeyValueWrite"/> with the source read through its layout (plan 37, V1b): row r (of
+    /// <c>dim</c> elements) of the source [heads, steps, dim] is the r-th run of dim elements of
+    /// <c>sourceLayout</c> over <c>source</c> in its row-major order (keys or values split from a
+    /// projection and permuted, read where they are), written into the [heads, capacity, dim] cache at the device-side
+    /// position as <see cref="Backend.KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
+    /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    public static readonly Operation<OperationKernels.KeyValueWriteStrided> KeyValueWriteStrided = new("KeyValueWriteStrided", OperationIndex.KeyValueWriteStrided, KernelSource.Host);
+
+    /// <summary>
+    /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
+    /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one element type, each n_j rows of k
+    /// values with a scale a row or none (<see cref="Backend.StoredMatMulKernel"/>'s layout), each output as its own product
+    /// computes it. False where the device has no single pass for them (callers then run the products one by one).
+    /// </summary>
+    public static readonly Operation<OperationKernels.StoredMatMulMany> StoredMatMulMany = new("StoredMatMulMany", OperationIndex.StoredMatMulMany, KernelSource.None);
+
+    /// <summary>
+    /// A feed-forward block's gate and up products of stored weights (StoredMatMulManyKernel's two, of equal widths) and
+    /// hidden = act(gate) · up (activation 0 SiLU, 1 tanh GELU, 2 ReLU) in one pass. False where the device has no such pass.
+    /// </summary>
+    public static readonly Operation<OperationKernels.StoredMatMulGatedPair> StoredMatMulGatedPair = new("StoredMatMulGatedPair", OperationIndex.StoredMatMulGatedPair, KernelSource.None);
+
+    /// <summary>
+    /// y = x · Wᵀ for a stored weight W (n rows of k, a scale a row or none), sum = residual + y and normalized = its RMS
+    /// normalization with gain (value · 1 / sqrt(mean of squares + eps) · (gain + offset)) in one pass, few rows. False
+    /// where the device has no such pass.
+    /// </summary>
+    public static readonly Operation<OperationKernels.StoredMatMulAddRmsNorm> StoredMatMulAddRmsNorm = new("StoredMatMulAddRmsNorm", OperationIndex.StoredMatMulAddRmsNorm, KernelSource.None);
+
     /// <summary>Every operation, by <see cref="Operation.Index"/>.</summary>
     public static IReadOnlyList<Operation> All { get; } =
     [
@@ -2796,6 +2866,10 @@ public static partial class Ops
         ConvertElements,
         StoredMatMul,
         ExpandStored,
+        KeyValueWriteStrided,
+        StoredMatMulMany,
+        StoredMatMulGatedPair,
+        StoredMatMulAddRmsNorm,
     ];
 
     /// <summary>The operation named <paramref name="name"/> (as <see cref="Operation.Name"/>, any case), or null.</summary>

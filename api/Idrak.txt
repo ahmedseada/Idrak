@@ -1883,6 +1883,8 @@ public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
   public (default) Idrak.Abstraction.Generation.IPackedWeight? ReadMapped(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool keep)
   public (default) Idrak.Abstraction.Generation.IPackedWeight? ReadStored(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool keep)
+  public (default) bool ReadOutputBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, System.Span<ushort> destination)
+  public (default) bool ReadOutputRows(string name, System.Collections.Generic.IReadOnlyList<int> shape, int first, int count, System.Span<float> destination)
   public (default) bool ReadRows(string name, System.Collections.Generic.IReadOnlyList<int> shape, int first, int count, System.Span<float> destination)
   public (default) string? IdentityOf(string name, System.Collections.Generic.IReadOnlyList<int> shape)
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
@@ -2557,6 +2559,7 @@ public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.
   public System.TimeSpan? ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool ReadBFloat16Rows(string name, int first, int count, System.Span<ushort> destination)
   public bool ReadRows(string name, int first, int count, System.Span<float> destination)
   public bool SameValues(string first, string second)
   public float[] Read(string name)
@@ -2593,6 +2596,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
   public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool ReadBFloat16Rows(string name, int first, int count, System.Span<ushort> destination)
   public bool ReadRows(string name, int first, int count, System.Span<float> destination)
   public bool SameValues(string first, string second)
   public float[] Read(string name)

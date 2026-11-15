@@ -40,7 +40,12 @@ public sealed partial class Tensor
         var flat = this.Rank == 2 ? this : this.Reshape(-1, k);
         int m = flat._shape[0];
         var y = Tensor.Empty([m, n], this.Device);
-        if (m <= Int8DirectRows)
+        if (ProductRoutes.Current != ProductRoute.Name)
+        {
+            // The generic or measured route (ProductRoutes): the device's product picks among its lanes for every row count.
+            this.Backend.Int8MatMul(flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k);
+        }
+        else if (m <= Int8DirectRows)
         {
             // Few rows: the direct kernels, unless the device's packed product is faster for this shape.
             if (!(this.Backend.PrefersPackedMatMul(PackedFormat.Int8, flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k)
@@ -301,7 +306,7 @@ public sealed partial class Tensor
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
+        var y = Tensor.Empty(Tensor.AttentionShape(heads, rowsPerHead, steps, dim, variant), q.Device);
         q.Backend.AttentionInt8(q.Storage, cache.Keys.Storage, cache.Values.Storage, cache.KeyScales!.Storage, cache.ValueScales!.Storage,
             position.Storage, y.Storage, heads, rowsPerHead, steps, cache.Keys._shape[1], dim, scale, tiled, variant);
         return Tensor.Traced("attention_int8", y, start);
@@ -334,7 +339,7 @@ public sealed partial class Tensor
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
+        var y = Tensor.Empty(Tensor.AttentionShape(heads, rowsPerHead, steps, dim, variant), q.Device);
         q.Backend.AttentionBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, heads, rowsPerHead, steps,
             cache.Keys._shape[1], dim, scale, tiled, variant);
 

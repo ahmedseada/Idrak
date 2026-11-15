@@ -505,8 +505,19 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
         // kernels compute each query's window start on the device, from the position).
         if (_softcap is not null || Windowed && (ComputeGraph.IsCapturing || Composed(context.Length + t)))
         {
+            if (WindowKernels && t > 1 && cache.SlidingWindowLayout is not null && cache.MergedHeadsLayout?.AttendMerged(q, cache, context, t, scale, KvHeads, Variant) is { } mergedWindow)
+            {
+                return mergedWindow;                // written token-major: the output projection's rows, no rearranging copy
+            }
+
             var windowed = WindowKernels ? cache.SlidingWindowLayout?.AttendVariant(q, cache, context, t, scale, Variant) : null;
             return MergeHeads(windowed ?? AttendComposed(q, cache, context, t, scale), n, t);
+        }
+
+        // A prompt's heads written token-major where the cache's format and the device do (one step's rows already are).
+        if (t > 1 && cache.MergedHeadsLayout?.AttendMerged(q, cache, context, t, scale, KvHeads, default) is { } merged)
+        {
+            return merged;
         }
 
         var context8 = cache.Layout.Attend(q, cache, context, t, scale, decoderKernels: true);

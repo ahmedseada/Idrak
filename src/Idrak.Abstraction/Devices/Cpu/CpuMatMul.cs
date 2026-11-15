@@ -472,6 +472,172 @@ internal static class CpuMatMul
         }
     }
 
+    /// <summary>The columns of the tiled kernel's B panels (its register block's width), or 0 where the CPU has none.</summary>
+    internal static int PanelColumns => CpuTuning.Kernel == TiledKernel.None ? 0 : CpuTuning.KernelShape(CpuTuning.Kernel).Columns;
+
+    /// <summary>
+    /// Whether <see cref="MultiplyPanels"/> takes an m × n × k product: where <see cref="Multiply(float[], float[], float[], int, int, int, bool, bool, float)"/>
+    /// (A [m, k], B [k, n], beta 0) would run the tiled kernel (not split over k, not the few-row column split, a register
+    /// block of rows at least) and n is whole panels.
+    /// </summary>
+    internal static bool TakesPanels(int m, int n, int k)
+    {
+        var kernel = CpuTuning.Kernel;
+        if (kernel == TiledKernel.None || SplitsK(m, n, k))
+        {
+            return false;
+        }
+
+        var (rows, columns) = CpuTuning.KernelShape(kernel);
+        bool parallel = ComputeResources.ParallelOptions.MaxDegreeOfParallelism > 1 && (long)m * n * k >= CpuTuning.ProductCutover((long)m * n * k);
+        bool columnSplit = m <= Math.Max(Mr, rows - 1) && n >= 2 * CpuTuning.ColumnBlock && parallel;
+        return !columnSplit && m >= rows && n % columns == 0;
+    }
+
+    /// <summary>
+    /// C [m, n] = A [m, k] · B for B given as the tiled kernel's panels, packed once by the caller (panel q, columns
+    /// [q · nr, (q + 1) · nr), at q · k · nr as [k][nr]): the tiles, kernels and sums Multiply runs over B [k, n] (Tiled),
+    /// without copying each panel out of B for every tile. Only where <see cref="TakesPanels"/>.
+    /// </summary>
+    internal static void MultiplyPanels(float[] a, float[] panels, float[] c, int m, int n, int k) =>
+        MultiplyPanelsFrom(a, new PackedPanels(panels, k, CpuTuning.KernelShape(CpuTuning.Kernel).Columns), c, m, n, k);
+
+    /// <summary>Where a panel product reads B panel q ([k][nr]): an array packed once, or a buffer the source fills.</summary>
+    internal interface IPanelSource
+    {
+        /// <summary>Whether the source fills the tile's buffers (false: it returns its own panels, the buffers unused).</summary>
+        bool Fills { get; }
+
+        /// <summary>Panel <paramref name="panel"/>: in <paramref name="buffer"/> (k · nr, filled here) or the source's own memory.</summary>
+        ref float Panel(int panel, float[] buffer, float[] rows);
+    }
+
+    // Panels packed once by the caller (MultiplyPanels).
+    private readonly struct PackedPanels(float[] panels, int k, int nr) : IPanelSource
+    {
+        public bool Fills => false;
+
+        public ref float Panel(int panel, float[] buffer, float[] rows) => ref panels[(long)panel * k * nr];
+    }
+
+    /// <summary>
+    /// <see cref="MultiplyPanels"/> with B's panels from <paramref name="source"/>: where it fills them (the stored rows
+    /// widened into each tile's panels as the tile needs them), no buffer of all of B exists; each row tile widens the
+    /// panels it uses again. The same tiles, kernels and sums. Only where <see cref="TakesPanels"/>.
+    /// </summary>
+    internal static void MultiplyPanelsFrom<TSource>(float[] a, TSource source, float[] c, int m, int n, int k) where TSource : struct, IPanelSource
+    {
+        var options = ComputeResources.ParallelOptions;
+        bool parallel = options.MaxDegreeOfParallelism > 1 && (long)m * n * k >= CpuTuning.ProductCutover((long)m * n * k);
+        var kernel = CpuTuning.Kernel;
+        var (mr, nr) = CpuTuning.KernelShape(kernel);
+        int threads = Math.Max(1, options.MaxDegreeOfParallelism is > 0 and var max ? max : Environment.ProcessorCount);
+        var (mc, nc) = CpuTuning.TileGrid(CpuTuning.Machine, m, n, k, mr, nr, parallel ? threads : 1);
+        int mTiles = (m + mc - 1) / mc;
+        int nTiles = (n + nc - 1) / nc;
+        void RunTile(int tile)
+        {
+            ref float ra = ref MemoryMarshal.GetArrayDataReference(a);
+            ref float rc = ref MemoryMarshal.GetArrayDataReference(c);
+            int i0 = tile / nTiles * mc, j0 = tile % nTiles * nc;
+            int i1 = Math.Min(m, i0 + mc), j1 = Math.Min(n, j0 + nc);
+            int fullRows = (i1 - i0) / mr * mr;
+            float[] packedA = ArrayPool<float>.Shared.Rent(Math.Max(1, fullRows * k));
+            float[] buffer = source.Fills ? ArrayPool<float>.Shared.Rent(k * nr) : packedA, rows = source.Fills ? ArrayPool<float>.Shared.Rent(k * nr) : packedA;
+            try
+            {
+                ref float pa = ref MemoryMarshal.GetArrayDataReference(packedA);
+                for (int block = 0; block < fullRows / mr; block++)
+                {
+                    ref float target = ref Unsafe.Add(ref pa, (nint)block * k * mr);
+                    nint row0 = (nint)(i0 + block * mr) * k;
+                    for (int p = 0; p < k; p++)
+                    {
+                        nint at = row0 + p;
+                        for (int r = 0; r < mr; r++, at += k)
+                        {
+                            Unsafe.Add(ref target, p * mr + r) = Unsafe.Add(ref ra, at);
+                        }
+                    }
+                }
+
+                for (int j = j0; j + nr <= j1; j += nr)
+                {
+                    ref float pb = ref source.Panel(j / nr, buffer, rows);
+                    for (int block = 0; block < fullRows / mr; block++)
+                    {
+                        ref float cBlock = ref Unsafe.Add(ref rc, (nint)(i0 + block * mr) * n + j);
+                        ref float aBlock = ref Unsafe.Add(ref pa, (nint)block * k * mr);
+                        switch (kernel)
+                        {
+                            case TiledKernel.Avx512: Kernel8x32(ref aBlock, ref pb, ref cBlock, n, k, 0f); break;
+                            case TiledKernel.Avx2: Kernel6x16(ref aBlock, ref pb, ref cBlock, n, k, 0f); break;
+                            default: Kernel8x8(ref aBlock, ref pb, ref cBlock, n, k, 0f); break;
+                        }
+                    }
+
+                    for (int i = i0 + fullRows; i < i1; i++)
+                    {
+                        RowPanel(ref ra, ref pb, ref rc, i, j, nr, k, n);
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(packedA);
+                if (source.Fills)
+                {
+                    ArrayPool<float>.Shared.Return(buffer);
+                    ArrayPool<float>.Shared.Return(rows);
+                }
+            }
+        }
+
+        int tiles = mTiles * nTiles;
+        if (tiles == 1 || !parallel)
+        {
+            for (int tile = 0; tile < tiles; tile++)
+            {
+                RunTile(tile);
+            }
+        }
+        else
+        {
+            Parallel.For(0, tiles, options, RunTile);
+        }
+    }
+
+    // Row i of C for a panel's nr columns from column j (B the panel [k][nr]): Row's sums (one FMA chain over k from zero
+    // a column, the same vectors), beta 0.
+    private static void RowPanel(ref float a, ref float pb, ref float c, int i, int j, int nr, int k, int n)
+    {
+        int w = Vector<float>.Count;
+        nint ai = (nint)i * k;
+        ref float ci = ref Unsafe.Add(ref c, (nint)i * n + j);
+        int col = 0;
+        for (; col + w <= nr; col += w)
+        {
+            Vector<float> acc = default;
+            for (int p = 0; p < k; p++)
+            {
+                acc = Vector.FusedMultiplyAdd(new Vector<float>(Unsafe.Add(ref a, ai + p)), Vector.LoadUnsafe(ref pb, (nuint)(p * nr + col)), acc);
+            }
+
+            Store(ref Unsafe.Add(ref ci, col), acc, 0f);
+        }
+
+        for (; col < nr; col++)
+        {
+            float acc = 0f;
+            for (int p = 0; p < k; p++)
+            {
+                acc = MathF.FusedMultiplyAdd(Unsafe.Add(ref a, ai + p), Unsafe.Add(ref pb, p * nr + col), acc);
+            }
+
+            Unsafe.Add(ref ci, col) = acc;
+        }
+    }
+
     // 8 rows × 32 columns of C in 16 registers across the whole k loop (each element: one FMA chain over k);
     // A packed as [k][8], B as [k][32].
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]

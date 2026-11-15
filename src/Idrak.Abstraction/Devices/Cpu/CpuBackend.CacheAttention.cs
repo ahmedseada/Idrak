@@ -267,7 +267,7 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
             if (!split)
             {
                 // Enough query rows for every thread: each row whole, as the float32 kernel runs.
-                For(rows, work, (first, last) => AttendRows(cache, qv, yv, first, last, rowsPerHead, capacity, dim, begins, counts, variant));
+                For(rows, work, (first, last) => AttendRows(cache, qv, yv, first, last, rowsPerHead, steps, capacity, dim, begins, counts, variant));
                 return;
             }
 
@@ -281,7 +281,8 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
             int least = Math.Max(CpuInfo.Current.CacheLine / cache.ElementBytes, step);
             int wanted = Math.Max(1, (2 * threads + rows - 1) / rows);
             int width = (Math.Max(least, (dim + wanted - 1) / wanted) + step - 1) / step * step, chunks = (dim + width - 1) / width;
-            For(rows * chunks, total * dim, (first, last) => WeightedValues(cache, s, yv, first, last, chunks, width, rowsPerHead, capacity, dim, begins, counts, offsets));
+            For(rows * chunks, total * dim, (first, last) => WeightedValues(cache, s, yv, first, last, chunks, width, rowsPerHead, steps, capacity, dim, begins, counts, offsets,
+                variant));
         }
         finally
         {
@@ -297,7 +298,7 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
 
     // Query rows [first, last) each whole: scores, softmax, weighted values.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void AttendRows<TRows>(TRows cache, float[] qv, float[] yv, int first, int last, int rowsPerHead, int capacity, int dim,
+    private static void AttendRows<TRows>(TRows cache, float[] qv, float[] yv, int first, int last, int rowsPerHead, int steps, int capacity, int dim,
         int[] begins, int[] counts, AttentionVariant variant) where TRows : struct, ICacheRows
     {
         var scores = ArrayPool<float>.Shared.Rent(capacity);
@@ -306,7 +307,7 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
             for (int row = first; row < last; row++)
             {
                 int h = row / rowsPerHead, begin = begins[row], count = counts[row];
-                var output = yv.AsSpan(row * dim, dim);
+                var output = yv.AsSpan((int)(variant.OutputRow(row, rowsPerHead, steps) * dim), dim);   // token-major with Merged
                 if (count == 0)
                 {
                     output.Clear();                                              // padding: sees nothing
@@ -371,8 +372,8 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
     // scores (the softmax terms over them, as the whole-row kernel takes them), then each element's weighted adds over the
     // row's positions in order.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void WeightedValues<TRows>(TRows cache, float[] scores, float[] yv, int first, int last, int chunks, int width, int rowsPerHead, int capacity,
-        int dim, int[] begins, int[] counts, int[] offsets) where TRows : struct, ICacheRows
+    private static void WeightedValues<TRows>(TRows cache, float[] scores, float[] yv, int first, int last, int chunks, int width, int rowsPerHead, int steps,
+        int capacity, int dim, int[] begins, int[] counts, int[] offsets, AttentionVariant variant) where TRows : struct, ICacheRows
     {
         var weights = ArrayPool<float>.Shared.Rent(capacity);
         try
@@ -381,7 +382,7 @@ internal sealed partial class CpuBackend : IMaskedCacheAttentionBackend
             for (int item = first; item < last; item++)
             {
                 int row = item / chunks, from = item % chunks * width, h = row / rowsPerHead, begin = begins[row], count = counts[row];
-                var output = yv.AsSpan(row * dim + from, Math.Min(width, dim - from));
+                var output = yv.AsSpan((int)(variant.OutputRow(row, rowsPerHead, steps) * dim) + from, Math.Min(width, dim - from));
                 if (count == 0)
                 {
                     output.Clear();                                          // padding: sees nothing

@@ -19,7 +19,7 @@ internal abstract partial class DesktopTests : Tests
         ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
         ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); float32 to and from bfloat16 and float16 on the device equal the CPU's bit for bit (NaN payloads, ties, subnormals, every 16-bit code); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
-        ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
+        ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, decodes as its GGUF type does, and encodes (q4_0's values back within half a step)", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
         ("element types: decoding with learned positions (a decoder's position table, and a position encoding's) takes no counted conversion on the device: the prompt's ids, the step's positions and the sampled ids in its index type; the tokens as without the cache, and the cached lookup the float positions' converted one bit for bit", LearnedPositionDecoding),
@@ -267,7 +267,7 @@ internal abstract partial class DesktopTests : Tests
         var q4k = ElementTypes.Get("q4_k");
         var q40 = ElementTypes.Get("Q4_0");
         Check(q4k.Describe() == "q4_k (4.5 bits a value, blocks of 256)" && q4k.ByteCount(512) == 288 && q4k.Scales is { PerBlock: 8, ZeroPoints: true }
-              && q4k.IsBlock && q4k.FromFloat32 is null, $"q4_k: {q4k.Describe()}, {q4k.Scales}");
+              && q4k.IsBlock && q4k.FromFloat32 is not null, $"q4_k: {q4k.Describe()}, {q4k.Scales} (and an encoder)");
         Check(q40.BitsPerValue == 4.5 && q40.Scales is { PerBlock: 1, ZeroPoints: false, Type: "float16" } && ElementTypes.Get("q8_0").BitsPerValue == 8.5,
             $"q4_0 and q8_0: {q40.Describe()}");
         Check(ThrowsWith<ArgumentException>(() => q4k.ByteCount(100), "whole blocks"), "a block format takes whole blocks");
@@ -283,8 +283,13 @@ internal abstract partial class DesktopTests : Tests
         var viaGguf = new float[32];
         q40.Decode(block, viaType);
         GgufTypes.Get(2).Dequantize(block, viaGguf);
-        Check(viaType.SequenceEqual(viaGguf) && ThrowsWith<NotSupportedException>(() => q40.Encode(viaType, block), "no conversion from float32"),
-            "q4_0 decodes as its GGUF type; it has no encoder");
+        var again = new byte[18];
+        q40.Encode(viaType, again);
+        var back = new float[32];
+        q40.Decode(again, back);
+        float step = MathF.Abs((float)BitConverter.UInt16BitsToHalf(BitConverter.ToUInt16(again, 0)));
+        Check(viaType.SequenceEqual(viaGguf) && viaType.Zip(back).All(v => MathF.Abs(v.First - v.Second) <= step * 0.5f + 1e-6f),
+            $"q4_0 decodes as its GGUF type, and its encoder gives those values back within half a step ({step})");
     }
 
     private static void ElementTypeChoosing(Device device)

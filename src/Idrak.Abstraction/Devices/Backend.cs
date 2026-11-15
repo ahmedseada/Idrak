@@ -176,8 +176,35 @@ public readonly record struct ConvGeometry(
 /// <param name="Softcap">The cap on the scaled scores (0: none).</param>
 public readonly record struct AttentionVariant(int Window, float Softcap)
 {
+    /// <summary>
+    /// Where the output rows go: 0 (the default) as the queries hold them, [heads, rowsPerHead, dim]; else the key/value
+    /// heads per sequence, the output written token-major, [sequences, steps, heads·dim], what an output projection reads
+    /// (<see cref="OutputRow"/>), so no copy rearranges the heads after attention. Given only to a device whose
+    /// <see cref="Backend.MergesAttention"/> says it writes so; it changes no value, only where each row is written.
+    /// </summary>
+    public int Merged { get; init; }
+
     /// <summary>Plain causal attention: no window and no cap.</summary>
     public bool IsPlain => Window <= 0 && Softcap <= 0f;
+
+    /// <summary>
+    /// The output row query row <paramref name="row"/> (row i of head h: h · <paramref name="rowsPerHead"/> + i) is written
+    /// to: itself, or with <see cref="Merged"/> (kv key/value heads per sequence, query heads sharing one stacked along the
+    /// rows: i = g · steps + s), the row of step s of sequence b = h / kv at query head (h % kv) · group + g:
+    /// ((b · steps + s) · kv + h % kv) · group + g, group = rowsPerHead / steps. With one step, each row is itself.
+    /// </summary>
+    public long OutputRow(long row, int rowsPerHead, int steps)
+    {
+        if (Merged <= 0)
+        {
+            return row;
+        }
+
+        long h = row / rowsPerHead;
+        int i = (int)(row - h * rowsPerHead), group = rowsPerHead / steps, g = i / steps, s = i - g * steps;
+        long b = h / Merged, kv = h - b * Merged;
+        return ((b * steps + s) * Merged + kv) * group + g;
+    }
 
     /// <summary>The first position a query whose causal limit is <paramref name="end"/> (exclusive) sees.</summary>
     public int Start(int end) => Window > 0 ? Math.Max(0, end - Window) : 0;
@@ -773,6 +800,15 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// <summary>Whether head size <paramref name="dim"/> has matrix-unit flash attention for training on this device.</summary>
     public bool MatrixUnitAttention(int dim) => _matrixUnits is { } units && units.AttentionHeadDim(dim);
 
+    /// <summary>
+    /// Whether this device's tiled attention <paramref name="operation"/> (<see cref="Operations.Ops.AttentionTiled"/>, or
+    /// <see cref="Operations.Ops.AttentionBFloat16"/> and <see cref="Operations.Ops.AttentionInt8"/> called tiled) writes its
+    /// output token-major when its <see cref="AttentionVariant.Merged"/> asks, for head size <paramref name="dim"/> and the
+    /// <paramref name="variant"/>'s window and cap, on the calling thread (its <c>MixedPrecision</c>): only then is it asked.
+    /// None does by default; the attention's caller then rearranges the heads itself.
+    /// </summary>
+    public virtual bool MergesAttention(Operation operation, int dim, AttentionVariant variant) => false;
+
     /// <summary>What the device reports about its hardware, for listings and diagnostics; empty when it reports nothing.</summary>
     public virtual BackendHardware Hardware => new();
 
@@ -1013,6 +1049,24 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
 
     /// <summary>Copies destination.Length floats starting at element <paramref name="offset"/>.</summary>
     public abstract void DownloadRange(Storage source, int offset, Span<float> destination);
+
+    /// <summary>
+    /// Copies the 16-bit values of <paramref name="block"/> (<paramref name="count"/> rows of <paramref name="columns"/>,
+    /// row-major) into <paramref name="destination"/>'s 16-bit values transposed: value (r, c) at
+    /// c · <paramref name="stride"/> + <paramref name="first"/> + r. A matrix's transpose is so made on the device a block of
+    /// rows at a time (<c>BFloat16Weight.FromStoredRows</c>), with no host copy of the whole. False, having written nothing,
+    /// when the device does not (the default): the caller transposes in host memory.
+    /// </summary>
+    /// <param name="block">The rows' values.</param>
+    /// <param name="count">The rows.</param>
+    /// <param name="columns">Values a row.</param>
+    /// <param name="destination">The storage written, its words two 16-bit values each.</param>
+    /// <param name="stride">The destination's 16-bit values a row (a transposed row: one of the block's columns).</param>
+    /// <param name="first">Where the block's first row lands within each destination row.</param>
+    public virtual bool UploadTransposed16(ReadOnlySpan<ushort> block, int count, int columns, Storage destination, int stride, int first) => false;
+
+    /// <summary>Whether <see cref="UploadTransposed16"/> transposes on this device (false: the default).</summary>
+    public virtual bool UploadsTransposed16 => false;
 
     /// <summary>
     /// Copies <paramref name="source"/> into floats [<paramref name="offset"/>, offset + source.Length) of

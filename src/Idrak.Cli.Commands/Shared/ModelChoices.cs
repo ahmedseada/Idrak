@@ -290,9 +290,10 @@ internal static class ModelChoices
     /// Without <c>-w</c> (or with <c>-w auto</c>) the weights' format is chosen before any weight is read
     /// (<see cref="PretrainedOptions.AutoWeights"/>: the largest that fits the device's free memory with the key/value room
     /// of the context), and the choice is said; <paramref name="autoWeights"/> false keeps float32 then (a reference
-    /// model, a conversion).
+    /// model, a conversion). <paramref name="keepPacked"/> false expands weights stored in a format of their own to float32
+    /// at load (a conversion writes float weights); null leaves it to the setting (IDRAK_KEEP_PACKED).
     /// </remarks>
-    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null, bool autoWeights = true)
+    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null, bool autoWeights = true, bool? keepPacked = null)
     {
         device ??= context.Device;
         string folder = Resolve(context, choice.Model);
@@ -326,6 +327,7 @@ internal static class ModelChoices
                 ElementType = choice.Dtype,
                 ExpertPlacement = choice.MoeExperts,
                 ElementTypeSource = choice.DtypeSource ?? DtypeOption,
+                KeepPacked = keepPacked,
             });
             progress.Clear();
         }

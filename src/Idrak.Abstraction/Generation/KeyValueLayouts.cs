@@ -99,6 +99,31 @@ public interface ISlidingWindowLayout : IKeyValueLayout
 }
 
 /// <summary>
+/// A key/value cache format whose attention can write its output token-major: [sequences, steps, heads·headDim], the rows
+/// an output projection reads, so no copy rearranges the heads after attention (the heads' results otherwise come as
+/// <see cref="IKeyValueLayout.Attend"/> returns them, [rows, queries, headDim], and the caller merges them). Tested once,
+/// when the cache is made (<see cref="KeyValueCache.MergedHeadsLayout"/>). The built-in formats are, on devices whose tiled
+/// attention writes so (<see cref="Backend.MergesAttention"/>).
+/// </summary>
+public interface IMergedHeadsLayout : IKeyValueLayout
+{
+    /// <summary>
+    /// <see cref="IKeyValueLayout.Attend"/> (with a <paramref name="variant"/>: <see cref="ISlidingWindowLayout.AttendVariant"/>)
+    /// of q [sequences · <paramref name="kvHeads"/>, group · steps, headDim] written token-major: [sequences, steps,
+    /// kvHeads · group · headDim], query head kv · group + g of step s at row s, columns (kv · group + g) · headDim, the
+    /// same values bit for bit. Null when the format or device has no such pass here (the caller merges the heads itself).
+    /// </summary>
+    /// <param name="q">The queries.</param>
+    /// <param name="cache">The cache, already holding this step's keys and values.</param>
+    /// <param name="context">The decoding state (position, mask).</param>
+    /// <param name="steps">New positions in this step.</param>
+    /// <param name="scale">The scale of the scores (1 / √headDim).</param>
+    /// <param name="kvHeads">Key/value heads per sequence (the cache's rows per sequence).</param>
+    /// <param name="variant">A sliding window or soft-capped scores (default: plain causal attention).</param>
+    Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant);
+}
+
+/// <summary>
 /// A key/value cache format the fused projection kernel (norms, rotary positions, head layout) may write keys and values
 /// straight into. The built-in float32 and bfloat16 formats are.
 /// </summary>
@@ -348,7 +373,13 @@ public static class KeyValueLayouts
         return new KeyValueLayoutChoice(layout, Picked: false, Source: from, $"selected by the user ({from})");
     }
 
-    private sealed class Float32Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout
+    // Whether the built-in formats' tiled pass over `cache` writes q's output token-major on q's device: q [rows, group ·
+    // steps, dim] over the cache's rows, kvHeads of them per sequence.
+    private static bool Merges(Tensor q, Operations.Operation operation, KeyValueCache cache, int kvHeads, AttentionVariant variant) =>
+        kvHeads > 0 && q.Rank == 3 && q.Shape[0] % kvHeads == 0 && q.Shape[0] == cache.Keys.Shape[0]
+        && q.Backend.MergesAttention(operation, cache.HeadDim, variant);
+
+    private sealed class Float32Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout, IMergedHeadsLayout
     {
         public override string Name => "float32";
 
@@ -385,6 +416,12 @@ public static class KeyValueLayouts
             AttentionVariant variant) =>
             Tensor.AttentionRows(q, cache.Keys, cache.Values, position, steps, scale, starts, headsPerRow, variant);
 
+        // A prompt's tiled pass, its output token-major where the device writes so.
+        public Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant) =>
+            steps >= 8 && cache.HeadDim <= q.Backend.Capabilities.TiledAttentionHeadDim && Merges(q, Operations.Ops.AttentionTiled, cache, kvHeads, variant)
+                ? Tensor.AttentionTiled(q, cache.Keys, cache.Values, context.PositionOf(cache), steps, scale, variant with { Merged = kvHeads })
+                : null;
+
         private static Tensor? Kernels(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant)
         {
             var capabilities = q.Backend.Capabilities;
@@ -399,7 +436,7 @@ public static class KeyValueLayouts
         }
     }
 
-    private sealed class Int8Layout : KeyValueLayout, IScaledLayout, IRecordableLayout, ISlidingWindowLayout
+    private sealed class Int8Layout : KeyValueLayout, IScaledLayout, IRecordableLayout, ISlidingWindowLayout, IMergedHeadsLayout
     {
         public override string Name => "int8";
 
@@ -458,9 +495,14 @@ public static class KeyValueLayouts
             cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
                 ? Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant)
                 : null;
+
+        public Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant) =>
+            steps >= 8 && cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim && Merges(q, Operations.Ops.AttentionInt8, cache, kvHeads, variant)
+                ? Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: true, variant with { Merged = kvHeads })
+                : null;
     }
 
-    private sealed class BFloat16Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout
+    private sealed class BFloat16Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout, IMergedHeadsLayout
     {
         public override string Name => "bfloat16";
 
@@ -512,6 +554,11 @@ public static class KeyValueLayouts
 
         public Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant);
+
+        public Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant) =>
+            steps >= 8 && Merges(q, Operations.Ops.AttentionBFloat16, cache, kvHeads, variant)
+                ? Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: true, variant with { Merged = kvHeads })
+                : null;
 
         public Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
             AttentionVariant variant) =>

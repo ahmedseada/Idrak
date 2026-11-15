@@ -99,6 +99,13 @@ public sealed partial class Tensor
     public static void WriteKeyValues(Tensor source, Tensor cache, Tensor position)
     {
         int heads = source._shape[0], steps = source._shape[1], dim = source._shape[2];
+        if (source._pending && source.Backend.Capabilities.StridedInputs.Contains(Operations.Ops.KeyValueWriteStrided) && source.ElementOrder.HasRows(dim))
+        {
+            // Keys or values split from a projection and permuted (a view) written where they are (plan 37, V1b).
+            source.Backend.KeyValueWriteStrided(source._storage, source.ElementOrder, cache.Storage, position.Storage, heads, steps, cache._shape[1], dim);
+            return;
+        }
+
         source.Backend.KeyValueWrite(source.Storage, cache.Storage, position.Storage, heads, steps, cache._shape[1], dim);
     }
 
@@ -117,11 +124,27 @@ public sealed partial class Tensor
     {
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
-        var y = Empty([heads, rowsPerHead, dim], q.Device);
-        q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, null, heads, rowsPerHead, steps,
-            keys._shape[1], dim, scale, variant);
+        var y = Empty(AttentionShape(heads, rowsPerHead, steps, dim, variant), q.Device);
+        if ((q._pending || keys._pending || values._pending) && q.Backend.Capabilities.StridedInputs.Contains(Operations.Ops.AttentionTiledStrided)
+            && q.ElementOrder.HasRows(dim) && keys.ElementOrder.HasRows(dim) && values.ElementOrder.HasRows(dim))
+        {
+            // Heads split from a projection and permuted (views) read where they are (plan 37, V1b), as CausalAttention reads them.
+            q.Backend.AttentionTiledStrided(q._storage, q.ElementOrder, keys._storage, keys.ElementOrder, values._storage, values.ElementOrder, position.Storage,
+                y.Storage, null, heads, rowsPerHead, steps, keys._shape[1], dim, scale, variant);
+        }
+        else
+        {
+            q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, position.Storage, y.Storage, null, heads, rowsPerHead, steps,
+                keys._shape[1], dim, scale, variant);
+        }
+
         return Traced("attention_tiled", y, start);
     }
+
+    // The shape attention writes: [heads, rowsPerHead, dim] as the queries are, or with the variant's Merged (key/value
+    // heads per sequence) token-major, [sequences, steps, heads·dim] (AttentionVariant.OutputRow).
+    internal static int[] AttentionShape(int heads, int rowsPerHead, int steps, int dim, AttentionVariant variant) =>
+        variant.Merged > 0 ? [heads / variant.Merged, steps, variant.Merged * (rowsPerHead / steps) * dim] : [heads, rowsPerHead, dim];
 
     /// <summary>
     /// Causal attention of q [heads, rowsPerHead, dim] over keys and values [heads, steps, dim] (row i sees positions

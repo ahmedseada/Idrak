@@ -108,6 +108,40 @@ public static class DecoderBuilder
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
+
+                // The generic and measured routes (ProductRoutes): the library's int8 and bfloat16 weights stored in the file's
+                // layout (PackedWeightFormats.Pack keeps them so), not read into today's packed layouts.
+                string? routed = ProductRoutes.Current == ProductRoute.Name ? null
+                    : (isHead && headName is not null ? headName : packedName)?.ToLowerInvariant() switch
+                    {
+                        "int8" => "int8",
+                        "bf16" or "bfloat16" => "bfloat16",
+                        null => (isHead && headName is not null) ? null : packed switch { PackedFormat.Int8 => "int8", PackedFormat.BFloat16 => "bfloat16", _ => null },
+                        _ => null,
+                    };
+                // A tied bfloat16 head stays today's bfloat16 head under the routes too (the embedding's bits, read transposed
+                // once): the embedding then reads its columns (Embedding.FromHead), one copy of the table, where a stored
+                // copy of the head would hold the table twice; its products take the routed bfloat16 lanes all the same.
+                if (routed == "bfloat16" && tiedTable is not null && weights is not null && headBFloat16)
+                {
+                    routed = null;
+                }
+
+                if (routed is not null)
+                {
+                    // As Adad converts (each type through its own lane, one rounding, never a float32 matrix): a bfloat16
+                    // checkpoint's bits kept as they are, else a block of the file's rows at a time encoded.
+                    if (routed == "bfloat16" && weights is not null && tiedTable is null && weights.ReadOutputBFloat16($"{name}.weight", shape, [])
+                        && Idrak.Abstraction.Generation.StoredWeight.FromFill(Idrak.Abstraction.ElementType.BFloat16, inputs, outputs, null, device,
+                            stored => weights.ReadOutputBFloat16($"{name}.weight", shape, System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ushort>(stored))) is { } bits16)
+                    {
+                        return Linear.FromPacked(bits16, b);
+                    }
+
+                    return Linear.FromPacked((weights is not null ? PackedWeightFormats.PackRows(routed, OutputRows, inputs, outputs, device) : null)
+                        ?? PackedWeightFormats.Pack(routed, Values(), inputs, outputs, device), b);
+                }
+
                 if (weights is not null && (isHead ? headBFloat16 : projectionsBFloat16))
                 {
                     var bits = tiedTable is not null
@@ -179,9 +213,28 @@ public static class DecoderBuilder
                             : Int8Weight.QuantizeColumns(inputs, outputs, device, TableRows);
                     }
 
+                    // A format packing from rows (the element types' stored formats) reads a block of the file's rows at a time.
+                    var byRows = isHead && headFactory is not null ? headFactory : factory;
+                    if (byRows is not null && weights is not null && PackedWeightFormats.PackRows(byRows, OutputRows, inputs, outputs, device) is { } fromRows)
+                    {
+                        return fromRows;
+                    }
+
                     return isHead && headFactory is not null ? PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device)
                         : factory is not null ? PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device)
                         : PackedWeightFormats.Pack(packed!.Value, Values(), inputs, outputs, device);
+                }
+
+                // The weight's output rows as the file holds them (a tied head's: the table's rows), a block at a time.
+                bool OutputRows(int first, int count, Span<float> destination)
+                {
+                    if (tiedTable is not null)
+                    {
+                        TableRows(first, count, destination);
+                        return true;
+                    }
+
+                    return weights!.ReadOutputRows($"{name}.weight", shape, first, count, destination);
                 }
             }
 

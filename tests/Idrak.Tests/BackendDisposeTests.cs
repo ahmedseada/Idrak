@@ -18,6 +18,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] BackendDisposeGroup =
     [
         ("backend dispose: a separate CPU backend gives its pool back; Allocate, Upload, Download and an operation after it throw ObjectDisposedException naming the backend; Return is a no-op and a second Dispose does nothing; the device's own backend ignores Dispose", d => { CpuOnly(d); SeparateCpuBackendDisposes(); }),
+        ("backend dispose: a miss in the CPU pool while it caches as much in other sizes frees only as much as it needs, the least recently used sizes first (rule 77: in use plus cached does not grow), so the sizes still in use stay cached and hit", d => { CpuOnly(d); CpuPoolFreesOnlyWhatAMissNeeds(); }),
         ("backend dispose: a simulated cluster disposes every rank's carved backend when the run ends (counted), a failed rank's as it leaves, a tensor kept past the run fails naming its device; ReleaseDevices=false keeps them until SimulatedDevices.Release", d => { CpuOnly(d); SimulatedClusterReleasesDevices(); }),
         ("backend dispose: a carved device released before its first use refuses to start a backend, naming the release; Release refuses a device that is not carved, and carving alike afterwards gives a new device", d => { CpuOnly(d); ReleasedCarvedDevice(); }),
         ("backend dispose: creating, using and disposing a separate backend of the GPU again and again leaves the driver's free memory where it started (within its granularity; not measured where the driver reports a CPU device, whose free memory is the host's), and each disposed one refuses calls", SeparateGpuBackendReturnsMemory),
@@ -55,6 +56,34 @@ internal abstract partial class DesktopTests : Tests
         Check(!own.IsDisposed, "the CPU device's own backend ignores Dispose");
         using var x = Tensor.From([1f, 2f, 3f], [3], Device.Cpu);
         Check((x + x).ToArray().SequenceEqual([2f, 4f, 6f]), "the CPU device's own backend still computes after a Dispose call");
+    }
+
+    // Sizes 200 (given back first) and 100 (given back last) cached; a miss of 150 frees the 200 block only: the cache keeps
+    // the 100 block, the process holds no more than before (in use + cached), and the next 100 is a hit.
+    private static void CpuPoolFreesOnlyWhatAMissNeeds()
+    {
+        var backend = Device.Cpu.CreateSeparateBackend(new SeparateBackendOptions("pool test", 16L << 20));
+        try
+        {
+            var old = backend.Allocate(200, zeroed: false);
+            var recent = backend.Allocate(100, zeroed: false);
+            backend.Return(old);
+            backend.Return(recent);
+            var before = backend.GetMemoryUsage();
+            Check(before.Cached == 300 * sizeof(float), $"both blocks cached: {before}");
+            var missed = backend.Allocate(150, zeroed: false);
+            var after = backend.GetMemoryUsage();
+            Check(after.Cached == 100 * sizeof(float), $"the miss freed the least recently used size only (the 100-float block stays cached): {after}");
+            Check(after.InUse + after.Cached <= before.InUse + before.Cached, $"in use plus cached did not grow: before {before}, after {after}");
+            var again = backend.Allocate(100, zeroed: false);
+            Check(backend.GetMemoryUsage().Cached == 0, $"the size still in use is a hit: {backend.GetMemoryUsage()}");
+            backend.Return(missed);
+            backend.Return(again);
+        }
+        finally
+        {
+            backend.Dispose();
+        }
     }
 
     private static void SimulatedClusterReleasesDevices()

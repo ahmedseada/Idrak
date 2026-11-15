@@ -116,6 +116,10 @@ public sealed class RenamedTensorStore : IBFloat16TensorStore
         _inner is IBFloat16TensorStore inner && Resolve(name) is (var stored, null) && inner.ReadBFloat16(stored, transposed, destination, stride);
 
     /// <inheritdoc />
+    public bool ReadBFloat16Rows(string name, int first, int count, Span<ushort> destination) =>
+        _inner is IBFloat16TensorStore inner && Resolve(name) is (var stored, null) && inner.ReadBFloat16Rows(stored, first, count, destination);
+
+    /// <inheritdoc />
     public bool ReadRows(string name, int first, int count, Span<float> destination) =>
         Resolve(name) is (var stored, null) && _inner.ReadRows(stored, first, count, destination);   // a folded weight is computed whole
 

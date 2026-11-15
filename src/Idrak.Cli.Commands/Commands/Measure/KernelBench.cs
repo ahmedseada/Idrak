@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using Idrak.Abstraction.Devices;
 using Idrak.Layers;
 
 namespace Idrak.Cli.Commands.Measure;
@@ -32,7 +33,10 @@ internal sealed record BenchResult(string Name, double Value, string Unit, bool 
 internal static class KernelBench
 {
     /// <summary>The benchmark names <c>--kernels</c> accepts.</summary>
-    public static readonly string[] Names = ["matmul", "gemv", "attention"];
+    public static readonly string[] Names = ["matmul", "gemv", "prompt", "attention"];
+
+    /// <summary>The benchmarks run when <c>--kernels</c> names none.</summary>
+    public static readonly string[] DefaultNames = ["matmul", "gemv", "attention"];
 
     /// <summary>Runs the chosen benchmarks on <paramref name="device"/>; <paramref name="small"/> uses small shapes (slow devices, quick checks).</summary>
     public static List<BenchResult> Run(Device device, IReadOnlyCollection<string> kernels, int repeats, bool small, IReadOnlyList<string> packedFormats,
@@ -54,7 +58,8 @@ internal static class KernelBench
         using var noGrad = Autograd.NoGrad();
         if (kernels.Contains("matmul"))
         {
-            foreach (int size in small ? new[] { 128, 256 } : [1024, 2048])
+            ProductRoutes.ForgetChoices();
+        foreach (int size in small ? new[] { 128, 256 } : [1024, 2048])
             {
                 progress?.Invoke($"matmul {size}");
                 using var a = Tensor.From(Values((long)size * size), [size, size], device);
@@ -95,6 +100,7 @@ internal static class KernelBench
                 foreach (string format in packedFormats)
                 {
                     progress?.Invoke($"gemv {format} {k}x{n}");
+                    ProductRoutes.ForgetChoices();
                     using var packed = PackedWeightFormats.Pack(format, weights, k, n, device);
                     var time = packed is IKernelPackedWeight kernel
                         ? Time(device, () => PackedProduct(kernel, x, y), repeats, settle)
@@ -104,8 +110,59 @@ internal static class KernelBench
                             packed.MatMul(x);
                         }, repeats, settle);
                     Add(new BenchResult($"gemv {format} 1x{k} -> {n}", time.Micros, "µs", false,
-                        string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (time.Micros * 1e3):F1} GB/s of weights, {time.AllocatedBytes:F0} B allocated a call"),
+                        string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (time.Micros * 1e3):F1} GB/s of weights, {time.AllocatedBytes:F0} B allocated a call, {Weights(packed)}{Chosen()}"),
                         time.ColdMicros, time.WarmupCalls, time.Settled, time.ColdJitMilliseconds, time.ColdJitMethods));
+                }
+            }
+        }
+
+        if (kernels.Contains("prompt"))
+        {
+            // Prompt-sized products through the same packed weights: the tensor's product (IPackedWeight.MatMul), as a
+            // model's prompt pass runs it, in float32 and with mixed-precision bfloat16 (the devices' matrix units).
+            int rows = small ? 64 : 512;
+            var shapes = small ? new[] { (256, 768), (768, 256) } : [(1024, 3072), (3072, 1024), (1024, 2048), (1024, 1024), (2048, 1024)];
+            var buffer = new float[shapes.Max(s => (long)s.Item1 * s.Item2)];
+            foreach (var (k, n) in shapes)
+            {
+                var weights = buffer.AsSpan(0, k * n);
+                for (int i = 0; i < weights.Length; i++)
+                {
+                    weights[i] = random.NextSingle() - 0.5f;
+                }
+
+                using var x = Tensor.From(Values((long)rows * k), [rows, k], device);
+                foreach (string format in packedFormats)
+                {
+                    using var packed = PackedWeightFormats.Pack(format, weights, k, n, device);
+                    foreach (bool mixed in new[] { false, true })
+                    {
+                        progress?.Invoke($"prompt {format} {rows}x{k}x{n}{(mixed ? " mixed bfloat16" : "")}");
+                        ProductRoutes.ForgetChoices();
+                        void Product()
+                        {
+                            using var scope = new TensorScope();
+                            packed.MatMul(x);
+                        }
+
+                        BenchTime time;
+                        if (mixed)
+                        {
+                            using (MixedPrecision.BFloat16())
+                            {
+                                time = Time(device, Product, repeats, settle);
+                            }
+                        }
+                        else
+                        {
+                            time = Time(device, Product, repeats, settle);
+                        }
+
+                        double flops = 2.0 * rows * n * k;
+                        Add(new BenchResult($"prompt {format} {rows}x{k} -> {n}{(mixed ? " mixed bfloat16" : "")}", flops / (time.Micros * 1e3), "GFLOP/s", true,
+                            string.Create(CultureInfo.InvariantCulture, $"{time.Micros / 1000:F3} ms, {Weights(packed)}{Chosen()}"),
+                            flops / (time.ColdMicros * 1e3), time.WarmupCalls, time.Settled, time.ColdJitMilliseconds, time.ColdJitMethods));
+                    }
                 }
             }
         }
@@ -173,6 +230,15 @@ internal static class KernelBench
                 throw new NotSupportedException($"gemv: no device product for the built-in format {weight.Format}.");
         }
     }
+
+    // The weights' memory and form, for a row's note: "1.5 MiB of weights, q8_0 (as stored)".
+    private static string Weights(IPackedWeight weight) =>
+        string.Create(CultureInfo.InvariantCulture, $"{weight.Bytes / 1048576.0:F2} MiB of weights, {weight.Description}");
+
+    // What the measured route chose for the row (ProductRoutes), or nothing under the other routes.
+    private static string Chosen() => ProductRoutes.Current is not (ProductRoute.Measured or ProductRoute.Adad) || ProductRoutes.Choices.Count == 0
+        ? ""
+        : "; measured: " + string.Join(", ", ProductRoutes.Choices.Select(c => $"{c.Key} {c.Value}"));
 
     // One cached pass of the attention layer over `input`'s positions.
     private static void Cached(MultiHeadAttention layer, Tensor input, DecodingContext context)

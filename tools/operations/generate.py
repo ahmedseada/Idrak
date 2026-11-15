@@ -35,7 +35,8 @@ BACKEND = ROOT / "src/Idrak.Abstraction/Devices/Backend.cs"
 # The files declaring operations, in slot order: Backend.cs first, then partial files whose operations come after its
 # (a new group of operations goes in a file of its own, appended here, so the slots of the earlier ones do not move).
 SOURCES = [BACKEND, ROOT / "src/Idrak.Abstraction/Devices/Backend.Routing.cs", ROOT / "src/Idrak.Abstraction/Devices/Backend.Layout.cs",
-           ROOT / "src/Idrak.Abstraction/Devices/Backend.Elements.cs", ROOT / "src/Idrak.Abstraction/Devices/Backend.Stored.cs"]
+           ROOT / "src/Idrak.Abstraction/Devices/Backend.Elements.cs", ROOT / "src/Idrak.Abstraction/Devices/Backend.Stored.cs",
+           ROOT / "src/Idrak.Abstraction/Devices/Backend.Views.cs", ROOT / "src/Idrak.Abstraction/Devices/Backend.Routes.cs"]
 # The parameters holding indices, token ids or offsets (plan 37, T1), by operation: "in" read by the kernel, "out" written
 # by it, "inout" both. Each is a storage of the device's index type (BackendCapabilities.IndexType); `Name(...)` converts
 # one of another type for the call (Backend.IndicesAs / IndicesBack, counted) before the kernel runs.
@@ -61,6 +62,7 @@ INDICES = {
 TYPED_AS_STORED = {
     "ConvertElements": {"source", "destination"},
     "StoredMatMul": {"weight"},
+    "StoredMatMulAddRmsNorm": {"weight"},
     "ExpandStored": {"weight"},
 }
 OPERATIONS = ROOT / "src/Idrak.Abstraction/Operations/Operations.g.cs"

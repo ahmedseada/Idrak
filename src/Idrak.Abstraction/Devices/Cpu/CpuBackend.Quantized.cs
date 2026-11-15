@@ -14,7 +14,8 @@ internal sealed partial class CpuBackend
     // Fewest columns per parallel work item: eight vectors (CpuTuning.MinColumns), a multiple of the int8 kernel's byte vectors.
     private static int Int8MinBlock => CpuTuning.ColumnBlock;
 
-    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    // Today's int8 kernel (ProductRoute.Name, the named lane of the others): the few-row tiles or the streaming loop.
+    private void Int8Direct(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
         float[] xv = D(x), sv = D(scales), yv = D(y);
         int stride = (n + 3) / 4 * 4;                                  // bytes per weight row
@@ -189,7 +190,9 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
+    // Today's bfloat16 product (ProductRoute.Name, the named lane of the others): more rows than the few-row limit expand the
+    // weights whole and take the float32 product; fewer read them in place.
+    private void BFloat16Direct(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
         {
@@ -407,7 +410,7 @@ internal sealed partial class CpuBackend
                         lv[row] = max + CpuMath.Log(sum);
                     }
 
-                    var output = yv.AsSpan(row * dim, dim);
+                    var output = yv.AsSpan((int)(variant.OutputRow(row, rowsPerHead, steps) * dim), dim);   // token-major with Merged
                     output.Clear();
                     for (int c = 0; c < count; c++)
                     {
@@ -649,17 +652,10 @@ internal sealed partial class CpuBackend
     public override void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
         float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        var normalized = Allocate(rows * cols, zeroed: false);
-        try
-        {
-            RmsNormAffine(x, gain, normalized, rows, cols, eps, offset);
-            Copy(normalized, y, rows * cols);
-            Rope(normalized, y, cos, sin, positions, rows, heads, steps, cols, half, interleaved, 1f);
-        }
-        finally
-        {
-            normalized.Release();
-        }
+        // Normalized into y, then rotated in place (each pair read before either is written), the dimensions it does not
+        // rotate keeping their normalized values: no buffer and no copy of the rows.
+        RmsNormAffine(x, gain, y, rows, cols, eps, offset);
+        RopeKernel(y, y, cos, sin, positions, rows, heads, steps, cols, half, interleaved, 1f);
     }
 
     public override void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)

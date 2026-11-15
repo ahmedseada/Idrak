@@ -71,6 +71,22 @@ public sealed partial class Tensor
         }
 
         var storage = t.Storage;
+        if (ReferenceEquals(type, stored) && bytes.Length == (long)storage.Length * sizeof(float))
+        {
+            // Whole words of the tensor's own type: uploaded from the bytes as they are, with no staging copy.
+            try
+            {
+                t.Backend.Upload(MemoryMarshal.Cast<byte, float>(bytes), storage);
+            }
+            catch
+            {
+                t.Dispose();
+                throw;
+            }
+
+            return t;
+        }
+
         float[] words = ArrayPool<float>.Shared.Rent(Math.Max(1, storage.Length));
         try
         {

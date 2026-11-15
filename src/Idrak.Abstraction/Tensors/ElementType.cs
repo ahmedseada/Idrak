@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using Idrak.Abstraction.Formats;
 
 namespace Idrak.Abstraction;
@@ -30,6 +31,468 @@ public delegate void ElementEncoder(ReadOnlySpan<float> source, Span<byte> desti
 public sealed record BlockScales(string Type, int PerBlock, bool ZeroPoints, string? Layout = null);
 
 /// <summary>
+/// How a float type's bits read (Adad's description): one sign bit, <paramref name="Exponent"/> exponent bits biased by
+/// 2^(Exponent − 1) − 1, then <paramref name="Mantissa"/> mantissa bits, the sign the highest; the largest exponent is an
+/// infinity (mantissa 0) or a NaN, the smallest a zero or a subnormal, as IEEE 754's formats are. A kernel that widens
+/// values from this description alone needs nothing named after the type. A float whose special values differ (E4M3fn:
+/// no infinity) declares none.
+/// </summary>
+/// <param name="Exponent">Exponent bits.</param>
+/// <param name="Mantissa">Mantissa bits.</param>
+public readonly record struct FloatBits(int Exponent, int Mantissa)
+{
+    /// <summary>The bits a value takes: 1 + <see cref="Exponent"/> + <see cref="Mantissa"/>.</summary>
+    public int Bits => 1 + Exponent + Mantissa;
+
+    /// <summary>The exponent's bias: 2^(<see cref="Exponent"/> − 1) − 1.</summary>
+    public int Bias => (1 << (Exponent - 1)) - 1;
+}
+
+/// <summary>
+/// How a block format whose values are integer codes times one scale per block reads (Adad's description): each block of
+/// <paramref name="Values"/> values takes <paramref name="Bytes"/> bytes, its scale a float of <paramref name="Scale"/>'s
+/// bits at byte <paramref name="ScaleOffset"/>, its codes <paramref name="CodeBits"/> bits each from byte
+/// <paramref name="CodeOffset"/> in value order (the first in the lowest bits), or, 4-bit codes with
+/// <paramref name="NibblesSplit"/>, ggml's order (byte i holds value i in its low half and value i + Values / 2 in its
+/// high half, as q4_0 stores them), and value i = (code i + <paramref name="CodeBias"/>) · scale, the code read as two's
+/// complement when <paramref name="SignedCodes"/>; with a <paramref name="CodeTable"/> (ggml's IQ4_NL: a non-linear grid)
+/// the code first stands for its entry of the table, value i = (table[code i] + <paramref name="CodeBias"/>) · scale. A kernel that widens values from this description alone needs nothing
+/// named after the format. A format whose scales are not one plain float per block (the k-quants' scaled sub-blocks), or
+/// that adds a minimum or high bits (q4_1, q5_x), declares none.
+/// </summary>
+/// <param name="Values">Values a block holds.</param>
+/// <param name="Bytes">Bytes a block takes.</param>
+/// <param name="CodeBits">Bits a code takes.</param>
+/// <param name="SignedCodes">Whether a code is two's complement.</param>
+/// <param name="CodeBias">Added to each code before the scale.</param>
+/// <param name="Scale">The scale's float bits.</param>
+/// <param name="ScaleOffset">The scale's first byte in the block.</param>
+/// <param name="CodeOffset">The first code's byte in the block.</param>
+/// <param name="NibblesSplit">4-bit codes in ggml's order: byte i holds value i (low half) and value i + Values / 2 (high half).</param>
+/// <param name="CodeTable">The integer each code stands for (2^CodeBits entries), or null: the code itself.</param>
+public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool SignedCodes, int CodeBias, FloatBits Scale, int ScaleOffset, int CodeOffset, bool NibblesSplit = false,
+    IReadOnlyList<int>? CodeTable = null);
+
+/// <summary>
+/// A bit plane of a super-block's codes (<see cref="SuperBlock"/>): fields of <paramref name="Bits"/> bits from byte
+/// <paramref name="Offset"/>, in groups of <paramref name="Group"/> values. A group takes Group · Bits / 8 bytes; value w of
+/// a group lies in byte w mod (Group · Bits / 8) of it, at bit Bits · ⌊w / (Group · Bits / 8)⌋ (ggml's split order: Q4_K's
+/// codes are a plane of 4 bits in groups of 64, Q6_K's high bits a plane of 2 bits in groups of 128).
+/// </summary>
+/// <param name="Offset">The plane's first byte in the block.</param>
+/// <param name="Bits">Bits a field takes (1, 2, 4 or 8).</param>
+/// <param name="Group">Values a group holds (a power of two).</param>
+public sealed record CodePlane(int Offset, int Bits, int Group)
+{
+    /// <summary>The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it.</summary>
+    public (int Byte, int Shift) Place(int value)
+    {
+        int per = Group * Bits / 8, w = value % Group;
+        return (Offset + value / Group * per + w % per, Bits * (w / per));
+    }
+}
+
+/// <summary>
+/// A piece of a sub-block's scale or minimum (<see cref="SuperBlock"/>): <paramref name="Bits"/> bits at bit
+/// <paramref name="Shift"/> of byte <paramref name="Offset"/> of the block; a value's pieces are listed from its low bits up.
+/// </summary>
+/// <param name="Offset">The byte in the block.</param>
+/// <param name="Shift">The piece's lowest bit in the byte.</param>
+/// <param name="Bits">Bits the piece takes.</param>
+public readonly record struct ScalePiece(int Offset, int Shift, int Bits);
+
+/// <summary>
+/// How a grid-codebook format reads (ggml's IQ2_XXS, IQ3_XXS; Adad's description extended): each block of
+/// <paramref name="Values"/> values takes <paramref name="Bytes"/> bytes; value v is (scale_j · magnitude) · sign, with
+/// j = v / <paramref name="SubValues"/> its sub-block, scale_j = (d · (s_j + <paramref name="SubScaleOffset"/>)) ·
+/// <paramref name="SubScaleFactor"/> (d the float of <paramref name="Scale"/>'s bits at <paramref name="ScaleOffset"/>,
+/// s_j from its pieces), magnitude = <paramref name="Grid"/>[index_e · <paramref name="EntryValues"/> + v mod
+/// <paramref name="EntryValues"/>] for its grid entry e = v / EntryValues (index_e from <paramref name="Entries"/>[e]),
+/// and sign −1 where bit (v mod <paramref name="SignValues"/>) of <paramref name="SignTable"/>[sign index] is set, its
+/// group's sign index from <paramref name="Signs"/>[v / SignValues].
+/// </summary>
+/// <param name="Values">Values a block holds.</param>
+/// <param name="Bytes">Bytes a block takes.</param>
+/// <param name="Scale">The super-scale's float bits.</param>
+/// <param name="ScaleOffset">The super-scale's first byte.</param>
+/// <param name="SubValues">Values a sub-block's scale covers.</param>
+/// <param name="SubScales">Each sub-block's scale, as pieces.</param>
+/// <param name="SubScaleOffset">Added to each sub-block's scale.</param>
+/// <param name="SubScaleFactor">Times each sub-block's scale.</param>
+/// <param name="EntryValues">Values a grid entry holds.</param>
+/// <param name="Entries">Each entry's index into the grid, as pieces.</param>
+/// <param name="Grid">The grid: each entry's magnitudes.</param>
+/// <param name="SignValues">Values a sign mask covers.</param>
+/// <param name="Signs">Each group's index into the sign table, as pieces.</param>
+/// <param name="SignTable">The sign masks (bit i set: value i of the group negative).</param>
+public sealed record GridBlock(int Values, int Bytes, FloatBits Scale, int ScaleOffset, int SubValues, IReadOnlyList<IReadOnlyList<ScalePiece>> SubScales,
+    float SubScaleOffset, float SubScaleFactor, int EntryValues, IReadOnlyList<IReadOnlyList<ScalePiece>> Entries, IReadOnlyList<int> Grid,
+    int SignValues, IReadOnlyList<IReadOnlyList<ScalePiece>> Signs, IReadOnlyList<int> SignTable)
+{
+    /// <summary>The float of <see cref="Scale"/>'s bits (float16 or bfloat16) at byte <paramref name="offset"/>.</summary>
+    public float FloatAt(ReadOnlySpan<byte> block, int offset)
+    {
+        ushort bits = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(block[offset..]);
+        return Scale.Exponent == 8 ? BitConverter.Int32BitsToSingle(bits << 16) : (float)BitConverter.UInt16BitsToHalf(bits);
+    }
+
+    /// <summary>The values of whole blocks of <paramref name="source"/> into <paramref name="destination"/>, by this description alone.</summary>
+    public void Decode(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        Span<float> scales = stackalloc float[Values / SubValues];
+        if (Plan is not null)
+        {
+            // Each value scale_j · (sign · magnitude): the same bits as (scale_j · magnitude) · sign, a sign flip being exact.
+            Span<sbyte> codes = stackalloc sbyte[Values];
+            for (int b = 0; b < destination.Length / Values; b++)
+            {
+                DecodeCodes(source.Slice(b * Bytes, Bytes), codes, scales);
+                var into = destination.Slice(b * Values, Values);
+                for (int v = 0; v < Values; v++)
+                {
+                    into[v] = scales[v / SubValues] * codes[v];
+                }
+            }
+
+            return;
+        }
+
+        for (int b = 0; b < destination.Length / Values; b++)
+        {
+            var block = source.Slice(b * Bytes, Bytes);
+            float d = FloatAt(block, ScaleOffset);
+            for (int j = 0; j < scales.Length; j++)
+            {
+                scales[j] = d * (SuperBlock.Assemble(SubScales[j], block, false) + SubScaleOffset) * SubScaleFactor;
+            }
+
+            var into = destination.Slice(b * Values, Values);
+            for (int e = 0; e < Values / EntryValues; e++)
+            {
+                int index = SuperBlock.Assemble(Entries[e], block, false) * EntryValues;
+                for (int i = 0; i < EntryValues; i++)
+                {
+                    int v = e * EntryValues + i;
+                    int mask = SignTable[SuperBlock.Assemble(Signs[v / SignValues], block, false)];
+                    into[v] = scales[v / SubValues] * Grid[index + i] * ((mask >> (v % SignValues) & 1) != 0 ? -1f : 1f);
+                }
+            }
+        }
+    }
+
+    // The description's fields as flat arrays, built once (CodePlan): what DecodeCodes reads, or null where the codes are
+    // not int8 (a magnitude past ±127, sign groups other than 8 values, entries that do not divide 8).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<GridBlock, object> Plans = new();
+
+    private CodePlan? Plan => Plans.GetValue(this, static g => (object?)CodePlan.Of(g) ?? g) as CodePlan;
+
+    /// <summary>Whether <see cref="DecodeCodes"/> reads this description: its signed magnitudes within int8, sign groups of 8 values.</summary>
+    internal bool HasCodes => Plan is not null;
+
+    /// <summary>
+    /// One block's codes (sign · magnitude, as int8: <paramref name="codes"/> holds <see cref="Values"/>) and each sub-block's
+    /// scale (<paramref name="scales"/> holds Values / SubValues): value v is scales[v / SubValues] · codes[v].
+    /// </summary>
+    internal void DecodeCodes(ReadOnlySpan<byte> block, Span<sbyte> codes, Span<float> scales)
+    {
+        var plan = Plan!;
+        float d = FloatAt(block, ScaleOffset);
+        for (int j = 0; j < scales.Length; j++)
+        {
+            scales[j] = d * (plan.Sub.Read(block, j) + SubScaleOffset) * SubScaleFactor;
+        }
+
+        var grid = plan.Grid.AsSpan();
+        for (int e = 0; e < Values / EntryValues; e++)
+        {
+            grid.Slice(plan.Entry.Read(block, e) * EntryValues, EntryValues).CopyTo(codes.Slice(e * EntryValues, EntryValues));
+        }
+
+        // Each group's sign mask as bytes (0xFF where negative): v = (v ^ m) − m, two groups a pass.
+        int groups = Values / 8, g0 = 0;
+        for (; g0 + 2 <= groups; g0 += 2)
+        {
+            var v = Vector128.Create<sbyte>(codes.Slice(g0 * 8, 16));
+            var m = Vector128.Create(plan.SignBytes[plan.Sign.Read(block, g0)], plan.SignBytes[plan.Sign.Read(block, g0 + 1)]).AsSByte();
+            ((v ^ m) - m).CopyTo(codes.Slice(g0 * 8, 16));
+        }
+
+        for (; g0 < groups; g0++)
+        {
+            int mask = SignTable[plan.Sign.Read(block, g0)];
+            for (int i = 0; i < 8; i++)
+            {
+                if ((mask >> i & 1) != 0)
+                {
+                    codes[g0 * 8 + i] = (sbyte)-codes[g0 * 8 + i];
+                }
+            }
+        }
+    }
+
+    // Fields of pieces flattened: field f's pieces at [Start[f], Start[f + 1]), each its byte, shift, mask and place.
+    private sealed class FieldPlan(int[] start, int[] offset, int[] shift, int[] mask, int[] place)
+    {
+        public static FieldPlan Of(IReadOnlyList<IReadOnlyList<ScalePiece>> fields)
+        {
+            var start = new int[fields.Count + 1];
+            var (offset, shift, mask, place) = (new List<int>(), new List<int>(), new List<int>(), new List<int>());
+            for (int f = 0; f < fields.Count; f++)
+            {
+                int at = 0;
+                foreach (var q in fields[f])
+                {
+                    offset.Add(q.Offset);
+                    shift.Add(q.Shift);
+                    mask.Add((1 << q.Bits) - 1);
+                    place.Add(at);
+                    at += q.Bits;
+                }
+
+                start[f + 1] = offset.Count;
+            }
+
+            return new FieldPlan(start, [.. offset], [.. shift], [.. mask], [.. place]);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public int Read(ReadOnlySpan<byte> block, int field)
+        {
+            int value = 0;
+            for (int p = start[field]; p < start[field + 1]; p++)
+            {
+                value |= (block[offset[p]] >> shift[p] & mask[p]) << place[p];
+            }
+
+            return value;
+        }
+    }
+
+    private sealed class CodePlan
+    {
+        public required FieldPlan Sub { get; init; }
+
+        public required FieldPlan Entry { get; init; }
+
+        public required FieldPlan Sign { get; init; }
+
+        public required sbyte[] Grid { get; init; }
+
+        public required ulong[] SignBytes { get; init; }
+
+        public static CodePlan? Of(GridBlock g)
+        {
+            bool fits = g.SignValues == 8 && g.EntryValues is 1 or 2 or 4 or 8 && g.Values % 16 == 0 && g.Values % g.SubValues == 0
+                && g.Grid.All(v => v is >= -127 and <= 127) && g.SignTable.All(v => v is >= 0 and <= 255);
+            if (!fits)
+            {
+                return null;
+            }
+
+            var signBytes = new ulong[g.SignTable.Count];
+            for (int s = 0; s < signBytes.Length; s++)
+            {
+                for (int i = 0; i < 8; i++)
+                {
+                    if ((g.SignTable[s] >> i & 1) != 0)
+                    {
+                        signBytes[s] |= 0xFFUL << (8 * i);
+                    }
+                }
+            }
+
+            return new CodePlan
+            {
+                Sub = FieldPlan.Of(g.SubScales), Entry = FieldPlan.Of(g.Entries), Sign = FieldPlan.Of(g.Signs),
+                Grid = [.. g.Grid.Select(v => (sbyte)v)], SignBytes = signBytes,
+            };
+        }
+    }
+}
+
+/// <summary>
+/// How a super-block format reads (ggml's k-quants, Adad's description extended): each block of <paramref name="Values"/>
+/// values takes <paramref name="Bytes"/> bytes; a value's code is the fields of <paramref name="Planes"/> at its place (the
+/// first plane the lowest bits); value v of sub-block j = v / <paramref name="SubValues"/> is
+/// (d · (scale_j + <paramref name="SubScaleBias"/>)) · (code + <paramref name="CodeBias"/>) − dmin · min_j, d the float of
+/// <paramref name="Scale"/>'s bits at <paramref name="ScaleOffset"/>, dmin the same at <paramref name="MinOffset"/> (−1:
+/// none), scale_j and min_j assembled from their pieces (<paramref name="SubScales"/>, <paramref name="SubMins"/>), scale_j
+/// two's complement over its bits when <paramref name="SubScalesSigned"/>. A kernel that widens values from this
+/// description alone needs nothing named after the format.
+/// </summary>
+/// <param name="Values">Values a block holds.</param>
+/// <param name="Bytes">Bytes a block takes.</param>
+/// <param name="Planes">The codes' bit planes, the lowest bits first.</param>
+/// <param name="CodeBias">Added to each code.</param>
+/// <param name="Scale">The super-scale's (and super-minimum's) float bits.</param>
+/// <param name="ScaleOffset">The super-scale's first byte.</param>
+/// <param name="MinOffset">The super-minimum's first byte, or −1.</param>
+/// <param name="SubValues">Values a sub-block's scale covers.</param>
+/// <param name="SubScales">Each sub-block's scale, as pieces.</param>
+/// <param name="SubScaleBias">Added to each sub-block's scale.</param>
+/// <param name="SubScalesSigned">Whether a sub-block's scale is two's complement.</param>
+/// <param name="SubMins">Each sub-block's minimum, as pieces, or null.</param>
+public sealed record SuperBlock(int Values, int Bytes, IReadOnlyList<CodePlane> Planes, int CodeBias, FloatBits Scale, int ScaleOffset, int MinOffset,
+    int SubValues, IReadOnlyList<IReadOnlyList<ScalePiece>> SubScales, int SubScaleBias, bool SubScalesSigned, IReadOnlyList<IReadOnlyList<ScalePiece>>? SubMins)
+{
+    // Each description's places once: per plane, each value's byte and shift (Place).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SuperBlock, (int[] Byte, int[] Shift)[]> Places = new();
+
+    /// <summary>A sub-block's scale or minimum from its <paramref name="pieces"/> in <paramref name="block"/>.</summary>
+    public static int Assemble(IReadOnlyList<ScalePiece> pieces, ReadOnlySpan<byte> block, bool signed)
+    {
+        int value = 0, at = 0;
+        for (int i = 0; i < pieces.Count; i++)                             // indexed: no enumerator a call (a hot path)
+        {
+            var piece = pieces[i];
+            value |= (block[piece.Offset] >> piece.Shift & ((1 << piece.Bits) - 1)) << at;
+            at += piece.Bits;
+        }
+
+        return signed ? value << (32 - at) >> (32 - at) : value;
+    }
+
+    /// <summary>The float of <see cref="Scale"/>'s bits (float16 or bfloat16) at byte <paramref name="offset"/>.</summary>
+    public float FloatAt(ReadOnlySpan<byte> block, int offset)
+    {
+        ushort bits = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(block[offset..]);
+        return Scale.Exponent == 8 ? BitConverter.Int32BitsToSingle(bits << 16) : (float)BitConverter.UInt16BitsToHalf(bits);
+    }
+
+    // Whether every 8 consecutive values' fields lie in 8 consecutive bytes at one shift in each plane (a group's bytes 8 or
+    // more, values a multiple of 8) and a code fits a byte: then 8 values are read as one 64-bit word a plane.
+    private bool Eights => (bool)EightsOf.GetValue(this, static s => s.FitsEights);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<SuperBlock, object> EightsOf = new();
+
+    private bool FitsEights => Values % 8 == 0 && SubValues % 8 == 0 && Planes.Sum(p => p.Bits) <= 8
+        && Planes.All(p => p.Bits is 1 or 2 or 4 or 8 && p.Group * p.Bits / 8 is var per && per >= 8 && per % 8 == 0 && p.Group % 8 == 0);
+
+    // A block's values 8 at a time: each plane's 8 bytes one word, its 8 fields shifted and masked at once, the planes'
+    // fields joined per byte, then widened and scaled (each value (code + bias) · scale − min, as the scalar loop rounds it).
+    private void DecodeEights(ReadOnlySpan<byte> block, (int[] Byte, int[] Shift)[] places, ReadOnlySpan<int> low, ReadOnlySpan<float> scales, ReadOnlySpan<float> mins, Span<float> into)
+    {
+        var bias = System.Runtime.Intrinsics.Vector128.Create(CodeBias);
+        for (int v = 0; v < Values; v += 8)
+        {
+            ulong codes = 0;
+            for (int p = 0; p < places.Length; p++)
+            {
+                ulong word = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(block[places[p].Byte[v]..]);
+                ulong mask = 0x0101010101010101UL * (ulong)((1 << Planes[p].Bits) - 1);
+                codes |= (word >> places[p].Shift[v] & mask) << low[p];
+            }
+
+            var bytes = System.Runtime.Intrinsics.Vector128.CreateScalar(codes).AsByte();
+            var (shorts, _) = System.Runtime.Intrinsics.Vector128.Widen(bytes);
+            var (first, second) = System.Runtime.Intrinsics.Vector128.Widen(shorts);
+            var scale = System.Runtime.Intrinsics.Vector128.Create(scales[v / SubValues]);
+            var min = System.Runtime.Intrinsics.Vector128.Create(mins[v / SubValues]);
+            (System.Runtime.Intrinsics.Vector128.ConvertToSingle(first.AsInt32() + bias) * scale - min).CopyTo(into.Slice(v, 4));
+            (System.Runtime.Intrinsics.Vector128.ConvertToSingle(second.AsInt32() + bias) * scale - min).CopyTo(into.Slice(v + 4, 4));
+        }
+    }
+
+    // Each plane's byte and shift for every value of a block (Place), once a description.
+    private (int[] Byte, int[] Shift)[] PlacesOfValues() => Places.GetValue(this, static s => [.. s.Planes.Select(p => (
+        Enumerable.Range(0, s.Values).Select(v => p.Place(v).Byte).ToArray(),
+        Enumerable.Range(0, s.Values).Select(v => p.Place(v).Shift).ToArray()))]);
+
+    /// <summary>
+    /// One block's codes plus <see cref="CodeBias"/> as int8 (<paramref name="codes"/>: <see cref="Values"/> of them; each
+    /// must fit int8, as the k-quants' do), its sub-blocks' scales d · (scale_j + <see cref="SubScaleBias"/>) and minimums
+    /// dmin · min_j (0 without): value v = scales[v / SubValues] · codes[v] − mins[v / SubValues], as <see cref="Decode"/> reads it.
+    /// </summary>
+    public void DecodeCodes(ReadOnlySpan<byte> block, Span<sbyte> codes, Span<float> scales, Span<float> mins)
+    {
+        var places = PlacesOfValues();
+        float d = FloatAt(block, ScaleOffset), dmin = MinOffset >= 0 ? FloatAt(block, MinOffset) : 0f;
+        for (int j = 0; j < Values / SubValues; j++)
+        {
+            scales[j] = d * (Assemble(SubScales[j], block, SubScalesSigned) + SubScaleBias);
+            mins[j] = SubMins is null ? 0f : dmin * Assemble(SubMins[j], block, false);
+        }
+
+        Span<int> low = stackalloc int[Planes.Count];
+        for (int p = 1; p < Planes.Count; p++)
+        {
+            low[p] = low[p - 1] + Planes[p - 1].Bits;
+        }
+
+        if (Eights)
+        {
+            var bias = Vector128.Create(unchecked((byte)CodeBias));
+            for (int v = 0; v < Values; v += 8)
+            {
+                ulong word = 0;
+                for (int p = 0; p < places.Length; p++)
+                {
+                    ulong plane = System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(block[places[p].Byte[v]..]);
+                    word |= (plane >> places[p].Shift[v] & 0x0101010101010101UL * (ulong)((1 << Planes[p].Bits) - 1)) << low[p];
+                }
+
+                (Vector128.CreateScalar(word).AsByte() + bias).AsSByte().GetLower().CopyTo(codes.Slice(v, 8));
+            }
+
+            return;
+        }
+
+        for (int v = 0; v < Values; v++)
+        {
+            int code = 0;
+            for (int p = 0; p < places.Length; p++)
+            {
+                code |= (block[places[p].Byte[v]] >> places[p].Shift[v] & ((1 << Planes[p].Bits) - 1)) << low[p];
+            }
+
+            codes[v] = (sbyte)(code + CodeBias);
+        }
+    }
+
+    /// <summary>The values of whole blocks of <paramref name="source"/> into <paramref name="destination"/>, by this description alone.</summary>
+    public void Decode(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var places = PlacesOfValues();
+        int subs = Values / SubValues;
+        Span<float> scales = stackalloc float[subs], mins = stackalloc float[subs];
+        Span<int> low = stackalloc int[Planes.Count];
+        for (int p = 1; p < Planes.Count; p++)
+        {
+            low[p] = low[p - 1] + Planes[p - 1].Bits;
+        }
+
+        for (int b = 0; b < destination.Length / Values; b++)
+        {
+            var block = source.Slice(b * Bytes, Bytes);
+            float d = FloatAt(block, ScaleOffset), dmin = MinOffset >= 0 ? FloatAt(block, MinOffset) : 0f;
+            for (int j = 0; j < subs; j++)
+            {
+                scales[j] = d * (Assemble(SubScales[j], block, SubScalesSigned) + SubScaleBias);
+                mins[j] = SubMins is null ? 0f : dmin * Assemble(SubMins[j], block, false);
+            }
+
+            var into = destination.Slice(b * Values, Values);
+            if (Eights)
+            {
+                DecodeEights(block, places, low, scales, mins, into);
+                continue;
+            }
+
+            for (int v = 0; v < Values; v++)
+            {
+                int code = 0;
+                for (int p = 0; p < places.Length; p++)
+                {
+                    code |= (block[places[p].Byte[v]] >> places[p].Shift[v] & ((1 << Planes[p].Bits) - 1)) << low[p];
+                }
+
+                into[v] = scales[v / SubValues] * (code + CodeBias) - mins[v / SubValues];
+            }
+        }
+    }
+}
+
+/// <summary>
 /// An element type (plan 37, T0): how a tensor's values are stored, as data a registry holds (<see cref="ElementTypes"/>),
 /// never a C# type parameter. A per-element type (float32, bfloat16, int32, int4, ...) has a block of one value; a block
 /// format (ggml's Q4_K, IQ2_XXS, MXFP4, a block-scaled FP8) stores <see cref="BlockSize"/> values in
@@ -45,6 +508,7 @@ public sealed class ElementType : IKind
     public static readonly ElementType Float32 = new()
     {
         Name = "float32", Summary = "32-bit IEEE float, what every operation computes in", BlockBits = 32, IsFloat = true, IsSigned = true, Kernels = ["*"],
+        Float = new FloatBits(8, 23),
         ToFloat32 = ElementConversions.Float32ToFloat32, FromFloat32 = ElementConversions.Float32FromFloat32,
     };
 
@@ -52,6 +516,7 @@ public sealed class ElementType : IKind
     public static readonly ElementType BFloat16 = new()
     {
         Name = "bfloat16", Summary = "bfloat16: float32's high 16 bits (rounded to nearest, ties to even)", BlockBits = 16, IsFloat = true, IsSigned = true,
+        Float = new FloatBits(8, 7),
         Kernels = ["BFloat16MatMul", "GatherBFloat16", "GatherBFloat16Columns", "PackBFloat16"],
         ToFloat32 = ElementConversions.BFloat16ToFloat32, FromFloat32 = ElementConversions.BFloat16FromFloat32,
     };
@@ -60,6 +525,7 @@ public sealed class ElementType : IKind
     public static readonly ElementType Float16 = new()
     {
         Name = "float16", Summary = "16-bit IEEE half (rounded to nearest, ties to even)", BlockBits = 16, IsFloat = true, IsSigned = true, Kernels = [],
+        Float = new FloatBits(5, 10),
         ToFloat32 = ElementConversions.Float16ToFloat32, FromFloat32 = ElementConversions.Float16FromFloat32,
     };
 
@@ -75,7 +541,7 @@ public sealed class ElementType : IKind
     public static readonly ElementType Float8E5M2 = new()
     {
         Name = "float8_e5m2", Summary = "8-bit float E5M2: a half's high byte, 5 exponent bits, 2 mantissa bits, with infinities", BlockBits = 8,
-        IsFloat = true, IsSigned = true, Kernels = [],
+        IsFloat = true, IsSigned = true, Kernels = [], Float = new FloatBits(5, 2),
         ToFloat32 = ElementConversions.E5M2ToFloat32, FromFloat32 = ElementConversions.E5M2FromFloat32,
     };
 
@@ -226,6 +692,30 @@ public sealed class ElementType : IKind
 
     /// <summary>A block format's scales and zero points, or null (a per-element type, or a format that does not describe them).</summary>
     public BlockScales? Scales { get; init; }
+
+    /// <summary>
+    /// How a float type's bits read (<see cref="FloatBits"/>), or null (not a float, or one whose special values are not
+    /// IEEE 754's): what a kernel reads to widen it without naming the type.
+    /// </summary>
+    public FloatBits? Float { get; init; }
+
+    /// <summary>
+    /// How a block format of integer codes and one scale a block reads (<see cref="ScaledBlock"/>), or null (not such a
+    /// format, or one laid out otherwise): what a kernel reads to widen it without naming the format.
+    /// </summary>
+    public ScaledBlock? Scaled { get; init; }
+
+    /// <summary>
+    /// How a super-block format of planes of codes, scaled sub-blocks and a super-scale reads (<see cref="SuperBlock"/>:
+    /// ggml's k-quants), or null: what a kernel reads to widen it without naming the format.
+    /// </summary>
+    public SuperBlock? Super { get; init; }
+
+    /// <summary>
+    /// How a grid-codebook format reads (<see cref="GridBlock"/>: ggml's IQ2_XXS, IQ3_XXS), or null: what a kernel reads
+    /// to widen it without naming the format.
+    /// </summary>
+    public GridBlock? Grid { get; init; }
 
     /// <summary>
     /// The operations that read or write the type natively, by name (<c>Operation.Name</c>; "*" for every one): any other
@@ -812,10 +1302,27 @@ internal static class ElementConversions
         }
     }
 
+    // Each signed byte to its float32 (exact): whole vectors widened sbyte → short → int → float, then a scalar tail.
     public static void Int8ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
     {
-        var values = MemoryMarshal.Cast<byte, sbyte>(source);
-        for (int i = 0; i < destination.Length; i++)
+        var values = MemoryMarshal.Cast<byte, sbyte>(source)[..destination.Length];
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            int width = Vector<sbyte>.Count, quarter = Vector<int>.Count;
+            for (; i <= values.Length - width; i += width)
+            {
+                Vector.Widen(new Vector<sbyte>(values[i..]), out Vector<short> low, out Vector<short> high);
+                Vector.Widen(low, out Vector<int> a, out Vector<int> b);
+                Vector.Widen(high, out Vector<int> c, out Vector<int> d);
+                Vector.ConvertToSingle(a).CopyTo(destination[i..]);
+                Vector.ConvertToSingle(b).CopyTo(destination[(i + quarter)..]);
+                Vector.ConvertToSingle(c).CopyTo(destination[(i + 2 * quarter)..]);
+                Vector.ConvertToSingle(d).CopyTo(destination[(i + 3 * quarter)..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
         {
             destination[i] = values[i];
         }

@@ -183,8 +183,10 @@ internal static partial class PtxKernels
 
     // Stages `rows` rows (absolute rows first + 0 … rows - 1; those at or past `limit` become zeros) of a float32 tensor
     // into shared memory at `shared` as bfloat16 ([rows][d + 8]); `address(row, dst)` emits the row's address. 128
-    // threads, four floats each per step. Uses %r11-%r14, %rd1-%rd2, %f0-%f3, %p1 (and what `address` uses).
-    private static string FlashStage(int rows, int d, string shared, string first, string limit, Func<string, string, string> address)
+    // threads, four floats each per step. halves: the rows are a bfloat16 cache's (value j in half j % 2 of word j / 2, the
+    // order the shared tile holds them), copied as they are, four values (8 bytes) a thread per step: the same bits the
+    // float32 rows staged give when their values are those. Uses %r11-%r14, %rd1-%rd2, %f0-%f3, %p1 (and what `address` uses).
+    private static string FlashStage(int rows, int d, string shared, string first, string limit, Func<string, string, string> address, bool halves = false)
     {
         int quadsPerRow = d / 4, rowStep = 128 / quadsPerRow, stride = FlashStride(d);
         var s = new StringBuilder();
@@ -192,7 +194,7 @@ internal static partial class PtxKernels
                 shr.u32 %r11, %r1, {(int)Math.Log2(quadsPerRow)};
                 and.b32 %r12, %r1, {quadsPerRow - 1};
                 shl.b32 %r12, %r12, 2;
-                mul.wide.u32 %rd2, %r12, 4;
+                mul.wide.u32 %rd2, %r12, {(halves ? 2 : 4)};
                 mul.lo.u32 %r14, %r11, {stride};
                 shl.b32 %r13, %r12, 1;
                 add.u32 %r14, %r14, %r13;
@@ -203,6 +205,19 @@ internal static partial class PtxKernels
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    add.u32 %r13, %r11, {it * rowStep};");
             s.AppendLine(address("%r13", "%rd1"));
+            if (halves)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $$"""
+                        add.u64 %rd1, %rd1, %rd2;
+                        setp.lt.u32 %p1, %r13, {{limit}};
+                        mov.b32 %r12, 0;
+                        mov.b32 %r13, 0;
+                        @%p1 ld.global.v2.b32 {%r12, %r13}, [%rd1];
+                        st.shared.v2.b32 [%r14+{{it * rowStep * stride}}], {%r12, %r13};
+                    """);
+                continue;
+            }
+
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     add.u64 %rd1, %rd1, %rd2;
                     setp.lt.u32 %p1, %r13, {{limit}};
@@ -319,10 +334,12 @@ internal static partial class PtxKernels
     // Block: 64 query rows of one head (warp w: rows 16w .. 16w + 15), walking the visible keys in tiles of 64: S = Q·Kᵀ
     // (Q fragments kept in registers), online softmax in the log2 domain, O += P·V with P straight from the accumulators.
     // Grid x = ⌈rowsPerHead / 64⌉, y = heads; 128 threads; K and V tiles 2 × 64 × (d + 8) bfloat16 of static shared memory.
-    private static void FlashForward(StringBuilder sb, int d)
+    // halves (flash_tc_fwd_bf16_d{d}): keys and values are a bfloat16 cache's rows (the key strides in words), staged as
+    // they are; queries and output stay float32.
+    private static void FlashForward(StringBuilder sb, int d, bool halves = false)
     {
         int stride = FlashStride(d), dTiles = d / 8, kSteps = d / 16, tileBytes = FlashTensorRows * stride;
-        string name = string.Create(CultureInfo.InvariantCulture, $"flash_tc_fwd_d{d}");
+        string name = string.Create(CultureInfo.InvariantCulture, $"flash_tc_fwd_{(halves ? "bf16_" : "")}d{d}");
         var s = new StringBuilder();
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{name}}(
@@ -421,8 +438,8 @@ internal static partial class PtxKernels
                 setp.ge.u32 %p3, %r43, %r34;
                 @%p3 bra TILE_END;
             """);
-        s.AppendLine(FlashStage(FlashTensorRows, d, "%r26", "%r43", "%r22", (row, dst) => KRow(dst, "%rd11", row)));
-        s.AppendLine(FlashStage(FlashTensorRows, d, "%r27", "%r43", "%r22", (row, dst) => KRow(dst, "%rd12", row)));
+        s.AppendLine(FlashStage(FlashTensorRows, d, "%r26", "%r43", "%r22", (row, dst) => KRow(dst, "%rd11", row), halves));
+        s.AppendLine(FlashStage(FlashTensorRows, d, "%r27", "%r43", "%r22", (row, dst) => KRow(dst, "%rd12", row), halves));
         s.AppendLine("bar.sync 0;");
         s.AppendLine(Zeros("%s", 32));
         for (int ks = 0; ks < kSteps; ks++)

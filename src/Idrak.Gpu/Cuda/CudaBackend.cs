@@ -393,6 +393,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         {
             NativeTypes = CudaNativeTypes.Of(BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
             NativeReport = CudaNativeTypes.Report(_computeMajor, _computeMinor, BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
+            StoredFormats = DescribedStoredFormats.Instance,               // the generic products' types (ProductRoutes; none under the named route)
         };
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
@@ -2304,6 +2305,13 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
     /// Launches a kernel. Every argument is widened to a 64-bit slot; the driver reads each
     /// parameter's actual size from the slot's start, which on little-endian hosts is the value itself.
     /// </summary>
+    // The native lane's pack kernels over `rows` rows of kp values (PtxKernels.NativePackGrid).
+    private void LaunchPack(IntPtr function, int rows, int kp, params ReadOnlySpan<ulong> args)
+    {
+        var (x, y) = PtxKernels.NativePackGrid(rows, kp);
+        Launch(function, x, y, 256, 1, args);
+    }
+
     private void Launch(IntPtr function, uint gridX, uint gridY, uint blockX, uint blockY, params ReadOnlySpan<ulong> args) =>
         Launch(function, gridX, gridY, 1, blockX, blockY, args);
 
