@@ -34,9 +34,16 @@ The first version of the Idrak.Adad package: the Adad design built and tested in
    a format's name (the proof's `name` route: Idrak's int8, int4 and bfloat16 packed formats and their kernels). So:
    - its lanes setting has no `name` value, and its measured lanes never include a named kernel as a candidate (the
      proof's `RoutedNamed`, which timed a format's own kernel against the generic lanes, is not carried over);
-   - on the Adad devices every weight is kept as stored rows (`StoredWeight`): int8 and bfloat16 too, never the named
-     packed formats; a packed weight of a named format handed to an Adad device fails loudly naming the format (Idrak's
-     own int4 has no description: it fails until it is described);
+   - nothing is per type: on the Adad devices every weight, whatever its type, is kept as stored rows (`StoredWeight`)
+     and multiplied by lanes generated from its description (float bits, integer bits and sign, `ScaledBlock`,
+     `SuperBlock`, `GridBlock`), never in a named packed format (the loader's int8 and bfloat16 packing included); a packed
+     weight of a named format handed to an Adad device fails loudly naming the format (Idrak's own int4 has no
+     description: it fails until it is described);
+   - the tensor rows are generated per description (`gemm_tc_nt_{code}`, as the few-row kernels already are,
+     `typed_gemv_{code}`): a float description's pairs copied as stored where its bits are a matrix-unit kind (bfloat16,
+     float16) and converted as each tile loads otherwise, an integer description's codes widened by their bits and sign,
+     blocks decoded as each tile loads; the proof's three hand-written modes (`bf16w`, `f16w`, `int8w`) become the
+     generator's cases of those descriptions, with no kernel of a type's own;
    - the tied bfloat16 head is the embedding table's own stored rows (`[vocab, dim]` is the head's `[outputs, inputs]`),
      shared with the embedding, read by the Adad lanes; never today's bfloat16 head (under the proof's routes it was, and
      its decode step took the named kernel: CPU 4.6 ms against the generic lane's 34 ms over the named layout).
