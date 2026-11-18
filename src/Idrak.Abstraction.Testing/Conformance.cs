@@ -295,6 +295,41 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks an outline tracer (<see cref="OutlineTracerSuite"/>) on the suite's shapes and <paramref name="outlines"/>,
+    /// filled into coverage at several sizes and sub-pixel places: the promised tolerance a finite number of pixels, no ink
+    /// traced to an empty outline, the traced outline filled again within the tolerance of the coverage both ways, one
+    /// winding, holes kept, the same outline again and from several threads, an option it does not take refused. Twelve
+    /// random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="tracer">The tracer.</param>
+    /// <param name="outlines">Outlines of one's own to trace besides the suite's (a font's glyphs); null for none.</param>
+    /// <param name="unitsPerEm">The em of <paramref name="outlines"/>, in font units.</param>
+    /// <param name="settings">Option sets to read the tracer's settings from besides its defaults.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckOutlineTracer(IOutlineTracer tracer, IReadOnlyList<GlyphOutline>? outlines = null, int unitsPerEm = 1000,
+        IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(tracer);
+        return Check(tracer, new OutlineTracerSuite(outlines, unitsPerEm, settings), options ?? new ContractCheckOptions { RandomCases = 12 });
+    }
+
+    /// <summary>
+    /// Checks a glyph source (<see cref="GlyphSourceSuite"/>) on images of its own, as given, padded with paper and blank:
+    /// every glyph on the image with ink and inside its cell or ink piece, labelled once, the known text's characters all
+    /// accounted for or reported, the glyphs known found where they are, no glyph on a blank page, the same glyphs again
+    /// and from several threads, an option it does not take refused. Six random (padded) cases unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="samples">Images in its kind (at least one), with their known text and glyphs where known.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckGlyphSource(IGlyphSource source, IReadOnlyList<GlyphSourceSample> samples, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Check(source, new GlyphSourceSuite(samples), options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
+
+    /// <summary>
     /// Checks a shape (<see cref="ShapeSuite"/>): the same plan for the same step and context, regions inside the box
     /// asked for and not overlapping, widths honoured from the start side, paths inside the box give or take their
     /// stroke, and an option it does not take refused; on <paramref name="steps"/> (its name alone when none: give steps

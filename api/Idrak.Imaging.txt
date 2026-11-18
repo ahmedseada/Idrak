@@ -80,6 +80,36 @@ public enum Idrak.Imaging.JpegSubsampling : int
   Half420 = 0
   Half422 = 1
 
+public sealed class Idrak.Imaging.MadeFontFace : Idrak.Abstraction.Data.IFontFace
+  public Idrak.Abstraction.Data.FontMetrics Metrics { get; }
+  public Idrak.Abstraction.Data.GlyphOutline Outline(int glyph)
+  public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Data.FontNameKind, string> Names { get; }
+  public System.Collections.Generic.IReadOnlyList<int> Characters { get; }
+  public System.ReadOnlyMemory<byte> Table(string tag)
+  public const string FormatName = "made"
+  public int Advance(int glyph)
+  public int Glyph(int codePoint)
+  public int GlyphCount { get; }
+  public override string ToString()
+  public string Family { get; }
+  public string Format { get; }
+  public string Style { get; }
+
+public sealed class Idrak.Imaging.MadeFontFaceBuilder
+  public Idrak.Abstraction.Data.FontMetrics Metrics { get; }
+  public Idrak.Imaging.MadeFontFace Build()
+  public Idrak.Imaging.MadeFontFaceBuilder Map(int codePoint, int glyph)
+  public Idrak.Imaging.MadeFontFaceBuilder Missing(Idrak.Abstraction.Data.GlyphOutline outline, int advance)
+  public Idrak.Imaging.MadeFontFaceBuilder Name(Idrak.Abstraction.Data.FontNameKind kind, string value)
+  public MadeFontFaceBuilder(string family, Idrak.Abstraction.Data.FontMetrics metrics)
+  public const int MostAdvance = 65535
+  public const int MostCoordinate = 32767
+  public const int MostGlyphs = 65535
+  public int Add(Idrak.Abstraction.Data.GlyphOutline outline, int advance)
+  public int Add(int codePoint, Idrak.Abstraction.Data.GlyphOutline outline, int advance)
+  public int CharacterCount { get; }
+  public int GlyphCount { get; }
+
 public static class Idrak.Imaging.OpenTypeFeatures
   public static (System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.IReadOnlyList<string>) Of(Idrak.Abstraction.Data.IFontFace font, string script, string? language = null)
 

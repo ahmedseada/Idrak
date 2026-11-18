@@ -11,7 +11,7 @@ however long it takes (owner, 2026-11-18): this plan waits until every plan 28 p
 
 | Phase | What | Lane | Needs | State |
 |---|---|---|---|---|
-| F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs (written through plan 28's `FontWriters`), their suites | A | plan 28 D8 | Planned |
+| F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs (written through plan 28's `FontWriters`), their suites | A | plan 28 D8 | Built (2026-11-18) |
 | F1 | The tracer: a glyph's pixels to an outline (contours, simplified, curves fitted, one winding) | A | F0 | Planned |
 | F2 | The glyph sheet: a blank sheet drawn by the shape pipeline (PNG and PDF), the filled sheet read back from an image or a PDF (found, straightened, cut, cleaned, traced) | A | F1; plan 28 D4, D6, D7 | Planned |
 | F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Planned |
@@ -140,6 +140,61 @@ CLAUDE.md and [docs/optimization.md](../../docs/optimization.md) apply in full. 
   kept), glyph source (every glyph labelled once, inside its cell or its component), the made face (written as `.ttf`
   and each other format, read back: outlines, advances, characters and shaping kept; a fonts folder holding `.ttf`,
   `.map.json` and made fonts reads each as what it is).
+
+**As built (2026-11-18):**
+- **The contracts**, in `Idrak.Abstraction.Data`, language-neutral (no script named; forms are data):
+  `IOutlineTracer` (`OutlineTracers.cs`: `GlyphCoverage` in, ink 0 to 1 checked once with its ink box found in the same
+  pass; `OutlinePlacement`, the rasterizer's scale and origin; `Tolerance(settings)` in pixels; `Trace` to a
+  `GlyphOutline` in font units, y up, one winding, holes kept, `Empty` for no ink) and `IGlyphSource`
+  (`GlyphSources.cs`: a `GlyphSourceRequest` of an image, its known text and the settings; `FoundGlyphs` of
+  `LabelledGlyph`s, each its text, its form as a string or none, its ink, box, region, baseline and size, checked as
+  made, with `Placement(unitsPerEm)` for the tracer; and `GlyphLeftOut`, a character asked for with no glyph and why).
+  Both read their options once into settings (`OutlineTracerSettings`, `GlyphSourceSettings`), as pens and poses do.
+- **The registries** `OutlineTracers` and `GlyphSources`: guarded `KindTable`s ignoring case (`Register`, `Unregister`,
+  `Names`, `Find`, `Get` "not registered" naming the registered ones and "add it with ... Register, or reference a
+  package that registers it", `Default`, `Origin`, `SetPolicy`, `Describe`, `AllKeys`); under FallBack a failed call is
+  answered by the library's, under Shadow the library's answers and the app's is compared (outlines by their boxes within
+  both tolerances, glyphs by labels, forms and boxes). Defaults through `LibraryDefaults.Ensure`; none is built in yet
+  ("contour" F1, "sheet" F2, "cells" F4).
+- **The face made from glyphs:** `MadeFontFace` and `MadeFontFaceBuilder` in Idrak.Imaging (`MadeFontFace.cs`, beside
+  the fonts and the writers, proposal 3): characters, outlines, advances, metrics and the names given (a family at least;
+  nothing made up), glyphs with no character for forms and alternates (reached by id), several characters on one glyph,
+  glyph 0 given or empty at half an em; its one table `name` (Windows, Unicode, English records of the names given); no
+  layout tables (F3's font map gives them). The builder checks every input (units per em 16 to 16,384, the ascender and
+  descender, advances and coordinates within 16 bits, contours started by a move, characters once, glyphs added before
+  they are mapped) and copies the outlines; the face is read-only, safe from several threads. **Not tested here:** its
+  export to `.ttf` through plan 28's `FontWriters` "truetype" (D8, being built now); F3 tests it once that writer is
+  merged, with the read back through `FontFormats`.
+- **The kit:** `OutlineTracerSuite` (the suite's own shapes, squares, rings with one and two holes, cubic and
+  quadratic discs, a dot over a stem, a slanted stroke, a thin bar, random stars with and without a hole, and outlines
+  given, filled through `OutlineRasterizers` at several sizes and sub-pixel places: the tolerance finite, no ink to an
+  empty outline, filled again within the tolerance both ways, one winding at every pixel centre, holes kept, the same
+  outline again and from several threads, an unknown option refused) and `GlyphSourceSuite` (samples of the source's
+  kind, as given, padded with paper and blank: glyphs on the image with ink, inside their cell or ink piece, labelled
+  once, the known text's characters accounted for or reported, the known glyphs found where they are, none on a blank
+  page, the same again and from several threads, an unknown option refused); `Conformance.CheckOutlineTracer` and
+  `CheckGlyphSource`. Each suite fails a broken implementation: a tracer that fills holes, traces twice, inks empty
+  coverage, leaves y down or takes any option; a source that labels a glyph twice, puts it outside its region, drops a
+  character unreported, answers differently each time or takes any option.
+- **The plug-in path** (`tests/Idrak.PluginTests/HandwritingPlugin.cs`, public API only): a toy tracer (each row's
+  runs of ink as rectangles of whole pixels) and a toy source (ink between blank columns, labelled from the text)
+  register, are found by name, find and trace a page's glyphs, pass both suites and unregister; over stand-in library
+  ones (`outside-proof`) the app's failure reaches the caller, falls back under FallBack, is compared under Shadow.
+- **Tests:** groups `outline tracers` (3), `glyph sources` (3) and `made fonts` (5), generic text and shapes only; the
+  kind table's refusal list names both registries. One build (clean, no warning), then one run on the CPU with
+  `outline tracers|glyph sources|made fonts|outside plug-in|kind table:|override loop:|public API|abstraction inventory|
+  test runner` and the update flags set: 61 tests, 61 passed, none failed. The API dumps (`Idrak.Abstraction`,
+  `Idrak.Abstraction.Testing`, `Idrak.Imaging`) and the inventory regenerated through the runner.
+- **Waits for:** plan 28's D8 (the TrueType writer) for the made face's export and read back (F3); F1's "contour"
+  tracer, F2's "sheet" and F4's "cells" sources, each checked by these suites when it lands.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "outline tracers|glyph sources|made fonts|outside plug-in|kind table:|override loop:|public API|abstraction inventory|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-p38f0.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ### F1: the tracer ("contour")
 

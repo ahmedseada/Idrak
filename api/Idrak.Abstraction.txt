@@ -1740,6 +1740,30 @@ public static class Idrak.Abstraction.Data.FontWriters
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void Write(Idrak.Abstraction.Data.IFontFace face, System.IO.Stream destination, string name, Idrak.Abstraction.Data.FontWriteOptions? options = null)
 
+public sealed record Idrak.Abstraction.Data.FoundGlyphs : System.IEquatable<Idrak.Abstraction.Data.FoundGlyphs>
+  public FoundGlyphs(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.LabelledGlyph> Glyphs, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.GlyphLeftOut> LeftOut)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.GlyphLeftOut> LeftOut { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.LabelledGlyph> Glyphs { get; init; }
+  public static Idrak.Abstraction.Data.FoundGlyphs None { get; }
+
+public sealed class Idrak.Abstraction.Data.GlyphCoverage
+  public GlyphCoverage(float[] values, int width, int height)
+  public Idrak.Abstraction.Data.GlyphCoverage Crop(Idrak.Abstraction.Data.PixelBox box)
+  public Idrak.Abstraction.Data.PixelBox InkBox { get; }
+  public System.ReadOnlyMemory<float> Values { get; }
+  public System.ReadOnlySpan<float> Row(int y)
+  public bool IsBlank { get; }
+  public float this[int x, int y] { get; }
+  public int Height { get; }
+  public int Width { get; }
+  public static Idrak.Abstraction.Data.GlyphCoverage Blank(int width, int height)
+
+public readonly record struct Idrak.Abstraction.Data.GlyphLeftOut : System.IEquatable<Idrak.Abstraction.Data.GlyphLeftOut>
+  public GlyphLeftOut(string Text, string? Form, string Reason)
+  public string Reason { get; init; }
+  public string Text { get; init; }
+  public string? Form { get; init; }
+
 public sealed class Idrak.Abstraction.Data.GlyphOutline
   public (float, float, float, float) Bounds()
   public GlyphOutline(Idrak.Abstraction.Data.OutlineVerb[] verbs, float[] points)
@@ -1793,6 +1817,29 @@ public static class Idrak.Abstraction.Data.GlyphPoses
   public static string Describe()
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Data.IGlyphPose pose)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed record Idrak.Abstraction.Data.GlyphSourceRequest : System.IEquatable<Idrak.Abstraction.Data.GlyphSourceRequest>
+  public GlyphSourceRequest(Idrak.Abstraction.Data.ImageData Image, string? Text, Idrak.Abstraction.Data.GlyphSourceSettings Settings)
+  public Idrak.Abstraction.Data.GlyphSourceSettings Settings { get; init; }
+  public Idrak.Abstraction.Data.ImageData Image { get; init; }
+  public string? Text { get; init; }
+
+public class Idrak.Abstraction.Data.GlyphSourceSettings
+  public GlyphSourceSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public static Idrak.Abstraction.Data.GlyphSourceSettings None { get; }
+
+public static class Idrak.Abstraction.Data.GlyphSources
+  public static Idrak.Abstraction.Data.IGlyphSource Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IGlyphSource? Default(string name)
+  public static Idrak.Abstraction.Data.IGlyphSource? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IGlyphSource source)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public interface Idrak.Abstraction.Data.IAugmentation
@@ -1918,6 +1965,10 @@ public interface Idrak.Abstraction.Data.IGlyphPose : Idrak.Abstraction.IConfigur
   public Idrak.Abstraction.Data.GlyphPoseBounds Bounds(Idrak.Abstraction.Data.GlyphPoseSettings settings)
   public Idrak.Abstraction.Data.GlyphPoseSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
+public interface Idrak.Abstraction.Data.IGlyphSource : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.FoundGlyphs Find(Idrak.Abstraction.Data.GlyphSourceRequest request)
+  public Idrak.Abstraction.Data.GlyphSourceSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+
 public interface Idrak.Abstraction.Data.IImageCodec
   public Idrak.Abstraction.Data.ImageData Decode(System.ReadOnlySpan<byte> file)
   public Idrak.Abstraction.Data.ImageInfo? ReadInfo(System.ReadOnlySpan<byte> header)
@@ -1938,6 +1989,11 @@ public interface Idrak.Abstraction.Data.IImageTransform : Idrak.Abstraction.ICon
 public interface Idrak.Abstraction.Data.IOutlineRasterizer
   public string Name { get; }
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
+
+public interface Idrak.Abstraction.Data.IOutlineTracer : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.GlyphOutline Trace(Idrak.Abstraction.Data.GlyphCoverage coverage, Idrak.Abstraction.Data.OutlinePlacement placement, Idrak.Abstraction.Data.OutlineTracerSettings settings)
+  public Idrak.Abstraction.Data.OutlineTracerSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public float Tolerance(Idrak.Abstraction.Data.OutlineTracerSettings settings)
 
 public interface Idrak.Abstraction.Data.IPageLayout
   public Idrak.Abstraction.Data.RenderedPage Render(Idrak.Abstraction.Data.PageContent content, Idrak.Abstraction.Data.PageStyle style, int seed)
@@ -2110,6 +2166,18 @@ public static class Idrak.Abstraction.Data.ImageTransforms
   public static void Register(Idrak.Abstraction.Data.IImageTransform transform)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed record Idrak.Abstraction.Data.LabelledGlyph : System.IEquatable<Idrak.Abstraction.Data.LabelledGlyph>
+  public Idrak.Abstraction.Data.GlyphCoverage Ink { get; }
+  public Idrak.Abstraction.Data.OutlinePlacement Placement(int unitsPerEm)
+  public Idrak.Abstraction.Data.PixelBox Box { get; }
+  public Idrak.Abstraction.Data.PixelBox Region { get; }
+  public LabelledGlyph(string text, string? form, Idrak.Abstraction.Data.GlyphCoverage ink, Idrak.Abstraction.Data.PixelBox box, Idrak.Abstraction.Data.PixelBox region, float baseline, float size)
+  public float Baseline { get; }
+  public float Size { get; }
+  public override string ToString()
+  public string Text { get; }
+  public string? Form { get; }
+
 public sealed record Idrak.Abstraction.Data.ObjectAnnotation : System.IEquatable<Idrak.Abstraction.Data.ObjectAnnotation>
   public Idrak.Abstraction.Data.BoundingBox Box { get; init; }
   public Idrak.Abstraction.Data.ObjectMask? Mask { get; init; }
@@ -2137,6 +2205,15 @@ public sealed class Idrak.Abstraction.Data.ObjectMask
   public static int[] DecodeCounts(string text)
   public static string EncodeCounts(System.Collections.Generic.IReadOnlyList<int> counts)
 
+public readonly record struct Idrak.Abstraction.Data.OutlinePlacement : System.IEquatable<Idrak.Abstraction.Data.OutlinePlacement>
+  public (float, float) ToPixels(float x, float y)
+  public (float, float) ToUnits(float x, float y)
+  public OutlinePlacement(float Scale, float X, float Y)
+  public bool IsValid { get; }
+  public float Scale { get; init; }
+  public float X { get; init; }
+  public float Y { get; init; }
+
 public static class Idrak.Abstraction.Data.OutlineRasterizers
   public const string Coverage = "coverage"
   public static Idrak.Abstraction.Data.IOutlineRasterizer Get(string name = "coverage")
@@ -2145,6 +2222,23 @@ public static class Idrak.Abstraction.Data.OutlineRasterizers
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Data.IOutlineRasterizer rasterizer)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public class Idrak.Abstraction.Data.OutlineTracerSettings
+  public OutlineTracerSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public static Idrak.Abstraction.Data.OutlineTracerSettings None { get; }
+
+public static class Idrak.Abstraction.Data.OutlineTracers
+  public static Idrak.Abstraction.Data.IOutlineTracer Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IOutlineTracer? Default(string name)
+  public static Idrak.Abstraction.Data.IOutlineTracer? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IOutlineTracer tracer)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public enum Idrak.Abstraction.Data.OutlineVerb : byte
