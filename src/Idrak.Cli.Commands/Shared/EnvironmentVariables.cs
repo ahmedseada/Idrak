@@ -74,10 +74,15 @@ internal static class EnvironmentVariables
 
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
-        Cluster = "Cluster", Code = "Code data", Fonts = "Fonts";
+        Cluster = "Cluster", Code = "Code data", Fonts = "Fonts", Documents = "Documents";
 
     // Read by FontMaps and FontMapDrawing (Idrak.Abstraction): the legacy font support, wherever fonts are read.
     private static readonly string[] FontCommands = ["data synth", "data fonts"];
+
+    // Plan 28: read by the document options (DocumentOptions, DocumentWriteOptions, DocumentDrawOptions, SignatureCheckOptions)
+    // and FontWriteOptions in Idrak.Abstraction, wherever documents are read, written or drawn and fonts written; no command
+    // reads a document yet (idrak data redact comes with phase D10).
+    private static readonly string[] DocumentCommands = [];
 
     // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code names them in its help, its flags win.
     private static readonly string[] CodeData = ["data code"];
@@ -494,6 +499,18 @@ internal static class EnvironmentVariables
         new("IDRAK_FONT_MAP_WORDS", Fonts, "0.5", "The chance (0 to 1) a page drawn in a mapped font writes the words the font draws whole as one glyph (drawn per page from its seed; 0 or off: never; --font-maps words=)", FontCommands),
         new("IDRAK_FONT_MAP_SHORT_MARKS", Fonts, "auto", "Which bases take a mapped font's lower marks drawn for short letters: auto (bases under the height the font's own lower marks clear), a share (0 to 1) of the tall letters' height, or 0 or off: never (--font-maps short-marks=off)", FontCommands),
         new("IDRAK_FONT_MAP_LETTERS", Fonts, "on", "0, off, false or no: letters mapped fonts lack are not composed from their own glyphs (--font-maps letters=off)", FontCommands),
+        new("IDRAK_FONT_CURVE_TOLERANCE", Fonts, "1", "How far a curve a font writer converts to another kind (cubic to quadratic) may stray from the original, in font units (FontWriteOptions.CurveTolerance)", DocumentCommands),
+        new("IDRAK_DOCUMENT_LAYOUT", Documents, "lines", "The layout that arranges a document page's text runs into lines and text: a DocumentTextLayouts name (lines, content, or a plug-in's; DocumentOptions.Layout)", DocumentCommands),
+        new("IDRAK_DOCUMENT_READING_ORDER", Documents, "bidi", "The reading order that puts a document line's text in logical order: a ReadingOrders name (bidi, runs; DocumentOptions.ReadingOrder)", DocumentCommands),
+        new("IDRAK_DOCUMENT_MAX_STREAM_BYTES", Documents, "a quarter of the memory free when a document is opened", "The most bytes one decoded part of a document file may take (bytes, or with k, m or g); a file that passes it fails naming the limit (DocumentOptions.MaxStreamBytes)", DocumentCommands),
+        new("IDRAK_DOCUMENT_CACHE_BYTES", Documents, "an eighth of the memory free when a document is opened", "The most bytes a document keeps decoded for reuse (fonts and other shared parts; bytes, or with k, m or g; DocumentOptions.CacheBytes)", DocumentCommands),
+        new("IDRAK_DOCUMENT_IMAGE_ENCODING", Documents, "auto", "How a document writer stores page images: auto (JPEG for photographs and scans, exact for line art and few levels, measured per image), flate (exact) or jpeg (DocumentWriteOptions.ImageEncoding)", DocumentCommands),
+        new("IDRAK_DOCUMENT_JPEG_QUALITY", Documents, "90", "The quality of the JPEG images a document writer stores, 1 to 100 (DocumentWriteOptions.JpegQuality)", DocumentCommands),
+        new("IDRAK_DOCUMENT_EMBED_FONTS", Documents, "subset", "How a document writer embeds fonts: subset (only the glyphs used) or whole (DocumentWriteOptions.EmbedFonts)", DocumentCommands),
+        new("IDRAK_DOCUMENT_SAVE_MODE", Documents, "incremental", "How an edited document is saved: incremental (the source's bytes kept, changes appended, earlier signatures stay valid) or rewrite (one clean file; DocumentWriteOptions.SaveMode)", DocumentCommands),
+        new("IDRAK_DOCUMENT_DPI", Documents, "150", "The resolution a document page is drawn at, in dots per inch (DocumentDrawOptions.Dpi)", DocumentCommands),
+        new("IDRAK_DOCUMENT_FONTS", Documents, "none (text whose font is not embedded is left out and counted)", "A folder of fonts for document text whose font the file does not embed, matched by name and then by the characters they cover (DocumentDrawOptions.Fonts)", DocumentCommands),
+        new("IDRAK_DOCUMENT_SIGNATURE_ONLINE", Documents, "off", "on: a signature check may fetch revocation data the document lacks online; off, nothing is fetched (SignatureCheckOptions.Online)", DocumentCommands),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
         new("IDRAK_CODE_MAX_FILE_BYTES", Code, "1048576", "The largest file a code extraction reads, in bytes (larger ones are often generated)", CodeData),
@@ -534,6 +551,10 @@ internal static class EnvironmentVariables
         new("NUGET_PACKAGES", Child, "the csharp environment's package folder", "Set for the csharp environment's commands when it has a package folder (IDRAK_CSHARP_PACKAGES)", ReinforcementRun),
         new("MSBUILDDISABLENODEREUSE", Child, "1", "Set for the csharp environment's commands unless node-reuse=true (build nodes end with their build)", ReinforcementRun),
         new("UseSharedCompilation", Child, "unset", "Set to false for the csharp environment's commands with build-server=false (each build compiles in its own process)", ReinforcementRun),
+        new("DOTNET_EnableEventPipe", Child, "1", "Set for the run idrak trace --stacks traces: the .NET runtime's own tracing on from its start", ["trace"]),
+        new("DOTNET_EventPipeOutputPath", Child, "the trace file", "Set for the run idrak trace --stacks traces: where the runtime writes its .nettrace", ["trace"]),
+        new("DOTNET_EventPipeConfig", Child, "the sample profiler, GC and JIT events", "Set for the run idrak trace --stacks traces: the providers the runtime traces", ["trace"]),
+        new("DOTNET_EventPipeOutputStreaming", Child, "1", "Set for the run idrak trace --stacks traces: the trace written as it comes, so a run stopped early keeps it", ["trace"]),
     ];
 
     /// <summary>The variable named <paramref name="name"/>, or null.</summary>

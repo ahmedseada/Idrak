@@ -26,6 +26,14 @@ public interface IReadingOrder
 
     /// <summary>A text in column order (as <see cref="ToColumns"/> gives it) back in logical order.</summary>
     string FromColumns(string columns, bool rightToLeft);
+
+    /// <summary>
+    /// The direction <paramref name="text"/> runs in, by its first strong character (Unicode's rules P2 and P3 of UAX #9:
+    /// characters inside isolates skipped, the search ending at a paragraph separator): true when it is right-to-left
+    /// (bidirectional class R or AL), false when left-to-right (L), null when the text has none (only digits, spaces and
+    /// punctuation). A document's <c>lines</c> layout gives each line its direction this way.
+    /// </summary>
+    bool? RightToLeft(string text);
 }
 
 /// <summary>
@@ -98,6 +106,9 @@ public static class ReadingOrders
 
         public string FromColumns(string columns, bool rightToLeft) =>
             slot.Call(() => app.FromColumns(columns, rightToLeft), () => library.FromColumns(columns, rightToLeft), (a, b) => Comparisons.Exact(a, b));
+
+        public bool? RightToLeft(string text) =>
+            slot.Call(() => app.RightToLeft(text), () => library.RightToLeft(text), (a, b) => Comparisons.Exact(a, b));
 
         public override string ToString() => app.ToString() ?? app.Name;
     }

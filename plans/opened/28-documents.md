@@ -12,7 +12,7 @@ built.** No phase starts before the owner names it.
 
 | Phase | What | Lane | State |
 |---|---|---|---|
-| D0 | The contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`), their suites, a test format from outside proving the plug-in path | A | Planned |
+| D0 | The contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`), their suites, a test format from outside proving the plug-in path | A | Built (2026-11-18) |
 | D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Planned |
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Planned |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
@@ -295,6 +295,59 @@ and "not registered" names the registered formats, writers, drawers and font wri
 
 **Tests (CPU here):** one build; `documents contracts|document layouts|outside plug-in|override loop:|public API|
 abstraction inventory|conformance kit:`.
+
+**As built (2026-11-18):**
+- **The contract**, C1-C25 in `Idrak.Abstraction.Data` (`DocumentPages.cs`, `Documents.cs`, `DocumentTextLayouts.cs`,
+  `DocumentWriters.cs`, `DocumentDrawing.cs`, `DocumentForms.cs`, `DocumentSignatures.cs`, `FontWriters.cs`), every
+  member documented, nothing naming PDF or a font format. Registries `DocumentFormats`, `DocumentWriters`,
+  `FontWriters` (`SlotTable`s) and `DocumentTextLayouts`, `DocumentPageDrawers` (`KindTable`s), each with `Register`,
+  `Unregister`, `Names`, `Get` ("not registered" naming the registered ones and what to do), `Default`, `Origin`,
+  `SetPolicy`, guarded: formats open the app's and the library's documents each over a view of the caller's stream of its
+  own and fall back or compare per call (pages: runs, text, images); writers fall back at `Create` / `Edit` and, in
+  shadow, write the same calls to a SHA-256 counter compared byte for byte; drawers compare pixels within two levels;
+  font writers keep the app's file until whole under FallBack. Library defaults through `LibraryDefaults.Ensure`; no
+  format, writer, drawer or font writer is built in yet (D1, D6, D7, D8).
+- **Layouts:** `lines` and `content` in Idrak.Abstraction. `lines` groups runs by baseline within `LineTolerance` of the
+  larger size (a superscript stays on its line), takes each line's direction from its first strong character in content
+  order (a line with none takes the page's; `DocumentOptions.Direction` can set every line), orders runs by place in that
+  direction, puts a space where a gap passes `WordGap` of the size, and turns the columns into logical order through the
+  reading order; a run's text is in visual order unless `DocumentTextRun.Logical` (an `/ActualText` span, an Office
+  run), which goes in through `ToColumns`. Runs without a place are lines of their own, in content order.
+- **Decisions the plan did not settle, taken here:** (1) `IReadingOrder` gains `RightToLeft(text)` (P2/P3), answered by
+  `bidi` and `runs` from Idrak.Imaging's bidi classes: the Unicode data stays in one place and the direction rule is
+  replaceable with the order (an app's order over `bidi` must answer it). (2) `IDocumentPageDrawer.Draw` and
+  `IDocument.DrawPage` return `DocumentDrawing` (the image and its issues), so a missing font is counted, not thrown.
+  (3) Annotation kinds are names in `DocumentAnnotationKinds`. (4) A font subset keeps glyph ids (the others written
+  empty), as an embedding with `CIDToGIDMap Identity` needs. (5) A builder writes as it goes, so a failure past `Create`
+  reaches the caller; an edit under Shadow is the library's alone. (6) Size limits are a quarter (streams) and an eighth
+  (cache) of the memory free when a document opens, objects one per KiB of it, nesting 64; all settable.
+- **Settings:** `IDRAK_DOCUMENT_LAYOUT`, `_READING_ORDER`, `_MAX_STREAM_BYTES`, `_CACHE_BYTES`, `_IMAGE_ENCODING`,
+  `_JPEG_QUALITY`, `_EMBED_FONTS`, `_SAVE_MODE`, `_DPI`, `_FONTS`, `_SIGNATURE_ONLINE` and `IDRAK_FONT_CURVE_TOLERANCE`
+  read by the options (a bad value refused naming its variable) and in the CLI's table (no command reads documents yet).
+  The table also gained the four `DOTNET_EventPipe*` variables `trace --stacks` sets, which its check found missing.
+- **The kit:** `DocumentFormatSuite`, `DocumentWriterSuite`, `DocumentPageDrawerSuite`, `FontWriterSuite` and
+  `Conformance.CheckDocumentFormat`, `CheckDocumentWriter`, `CheckDocumentPageDrawer`, `CheckFontWriter`;
+  `ReadingOrderSuite` checks `RightToLeft`. Each suite is shown to fail an implementation that breaks it.
+- **The plug-in path** (`tests/Idrak.PluginTests/DocumentPlugin.cs`, public API only): a toy format and writer
+  register, write by extension, open by first bytes from a file, a stream and memory, pass both suites and unregister;
+  over a stand-in library format and writer of the same name (`outside-proof`, a library default for the process) the
+  app's failure reaches the caller, falls back under FallBack and is compared under Shadow. A drawer and a font writer of
+  the test's own (`test-guard` stand-ins) prove their guards and the two other suites.
+- **Tests:** groups `documents contracts` (6) and `document layouts` (5), right-to-left and mixed lines in generic
+  text. Run on the CPU with the phase's filter and `every environment variable read in src|the environment table names
+  real commands|test runner|generic components: reading order`: 67 tests, 66 passed and the table check failed (the
+  `DOTNET_EventPipe*` gap, fixed); rerun with the API and inventory checks without their update flags: 9 passed. The
+  API dumps (`Idrak.Abstraction`, `Idrak.Abstraction.Testing`) and the inventory regenerated through the runner.
+- **Left for later phases:** every implementation (PDF from D1); the toy's `NotSupportedException`s for forms, links,
+  bookmarks, labels, encryption, signing and editing are the toy's own; the library's answer them when D9-D12 land.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents contracts|document layouts|outside plug-in|override loop:|public API|abstraction inventory|conformance kit:|every environment variable read in src|the environment table names real commands|test runner|generic components: reading order"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d0.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase D1: PDF, the file
 

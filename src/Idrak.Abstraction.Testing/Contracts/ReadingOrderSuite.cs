@@ -15,8 +15,9 @@ namespace Idrak.Abstraction.Testing;
 /// order;</item>
 /// <item>a reading turned back to logical order gives the same columns again (and, with <see cref="Invertible"/>, the
 /// text itself: an order that maps no two texts to the same columns);</item>
+/// <item>the direction of the text's first strong letter (null for a text of none);</item>
 /// <item>the same text again and from several threads;</item>
-/// <item>given a <see cref="Reference"/> (the library's order it replaces), the same columns and the same text back.</item>
+/// <item>given a <see cref="Reference"/> (the library's order it replaces), the same columns, the same text back and the same direction.</item>
 /// </list>
 /// </summary>
 /// <param name="reference">The library's order to agree with, or null.</param>
@@ -91,6 +92,8 @@ public sealed class ReadingOrderSuite(IReadingOrder? reference = null, bool inve
             checks.Skip("read back, the same text", "the order maps some texts to the same columns");
         }
 
+        bool? direction = implementation.RightToLeft(logical), first = FirstStrong(logical);
+        checks.Check("the direction of the first strong letter", direction == first, $"'{logical}': {Show(direction)}, its first strong letter {Show(first)}");
         checks.Check("the same columns again", implementation.ToColumns(logical, rightToLeft) == columns, "other columns");
         var parallel = new string[4];
         Parallel.For(0, parallel.Length, i => parallel[i] = implementation.ToColumns(logical, rightToLeft));
@@ -98,8 +101,8 @@ public sealed class ReadingOrderSuite(IReadingOrder? reference = null, bool inve
         if (Reference is not null)
         {
             string expected = Reference.ToColumns(logical, rightToLeft);
-            checks.Check("agrees with the reference", expected == columns && Reference.FromColumns(columns, rightToLeft) == back,
-                $"'{columns}' and back '{back}', the reference '{expected}' and back '{Reference.FromColumns(columns, rightToLeft)}'");
+            checks.Check("agrees with the reference", expected == columns && Reference.FromColumns(columns, rightToLeft) == back && Reference.RightToLeft(logical) == direction,
+                $"'{columns}' and back '{back}', direction {Show(direction)}; the reference '{expected}' and back '{Reference.FromColumns(columns, rightToLeft)}', direction {Show(Reference.RightToLeft(logical))}");
         }
         else
         {
@@ -108,6 +111,23 @@ public sealed class ReadingOrderSuite(IReadingOrder? reference = null, bool inve
     }
 
     private static bool IsRightToLeft(System.Text.Rune rune) => rune.Value is >= 0x0590 and <= 0x08FF;
+
+    // The suite's words hold letters of the Hebrew and Arabic blocks (right to left) and Latin ones; digits and
+    // separators are not strong.
+    private static bool? FirstStrong(string text)
+    {
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (System.Text.Rune.IsLetter(rune))
+            {
+                return IsRightToLeft(rune);
+            }
+        }
+
+        return null;
+    }
+
+    private static string Show(bool? direction) => direction switch { true => "right to left", false => "left to right", null => "none" };
 
     private static string Sorted(string text) => string.Concat(text.EnumerateRunes().Select(r => r.Value).Order().Select(v => char.ConvertFromUtf32(v)));
 

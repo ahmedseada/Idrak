@@ -19,6 +19,8 @@ internal sealed class BidiReadingOrder : IReadingOrder
 
     public string Name => ReadingOrders.Bidi;
 
+    public bool? RightToLeft(string text) => FirstStrong.RightToLeft(text);
+
     public string ToColumns(string logical, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(logical);
@@ -135,6 +137,8 @@ internal sealed class RunsReadingOrder : IReadingOrder
 {
     public string Name => ReadingOrders.Runs;
 
+    public bool? RightToLeft(string text) => FirstStrong.RightToLeft(text);
+
     public string ToColumns(string logical, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(logical);
@@ -199,5 +203,40 @@ internal sealed class RunsReadingOrder : IReadingOrder
         }
 
         return builder.ToString();
+    }
+}
+
+/// <summary>
+/// A text's direction by its first strong character, Unicode's rules P2 and P3 (UAX #9): the bidirectional classes of
+/// <see cref="Bidi.ClassOf"/>, characters inside isolates skipped, the search ending at a paragraph separator. Both reading
+/// orders answer <see cref="IReadingOrder.RightToLeft"/> with it. Nothing is allocated.
+/// </summary>
+internal static class FirstStrong
+{
+    /// <summary>True for R or AL first, false for L first, null when the text has no strong character.</summary>
+    public static bool? RightToLeft(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        int isolates = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            switch (UnicodeText.Bidi(rune.Value))
+            {
+                case BidiClass.LRI or BidiClass.RLI or BidiClass.FSI:
+                    isolates++;
+                    break;
+                case BidiClass.PDI when isolates > 0:
+                    isolates--;
+                    break;
+                case BidiClass.B:
+                    return null;
+                case BidiClass.L when isolates == 0:
+                    return false;
+                case BidiClass.R or BidiClass.AL when isolates == 0:
+                    return true;
+            }
+        }
+
+        return null;
     }
 }

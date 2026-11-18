@@ -223,6 +223,78 @@ public static class Conformance
         Check(order ?? ReadingOrders.Get(name), new ReadingOrderSuite(order is null ? null : ReadingOrders.Default(name), invertible), options);
 
     /// <summary>
+    /// Checks a document format (<see cref="DocumentFormatSuite"/>) on files of its own: it accepts their first bytes and
+    /// refuses other formats', its pages count and read with every run inside its page, the same in parallel as one by one,
+    /// images decode or name their encoding, tight limits fail naming the limit, and damaged files fail with an
+    /// <see cref="InvalidDataException"/>, never another exception. Twelve random (damaged) cases unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="format">The format.</param>
+    /// <param name="samples">Files in its format (at least one valid one), with what they hold when known.</param>
+    /// <param name="foreign">File starts it must refuse; null for <see cref="DocumentFormatSuite.DefaultForeign"/>.</param>
+    /// <param name="documentOptions">The options documents are opened with; null for the defaults.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckDocumentFormat(IDocumentFormat format, IReadOnlyList<DocumentSample> samples, IReadOnlyList<byte[]>? foreign = null,
+        DocumentOptions? documentOptions = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        return Check(format, new DocumentFormatSuite(samples, foreign, documentOptions), options ?? new ContractCheckOptions { RandomCases = 12 });
+    }
+
+    /// <summary>
+    /// Checks a document writer (<see cref="DocumentWriterSuite"/>): pages of images, paths, text (in <paramref name="face"/>,
+    /// when given), information and an attached file written twice to the same bytes and read back exactly through
+    /// <paramref name="reader"/> (by default the registered format of the writer's name), and a page's memory bounded. Four
+    /// random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="writer">The writer.</param>
+    /// <param name="reader">The format its files are read back with; null for <see cref="DocumentFormats.Get"/> of its name.</param>
+    /// <param name="face">A font for the text pages; null leaves text out.</param>
+    /// <param name="writeOptions">The options documents are written with; null for the defaults.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckDocumentWriter(IDocumentWriter writer, IDocumentFormat? reader = null, IFontFace? face = null, DocumentWriteOptions? writeOptions = null,
+        ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        return Check(writer, new DocumentWriterSuite(reader ?? DocumentFormats.Get(writer.Name), face, writeOptions), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
+    /// Checks a page drawer (<see cref="DocumentPageDrawerSuite"/>) on pages of known paths, glyph runs (in
+    /// <paramref name="face"/>, when given) and images: the page's size, its background, fills and glyphs within
+    /// <paramref name="tolerance"/> of the rasterizer's own coverage, both fill rules, strokes, images in their boxes, parts
+    /// left out when asked, hidden text only when asked, a missing font counted and never thrown, the same pixels again and
+    /// from several threads. Four random cases unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="drawer">The drawer.</param>
+    /// <param name="face">A font for the glyph runs; null leaves them out.</param>
+    /// <param name="tolerance">How far, on average, a drawing may be from the rasterizer's coverage.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckDocumentPageDrawer(IDocumentPageDrawer drawer, IFontFace? face = null, float tolerance = 0.02f, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(drawer);
+        return Check(drawer, new DocumentPageDrawerSuite(face, tolerance), options ?? new ContractCheckOptions { RandomCases = 4 });
+    }
+
+    /// <summary>
+    /// Checks a font writer (<see cref="FontWriterSuite"/>) on <paramref name="faces"/>: each written whole and as subsets to
+    /// the same bytes every time, read back (through <see cref="FontFormats"/>, or <paramref name="read"/>) with the same
+    /// metrics, advances, outlines (the same points when <paramref name="exact"/>), characters and shaping; a subset keeping
+    /// its glyphs and their ids. Six random subsets unless <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="writer">The writer.</param>
+    /// <param name="faces">The faces written.</param>
+    /// <param name="exact">Whether outlines read back with the same points.</param>
+    /// <param name="read">Reads a written file back as a face; null for <see cref="FontFormats.Read(ReadOnlyMemory{byte}, string)"/>'s first.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckFontWriter(IFontWriter writer, IReadOnlyList<IFontFace> faces, bool exact = true, Func<ReadOnlyMemory<byte>, IFontFace>? read = null,
+        ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        return Check(writer, new FontWriterSuite(faces, exact, read), options ?? new ContractCheckOptions { RandomCases = 6 });
+    }
+
+    /// <summary>
     /// Checks a shape (<see cref="ShapeSuite"/>): the same plan for the same step and context, regions inside the box
     /// asked for and not overlapping, widths honoured from the start side, paths inside the box give or take their
     /// stroke, and an option it does not take refused; on <paramref name="steps"/> (its name alone when none: give steps
