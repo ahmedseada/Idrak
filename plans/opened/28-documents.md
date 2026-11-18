@@ -121,6 +121,11 @@ registered format the same way.
     drawn and composed glyphs are kept at whole font units (at most half a unit off, what the TrueType format holds);
     that rounding is the new reference for pages drawn from legacy fonts, an accepted exception to rule 71's
     byte-identical pages. `IDRAK_FONT_CACHE=off` (or `--font-maps cache=off`) gives the exact mapped face back.
+25. **Cached and mapped faces are identical** (owner, 2026-11-18, "1a" to "how could it be byte identical?"): the
+    mapped face rounds its drawn and composed glyphs to whole font units exactly as the TrueType writer does, so a
+    legacy font gives the same outlines, and a page the same bytes, with the cache on or off. Pages drawn from legacy
+    fonts change once (decision 24's rounding, now in both paths) and never differ between the two paths again
+    (rule 71 holds from here). Built as D8c.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
