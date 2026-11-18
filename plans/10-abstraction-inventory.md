@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 213 | 19 | 77 | 309 | 0 |
+| `Idrak.Abstraction` | 214 | 19 | 78 | 311 | 0 |
 | `Idrak` | 59 | 5 | 23 | 87 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -88,6 +88,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontMakers` | registry | public | — |  | traced | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontWriters` | registry | public | — |  | truetype | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
@@ -106,6 +107,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MadeFontFace, MappedFontFace, OpenTypeFace |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat, WoffFormat |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.Data.IFontMaker` | interface | public | — | FontMakers.GuardedMaker, TracedFontMaker |  | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter, TrueTypeWriter, WoffWriter |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
@@ -285,8 +287,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSession` | interface | public | — | ProcessCommandSession |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, AttentionPositionBiases.BuiltInKind, +133 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +196 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, AttentionPositionBiases.BuiltInKind, +135 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +198 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +39 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |

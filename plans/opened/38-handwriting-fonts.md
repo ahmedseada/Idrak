@@ -1,7 +1,8 @@
 # Plan 38: handwriting fonts from images (a person's hand, read from a scan, used as a font)
 
-**In progress (on the branch `documents`, one agent slot, this session only).** Built: F0 and F1 (2026-11-18). Next
-in that slot: F3; then the slot stops (plan 28's decision 23).
+**In progress (on the branch `documents`).** Built 2026-11-18 in the one slot the owner gave this plan for that
+session: F0, F1 and F3. That slot has stopped (plan 28's decision 23); F2 and F4-F6 wait for plan 28 to finish
+(decision 14).
 
 **Status (2026-11-18, `imaging`):** planned 2026-11-13 from the owner's question "can Idrak extract a font from an image
 and use it?", against the code at b96ff2e; refreshed 2026-11-18 against the code at da19bfc (the pieces it was waiting
