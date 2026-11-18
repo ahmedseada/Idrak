@@ -98,7 +98,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IAugmentationKind` | interface | public | — | Augmentations.FunctionKind, Augmentations.GuardedKind |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDocument` | interface | public | — | DocumentFormats.GuardedDocument, DocumentFormats.OwningDocument, PdfDocument |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentBuilder` | interface | public | — | DocumentWriters.OwningBuilder, DocumentWriters.ShadowBuilder, PdfDocumentBuilder |  | Data | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | — |  | Data | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | PdfEditor |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat, PdfFormat |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder, PdfPageBuilder |  | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | DocumentPageDrawers.GuardedDrawer |  | Data | Abstraction |

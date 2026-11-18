@@ -7,7 +7,9 @@ namespace Idrak.Data.Pdf;
 /// One page being written: its content stream built in a pooled buffer, in the page's own frame (points from the top-left
 /// corner, y down: the content starts by turning the user space over, so every point is written as given and reads back
 /// exactly), the graphics state kept to write only what changes; images written to the file as they are given, the
-/// content stream and the page object when the document moves on.
+/// content stream and the page object when the document moves on. Content over an existing page (an editor's) starts by
+/// the page's own frame instead (its display map turned back), and names its resources after a prefix that the page's
+/// own do not start with.
 /// </summary>
 internal sealed class PdfPageBuilder : IDocumentPageBuilder
 {
@@ -18,16 +20,28 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
     // caller's float sums, not a kern. Each glyph is measured against its own place, so the error never adds up.
     private const double Placed = 2.5e-4;
 
-    private readonly PdfDocumentBuilder _document;
+    private readonly Func<IFontFace, PdfWriterFont> _font;
+    private readonly Func<ImageData, DocumentImageEncoding, int> _image;
     private readonly List<GraphicsState> _saved = [];
     private readonly List<int> _images = [];
     private readonly List<PdfWriterFont> _fonts = [];
     private readonly List<(float Fill, float Stroke)> _alphas = [];
+    private readonly PdfMatrix? _frame;
+    private readonly byte[] _names;
     private PdfSyntax? _content;
     private GraphicsState _state = GraphicsState.Initial;
     private bool _written;
 
-    public PdfPageBuilder(PdfDocumentBuilder document, int index, float width, float height) => (_document, Index, Width, Height) = (document, index, width, height);
+    /// <param name="font">The face's font in the document the page belongs to (a builder's or an editor's), made on its first use.</param>
+    /// <param name="image">Takes an image as an image XObject of that document: the number the page's resources name it by.</param>
+    /// <param name="index">The page's index.</param>
+    /// <param name="width">Its width in points.</param>
+    /// <param name="height">Its height in points.</param>
+    /// <param name="frame">The map from page points (top-left origin, y down) to the page's user space; null for a new page's (its user space turned over).</param>
+    /// <param name="names">What its resources' names start with ("" for a new page: /Im1, /F1, /GS1).</param>
+    public PdfPageBuilder(Func<IFontFace, PdfWriterFont> font, Func<ImageData, DocumentImageEncoding, int> image, int index, float width, float height,
+        PdfMatrix? frame = null, string names = "") =>
+        (_font, _image, Index, Width, Height, _frame, _names) = (font, image, index, width, height, frame, System.Text.Encoding.ASCII.GetBytes(names));
 
     public int Index { get; }
 
@@ -44,7 +58,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
         }
 
         var content = Content();
-        int number = _document.WriteImage(image, encoding);
+        int number = _image(image, encoding);
         int resource = _images.IndexOf(number);
         if (resource < 0)
         {
@@ -54,7 +68,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
 
         // The unit square onto the box, its first row at the top (the page's frame is y down).
         content.Raw("q "u8).Number(box.Width).Raw(" 0 0 "u8).Number(-box.Height).Space().Number(box.X).Space().Number(box.Y + box.Height)
-            .Raw(" cm /Im"u8).Integer(resource + 1).Raw(" Do Q\n"u8);
+            .Raw(" cm /"u8).Raw(_names).Raw("Im"u8).Integer(resource + 1).Raw(" Do Q\n"u8);
     }
 
     public void Path(DocumentPath path)
@@ -120,7 +134,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
             }
         }
 
-        var font = _document.Font(face);
+        var font = _font(face);
         var content = Content();
         if (!_fonts.Contains(font))
         {
@@ -152,7 +166,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
         content.Raw("BT\n"u8);
         if (!ReferenceEquals(_state.Font, font) || _state.Size != size)
         {
-            content.Raw("/F"u8).Integer(font.Index).Space().Number(size).Raw(" Tf\n"u8);
+            content.Raw("/"u8).Raw(_names).Raw("F"u8).Integer(font.Index).Space().Number(size).Raw(" Tf\n"u8);
             (_state.Font, _state.Size) = (font, size);
         }
 
@@ -245,21 +259,52 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
 
     public void AddLink(DocumentLink link) => throw PdfDocumentBuilder.NotYet("links", "D10");
 
+    /// <summary>The numbers of the images its resources name (<c>/Im1</c>, <c>/Im2</c>, ... after the prefix), in order.</summary>
+    internal IReadOnlyList<int> ImageNumbers => _images;
+
+    /// <summary>The fonts its resources name (<c>/F</c> and each one's index, after the prefix).</summary>
+    internal IReadOnlyList<PdfWriterFont> Fonts => _fonts;
+
+    /// <summary>The opacities its graphics states set (<c>/GS1</c>, <c>/GS2</c>, ... after the prefix), in order.</summary>
+    internal IReadOnlyList<(float Fill, float Stroke)> Alphas => _alphas;
+
+    /// <summary>What its resources' names start with.</summary>
+    internal ReadOnlySpan<byte> Names => _names;
+
+    /// <summary>
+    /// Ends the content (closing what it left open: each Save never restored, then the frame) and gives it, or null when
+    /// nothing was drawn; the buffer stays the page's until <see cref="Release"/>. Nothing more can be drawn after.
+    /// </summary>
+    internal PdfSyntax? Close()
+    {
+        if (_written)
+        {
+            return _content;                                                   // closed before (an editor writes a page's object twice when it encrypts)
+        }
+
+        _written = true;
+        if (_content is not { } content)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < _saved.Count; i++)
+        {
+            content.Raw("Q\n"u8);                                              // a Save never restored ends with the page
+        }
+
+        content.Raw("Q\n"u8);                                                  // the page's frame
+        return content;
+    }
+
     /// <summary>Writes the page's content stream and the page object (closing what the content left open); the page object's number.</summary>
     public int Write(PdfFileWriter file, int parent)
     {
-        _written = true;
         try
         {
             int contents = 0;
-            if (_content is { } content)
+            if (Close() is { } content)
             {
-                for (int i = 0; i < _saved.Count; i++)
-                {
-                    content.Raw("Q\n"u8);                                      // a Save never restored ends with the page
-                }
-
-                content.Raw("Q\n"u8);                                          // the page's frame
                 contents = file.Allocate();
                 file.BeginStream(contents);
                 file.EndStream(content.Span, deflate: true);
@@ -273,7 +318,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
                 s.Raw("/XObject<<"u8);
                 for (int i = 0; i < _images.Count; i++)
                 {
-                    s.Raw("/Im"u8).Integer(i + 1).Space().Reference(_images[i]);
+                    s.Raw("/"u8).Raw(_names).Raw("Im"u8).Integer(i + 1).Space().Reference(_images[i]);
                 }
 
                 s.Raw(">>"u8);
@@ -284,7 +329,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
                 s.Raw("/Font<<"u8);
                 foreach (var font in _fonts)
                 {
-                    s.Raw("/F"u8).Integer(font.Index).Space().Reference(font.Number);
+                    s.Raw("/"u8).Raw(_names).Raw("F"u8).Integer(font.Index).Space().Reference(font.Number);
                 }
 
                 s.Raw(">>"u8);
@@ -295,7 +340,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
                 s.Raw("/ExtGState<<"u8);
                 for (int i = 0; i < _alphas.Count; i++)
                 {
-                    s.Raw("/GS"u8).Integer(i + 1).Raw("<</ca "u8).Number(_alphas[i].Fill).Raw("/CA "u8).Number(_alphas[i].Stroke).Raw(">>"u8);
+                    s.Raw("/"u8).Raw(_names).Raw("GS"u8).Integer(i + 1).Raw("<</ca "u8).Number(_alphas[i].Fill).Raw("/CA "u8).Number(_alphas[i].Stroke).Raw(">>"u8);
                 }
 
                 s.Raw(">>"u8);
@@ -325,14 +370,23 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
         _content = null;
     }
 
-    // The content buffer, started with the page's frame: user space turned over so points are page points from the top-left.
+    // The content buffer, started with the page's frame: user space turned over so points are page points from the top-left
+    // (or, over an existing page, the page's own display map turned back).
     private PdfSyntax Content()
     {
         ThrowIfWritten();
         if (_content is null)
         {
             _content = new PdfSyntax(4096);
-            _content.Raw("q 1 0 0 -1 0 "u8).Number(Height).Raw(" cm\n"u8);
+            if (_frame is { } f)
+            {
+                _content.Raw("q "u8).Number(f.A, 6).Space().Number(f.B, 6).Space().Number(f.C, 6).Space().Number(f.D, 6).Space()
+                    .Number(f.E, 6).Space().Number(f.F, 6).Raw(" cm\n"u8);
+            }
+            else
+            {
+                _content.Raw("q 1 0 0 -1 0 "u8).Number(Height).Raw(" cm\n"u8);
+            }
         }
 
         return _content;
@@ -512,7 +566,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
             index = _alphas.Count - 1;
         }
 
-        content.Raw("/GS"u8).Integer(index + 1).Raw(" gs\n"u8);
+        content.Raw("/"u8).Raw(_names).Raw("GS"u8).Integer(index + 1).Raw(" gs\n"u8);
         (_state.FillAlpha, _state.StrokeAlpha) = (fill, stroke);
     }
 

@@ -18,8 +18,12 @@ namespace Idrak.Data.Pdf;
 /// tree, the fonts (one composite font a face, its program subset through <see cref="FontWriters"/>, a ToUnicode map from
 /// the runs' text) and the cross-reference at <see cref="IDocumentBuilder.Finish"/>. A builder disposed without it writes
 /// the page in hand, the page tree, the catalog and a trailer naming it, and no cross-reference: the reader rebuilds it
-/// and says the file was repaired (fonts, written at the end, are missing). Forms, annotations, links, bookmarks, page labels, copied pages, encryption, signing and editing come with
-/// the later phases of the documents plan (D9-D12), each a <see cref="NotSupportedException"/> naming its phase until it lands.
+/// and says the file was repaired (fonts, written at the end, are missing). Pages are copied from other PDF documents
+/// (merging and splitting, <see cref="IDocumentBuilder.CopyPage"/>: what each uses copied once, duplicates written once)
+/// and a document is saved encrypted (<see cref="IDocumentBuilder.Encrypt"/>: AES-256, revision 6); a PDF document is
+/// edited through <see cref="Edit"/> (<see cref="PdfEditor"/>). Forms, annotations, links, bookmarks, page labels and
+/// signing come with the later phases of the documents plan (D9, D10, D12), each a <see cref="NotSupportedException"/>
+/// naming its phase until it lands.
 /// </summary>
 internal sealed class PdfWriter : IDocumentWriter
 {
@@ -41,7 +45,28 @@ internal sealed class PdfWriter : IDocumentWriter
         return new PdfDocumentBuilder(destination, options);
     }
 
-    public IDocumentEditor Edit(IDocument source, Stream destination, DocumentWriteOptions options) => throw PdfDocumentBuilder.NotYet("editing documents", "D11");
+    public IDocumentEditor Edit(IDocument source, Stream destination, DocumentWriteOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!destination.CanWrite)
+        {
+            throw new ArgumentException("A PDF document is written to a stream that writes.", nameof(destination));
+        }
+
+        return new PdfEditor(source, Own(source, "edits"), destination, options);
+    }
+
+    /// <summary>
+    /// The PDF document behind <paramref name="document"/> (the registry's wrapper of a file it opened looked through,
+    /// <see cref="DocumentFormats.Unwrap"/>): the writer reads its objects to edit it or copy its pages.
+    /// </summary>
+    /// <exception cref="NotSupportedException">It is not a document the library's pdf format opened (the message names its format).</exception>
+    internal static PdfDocument Own(IDocument document, string what) =>
+        DocumentFormats.Unwrap(document) as PdfDocument
+        ?? throw new NotSupportedException(
+            $"The PDF writer {what} PDF documents the library's pdf format opened (DocumentFormats.Default(\"pdf\")), whose objects it reads; this one is a '{document.Format}' document another reader opened: open the file with the library's pdf format.");
 }
 
 /// <summary>A PDF document being written (see <see cref="PdfWriter"/>). Not safe from several threads.</summary>
@@ -51,6 +76,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
 
     private readonly Stream _destination;
     private readonly DocumentWriteOptions _options;
+    private readonly string _version;
     private readonly PdfFileWriter _file;
     private readonly bool _classic;
     private readonly List<int> _pages = [];
@@ -58,18 +84,22 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     private readonly List<PdfWriterFont> _fontOrder = [];
     private readonly List<(string Name, byte[] Key, int Spec)> _attachments = [];
     private PdfPageBuilder? _page;
+    private (PdfDocument Document, int Index)? _copied;                       // the page in hand is a copy of this one
+    private PdfEditCopier? _copier;
+    private PdfSecurity? _security;
+    private int _saveStream;
     private DocumentInfo _info = DocumentInfo.Empty;
-    private bool _finished, _disposed, _closing;
+    private bool _finished, _disposed, _closing, _started;
 
     public PdfDocumentBuilder(Stream destination, DocumentWriteOptions options)
     {
         string version = options.Version ?? "1.7";
-        if (!(version is "2.0" || (version.Length == 3 && version[0] == '1' && version[1] == '.' && version[2] is >= '0' and <= '7')))
+        if (!IsVersion(version))
         {
             throw new ArgumentException($"A PDF version is 1.0 to 1.7 or 2.0, not '{version}' (DocumentWriteOptions.Version).", nameof(options));
         }
 
-        (_destination, _options) = (destination, options);
+        (_destination, _options, _version) = (destination, options, version);
         _classic = string.CompareOrdinal(version, "1.5") < 0;                  // cross-reference and object streams came with 1.5
         _file = new PdfFileWriter(destination, version, options.Compression, packing: !_classic && options.ObjectStreams);
         _file.Allocate();                                                      // 1: the catalog
@@ -98,17 +128,40 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         }
 
         FinishPage();
-        _page = new PdfPageBuilder(this, _pages.Count, width, height);
+        _started = true;
+        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height);
         return _page;
     }
 
-    public IDocumentPageBuilder CopyPage(IDocument from, int index) => throw NotYet("copying pages from another document", "D11");
+    /// <summary>
+    /// Adds page <paramref name="index"/> of <paramref name="from"/> (a PDF document; it stays open until the next page
+    /// starts or the document is finished): written when the next page starts, with what it uses copied (once for every
+    /// page copied from that document; images and fonts the same as ones written already are not written again), what
+    /// it inherits from its page tree written on it, and a reference to a page of <paramref name="from"/> that is never
+    /// copied null. The builder given back draws over the page in its frame as shown (points from its top-left corner),
+    /// its resources named apart from the page's own.
+    /// </summary>
+    public IDocumentPageBuilder CopyPage(IDocument from, int index)
+    {
+        ArgumentNullException.ThrowIfNull(from);
+        ThrowIfDone();
+        var document = PdfWriter.Own(from, "copies pages of");
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, document.PageCount);
+        FinishPage();
+        _started = true;
+        var (display, width, height, _) = document.Frame(index);
+        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height, PdfEditPages.Inverse(display), PdfEditPages.Prefix(document, index));
+        _copied = (document, index);
+        return _page;
+    }
 
     public void Attach(string name, string mediaType, Stream content)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(content);
         ThrowIfDone();
+        _started = true;
         int file = _file.Allocate(), spec = _file.Allocate();
         long size;
         using (var data = new PdfSyntax(64 * 1024))
@@ -126,7 +179,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
                 s.Raw("/Filter/FlateDecode"u8);
             }
 
-            _file.EndStream(data.Span, deflate: false);                        // deflated as it was read
+            _file.EndStream(data.Span, deflate: false, PdfCryptUse.EmbeddedFile);  // deflated as it was read
         }
 
         var f = _file.BeginSmall(spec);
@@ -145,7 +198,26 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
 
     public void SetPageLabels(IReadOnlyList<DocumentPageLabel> labels) => throw NotYet("page labels", "D10");
 
-    public void Encrypt(DocumentEncryption encryption) => throw NotYet("encryption", "D11");
+    /// <summary>
+    /// Encrypts the document as it is written: AES-256 (revision 6) with the user and owner passwords and permissions of
+    /// <paramref name="encryption"/>, every string and stream after this call; called before the first page or file.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A page or a file was added already (it would be written plain), or the document is encrypted already.</exception>
+    public void Encrypt(DocumentEncryption encryption)
+    {
+        ArgumentNullException.ThrowIfNull(encryption);
+        ThrowIfDone();
+        if (_started || _security is not null)
+        {
+            throw new InvalidOperationException(_security is not null
+                ? "The PDF document is encrypted already: Encrypt is called once."
+                : "Encrypt is called before the first page or attached file: what is written before it would be written plain.");
+        }
+
+        _security = PdfSecurity.Create(encryption);
+        int number = _file.Allocate();
+        (_file.Security, _file.PlainNumber, _file.EncryptNumber) = (_security, number, number);
+    }
 
     public void Sign(string field, SigningOptions options) => throw NotYet("signatures", "D12");
 
@@ -161,8 +233,10 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
                 font.Write(_file, _options.EmbedFonts);
             }
 
+            _copier?.Finish();
             WriteStructure(packed: true);
             int info = WriteInfo();
+            WriteEncryption();
             _file.Finish(CatalogNumber, info, Identifier(), _classic);
             _destination.Flush();
         }
@@ -189,6 +263,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
                 _closing = true;
                 FinishPage();
                 WriteStructure(packed: false);
+                WriteEncryption();
                 _file.Unfinished(CatalogNumber);
                 _destination.Flush();
             }
@@ -201,6 +276,8 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         {
             _page?.Release();
             _page = null;
+            _copier?.Dispose();
+            _security?.Dispose();                                              // the file key cleared
             _file.Dispose();
         }
     }
@@ -229,6 +306,10 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     internal static NotSupportedException NotYet(string what, string phase) =>
         new($"The PDF writer does not write {what} yet: they come with phase {phase} of the documents plan.");
 
+    /// <summary>Whether <paramref name="version"/> is a PDF version the writer writes (1.0 to 1.7, or 2.0).</summary>
+    internal static bool IsVersion(string version) =>
+        version is "2.0" || (version.Length == 3 && version[0] == '1' && version[1] == '.' && version[2] is >= '0' and <= '7');
+
     private void ThrowIfDone()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -243,9 +324,51 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         if (_page is { } page)
         {
             _page = null;
-            _pages.Add(page.Write(_file, PagesNumber));
+            if (_copied is { } copy)
+            {
+                _copied = null;
+                _pages.Add(WriteCopy(page, copy.Document, copy.Index));
+            }
+            else
+            {
+                _pages.Add(page.Write(_file, PagesNumber));
+            }
+
             _file.Flush();                                                     // the page goes to the destination as it finishes
         }
+    }
+
+    // A copied page: what it uses copied (once a source document), what it inherits written on it, the content drawn over
+    // it after its own; its object's number (one a page copied earlier referred to it by, else a new one).
+    private int WriteCopy(PdfPageBuilder content, PdfDocument document, int index)
+    {
+        try
+        {
+            var copier = _copier ??= new PdfEditCopier(_file, _options.Compression, recompress: false) { Root = PagesNumber };
+            var source = copier.For(document, reserve: true);
+            var node = document.PageObject(index).Node;
+            int number = node.IsReference ? copier.PageNumber(source, node.AsReference.Number) : _file.Allocate();
+            var how = new PdfPageWrite(number, PagesNumber, document.Frame(index).Rotation, Materialize: true, ParentCrops: false, ParentRotates: false);
+            PdfEditPages.Write(copier, _file, source, index, how, content, image => image, () => _saveStream != 0 ? _saveStream : _saveStream = PdfEditPages.WriteSave(_file));
+            return number;
+        }
+        finally
+        {
+            content.Release();
+        }
+    }
+
+    // The encryption dictionary, when the document is encrypted (never itself encrypted).
+    private void WriteEncryption()
+    {
+        if (_security is null)
+        {
+            return;
+        }
+
+        var s = _file.BeginObject(_file.EncryptNumber);
+        _security.WriteDictionary(s);
+        _file.EndObject();
     }
 
     // The page tree (one node over every page) and the catalog, with the attached files' names; in object streams when
@@ -282,6 +405,11 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
 
         s = Begin(CatalogNumber);
         s.Raw("<</Type/Catalog/Pages "u8).Reference(PagesNumber);
+        if (_security is not null && _version != "2.0")
+        {
+            s.Raw(PdfEditPages.Aes256Extension);                               // AES-256 in a file before 2.0: Adobe's extension level 8
+        }
+
         if (_attachments.Count > 0)
         {
             // The name tree's one node: the names in the order of their bytes, as the format asks.
@@ -309,6 +437,21 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             info = info with { Created = info.Created ?? now, Modified = info.Modified ?? now };
         }
 
+        var entries = InfoEntries(info);
+        if (entries.Count == 0)
+        {
+            return 0;
+        }
+
+        int number = _file.Allocate();
+        WriteInfo(_file.BeginSmall(number), entries);
+        _file.EndSmall();
+        return number;
+    }
+
+    /// <summary>The entries of an information dictionary saying <paramref name="info"/>: only what is given, the standard keys first, then the others by key.</summary>
+    internal static List<(string Key, string? Text, DateTimeOffset? Date)> InfoEntries(DocumentInfo info)
+    {
         var entries = new List<(string Key, string? Text, DateTimeOffset? Date)>
         {
             ("Title", info.Title, null), ("Author", info.Author, null), ("Subject", info.Subject, null), ("Keywords", info.Keywords, null),
@@ -322,13 +465,13 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             }
         }
 
-        if (entries.All(e => e.Text is null && e.Date is null))
-        {
-            return 0;
-        }
+        entries.RemoveAll(e => e.Text is null && e.Date is null);
+        return entries;
+    }
 
-        int number = _file.Allocate();
-        var s = _file.BeginSmall(number);
+    /// <summary>Writes an information dictionary of <paramref name="entries"/> (<see cref="InfoEntries"/>).</summary>
+    internal static void WriteInfo(PdfSyntax s, List<(string Key, string? Text, DateTimeOffset? Date)> entries)
+    {
         s.Raw("<<"u8);
         foreach (var (key, text, date) in entries)
         {
@@ -343,8 +486,6 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         }
 
         s.Raw(">>"u8);
-        _file.EndSmall();
-        return number;
     }
 
     // A date as PDF writes it: D:YYYYMMDDHHmmSS and the offset from UT (Z, or +HH'mm').
@@ -356,7 +497,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         return "D:" + when.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + zone;
     }
 
-    // The file's identifier: the one given, else (not deterministic) one made now, else none.
+    // The file's identifier: the one given, else (not deterministic, or encrypted) one made now, else none.
     private ReadOnlySpan<byte> Identifier()
     {
         if (!_options.Id.IsEmpty)
@@ -364,7 +505,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             return _options.Id.Span;
         }
 
-        return _options.Deterministic ? [] : RandomNumberGenerator.GetBytes(16);
+        return _options.Deterministic && _security is null ? [] : RandomNumberGenerator.GetBytes(16);
     }
 
     // Byte strings in the order of their bytes.

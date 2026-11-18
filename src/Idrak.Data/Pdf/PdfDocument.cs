@@ -457,6 +457,41 @@ internal sealed class PdfDocument : IDocument
         _ => value.ToString(),
     };
 
+    /// <summary>The format version the document states (the header's, or the catalog's when later).</summary>
+    internal string StatedVersion => _version;
+
+    /// <summary>
+    /// Page <paramref name="index"/>'s object (a reference, or the dictionary itself) and what the page tree above it sets
+    /// of what a page inherits (null where no node does): what an editor writes a page again from.
+    /// </summary>
+    internal (PdfValue Node, PdfValue MediaBox, PdfValue CropBox, PdfValue Rotate, PdfValue Resources) PageObject(int index)
+    {
+        var (node, inherited) = _pages[index];
+        return (node, inherited.MediaBox, inherited.CropBox, inherited.Rotate, inherited.Resources);
+    }
+
+    /// <summary>
+    /// Page <paramref name="index"/> as shown when turned by <paramref name="rotation"/> (its own when null): the map from
+    /// its user space onto the page (top-left origin, y down; the same map <see cref="ReadPage"/> places runs by), its size
+    /// and its rotation. An editor writes content over the page through the map turned back.
+    /// </summary>
+    internal (PdfMatrix Display, float Width, float Height, int Rotation) Frame(int index, int? rotation = null)
+    {
+        var (node, inherited) = _pages[index];
+        var page = _file.Dictionary(node) ?? PdfDictionary.Empty;
+        var media = Box(page.TryGet("MediaBox"u8, out var own) ? own : inherited.MediaBox) ?? (0, 0, 612, 792);
+        var crop = Box(page.TryGet("CropBox"u8, out own) ? own : inherited.CropBox) is { } cropped ? Intersect(cropped, media) : media;
+        int turned = rotation ?? Rotation(page.TryGet("Rotate"u8, out own) ? own : inherited.Rotate);
+        double unit = _file.Resolve(page["UserUnit"u8]).TryNumber(out double u) && u > 0 && double.IsFinite(u) ? u : 1;
+        double width = (crop.Right - crop.Left) * unit, height = (crop.Top - crop.Bottom) * unit;
+        if (turned is 90 or 270)
+        {
+            (width, height) = (height, width);
+        }
+
+        return (Display(crop, turned, unit), (float)width, (float)height, turned);
+    }
+
     // A leaf of the page tree: the page (a reference, or the dictionary itself) and what it inherits.
     private readonly record struct PageNode(PdfValue Node, Inherited Inherited);
 

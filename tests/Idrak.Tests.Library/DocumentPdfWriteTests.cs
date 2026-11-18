@@ -838,12 +838,9 @@ internal abstract partial class Tests
             ExpectRefusal<NotSupportedException>(() => builder.AddField(null!), "D9", "form fields");
             ExpectRefusal<NotSupportedException>(() => builder.AddOutline(null!), "D10", "bookmarks");
             ExpectRefusal<NotSupportedException>(() => builder.SetPageLabels([]), "D10", "page labels");
-            ExpectRefusal<NotSupportedException>(() => builder.Encrypt(null!), "D11", "encryption");
             ExpectRefusal<NotSupportedException>(() => builder.Sign("Signature1", null!), "D12", "signing");
-            ExpectRefusal<NotSupportedException>(() => builder.CopyPage(null!, 0), "D11", "copied pages");
             ExpectRefusal<NotSupportedException>(() => page.AddLink(null!), "D10", "links");
             ExpectRefusal<NotSupportedException>(() => page.AddAnnotation(null!), "D10", "annotations");
-            ExpectRefusal<NotSupportedException>(() => DocumentWriters.Get("pdf").Edit(null!, new MemoryStream(), PdfWriteDefaults), "D11", "editing");
             builder.AddPage(100, 100);
             ExpectRefusal<InvalidOperationException>(() => page.Path(new DocumentPath(PdfBoxVerbs, PdfBoxPoints(new DocumentBox(0, 0, 5, 5)))), "was written", "a page used after the next one started");
             builder.Finish();

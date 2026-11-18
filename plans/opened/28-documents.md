@@ -27,7 +27,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
-| D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
+| D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Built (2026-11-18) |
 | D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Planned |
 | D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Planned |
 
@@ -1444,6 +1444,152 @@ sample edited incrementally keeps its signature valid (D12); a rewritten file is
 asked to add, and reads the same; an encrypted file opens with each password and not without.
 
 **Tests (CPU here):** one build; `documents pdf: edit|documents pdf: encryption|documents pdf: write|documents pdf: file`.
+
+**As built (2026-11-18):**
+- **The editor** (`src/Idrak.Data/Pdf/PdfEditor.cs`, `PdfEditPages.cs`, `PdfEditCopy.cs`, `PdfEditFile.cs`, all internal;
+  `IDocumentWriter.Edit` on `pdf`): `SetInfo`, `InsertPages` (pages of any document the library's pdf format opened),
+  `RemovePages`, `MovePage`, `RotatePage` (to a multiple of 90), `AddPage`, `Overlay` (content over a page through D6's
+  page-builder calls, in the page's frame as shown: its display map turned back, so a stamp stands upright on a turned,
+  cropped or scaled page; written as a stream after the page's own, which a stream holding `q` opens before them; its
+  resources added to the page's own, named after a prefix `Ov1`, `Ov2`, ... that none of the page's names starts with
+  when D6's `/Im1`, `/F1`, `/GS1` would clash), `Encrypt`, `Save`. Edits are recorded and written by `Save` (the
+  documents pages come from stay open until then; an image given to a page is read then). `SetField` and `AddField`
+  answer a `NotSupportedException` naming D9, `AddAnnotation`, `RemoveAnnotation` and `AddOutline` D10, `Sign` D12.
+- **Incremental** (`DocumentSaveMode.Incremental`): the source's bytes copied as they are (a line end added when they
+  end without one), then what changed under its own number and generation (a page turned or drawn over; the page tree
+  when pages change: one flat node under the root's number, keeping what the root passes on, a page under another node
+  written with what it inherited), what is new under numbers from the source's `/Size`, and one cross-reference section:
+  a classic table after a table or a hybrid, a stream (small objects in a new object stream) after a stream; `/Prev` the
+  source's last section; the trailer's `/Root`, `/Info`, `/Encrypt` and `/ID` (the first kept, the second the options'
+  `Id`, else kept). A source whose cross-reference was rebuilt by scanning gets a section listing every object and no
+  `/Prev`. An encrypted source's new objects are encrypted with its own handler and key (RC4, AES-128, AES-256). What
+  earlier signatures cover is the prefix, untouched.
+- **Rewrite** (`DocumentSaveMode.Rewrite`): the catalog 1, the page tree 2 (one node, as D6), the pages 3 on (each with
+  what it inherits written on it), then what the catalog, the pages and the information reach, copied depth first
+  (`PdfEditCopier`): what an object refers to is numbered before it, so one whose content and references' numbers match
+  one already written (SHA-256) is written once: streams, arrays, fonts, font descriptors, encodings and graphics states
+  (pages, annotations, fields, bookmarks and structure elements stay their own). A reference to a page the result does
+  not hold is null, one to a page-tree node the new root. Streams are copied as stored (decrypted, encrypted again for
+  the result), deflated at `Compression` when stored plain or when their zlib header says a faster level than the
+  options' (no predictor), kept so only when smaller. Object streams and a cross-reference stream (a classic table before
+  1.5); the catalog's `/Version` dropped (the header states the output's); a chain past 48 objects deep numbered and
+  written after (no deep recursion on long bookmark lists).
+- **The builder (C24):** `CopyPage` (a page of another PDF document with what it uses, copied once per source document
+  through the same copier, duplicates written once; a reference to a page of it not copied yet numbered, and written
+  null at `Finish` if the page never comes; content over it as the editor's `Overlay`), `Encrypt` (before the first page
+  or attached file).
+- **Saved encrypted** (`PdfSecurityWrite.cs`; `PdfSecurity` made `partial`): AES-256, revision 6, by Algorithms 8, 9 and
+  10: a fresh 32-byte file key and salts; `/U` `/UE` from the user password, `/O` `/OE` from the owner password (none: 32
+  random bytes, so the permissions cannot be lifted), `/P` from `DocumentPermissions` (the reserved bits set as the
+  standard asks), `/Perms`; passwords by SASLprep and UTF-8 up to 127 bytes, as D2 reads them. Strings are encrypted in
+  objects that stand on their own (`PdfSyntax.Encrypting`), not in object streams; streams by `/StmF`, embedded files by
+  `/EFF`, metadata plain under `/EncryptMetadata false`; the cross-reference stream and the encryption dictionary plain;
+  AES with a fresh IV and its padding. Before PDF 2.0 the catalog states Adobe's extension level 8; an encrypted file
+  always has an `/ID`. A file keeps its own encryption when edited (any handler D2 reads); `Encrypt(null)` removes it by
+  a rewrite when the owner password opened it; changed or removed with the user password, or by an update, is refused
+  naming why. Every buffer that held a password or an intermediate key is cleared; the file key on dispose.
+- **Hooks in the existing files (small, local):** `PdfWriterSyntax.cs` (`PdfSyntax`: the string cipher, `Literal`,
+  `HexString` and `Text` encrypting while it is set; `PdfFileWriter`: `partial`, generations, the offset shift,
+  `Security`, `PlainNumber`, `EncryptNumber`, streams encrypted in `EndStream` by a `PdfCryptUse`, no object of another
+  generation or the encryption dictionary packed, `/Encrypt` and a second ID in the trailer), `PdfWriterPage.cs` (its
+  fonts and images through two delegates, not the builder; an optional frame and resource-name prefix; `Close`; its
+  resources readable), `PdfWriterFonts.cs` (`Number` settable; CIDSystemInfo's strings through `Literal`), `PdfWriter.cs`
+  (`Edit`, `CopyPage`, `Encrypt`, the information writer shared, the catalog's extension), `PdfDocument.cs`
+  (`StatedVersion`, `PageObject`, `Frame`: added at the end, `Page` untouched), `PdfSecurity.cs` (`partial`). D6's output
+  is byte for byte as before (its group's same-bytes checks pass); its three D11 refusals moved into this group.
+- **Public API:** `DocumentFormats.Unwrap(IDocument)`: the registry's wrapper of a file it opened (`Open(path)`) hides the
+  format's own document, which a writer of that format reads to edit it or copy its pages (an Office plug-in's writer
+  will meet the same); `api/Idrak.Abstraction.txt` and the inventory (`IDocumentEditor` now implemented by `PdfEditor`)
+  regenerated through the runner and checked again without the flags.
+- **Decisions the plan did not settle, taken here:** (1) Encryption is random (file key, salts, IVs), so an encrypted
+  output is the one output that does not repeat byte for byte; every other edit writes the same bytes from the same
+  input. (2) Changing or removing encryption needs the owner password; otherwise the editor, like D2's reader, enforces
+  no permission. (3) An incremental update cannot set or remove encryption (its prefix stays as it is): refused naming
+  `Rewrite`. (4) A rewrite of a source the reader repaired may be larger: it gets the cross-reference it lacked
+  (`missing-xref`, 1,043 to 1,225 bytes); every other sample came out smaller. (5) Recompression is decided by the zlib
+  header's level class against `Compression` (level 6 against producers' default: copied as stored), then measured.
+  (6) `RotatePage` sets the rotation (the contract's "to"); the sample's relative steps are turned into it by the test.
+  (7) The registry's file wrapper is looked through by the public `Unwrap` (above), not an internal grant
+  (Idrak.Abstraction grants its internals to the tests alone). (8) A page inserted twice shares its content and
+  annotations with its first copy. (9) `Save(mode)` takes the mode; `DocumentWriteOptions.SaveMode`
+  (`IDRAK_DOCUMENT_SAVE_MODE`, already in the CLI's table) is what an app passes when it does not choose (tested).
+  (10) The editor's page builders get fonts and images through delegates, not an interface (no new contract outside an
+  Abstractions namespace).
+- **Tests:** group `documents pdf: edit` (9, `tests/Idrak.Tests.Library/DocumentPdfEditTests.cs`): the two incremental
+  samples (each revision ends with `%%EOF` where its JSON says and its prefix opens alone; the sections are its revisions,
+  newest first; the newest reads as `final`: pages, rotations, title, text, the field's value through the objects, each
+  page's annotations, the bookmark); an incremental update of four samples (classic tables, streams over object streams,
+  inherited resources), a light edit (the information, a page turned, a stamp) and a heavy one (pages added, moved and
+  removed): the source's bytes its prefix, one more section of the source's kind with `/Prev` its last, reading as
+  edited, the same as a rewrite of the same edits, the same bytes twice, and the options' save mode choosing; merge-a and
+  merge-b merged by `CopyPage` and by `InsertPages` (both modes) as merge-plan says, each page's `/F1`, `/Im1` and `/GS1`
+  its own source's; the stamp sample's word at its place and size, translucent, with an image, over merge-a's pages
+  (both modes): named `/Ov1F1`, `/Ov1Im1`, `/Ov1GS1` beside the page's own, the page's text, image and state kept;
+  split-source split by copying and by removing (text, rotations, smaller than the whole); merge-b copied from two copies
+  of its file holding its image and font once; page-operations' five cases in both modes, and content over a page turned
+  0, 90, 180 and 270 degrees reading upright where it was put; a rewrite of every readable sample (90) reading the same
+  (information, pages, sizes, rotations, text, runs with their boxes, images' data, issues), no larger than its source
+  but the repaired one, the same bytes twice; encryption: the builder's AES-256 in three file forms (object streams, a
+  1.4 classic table, none packed), encrypted-aes256 updated with its encryption kept, rewritten as it is, decrypted by
+  its owner, refused by its user, encrypted anew (a password through SASLprep), merge-b encrypted by a rewrite, each
+  opened by each password and refused without and with a wrong one, `/P`, the permissions and `/Perms` checked, no plain
+  string or stream in the file; every encrypted sample of D2 and D11 (22) rewritten and updated with its own handler
+  (RC4 40 and 128 bits, AES-128, AES-256 revisions 5 and 6, crypt filters, metadata left plain) reading the same; the 13
+  D12 signed samples updated (every byte of every byte range unchanged, the signature dictionaries the same, the stamp
+  read); the refusals; the timings below. D6's group lost its three D11 refusals (encryption, copied pages, editing),
+  which now work.
+  Runs (the brief's filter with `document layouts|outside plug-in|override loop:|hidden boxing` added): three builds to
+  compile (a property named as `PdfDocument`'s own `Version` method; then two errors the first build never reached: a
+  dereference the null-state analysis could not prove, a parameter named as a local of D6's `Finish`); the first run, with
+  the update flags, 105 tests: 101 passed, 4 failed: the inventory (an internal interface for the page builders' fonts
+  and images, outside an Abstractions namespace: two delegates now), merge-plan (no PDF, so the samples' loader does not
+  list it: its JSON read beside merge-a's), `missing-xref`'s rewrite larger than its source (decision 4), and the
+  decrypted file's title looked for in bytes the rewrite had packed and compressed (that file now saved unpacked and
+  stored). Rebuilt once; the three and the inventory and API checks: 9 passed; the full filter without the flags: 105
+  passed, 0 failed. Then the update's untouched pages passed over (timings below): rebuilt once, 105 passed, 0 failed, and
+  the 79 files the edit and write groups write without encryption the same bytes before and after (SHA-256).
+- **The checker's verdicts** (`tools/documents/check_written.py`): `test-output/documents/edited`, 62 files (updates and
+  rewrites of the D11 samples, merges, stamps, splits, page operations, the 13 signed samples updated, the decrypted
+  file, clean rewrites of the D6 and D11 samples): qpdf finds no damage, problem or warning and decodes every stream;
+  pdfminer.six and pdfium open each without a warning; the 29 with an expected JSON on upright pages extract exactly its
+  text in both. The other 14 differ only on turned pages (`/Rotate` 90 or 270): pdfium gives a turned page's two lines in
+  the other order and pdfminer.six splits its words into letters, as both read the source samples' turned pages
+  (`split-source` checked the same way fails on its page 4 alike). `test-output/documents/edited-encrypted`, 5 files (the
+  builder's three forms, encrypted-aes256 updated, merge-b encrypted by a rewrite): with the user password and with the
+  owner password all three tools open each, qpdf without damage or warning, the texts as expected; qpdf reads revision 6
+  with AESV3 for strings and streams, `/P` and the permissions as set, and which password matched (user, owner); without a
+  password all three refuse each. The one note: pdfminer.six says encrypted-aes256-updated does not allow text extraction,
+  as it says of its source (its permissions deny copying, by design).
+- **Timings and memory** (this container, 4 cores, load average 8-12 from other agents' builds: noisy; the owner's
+  devices give the real ones; each written to a stream that only counts): on D13's `pages-3000` (3,978,312 bytes, 3,000
+  pages, in memory), a one-field incremental update (`SetInfo`): 345 bytes appended, cold 25.8-41.5 ms (the first call,
+  mostly compiling), warm 1.7 ms, 284 KiB allocated; a rewrite: 3,964,581 bytes, cold 68-78 ms, warm 35-43 ms (12-14 µs a
+  page), 2.8 MiB allocated; merged with `huge-image` page by page by `CopyPage` (3,001 pages, 7,065,870 bytes in):
+  7,054,478 bytes, cold 55-87 ms, warm 60-63 ms (20-21 µs a page), 5.4 MiB allocated; merged with a copy of itself (6,000
+  pages, every stream and font the same): 4,015,337 bytes (the second copy's streams and fonts written once), warm 76-103
+  ms, 10.4 MiB allocated; the process's peak working set 138-172 MiB, the managed heap 21-28 MiB after. One change
+  measured before and after: the update passes over the pages it does not touch without reading them (no frame read, no
+  set of pages met, no page list for a source referred to as it is): warm 4.3 to 1.7 ms and 615 to 284 KiB, the same
+  bytes. The 90 readable samples rewritten: 1,499,316 bytes to 1,036,680 (69.1%).
+- **Left for later phases:** fields, annotations, bookmarks and signing in the editor (D9, D10, D12; refused naming
+  them); objects an update no longer uses are left in the file, not freed; a deeper page tree for very large documents
+  (a rewrite writes one node, as D6); plain Flate streams deflated again only by their level class (a pass that would
+  decode and deflate every one is measurable, not taken); the builder's `CopyPage` copies streams as stored (no
+  recompression, duplicates once); an editor holds a small record per page from its start.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  python -I tools\documents\make_fixtures.py --only none --large
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: edit|documents pdf: encryption|documents pdf: write|documents pdf: file|documents pdf: text|documents pdf: images|documents contracts|document layouts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d11.txt
+  $env:IDRAK_FILTER = "documents pdf: edit: timings"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d11-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_written.py test-output\documents\edited -o test-output\documents\edited-check.json --expected auto
+  python -I tools\documents\check_written.py test-output\documents\edited-encrypted -o test-output\documents\edited-encrypted-check.json --expected auto --password reader-2026
+  ```
 
 ## Phase D12: signatures
 

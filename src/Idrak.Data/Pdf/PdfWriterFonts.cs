@@ -44,8 +44,8 @@ internal sealed class PdfWriterFont
 
     public IFontFace Face { get; }
 
-    /// <summary>The Type0 font's object number.</summary>
-    public int Number { get; }
+    /// <summary>The Type0 font's object number (an editor gives it when it saves).</summary>
+    public int Number { get; set; }
 
     /// <summary>Its resource name's number (<c>/F1</c>, <c>/F2</c>, ... in the order faces are first used).</summary>
     public int Index { get; }
@@ -247,7 +247,8 @@ internal sealed class PdfWriterFont
 
         var s = file.BeginSmall(cidFont);
         s.Raw("<</Type/Font/Subtype/CIDFontType2/BaseFont"u8).Name(baseName)
-            .Raw("/CIDSystemInfo<</Registry(Adobe)/Ordering(Identity)/Supplement 0>>/FontDescriptor "u8).Reference(descriptor).Raw("/W["u8);
+            .Raw("/CIDSystemInfo<</Registry"u8).Literal("Adobe"u8).Raw("/Ordering"u8).Literal("Identity"u8)   // strings: encrypted in an encrypted file
+            .Raw("/Supplement 0>>/FontDescriptor "u8).Reference(descriptor).Raw("/W["u8);
         for (int i = 0; i < used.Count;)
         {
             int start = i;

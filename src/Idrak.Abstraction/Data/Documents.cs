@@ -457,11 +457,30 @@ public static class DocumentFormats
         }
     }
 
+    /// <summary>
+    /// The document a format opened, behind the registry's own wrapper of a file it opened (<see cref="Open(string, DocumentOptions?)"/>):
+    /// what a writer of the same format edits or copies pages from (<see cref="IDocumentWriter.Edit"/>,
+    /// <see cref="IDocumentBuilder.CopyPage"/>), since it reads its own documents' objects. Any other document is given
+    /// back as it is (the wrapper still owns the file: dispose it, not what this gives).
+    /// </summary>
+    public static IDocument Unwrap(IDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        while (document is OwningDocument owning)
+        {
+            document = owning.Inner;
+        }
+
+        return document;
+    }
+
     private static string Listed() => Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys);
 
     // A document the registry opened from a file it owns: the file is closed after the document.
     private sealed class OwningDocument(IDocument inner, Stream stream) : IDocument
     {
+        public IDocument Inner => inner;
+
         public string Format => inner.Format;
 
         public DocumentInfo Info => inner.Info;

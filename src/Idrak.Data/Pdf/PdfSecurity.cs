@@ -21,7 +21,7 @@ namespace Idrak.Data.Pdf;
 /// their filters (not a cross-reference stream, nor metadata under <c>/EncryptMetadata false</c>, nor what a crypt filter
 /// of the stream's own or <c>/Identity</c> leaves plain). Safe from several threads.
 /// </summary>
-internal sealed class PdfSecurity : IDisposable
+internal sealed partial class PdfSecurity : IDisposable
 {
     // A password longer than this many characters is cut before it is prepared (revisions 5 and 6 keep 127 bytes of it).
     private const int MostPasswordChars = 1024;

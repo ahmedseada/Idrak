@@ -21,11 +21,24 @@ internal sealed class PdfSyntax : IDisposable
     private static readonly string[] Fixed = [.. Enumerable.Range(0, 10).Select(d => "F" + d.ToString(CultureInfo.InvariantCulture))];
 
     private PdfBuffer _buffer;
+    private PdfSecurity? _cipher;
+    private int _cipherNumber, _cipherGeneration;
 
     public PdfSyntax(int capacity = 4096) =>
         _buffer = new PdfBuffer(capacity, Array.MaxLength, "a part of a PDF being written passes the largest array .NET holds");
 
     public int Length => _buffer.Length;
+
+    /// <summary>Whether strings are written encrypted (see <see cref="Encrypting"/>).</summary>
+    public bool Encrypts => _cipher is not null;
+
+    /// <summary>
+    /// Encrypts every string written from now on with <paramref name="security"/>'s key for object
+    /// <paramref name="number"/> and <paramref name="generation"/> (an object of an encrypted file that stands on its own:
+    /// its strings written as hex digits of their ciphertext), or, with null, writes them as they are (an object stream's
+    /// objects, which the stream's own encryption covers).
+    /// </summary>
+    public void Encrypting(PdfSecurity? security, int number, int generation) => (_cipher, _cipherNumber, _cipherGeneration) = (security, number, generation);
 
     public ReadOnlySpan<byte> Span => _buffer.Span;
 
@@ -206,6 +219,11 @@ internal sealed class PdfSyntax : IDisposable
     /// <summary>A literal string: its bytes between parentheses, the parentheses and backslash escaped, line ends and other control bytes as escapes.</summary>
     public PdfSyntax Literal(ReadOnlySpan<byte> bytes)
     {
+        if (_cipher is not null)
+        {
+            return Encrypted(bytes);
+        }
+
         var span = _buffer.GetSpan(2 + 4 * bytes.Length);
         int at = 0;
         span[at++] = (byte)'(';
@@ -243,7 +261,9 @@ internal sealed class PdfSyntax : IDisposable
     }
 
     /// <summary>A hex string: two digits a byte between angle brackets.</summary>
-    public PdfSyntax HexString(ReadOnlySpan<byte> bytes)
+    public PdfSyntax HexString(ReadOnlySpan<byte> bytes) => _cipher is not null ? Encrypted(bytes) : Hex(bytes);
+
+    private PdfSyntax Hex(ReadOnlySpan<byte> bytes)
     {
         var span = _buffer.GetSpan(2 + 2 * bytes.Length);
         span[0] = (byte)'<';
@@ -277,6 +297,11 @@ internal sealed class PdfSyntax : IDisposable
     /// </summary>
     public PdfSyntax Text(string text)
     {
+        if (_cipher is not null)
+        {
+            return EncryptedText(text);
+        }
+
         if (Ascii(text))
         {
             var span = _buffer.GetSpan(2 + 2 * text.Length);
@@ -369,6 +394,50 @@ internal sealed class PdfSyntax : IDisposable
                 }
 
                 return Raw(">>"u8);
+        }
+    }
+
+    // A string encrypted for the object being written, as hex digits.
+    private PdfSyntax Encrypted(ReadOnlySpan<byte> plain)
+    {
+        byte[] encrypted = ArrayPool<byte>.Shared.Rent(PdfSecurity.MostEncryptedLength(plain.Length));
+        try
+        {
+            int length = _cipher!.EncryptString(plain, _cipherNumber, _cipherGeneration, encrypted);
+            return Hex(encrypted.AsSpan(0, length));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(encrypted);
+        }
+    }
+
+    // A text string's bytes (ASCII, or UTF-16BE after its mark, as Text writes them) encrypted.
+    private PdfSyntax EncryptedText(string text)
+    {
+        bool ascii = Ascii(text);
+        int length = ascii ? text.Length : 2 + 2 * text.Length;
+        byte[] bytes = ArrayPool<byte>.Shared.Rent(Math.Max(1, length));
+        try
+        {
+            if (ascii)
+            {
+                for (int i = 0; i < text.Length; i++)
+                {
+                    bytes[i] = (byte)text[i];
+                }
+            }
+            else
+            {
+                (bytes[0], bytes[1]) = (0xFE, 0xFF);
+                Encoding.BigEndianUnicode.GetBytes(text, bytes.AsSpan(2));
+            }
+
+            return Encrypted(bytes.AsSpan(0, length));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bytes);
         }
     }
 
@@ -471,7 +540,7 @@ internal static class PdfDeflate
 /// the cross-reference (a stream, or a classic table for versions before 1.5) and the trailer. Bytes go to the destination
 /// in blocks as they are made (the destination need not seek); nothing else is kept.
 /// </summary>
-internal sealed class PdfFileWriter : IDisposable
+internal sealed partial class PdfFileWriter : IDisposable
 {
     private const int Block = 64 * 1024, MaxPacked = 100;
     private const long NotWritten = long.MinValue;
@@ -479,11 +548,19 @@ internal sealed class PdfFileWriter : IDisposable
     private readonly Stream _destination;
     private readonly int _level;
     private readonly PdfSyntax _pending = new(Block + 4096);
-    private PdfSyntax? _packed, _packedData, _scratch;
+    private PdfSyntax? _packed, _packedData, _scratch, _crypt;
     private readonly List<(int Number, int Offset)> _packedObjects = [];
     private long[] _entries = new long[64];
     private int _count = 1;
     private long _written;
+
+    // Objects written again with a generation other than 0 (an update's), what offsets are counted from (an update of a
+    // file with bytes before its header), whether the small object begun was packed, and the object being written.
+    private Dictionary<int, int>? _generations;
+    private long _shift;
+    private bool _smallPacked;
+    private int _currentNumber, _currentGeneration, _xrefNumber;
+    private bool _currentEncrypted;
 
     /// <param name="destination">Where the bytes go (written in order).</param>
     /// <param name="version">The header's version ("1.7").</param>
@@ -503,6 +580,18 @@ internal sealed class PdfFileWriter : IDisposable
     /// <summary>The Flate level of the streams this writes (0: stored).</summary>
     public int Level => _level;
 
+    /// <summary>
+    /// The security handler every string and stream is encrypted by from now on (null: none), but for
+    /// <see cref="PlainNumber"/>'s and the cross-reference stream's.
+    /// </summary>
+    public PdfSecurity? Security { get; set; }
+
+    /// <summary>The object written without encryption (the encryption dictionary; 0 for none).</summary>
+    public int PlainNumber { get; set; }
+
+    /// <summary>The encryption dictionary the trailer names (0: none).</summary>
+    public int EncryptNumber { get; set; }
+
     /// <summary>A new object's number (it must be written before the end).</summary>
     public int Allocate()
     {
@@ -515,15 +604,32 @@ internal sealed class PdfFileWriter : IDisposable
         return _count++;
     }
 
-    /// <summary>Starts object <paramref name="number"/> in the file ("N 0 obj"); the caller writes its value, then <see cref="EndObject"/>.</summary>
+    /// <summary>
+    /// Starts object <paramref name="number"/> in the file ("N G obj", its generation 0 unless an update writes it again
+    /// with another); the caller writes its value, then <see cref="EndObject"/>. In an encrypted file its strings are
+    /// encrypted as they are written.
+    /// </summary>
     public PdfSyntax BeginObject(int number)
     {
-        _entries[number] = Position;
-        return _pending.Integer(number).Raw(" 0 obj\n"u8);
+        _entries[number] = Position - _shift;
+        int generation = Generation(number);
+        _currentEncrypted = Security is not null && number != PlainNumber && number != _xrefNumber;
+        (_currentNumber, _currentGeneration) = (number, generation);
+        if (_currentEncrypted)
+        {
+            _pending.Encrypting(Security, number, generation);
+        }
+
+        return _pending.Integer(number).Space().Integer(generation).Raw(" obj\n"u8);
     }
+
+    /// <summary>The generation object <paramref name="number"/> is written with.</summary>
+    public int Generation(int number) => _generations is not null && _generations.TryGetValue(number, out int generation) ? generation : 0;
 
     public void EndObject()
     {
+        _pending.Encrypting(null, 0, 0);
+        _currentEncrypted = false;
         _pending.Raw("\nendobj\n"u8);
         if (_pending.Length >= Block)
         {
@@ -537,24 +643,26 @@ internal sealed class PdfFileWriter : IDisposable
     /// </summary>
     public PdfSyntax BeginSmall(int number)
     {
-        if (_packed is null)
+        // An object stream holds objects of generation 0 alone, and never the encryption dictionary (7.5.7).
+        _smallPacked = _packed is not null && number != PlainNumber && Generation(number) == 0;
+        if (!_smallPacked)
         {
             return BeginObject(number);
         }
 
-        _packedObjects.Add((number, _packed.Length));
+        _packedObjects.Add((number, _packed!.Length));
         return _packed;
     }
 
     public void EndSmall()
     {
-        if (_packed is null)
+        if (!_smallPacked)
         {
             EndObject();
             return;
         }
 
-        _packed.Line();
+        _packed!.Line();
         if (_packedObjects.Count >= MaxPacked || _packed.Length >= Block)
         {
             FlushPacked();
@@ -566,20 +674,37 @@ internal sealed class PdfFileWriter : IDisposable
 
     /// <summary>
     /// Ends a stream whose dictionary the caller wrote: deflated at the file's level when <paramref name="deflate"/> (its
-    /// /Filter written here), else stored as given (the caller's own /Filter, or none); its /Length, then its data.
+    /// /Filter written here), else stored as given (the caller's own /Filter, or none); in an encrypted file encrypted by
+    /// the crypt filter <paramref name="use"/> names; its /Length, then its data.
     /// </summary>
-    public void EndStream(ReadOnlySpan<byte> data, bool deflate)
+    public void EndStream(ReadOnlySpan<byte> data, bool deflate, PdfCryptUse use = PdfCryptUse.Stream)
     {
         if (deflate && _level > 0)
         {
             var scratch = _scratch ??= new PdfSyntax(Block);
             PdfDeflate.Compress(data, _level, scratch.Buffer);
             _pending.Raw("/Filter/FlateDecode"u8);
-            WriteStreamData(scratch.Span);
+            WriteStreamData(Encrypted(scratch.Span, use));
             return;
         }
 
-        WriteStreamData(data);
+        WriteStreamData(Encrypted(data, use));
+    }
+
+    // A stream's data as the file stores it: encrypted for the object being written, when it is.
+    private ReadOnlySpan<byte> Encrypted(ReadOnlySpan<byte> data, PdfCryptUse use)
+    {
+        if (!_currentEncrypted || Security is not { } security || security.StreamMethod(use) == PdfCryptMethod.Identity)
+        {
+            return data;
+        }
+
+        var crypt = _crypt ??= new PdfSyntax(Block);
+        crypt.Clear();
+        var room = crypt.Buffer.Reserve(PdfSecurity.MostEncryptedLength(data.Length));
+        int length = security.EncryptStream(data, _currentNumber, _currentGeneration, use, room);
+        crypt.Buffer.Advance(length);
+        return crypt.Span;
     }
 
     private void WriteStreamData(ReadOnlySpan<byte> data)
@@ -642,11 +767,12 @@ internal sealed class PdfFileWriter : IDisposable
 
     /// <summary>
     /// The cross-reference and the trailer (<c>/Root</c> <paramref name="root"/>, <c>/Info</c> <paramref name="info"/> when
-    /// it is above 0, <c>/ID</c> when <paramref name="id"/> is not empty), <c>startxref</c> and <c>%%EOF</c>: a stream, or a
-    /// classic table when <paramref name="classic"/>.
+    /// it is above 0, <c>/Encrypt</c> when <see cref="EncryptNumber"/> is, <c>/ID</c> when <paramref name="id"/> is not
+    /// empty: <paramref name="id"/> and <paramref name="secondId"/>, or <paramref name="id"/> twice), <c>startxref</c> and
+    /// <c>%%EOF</c>: a stream, or a classic table when <paramref name="classic"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException">An object allocated was never written (a fault of the writer).</exception>
-    public void Finish(int root, int info, ReadOnlySpan<byte> id, bool classic)
+    public void Finish(int root, int info, ReadOnlySpan<byte> id, bool classic, ReadOnlySpan<byte> secondId = default)
     {
         FlushPacked();
         for (int n = 1; n < _count; n++)
@@ -674,7 +800,7 @@ internal sealed class PdfFileWriter : IDisposable
             }
 
             _pending.Raw("trailer\n"u8);
-            Trailer(_pending, root, info, id);
+            Trailer(_pending, root, info, id, secondId);
             _pending.Raw("\nstartxref\n"u8).Integer(at).Raw("\n%%EOF\n"u8);
             Flush();
             return;
@@ -716,9 +842,10 @@ internal sealed class PdfFileWriter : IDisposable
         }
 
         rows.Buffer.Advance(row * _count);
+        _xrefNumber = self;                                                    // a cross-reference stream is never encrypted
         var s = BeginStream(self);
         s.Raw("/Type/XRef/W[1 "u8).Integer(width).Raw(" 2]"u8);
-        Trailer(s, root, info, id, inside: true);
+        Trailer(s, root, info, id, secondId, inside: true);
         EndStream(rows.Span, deflate: true);
         _pending.Raw("startxref\n"u8).Integer(start).Raw("\n%%EOF\n"u8);
         Flush();
@@ -732,12 +859,12 @@ internal sealed class PdfFileWriter : IDisposable
     {
         FlushPacked();
         _pending.Raw("trailer\n"u8);
-        Trailer(_pending, root, 0, []);
+        Trailer(_pending, root, 0, [], []);
         _pending.Line();
         Flush();
     }
 
-    private void Trailer(PdfSyntax s, int root, int info, ReadOnlySpan<byte> id, bool inside = false)
+    private void Trailer(PdfSyntax s, int root, int info, ReadOnlySpan<byte> id, ReadOnlySpan<byte> second, bool inside = false)
     {
         if (!inside)
         {
@@ -750,9 +877,14 @@ internal sealed class PdfFileWriter : IDisposable
             s.Raw("/Info "u8).Reference(info);
         }
 
+        if (EncryptNumber > 0)
+        {
+            s.Raw("/Encrypt "u8).Reference(EncryptNumber);
+        }
+
         if (!id.IsEmpty)
         {
-            s.Raw("/ID["u8).HexString(id).HexString(id).Byte((byte)']');
+            s.Raw("/ID["u8).HexString(id).HexString(second.IsEmpty ? id : second).Byte((byte)']');
         }
 
         if (!inside)
@@ -767,6 +899,7 @@ internal sealed class PdfFileWriter : IDisposable
         _packed?.Dispose();
         _packedData?.Dispose();
         _scratch?.Dispose();
-        _packed = _packedData = _scratch = null;
+        _crypt?.Dispose();
+        _packed = _packedData = _scratch = _crypt = null;
     }
 }

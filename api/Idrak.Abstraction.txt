@@ -1179,6 +1179,7 @@ public static class Idrak.Abstraction.Data.DocumentFormats
   public static Idrak.Abstraction.Data.IDocument Open(System.IO.Stream stream, string name, Idrak.Abstraction.Data.DocumentOptions? options = null)
   public static Idrak.Abstraction.Data.IDocument Open(System.ReadOnlyMemory<byte> file, string name, Idrak.Abstraction.Data.DocumentOptions? options = null)
   public static Idrak.Abstraction.Data.IDocument Open(string path, Idrak.Abstraction.Data.DocumentOptions? options = null)
+  public static Idrak.Abstraction.Data.IDocument Unwrap(Idrak.Abstraction.Data.IDocument document)
   public static Idrak.Abstraction.Data.IDocumentFormat Get(string name)
   public static Idrak.Abstraction.Data.IDocumentFormat? Default(string name)
   public static Idrak.Abstraction.Data.IDocumentFormat? Detect(System.ReadOnlySpan<byte> header)
