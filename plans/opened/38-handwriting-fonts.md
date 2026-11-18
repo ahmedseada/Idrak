@@ -1,10 +1,11 @@
 # Plan 38: handwriting fonts from images (a person's hand, read from a scan, used as a font)
 
-**Not started.**
+**In progress (on the branch `documents`, one agent slot, this session only).** Built: F0 (2026-11-18). Next in that
+slot: F1, then F3; then the slot stops (plan 28's decision 23).
 
 **Status (2026-11-18, `imaging`):** planned 2026-11-13 from the owner's question "can Idrak extract a font from an image
 and use it?", against the code at b96ff2e; refreshed 2026-11-18 against the code at da19bfc (the pieces it was waiting
-on have landed, see "What exists"). **Nothing is built.** Everything PDF moved to [plan 28](28-documents.md), and
+on have landed, see "What exists"). Everything PDF moved to [plan 28](28-documents.md), and
 font writing (TrueType built in, WOFF from a plug-in) is plan 28's D8. Plan 28 is built and finished first, for any workload,
 however long it takes (owner, 2026-11-18): this plan waits until every plan 28 phase is closed. Worked on the branch
 `documents` (taken from `migration`). No phase starts before the owner names it.
