@@ -1646,6 +1646,17 @@ Plan 38 (handwriting fonts from images) takes everything PDF from here and start
   `data synth --fonts` reads it like any other font.
 - **Tablet ink:** ink annotations (D10) give a pen's strokes as paths, another way a sheet written on a tablet comes in.
 
+## Planned follow-ups, built only when the owner says
+
+- **`data synth` writes PDFs** (owner, 2026-11-18: "add it to plan but don't implement it unless I tell you"): today
+  `idrak data synth` writes each page as an image (JPEG by default, any registered `ImageEncoders` format) with its
+  label in the `.jsonl`. With D6's writer it could also write PDFs: `--format pdf`, the drawn page (scan look and all)
+  as an image page with the label's text as a hidden, searchable layer placed on the drawn runs (a scan-like PDF);
+  `--format pdf-vector`, the page written before any scan look as real text and shapes (`DocumentShapes`, the page's
+  fonts embedded as subsets: a PDF as software makes it); the records point at the PDF and its page. Through
+  `DocumentWriters` only (any registered writer), the options carried to the command and its variables. **Not built:
+  waits for the owner's word.**
+
 ## Not in this plan
 
 - **Office** (Word, Excel, PowerPoint): a later plug-in on C1-C25 (a package such as `Idrak.Data.Plugins`, namespace
