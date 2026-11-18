@@ -1814,8 +1814,10 @@ Plan 38 (handwriting fonts from images) takes everything PDF from here and start
   as an image page with the label's text as a hidden, searchable layer placed on the drawn runs (a scan-like PDF);
   `--format pdf-vector`, the page written before any scan look as real text and shapes (`DocumentShapes`, the page's
   fonts embedded as subsets: a PDF as software makes it); the records point at the PDF and its page. Through
-  `DocumentWriters` only (any registered writer), the options carried to the command and its variables. **Not built:
-  waits for the owner's word.**
+  `DocumentWriters` only (any registered writer), the options carried to the command and its variables. **Built last,
+  without waiting for the owner** (owner, 2026-11-18: "keep it in the plan but it's the last to implement … if the plan
+  completed then start the pdf output directly don't wait for me"): it starts on its own the moment every other plan 28
+  phase and every queued fix is merged and the slots are free, and on nothing earlier.
 
 ## Not in this plan
 
