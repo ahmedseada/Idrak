@@ -10,7 +10,10 @@ namespace Idrak.Abstraction.Data;
 /// <summary>How a writer stores an image of a page.</summary>
 public enum DocumentImageEncoding : byte
 {
-    /// <summary>Measured per image: photographs and scans as JPEG, line art and images of few levels exact (<see cref="DocumentWriteOptions.LineArtLevels"/>).</summary>
+    /// <summary>
+    /// Measured per image: photographs and scans as JPEG, line art and images of few levels exact
+    /// (<see cref="DocumentWriteOptions.LineArtLevels"/>, then <see cref="DocumentWriteOptions.SmoothSteps"/>).
+    /// </summary>
     Auto,
 
     /// <summary>Exact pixels, compressed without loss.</summary>
@@ -60,6 +63,7 @@ public sealed record DocumentWriteOptions
     public const string SaveModeVariable = "IDRAK_DOCUMENT_SAVE_MODE";
 
     private readonly int _compression = 6, _jpegQuality = DocumentSettings.Int(JpegQualityVariable, 1, 100) ?? 90, _lineArtLevels = 32;
+    private readonly float _smoothSteps = 0.25f;
 
     /// <summary>How hard streams are compressed without loss: 0 (stored) to 9 (smallest), 6 unless set.</summary>
     /// <exception cref="ArgumentOutOfRangeException">Not from 0 to 9.</exception>
@@ -81,14 +85,28 @@ public sealed record DocumentWriteOptions
     }
 
     /// <summary>
-    /// <see cref="DocumentImageEncoding.Auto"/>'s rule: an image with at most this many levels in each channel (line art,
-    /// text, a few colours) is stored exact, others as JPEG (32).
+    /// <see cref="DocumentImageEncoding.Auto"/>'s first rule: an image with at most this many levels in each channel (line
+    /// art, text, a few colours) is stored exact; one with more is measured by <see cref="SmoothSteps"/> (32).
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Not from 1 to 256.</exception>
     public int LineArtLevels
     {
         get => _lineArtLevels;
         init => _lineArtLevels = value is >= 1 and <= 256 ? value : throw new ArgumentOutOfRangeException(nameof(LineArtLevels), value, "Levels are from 1 to 256.");
+    }
+
+    /// <summary>
+    /// <see cref="DocumentImageEncoding.Auto"/>'s second rule, for an image of more levels than <see cref="LineArtLevels"/>:
+    /// the share of neighbouring pixel pairs (each pixel against its right and its lower neighbour, the largest channel
+    /// difference) that differ by 1 to 16 levels. At or above it the image is a photograph or a scan (smooth shading,
+    /// sensor noise, paper grain: JPEG); below it, line art with smoothed edges (flat areas and sharp steps: stored exact)
+    /// (0.25).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not from 0 to 1.</exception>
+    public float SmoothSteps
+    {
+        get => _smoothSteps;
+        init => _smoothSteps = value is >= 0f and <= 1f ? value : throw new ArgumentOutOfRangeException(nameof(SmoothSteps), value, "A share is from 0 to 1.");
     }
 
     /// <summary>How fonts are embedded (<see cref="DocumentFontEmbedding.Subset"/> unless <see cref="EmbedFontsVariable"/> sets it).</summary>
@@ -296,9 +314,9 @@ public interface IDocumentWriter
 }
 
 /// <summary>
-/// The document writers, by name (ignoring case). None is built in yet; a package registers its own with
-/// <see cref="Register"/>, and one registered under a library name takes its place, which stays behind it (see
-/// <see cref="SetPolicy"/>).
+/// The document writers, by name (ignoring case). Built in (Idrak.Data): "pdf" (pages of images, vector paths and text
+/// with their fonts embedded). A package registers its own with <see cref="Register"/>, and one registered under a library
+/// name takes its place, which stays behind it (see <see cref="SetPolicy"/>).
 /// </summary>
 public static class DocumentWriters
 {

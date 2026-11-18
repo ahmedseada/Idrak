@@ -1516,6 +1516,7 @@ public sealed record Idrak.Abstraction.Data.DocumentWriteOptions : System.IEquat
   public const string ImageEncodingVariable = "IDRAK_DOCUMENT_IMAGE_ENCODING"
   public const string JpegQualityVariable = "IDRAK_DOCUMENT_JPEG_QUALITY"
   public const string SaveModeVariable = "IDRAK_DOCUMENT_SAVE_MODE"
+  public float SmoothSteps { get; init; }
   public int Compression { get; init; }
   public int JpegQuality { get; init; }
   public int LineArtLevels { get; init; }
@@ -1985,6 +1986,7 @@ public interface Idrak.Abstraction.Data.IImageCodec
   public string Name { get; }
 
 public interface Idrak.Abstraction.Data.IImageEncoder
+  public (default) byte[] Encode(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Data.ImageEncodeOptions options)
   public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
   public byte[] Encode(Idrak.Abstraction.Data.ImageData image)
   public string Name { get; }
@@ -2096,6 +2098,10 @@ public sealed class Idrak.Abstraction.Data.ImageData
   public int Height { get; }
   public int Width { get; }
   public void Resize(int channels, int height, int width, System.Span<float> destination)
+
+public sealed record Idrak.Abstraction.Data.ImageEncodeOptions : System.IEquatable<Idrak.Abstraction.Data.ImageEncodeOptions>
+  public ImageEncodeOptions()
+  public int? Quality { get; init; }
 
 public static class Idrak.Abstraction.Data.ImageEncoders
   public static Idrak.Abstraction.Data.IImageEncoder For(string path)

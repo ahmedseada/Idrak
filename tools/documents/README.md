@@ -37,7 +37,8 @@ reference tools, most of that the hostile files' probes); `--large` adds about 1
 Two checkers for files Idrak will write, sharing the generator's reference runs:
 
 - `check_written.py FILES|DIR -o REPORT.json [--expected auto|FILE.json] [--password PW] [--render DIR] [--dpi N]`
-  (D6 onwards): qpdf (pikepdf) opens each PDF, runs its syntax check and decodes every stream; pdfminer.six reads
+  (D6 onwards): qpdf (pikepdf) opens each PDF, runs its syntax check and decodes every stream (a JPEG or JPEG 2000
+  image, which qpdf hands over encoded, as the image it is, through Pillow); pdfminer.six reads
   every page's text; pdfium counts, reads and (with `--render`) draws the pages. Every warning, problem and stream
   error is listed; with an expected JSON (this README's format; `auto` takes `NAME.json` beside `NAME.pdf`), the page
   count, the page sizes and each page's text (whitespace collapsed) are compared. Exit code 1 when a file fails.

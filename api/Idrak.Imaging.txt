@@ -15,6 +15,21 @@ public sealed class Idrak.Imaging.CoverageRasterizer : Idrak.Abstraction.Data.IO
   public string Name { get; }
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
 
+public sealed record Idrak.Imaging.DocumentShapeStyle : System.IEquatable<Idrak.Imaging.DocumentShapeStyle>
+  public DocumentShapeStyle()
+  public Idrak.Abstraction.Data.DocumentColour Ink { get; init; }
+  public Idrak.Abstraction.Data.DocumentColour Paper { get; init; }
+  public Idrak.Abstraction.Data.DocumentColour Tone(float tone)
+  public Idrak.Abstraction.Data.DocumentLineCap Cap { get; init; }
+  public Idrak.Abstraction.Data.DocumentLineJoin Join { get; init; }
+  public float Scale { get; init; }
+  public float StrokeWidth { get; init; }
+
+public static class Idrak.Imaging.DocumentShapes
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentPath> Paths(Idrak.Abstraction.Data.ShapePlan plan, Idrak.Imaging.DocumentShapeStyle style)
+  public static void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, Idrak.Abstraction.Data.ShapePlan plan, Idrak.Imaging.DocumentShapeStyle style)
+  public static void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, Idrak.Imaging.TextBlock block, string text, float x, float y, Idrak.Imaging.DocumentShapeStyle style, Idrak.Abstraction.Data.DocumentTextMode mode = (Idrak.Abstraction.Data.DocumentTextMode)0)
+
 public sealed class Idrak.Imaging.GaussianNoise : Idrak.Abstraction.Data.ISampleTransform
   public GaussianNoise(float standardDeviation, bool clamp = false)
   public bool Clamp { get; }

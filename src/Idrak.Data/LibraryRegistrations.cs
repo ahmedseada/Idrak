@@ -6,8 +6,8 @@
 namespace Idrak.Data;
 
 /// <summary>
-/// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the Hugging Face model source and
-/// the "pdf" document format. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
+/// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the Hugging Face model source, the
+/// "pdf" document format and the "pdf" document writer. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used. The registries that live here (data file formats, dataset sources,
 /// Parquet codecs) register their built-ins themselves.
 /// </summary>
@@ -17,6 +17,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
     {
         [typeof(ModelSources)] = () => ModelSources.Register(HuggingFaceModels.Source),
         [typeof(DocumentFormats)] = () => DocumentFormats.Register(new Pdf.PdfFormat()),
+        [typeof(DocumentWriters)] = () => DocumentWriters.Register(new Pdf.PdfWriter()),
     };
 
     public void RegisterFor(Type registry)

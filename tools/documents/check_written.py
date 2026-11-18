@@ -54,6 +54,10 @@ class Collector(logging.Handler):
         self.messages.append(f"{record.levelname}: {record.getMessage()}"[:300])
 
 
+# The filters qpdf does not decode (an image codec's data, read_bytes refuses it): such a stream is decoded as an image.
+IMAGE_CODECS = {"/DCTDecode", "/DCT", "/JPXDecode"}
+
+
 def qpdf(path, password):
     import pikepdf
 
@@ -68,7 +72,13 @@ def qpdf(path, password):
                 if isinstance(obj, pikepdf.Stream):
                     streams += 1
                     try:
-                        obj.read_bytes()
+                        filters = obj.get("/Filter")
+                        names = [] if filters is None else [str(f) for f in filters] if isinstance(filters, pikepdf.Array) else [str(filters)]
+                        if any(n in IMAGE_CODECS for n in names):
+                            # qpdf hands an image codec's data over encoded: decoded as the image it is (Pillow).
+                            pikepdf.PdfImage(obj).as_pil_image().load()
+                        else:
+                            obj.read_bytes()
                     except Exception as e:  # noqa: BLE001 - recorded
                         errors.append(f"{obj.objgen}: {type(e).__name__}: {e}"[:300])
             out["streams"] = streams

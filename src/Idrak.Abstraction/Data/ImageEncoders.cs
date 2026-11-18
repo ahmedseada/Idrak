@@ -5,6 +5,23 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Data;
 
+/// <summary>What an image is encoded with beyond its pixels: the settings a format may take (a lossy format's quality).</summary>
+public sealed record ImageEncodeOptions
+{
+    private readonly int? _quality;
+
+    /// <summary>
+    /// The quality of a lossy format, 1 (smallest) to 100 (best), or null for the encoder's own default; a format without
+    /// loss ignores it.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not from 1 to 100.</exception>
+    public int? Quality
+    {
+        get => _quality;
+        init => _quality = value is null or (>= 1 and <= 100) ? value : throw new ArgumentOutOfRangeException(nameof(Quality), value, "An image's quality is from 1 to 100.");
+    }
+}
+
 /// <summary>
 /// Writes one image format; register it with <see cref="ImageEncoders.Register"/>. The reading side of a format is its
 /// <see cref="IImageCodec"/> in <see cref="ImageCodecs"/>.
@@ -22,11 +39,17 @@ public interface IImageEncoder
     /// (1 channel) or colour (3 channels).
     /// </summary>
     byte[] Encode(ImageData image);
+
+    /// <summary>
+    /// The file's bytes for <paramref name="image"/> written with <paramref name="options"/> (a lossy format's quality);
+    /// a format with nothing to choose writes what <see cref="Encode(ImageData)"/> writes.
+    /// </summary>
+    byte[] Encode(ImageData image, ImageEncodeOptions options) => Encode(image);
 }
 
 /// <summary>
 /// The image formats files are written in, by name (ignoring case). Built in (Idrak.Imaging): "png" (8-bit grey or RGB, deflated with the zlib in
-/// .NET) and "netpbm" (binary PGM for grey, PPM for colour). A segmentation mask, for example, is an 8-bit grey image whose
+/// .NET), "jpeg" (baseline, the quality from <see cref="ImageEncodeOptions.Quality"/>, 75 unless given) and "netpbm" (binary PGM for grey, PPM for colour). A segmentation mask, for example, is an 8-bit grey image whose
 /// level is the class (<c>idrak predict --out</c> writes them). Register another format, or replace these, with
 /// <see cref="Register"/>; an app's encoder over a library one falls back on it or is compared with it by its policy.
 /// </summary>
@@ -107,5 +130,8 @@ public static class ImageEncoders
         public IReadOnlyCollection<string> Extensions => app.Extensions;
 
         public byte[] Encode(ImageData image) => slot.Call(() => app.Encode(image), () => library.Encode(image), (a, b) => a.AsSpan().SequenceEqual(b) ? null : $"{a.Length} and {b.Length} bytes differ");
+
+        public byte[] Encode(ImageData image, ImageEncodeOptions options) =>
+            slot.Call(() => app.Encode(image, options), () => library.Encode(image, options), (a, b) => a.AsSpan().SequenceEqual(b) ? null : $"{a.Length} and {b.Length} bytes differ");
     }
 }

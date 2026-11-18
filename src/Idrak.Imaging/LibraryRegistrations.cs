@@ -9,7 +9,7 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
-/// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
+/// netpbm) and encoders (png, jpeg, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
 /// the "images" sample source, the "opentype" font format and font mapper, the "truetype" font writer, the library's font maps (legacy layouts, as data), the "coverage"
 /// outline rasterizer, the reading orders (bidi, runs), the page layouts (letter, plain, shapes), the shapes, shape profiles, pens and text
 /// bindings the "shapes" layout draws with, and the glyph poses every layout writes its text with. <c>LibraryDefaults.Ensure</c> (in
@@ -28,9 +28,10 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         [typeof(ScanProfiles)] = ScanTransforms.RegisterProfiles,
         [typeof(Augmentations)] = LibraryAugmentations.RegisterDefaults,       // flip and shift (Idrak.Vision adds the others)
         [typeof(ImageCodecs)] = RegisterImageCodecs,
-        [typeof(ImageEncoders)] = () =>                                          // png, netpbm
+        [typeof(ImageEncoders)] = () =>                                          // png, jpeg, netpbm
         {
             ImageEncoders.Register(new PngEncoder());
+            ImageEncoders.Register(new JpegImageEncoder());
             ImageEncoders.Register(new NetpbmEncoder());
         },                            // png, jpeg, bmp, netpbm (asked newest first)
         [typeof(SampleSources)] = () => SampleSources.Register(new ImagesSource()),

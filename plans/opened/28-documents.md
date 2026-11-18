@@ -22,7 +22,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Built (2026-11-18) |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Built (2026-11-18) |
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
-| D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
+| D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Built (2026-11-18) |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
@@ -924,6 +924,141 @@ extracts the same text; a 500-page image PDF is written with one page's buffers 
 
 **Tests (CPU here):** one build; `documents pdf: write|documents writers|documents pdf: file|documents contracts|public API|
 abstraction inventory`.
+
+**As built (2026-11-18):**
+- **The writer** (`src/Idrak.Data/Pdf/PdfWriter*.cs`, all internal; `PdfWriter` registered as "pdf" in `DocumentWriters`
+  through Idrak.Data's `LibraryRegistrations`, one line): `PdfSyntax` writes on pooled spans (D1's `PdfBuffer`): floats as
+  the shortest text that reads back as them, computed values to fixed decimals, never an exponent; names with `#xx`;
+  literal strings escaped; text strings ASCII, or UTF-16BE after its mark; any value of D1's object model (`PdfValue`)
+  written back as it reads (for D11's editor). `PdfFileWriter`: the header with a binary comment, each object's offset
+  kept (eight bytes an object), small objects packed a hundred to a compressed object stream, streams deflated through
+  `ZLibStream` at `Compression` (0 stores them), a cross-reference stream (a classic table for `Version` 1.0-1.4), the
+  trailer with `/Info` and `/ID` only when there are some; bytes reach the destination in 64 KiB blocks and when each page
+  ends (it need not seek). `PdfDocumentBuilder`: objects 1 and 2 kept for the catalog and the page tree, so each page
+  object names its parent when written; a page is written when the next starts; the fonts, the page tree (one node), the
+  catalog (attached files in a name tree sorted by their bytes), the information and the cross-reference at `Finish`.
+  Disposed without it: the page in hand, the page tree and the catalog (standing on their own), a trailer naming the
+  catalog, no cross-reference: the reader rebuilds it and says `Repaired` (the fonts, written at the end, are missing:
+  counted as `missing-font`). Forms, annotations, links, bookmarks, page labels, copied pages, encryption, signing and
+  editing are `NotSupportedException`s naming D9, D10, D11 or D12.
+- **Pages** (`PdfPageBuilder`): the content starts by turning the user space over (`1 0 0 -1 0 H cm`), so every point is
+  written as the caller gave it and reads back exactly (the reader's matrices compose to the identity); the graphics state
+  is tracked so only changes are written (colours `g rg k` / `G RG K`, opacity through an `ExtGState` per pair, `w J j M
+  d`, `Tf`, `Tr`), saved and restored with `q`/`Q` (a Restore without a Save refused; Saves left open closed with the
+  page). Paths: `m l h`, a rectangle as `re`, cubics as `c`, or `v`/`y` when a control is an end, a quadratic as the cubic
+  it raises to; `f f* S B B*`; clips `W n`/`W* n`. A path not starting with a move, a negative width or an all-zero dash is
+  refused before anything is written.
+- **Images** (`PdfWriterImages`): values to 8-bit levels by the image encoders' rounding (an 8-bit image's planes used as
+  they are); `Flate`: the PNG predictor (each row's filter by libpng's smallest sum of signed residuals; kept when it
+  lowers the plain rows' sum by a fifth, since on noise the best of five filters is a little smaller by chance), then
+  Flate; rows filtered and measured in parallel, the same bytes on any number of threads; `Jpeg`: `DCTDecode`, the bytes
+  of `ImageEncoders.Get("jpeg")` at `JpegQuality`. `Auto` at a call takes the options' encoding, and `Auto` there
+  measures: the most levels a channel uses (at most `LineArtLevels`: exact), then the share of neighbouring pixel pairs
+  (right and below, the largest channel difference) differing by 1 to 16 levels: at or above `SmoothSteps` JPEG, below it
+  exact; with no "jpeg" encoder registered Auto stores the image exact. **The jpeg encoder**
+  (`src/Idrak.Imaging/JpegImageEncoder.cs`, one line in `LibraryRegistrations.cs`): `JpegEncoder` at
+  `ImageEncodeOptions.Quality` (75 unless given), so `ImageEncoders.Save` writes `.jpg` too.
+- **Text** (`PdfWriterFont`): a face is one `Type0` font a document (`Identity-H` over a `CIDFontType2` with `CIDToGIDMap
+  /Identity`; glyph ids as two bytes); a run is a `TJ` a baseline from `1 0 0 -1 x y Tm`, each glyph moved to its place by
+  offsets computed against what a reader adds up (the widths and the size as written; an offset under a quarter of a
+  thousandth of a point left out: rounding, not a kern, and never added up); `/W` the advances in thousandths to three
+  decimals; the descriptor's box, italic angle and cap height from the face's `head`, `post` and `OS/2`; the program
+  through `FontWriters` "truetype" (`Subset`: the glyphs used, ids kept, the others empty, no layout tables; `Whole`:
+  every glyph with its layout tables and hinting) as `FontFile2` with `/Length1`, a subset's tag six letters from a hash
+  of its name and glyphs. **ToUnicode** from the runs: each glyph the characters it first stood for, found by aligning a
+  run's glyphs with its text through the face's own character map (in order or reversed, whichever matches more; with no
+  match at all, the text's direction from `ReadingOrders` "bidi"); the characters between two matched glyphs go to the
+  glyphs between them (several to one: a ligature). A run whose glyphs do not read back as its text through that map
+  (right to left, a ligature's characters, a character drawn by two glyphs, a glyph that stood for other text before) is
+  written inside `/Span <</ActualText ...>> BDC ... EMC`. Render modes 0-3 (`Hidden` 3); no script is named.
+- **Pages the library draws** (`src/Idrak.Imaging/DocumentShapes.cs`, public, writing through `IDocumentPageBuilder`
+  only): `DocumentShapes.Paths(plan, style)` and `Write(page, plan, style)`: a `ShapePlan`'s areas as closed polygons
+  filled in their tone, its paths as ideal strokes (the style's stroke width times the path's, dashes in those widths, a
+  one-point path a dot of round ends, a tone mixing paper and ink); `Write(page, block, text, x, y, style, mode)`: a
+  `TextLayout` block's lines, a run for each stretch of one font, standing for the characters of its glyphs' clusters.
+  `DocumentShapeStyle`: scale (points a pixel), stroke width, ink, paper, cap, join.
+- **Contract changes (public API, dumps regenerated through the runner):** `ImageEncodeOptions` (`Quality`) and
+  `IImageEncoder.Encode(image, options)` (a default member: an encoder with nothing to choose writes what `Encode(image)`
+  writes; `ImageEncoders`' guard forwards it), so the JPEG quality reaches the encoder through the registry;
+  `DocumentWriteOptions.SmoothSteps` (0.25), `Auto`'s second measure (nothing fixed); `DocumentShapes` and
+  `DocumentShapeStyle` (Idrak.Imaging). `DocumentWriters` and the writing contracts (`IDocumentWriter`,
+  `IDocumentBuilder`, `IDocumentEditor`), now used by Idrak.Data alone, are listed in
+  `tests/Idrak.Tests/data/shared-contracts.txt` (decision 1, as D1 listed the reading ones); the inventory regenerated.
+- **Decisions the plan did not settle, taken here:** (1) `Whole` cannot embed "the file as read": `IFontFace` gives no
+  file's bytes (and a collection's face could not be embedded as read); it writes the whole face through "truetype"
+  (every glyph, layout tables, hinting). Every face, CFF too, is embedded as TrueType (`FontFile2`): decision 20 dropped
+  the OpenType CFF writer. (2) `Auto`'s steps rule is an option (`SmoothSteps`), not only `LineArtLevels`: smoothed line art
+  (many levels at its edges, flat elsewhere) is stored exact. (3) A path neither filled nor stroked is not written.
+  (4) The reading side of a quadratic: PDF has none; the cubic it is written as reads back as the quadratic when its
+  controls are two thirds of the way to one point (the test reader does this; D7's reader must, for `DocumentWriterSuite`'s
+  quadratic). (5) `tools/documents/check_written.py` decoded every stream with qpdf's `read_bytes`, which refuses JPEG
+  (the generator's own JPEG samples failed it too): a JPEG or JPEG 2000 stream is now decoded as an image through Pillow
+  (README updated).
+- **Tests:** group `documents pdf: write` (9, `tests/Idrak.Tests.Library/DocumentPdfWriteTests.cs`): the writer and the
+  jpeg encoder registered, `DocumentWriterSuite` on pdf (defaults; 1.4 with level 0; no object streams at level 9);
+  the file's syntax, D1's objects written back, object streams and a cross-reference stream, a classic table, levels 0, 1
+  and 9, information in any script, an ID when given, dates and an ID when not deterministic, a bad version refused;
+  image pages (grey, RGB, 8-bit planes exact, the predictor on line art only, JPEG the encoder's bytes and the codec's
+  pixels, every D6 input measured as its JSON measures it, to four decimals, and stored as its `expectedAuto`); vector
+  pages (every operator, nested clips, order); text (runs, glyph ids and places to a thousandth of a point, boxes to a
+  hundredth, `/ActualText` on the two runs that need it, hidden and stroked runs, one font a face, the subset's ids,
+  outlines and empty glyphs, `/W`, a CFF face, FS_Hand_Style mapped, whole embedding); a searchable scan and the shapes
+  helper; the same bytes twice and from four threads, attached files, an unfinished file repaired, the later phases
+  refused; the 500-page measure; the sample for a person to open. **Read-back:** text through D3's reader; images,
+  paths, clips and attached files through D1's objects, filters and content lexer
+  (`tests/Idrak.Tests.Library/DocumentPdfWriteReadBack.cs`), as D4 and D7 will read them: once they land their own parts
+  are taken (the read-back fills a part only when the reader gives none) and D4's `Decode()` replaces the pixels read here.
+  Runs: the targeted filter (below) first 71 tests, 64 passed, 7 failed: `Math.Abs` of the signed byte -128 in the
+  predictor's sums overflowed (5 tests), the test's own expected text of `1e20f` and its search for paint operators after
+  a space (2), and the inventory (the writing contracts now used by Idrak.Data alone, listed); then the write group with
+  the inventory and API checks: 15 tests, 14 passed, the unfinished file not found by the repair (D1 finds a catalog only
+  among objects standing on their own: the dispose path no longer packs the page tree and catalog); then 15 passed;
+  the full filter again after the last changes: 71 passed, 0 failed. The API dumps (`Idrak.Abstraction`, `Idrak.Imaging`)
+  and the inventory regenerated through the runner and checked again without the flags (passed). No new environment
+  variable (the options D0 named are read). The plan's filter names `documents writers`, a group that does not exist (the
+  writer suite runs inside `documents pdf: write` and `documents contracts`).
+- **The checker's verdicts** (`tools/documents/check_written.py test-output/documents/written --expected auto`, 17 files:
+  every page kind, the information, the file forms, JPEG and Auto pages, the searchable scan, the shapes page, a mixed
+  file with attachments, the sample): all 17 pass: qpdf finds no damage and no warning and decodes every stream (113),
+  pdfminer.six and pdfium open each with no warning, and the 13 files with an expected JSON extract exactly its text in
+  both. Two findings: pdfminer.six ignores `/ActualText`, so the mapped legacy face's run shows `(cid:N)` for the glyphs
+  its shaper added that stand for no character (Idrak and pdfium read it); pdfium gives right-to-left runs in the
+  glyphs' order. The unfinished file (`test-output/documents/written-unfinished/`, damaged by design): Idrak's reader
+  repairs it (3 pages); pdfium opens it and pdfminer.six reads it (warning of the missing font); qpdf does not, as it does
+  not recover objects inside object streams without their cross-reference stream.
+- **Timings and memory** (this container, 4 cores, other agents building beside it: noisy; the owner's devices give the
+  real ones; each run written to a stream that only counts, the measuring's own collections left out of the time):
+  - 500 pages of line art, A4 at 100 dpi (827 x 1169 grey, Auto: Flate with the predictor): cold 4.2 s, warm 4.0 s (8.0
+    ms a page; 6.8 and 6.7 s, 13.3 ms a page, in the noisier last run), 1.9 MiB written; **6 KiB allocated a page**; the
+    managed memory after a full collection every 100 pages at most 34 MiB (the test's own two source images, 7.4 MiB,
+    included), the heap with its garbage at most 35 MiB, and no growth from page 20 to 500 (5.5 MiB less).
+  - 500 pages of a scan-like page the same size (Auto: JPEG at 90): cold 22.4 s, warm 18.7 s (37 ms a page; 22.6 and
+    26.1 s, 52 ms a page, in the last run), 172 MiB written; 6,199 KiB allocated a page, **6,193 KiB of them the JPEG
+    encoder's** (alone on the page: 40.6 ms and 6,193 KiB a call, warm): its working arrays (a `short[64]` a block, the
+    sample planes, the scan's list) are made at every call, so the heap with that garbage reached 759 MiB before the GC
+    took it, 183 MiB after a full collection at page 20 and 34 MiB at the end (149 MiB less: nothing kept per page).
+  The writer's own buffers (the levels, the predictor's rows, the deflate output, the content stream, the object stream)
+  are pooled, returned in `finally` or kept one of each for the next page: one page's buffers.
+- **Left for later phases:** images' read-back through D4 and paths' through D7 (their readers replace the test's
+  read-back); forms, annotations, links, bookmarks, page labels, copied pages, encryption, signing and editing (D9-D12);
+  pooling `JpegEncoder`'s working arrays and its speed (a piece of its own, in Idrak.Imaging); pruning a subset's widths
+  to a `/DW`; a deeper page tree for very large documents (one node holds every page now).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: write|documents pdf: text|documents pdf: file|documents contracts|document layouts|outside plug-in: a document format|override loop:|conformance kit:|cli vision: ImageEncoders|fonts write|public API|abstraction inventory|cli health: every environment variable read in src|cli polish: the environment table names real commands|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d6.txt
+  $env:IDRAK_FILTER = "documents pdf: write: a 500-page"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d6-timing.txt
+  $env:IDRAK_FILTER = "documents pdf: write: a sample document"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_written.py test-output\documents\written -o test-output\documents\written-check.json --expected auto
+  ```
+  The sample run writes `test-output\documents\written\sample.pdf` (a vector page with text, a photograph, a searchable
+  scan and a page of shapes) to open.
 
 ## Phase D7: PDF vector content, and pages drawn to pixels
 
