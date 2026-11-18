@@ -246,7 +246,7 @@ Added 2026-11-18, second round (decisions 10-14):
 
 | # | Type | What |
 |---|---|---|
-| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype" built in; "opentype-cff", "woff", "woff2" from the plug-in, decision 18), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (family, style, version, copyright and licence strings the caller gives; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`): "truetype"; the plug-in adds the rest and the `woff` and `woff2` readers to `FontFormats` |
+| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype" built in; "opentype-cff", "woff", "woff2" from the plug-in, decision 18), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (the source face's name records kept, copyright and licence included, with the strings the caller gives over them; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`): "truetype"; the plug-in adds the rest and the `woff` and `woff2` readers to `FontFormats` |
 | C19 | `DocumentField` | `Name` (full, dotted), `Kind` (text, check box, radio, list, combo, push button, signature), `Value` / `Values`, `Options` (choices, with export values), `Flags` (read-only, required, multi-line, password, comb, ...), `MaxLength`, `Widgets` (page, box, appearance state), `Tooltip`; `IDocument.Fields` (read on demand); XFA forms: their data (`datasets`) read as fields, their layout not drawn (reported in `Issues`) |
 | C20 | `DocumentAnnotation` | `Kind` (text note, free text, line, square, circle, polygon, polyline, highlight, underline, squiggly, strike-out, ink, stamp, caret, link, file attachment, popup, redaction, widget, and any other by its name), `Page`, `Box`, `Contents`, `Author`, `Created` / `Modified`, `Colour`, `Opacity`, `Points` (quad points, a line's ends, a polygon's vertices), `Ink` (`DocumentPath`s: strokes written on the page), `Target` (a link's URI or destination), `Replies` (its thread), `Appearance` (drawn by the drawer when asked); `DocumentPage.Annotations` |
 | C21 | `DocumentOutline`, `DocumentDestination`, `DocumentPageLabel` | the bookmarks tree (title, destination, open, colour, style, children), destinations (page, a position and zoom, or a name), page labels (`iv`, `A-3`); `IDocument.Outline`, `IDocument.PageLabel(index)`; tagged files: the structure tree's order used by a `tagged` text layout (C10), the reading order the author gave |
@@ -262,7 +262,8 @@ PDF, and nothing in C18 names one font format.
 **Settings:** the options in C8, C15 and C16, with `IDRAK_DOCUMENT_LAYOUT`, `IDRAK_DOCUMENT_READING_ORDER`,
 `IDRAK_DOCUMENT_MAX_STREAM_BYTES`, `IDRAK_DOCUMENT_CACHE_BYTES`, `IDRAK_DOCUMENT_IMAGE_ENCODING`,
 `IDRAK_DOCUMENT_JPEG_QUALITY`, `IDRAK_DOCUMENT_EMBED_FONTS`, `IDRAK_DOCUMENT_DPI`, `IDRAK_DOCUMENT_FONTS`,
-`IDRAK_DOCUMENT_SAVE_MODE`, `IDRAK_DOCUMENT_SIGNATURE_ONLINE` (off by default) and `IDRAK_FONT_CURVE_TOLERANCE` read by
+`IDRAK_DOCUMENT_SAVE_MODE`, `IDRAK_DOCUMENT_SIGNATURE_ONLINE` (off by default), `IDRAK_FONT_CURVE_TOLERANCE` and
+`IDRAK_FONT_CACHE` read by
 the library (names proposed), added to the
 CLI's variables table (`src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`, which a test checks). Defaults: the stream limit and
 the cache from the machine's measured memory, never a fixed size in GB.
@@ -491,6 +492,18 @@ writer, the one Idrak works from; **a plug-in project** (proposed `Idrak.Imaging
 - **"woff" (`.woff`, plug-in):** a written font's tables, each zlib-compressed through `ZLibStream` when that is smaller; and read.
 - **"woff2" (`.woff2`, plug-in):** the tables Brotli-compressed through the base library's `BrotliEncoder` / `BrotliDecoder`, with
   the `glyf` / `loca` and `hmtx` transforms; and read.
+- **Legacy fonts converted once, and Idrak works from the completed font** (owner, 2026-11-18): a face a font map made
+  is written as a complete TrueType font: the map's Unicode characters, the glyphs drawn for what the font lacked
+  (digits, marks, composed letters), its ligatures, pairs, second style and words, and the GSUB / GDEF / GPOS made from
+  the map. Read back, it needs no map (it has its own GSUB, so detection leaves it alone) and shapes the same in Idrak
+  and in any other software. A converted-font cache (a folder setting, `IDRAK_FONT_CACHE`, default under the user's
+  cache folder, measured room, never a fixed size) keeps each converted font keyed by the source file's hash, the map
+  and the drawing settings (`FontMapDrawing`), so a legacy font is mapped and drawn once and then opened as a plain TTF
+  (work done once, rule 75; cold and warm loads measured, rule 76). **Gap fixed here:** a page turns on the hand's
+  features (`PAIR`, `PAI2`, `WORD`) only when `FontMaps.MappedBy(font)` finds the map
+  (`src/Idrak.Imaging/PageLayoutImplementations.cs:208`), so a converted font read later would lose them; the check
+  reads the features from the font's own GSUB instead, the same for a mapped face and a converted one (pages drawn
+  with a mapped face stay byte-identical, rule 71).
 - **Subsetting:** `Glyphs` keeps those glyphs, their composite parts and, with `KeepLayout`, every glyph the layout
   tables can reach (a closure over `GSUB`), with the layout tables rewritten to the kept glyphs; without it the layout
   tables are dropped (what a PDF embedding needs).
