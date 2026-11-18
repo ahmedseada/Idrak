@@ -105,6 +105,10 @@ registered format the same way.
     cleanly there still could be errors"): after each cherry-pick onto `documents`, one build of the merged code
     (`dotnet build -c Release tests/Idrak.Tests -nodeReuse:false`, and `tests/Idrak.PluginTests` when the piece touched
     it); a failed build is fixed before the push. A merge with conflicts also runs the test groups the merge touched.
+    **Refined the same day** (owner: "if the agent already built and none other projects changed … no rebuild
+    needed"): the build is skipped when the merged code is the code the agent built — `git diff <agent's commit> HEAD`
+    outside `plans/` is empty, only plan files changed since its start — and done whenever another piece's code landed
+    after the agent started.
     Up to four agents may run when pieces with no unmerged dependency are ready; a slot with none waits.
 23. **Slot 4 is plan 38's, this session only** (owner, 2026-11-18: "for this session slot 4 takes what could be
     finished from phase 38", then "keep the fourth always for plan 38 f0, f1, f3 the other three works on plan 28"):
