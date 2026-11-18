@@ -10,6 +10,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The PDF reader's object layer (internal) is checked object by object against the samples' expected forms. -->
+    <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Tests.Library" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- TableSamples turns columns into Idrak's sample sources. -->
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
   </ItemGroup>

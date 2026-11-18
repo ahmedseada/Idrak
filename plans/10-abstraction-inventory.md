@@ -82,8 +82,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.Transports` | registry | public | — |  | direct-link, nvlink, p2p, pcie-host, shared-memory, sim, tcp | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.CommandSandboxes` | registry | public | — |  | process | Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, noise, resize, +3 | Imaging, Vision | Abstraction |
-| `Idrak.Abstraction.Data.DocumentFormats` | registry | public | — |  | — | — | Abstraction |
-| `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Data.DocumentFormats` | registry | public | — |  | pdf | Data | Abstraction |
+| `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | — | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | — | Abstraction |
 | `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | — | — | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Text | Abstraction |
@@ -93,16 +93,16 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.GlyphPoses` | registry | public | — |  | drift, none | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentationKind` | interface | public | — | Augmentations.FunctionKind, Augmentations.GuardedKind |  | Abstraction, Imaging, Vision | Abstraction |
-| `Idrak.Abstraction.Data.IDocument` | interface | public | — | DocumentFormats.GuardedDocument, DocumentFormats.OwningDocument |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocument` | interface | public | — | DocumentFormats.GuardedDocument, DocumentFormats.OwningDocument, PdfDocument |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentBuilder` | interface | public | — | DocumentWriters.OwningBuilder, DocumentWriters.ShadowBuilder |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | — |  | — | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat, PdfFormat |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder |  | — | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | DocumentPageDrawers.GuardedDrawer |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | DocumentPageDrawers.GuardedDrawer |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentWriter` | interface | public | — | DocumentWriters.GuardedWriter |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MappedFontFace, OpenTypeFace |  | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MappedFontFace, OpenTypeFace |  | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter |  | — | Abstraction |

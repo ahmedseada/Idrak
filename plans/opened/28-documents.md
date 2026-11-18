@@ -15,7 +15,7 @@ Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a
 | Phase | What | Lane | State |
 |---|---|---|---|
 | D0 | The contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`), their suites, a test format from outside proving the plug-in path | A | Built (2026-11-18) |
-| D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Planned |
+| D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Built (2026-11-18) |
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Planned |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
@@ -373,6 +373,80 @@ bomb, an object cycle and a deep nesting fail fast with the limit named; the sui
 yet).
 
 **Tests (CPU here):** one build; `documents pdf: file|documents contracts|public API|abstraction inventory`.
+
+**As built (2026-11-18):**
+- **The reader** (`src/Idrak.Data/Pdf/`, internal but `PdfFormat`, registered as `pdf` through Idrak.Data's
+  `LibraryRegistrations`): `PdfParser` (a ref struct over the file's bytes: whitespace and comments, numbers invariant and
+  as damaged writers write them, literal strings with escapes, octal, nested parentheses, CR / CR LF ends and
+  continuations, hex strings with an odd last digit, names with `#xx`, arrays, dictionaries, `n g R`; keys compared as
+  bytes, the common names made once); `PdfValue` (numbers, booleans and references held without a box); `PdfFile` (the
+  header within the first KiB, objects read on demand from a file's handle through `RandomAccess`, from memory in place or
+  under one lock from any other stream, each parsed once into a cache within `CacheBytes`, object streams decoded once and
+  `/Extends` followed; `/Length` direct or indirect, a wrong one found by `endstream`); `PdfXrefReader` (tables, streams
+  with `/W` and `/Index`, hybrids through `/XRefStm`, `/Prev` with the newest entry winning, offsets from the file's start
+  or, when that finds no section, from a header after junk; the repair: the file scanned in 1 MiB windows for `n g obj`
+  and `trailer`, object streams' headers listed, the catalog found by its type; `Info.Repaired`); `PdfFilters` (Flate
+  through `ZLibStream`, raw deflate without a zlib header, data damaged part of the way keeping what decoded; LZW with and
+  without early change; ASCIIHex; ASCII85; RunLength; the PNG and TIFF predictors in place at 1 to 16 bits; chains; the
+  identity crypt filter; DCT, JPX, CCITT and JBIG2 handed over encoded); `PdfText` (PDFDocEncoding, UTF-16 and UTF-8 with
+  their marks, language marks dropped, `D:` dates whole, partial and without the last apostrophe); `PdfDocument` (the page
+  tree walked once without recursion, MediaBox, CropBox, Rotate and Resources inherited, the kids counted over `/Count`;
+  each page's size as shown: the crop box within the media box, `/UserUnit`, the rotation).
+- **Limits and cycles:** `MaxStreamBytes` bounds every stored and decoded stream (each filter's output a pooled buffer
+  whose capacity never passes the limit: the flate bomb allocates 127 MiB in all for its 64 MiB limit), `MaxObjects` every
+  `/Size`, table, stream, object stream, repair and page tree, `MaxDepth` every nesting (objects, the page tree, filter
+  chains, and objects needed to read other objects, 16 levels past it); each an `InvalidDataException` naming the limit and
+  `DocumentOptions.<Limit>` (and `IDRAK_DOCUMENT_MAX_STREAM_BYTES` for streams). A cycle (an object needed to read itself,
+  a chain of references that comes back, a page-tree node that is its own descendant, a `/Prev` loop, an object stream
+  holding itself) names "cycle". Neither is repaired around.
+- **Decisions the plan did not settle, taken here:** (1) `hostile-huge-size` is confirmed: a `/Size` (or a table's or
+  stream's subsections) claiming more objects than `MaxObjects` is refused at open, before anything is sized from the
+  claim (the stream's default `/Index [0 /Size]` lists two billion entries; qpdf, pdfminer.six and pdfium open it by
+  ignoring `/Size`). (2) A `/Prev` loop fails (the sample's expectation), it is not read around. (3) `ReadPage` with text,
+  images, paths or glyphs asked decodes the page's content streams (checked, then dropped until D3's interpreter), so a
+  stream bomb or a reference cycle in `/Contents` trips at "page 0 read" as the samples say; a damaged content stream is a
+  `damaged-stream` issue; `DocumentParts.None` reads the size alone. (4) An object not where the cross-reference says
+  (or damaged) has the document repaired once, by scanning, and read again; a repair that finds nothing better leaves the
+  object's own error. (5) The version is the header's, or the catalog's `/Version` when later. (6) A date without an
+  offset is given at offset zero; one that is not a date is kept as written in `Entries`. (7) `Attachments` is empty until
+  D4 (the contract's suite reads it on every document); `Fields`, `Outline`, `Signatures` and `PageLabel` answer a
+  `NotSupportedException` naming D9, D10 or D12, as D0 decided; an encrypted file one naming D2, and the public-key
+  handler naming `Adobe.PubSec`. (8) `IDocumentFormat`, `DocumentFormats`, `IDocument`, `IDocumentPageDrawer` and
+  `DocumentPageDrawers`, used by Idrak.Data alone today, are listed in `tests/Idrak.Tests/data/shared-contracts.txt`
+  (decision 1 keeps them in Idrak.Abstraction for every format and package). (9) Idrak.Data grants its internals to the
+  tests (the object layer is checked object by object). (10) D0's outside plug-in check that nothing detects a PDF header
+  now says the toy is not taken for one.
+- **Tests:** group `documents pdf: file` (5): the format registered and every sample that is neither encrypted nor hostile
+  (43) opening with its page count, version, information, page sizes, rotations and repaired flag; each D1 sample's
+  cross-reference sections and every live object in the canonical form (167), read alike from several threads, and every
+  listed stream of every sample (176) decoded to its SHA-256, a wrong `/Length` the only one found by `endstream`; the
+  nine D1 hostile samples tripping their limit where their JSON says, the 23 encrypted ones refused; `DocumentFormatSuite`
+  on `pdf` (the readable samples, the encrypted and cycle and depth ones as invalid, 60 cut or changed files); the lexer,
+  text and dates on hand-made bytes, and hand-made files read alike from a file, memory and a plain stream, without a
+  cache, repaired when shifted, a bomb and a deep page tree failing. The samples come from `IDRAK_DOCUMENTS_SAMPLES`
+  (default `test-output/documents/samples`); missing, the group fails at once naming the command that makes them. First run
+  of the phase's filter with `documents contracts|test runner|every environment variable read in src`: 25 tests, 7 failed
+  (a table entry's type read without the space before it, so every table was repaired: the repaired flags, a freed object
+  back and the `/Prev` loop missed; an internal abstract class outside an Abstractions namespace, made sealed; the
+  contracts above), then 1 (the D3 and D4 samples state no information: compared where stated), then with D0's groups
+  `document layouts|outside plug-in|override loop:|conformance kit:` added, after D0's check above: 70 passed, 0 failed.
+  The API dump (`Idrak.Data`) and the inventory regenerated through the runner.
+- **Timings** (this container, 4 cores, Linux; the owner's devices give the real ones): opening and reading the 17 D1
+  samples and the twin (44 pages, every part, the information) cold 129-155 ms (8-9 ms a document, mostly compiling),
+  warm median 3.0-3.2 ms a pass (175-185 µs a document), 479 KiB allocated a pass; the managed heap at most 16 MiB, the
+  process's working set 63 MiB at most. The hostile files fail in 0.2-3 ms, the two bombs in 30-170 ms. The three measured
+  limits cost about 2 µs an open.
+- **Left for later phases:** text (D3: `hostile-form-recursion`, a D3 sample, trips in its interpreter), images and
+  embedded files (D4), encryption (D2), the rest from D6.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: file|documents contracts|document layouts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable read in src|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d1.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase D2: PDF encryption
 

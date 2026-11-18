@@ -500,6 +500,16 @@ public static class Idrak.Data.ParquetFile
   public static (long, System.Collections.Generic.IReadOnlyList<string>) Describe(System.IO.Stream stream)
   public static System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> ReadRows(System.IO.Stream stream, System.Collections.Generic.IReadOnlyCollection<string>? columns = null)
 
+public sealed class Idrak.Data.Pdf.PdfFormat : Idrak.Abstraction.Data.IDocumentFormat
+  public Idrak.Abstraction.Data.IDocument Open(System.IO.Stream stream, string name, Idrak.Abstraction.Data.DocumentOptions options)
+  public PdfFormat()
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> MediaTypes { get; }
+  public bool Accepts(System.ReadOnlySpan<byte> header)
+  public const int HeaderWithin = 1024
+  public const string FormatName = "pdf"
+  public string Name { get; }
+
 public sealed class Idrak.Data.RecipeCounts
   public RecipeCounts()
   public long Duplicates { get; }

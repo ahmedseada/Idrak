@@ -609,8 +609,8 @@ public static class DocumentPluginTests
             }
 
             byte[] bytes = File.ReadAllBytes(path);
-            Check(DocumentFormats.CanOpen(path) && ReferenceEquals(DocumentFormats.Detect(bytes), format) && DocumentFormats.Detect("%PDF-1.7\n"u8) is null,
-                "found by extension and first bytes, and nothing else taken for it");
+            Check(DocumentFormats.CanOpen(path) && ReferenceEquals(DocumentFormats.Detect(bytes), format) && !ReferenceEquals(DocumentFormats.Detect("%PDF-1.7\n"u8), format),
+                "found by extension and first bytes, and not taken for another format's file (a PDF's start)");
             using (var document = DocumentFormats.Open(path))
             {
                 var page = document.ReadPage(0, DocumentParts.All);
