@@ -394,14 +394,15 @@ No leftovers.
 | 28.12 | Phase D7, not started: PDF vector content read, pages drawn to pixels (the `coverage` drawer in `Idrak.Imaging`, a Type 1 font reader, Type 3 glyphs, shadings, transparency, a fill rule on the rasterizer, `Homography` / `Warp` shared). | feature | Phase D7 |
 | 28.13 | ~~Reference reader and renderer from PyPI: agreed?~~ Answered 2026-11-18: agreed, their samples under the ignored `test-output/` (decision 13). | question (answered) | Open questions (2) |
 | 28.14 | ~~The writer's default image encoding~~ Answered 2026-11-18: `Auto` (decision 11). | question (answered) | Open questions (3) |
-| 28.15 | Phase D8, not started: fonts written (`truetype`, `opentype-cff`, `woff`, `woff2`) and WOFF / WOFF2 read, subsetting with layout closure; D6 embeds and plan 38 exports through it. | feature | Phase D8 |
+| 28.15 | Phase D8, not started: fonts written (`truetype` built in, the one Idrak works from; `opentype-cff`, `woff`, `woff2` and the WOFF / WOFF2 readers in a font plug-in project; no JSON font file), subsetting with layout closure; D6 embeds and plan 38 exports through it. | feature | Phase D8 |
 | 28.16 | Phase D9, not started: forms (every field kind read, filled, created, flattened; appearances generated; XFA data read). | feature | Phase D9 |
 | 28.17 | Phase D10, not started: annotations (every kind read, drawn, created, removed; redaction applied), links, bookmarks, destinations, page labels, the `tagged` layout. | feature | Phase D10 |
 | 28.18 | Phase D11, not started: editing in place (incremental updates, rewrite, page operations, merge and split, saved with AES-256). | feature | Phase D11 |
 | 28.19 | Phase D12, not started: signatures read and checked (CMS, chain, timestamps, revocation from the file) and signing (PAdES B-B, B-T, B-LT). | feature | Phase D12 |
 | 28.20 | Phase D13, not started: any workload (`idrak bench documents`, large and many files, bounded memory, the owner's real files written back and drawn). | feature | Phase D13 |
-| 28.21 | Signing's trust by default: only the app's certificates (proposed), or the machine's store too? (open question 4) | question | Open questions (4) |
-| 28.22 | Redaction as a CLI command too, or a library call only? (open question 5) | question | Open questions (5) |
+| 28.21 | ~~Signing's trust by default~~ Answered 2026-11-18: only the app's certificates (decision 16). | question (answered) | Open questions (4) |
+| 28.22 | ~~Redaction as a command~~ Answered 2026-11-18: `idrak data redact` in D10 (decision 17). | question (answered) | Open questions (5) |
+| 28.23 | The font plug-in project's name: `Idrak.Imaging.Plugins` (proposed) or an existing plug-in project? (open question 6) | question | Open questions (6) |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 

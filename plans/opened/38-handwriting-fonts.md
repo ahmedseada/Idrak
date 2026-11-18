@@ -87,7 +87,9 @@ first.
 - **Plan 28 first, for any workload.** Plan 28 is built and finished (all its phases, D0-D13) before this plan starts,
   however long it takes, so no phase here waits on PDF or on font writing.
 - **A made font is exported in a common format:** TrueType (`.ttf`), OpenType (`.otf`), WOFF or WOFF2, through plan 28's
-  `FontWriters` (D8). This replaces the proposed Idrak-only JSON file ("glyphs" format): there is none.
+  `FontWriters` (D8). This replaces the proposed Idrak-only JSON file ("glyphs" format): there is none. TrueType is
+  built into Idrak and is what Idrak works from (the fastest to open and draw from); OTF, WOFF and WOFF2 come from the
+  font plug-in project (plan 28, decision 18).
 
 **Proposed, for the owner to confirm:**
 

@@ -6,7 +6,8 @@
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
 before plan 38) and 10-15 (forms, annotations, signatures and editing in; fonts written in the common formats; the test
 samples in the ignored `test-output/`; ready for any workload, plan 38 waits; worked on the branch `documents`, taken
-from `migration`). The PDF parts of [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). **Nothing is
+from `migration`) and 16-19 (only the app's certificates trusted; `idrak data redact`; TrueType built in and used by
+Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a fresh one per piece). The PDF parts of [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). **Nothing is
 built.** No phase starts before the owner names it.
 
 | Phase | What | Lane | State |
@@ -79,15 +80,31 @@ registered format the same way.
 15. **The branch:** this plan is worked on the branch `documents`, taken from `migration` (not `main`), until the owner
     says otherwise.
 
+**Taken by the owner (2026-11-18, third round):**
+
+16. **Signatures trust only what the app gives** (open question 4): the certificates passed in `SignatureCheckOptions`;
+    the machine's store only when the app asks for it by that option.
+17. **Redaction is also a command** (open question 5): `idrak data redact` (D10), beside the library call.
+18. **Fonts: TrueType built in, and Idrak uses it; no Idrak-only font file.** The library (`Idrak.Imaging`) reads and
+    writes `.ttf` (the fastest of the formats to open and draw from, by estimate; D8's bench measures it). There is no
+    JSON font format: TrueType holds everything a made font needs (outlines, metrics, characters, layout tables,
+    alternates, names), and a second format would only add upkeep and the `.json` clash with font maps; a person reads a
+    font through the reference font tools' text dump (`tools/`). OpenType CFF (`.otf`) writing, WOFF and WOFF2 (read and
+    write) live in a plug-in project that registers into the same `FontWriters` and `FontFormats`. Whatever a font came
+    in as, Idrak works from TrueType (the PDF writer's embedded subsets, plan 38's made fonts).
+19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
+    frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
+    one list when asked).
+
 **Proposed, for the owner to confirm:**
 
 5. ~~Scope of the first version: text and images, not rendering.~~ Superseded by decisions 7-14: reading covers text,
    images, vector paths, forms, annotations, navigation and signatures, and drawing a page to pixels; writing covers
    images, paths, text, fields, annotations, bookmarks and signatures; editing covers changes in place and page
    operations.
-6. **The contract, the PDF reader, writer and editor, and the font writers** ("just implement the contract"): no CLI command, no dataset rows,
-   no retrieval chunking from documents here, except what plan 38 needs (its commands are plan 38's F6). Other users of
-   the contract are listed under "Not in this plan".
+6. **The contract, the PDF reader, writer and editor, and the font writers** ("just implement the contract"): one CLI
+   command (`idrak data redact`, decision 17), no dataset rows, no retrieval chunking from documents here, except what
+   plan 38 needs (its commands are plan 38's F6). Other users of the contract are listed under "Not in this plan".
 
    Proposed with decisions 7-9:
 
@@ -229,7 +246,7 @@ Added 2026-11-18, second round (decisions 10-14):
 
 | # | Type | What |
 |---|---|---|
-| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype", "opentype-cff", "woff", "woff2"), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (family, style, version, copyright and licence strings the caller gives; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`). `FontFormats` gains `woff` and `woff2` readers |
+| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype" built in; "opentype-cff", "woff", "woff2" from the plug-in, decision 18), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (family, style, version, copyright and licence strings the caller gives; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`): "truetype"; the plug-in adds the rest and the `woff` and `woff2` readers to `FontFormats` |
 | C19 | `DocumentField` | `Name` (full, dotted), `Kind` (text, check box, radio, list, combo, push button, signature), `Value` / `Values`, `Options` (choices, with export values), `Flags` (read-only, required, multi-line, password, comb, ...), `MaxLength`, `Widgets` (page, box, appearance state), `Tooltip`; `IDocument.Fields` (read on demand); XFA forms: their data (`datasets`) read as fields, their layout not drawn (reported in `Issues`) |
 | C20 | `DocumentAnnotation` | `Kind` (text note, free text, line, square, circle, polygon, polyline, highlight, underline, squiggly, strike-out, ink, stamp, caret, link, file attachment, popup, redaction, widget, and any other by its name), `Page`, `Box`, `Contents`, `Author`, `Created` / `Modified`, `Colour`, `Opacity`, `Points` (quad points, a line's ends, a polygon's vertices), `Ink` (`DocumentPath`s: strokes written on the page), `Target` (a link's URI or destination), `Replies` (its thread), `Appearance` (drawn by the drawer when asked); `DocumentPage.Annotations` |
 | C21 | `DocumentOutline`, `DocumentDestination`, `DocumentPageLabel` | the bookmarks tree (title, destination, open, colour, style, children), destinations (page, a position and zoom, or a name), page labels (`iv`, `A-3`); `IDocument.Outline`, `IDocument.PageLabel(index)`; tagged files: the structure tree's order used by a `tagged` text layout (C10), the reading order the author gave |
@@ -459,17 +476,20 @@ fonts|synthetic pages`.
 
 ## Phase D8: fonts written and read in the common formats
 
-In `Idrak.Imaging`, beside `OpenTypeFormat` and `CffOutlines`, registered in `FontWriters` (C18) and `FontFormats`:
-- **"truetype" (`.ttf`):** the tables a face needs, from any `IFontFace`: `head`, `hhea`, `maxp`, `hmtx`, `cmap` (formats
+Two packages (decision 18): **built in**, in `Idrak.Imaging` beside `OpenTypeFormat` and `CffOutlines`, the "truetype"
+writer, the one Idrak works from; **a plug-in project** (proposed `Idrak.Imaging.Plugins`, namespace
+`Idrak.Imaging.Plugins.Fonts`, open question 6) with "opentype-cff", "woff" and "woff2", registering into the same
+`FontWriters` (C18) and `FontFormats`. No JSON font format.
+- **"truetype" (`.ttf`, built in):** the tables a face needs, from any `IFontFace`: `head`, `hhea`, `maxp`, `hmtx`, `cmap` (formats
   4 and 12, from the face's characters), `glyf` and `loca` (quadratic outlines; a cubic outline turned into quadratics
   within `CurveTolerance`, measured), `name` (only the strings given), `OS/2` (metrics and ranges from the glyphs),
   `post` (glyph names when the face has them); the face's layout tables (`GSUB`, `GDEF`, `GPOS`) written as they are, so
   a mapped legacy face or plan 38's made face shapes in any software, not only in Idrak; checksums and the table order
   the specification asks for.
-- **"opentype-cff" (`.otf`):** the same with `CFF ` outlines (Type 2 charstrings, cubic: quadratics raised exactly,
+- **"opentype-cff" (`.otf`, plug-in):** the same with `CFF ` outlines (Type 2 charstrings, cubic: quadratics raised exactly,
   subroutines for repeated runs, a setting).
-- **"woff" (`.woff`):** a written font's tables, each zlib-compressed through `ZLibStream` when that is smaller; and read.
-- **"woff2" (`.woff2`):** the tables Brotli-compressed through the base library's `BrotliEncoder` / `BrotliDecoder`, with
+- **"woff" (`.woff`, plug-in):** a written font's tables, each zlib-compressed through `ZLibStream` when that is smaller; and read.
+- **"woff2" (`.woff2`, plug-in):** the tables Brotli-compressed through the base library's `BrotliEncoder` / `BrotliDecoder`, with
   the `glyf` / `loca` and `hmtx` transforms; and read.
 - **Subsetting:** `Glyphs` keeps those glyphs, their composite parts and, with `KeepLayout`, every glyph the layout
   tables can reach (a closure over `GSUB`), with the layout tables rewritten to the kept glyphs; without it the layout
@@ -501,6 +521,10 @@ the reference reader, and draws (D7) with the values in place; a flattened form 
   asked (their appearance streams; one without is drawn from its properties); created (with an appearance made) and
   removed; redaction annotations applied on request (the content under them removed from text, paths and image pixels,
   not only covered).
+- **The redaction command** (decision 17): `idrak data redact IN.pdf (--boxes FILE | --text TEXT | --marked) -o OUT.pdf`
+  (boxes by page, every match of a text, or the file's own redaction annotations), with live progress (pages done,
+  areas removed) and a summary of what was removed per page; the output written as a rewrite (D11), so nothing removed
+  survives in an earlier revision. Its help text and README use a generic example.
 - **Navigation (C21):** links (URI and destinations), bookmarks read and written, named destinations, page labels.
 - **Tagged files:** the structure tree read, and a `tagged` text layout in `DocumentTextLayouts` that orders text as the
   author tagged it (the `lines` layout stays the default for files without tags).
@@ -509,7 +533,8 @@ the reference reader, and draws (D7) with the values in place; a flattened form 
 Idrak and the reference reader; a redacted area holds no text, path or pixel of what it covered; a tagged sample's text
 comes in its tagged order.
 
-**Tests (CPU here):** one build; `documents pdf: annotations|document layouts|documents pdf: write|documents drawers`.
+**Tests (CPU here):** one build; `documents pdf: annotations|document layouts|documents pdf: write|documents drawers|
+cli: data redact|environment variables|help text`.
 
 ## Phase D11: editing in place, and saving
 
@@ -664,11 +689,11 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:I
 ## Open questions for the owner (2026-11-18)
 
 Answered the same day: 1 (forms, annotations, signatures and editing are in: decision 10), 2 (the reference tools from
-PyPI, their samples under `test-output/`: decision 13), 3 (`Auto`: decision 11). Open:
+PyPI, their samples under `test-output/`: decision 13), 3 (`Auto`: decision 11), 4 (only the app's certificates:
+decision 16), 5 (redaction is a command too: decision 17). Open:
 
-4. Signing's trust by default: only the certificates the app gives (proposed), or the machine's certificate store too?
-5. Redaction (D10) removes content for real; should it also be offered as a CLI command once the contract lands, or stay
-   a library call?
+6. The font plug-in project's name (D8): `Idrak.Imaging.Plugins` (proposed, new, beside the other `*.Plugins`
+   projects), or inside an existing plug-in project?
 
 ## Runs
 
