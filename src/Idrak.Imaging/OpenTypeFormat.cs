@@ -210,9 +210,9 @@ internal sealed class OpenTypeFace : IFontFace
                 return outline;
             }
 
-            var contours = new List<Contour>();
+            var contours = new List<TrueTypeContour>();
             AddGlyph(glyph, 1, 0, 0, 1, 0, 0, contours, 0);
-            outline = ToOutline(contours);
+            outline = TrueTypeContour.ToOutline(contours);
             Volatile.Write(ref _outlines[glyph], outline);                // two threads may both read it: the same outline
         }
 
@@ -274,14 +274,8 @@ internal sealed class OpenTypeFace : IFontFace
 
     private ReadOnlySpan<byte> Span(string tag) => Table(tag).Span;
 
-    // A contour's points in font units, each on the curve or a quadratic control point.
-    private sealed class Contour(int capacity)
-    {
-        public readonly List<(float X, float Y, bool On)> Points = new(capacity);
-    }
-
     // Appends glyph's contours, transformed by [a b; c d] then moved by (dx, dy) (a component of a composite glyph).
-    private void AddGlyph(int glyph, float a, float b, float c, float d, float dx, float dy, List<Contour> contours, int depth)
+    private void AddGlyph(int glyph, float a, float b, float c, float d, float dx, float dy, List<TrueTypeContour> contours, int depth)
     {
         if (depth > MaxComponentDepth)
         {
@@ -312,7 +306,7 @@ internal sealed class OpenTypeFace : IFontFace
         }
     }
 
-    private static void AddSimple(ReadOnlySpan<byte> data, int contourCount, float a, float b, float c, float d, float dx, float dy, List<Contour> contours)
+    private static void AddSimple(ReadOnlySpan<byte> data, int contourCount, float a, float b, float c, float d, float dx, float dy, List<TrueTypeContour> contours)
     {
         if (contourCount == 0)
         {
@@ -365,7 +359,7 @@ internal sealed class OpenTypeFace : IFontFace
         int first = 0;
         for (int contour = 0, i = 0; contour < contourCount; contour++)
         {
-            var points2 = new Contour(ends[contour] - first + 1);
+            var points2 = new TrueTypeContour(ends[contour] - first + 1);
             for (; i <= ends[contour]; i++)
             {
                 byte flag = flags[i];
@@ -389,7 +383,7 @@ internal sealed class OpenTypeFace : IFontFace
         }
     }
 
-    private void AddComposite(ReadOnlySpan<byte> data, float a, float b, float c, float d, float dx, float dy, List<Contour> contours, int depth)
+    private void AddComposite(ReadOnlySpan<byte> data, float a, float b, float c, float d, float dx, float dy, List<TrueTypeContour> contours, int depth)
     {
         const int ArgsAreWords = 1, ArgsAreXY = 2, HaveScale = 8, MoreComponents = 32, HaveXYScale = 64, HaveTwoByTwo = 128, ScaledOffset = 0x800;
         int at = 10, flags;
@@ -442,7 +436,7 @@ internal sealed class OpenTypeFace : IFontFace
 
             // The component in the parent's units: its transform, then its offset (scaled by its transform only when the
             // font says so; unscaled is the Microsoft rule FreeType follows by default).
-            var own = new List<Contour>();
+            var own = new List<TrueTypeContour>();
             AddGlyph(component, ca, cb, cc, cd, 0, 0, own, depth + 1);
             float ox, oy;
             if ((flags & ArgsAreXY) != 0)
@@ -459,7 +453,7 @@ internal sealed class OpenTypeFace : IFontFace
 
             foreach (var contour in own)
             {
-                var moved = new Contour(contour.Points.Count);
+                var moved = new TrueTypeContour(contour.Points.Count);
                 foreach (var (x, y, on) in contour.Points)
                 {
                     float px = x + ox, py = y + oy;
@@ -472,7 +466,7 @@ internal sealed class OpenTypeFace : IFontFace
         while ((flags & MoreComponents) != 0);
     }
 
-    private (float X, float Y) PointAt(List<Contour> contours, int index, int count)
+    private (float X, float Y) PointAt(List<TrueTypeContour> contours, int index, int count)
     {
         for (int i = 0; i < count; i++)
         {
@@ -489,84 +483,6 @@ internal sealed class OpenTypeFace : IFontFace
     }
 
     private static float F2Dot14(ReadOnlySpan<byte> data) => BinaryPrimitives.ReadInt16BigEndian(data) / 16384f;
-
-    // TrueType contours to moves, lines and quadratic curves: two control points in a row have an on-curve point midway.
-    private static GlyphOutline ToOutline(List<Contour> contours)
-    {
-        var verbs = new List<OutlineVerb>();
-        var points = new List<float>();
-        foreach (var contour in contours)
-        {
-            var p = contour.Points;
-            int n = p.Count;
-            if (n == 0)
-            {
-                continue;
-            }
-
-            // The start: the first point on the curve, else the midway point of the last and the first.
-            int first = p.FindIndex(q => q.On);
-            (float X, float Y) start = first >= 0 ? (p[first].X, p[first].Y) : ((p[0].X + p[^1].X) / 2, (p[0].Y + p[^1].Y) / 2);
-            int begin = first >= 0 ? first : 0;
-            verbs.Add(OutlineVerb.Move);
-            points.Add(start.X);
-            points.Add(start.Y);
-            (float X, float Y)? control = null;
-            for (int k = 1; k <= n; k++)
-            {
-                var q = p[(begin + k) % n];
-                bool closing = k == n;
-                if (first < 0 && closing)
-                {
-                    q = (start.X, start.Y, true);                               // an all-control contour ends where it began
-                }
-
-                if (q.On)
-                {
-                    if (control is { } ctl)
-                    {
-                        verbs.Add(OutlineVerb.Quadratic);
-                        points.Add(ctl.X);
-                        points.Add(ctl.Y);
-                    }
-                    else
-                    {
-                        verbs.Add(OutlineVerb.Line);
-                    }
-
-                    points.Add(q.X);
-                    points.Add(q.Y);
-                    control = null;
-                }
-                else
-                {
-                    if (control is { } ctl)
-                    {
-                        verbs.Add(OutlineVerb.Quadratic);
-                        points.Add(ctl.X);
-                        points.Add(ctl.Y);
-                        points.Add((ctl.X + q.X) / 2);
-                        points.Add((ctl.Y + q.Y) / 2);
-                    }
-
-                    control = (q.X, q.Y);
-                }
-            }
-
-            if (control is { } last)                                            // a control point before the start
-            {
-                verbs.Add(OutlineVerb.Quadratic);
-                points.Add(last.X);
-                points.Add(last.Y);
-                points.Add(start.X);
-                points.Add(start.Y);
-            }
-
-            verbs.Add(OutlineVerb.Close);
-        }
-
-        return verbs.Count == 0 ? GlyphOutline.Empty : new GlyphOutline([.. verbs], [.. points]);
-    }
 
     // The character map: format 12 (all planes) when the font has it, else format 4 (the basic plane).
     private (ushort[]? Basic, (uint, uint, uint)[]? Groups) ReadCmap(ReadOnlySpan<byte> cmap)

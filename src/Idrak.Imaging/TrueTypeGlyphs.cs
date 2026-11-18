@@ -139,12 +139,39 @@ internal static class GlyphRecords
 internal readonly record struct EncodedGlyph(byte[] Data, int Contours, int Points, int XMin, int YMin, int XMax, int YMax);
 
 /// <summary>
+/// An outline's points as a simple TrueType glyph holds them (<see cref="GlyphEncoder.Points"/>): whole font units, each
+/// on the curve or a quadratic control, and the index of each contour's last point.
+/// </summary>
+internal sealed class GlyphPoints(int capacity)
+{
+    /// <summary>The points' x, in order.</summary>
+    public readonly List<int> X = new(capacity);
+
+    /// <summary>The points' y, in order.</summary>
+    public readonly List<int> Y = new(capacity);
+
+    /// <summary>Whether each point is on the curve (else a quadratic control).</summary>
+    public readonly List<bool> On = new(capacity);
+
+    /// <summary>The index of each contour's last point.</summary>
+    public readonly List<int> Ends = [];
+
+    /// <summary>How many points there are.</summary>
+    public int Count => X.Count;
+
+    /// <summary>The first point (as the outline has it) whose rounding lies outside the 16 bits TrueType holds, or null: the points are then not whole.</summary>
+    public (double X, double Y)? Outside { get; set; }
+}
+
+/// <summary>
 /// Any outline as a simple TrueType glyph (no instructions): each contour starts at its first point, on the curve;
 /// lines and quadratic curves are written as on- and off-curve points (an on-curve point exactly midway between two
 /// controls is left implied, as TrueType reads it); a cubic curve becomes the fewest quadratics within the tolerance
 /// (<see cref="CubicSpline"/>); every point is rounded to whole font units (half up), and the segment that closes a
 /// contour back on its start is the contour's own closing. An outline read from TrueType data of whole units is written
-/// back to the same points, so it reads back the same.
+/// back to the same points, so it reads back the same. <see cref="Points"/> is the one place an outline becomes TrueType
+/// points: the writer encodes them (<see cref="Encode"/>), and a mapped face keeps its drawn and composed glyphs as they
+/// read back (<see cref="Whole"/>), so the two never differ (plan 28, decision 25).
 /// </summary>
 internal static class GlyphEncoder
 {
@@ -154,108 +181,16 @@ internal static class GlyphEncoder
     /// <exception cref="NotSupportedException">A point or a step between two lies outside what TrueType's 16 bits hold, or the glyph has more than 65,535 points.</exception>
     public static EncodedGlyph Encode(GlyphOutline outline, double tolerance, string font, int glyph)
     {
-        if (outline.IsEmpty)
+        var points = Points(outline, tolerance);
+        if (points.Outside is { } outside)
         {
-            return new EncodedGlyph([], 0, 0, 0, 0, 0, 0);
+            throw new NotSupportedException($"{font}: glyph {glyph} has a point at ({outside.X}, {outside.Y}), outside the 16-bit range TrueType holds.");
         }
 
-        var verbs = outline.Verbs.Span;
-        var p = outline.Points.Span;
-        var xs = new List<int>(p.Length / 2 + 8);
-        var ys = new List<int>(p.Length / 2 + 8);
-        var on = new List<bool>(p.Length / 2 + 8);
-        var ends = new List<int>();
-        var segments = new List<Segment>();
-        var controls = new List<(double X, double Y)>();
-        float sx = 0, sy = 0;
-        int v = 0, k = 0;
-        while (v < verbs.Length)
-        {
-            if (verbs[v] == OutlineVerb.Close)
-            {
-                v++;
-                continue;
-            }
-
-            if (verbs[v] == OutlineVerb.Move)
-            {
-                (sx, sy) = (p[k], p[k + 1]);
-                k += 2;
-                v++;
-            }
-
-            segments.Clear();
-            for (; v < verbs.Length && verbs[v] is not (OutlineVerb.Move or OutlineVerb.Close); v++)
-            {
-                switch (verbs[v])
-                {
-                    case OutlineVerb.Line:
-                        segments.Add(new Segment(OutlineVerb.Line, 0, 0, 0, 0, p[k], p[k + 1]));
-                        k += 2;
-                        break;
-                    case OutlineVerb.Quadratic:
-                        segments.Add(new Segment(OutlineVerb.Quadratic, p[k], p[k + 1], 0, 0, p[k + 2], p[k + 3]));
-                        k += 4;
-                        break;
-                    default:
-                        segments.Add(new Segment(OutlineVerb.Cubic, p[k], p[k + 1], p[k + 2], p[k + 3], p[k + 4], p[k + 5]));
-                        k += 6;
-                        break;
-                }
-            }
-
-            if (v < verbs.Length && verbs[v] == OutlineVerb.Close)
-            {
-                v++;
-            }
-
-            Add(sx, sy, true);
-            float cx = sx, cy = sy;
-            for (int j = 0; j < segments.Count; j++)
-            {
-                var s = segments[j];
-                bool closes = j == segments.Count - 1 && s.X == sx && s.Y == sy;   // the contour's own closing: not stored
-                switch (s.Verb)
-                {
-                    case OutlineVerb.Line:
-                        if (!closes)
-                        {
-                            Add(s.X, s.Y, true);
-                        }
-
-                        break;
-                    case OutlineVerb.Quadratic:
-                        Add(s.X1, s.Y1, false);
-                        bool implied = j + 1 < segments.Count && segments[j + 1] is { Verb: OutlineVerb.Quadratic } next
-                                       && s.X == (s.X1 + next.X1) / 2 && s.Y == (s.Y1 + next.Y1) / 2;
-                        if (!closes && !implied)
-                        {
-                            Add(s.X, s.Y, true);
-                        }
-
-                        break;
-                    default:
-                        controls.Clear();
-                        CubicSpline.Approximate((cx, cy), (s.X1, s.Y1), (s.X2, s.Y2), (s.X, s.Y), tolerance, controls);
-                        foreach (var (qx, qy) in controls)
-                        {
-                            Add(qx, qy, false);
-                        }
-
-                        if (!closes)
-                        {
-                            Add(s.X, s.Y, true);
-                        }
-
-                        break;
-                }
-
-                (cx, cy) = (s.X, s.Y);
-            }
-
-            ends.Add(xs.Count - 1);
-        }
-
+        var xs = points.X;
+        var ys = points.Y;
+        var on = points.On;
+        var ends = points.Ends;
         if (xs.Count == 0)
         {
             return new EncodedGlyph([], 0, 0, 0, 0, 0, 0);
@@ -353,19 +288,253 @@ internal static class GlyphEncoder
         }
 
         return new EncodedGlyph(w.ToArray(), ends.Count, xs.Count, xMin, yMin, xMax, yMax);
+    }
+
+    /// <summary>
+    /// <paramref name="outline"/> as a TrueType font gives it back once written: its <see cref="Points"/> (whole units,
+    /// cubic curves within <paramref name="tolerance"/>), read as every TrueType glyph is read (<see cref="TrueTypeContour.ToOutline"/>).
+    /// The outline itself when TrueType cannot hold it (a point outside its 16 bits, more than 65,535 points): the writer
+    /// refuses such a glyph, and the face is then used as it is.
+    /// </summary>
+    public static GlyphOutline Whole(GlyphOutline outline, double tolerance)
+    {
+        var points = Points(outline, tolerance);
+        if (points.Outside is not null || points.Count > 0xFFFF)
+        {
+            return outline;
+        }
+
+        var contours = new List<TrueTypeContour>(points.Ends.Count);
+        int first = 0;
+        foreach (int end in points.Ends)
+        {
+            var contour = new TrueTypeContour(end - first + 1);
+            for (int i = first; i <= end; i++)
+            {
+                contour.Points.Add((points.X[i], points.Y[i], points.On[i]));
+            }
+
+            contours.Add(contour);
+            first = end + 1;
+        }
+
+        return TrueTypeContour.ToOutline(contours);
+    }
+
+    /// <summary>
+    /// The points a simple TrueType glyph holds for <paramref name="outline"/>, contour by contour (see the class): the one
+    /// rounding to whole font units (half up) the writer and a mapped face's drawn glyphs share. A point whose rounding
+    /// lies outside TrueType's 16 bits is named in <see cref="GlyphPoints.Outside"/> and left out.
+    /// </summary>
+    public static GlyphPoints Points(GlyphOutline outline, double tolerance)
+    {
+        var p = outline.Points.Span;
+        var result = new GlyphPoints(p.Length / 2 + 8);
+        if (outline.IsEmpty)
+        {
+            return result;
+        }
+
+        var verbs = outline.Verbs.Span;
+        var xs = result.X;
+        var ys = result.Y;
+        var on = result.On;
+        var ends = result.Ends;
+        var segments = new List<Segment>();
+        var controls = new List<(double X, double Y)>();
+        float sx = 0, sy = 0;
+        int v = 0, k = 0;
+        while (v < verbs.Length)
+        {
+            if (verbs[v] == OutlineVerb.Close)
+            {
+                v++;
+                continue;
+            }
+
+            if (verbs[v] == OutlineVerb.Move)
+            {
+                (sx, sy) = (p[k], p[k + 1]);
+                k += 2;
+                v++;
+            }
+
+            segments.Clear();
+            for (; v < verbs.Length && verbs[v] is not (OutlineVerb.Move or OutlineVerb.Close); v++)
+            {
+                switch (verbs[v])
+                {
+                    case OutlineVerb.Line:
+                        segments.Add(new Segment(OutlineVerb.Line, 0, 0, 0, 0, p[k], p[k + 1]));
+                        k += 2;
+                        break;
+                    case OutlineVerb.Quadratic:
+                        segments.Add(new Segment(OutlineVerb.Quadratic, p[k], p[k + 1], 0, 0, p[k + 2], p[k + 3]));
+                        k += 4;
+                        break;
+                    default:
+                        segments.Add(new Segment(OutlineVerb.Cubic, p[k], p[k + 1], p[k + 2], p[k + 3], p[k + 4], p[k + 5]));
+                        k += 6;
+                        break;
+                }
+            }
+
+            if (v < verbs.Length && verbs[v] == OutlineVerb.Close)
+            {
+                v++;
+            }
+
+            Add(sx, sy, true);
+            float cx = sx, cy = sy;
+            for (int j = 0; j < segments.Count; j++)
+            {
+                var s = segments[j];
+                bool closes = j == segments.Count - 1 && s.X == sx && s.Y == sy;   // the contour's own closing: not stored
+                switch (s.Verb)
+                {
+                    case OutlineVerb.Line:
+                        if (!closes)
+                        {
+                            Add(s.X, s.Y, true);
+                        }
+
+                        break;
+                    case OutlineVerb.Quadratic:
+                        Add(s.X1, s.Y1, false);
+                        bool implied = j + 1 < segments.Count && segments[j + 1] is { Verb: OutlineVerb.Quadratic } next
+                                       && s.X == (s.X1 + next.X1) / 2 && s.Y == (s.Y1 + next.Y1) / 2;
+                        if (!closes && !implied)
+                        {
+                            Add(s.X, s.Y, true);
+                        }
+
+                        break;
+                    default:
+                        controls.Clear();
+                        CubicSpline.Approximate((cx, cy), (s.X1, s.Y1), (s.X2, s.Y2), (s.X, s.Y), tolerance, controls);
+                        foreach (var (qx, qy) in controls)
+                        {
+                            Add(qx, qy, false);
+                        }
+
+                        if (!closes)
+                        {
+                            Add(s.X, s.Y, true);
+                        }
+
+                        break;
+                }
+
+                (cx, cy) = (s.X, s.Y);
+            }
+
+            ends.Add(xs.Count - 1);
+        }
+
+        return result;
 
         void Add(double x, double y, bool onCurve)
         {
             double rx = Math.Floor(x + 0.5), ry = Math.Floor(y + 0.5);
             if (!(rx >= short.MinValue && rx <= short.MaxValue && ry >= short.MinValue && ry <= short.MaxValue))
             {
-                throw new NotSupportedException($"{font}: glyph {glyph} has a point at ({x}, {y}), outside the 16-bit range TrueType holds.");
+                result.Outside ??= (x, y);
+                return;
             }
 
             xs.Add((int)rx);
             ys.Add((int)ry);
             on.Add(onCurve);
         }
+    }
+}
+
+/// <summary>
+/// One TrueType contour's points in font units, each on the curve or a quadratic control point, and the one way the
+/// library reads such contours as an outline (<see cref="ToOutline"/>): a font's glyph records, and a mapped face's drawn
+/// glyphs as the writer keeps them (<see cref="GlyphEncoder.Whole"/>).
+/// </summary>
+internal sealed class TrueTypeContour(int capacity)
+{
+    /// <summary>The contour's points, in order.</summary>
+    public readonly List<(float X, float Y, bool On)> Points = new(capacity);
+
+    /// <summary>TrueType contours to moves, lines and quadratic curves: two control points in a row have an on-curve point midway.</summary>
+    public static GlyphOutline ToOutline(List<TrueTypeContour> contours)
+    {
+        var verbs = new List<OutlineVerb>();
+        var points = new List<float>();
+        foreach (var contour in contours)
+        {
+            var p = contour.Points;
+            int n = p.Count;
+            if (n == 0)
+            {
+                continue;
+            }
+
+            // The start: the first point on the curve, else the midway point of the last and the first.
+            int first = p.FindIndex(q => q.On);
+            (float X, float Y) start = first >= 0 ? (p[first].X, p[first].Y) : ((p[0].X + p[^1].X) / 2, (p[0].Y + p[^1].Y) / 2);
+            int begin = first >= 0 ? first : 0;
+            verbs.Add(OutlineVerb.Move);
+            points.Add(start.X);
+            points.Add(start.Y);
+            (float X, float Y)? control = null;
+            for (int k = 1; k <= n; k++)
+            {
+                var q = p[(begin + k) % n];
+                bool closing = k == n;
+                if (first < 0 && closing)
+                {
+                    q = (start.X, start.Y, true);                               // an all-control contour ends where it began
+                }
+
+                if (q.On)
+                {
+                    if (control is { } ctl)
+                    {
+                        verbs.Add(OutlineVerb.Quadratic);
+                        points.Add(ctl.X);
+                        points.Add(ctl.Y);
+                    }
+                    else
+                    {
+                        verbs.Add(OutlineVerb.Line);
+                    }
+
+                    points.Add(q.X);
+                    points.Add(q.Y);
+                    control = null;
+                }
+                else
+                {
+                    if (control is { } ctl)
+                    {
+                        verbs.Add(OutlineVerb.Quadratic);
+                        points.Add(ctl.X);
+                        points.Add(ctl.Y);
+                        points.Add((ctl.X + q.X) / 2);
+                        points.Add((ctl.Y + q.Y) / 2);
+                    }
+
+                    control = (q.X, q.Y);
+                }
+            }
+
+            if (control is { } last)                                            // a control point before the start
+            {
+                verbs.Add(OutlineVerb.Quadratic);
+                points.Add(last.X);
+                points.Add(last.Y);
+                points.Add(start.X);
+                points.Add(start.Y);
+            }
+
+            verbs.Add(OutlineVerb.Close);
+        }
+
+        return verbs.Count == 0 ? GlyphOutline.Empty : new GlyphOutline([.. verbs], [.. points]);
     }
 }
 

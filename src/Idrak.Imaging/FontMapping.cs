@@ -293,8 +293,9 @@ internal static class PostNames
 
 /// <summary>
 /// A face a <see cref="FontMap"/> made usable: the map's characters answer through the face's glyphs (and glyphs drawn
-/// in after its own), the marks have no width, and GSUB, GDEF and GPOS are made from the map; every other answer and
-/// table is the face's. Thread-safe: the tables and drawn glyphs are made once, on first use.
+/// in after its own, kept as the TrueType writer keeps them, so the font converted from this face is this face), the
+/// marks have no width, and GSUB, GDEF and GPOS are made from the map; every other answer and table is the face's.
+/// Thread-safe: the tables and drawn glyphs are made once, on first use.
 /// </summary>
 internal sealed class MappedFontFace : IFontFace
 {
@@ -686,6 +687,18 @@ internal sealed class MappedFontFace : IFontFace
 
             result[glyph - _inner.GlyphCount] = (Composition.Compose(_inner.Outline(body), recipe, strokes, upem, _map.AnchorGap, _map.AnchorWindow, slanted,
                 DrawnGlyphData.Library.DiscSides), _inner.Advance(body));
+        }
+
+        // Each drawn and composed glyph kept as the TrueType writer keeps it (plan 28, decision 25): its points through the
+        // writer's own step (whole units, rounded half up; a cubic curve made quadratic within the tolerance the converted-font
+        // cache writes with; an exact midpoint between two controls implied) and read back as every TrueType glyph is, so
+        // this face and the font FontCache converts from it give the same outlines and draw the same pages. Done once a glyph,
+        // here, where the glyphs are drawn.
+        double tolerance = new FontWriteOptions().CurveTolerance;
+        for (int i = 0; i < result.Length; i++)
+        {
+            var (outline, advance) = result[i];
+            result[i] = (GlyphEncoder.Whole(outline, tolerance), advance);
         }
 
         return result;

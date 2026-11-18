@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -17,11 +18,12 @@ internal abstract partial class DesktopTests
 {
     internal static readonly (string Name, Action<Device> Run)[] FontWriteGroup =
     [
-        ("fonts write: every test font (TrueType, CFF, a collection, variable fonts' default instance, and the legacy fonts as their maps make them) written as TrueType reads back with the same metrics, names, glyph count, characters, advances, outlines (the same points from TrueType; cubic curves within the curve tolerance and drawn glyphs within half a unit, measured) and shaping; the same face, the same bytes", FontWriteEveryFont),
+        ("fonts write: every test font (TrueType, CFF, a collection, variable fonts' default instance, and the legacy fonts as their maps make them) written as TrueType reads back with the same metrics, names, glyph count, characters, advances, outlines (the same points from TrueType and for a mapped face's drawn and composed glyphs; cubic curves within the curve tolerance and CFF's straight glyphs within half a unit, measured) and shaping; the same face, the same bytes", FontWriteEveryFont),
         ("fonts write: subsets keep exactly the glyphs fontTools' subsetter keeps on the D8 samples (glyph 0, the glyphs asked for, the GSUB closure with layout, composite parts), under their own ids, the others empty with their advances; layout tables kept or dropped", FontWriteSubsets),
-        ("fonts write: truetype is the library's writer and passes the font writer contract (TrueType, CFF and mapped faces); names given over the face's, hinting kept only when asked, a face of no tables (a cubic glyph, a character past the basic plane), the tables by tag with their checksums, a glyph the face lacks refused", FontWriteContract),
+        ("fonts write: truetype is the library's writer and passes the font writer contract (TrueType and mapped faces with the same points, CFF within the tolerance); names given over the face's, hinting kept only when asked, a face of no tables (a cubic glyph, a character past the basic plane), the tables by tag with their checksums, a glyph the face lacks refused", FontWriteContract),
         ("fonts write: a legacy font is converted to TrueType once and kept: read back it is a plain font (the maps leave it alone) that shapes as its mapped face, the next read finds it in the cache (counted; cold and warm timed), another drawing setting makes another, a damaged one is made again, off reads the mapped face; --font-maps cache=off", FontWriteLegacyCache),
-        ("fonts write: a page turns on the hand's features (PAIR, PAI2, WORD) from the font's own GSUB: the same answer as the map's rule for every mapped face and hand, the same for its converted font, none for Unicode fonts; a page of the converted font has the mapped face's text and description", FontWriteHandFeatures),
+        ("fonts write: a page turns on the hand's features (PAIR, PAI2, WORD) from the font's own GSUB: the same answer as the map's rule for every mapped face and hand, the same for its converted font, none for Unicode fonts; a page of the converted font is the mapped face's, text, description and pixels", FontWriteHandFeatures),
+        ("fonts write: cached and mapped faces are identical (decision 25): every legacy font under fonts/arabic a map fits gives, with the converted-font cache off and on, the same outline (every step and point) and advance for every glyph, the same characters and layout tables, as does every other library map that applies to it written and read back; generic pages (two layouts, three texts with drawn digits, marks and composed letters, the hand's features off and on) drawn from both are byte for byte the same", FontWriteCacheIdentical),
     ];
 
     private static readonly (string Text, string Script, bool RightToLeft)[] FontWriteLines =
@@ -225,8 +227,8 @@ internal abstract partial class DesktopTests
         CpuOnly(device);
         var writer = FontWriters.Get(TrueTypeWriter.WriterName);
         float tolerance = new FontWriteOptions().CurveTolerance;
-        double worstCubic = 0, worstDrawn = 0;
-        int written = 0, exactGlyphs = 0, cubicGlyphs = 0, drawnGlyphs = 0, lines = 0;
+        double worstCubic = 0, worstStraight = 0;
+        int written = 0, exactGlyphs = 0, drawnGlyphs = 0, cubicGlyphs = 0, straightGlyphs = 0, lines = 0;
         foreach (var (name, face) in FontWriteFaces())
         {
             byte[] bytes = WriteFont(writer, face, new FontWriteOptions());
@@ -261,6 +263,14 @@ internal abstract partial class DesktopTests
                     Check(a.IsEmpty || Bearing(read, g) == Bearing(face, g), $"{name}: glyph {g}'s left side bearing {Bearing(read, g)}, the font's {Bearing(face, g)}");
                     exactGlyphs++;
                 }
+                else if (face is MappedFontFace)
+                {
+                    // A mapped face keeps its drawn and composed glyphs as the writer keeps them (decision 25).
+                    Check(a.Verbs.Span.SequenceEqual(b.Verbs.Span) && a.Points.Span.SequenceEqual(b.Points.Span),
+                        $"{name}: drawn glyph {g} reads back with {b.Verbs.Length} steps and {b.Points.Length / 2} points, the face's {a.Verbs.Length} and {a.Points.Length / 2}: "
+                        + "the mapped face does not keep its drawn and composed glyphs as the TrueType writer does (their rounding to whole units, GlyphEncoder.Whole)");
+                    drawnGlyphs++;
+                }
                 else if (a.Verbs.Span.Contains(OutlineVerb.Cubic))
                 {
                     double deviation = Deviation(a, b);
@@ -271,10 +281,10 @@ internal abstract partial class DesktopTests
                 else
                 {
                     float difference = BoundsDifference(a, b);
-                    worstDrawn = Math.Max(worstDrawn, difference);
+                    worstStraight = Math.Max(worstStraight, difference);
                     Check(a.IsEmpty == b.IsEmpty && ContourCount(a) == ContourCount(b) && difference <= 0.5f + 1e-3f,
                         $"{name}: glyph {g} reads back with {ContourCount(b)} contours within {difference} units, the face's {ContourCount(a)}");
-                    drawnGlyphs++;
+                    straightGlyphs++;
                 }
             }
 
@@ -301,8 +311,8 @@ internal abstract partial class DesktopTests
             lines += shaped;
         }
 
-        Console.WriteLine($"    {written} faces written and read back: {exactGlyphs} glyphs the same points, {cubicGlyphs} cubic glyphs within {worstCubic:F3} units "
-                          + $"(tolerance {tolerance}), {drawnGlyphs} other glyphs within {worstDrawn:F3}; {lines} lines shaped the same");
+        Console.WriteLine($"    {written} faces written and read back: {exactGlyphs} glyphs the same points, {drawnGlyphs} drawn and composed glyphs the same points, "
+                          + $"{cubicGlyphs} cubic glyphs within {worstCubic:F3} units (tolerance {tolerance}), {straightGlyphs} other CFF glyphs (straight lines or none) within {worstStraight:F3}; {lines} lines shaped the same");
     }
 
     // The D8 samples' folder (IDRAK_DOCUMENTS_SAMPLES, else test-output/documents/samples); missing, the test fails naming the command.
@@ -432,7 +442,7 @@ internal abstract partial class DesktopTests
         var mapped = FontMaps.Apply(RawFace("MCS-HAND"));
         Conformance.CheckFontWriter(writer, [subset, features, amiri]).ThrowIfFailed();
         Conformance.CheckFontWriter(writer, [cff], exact: false).ThrowIfFailed();
-        Conformance.CheckFontWriter(writer, [mapped], exact: false).ThrowIfFailed();
+        Conformance.CheckFontWriter(writer, [mapped]).ThrowIfFailed();                   // its drawn glyphs as the writer keeps them (decision 25)
 
         foreach (var (name, face) in new[] { ("dejavu-sans-subset", subset), ("dejavu-sans-cff", cff), ("MCS-HAND mapped", mapped) })
         {
@@ -575,8 +585,9 @@ internal abstract partial class DesktopTests
                 var plain = new OpenTypeFormat().Read(bytes, name)[0];
                 Check(ReferenceEquals(FontMaps.Apply(plain), plain) && !plain.Table("GSUB").IsEmpty, $"{name}: the maps leave the converted font alone (it has its own GSUB)");
 
-                // The mapped face's answers: characters, advances, its own glyphs' points, drawn glyphs within half a unit,
-                // the layout tables byte for byte, the shaping of every line with and without the hand's features.
+                // The mapped face's answers: characters, advances, every glyph's steps and points (its own, and the drawn and
+                // composed ones as the writer keeps them, decision 25), the layout tables byte for byte, the shaping of every
+                // line with and without the hand's features.
                 Check(warm.GlyphCount == mapped.GlyphCount && warm.Family == mapped.Family && warm.Metrics == mapped.Metrics, $"{name}: {warm.GlyphCount} glyphs, the mapped face's {mapped.GlyphCount}");
                 for (int c = 0; c <= 0x10FFFF; c++)
                 {
@@ -590,9 +601,12 @@ internal abstract partial class DesktopTests
                 for (int g = 0; g < mapped.GlyphCount; g++)
                 {
                     GlyphOutline a = mapped.Outline(g), b = warm.Outline(g);
-                    bool same = g < own ? a.Verbs.Span.SequenceEqual(b.Verbs.Span) && a.Points.Span.SequenceEqual(b.Points.Span) : ContourCount(a) == ContourCount(b) && BoundsDifference(a, b) <= 0.5f + 1e-3f;
-                    Check(warm.Advance(g) == mapped.Advance(g) && same,
-                        $"{name}: glyph {g} reads back otherwise ({(g < own ? "the font's own" : "drawn")})");
+                    if (warm.Advance(g) != mapped.Advance(g) || !a.Verbs.Span.SequenceEqual(b.Verbs.Span) || !a.Points.Span.SequenceEqual(b.Points.Span))
+                    {
+                        Check(false, $"{name}: glyph {g} ({(g < own ? "the font's own" : "drawn")}) reads back with {b.Verbs.Length} steps, {b.Points.Length / 2} points and advance {warm.Advance(g)}, "
+                                     + $"the mapped face's {a.Verbs.Length}, {a.Points.Length / 2} and {mapped.Advance(g)}"
+                                     + (g < own ? "" : ": the mapped face does not keep its drawn and composed glyphs as the TrueType writer does (their rounding to whole units, GlyphEncoder.Whole)"));
+                    }
                 }
 
                 foreach (string tag in (string[])["GSUB", "GDEF", "GPOS"])
@@ -704,24 +718,165 @@ internal abstract partial class DesktopTests
             var fromConverted = PageLayouts.Get("plain").Render(content, new PageStyle { Fonts = [mcsConverted], Fallbacks = [SubsetFace()] }, 3);
             Check(fromMapped.Description.Contains(", pairs, second style, words", StringComparison.Ordinal) && fromConverted.Description == fromMapped.Description
                   && fromConverted.Text == fromMapped.Text, $"the converted font's page: {fromConverted.Description}; the mapped face's {fromMapped.Description}");
-            float[] a = fromMapped.Image.Pixels, b = fromConverted.Image.Pixels;
-            Check(a.Length == b.Length, $"the converted font's page is {b.Length} values, the mapped face's {a.Length}");
-            double sum = 0, largest = 0;
-            for (int i = 0; i < a.Length; i++)
-            {
-                double d = Math.Abs(a[i] - b[i]) * 255;
-                sum += d;
-                largest = Math.Max(largest, d);
-            }
-
-            double mean = sum / Math.Max(1, a.Length);
-            Check(mean < 0.5, $"the converted font's page differs from the mapped face's by {mean:F3} levels on average");
-            Console.WriteLine($"    {compared} faces and hands asked the same; the converted font's page against the mapped face's: {mean:F4} levels on average, {largest:F0} at most (its drawn glyphs at whole units)");
+            var (same, changed, largest) = ComparePageBytes(fromMapped, fromConverted);
+            Check(same, $"the converted font's page differs from the mapped face's in {changed} values, by up to {largest:F3} levels: "
+                        + "the mapped face does not keep its drawn and composed glyphs as the TrueType writer does (their rounding to whole units, GlyphEncoder.Whole, decision 25)");
+            Console.WriteLine($"    {compared} faces and hands asked the same; the converted font's page is the mapped face's, byte for byte");
         }
         finally
         {
             FontMaps.Drawing = drawing;
         }
+    }
+
+    // Plan 28, decision 25 (D8c): a legacy font's mapped face (the converted-font cache off) and its converted font (on)
+    // are the same face, glyph for glyph, and draw the same pages byte for byte.
+    private static void FontWriteCacheIdentical(Device device)
+    {
+        CpuOnly(device);
+        string folder = Path.Combine(Path.GetTempPath(), $"idrak-font-cache-same-{Guid.NewGuid():N}");
+        bool enabled = FontCache.Enabled;
+        var drawing = FontMaps.Drawing;
+        var writer = FontWriters.Get(TrueTypeWriter.WriterName);
+        var fallback = SubsetFace();
+        (string Name, PageContent Content)[] contents =
+        [
+            ("a report", new PageContent { Body = ["لمح الفريق التقرير ثم لم يتأخر", "بجانب لحم مجلس نحن تحت يمين في بيت لجنة تمام"], Language = "ar" }),
+            ("marks and digits", new PageContent { Title = "تَقرِيرٌ مُفَصَّل", Body = ["اِجتِمَاعُ الفَرِيقِ يَومَ الثُّلَاثَاءِ", "المبيعات 2026 و ١٢٣ وحدة"], Language = "ar" }),
+            ("composed letters", new PageContent { Body = ["گزارش پروژه چاپ شد", "کتاب ژورنال ڤيديو ٱلشركة"], Language = "ar" }),
+        ];
+        int fonts = 0, faces = 0, glyphs = 0, pages = 0;
+        try
+        {
+            FontCache.Folder = folder;
+            foreach (string path in Directory.EnumerateFiles(Path.Combine(DataFolder(), "fonts", "arabic"), "*.ttf").Order(StringComparer.Ordinal))
+            {
+                string name = Path.GetFileNameWithoutExtension(path);
+                FontCache.Enabled = false;
+                var mapped = FontFormats.Read(path).Single();
+                if (FontMaps.MappedBy(mapped) is not { } map)
+                {
+                    continue;                                                   // a Unicode font: read as it is either way
+                }
+
+                FontCache.Enabled = true;
+                var converted = FontFormats.Read(path).Single();
+                Check(mapped is MappedFontFace && converted is OpenTypeFace, $"{name}: the cache off gives {mapped.GetType().Name}, on {converted.GetType().Name}");
+                glyphs += SameFace($"{name} ({map.Name}, the cache off and on)", mapped, converted);
+                faces++;
+
+                // Every other library map the mapper applies to the font, converted as the cache converts.
+                var raw = new OpenTypeFormat().Read(File.ReadAllBytes(path), name)[0];
+                foreach (string other in FontMaps.Names.Where(n => n != map.Name && FontMaps.Origin(n) == Overrides.Library).Order(StringComparer.Ordinal))
+                {
+                    if (FontMappers.Get(FontMaps.Mapper).Map(raw, FontMaps.Get(other), detect: false, FontMaps.Drawing) is not { } face)
+                    {
+                        continue;
+                    }
+
+                    var written = new OpenTypeFormat().Read(WriteFont(writer, face, new FontWriteOptions { KeepLayout = true, KeepHinting = true }), name)[0];
+                    glyphs += SameFace($"{name} ({other}, written)", face, written);
+                    faces++;
+                }
+
+                foreach (bool hand in (bool[])[false, true])
+                {
+                    foreach (string layout in (string[])["plain", "letter"])
+                    {
+                        foreach (var (what, content) in contents)
+                        {
+                            FontMaps.Drawing = hand ? drawing with { Pairs = 1, SecondStyle = 1, Words = 1 } : drawing;
+                            var off = PageLayouts.Get(layout).Render(content, new PageStyle { Fonts = [mapped], Fallbacks = [fallback], Width = 900, Height = 700 }, 3);
+                            var on = PageLayouts.Get(layout).Render(content, new PageStyle { Fonts = [converted], Fallbacks = [fallback], Width = 900, Height = 700 }, 3);
+                            FontMaps.Drawing = drawing;
+                            var (same, changed, largest) = ComparePageBytes(off, on);
+                            Check(same && off.Text == on.Text && off.Description == on.Description,
+                                $"{name}, {layout}, {what}{(hand ? ", the hand's features on" : "")}: the page with the cache on differs from the page with it off in {changed} values, "
+                                + $"by up to {largest:F3} levels{(off.Description == on.Description ? "" : $" (described {on.Description}, off {off.Description})")}: the mapped face does not keep "
+                                + "its drawn and composed glyphs as the TrueType writer does (their rounding to whole units, GlyphEncoder.Whole)");
+                            pages++;
+                        }
+                    }
+                }
+
+                fonts++;
+            }
+
+            Check(fonts >= LegacyFonts.Length, $"{fonts} legacy fonts under fonts/arabic, the test fonts {string.Join(", ", LegacyFonts)} at least");
+            Console.WriteLine($"    {fonts} legacy fonts, {faces} mapped faces: {glyphs} glyphs the same steps, points and advances with the cache off and on; {pages} pages byte for byte the same");
+        }
+        finally
+        {
+            FontCache.Enabled = enabled;
+            FontCache.Folder = null;
+            FontMaps.Drawing = drawing;
+            if (Directory.Exists(folder))
+            {
+                Directory.Delete(folder, recursive: true);
+            }
+        }
+    }
+
+    // A mapped face and its converted font as the same face: names, metrics, every glyph's steps, points and advance,
+    // every character and the layout tables. Returns the glyphs compared.
+    private static int SameFace(string name, IFontFace mapped, IFontFace converted)
+    {
+        Check(converted.GlyphCount == mapped.GlyphCount && converted.Metrics == mapped.Metrics && converted.Family == mapped.Family && converted.Style == mapped.Style,
+            $"{name}: {converted.Family} {converted.Style}, {converted.GlyphCount} glyphs, {converted.Metrics}; mapped {mapped.Family} {mapped.Style}, {mapped.GlyphCount}, {mapped.Metrics}");
+        int own = ((MappedFontFace)mapped).Inner.GlyphCount;
+        for (int g = 0; g < mapped.GlyphCount; g++)
+        {
+            GlyphOutline a = mapped.Outline(g), b = converted.Outline(g);
+            if (mapped.Advance(g) != converted.Advance(g) || !a.Verbs.Span.SequenceEqual(b.Verbs.Span) || !a.Points.Span.SequenceEqual(b.Points.Span))
+            {
+                Check(false, $"{name}: glyph {g} ({(g < own ? "the font's own" : "drawn or composed")}) has {b.Verbs.Length} steps, {b.Points.Length / 2} points and advance {converted.Advance(g)} "
+                             + $"converted, {a.Verbs.Length}, {a.Points.Length / 2} and {mapped.Advance(g)} mapped"
+                             + (g < own ? "" : ": the mapped face does not keep its drawn and composed glyphs as the TrueType writer does (their rounding to whole units, GlyphEncoder.Whole)"));
+            }
+        }
+
+        for (int c = 0; c <= 0x10FFFF; c++)
+        {
+            if (mapped.Glyph(c) != converted.Glyph(c))
+            {
+                Check(false, $"{name}: U+{c:X4} is glyph {converted.Glyph(c)} converted, {mapped.Glyph(c)} mapped");
+            }
+        }
+
+        foreach (string tag in (string[])["GSUB", "GDEF", "GPOS"])
+        {
+            Check(converted.Table(tag).Span.SequenceEqual(mapped.Table(tag).Span), $"{name}: its {tag} converted is {converted.Table(tag).Length} bytes, mapped {mapped.Table(tag).Length}, and not the same");
+        }
+
+        return mapped.GlyphCount;
+    }
+
+    // Whether two pages are the same image byte for byte; else how many of their values differ, by how many levels at most.
+    private static (bool Same, int Changed, double Largest) ComparePageBytes(RenderedPage a, RenderedPage b)
+    {
+        float[] p = a.Image.Pixels, q = b.Image.Pixels;
+        if (a.Image.Width != b.Image.Width || a.Image.Height != b.Image.Height || a.Image.Channels != b.Image.Channels || p.Length != q.Length)
+        {
+            return (false, Math.Max(p.Length, q.Length), double.PositiveInfinity);
+        }
+
+        if (MemoryMarshal.AsBytes(p.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(q.AsSpan())))
+        {
+            return (true, 0, 0);
+        }
+
+        int changed = 0;
+        double largest = 0;
+        for (int i = 0; i < p.Length; i++)
+        {
+            if (BitConverter.SingleToInt32Bits(p[i]) != BitConverter.SingleToInt32Bits(q[i]))
+            {
+                changed++;
+                largest = Math.Max(largest, Math.Abs(p[i] - q[i]) * 255);
+            }
+        }
+
+        return (false, changed, largest);
     }
 
     // A face of the test's own, no tables: a square of lines, a ring of quadratic curves (closed on its start), a circle of

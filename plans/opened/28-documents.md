@@ -989,6 +989,65 @@ format; no OpenType CFF writer and no WOFF2 (decision 20).
   python -I tools\documents\check_font.py (Get-ChildItem test-output\fonts\written\*.ttf).FullName -o test-output\fonts\check-written.json
   ```
 
+**As built, D8c (2026-11-18): a legacy font's mapped face is its converted font (decision 25).**
+- **Measured first** (at 58694b2, the three legacy fonts with the cache off and on): the mapped faces and their converted
+  fonts differed in 98 of 923 glyphs (FS_Hand_Style 38, MCS-HAND 29, mohareb-hand 31), and only in how a contour closes:
+  TrueType gives each contour its own segment back to its start, which the drawn polygons (digits, marks, strokes, dots,
+  bars) did not carry. No point, advance or layout table differed: the drawing already puts every drawn point at whole
+  units (rounded half to even as it draws), and a composed letter's only fractional points are its font's implied
+  midpoints, which TrueType implies again exactly. The "half a unit at most" of decision 24 did not happen in these fonts,
+  and 72 generic pages (below) were already the same both ways.
+- **The change:** the writer's point step moves out of `GlyphEncoder.Encode` into `GlyphEncoder.Points`
+  (`TrueTypeGlyphs.cs`), the one place an outline becomes TrueType points (whole units rounded half up, a cubic curve made
+  quadratic within the tolerance, an exact midpoint between two controls implied, the closing segment the contour's own);
+  the writer encodes them, and `GlyphEncoder.Whole` reads them back through `TrueTypeContour.ToOutline`, the reader's
+  contour-to-outline routine moved out of `OpenTypeFace`. The mapped face keeps every drawn and composed glyph as `Whole`
+  gives it, once a glyph where the glyphs are drawn (`MappedFontFace.DrawGlyphs`; the tolerance of `FontWriteOptions`, as
+  the cache writes with); the font's own glyphs are untouched. Both moved routines are the same code as before (compared
+  text for text), so the two faces cannot drift: the mapped face's drawn glyphs are what the writer writes, read the way
+  every TrueType glyph is read.
+- **The proof** (group `fonts write`, new test "cached and mapped faces are identical"): every font under `fonts/arabic` a
+  map fits (FS_Hand_Style, MCS-HAND, mohareb-hand), read with the cache off and on, and FS_Hand_Style by the glyph-names
+  map too (every other library map that applies, written as the cache writes): 4 faces, 1,238 glyphs with the same steps,
+  points and advances, every character and GSUB, GDEF and GPOS byte for byte; 36 pages (two layouts, three generic texts
+  with drawn digits, marks and composed letters, the hand's features off and on) byte for byte the same image, text and
+  description. The other checks are now exact: every test font written whole has its mapped faces' 162 drawn and composed
+  glyphs back with the same points (they were within 0.006 with CFF's straight ones), the font writer contract passes on a
+  mapped face with the same points (it was bounds within the tolerance), the cache test's drawn glyphs and the hand's
+  features page are the same steps, points and bytes.
+- **References that changed: none.** No reference file holds a page or an outline drawn from a legacy font (the synthetic
+  pages draw DejaVu and features.ttf, the shaping references the Unicode fonts). Measured before and after the change on
+  the same 72 pages (the three fonts, two layouts, three texts, the hand's features off and on, the cache off and on): 0
+  pixels changed, the largest difference 0; the converted fonts the cache keeps are byte for byte as before (the same
+  SHA-256). So decision 24's rounding changed no page, and none changes now.
+- **Speed:** the step runs once a glyph, when the face draws its glyphs (rule 75), nothing per page. Reading a legacy font
+  with the cache off and drawing every glyph, before and after (warm, median of five, this container): FS_Hand_Style
+  57.6-59.5 and 58.9-60.7 ms, MCS-HAND 122-127 and 124-125 ms, mohareb-hand 115.5-115.7 and 115.4-118.2 ms, within the
+  noise.
+- **Tests:** one build; `fonts write|fonts:|shaping:|pages:|shapes: (its five tests)|glyph poses:|glyph sources:|outline
+  tracers:|scans:|synthetic data:|documents contracts|document layouts|conformance kit:|cli arabic:|public API:|abstraction
+  inventory:|test runner:` on the CPU: 111 passed, 2 failed. "cli arabic: every message ... has both languages": two
+  command summaries had grown (`trace`'s "or samples its stacks (--stacks)", `profile`'s "or one prompt pass") without
+  their Arabic entries; the catalog's two entries now match them. "fonts write: subsets ...": the D8 samples were not
+  made in this checkout; made with `tools/documents/make_fixtures.py --only d8`. Rebuilt once, rerun with the whole
+  `fonts write` group: 7 passed, 0 failed. No public API changed (the new types are internal).
+- **Decisions the plan did not settle, taken here:** (1) The drawing keeps its own rounding (half to even, as it draws):
+  its points are whole already, which the writer keeps, so the two agree; changing it to half up would move dots and
+  strokes at exact halves and change pages for no gain in identity. One rule everywhere is a small change if wanted.
+  (2) A legacy font with CFF outlines (none in the repository): its drawn and composed glyphs are the same both ways, but
+  its own glyphs stay cubic in the mapped face and become quadratic in the converted font; making them the same means the
+  mapped face converting its own glyphs too (left). (3) A drawn glyph TrueType cannot hold (a point past 16 bits) is kept
+  as drawn: the writer then refuses the face and the cache gives the mapped face, so the two paths still agree.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples --only d8
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "fonts write|fonts:|shaping:|pages:|shapes: the contract|shapes: a grid|shapes: blanked|shapes: the same seed|shapes: letter and plain|glyph poses:|glyph sources:|outline tracers:|scans:|synthetic data:|documents contracts|document layouts|conformance kit:|cli arabic:|public API:|abstraction inventory:|test runner:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d8c.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+
 ## Phase D9: forms
 
 - **Read:** the `AcroForm` tree (inherited values, kids, widgets), every field kind (C19), its value and options, its
