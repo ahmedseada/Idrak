@@ -5,7 +5,7 @@
 **Status (2026-11-18, `imaging`):** planned 2026-11-13 from the owner's question "can Idrak extract a font from an image
 and use it?", against the code at b96ff2e; refreshed 2026-11-18 against the code at da19bfc (the pieces it was waiting
 on have landed, see "What exists"). **Nothing is built.** Everything PDF moved to [plan 28](28-documents.md), and
-font writing (TrueType, OpenType, WOFF, WOFF2) is plan 28's D8. Plan 28 is built and finished first, for any workload,
+font writing (TrueType built in, WOFF from a plug-in) is plan 28's D8. Plan 28 is built and finished first, for any workload,
 however long it takes (owner, 2026-11-18): this plan waits until every plan 28 phase is closed. Worked on the branch
 `documents` (taken from `migration`). No phase starts before the owner names it.
 
@@ -17,7 +17,7 @@ however long it takes (owner, 2026-11-18): this plan waits until every plan 28 p
 | F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Planned |
 | F4 | Glyphs from real scans with their transcription: separate characters (digits in cells, unjoined letters) | B | F1, F3; plan 28 D4, D7 for PDF scans | Planned |
 | F5 | Joined handwriting: a written word cut into its letters by alignment with its transcription | B | F4 | Research, after F4 |
-| F6 | The command line: `idrak data font-sheet` and `idrak data font-from` (a `.ttf`, `.otf`, `.woff` or `.woff2` out), and `data synth` reading the made fonts | A | F2, F3; plan 28 D6, D8 | Planned |
+| F6 | The command line: `idrak data font-sheet` and `idrak data font-from` (a `.ttf`, or a `.woff` through the plug-in, out), and `data synth` reading the made fonts | A | F2, F3; plan 28 D6, D8 | Planned |
 
 ## Goal
 
@@ -86,15 +86,15 @@ first.
   there ("Plan 38's needs").
 - **Plan 28 first, for any workload.** Plan 28 is built and finished (all its phases, D0-D13) before this plan starts,
   however long it takes, so no phase here waits on PDF or on font writing.
-- **A made font is exported in a common format:** TrueType (`.ttf`), OpenType (`.otf`), WOFF or WOFF2, through plan 28's
-  `FontWriters` (D8). This replaces the proposed Idrak-only JSON file ("glyphs" format): there is none. TrueType is
-  built into Idrak and is what Idrak works from (the fastest to open and draw from); OTF, WOFF and WOFF2 come from the
-  font plug-in project (plan 28, decision 18).
+- **A made font is exported as TrueType** (`.ttf`), through plan 28's `FontWriters` (D8), or as WOFF through the one
+  font plug-in (plan 28, decision 20: one plug-in format, only to prove the path). This replaces the proposed
+  Idrak-only JSON file ("glyphs" format): there is none. TrueType is built into Idrak and is what Idrak works from (the
+  fastest to open and draw from).
 
 **Proposed, for the owner to confirm:**
 
 1. **The made font is the exported file.** The face F3 makes (outlines, metrics, and the GSUB / GDEF / GPOS its font map
-   made) is written straight to `.ttf` (default) or `.otf`, `.woff`, `.woff2`, and read back by `FontFormats` like any
+   made) is written straight to `.ttf` (default) or `.woff` (the plug-in), and read back by `FontFormats` like any
    font, so `--fonts DIR`, other software and the web take it with nothing else changed. Several fills of a character
    go in as alternates (`salt` and `aalt` in the written GSUB, and a random pick per glyph in Idrak, a setting); the
    family and style names are what the user gives (`--name`), nothing invented.
@@ -167,8 +167,8 @@ by `#id`) so `FontMappers` "opentype" makes the GSUB / GDEF / GPOS that shape it
 does; whatever the sheet lacks drawn by `DrawnGlyphs` from pen strokes measured from the written glyphs (the map's
 `measure`). Several fills of the same character are kept as alternates (`salt` / `aalt` in the written GSUB, and a
 random pick per glyph in Idrak, a setting), so a made font does not repeat one shape; `GlyphPoses` still varies each
-drawn glyph on top. The face is then written through `FontWriters` (plan 28 D8): `.ttf` by default, or `.otf`, `.woff`,
-`.woff2`.
+drawn glyph on top. The face is then written through `FontWriters` (plan 28 D8): `.ttf` by default, or `.woff` through
+the plug-in.
 
 ### F4: glyphs from real scans with their transcription
 
@@ -189,10 +189,10 @@ only after F4, and only kept where its glyphs make better pages than a sheet's.
 - `idrak data font-sheet --chars FILE -o test-output\fonts\sheet.pdf|sheet.png` (the blank sheet; the character list as
   data; PDF through plan 28's writer).
 - `idrak data font-from IMAGES|PDFS... --source sheet|cells [--text FILE] --name FAMILY
-  -o test-output\fonts\FONT.ttf|.otf|.woff|.woff2` (the format from the extension, through `FontWriters`; live progress:
-  pages read, glyphs found, traced, left out and why).
-- `idrak data synth --fonts DIR` reads made fonts like any `.ttf` or `.otf` (nothing else changes); its help lists
-  `.woff` and `.woff2` once plan 28's D8 reads them.
+  -o test-output\fonts\FONT.ttf|FONT.woff` (the format from the extension, through `FontWriters`; `.woff` when the
+  plug-in is referenced; live progress: pages read, glyphs found, traced, left out and why).
+- `idrak data synth --fonts DIR` reads made fonts like any `.ttf` (nothing else changes); its help lists `.woff` when
+  the plug-in is referenced.
 - `idrak data fonts DIR` shows a made font's coverage like any other.
 
 ## Not in this plan
@@ -203,8 +203,8 @@ finished first.
 
 ## Open questions for the owner
 
-1. ~~The made font's file~~: answered 2026-11-18: exported in a common format (TrueType, OpenType, WOFF, WOFF2) through
-   plan 28's D8; no Idrak-only file. Proposal 1 (the exported file is the made font, `.ttf` by default) awaits
+1. ~~The made font's file~~: answered 2026-11-18: exported as TrueType (built in) or WOFF (the one plug-in format)
+   through plan 28's D8; no Idrak-only file. Proposal 1 (the exported file is the made font, `.ttf` by default) awaits
    confirmation.
 2. Which character list goes on the first sheet (letters in their four forms, both digit sets, marks, punctuation)?
 3. The first real scans for F4: which of the owner's crops under `test-output\` (generic ones: digits in a table's

@@ -3,14 +3,14 @@
 **In progress (on the branch `documents`).** Built 2026-11-18: D0 (the contract), D1 (the file), and D5's sample
 generator with every phase's samples (D1-D13) and the checkers. Paused after D1, resumed the same day by the owner
 ("resume"): running D3 (text) and D8's built-in part (the TrueType writer, subsetting, the converted-font cache); D8's
-plug-in part (OTF, WOFF, WOFF2) waits for open question 6 (the plug-in project's name).
+plug-in part (WOFF alone, decision 20) waits for open question 6 (the plug-in project's name).
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
 before plan 38) and 10-15 (forms, annotations, signatures and editing in; fonts written in the common formats; the test
 samples in the ignored `test-output/`; ready for any workload, plan 38 waits; worked on the branch `documents`, taken
 from `migration`) and 16-19 (only the app's certificates trusted; `idrak data redact`; TrueType built in and used by
-Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a fresh one per piece). The PDF parts of
+Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at most, a fresh one per piece). The PDF parts of
 [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). The owner started the work 2026-11-18 ("start
 2 agents at max in parallel"); the owner tests later, so the command lists are held.
 
@@ -24,7 +24,7 @@ Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
-| D8 | Fonts written and read in the common formats: TrueType (`.ttf`), OpenType CFF (`.otf`), WOFF, WOFF2; subsetting (D6 embeds through it; plan 38 exports through it) | B | Planned |
+| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Planned |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
@@ -39,7 +39,7 @@ giving text with its place on the page, vector paths, images, embedded files, fo
 bookmarks and signatures, and any page drawn to pixels; a writer that makes pages of images, vector paths and text, with
 fields, annotations, bookmarks and signatures; and an editor that changes a file in place (a filled form, a new
 annotation, a signature, pages merged or split) without losing what was signed before. Fonts are written in the common
-formats too (TrueType, OpenType, WOFF, WOFF2), which the writer embeds from and plan 38 exports to. PDF is the library's
+formats too (TrueType built in, WOFF from one plug-in), which the writer embeds from and plan 38 exports to. PDF is the library's
 default, both ways, for both kinds of
 PDF: image PDFs (most scans are a page image, sometimes with a hidden text layer) and vector PDFs (text and drawings,
 as made by software or written on a tablet). Office (Word, Excel, PowerPoint) comes later as a plug-in registering into
@@ -73,7 +73,7 @@ registered format the same way.
 10. **Forms, annotations, signatures and editing in place are in this plan** (open question 1 answered "in"): D9-D12.
 11. **The writer's image pages default to `Auto`** (open question 3): JPEG for photographs and scans, Flate for line art
     and few levels, measured per image; `Flate` or `Jpeg` fixed by the option.
-12. **Fonts are written in the common formats:** TrueType (`.ttf`), OpenType with CFF outlines (`.otf`), WOFF and WOFF2
+12. **Fonts are written in the common formats** (narrowed by decision 20 to TrueType built in and WOFF from one plug-in): TrueType (`.ttf`), OpenType with CFF outlines (`.otf`), WOFF and WOFF2
     (and read in all four): D8. The writer embeds font subsets through it, and plan 38 exports a made font through it
     (no Idrak-only font file).
 13. **The test samples live in the ignored folder.** The reference reader and renderer from PyPI (open question 2,
@@ -93,9 +93,12 @@ registered format the same way.
     writes `.ttf` (the fastest of the formats to open and draw from, by estimate; D8's bench measures it). There is no
     JSON font format: TrueType holds everything a made font needs (outlines, metrics, characters, layout tables,
     alternates, names), and a second format would only add upkeep and the `.json` clash with font maps; a person reads a
-    font through the reference font tools' text dump (`tools/`). OpenType CFF (`.otf`) writing, WOFF and WOFF2 (read and
-    write) live in a plug-in project that registers into the same `FontWriters` and `FontFormats`. Whatever a font came
-    in as, Idrak works from TrueType (the PDF writer's embedded subsets, plan 38's made fonts).
+    font through the reference font tools' text dump (`tools/`). Whatever a font came in as, Idrak works from TrueType
+    (the PDF writer's embedded subsets, plan 38's made fonts).
+20. **One plug-in font format, only to prove the path** (owner, 2026-11-18: "do one in the plugins for proving
+    abstraction works but not all of them"): **WOFF** (read and write) in a plug-in project, registering into
+    `FontWriters` and `FontFormats` from outside the library. OpenType CFF writing and WOFF2 are not built (dropped from
+    this plan; a later plug-in can add them through the same registries).
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
@@ -250,7 +253,7 @@ Added 2026-11-18, second round (decisions 10-14):
 
 | # | Type | What |
 |---|---|---|
-| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype" built in; "opentype-cff", "woff", "woff2" from the plug-in, decision 18), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (the source face's name records kept, copyright and licence included, with the strings the caller gives over them; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`): "truetype"; the plug-in adds the rest and the `woff` and `woff2` readers to `FontFormats` |
+| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype" built in; "woff" from the plug-in, decisions 18 and 20), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (the source face's name records kept, copyright and licence included, with the strings the caller gives over them; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`): "truetype"; the plug-in adds "woff" to both `FontWriters` and `FontFormats` |
 | C19 | `DocumentField` | `Name` (full, dotted), `Kind` (text, check box, radio, list, combo, push button, signature), `Value` / `Values`, `Options` (choices, with export values), `Flags` (read-only, required, multi-line, password, comb, ...), `MaxLength`, `Widgets` (page, box, appearance state), `Tooltip`; `IDocument.Fields` (read on demand); XFA forms: their data (`datasets`) read as fields, their layout not drawn (reported in `Issues`) |
 | C20 | `DocumentAnnotation` | `Kind` (text note, free text, line, square, circle, polygon, polyline, highlight, underline, squiggly, strike-out, ink, stamp, caret, link, file attachment, popup, redaction, widget, and any other by its name), `Page`, `Box`, `Contents`, `Author`, `Created` / `Modified`, `Colour`, `Opacity`, `Points` (quad points, a line's ends, a polygon's vertices), `Ink` (`DocumentPath`s: strokes written on the page), `Target` (a link's URI or destination), `Replies` (its thread), `Appearance` (drawn by the drawer when asked); `DocumentPage.Annotations` |
 | C21 | `DocumentOutline`, `DocumentDestination`, `DocumentPageLabel` | the bookmarks tree (title, destination, open, colour, style, children), destinations (page, a position and zoom, or a name), page labels (`iv`, `A-3`); `IDocument.Outline`, `IDocument.PageLabel(index)`; tagged files: the structure tree's order used by a `tagged` text layout (C10), the reading order the author gave |
@@ -649,23 +652,22 @@ when asked, its hidden text; existing glyph drawing is byte-identical.
 **Tests (CPU here):** one build; `documents pdf: vector|documents drawers|documents pdf: write|documents pdf: images|
 fonts|synthetic pages`.
 
-## Phase D8: fonts written and read in the common formats
+## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 
-Two packages (decision 18): **built in**, in `Idrak.Imaging` beside `OpenTypeFormat` and `CffOutlines`, the "truetype"
-writer, the one Idrak works from; **a plug-in project** (proposed `Idrak.Imaging.Plugins`, namespace
-`Idrak.Imaging.Plugins.Fonts`, open question 6) with "opentype-cff", "woff" and "woff2", registering into the same
-`FontWriters` (C18) and `FontFormats`. No JSON font format.
+Two packages (decisions 18 and 20): **built in**, in `Idrak.Imaging` beside `OpenTypeFormat` and `CffOutlines`, the
+"truetype" writer, the one Idrak works from; **a plug-in project** (proposed `Idrak.Imaging.Plugins`, namespace
+`Idrak.Imaging.Plugins.Fonts`, open question 6) with "woff" alone, read and written, registering into the same
+`FontWriters` (C18) and `FontFormats` from outside the library: the proof that a font format plugs in. No JSON font
+format; no OpenType CFF writer and no WOFF2 (decision 20).
 - **"truetype" (`.ttf`, built in):** the tables a face needs, from any `IFontFace`: `head`, `hhea`, `maxp`, `hmtx`, `cmap` (formats
   4 and 12, from the face's characters), `glyf` and `loca` (quadratic outlines; a cubic outline turned into quadratics
   within `CurveTolerance`, measured), `name` (only the strings given), `OS/2` (metrics and ranges from the glyphs),
   `post` (glyph names when the face has them); the face's layout tables (`GSUB`, `GDEF`, `GPOS`) written as they are, so
   a mapped legacy face or plan 38's made face shapes in any software, not only in Idrak; checksums and the table order
   the specification asks for.
-- **"opentype-cff" (`.otf`, plug-in):** the same with `CFF ` outlines (Type 2 charstrings, cubic: quadratics raised exactly,
-  subroutines for repeated runs, a setting).
-- **"woff" (`.woff`, plug-in):** a written font's tables, each zlib-compressed through `ZLibStream` when that is smaller; and read.
-- **"woff2" (`.woff2`, plug-in):** the tables Brotli-compressed through the base library's `BrotliEncoder` / `BrotliDecoder`, with
-  the `glyf` / `loca` and `hmtx` transforms; and read.
+- **"woff" (`.woff`, plug-in):** a written font's tables, each zlib-compressed through `ZLibStream` when that is
+  smaller; and read back through `FontFormats` like any font. Its test registers it the way an app would and proves
+  write, read, override and fall back, as the other plug-in proofs do.
 - **Legacy fonts converted once, and Idrak works from the completed font** (owner, 2026-11-18): a face a font map made
   is written as a complete TrueType font: the map's Unicode characters, the glyphs drawn for what the font lacked
   (digits, marks, composed letters), its ligatures, pairs, second style and words, and the GSUB / GDEF / GPOS made from
@@ -870,7 +872,7 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:I
 
 - **Signatures are security:** a wrong "valid" is worse than no check. Answered by the generator's broken and changed
   samples, every step of a check reported, and nothing trusted that the app did not give as trusted.
-- **WOFF2 and CFF writing** are exacting formats: answered by the reference font tools and the browsers' sanitizer on
+- **TrueType writing and subsetting** are exacting: answered by the reference font tools and the browsers' sanitizer on
   every written font (D8).
 
 ## Open questions for the owner (2026-11-18)
