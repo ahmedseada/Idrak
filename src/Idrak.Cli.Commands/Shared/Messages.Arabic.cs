@@ -353,7 +353,7 @@ internal static partial class Messages
         ["Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime"] = "فحص نموذج ONNX: استيراد إدراك مقابل رحلة ذهاب وعودة ومقابل ONNX Runtime",
         ["An interactive prompt for idrak commands, with history and completion"] = "موجه تفاعلي لأوامر idrak، مع السجل والإكمال",
         ["Runs the library's tests from a source checkout"] = "تشغيل اختبارات المكتبة من نسخة المصدر",
-        ["Runs an idrak command with telemetry printed live or written to JSON Lines, or samples its stacks (--stacks)"] = "تشغيل أمر idrak مع القياسات مطبوعة مباشرة أو مكتوبة بصيغة JSON Lines، أو أخذ عينات من مكدساته (--stacks)",
+        ["Runs an idrak command with telemetry shown live or written to JSON Lines, or samples its stacks (--stacks)"] = "تشغيل أمر idrak مع القياسات معروضة مباشرة أو مكتوبة بصيغة JSON Lines، أو أخذ عينات من مكدساته (--stacks)",
         ["Sizes and paths of the caches (models, tuning, kernels, downloads)"] = "أحجام التخزين المؤقت ومساراته (النماذج والضبط والنوى والتنزيلات)",
         ["Clears one part of the cache (models, tuning, kernels) or all of it"] = "مسح جزء من التخزين المؤقت (النماذج أو الضبط أو النوى) أو كله",
         ["Prints a shell completion script (bash, zsh, fish, pwsh)"] = "طباعة نص الإكمال للصدفة (bash أو zsh أو fish أو pwsh)",

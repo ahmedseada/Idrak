@@ -31,7 +31,7 @@ internal abstract partial class DesktopTests : Tests
     // would pull contracts back into Idrak.Abstraction.
     private static readonly string[] LibraryAssemblyNames =
         ["Idrak.Abstraction", "Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Text", "Idrak.Data", "Idrak.Vision", "Idrak.Audio", "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.AspNetCore", "Idrak.Mcp",
-            "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins"];
+            "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Imaging.Plugins"];
 
     // Each assembly whose internals others see, with those others (the tests aside): what must turn into public contract
     // or be justified. Idrak.Abstraction is not one since phase 4: it grants no library assembly its internals.
@@ -203,7 +203,7 @@ internal abstract partial class DesktopTests : Tests
     // The plug-in packages (plan 26): model families written on the library's public API, as an application is. They
     // register into the library's contracts and call them, so their use places no contract: a contract only they use stays
     // where the library keeps it, and theirs with another package's is not "several packages".
-    private static readonly string[] PluginPackageNames = ["Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins"];
+    private static readonly string[] PluginPackageNames = ["Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Imaging.Plugins"];
 
     // The users that decide where a contract lives: every library assembly using it but the plug-in packages (unless the
     // contract is one of theirs).

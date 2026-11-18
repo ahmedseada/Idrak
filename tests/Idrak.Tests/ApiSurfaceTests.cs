@@ -50,7 +50,7 @@ internal abstract partial class DesktopTests : Tests
     // CLI not (an app). The reserved packages (Idrak.Diffusion, Idrak.Video, Idrak.HarfBuzz, … nothing implemented) are
     // not packable (plan 36, P7) and join this list, with their dumps, when they are built and packed.
     private static readonly string[] ApiAssemblyNames =
-        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Audio", "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Cluster", "Idrak.Network", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime"];
+        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Audio", "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Imaging.Plugins", "Idrak.Cluster", "Idrak.Network", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime"];
 
     private static bool UpdateApi => Environment.GetEnvironmentVariable("IDRAK_UPDATE_API") == "1";
 

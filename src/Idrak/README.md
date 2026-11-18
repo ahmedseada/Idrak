@@ -184,6 +184,7 @@ Console.WriteLine(reply.Message!.Content);
 | `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` | The model families as plug-ins, one namespace per family (`TextPlugins.RegisterAll()` and the like) |
 | `Idrak.Reinforcement` | Reinforcement learning: the general algorithms on the reinforcement contracts (environments, policies, rewards, advantages, policy losses) |
 | `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families as plug-ins, one namespace per family (`ReinforcementPlugins.RegisterAll()`) |
+| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins: WOFF fonts read and written (`ImagingPlugins.RegisterAll()`) |
 | `Idrak.AspNetCore` | Prediction, generation, a local chat API and an OpenAI-style `/v1` API in ASP.NET Core |
 | `Idrak.Mcp` | Model Context Protocol tools |
 | `Idrak.Onnx.Runtime` | Running `.onnx` models with ONNX Runtime as Idrak modules |

@@ -39,7 +39,7 @@ internal sealed class TraceCommand : Command
 
     public override string Name => "trace";
 
-    public override string Summary => "Runs an idrak command with telemetry printed live or written to JSON Lines, or samples its stacks (--stacks)";
+    public override string Summary => "Runs an idrak command with telemetry shown live or written to JSON Lines, or samples its stacks (--stacks)";
 
     public override string Usage =>
         "[-o FILE.jsonl] [--levels LIST] [--sync] [--] COMMAND [arguments] [options]\n" +

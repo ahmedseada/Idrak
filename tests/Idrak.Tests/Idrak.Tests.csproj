@@ -43,6 +43,7 @@
     <ProjectReference Include="..\..\src\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Imaging.Plugins\Idrak.Imaging.Plugins.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cluster\Idrak.Cluster.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Network\Idrak.Network.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />

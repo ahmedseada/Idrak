@@ -60,6 +60,7 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 | `Idrak.Vision.Plugins` | The vision model families (vision-language towers, image models, line recognizers) as plug-ins; `VisionPlugins.RegisterAll()`. |
 | `Idrak.Audio.Plugins` | The speech and voice model families (recognition, synthesis, voice conversion) as plug-ins; `AudioPlugins.RegisterAll()`. |
 | `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families (environments and their rewards) as plug-ins, one namespace per family; `ReinforcementPlugins.RegisterAll()`. |
+| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins, registered from outside the library: WOFF fonts read and written (`FontFormats`, `FontWriters`); `ImagingPlugins.RegisterAll()`. |
 | `Idrak.AspNetCore` | Predictions, generation, chat and an OpenAI-style `/v1` API (chat completions, embeddings; a request field it does not implement is refused by name, never ignored) as thin endpoints over the inference engine. |
 | `Idrak.Mcp` | Model Context Protocol: MCP servers' tools in conversations, and the engine's models served as the MCP tools `generate`, `chat` and `embed`. |
 | `Idrak.Onnx.Runtime` | Runs ONNX models with ONNX Runtime as Idrak modules, so they serve through the same engine and endpoints. |

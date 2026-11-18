@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Idrak.Imaging.Plugins</RootNamespace>
+    <AssemblyName>Idrak.Imaging.Plugins</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Imaging.Plugins</PackageId>
+    <Description>Image and font formats for Idrak as plug-ins on the library's public API (one namespace per kind): WOFF fonts read and written (Fonts), registered into FontFormats and FontWriters. Reference it and call ImagingPlugins.RegisterAll(), or register one with its own Register().</Description>
+  </PropertyGroup>
+
+  <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. Plan 28,
+       decision 21: it builds on Idrak.Imaging, whose "opentype" reader and "truetype" writer it reaches through the
+       FontFormats and FontWriters registries at run time, never by type. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
+  </ItemGroup>
+
+</Project>

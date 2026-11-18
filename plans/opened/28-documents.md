@@ -24,7 +24,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
-| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built-in part built (2026-11-18); the WOFF plug-in deferred (decision 26) |
+| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
@@ -1139,6 +1139,83 @@ format; no OpenType CFF writer and no WOFF2 (decision 20).
   $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "fonts write|fonts:|shaping:|pages:|shapes: the contract|shapes: a grid|shapes: blanked|shapes: the same seed|shapes: letter and plain|glyph poses:|glyph sources:|outline tracers:|scans:|synthetic data:|documents contracts|document layouts|conformance kit:|cli arabic:|public API:|abstraction inventory:|test runner:"
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d8c.txt
   Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+
+**As built, the plug-in part (2026-11-18): WOFF read and written from `Idrak.Imaging.Plugins` (decisions 20, 21, 27).**
+- **The project** `src/Idrak.Imaging.Plugins` (new, beside the other `*.Plugins`, in the solution and `build/IdrakFromSource.targets`,
+  with its README; it references Idrak.Imaging alone and uses the public API only: no assembly grants it internals, it
+  declares no library registrations, `LibraryDefaults` does not list it): `ImagingPlugins` (`Package`, `All`, `RegisterAll`,
+  `UnregisterAll`; `[assembly: IdrakPluginPackage]`) and, in `Idrak.Imaging.Plugins.Fonts`, `WoffPlugin` ("woff"), which
+  registers a `WoffFormat` into `FontFormats` and a `WoffWriter` into `FontWriters`, both with the package as their origin.
+- **Read** (`WoffFormat`, ".woff", by its `wOFF` signature): `Decode` checks the whole directory before allocating or
+  inflating anything (the header's length is the file's, reserved 0, tables in tag order and never twice, each on a 4-byte
+  boundary, after the directory, inside the file, storing no more than its length and no fewer bytes than zlib needs for
+  it, 1,032 to 1 at most, no two blocks overlapping, metadata and private data inside the file, the font inside within
+  `MaxFontBytes` and exactly the size the header gives), then unpacks the sfnt: its directory by tag, its tables in the
+  WOFF's order, each inflated through `ZLibStream` into its place and stopped one byte past its declared length. The
+  unpacked font goes to the first other registered format that accepts it (the library's "opentype", through
+  `FontFormats`), so the faces are that font's own. Every failure is an `InvalidDataException` naming the file and the cause.
+- **Write** (`WoffWriter`, ".woff"): the face written by `SfntWriter` ("truetype", through `FontWriters`, every
+  `FontWriteOptions` passed on), then `Encode`: each table zlib-compressed at `CompressionLevel` and kept so only when
+  smaller, the directory by tag, the data in the sfnt's own order, every table zero-padded to 4 bytes, the header's version
+  head's fontRevision (as fontTools), no metadata or private data; written to the destination once. The same face writes
+  the same bytes, and the file unpacks to exactly the truetype writer's file.
+- **Settings:** `WoffFormat.MaxFontBytes` (a quarter of the memory free when a file is read, within
+  `ComputeResources.CpuMemoryLimit`, as `DocumentOptions.MaxStreamBytes`; `IDRAK_WOFF_MAX_BYTES`), `WoffWriter.CompressionLevel`
+  (9; `IDRAK_WOFF_COMPRESSION`, 0 to 9, 0 stores every table), `WoffWriter.SfntWriter`; the two variables in the tool's table.
+- **Who sees it:** the idrak tool registers the package at startup as its fifth (`IDRAK_PLUGIN_PACKAGES` short name
+  `imaging`, after reinforcement), so `data fonts` (its folder walk now takes the registered formats' extensions) and
+  `data synth --fonts` (`FontFormats.ReadFolder`) read `.woff`; both commands' help and messages list the registered
+  formats' extensions (".ttf, .otf, .ttc, .woff" in the tool, the first three without the package); `plugins list` and
+  `formats` gained the font formats and font writers. Referenced by `Idrak.Cli.Commands` (the tool, and the Mobile app's
+  terminal through it) and `tests/Idrak.Tests` (its tests, the API guard, the inventory). `IdrakPlugins`' refusal and
+  the help page `idrak help plugins` name it.
+- **Tests:** group `fonts woff` (6): the four D8 samples (fontTools' WOFF of the test fonts) read with every table byte for
+  byte the source's, the dumps' glyph count, table lengths, advances and characters, the source faces' outlines and every
+  character exactly (2,521 glyphs, 1,108 characters of the dumps), and their 20 sample lines shaped as from the source and
+  as HarfBuzz shapes them (all 20); the 14 test faces of the TrueType tests written as WOFF unpack to the truetype writer's
+  bytes and read back with the same tables, glyphs, outlines, every character and the shaping of 79 lines (451,944 bytes
+  for 909,476 of TrueType, 49.7%; 168 tables compressed, 11 stored), the layout checked table by table; `FontWriterSuite`
+  on TrueType, CFF and mapped faces, `Save`, `ReadFolder`, `Encode` of a TrueType and a CFF file, the levels and the
+  settings; the registration from outside (once, the package's origin, no library default, unregistered as found, `Load`
+  as `-P` does) and the truetype writer and opentype reader it builds on overridden by an app (used; its failure reaching
+  the caller, falling back under FallBack, compared under Shadow); 19 damaged and hostile files refused (0.07 ms each),
+  a 16 MiB bomb past a 1 MiB limit refused before inflating (4,744 bytes allocated) and one lying about its length stopped
+  at it (35,920 bytes); `data fonts` on a `.woff` and a folder of them, the help with and without the package. The
+  `plugins: packages` guards take the fifth package. Run once on the CPU with
+  `fonts woff|fonts write|fonts:|plugins: packages|outside plug-in:|conformance kit:|public API|IdrakFromSource|abstraction
+  inventory|every environment variable read in src|the environment table names real commands|cli arabic:|cli polish: help
+  lists|cli health: plugins list|cli health: help topics|synthetic data: idrak data synth|no command, option or help text
+  names a provider|test runner` and the update flags: 90 passed, 2 failed. "fonts woff: idrak data fonts ...": the
+  repository's Amiri has no Arabic-Indic digits, so the test now gives it only the generic lines it holds. "cli polish:
+  help lists ...": `idrak trace`'s first help line was 121 characters (its summary had grown in D8c); "printed" became
+  "shown", the Arabic catalog entry with it. Rebuilt once; `fonts woff|cli polish: help lists|cli arabic: every
+  message|public API|abstraction inventory` without the flags: 14 passed, 0 failed. `api/Idrak.Imaging.Plugins.txt` new
+  and the inventory regenerated through the runner.
+- **The checker's verdicts** (`tools/documents/check_font.py` on the 14 WOFF files the tests write into
+  `test-output/fonts/woff`): fontTools opens each and decompiles every table, the OpenType Sanitizer accepts each (its only
+  warning, as for the TrueType files: arbfonts-diwany-thuluth's own GSUB lists its tags out of order). The nine with a
+  source of one font compared with it: outlines exactly (TrueType) or within 0.34 units by bounds, area and centroid (the
+  CFF font), every advance and character, and HarfBuzz's shaping of the seven sample lines kept.
+- **Decisions the plan did not settle, taken here:** (1) A face read from a WOFF is the face its font's reader gives
+  (`Format` "opentype"), not wrapped: a wrapper would lose the library's own glyph records (kept by the truetype writer)
+  and make it ask every code point. (2) The font inside goes to the first other registered format that accepts it, and the
+  sfnt writer is a setting, so a CFF writer or an app's reader later plugs in unchanged. (3) The checks are as strict as the
+  Sanitizer's (exact length and font size, sorted directory, no overlap); a table's checksum is carried, not verified
+  (zlib's Adler-32 checks a compressed table, the font's reader the rest). (4) The data keep the sfnt's order and the
+  decoder keeps the WOFF's, so writing and reading round-trip byte for byte. (5) Level 9 by default (WOFF is for
+  delivery); the limit's default as the documents'. (6) The package is the tool's fifth, registered last; the Mobile app's
+  font picker still lists .ttf, .otf and .ttc (left). (7) Tables are inflated one after another (fonts are small; spreading
+  them waits for a measurement, rule 79).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "fonts woff|fonts write|fonts:|plugins: packages|outside plug-in:|conformance kit:|public API|IdrakFromSource|abstraction inventory|every environment variable read in src|the environment table names real commands|cli arabic:|cli polish: help lists|cli health: plugins list|cli health: help topics|synthetic data: idrak data synth|no command, option or help text names a provider|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d8b.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_font.py (Get-ChildItem test-output\fonts\woff\*.woff).FullName -o test-output\fonts\check-woff.json
   ```
 
 ## Phase D9: forms

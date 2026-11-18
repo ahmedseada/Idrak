@@ -22,15 +22,15 @@ internal sealed class DataFontsCommand : Command
 
     public override string Summary => "Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz";
 
-    public override string Usage => """
+    public override string Usage => $$"""
         FONTS... [--language CODE] [--script NAME] [--lines FILE] [--write-lines OUT] [--harfbuzz JSON]
 
-        Reads every font (.ttf, .otf, .ttc, folders searched through) and says for each: whether it reads, which
-        characters of the sample it has no glyph for (a page with one of them is left out), its layout features for the
-        script, and for a joining script (Arabic) whether it has the joining forms (init, medi, fina), the
-        lam-alef ligatures (rlig) and mark positioning (mark). A legacy font a font map makes usable is checked as
-        mapped, and the map and its file are named. With --harfbuzz, every line of the references is shaped
-        here too and compared glyph for glyph (glyphs, clusters, advances, offsets).
+        Reads every font file ({{FontMapSettings.FontFiles()}}: the registered font formats'; folders searched through)
+        and says for each: whether it reads, which characters of the sample it has no glyph for (a page with one of them
+        is left out), its layout features for the script, and for a joining script (Arabic) whether it has the joining
+        forms (init, medi, fina), the lam-alef ligatures (rlig) and mark positioning (mark). A legacy font a font map
+        makes usable is checked as mapped, and the map and its file are named. With --harfbuzz, every line of the
+        references is shaped here too and compared glyph for glyph (glyphs, clusters, advances, offsets).
 
         Options:
           -l, --language CODE   the sample's language: random text of it unless --lines (ar)
@@ -103,7 +103,8 @@ internal sealed class DataFontsCommand : Command
 
         var reports = new JsonArray();
         int problems = 0;
-        foreach (var (root, path) in context.Positional.SelectMany(Files))
+        var extensions = FontFormats.Extensions;                       // the registered formats' (a plug-in's .woff too)
+        foreach (var (root, path) in context.Positional.SelectMany(target => Files(target, extensions)))
         {
             string relative = Path.GetRelativePath(root, path).Replace('\\', '/');
             IReadOnlyList<IFontFace> faces;
@@ -170,7 +171,7 @@ internal sealed class DataFontsCommand : Command
 
         if (reports.Count == 0)
         {
-            throw new UsageException($"No font (.ttf, .otf, .ttc) in {string.Join(", ", context.Positional)}.");
+            throw new UsageException($"No font ({FontMapSettings.FontFiles()}) in {string.Join(", ", context.Positional)}.");
         }
 
         if (references is null && !context.Json)
@@ -182,7 +183,8 @@ internal sealed class DataFontsCommand : Command
         return problems == 0 ? ExitCodes.Ok : ExitCodes.Failed;
     }
 
-    private static IEnumerable<(string Root, string Path)> Files(string target)
+    // The font files a target names: the file itself, or every file under the folder whose extension a registered format lists.
+    private static IEnumerable<(string Root, string Path)> Files(string target, IReadOnlyCollection<string> extensions)
     {
         if (File.Exists(target))
         {
@@ -196,7 +198,7 @@ internal sealed class DataFontsCommand : Command
 
         string root = Path.GetFullPath(target);
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Where(f => Path.GetExtension(f).ToLowerInvariant() is ".ttf" or ".otf" or ".ttc")
+            .Where(f => extensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
             .Order(StringComparer.Ordinal).Select(f => (root, f));
     }
 

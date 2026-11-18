@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Plugins;
 /// registered under a taken name replaces the earlier one (which is unregistered first), so an outside plug-in loaded
 /// after a package (the CLI's <c>-P</c>, through <see cref="Load"/>) can take a family's place. The library registers none: model families live in
 /// the plug-in packages (<c>Idrak.Text.Plugins</c>, <c>Idrak.Vision.Plugins</c>, <c>Idrak.Audio.Plugins</c>; environment
-/// families in <c>Idrak.Reinforcement.Plugins</c>) and in apps.
+/// families in <c>Idrak.Reinforcement.Plugins</c>; font formats in <c>Idrak.Imaging.Plugins</c>) and in apps.
 /// </summary>
 public static class IdrakPlugins
 {
@@ -179,8 +179,9 @@ public static class IdrakPlugins
     public static IIdrakPlugin Get(string name) => Registry.Find(name)
         ?? throw new NotRegisteredException(nameof(IdrakPlugins), name, Registry.Keys,
             $"No plug-in '{name}' is registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "add it with IdrakPlugins.Register, or reference Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins or "
-            + "Idrak.Reinforcement.Plugins and call its RegisterAll() (TextPlugins, VisionPlugins, AudioPlugins, ReinforcementPlugins).");
+            + "add it with IdrakPlugins.Register, or reference Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins, "
+            + "Idrak.Reinforcement.Plugins or Idrak.Imaging.Plugins and call its RegisterAll() (TextPlugins, VisionPlugins, AudioPlugins, "
+            + "ReinforcementPlugins, ImagingPlugins).");
 
     /// <summary>The assembly that brings the plug-in <paramref name="name"/>; null when none is recorded.</summary>
     public static string? Origin(string name) => Registry.Origin(name);

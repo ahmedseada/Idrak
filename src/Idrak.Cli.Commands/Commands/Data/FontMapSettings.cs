@@ -44,6 +44,25 @@ internal sealed class FontMapSettings : IDisposable
     /// <summary>The value options this adds to a command.</summary>
     public static IReadOnlyCollection<string> Options => ["--font-map", "--font-maps"];
 
+    /// <summary>
+    /// The font file extensions the registered formats read, the library's first (".ttf, .otf, .ttc", then ".woff" from
+    /// Idrak.Imaging.Plugins): what the font commands' help and messages name. The tool's plug-in packages are registered
+    /// first, as every command registers them (idempotent), so a help lists what its command reads.
+    /// </summary>
+    public static string FontFiles()
+    {
+        try
+        {
+            CommandLine.RegisterPluginPackages();
+        }
+        catch (UsageException)
+        {
+            // IDRAK_PLUGIN_PACKAGES names no package: the help lists what is registered, and the command says what is wrong.
+        }
+
+        return string.Join(", ", FontFormats.Names.Reverse().SelectMany(n => FontFormats.Get(n).Extensions).Select(e => e.ToLowerInvariant()).Distinct());
+    }
+
     /// <summary>Applies the command's font map options; dispose the result to put the settings back.</summary>
     /// <exception cref="UsageException">A map file that is not valid, or a setting that is not known or not valid.</exception>
     public static FontMapSettings Apply(CommandContext context)

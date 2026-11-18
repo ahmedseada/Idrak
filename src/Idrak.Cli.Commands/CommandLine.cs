@@ -4,6 +4,7 @@
 using Idrak.Abstraction.Plugins;
 using Idrak.Audio.Plugins;
 using Idrak.Cli.Shared;
+using Idrak.Imaging.Plugins;
 using Idrak.Reinforcement.Plugins;
 using Idrak.Text.Plugins;
 using Idrak.Vision.Plugins;
@@ -18,11 +19,12 @@ namespace Idrak.Cli;
 internal static class CommandLine
 {
     /// <summary>
-    /// The plug-in packages the tool ships with (plans 26 and 27), in the order they are registered (text first: a vision,
-    /// audio or reinforcement family may build on a text one), each with its short name in <see cref="PluginPackagesVariable"/>. Registered before
+    /// The plug-in packages the tool ships with (plans 26, 27 and 28), in the order they are registered (text first: a vision,
+    /// audio or reinforcement family may build on a text one; the image and font formats last, building on none), each with
+    /// its short name in <see cref="PluginPackagesVariable"/>. Registered before
     /// every command: before <c>plugins list</c> takes its snapshot (they are the tool's own, not added) and before the
     /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
-    /// model: only the families' names.
+    /// model: only the families' and formats' names.
     /// </summary>
     internal static readonly (string Name, IIdrakPluginPackage Package)[] PluginPackages =
     [
@@ -30,12 +32,13 @@ internal static class CommandLine
         ("vision", VisionPlugins.Package),
         ("audio", AudioPlugins.Package),
         ("reinforcement", ReinforcementPlugins.Package),
+        ("imaging", ImagingPlugins.Package),
     ];
 
     /// <summary>
-    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all four,
-    /// "none" for none, or a comma list of their short names (text, vision, audio, reinforcement); <c>-P</c> plug-ins load
-    /// either way.
+    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all five,
+    /// "none" for none, or a comma list of their short names (text, vision, audio, reinforcement, imaging); <c>-P</c>
+    /// plug-ins load either way.
     /// </summary>
     internal const string PluginPackagesVariable = "IDRAK_PLUGIN_PACKAGES";
 

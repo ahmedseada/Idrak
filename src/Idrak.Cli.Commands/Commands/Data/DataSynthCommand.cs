@@ -21,7 +21,7 @@ internal sealed class DataSynthCommand : Command
 
     public override string Summary => "Tuning pages drawn from text: each record's answer set as scanned-looking pages";
 
-    public override string Usage => """
+    public override string Usage => $$"""
         INPUT -o OUT.jsonl --fonts DIR [--parts FILE] [-n VARIANTS] [options]
 
         INPUT is ShareGPT or chat messages records with JSON or text answers (.jsonl or .json), or plain text (a .txt of
@@ -31,9 +31,10 @@ internal sealed class DataSynthCommand : Command
         Options:
           -o, --out FILE          the records written (.jsonl); the images go to the folder of its name beside it (or
                                   its .zip with --zip), how each page was made to NAME.manifest.jsonl
-              --fonts DIR         the fonts (.ttf, .otf, .ttc); each page is set in those that have its characters. A
-                                  legacy font (letter forms in the Private Use Area, no shaping tables) is mapped by
-                                  the library's maps and drawn joined, its missing digits and marks drawn in and missing letters composed
+              --fonts DIR         the fonts ({{FontMapSettings.FontFiles()}}: the registered font formats'); each
+                                  page is set in those that have its characters. A legacy font (letter forms in the
+                                  Private Use Area, no shaping tables) is mapped by the library's maps and drawn joined,
+                                  its missing digits and marks drawn in and missing letters composed
               --font-map FILE     a font map (JSON), again for more: tried before the library's maps
               --font-maps SET     legacy font settings, KEY=VALUE,...: builtin (on: the library's maps), sidecars (on:
                                   FONT.map.json beside FONT.ttf), digits, marks (on: drawn into mapped fonts lacking them), letters (on: composed),
@@ -112,7 +113,7 @@ internal sealed class DataSynthCommand : Command
     {
         string input = context.Argument(0, "INPUT");
         string output = context.Option("--out") ?? throw new UsageException("Give -o, --out FILE for the records to write (.jsonl).");
-        string fontsFolder = context.Option("--fonts") ?? throw new UsageException("Give --fonts DIR, a folder of .ttf, .otf or .ttc fonts.");
+        string fontsFolder = context.Option("--fonts") ?? throw new UsageException($"Give --fonts DIR, a folder of fonts ({FontMapSettings.FontFiles()}).");
         if (!File.Exists(input))
         {
             throw new UsageException($"The records file {input} is not there (idrak data text writes one).");
@@ -127,7 +128,7 @@ internal sealed class DataSynthCommand : Command
         var fonts = SyntheticPages.Fonts(fontsFolder);
         if (fonts.Count == 0)
         {
-            throw new UsageException($"No font was read from {fontsFolder} (.ttf, .otf, .ttc).");
+            throw new UsageException($"No font was read from {fontsFolder} ({FontMapSettings.FontFiles()}).");
         }
 
         SyntheticPageOptions options;
