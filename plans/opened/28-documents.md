@@ -130,6 +130,10 @@ registered format the same way.
     work, the plugin is an extra so it can wait"): D8's plug-in part (WOFF in `Idrak.Imaging.Plugins`, decisions 20
     and 21) is deferred to after the real phases; its agent was stopped before committing anything, and its slot took
     D6. D8 counts as built for every phase that depends on it (they need the built-in TrueType writer only).
+27. **Real pieces first, the extra only in a gap** (owner, 2026-11-18: "finish the real ready pieces first then do
+    the extra only if a real piece waits on a real piece"): a free plan 28 slot always takes a ready real piece; the
+    WOFF plug-in (decision 26) takes a plan 28 slot only when no real piece is ready because every remaining one waits
+    on another that is still running, and a real piece that becomes ready never waits for it.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
