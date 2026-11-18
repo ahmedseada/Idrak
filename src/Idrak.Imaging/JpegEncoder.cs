@@ -38,6 +38,11 @@ public enum JpegSubsampling
 /// standard tables (each written out before the next are made) and the whole image with optimized ones (their
 /// statistics need every block first); the entropy-coded bytes go to one pooled buffer, copied once into the file.
 /// </para>
+/// <para>
+/// A round trip (<see cref="PillowImageOps.JpegRoundTrip"/>, the <c>jpeg=Q</c> transform) needs the pixels, not the file:
+/// <see cref="RoundTrip"/> writes the same quantized coefficients straight into the library's decoder's arrays and takes
+/// its pixels, with nothing entropy coded, written or read back.
+/// </para>
 /// </summary>
 public static class JpegEncoder
 {
@@ -99,6 +104,13 @@ public static class JpegEncoder
         35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     ];
 
+    // Natural (row-major) order: a round trip's blocks, kept as the decoder keeps them.
+    private static ReadOnlySpan<byte> RowMajor =>
+    [
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+        32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,
+    ];
+
     // The symbols of a table class: 256, and the reserved one jpeg_gen_optimal_table adds; a count array's length.
     private const int Symbols = 257;
 
@@ -108,6 +120,70 @@ public static class JpegEncoder
     /// </summary>
     public static byte[] Encode(ImageData image, int quality = 75, bool optimize = false, JpegSubsampling subsampling = JpegSubsampling.Half420)
     {
+        var source = SourceOf(image, quality);
+        return Write(source, image.Channels == 3, quality, optimize, subsampling);
+    }
+
+    /// <summary>
+    /// The pixels the library's JPEG decoder gives for the file <see cref="Encode(ImageData, int, bool, JpegSubsampling)"/>
+    /// writes at <paramref name="quality"/> (with standard or optimized tables alike: Huffman tables change the file, never
+    /// its pixels), without the file: every MCU row's quantized coefficients go straight into the decoder's coefficient
+    /// arrays, in its order, as its scan would leave them, and its pixel stage (inverse DCT, upsampling, colour conversion)
+    /// makes the image. Nothing is entropy coded, written or read back, and no file-sized buffer is held.
+    /// </summary>
+    internal static ImageData RoundTrip(ImageData image, int quality, JpegSubsampling subsampling)
+    {
+        var source = SourceOf(image, quality);
+        bool colour = image.Channels == 3;
+        int scale = Scale(quality), tableCount = colour ? 2 : 1;
+        var (hs, vs) = Sampling(colour, subsampling);
+        var quantizers = ArrayPool<Quantizer>.Shared.Rent(64 * tableCount);
+        JpegDecoder? decoder = null;
+        try
+        {
+            // The divisors in natural order, the order the decoder keeps a block's coefficients in.
+            for (int t = 0; t < tableCount; t++)
+            {
+                for (int n = 0; n < 64; n++)
+                {
+                    quantizers[t * 64 + n] = Divisor(Quantized(t, n, scale) << 3);
+                }
+            }
+
+            // The decoder's frame from the frame header and quantization tables the file would hold.
+            var job = new Job(source, colour, hs, vs, quantizers);
+            Span<byte> frame = stackalloc byte[6 + 3 * 3];
+            Span<byte> tables = stackalloc byte[2 * 65];
+            int frameLength = FrameBody(job, frame);
+            for (int t = 0; t < tableCount; t++)
+            {
+                TableBody(t, scale, tables.Slice(65 * t, 65));
+            }
+
+            decoder = JpegDecoder.ForFrame(frame[..frameLength], tables[..(65 * tableCount)]);
+            var targets = new short[job.Components.Length][];
+            for (int i = 0; i < targets.Length; i++)
+            {
+                targets[i] = decoder.Coefficients(i);
+            }
+
+            // Every MCU row on all cores, each into its own blocks of the decoder's arrays.
+            job.Targets = targets;
+            HostParallel.For(job.McusDown, 1, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (from, to) => TransformRows(job, from, to));
+            return JpegCodec.ToImage(decoder.Pixels());
+        }
+        finally
+        {
+            decoder?.ReturnCoefficients();
+            ArrayPool<Quantizer>.Shared.Return(quantizers);
+        }
+    }
+
+    // The image to encode, checked (grey or RGB; a quality and size a JPEG takes). An 8-bit image is read in place (its
+    // planes are the bytes ImagePreprocessor.ToBytes would copy); floats are brought to bytes a row at a time, rounded as
+    // ToBytes rounds them.
+    private static Source SourceOf(ImageData image, int quality)
+    {
         ArgumentNullException.ThrowIfNull(image);
         if (image.Channels is not 1 and not 3)
         {
@@ -115,13 +191,9 @@ public static class JpegEncoder
         }
 
         CheckSettings(quality, image.Height, image.Width);
-
-        // An 8-bit image is read in place (its planes are the bytes ImagePreprocessor.ToBytes would copy); floats are
-        // brought to bytes a row at a time, rounded as ToBytes rounds them.
-        var source = image.TryGetPlanes(out var planes, out _)
+        return image.TryGetPlanes(out var planes, out _)
             ? new Source(planes, null, image.Height, image.Width)
             : new Source(null, image.Pixels, image.Height, image.Width);
-        return Write(source, image.Channels == 3, quality, optimize, subsampling);
     }
 
     /// <summary>8-bit planes (one grey, or red, green and blue) of <paramref name="height"/> x <paramref name="width"/> as a JPEG file.</summary>
@@ -155,11 +227,17 @@ public static class JpegEncoder
         }
     }
 
+    // jpeg_quality_scaling: the percentage the standard quantization tables are scaled by.
+    private static int Scale(int quality) => quality < 50 ? 5000 / quality : 200 - quality * 2;
+
+    // Luma's sampling factors (chroma's are 1 x 1): 2 x 2 for 4:2:0, 2 x 1 for 4:2:2, 1 x 1 for 4:4:4 and for grey.
+    private static (int H, int V) Sampling(bool colour, JpegSubsampling subsampling) =>
+        (colour && subsampling != JpegSubsampling.Full444 ? 2 : 1, colour && subsampling == JpegSubsampling.Half420 ? 2 : 1);
+
     private static byte[] Write(Source source, bool colour, int quality, bool optimize, JpegSubsampling subsampling)
     {
-        int scale = quality < 50 ? 5000 / quality : 200 - quality * 2;                     // jpeg_quality_scaling
-        int tableCount = colour ? 2 : 1;
-        int hs = colour && subsampling != JpegSubsampling.Full444 ? 2 : 1, vs = colour && subsampling == JpegSubsampling.Half420 ? 2 : 1;
+        int scale = Scale(quality), tableCount = colour ? 2 : 1;
+        var (hs, vs) = Sampling(colour, subsampling);
         var quantizers = ArrayPool<Quantizer>.Shared.Rent(64 * tableCount);
         short[]?[] buffers = [];
         long[]? counts = null;
@@ -298,8 +376,9 @@ public static class JpegEncoder
         return new Quantizer((int)(fq & 0xFFFF), c, r);
     }
 
-    // The MCU rows [first, last) of the job's chunk: each one's blocks transformed and quantized into its part of the
-    // chunk's buffer (component by component, each component's block rows in turn), with the scratch they need.
+    // The MCU rows [first, last) of the job's chunk: each one's blocks transformed and quantized into each component's
+    // part of the row (Job.Blocks: the chunk's buffer, or the decoder's arrays for a round trip), with the scratch they
+    // need.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static void TransformRows(Job job, int first, int last)
     {
@@ -311,14 +390,14 @@ public static class JpegEncoder
         {
             for (int local = first; local < last; local++)
             {
-                var row = job.Buffer.AsSpan(local * job.RowStride, job.RowStride);
+                int m = job.ChunkStart + local;
                 if (job.Colour)
                 {
-                    ColourRow(job, job.ChunkStart + local, row, scratch, workspace, upper, lower);
+                    ColourRow(job, m, job.Blocks(0, m), job.Blocks(1, m), job.Blocks(2, m), scratch, workspace, upper, lower);
                 }
                 else
                 {
-                    GreyRow(job, job.ChunkStart + local, row, scratch, workspace, upper);
+                    GreyRow(job, m, job.Blocks(0, m), scratch, workspace, upper);
                 }
             }
         }
@@ -331,11 +410,13 @@ public static class JpegEncoder
         }
     }
 
-    // A grey MCU row (eight rows of the image, one block each MCU), read from the plane, or from its floats brought to
-    // bytes; rows past the bottom repeat the last, columns past the right edge the last (jcprepct.c's padding).
+    // A grey MCU row (eight rows of the image, one block each MCU) into its blocks, read from the plane, or from its
+    // floats brought to bytes; rows past the bottom repeat the last, columns past the right edge the last (jcprepct.c's
+    // padding).
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void GreyRow(Job job, int m, Span<short> row, byte[]? scratch, Span<int> workspace, Span<int> starts)
+    private static void GreyRow(Job job, int m, Span<short> blocks, byte[]? scratch, Span<int> workspace, Span<int> starts)
     {
+        var order = Order(job);
         int width = job.Width, height = job.Height, top = m * 8;
         ReadOnlySpan<byte> plane;
         if (job.Source.Floats)
@@ -389,17 +470,20 @@ public static class JpegEncoder
             }
 
             ForwardDct(workspace);
-            Quantize(workspace, row.Slice(bx * 64, 64), divisors);
+            Quantize(workspace, blocks.Slice(bx * 64, 64), divisors, order);
         }
     }
 
-    // A colour MCU row (8 x maxV rows of the image): its real rows to YCbCr (jccolor.c) in a stripe as wide as the MCUs,
-    // the columns past the right edge repeating the last; luma's blocks read from it (rows past the bottom repeating the
-    // last), chroma's downsampled from it as jcsample.c does (h2v1: bias 0, 1, 0, 1, ...; h2v2: 1, 2, 1, 2, ...; the
-    // downsampled rows past the image's repeating its last, jcsample.c's expand_bottom_edge); then luma's dummy blocks.
+    // A colour MCU row (8 x maxV rows of the image) into each component's blocks: its real rows to YCbCr (jccolor.c) in a
+    // stripe as wide as the MCUs, the columns past the right edge repeating the last; luma's blocks read from it (rows
+    // past the bottom repeating the last), chroma's downsampled from it as jcsample.c does (h2v1: bias 0, 1, 0, 1, ...;
+    // h2v2: 1, 2, 1, 2, ...; the downsampled rows past the image's repeating its last, jcsample.c's expand_bottom_edge);
+    // then luma's dummy blocks.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static void ColourRow(Job job, int m, Span<short> row, byte[]? scratch, Span<int> workspace, Span<int> upper, Span<int> lower)
+    private static void ColourRow(Job job, int m, Span<short> lumaBlocks, Span<short> cbBlocks, Span<short> crBlocks, byte[]? scratch, Span<int> workspace,
+        Span<int> upper, Span<int> lower)
     {
+        var order = Order(job);
         int width = job.Width, height = job.Height, rows = 8 * job.MaxV, stripe = job.StripeWidth, top = m * rows;
         int real = Math.Min(rows, height - top);
         var lumaPlane = scratch.AsSpan(0, rows * stripe);
@@ -457,7 +541,7 @@ public static class JpegEncoder
                 }
 
                 ForwardDct(workspace);
-                Quantize(workspace, row.Slice(luma.Offset + ((by * luma.PaddedAcross + bx) << 6), 64), divisors);
+                Quantize(workspace, lumaBlocks.Slice((by * luma.PaddedAcross + bx) << 6, 64), divisors, order);
             }
         }
 
@@ -474,7 +558,7 @@ public static class JpegEncoder
         for (int ci = 1; ci < 3; ci++)
         {
             var plane = ci == 1 ? cbPlane : crPlane;
-            int offset = job.Components[ci].Offset;
+            var blocks = ci == 1 ? cbBlocks : crBlocks;
             for (int bx = 0; bx < job.McusAcross; bx++)
             {
                 for (int y = 0; y < 8; y++)
@@ -507,26 +591,29 @@ public static class JpegEncoder
                 }
 
                 ForwardDct(workspace);
-                Quantize(workspace, row.Slice(offset + (bx << 6), 64), divisors);
+                Quantize(workspace, blocks.Slice(bx << 6, 64), divisors, order);
             }
         }
 
         // Luma's dummy blocks (past its width or height in an MCU), all zero but for a DC equal to the block before (right
         // edge) or the last block of the MCU's block row above (bottom edge), as jccoefct.c makes them; in row order, so
-        // each one's source is already there.
+        // each one's source is already there. The DC is coefficient 0 in either order.
         for (int by = 0; by < luma.V; by++)
         {
             bool below = m * luma.V + by >= luma.BlocksDown;
             for (int bx = below ? 0 : luma.BlocksAcross; bx < luma.PaddedAcross; bx++)
             {
                 int source = below ? (by - 1) * luma.PaddedAcross + bx / luma.H * luma.H + luma.H - 1 : by * luma.PaddedAcross + bx - 1;
-                short dc = row[luma.Offset + (source << 6)];
-                var block = row.Slice(luma.Offset + ((by * luma.PaddedAcross + bx) << 6), 64);
+                short dc = lumaBlocks[source << 6];
+                var block = lumaBlocks.Slice((by * luma.PaddedAcross + bx) << 6, 64);
                 block.Clear();
                 block[0] = dc;
             }
         }
     }
+
+    // The order a job's blocks are written in: zigzag for the file's scan, natural for a round trip (the decoder's).
+    private static ReadOnlySpan<byte> Order(Job job) => job.Targets is null ? Zigzag : RowMajor;
 
     // jccolor.c rgb_ycc_convert for one row, then the columns past it repeating its last (the stripe's width).
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -548,16 +635,17 @@ public static class JpegEncoder
         cr[width..].Fill(cr[width - 1]);
     }
 
-    // libjpeg-turbo's quantization by reciprocals (jcdctmgr.c quantize), written in zigzag order.
+    // libjpeg-turbo's quantization by reciprocals (jcdctmgr.c quantize), written in `order` (the block's coefficient k is
+    // the DCT's order[k]: zigzag for the file, natural for a round trip), the divisors given in the same order.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void Quantize(ReadOnlySpan<int> workspace, Span<short> block, ReadOnlySpan<Quantizer> divisors)
+    private static void Quantize(ReadOnlySpan<int> workspace, Span<short> block, ReadOnlySpan<Quantizer> divisors, ReadOnlySpan<byte> order)
     {
-        var zigzag = Zigzag;
+        order = order[..64];
         divisors = divisors[..64];
         block = block[..64];
         for (int k = 0; k < 64; k++)
         {
-            int temp = workspace[zigzag[k]];
+            int temp = workspace[order[k]];
             var (recip, corr, shift) = divisors[k];
             if (temp < 0)
             {
@@ -771,24 +859,19 @@ public static class JpegEncoder
     private static void WriteHeaders(ref BitWriter writer, Job job, int scale, HuffmanTable[] dc, HuffmanTable[] ac)
     {
         int tableCount = job.Colour ? 2 : 1, count = job.Components.Length;
+        Span<byte> body = stackalloc byte[65];
         writer.Write([0xFF, 0xD8]);
         writer.Write([0xFF, 0xE0, 0, 16, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]);   // JFIF 1.01, aspect 1:1
         for (int t = 0; t < tableCount; t++)
         {
-            writer.Write([0xFF, 0xDB, 0, 67, (byte)t]);
-            for (int k = 0; k < 64; k++)
-            {
-                writer.Write([(byte)Quantized(t, Zigzag[k], scale)]);
-            }
+            TableBody(t, scale, body);
+            writer.Write([0xFF, 0xDB, 0, 67]);
+            writer.Write(body);
         }
 
-        int sofLength = 8 + 3 * count;
-        writer.Write([0xFF, 0xC0, (byte)(sofLength >> 8), (byte)sofLength, 8, (byte)(job.Height >> 8), (byte)job.Height, (byte)(job.Width >> 8), (byte)job.Width, (byte)count]);
-        foreach (var c in job.Components)
-        {
-            writer.Write([(byte)c.Id, (byte)(c.H << 4 | c.V), (byte)c.Table]);
-        }
-
+        int frameLength = FrameBody(job, body);
+        writer.Write([0xFF, 0xC0, (byte)((frameLength + 2) >> 8), (byte)(frameLength + 2)]);
+        writer.Write(body[..frameLength]);
         for (int t = 0; t < tableCount; t++)
         {
             WriteTable(ref writer, dc[t], (byte)t);
@@ -803,6 +886,38 @@ public static class JpegEncoder
         }
 
         writer.Write([0, 63, 0]);
+    }
+
+    // The frame header after its length (SOF0's body, which the decoder's frame is also made from): 8-bit samples, the
+    // height and width, then each component's id, sampling (H << 4 | V) and quantization table; its length.
+    private static int FrameBody(Job job, Span<byte> body)
+    {
+        var components = job.Components;
+        body[0] = 8;
+        BinaryPrimitives.WriteUInt16BigEndian(body[1..], (ushort)job.Height);
+        BinaryPrimitives.WriteUInt16BigEndian(body[3..], (ushort)job.Width);
+        body[5] = (byte)components.Length;
+        for (int i = 0; i < components.Length; i++)
+        {
+            var c = components[i];
+            body[6 + 3 * i] = (byte)c.Id;
+            body[7 + 3 * i] = (byte)(c.H << 4 | c.V);
+            body[8 + 3 * i] = (byte)c.Table;
+        }
+
+        return 6 + 3 * components.Length;
+    }
+
+    // Quantization table `table` as a DQT segment holds it after its length: its id (8-bit values), then its 64 values in
+    // zigzag order.
+    private static void TableBody(int table, int scale, Span<byte> body)
+    {
+        body = body[..65];
+        body[0] = (byte)table;
+        for (int k = 0; k < 64; k++)
+        {
+            body[1 + k] = (byte)Quantized(table, Zigzag[k], scale);
+        }
     }
 
     private static void WriteTable(ref BitWriter writer, HuffmanTable table, byte classAndId)
@@ -1035,6 +1150,21 @@ public static class JpegEncoder
         public short[] Buffer { get; set; } = [];
 
         public int ChunkStart { get; set; }
+
+        // A round trip's destination instead of the chunk: each component's coefficient array (the decoder's: its blocks
+        // row by row, PaddedAcross a block row, each block in natural order); null when the blocks are entropy coded.
+        public short[][]? Targets { get; set; }
+
+        // Component ci's blocks of MCU row m (its V block rows of PaddedAcross blocks), in its array for a round trip, else
+        // in the chunk's buffer.
+        public Span<short> Blocks(int ci, int m)
+        {
+            var c = Components[ci];
+            int length = (c.V * c.PaddedAcross) << 6;
+            return Targets is { } targets
+                ? targets[ci].AsSpan(m * length, length)
+                : Buffer.AsSpan((m - ChunkStart) * RowStride + c.Offset, length);
+        }
     }
 
     private sealed class HuffmanTable

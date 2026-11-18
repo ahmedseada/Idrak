@@ -85,11 +85,13 @@ internal sealed class JpegCodec : IImageCodec
         }
     }
 
-    public ImageData Decode(ReadOnlySpan<byte> file)
+    public ImageData Decode(ReadOnlySpan<byte> file) => ToImage(JpegDecoder.Decode(file));
+
+    // An 8-bit image of the decoded planes (each cut to the image when it holds whole blocks), its values the bytes times
+    // 1/255 as before, made only if someone reads them as floats: a file's, or a round trip's (JpegEncoder.RoundTrip).
+    internal static ImageData ToImage((byte[][] Planes, int Height, int Width) decoded)
     {
-        // An 8-bit image of the decoded planes (each cut to the image when it holds whole blocks), its values the bytes
-        // times 1/255 as before, made only if someone reads them as floats.
-        var (planes, h, w) = JpegDecoder.Decode(file);
+        var (planes, h, w) = decoded;
         for (int c = 0; c < planes.Length; c++)
         {
             if (planes[c].Length != h * w)
@@ -157,8 +159,8 @@ internal sealed class JpegDecoder
         static int Fix(double v) => (int)(v * (1 << scale) + 0.5);
     }
 
-    // The pooled coefficients back to the pool (after Output, or when decoding failed).
-    private void ReturnCoefficients()
+    // The pooled coefficients back to the pool (after Output, or when decoding failed); a second call does nothing.
+    internal void ReturnCoefficients()
     {
         foreach (var c in components)
         {
@@ -192,6 +194,52 @@ internal sealed class JpegDecoder
         {
             ArrayPool<byte>.Shared.Return(data);
             decoder?.ReturnCoefficients();
+        }
+    }
+
+    /// <summary>
+    /// A baseline frame made in memory instead of read from a file (<see cref="JpegEncoder"/>'s round trip): its frame
+    /// header and quantization tables given as their segments' bodies (SOF0's and DQT's, after the length), its three
+    /// components YCbCr as a JFIF file's are. The caller writes every block of every component (<see cref="Coefficients"/>)
+    /// as a scan would leave it, then takes the image (<see cref="Pixels"/>); <see cref="ReturnCoefficients"/> if it fails.
+    /// </summary>
+    internal static JpegDecoder ForFrame(ReadOnlySpan<byte> frame, ReadOnlySpan<byte> tables)
+    {
+        var decoder = new JpegDecoder([], 0) { sawJfif = true };
+        try
+        {
+            decoder.Frame(frame, isProgressive: false);
+            decoder.QuantizationTables(tables);
+            foreach (var c in decoder.components)
+            {
+                c.Scanned = true;                                                       // its blocks are all written by the caller
+            }
+
+            return decoder;
+        }
+        catch
+        {
+            decoder.ReturnCoefficients();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The coefficient array of component <paramref name="component"/> of a frame made by <see cref="ForFrame"/> (pooled:
+    /// at least its blocks, a row of them after another, each block's 64 coefficients in natural order).
+    /// </summary>
+    internal short[] Coefficients(int component) => components[component].Coefficients;
+
+    /// <summary>The image of the coefficients written (as <see cref="Decode"/> gives a file's), the coefficients back to the pool.</summary>
+    internal (byte[][] Planes, int Height, int Width) Pixels()
+    {
+        try
+        {
+            return (Output(), height, width);
+        }
+        finally
+        {
+            ReturnCoefficients();
         }
     }
 

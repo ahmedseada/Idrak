@@ -171,10 +171,15 @@ public static partial class PillowImageOps
     /// <summary>
     /// The image saved as a JPEG at <paramref name="quality"/> (Pillow's <c>save(..., "JPEG", quality=Q,
     /// optimize=True)</c>: <see cref="JpegEncoder"/>), then decoded (<see cref="ImageCodecs"/>' JPEG, as Pillow decodes):
-    /// what a server that receives the file as a base64 data URL reads.
+    /// what a server that receives the file as a base64 data URL reads. While the "jpeg" codec is the library's, no file
+    /// is made: the encoder's quantized coefficients go straight to the decoder's pixel stage, the pixels the file decodes
+    /// to (Huffman tables, optimized or not, change a file's size, never its pixels). An app's codec decodes a file
+    /// written with the standard tables.
     /// </summary>
     public static ImageData JpegRoundTrip(ImageData image, int quality, JpegSubsampling subsampling = JpegSubsampling.Half420) =>
-        ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(image, quality, optimize: true, subsampling));
+        ImageCodecs.Origin("jpeg") == Overrides.Library
+            ? JpegEncoder.RoundTrip(image, quality, subsampling)
+            : ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(image, quality, subsampling: subsampling));
 
     // ---------------------------------------------------------------- helpers
 

@@ -1078,6 +1078,27 @@ recorded from 0e13af7 before the change (`data/image-transforms/jpeg-encoder.sha
 chunk's DCT. Tests: `image transforms|image data: 8-bit|jpeg:|synthetic data|scans:|cli vision: ImageEncoders|naming:|
 public API|test runner`, 42 passed.
 
+**JPEG round trip (2026-11-18):** the `jpeg=Q` transform (`PillowImageOps.JpegRoundTrip`, the scan look of every
+profile) encoded with optimized tables only to decode the file at once: a statistics pass and the whole image's
+coefficients for tables that change the file, never its pixels, then the entropy coding both ways. While the "jpeg"
+codec is the library's, `JpegEncoder.RoundTrip` now writes each MCU row's quantized coefficients straight into the
+decoder's coefficient arrays (natural order, the divisors in that order; the decoder's frame made from the same SOF0 and
+DQT bodies the file holds, `JpegDecoder.ForFrame`) and takes its pixel stage's image: nothing entropy coded, written or
+read back, and only the decoder's coefficients held (before: also the encoder's, 2.0 MB for the grey page and 3.0 MB for
+the colour one, its output buffer and the decoder's copy of the file). An app's "jpeg" codec still decodes a real file,
+written with the standard tables. The same pixels: 979 round trips hashed with ad4859a's build before the change (grey
+and colour, 8-bit and floats; 1 x 1 to 250 x 131 at every MCU edge at qualities 1 to 100 and every subsampling; the
+scan-like page grey and colour and a 1,001 x 701 pattern at 35 to 95; the transform's pipelines and three profiles'
+samples) and Pillow's 51 decoded files; the encoder's files unchanged (its 147 and Pillow's 51 byte for byte); a new
+test compares the round trip with its file decoded. Three alternated rounds on a loaded 4-thread container, medians,
+warm (KiB allocated a call, the pixels being 944 grey and 2,832 colour): grey page 827 x 1,169 q75 11.2 → 3.5 ms (1,105
+→ 953), q40 8.5 → 3.6, q92 17.0 → 3.7 (1,252 → 952); colour page 827 x 1,169 q75 4:2:0 15.5 → 6.6 (3,001 → 2,850), from
+floats 18.8 → 10.0, q90 4:4:4 25.5 → 9.8; colour page 1,654 x 2,339 q90 from floats 85.7 → 34.4 (12,459 → 11,359). Cold
+(the process's first round trip): grey 111.7 → 82.0 ms, colour 133.3 → 101.8. A grey page through a profile's sample:
+`clean` (jpeg=86 alone) 13.1 → 4.5 ms, `pale` (fade, uneven, rotate, noise, jpeg=78) 27.6 → 19.7, `office` (rotate,
+blur, lowres, jpeg=54) 42.1 → 39.4. Tests: `image transforms|image data: 8-bit|jpeg:|synthetic data|scans:|cli vision:
+ImageEncoders|public API|test runner`, 40 passed.
+
 ## Phase D7: PDF vector content, and pages drawn to pixels
 
 - **Vector content read:** the content interpreter (D3) also gives paths: construction (`m l c v y h re`), painting

@@ -189,4 +189,109 @@ internal abstract partial class Tests
             Console.WriteLine($"    {what}: {allocated:N0} bytes allocated for a file of {file.Length:N0}");
         }
     }
+
+    internal static void JpegRoundTripWithoutFile(Device device)
+    {
+        _ = device;
+
+        // The round trip against the file it stands for (optimized tables, as Pillow's optimize=True), decoded by the
+        // library's codec: grey and colour, every subsampling, sizes at every MCU edge, qualities 1 to 100, 8-bit and floats.
+        var codec = ImageCodecs.Get("jpeg");
+        (int Width, int Height)[] sizes = [(1, 1), (2, 3), (7, 5), (9, 17), (16, 15), (17, 33), (33, 7), (63, 47), (129, 97), (250, 131)];
+        int[] qualities = [1, 10, 25, 35, 40, 50, 60, 75, 85, 90, 92, 95, 100];
+        JpegSubsampling[] samplings = [JpegSubsampling.Half420, JpegSubsampling.Half422, JpegSubsampling.Full444];
+        var failures = new List<string>();
+        int cases = 0;
+        for (int s = 0; s < sizes.Length; s++)
+        {
+            var (w, h) = sizes[s];
+            foreach (int channels in (int[])[1, 3])
+            {
+                var planes = JpegTestPlanes(w, h, channels, s);
+                foreach (int quality in qualities)
+                {
+                    bool floats = (cases & 1) == 1;
+                    var image = floats ? new ImageData(JpegTestFloats(planes, wide: false), channels, h, w) : new ImageData(planes, h, w, JpegTestLevels);
+                    foreach (var sub in channels == 1 ? samplings[..1] : samplings)
+                    {
+                        cases++;
+                        var expected = PlanarBytes(codec.Decode(JpegEncoder.Encode(image, quality, optimize: true, sub)));
+                        if (!PlanarBytes(PillowImageOps.JpegRoundTrip(image, quality, sub)).AsSpan().SequenceEqual(expected))
+                        {
+                            failures.Add($"{(channels == 1 ? "grey" : "colour")} {w}x{h} q{quality} {sub} {(floats ? "floats" : "8-bit")}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pages through the jpeg transform, at the scan profiles' qualities.
+        var page = new ImageData(JpegTestPlanes(827, 1169, 1, 101), 1169, 827, JpegTestLevels);
+        var colourPage = new ImageData(JpegTestPlanes(1001, 701, 3, 102), 701, 1001, JpegTestLevels);
+        foreach (var (image, quality, sub, text) in new (ImageData, int, JpegSubsampling, string)[]
+                 {
+                     (page, 40, JpegSubsampling.Half420, "jpeg=40"), (page, 92, JpegSubsampling.Half420, "jpeg=92"),
+                     (colourPage, 60, JpegSubsampling.Half420, "jpeg=60"), (colourPage, 85, JpegSubsampling.Half422, "jpeg=85,subsampling=4:2:2"),
+                 })
+        {
+            cases++;
+            var expected = PlanarBytes(codec.Decode(JpegEncoder.Encode(image, quality, optimize: true, sub)));
+            if (!PlanarBytes(ImageTransformPipeline.Parse(text).Apply(image)).AsSpan().SequenceEqual(expected))
+            {
+                failures.Add($"{image.Channels} x {image.Height} x {image.Width} {text}");
+            }
+        }
+
+        Check(failures.Count == 0, $"{failures.Count} of {cases} round trips differ from their file decoded: {string.Join("; ", failures.Take(12))}");
+
+        // An app's jpeg codec still decodes a real file (standard tables): the same pixels.
+        var app = new CountingJpegCodec(codec);
+        ImageCodecs.Register(app);
+        try
+        {
+            var through = PillowImageOps.JpegRoundTrip(colourPage, 75);
+            Check(app.Decoded == 1 && PlanarBytes(through).AsSpan().SequenceEqual(PlanarBytes(codec.Decode(JpegEncoder.Encode(colourPage, 75)))),
+                $"an app's codec: {app.Decoded} files decoded, or other pixels");
+        }
+        finally
+        {
+            ImageCodecs.Unregister("jpeg");
+        }
+
+        Check(ImageCodecs.Origin("jpeg") == Overrides.Library, $"the library's jpeg codec back: {ImageCodecs.Origin("jpeg")}");
+
+        // A warm round trip of a page allocates its pixels and little else: no file, no coefficient chunks, no scan buffer.
+        foreach (var (what, image) in new[] { ("grey page", page), ("colour image", colourPage) })
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                PillowImageOps.JpegRoundTrip(image, 75);                                // warm: the pooled buffers
+            }
+
+            long before = GC.GetTotalAllocatedBytes(precise: true);
+            var result = PillowImageOps.JpegRoundTrip(image, 75);
+            long allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
+            long pixels = (long)result.Channels * result.Height * result.Width;
+            Check(allocated < pixels + (64 << 10), $"{what}: a round trip allocated {allocated:N0} bytes for {pixels:N0} bytes of pixels");
+            Console.WriteLine($"    {what}: {allocated:N0} bytes allocated for {pixels:N0} bytes of pixels");
+        }
+    }
+
+    // An app's "jpeg" codec over the library's, counting the files it decodes.
+    private sealed class CountingJpegCodec(IImageCodec library) : IImageCodec
+    {
+        public int Decoded { get; private set; }
+
+        public string Name => "jpeg";
+
+        public IReadOnlyCollection<string> Extensions => library.Extensions;
+
+        public ImageInfo? ReadInfo(ReadOnlySpan<byte> header) => library.ReadInfo(header);
+
+        public ImageData Decode(ReadOnlySpan<byte> file)
+        {
+            Decoded++;
+            return library.Decode(file);
+        }
+    }
 }
