@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Text;
 
 namespace Idrak.Imaging.Shaping;
@@ -11,7 +12,9 @@ namespace Idrak.Imaging.Shaping;
 /// order read in the line's direction. Characters are not mirrored. The algorithm maps some different texts to the same
 /// columns (a number before a Latin word and after it, in a right-to-left line), so <see cref="FromColumns"/> returns the
 /// logical text whose columns are the ones given, found from the columns' own levels and refined until its columns agree
-/// (a few rounds); where several texts agree it returns one of them.
+/// (a few rounds); where several texts agree it returns one of them. A text whose every character resolves to the line's own
+/// level (no character of the other direction, no number that rises, no explicit control) is its own columns: it is given
+/// back as it is, nothing allocated.
 /// </summary>
 internal sealed class BidiReadingOrder : IReadingOrder
 {
@@ -24,6 +27,11 @@ internal sealed class BidiReadingOrder : IReadingOrder
     public string ToColumns(string logical, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(logical);
+        if (Unchanged(logical, rightToLeft))
+        {
+            return logical;
+        }
+
         var units = Units(logical);
         return Gather(logical, units, Order(logical, units, rightToLeft));
     }
@@ -31,6 +39,11 @@ internal sealed class BidiReadingOrder : IReadingOrder
     public string FromColumns(string columns, bool rightToLeft)
     {
         ArgumentNullException.ThrowIfNull(columns);
+        if (Unchanged(columns, rightToLeft))
+        {
+            return columns;                                                     // its own logical order: ToColumns gives it back
+        }
+
         var units = Units(columns);
         string candidate = columns;
         string best = columns;
@@ -62,6 +75,32 @@ internal sealed class BidiReadingOrder : IReadingOrder
     }
 
     public override string ToString() => "the Unicode bidirectional algorithm (UAX #9), a paragraph of the line's direction";
+
+    // Whether every code point of `text` (read as Units reads them) resolves to the paragraph's level, so that the visual
+    // order is the logical one (read from the right, a right-to-left line's too): no explicit embedding, override or isolate
+    // (X1-X10) and no Arabic number (I1, I2); in a left-to-right line no R or AL (European numbers then follow sos L, W7,
+    // and neutrals and brackets the strong L around them, N0-N2); in a right-to-left line no L or European number (all the
+    // rest resolves to R). Separators and trailing whitespace go to the paragraph's level anyway (L1).
+    private static bool Unchanged(string text, bool rightToLeft)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            int point = text[i];
+            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+            {
+                point = char.ConvertToUtf32(text[i], text[i + 1]);
+                i++;
+            }
+
+            var type = Bidi.ClassOf(point);
+            if (type >= BidiClass.LRE || type == BidiClass.AN || (rightToLeft ? type is BidiClass.L or BidiClass.EN : type is BidiClass.R or BidiClass.AL))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     // Each code point's start in the text (UTF-16), with the text's length at the end.
     private static int[] Units(string text)
@@ -131,7 +170,7 @@ internal sealed class BidiReadingOrder : IReadingOrder
 /// (<c>space . , : / -</c> and the Arabic decimal and thousands separators), reversed; in a left-to-right line, every run
 /// of right-to-left characters (letters and marks of the right-to-left blocks, not their digits) with the same separators
 /// reversed. Its own inverse, so <see cref="FromColumns"/> is <see cref="ToColumns"/>. Text is read as Unicode scalars
-/// (a lone surrogate becomes U+FFFD).
+/// (a lone surrogate becomes U+FFFD); a text with nothing to reverse is given back as it is, nothing allocated.
 /// </summary>
 internal sealed class RunsReadingOrder : IReadingOrder
 {
@@ -171,6 +210,11 @@ internal sealed class RunsReadingOrder : IReadingOrder
     // A run: characters drawn against the line's direction, with the joiners between two of them (not at its ends).
     private static string ReverseRuns(string text, bool rightToLeft)
     {
+        if (NothingAgainst(text, rightToLeft))
+        {
+            return text;
+        }
+
         var runes = text.EnumerateRunes().ToArray();
         var builder = new StringBuilder(text.Length);
         Span<char> pair = stackalloc char[2];
@@ -203,6 +247,24 @@ internal sealed class RunsReadingOrder : IReadingOrder
         }
 
         return builder.ToString();
+    }
+
+    // Whether no scalar of `text` is drawn against the line's direction and none is a lone surrogate (which reads as
+    // U+FFFD): every scalar is then written back as it is, so the text is its own columns.
+    private static bool NothingAgainst(string text, bool rightToLeft)
+    {
+        var rest = text.AsSpan();
+        while (!rest.IsEmpty)
+        {
+            if (Rune.DecodeFromUtf16(rest, out var rune, out int used) != OperationStatus.Done || (rightToLeft ? IsLeftToRight(rune) : IsRightToLeft(rune)))
+            {
+                return false;
+            }
+
+            rest = rest[used..];
+        }
+
+        return true;
     }
 }
 

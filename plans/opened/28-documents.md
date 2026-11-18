@@ -704,6 +704,21 @@ come out in logical order through `bidi` with no language code; pages read in pa
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d3-timing.txt
   Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
   ```
+- **Lines layout memory (2026-11-18):** `lines` allocated, a page: the bidi order's whole UAX #9 twice a line (the
+  candidate of `FromColumns` and its check) even for a line it leaves as it is, sort delegates and closures, the groups'
+  lists, a sorted copy and LINQ a line for its direction's text, `StringBuilder` chunks, a reversed string a right-to-left
+  run. Now its keys are sorted as a span of structs from the shared pool, a line is a slice of them, one pooled buffer
+  holds the columns and the direction texts, the page text is made once; `bidi` and `runs` give a line they leave as it
+  is back as the same string (`bidi`: no explicit control or Arabic number, no R or AL in a left-to-right line, no L or
+  European number in a right-to-left one; `runs`: nothing against the line, no lone surrogate). It allocates what it gives
+  back and the texts it asks the order about (a test in `document layouts` holds it there). The same results: the 41 D3
+  and D4 sample pages under seven options and 4,000 random pages arranged directly give byte-identical lines and text,
+  20,000 random texts the same answers from both orders. Before and after, interleaved: the layout alone, warm, 19,528
+  to 1,596 B and 11.2 to 1.7 µs a page, its first pass 25.0 to 2.6 KiB a page (18-20 to 16-17 ms, compiling); a page
+  read from documents kept open 31.9 to 9.4 KiB (5.6-5.9 to 2.8-3.0 ms a pass), opened each pass 65.1 to 42.6 KiB
+  (13.7-14.2 to 10.1-11.2 ms). Left: a mixed line still runs the whole UAX #9 (4.6-7.6 KB a `FromColumns`, two thirds in
+  `Bidi.Levels` and `Bidi.Reorder`), a pooled path through them a piece of its own; the rest of a kept-open page's 9.4
+  KiB is the reader's own (its main direction's LINQ and dictionary, the page's font dictionary, operands, the pieces).
 
 ## Phase D4: PDF images and embedded files
 

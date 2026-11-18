@@ -26,6 +26,7 @@ internal abstract partial class Tests
         ("document layouts: lines: runs grouped by baseline and size into lines from the top, ordered by place whatever their content order, a space where a gap passes the word gap (an option), none inside a word, a superscript kept on its line", LayoutsLinesLeftToRight),
         ("document layouts: lines: a right-to-left line of runs in visual order comes out in logical order, a number and a left-to-right word inside it and a right-to-left word in a left-to-right line through bidi; runs in logical order give the same text", LayoutsLinesBothDirections),
         ("document layouts: lines: each line's direction from its first strong character, a line with none taking the page's; the direction option sets every line; runs without a place are lines of their own, after the placed ones", LayoutsLinesDirection),
+        ("document layouts: lines: once warm, a page of left-to-right and right-to-left lines allocates only what it gives back (its lines, each line's runs and text, the page's text) and the content-order text of each line of several runs, which its direction is read from", LayoutsLinesAllocation),
         ("document layouts: content: runs in content order, joined; the layout and the reading order named by the options and their variables; an unregistered layout or reading order refused naming its option", LayoutsContentAndNames),
         ("document layouts: an app's layout over lines answers, its failure reaches the caller, falls back per call under FallBack, is compared under Shadow; unregistered, the library's lines is back", LayoutsOverride),
     ];
@@ -539,6 +540,70 @@ internal abstract partial class Tests
         DocumentTextRun[] notes = [new("note two", DocumentBox.Empty, 10f) { Order = 5 }, Placed("Title", 50f, 50f, 10f, 0), new("note one", DocumentBox.Empty, 10f) { Order = 3 }];
         string text = DocumentTextLayouts.Arrange(notes, 612f, 792f, options).Text;
         Check(text == "Title\nnote one\nnote two", $"runs without a place: \"{text}\"");
+    }
+
+    private static void LayoutsLinesAllocation(Device device)
+    {
+        CpuOnly(device);
+        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines, ReadingOrder = ReadingOrders.Bidi };
+
+        // A report's heading in Arabic words alone ("التقرير السنوي", the annual report, its glyphs left to right), two
+        // lines of Latin words and numbers, and a line of one run: none that the reading order reorders.
+        DocumentTextRun[] runs =
+        [
+            Placed(LinesLayout.Reversed("السنوي"), 120f, 30f, 12f, 0, 40f),
+            Placed(LinesLayout.Reversed("التقرير"), 170f, 30f, 12f, 1, 45f),
+            Placed("The", 50f, 50f, 10f, 2, 15f),
+            Placed("quarterly", 70f, 50f, 10f, 3, 45f),
+            Placed("report", 120f, 50f, 10f, 4, 30f),
+            Placed("is", 155f, 50f, 10f, 5, 10f),
+            Placed("ready.", 170f, 50f, 10f, 6, 30f),
+            Placed("Sales", 50f, 70f, 10f, 7, 25f),
+            Placed("rose", 80f, 70f, 10f, 8, 20f),
+            Placed("12%", 105f, 70f, 10f, 9, 15f),
+            Placed("Contents", 50f, 90f, 10f, 10, 40f),
+        ];
+        var text = DocumentTextLayouts.Arrange(runs, 612f, 792f, options);
+        Check(text.Text == "التقرير السنوي\nThe quarterly report is ready.\nSales rose 12%\nContents" && text.Lines[0].RightToLeft && !text.Lines[1].RightToLeft,
+            $"the page's text: \"{text.Text}\"");
+
+        // What it gives back and asks, made by hand: the same objects of the same lengths.
+        int[] lengths = [.. text.Lines.Select(l => l.Text.Length)];
+        int[] counts = [.. text.Lines.Select(l => l.Runs.Count)];
+        int[] asked = [.. text.Lines.Select(l => l.Runs.Count > 1 ? l.Runs.Sum(r => runs[r].Text.Length) : 0)];
+        int page = text.Text.Length;
+        object Given()
+        {
+            var lines = new DocumentLine[lengths.Length];
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string question = asked[i] > 0 ? new string('x', asked[i]) : "";
+                lines[i] = new DocumentLine(new string('x', lengths[i]), DocumentBox.Empty, question.Length > 0, new int[counts[i]]);
+            }
+
+            return new DocumentText(lines, new string('x', page));
+        }
+
+        object Arranged() => DocumentTextLayouts.Arrange(runs, 612f, 792f, options);
+        static long Allocated(Func<object> call)
+        {
+            for (int i = 0; i < 300; i++)
+            {
+                call();
+            }
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1_000; i++)
+            {
+                call();
+            }
+
+            return GC.GetAllocatedBytesForCurrentThread() - before;
+        }
+
+        long given = Allocated(Given), arranged = Allocated(Arranged);
+        Check(arranged <= given, $"{runs.Length} runs in {text.Lines.Count} lines arranged 1,000 times allocated {arranged} bytes once warm, {given} for what it gives back and asks"
+            + (arranged <= given ? "" : $" ({AllocatedTypes(() => Arranged())})"));
     }
 
     private static void LayoutsContentAndNames(Device device)

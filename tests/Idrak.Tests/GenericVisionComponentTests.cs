@@ -25,7 +25,7 @@ internal abstract partial class DesktopTests : Tests
         ("generic components: noise: Augmentations' noise (std, p) gives the Arabic OCR app's pixels for the same seed, clamped to [0, 1], keeps the objects, does nothing at p=0, refuses unknown options and passes the augmentation suite", GenericNoise),
         ("generic components: line segmentation: TextLineSegmenters' projection passes the line segmenter suite; its options (no deskew, padding) apply and are checked; an app's segmenter falls back on it; an unknown name is refused naming the registry", GenericLineSegmentation),
         ("generic components: text matching: TextMatchers' semi-global passes the text matcher suite (with and without word boundaries); Align snaps the Arabic OCR app's drafts as it did, MaxError applies; an app's matcher falls back on it; an unknown name is refused", GenericTextMatching),
-        ("generic components: reading order: ReadingOrders' runs (its own inverse) and bidi (UAX #9) pass the reading order suite; both give the Arabic OCR app's columns for its line; bidi maps a number before or after a Latin word to the same columns and orders Arabic-Indic digits after Latin apart, so the app keeps runs", GenericReadingOrder),
+        ("generic components: reading order: ReadingOrders' runs (its own inverse) and bidi (UAX #9) pass the reading order suite; both give the Arabic OCR app's columns for its line; bidi maps a number before or after a Latin word to the same columns and orders Arabic-Indic digits after Latin apart, so the app keeps runs; a line neither reorders comes back as the same string", GenericReadingOrder),
         ("generic components: line recognition task: a line-recognition family loads with its line settings and labels, reads lines through ModelLineReader (prepared as the OCR app did, alone as in a batch, text and labels round trip with a reading order), passes the image model family suite, and a description without line settings, labels or a blank in range is refused", GenericLineRecognitionTask),
         ("generic components: line recognition cli: idrak train --task line-recognition trains a builder network on line images with .txt beside them (CTC, cer and wer) and fine-tunes a family; idrak predict reads lines with a package or a family and --weights; wrong options and a network of the wrong width are refused", GenericLineRecognitionCli),
     ];
@@ -271,6 +271,15 @@ internal abstract partial class DesktopTests : Tests
         Check(runs.FromColumns(columns, true) == logical && bidi.FromColumns(columns, true) == logical, "both read the line back");
         Check(runs.ToColumns("the river", false) == "the river" && bidi.ToColumns("the river", false) == "the river", "a left-to-right line of Latin as it is");
         Check(runs.ToColumns("the باب سم end", false) == "the مس باب end", "runs: Arabic reversed in a left-to-right line");
+
+        // A line neither order reorders (Latin and European digits left to right, Arabic words alone right to left) comes back
+        // as the same string, nothing allocated.
+        string latin = "the river 12%", arabic = "باب سم";
+        foreach (var order in new[] { runs, bidi })
+        {
+            Check(ReferenceEquals(order.ToColumns(latin, false), latin) && ReferenceEquals(order.FromColumns(latin, false), latin)
+                  && ReferenceEquals(order.ToColumns(arabic, true), arabic) && ReferenceEquals(order.FromColumns(arabic, true), arabic), $"{order.Name}: an unchanged line is not given back as it is");
+        }
 
         // Where UAX #9 differs from the app's order: a number after a Latin word reads back before it (both texts give the
         // same columns), and Arabic-Indic digits after Latin letters are a run of their own.
