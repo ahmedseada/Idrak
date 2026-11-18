@@ -86,7 +86,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.DocumentFormats` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | — | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | Data | Abstraction |
-| `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
@@ -96,13 +96,13 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentationKind` | interface | public | — | Augmentations.FunctionKind, Augmentations.GuardedKind |  | Abstraction, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.IDocument` | interface | public | — | DocumentFormats.GuardedDocument, DocumentFormats.OwningDocument, PdfDocument |  | Data | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentBuilder` | interface | public | — | DocumentWriters.OwningBuilder, DocumentWriters.ShadowBuilder |  | — | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | — |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentBuilder` | interface | public | — | DocumentWriters.OwningBuilder, DocumentWriters.ShadowBuilder, PdfDocumentBuilder |  | Data | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | — |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat, PdfFormat |  | Data | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder, PdfPageBuilder |  | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | DocumentPageDrawers.GuardedDrawer |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout |  | Data | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentWriter` | interface | public | — | DocumentWriters.GuardedWriter |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentWriter` | interface | public | — | DocumentWriters.GuardedWriter, PdfWriter |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MadeFontFace, MappedFontFace, OpenTypeFace |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat, WoffFormat |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
@@ -111,7 +111,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphSource` | interface | public | — | GlyphSources.GuardedSource |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Imaging, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Data.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, NetpbmEncoder, PngEncoder |  | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IImageEncoder` | interface | public | — | ImageEncoders.GuardedEncoder, JpegImageEncoder, NetpbmEncoder, PngEncoder |  | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IImageTransform` | interface | public | — | ImageTransforms.GuardedTransform, LibraryImageTransforms.Transform |  | Abstraction, AspNetCore, Audio, Imaging, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Data.IOutlineRasterizer` | interface | public | — | CoverageRasterizer, OutlineRasterizers.GuardedRasterizer |  | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IOutlineTracer` | interface | public | — | ContourTracer, OutlineTracers.GuardedTracer |  | Imaging | Abstraction |
@@ -128,8 +128,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IShapeProfile` | interface | public | — | ShapeProfile, ShapeProfiles.GuardedProfile |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.ITextBinding` | interface | public | — | SequenceBinding, TextBindings.GuardedBinding |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.ITextShaper` | interface | public | — | ArabicShaper, OpenTypeShaper, TextShapers.GuardedShaper |  | Imaging | Abstraction |
-| `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Data, Imaging, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Data.ImageEncoders` | registry | public | — |  | netpbm, png | Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.ImageCodecs` | registry | public | — |  | bmp, jpeg, netpbm, png | Abstraction, Data, Imaging, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Data.ImageEncoders` | registry | public | — |  | jpeg, netpbm, png | Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.ImageTransforms` | registry | public | — |  | autocontrast, banding, binarize, bleed, blot, blur, brightness, burn, +70 | Abstraction, AspNetCore, Audio, Imaging, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Data.OutlineRasterizers` | registry | public | — |  | coverage | Imaging | Abstraction |
 | `Idrak.Abstraction.Data.OutlineTracers` | registry | public | — |  | contour | Imaging | Abstraction |
