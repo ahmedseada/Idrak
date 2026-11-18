@@ -4,7 +4,9 @@
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
-before plan 38). The PDF parts of [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). **Nothing is
+before plan 38) and 10-15 (forms, annotations, signatures and editing in; fonts written in the common formats; the test
+samples in the ignored `test-output/`; ready for any workload, plan 38 waits; worked on the branch `documents`, taken
+from `migration`). The PDF parts of [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). **Nothing is
 built.** No phase starts before the owner names it.
 
 | Phase | What | Lane | State |
@@ -17,13 +19,23 @@ built.** No phase starts before the owner names it.
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | Planned |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
+| D8 | Fonts written and read in the common formats: TrueType (`.ttf`), OpenType CFF (`.otf`), WOFF, WOFF2; subsetting (D6 embeds through it; plan 38 exports through it) | B | Planned |
+| D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
+| D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
+| D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
+| D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Planned |
+| D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Planned |
 
 ## Goal
 
 The library reads **and writes** documents through one contract, the way it reads and writes images through
 `ImageCodecs` and `ImageEncoders`: a format registered by name, chosen from a file's first bytes, opened page by page,
-giving text with its place on the page, vector paths, images and embedded files, and any page drawn to pixels; and a
-writer that makes pages of images, vector paths and text. PDF is the library's default, both ways, for both kinds of
+giving text with its place on the page, vector paths, images, embedded files, form fields, annotations, links,
+bookmarks and signatures, and any page drawn to pixels; a writer that makes pages of images, vector paths and text, with
+fields, annotations, bookmarks and signatures; and an editor that changes a file in place (a filled form, a new
+annotation, a signature, pages merged or split) without losing what was signed before. Fonts are written in the common
+formats too (TrueType, OpenType, WOFF, WOFF2), which the writer embeds from and plan 38 exports to. PDF is the library's
+default, both ways, for both kinds of
 PDF: image PDFs (most scans are a page image, sometimes with a hidden text layer) and vector PDFs (text and drawings,
 as made by software or written on a tablet). Office (Word, Excel, PowerPoint) comes later as a plug-in registering into
 the same contract, with nothing in the library changed for it. Apps (search and question answering over attachments, a
@@ -51,12 +63,29 @@ registered format the same way.
 9. **Finished for good, before plan 38.** Every phase here is built and closed before plan 38 starts, so plan 38 never
    waits on PDF.
 
+**Taken by the owner (2026-11-18, second round):**
+
+10. **Forms, annotations, signatures and editing in place are in this plan** (open question 1 answered "in"): D9-D12.
+11. **The writer's image pages default to `Auto`** (open question 3): JPEG for photographs and scans, Flate for line art
+    and few levels, measured per image; `Flate` or `Jpeg` fixed by the option.
+12. **Fonts are written in the common formats:** TrueType (`.ttf`), OpenType with CFF outlines (`.otf`), WOFF and WOFF2
+    (and read in all four): D8. The writer embeds font subsets through it, and plan 38 exports a made font through it
+    (no Idrak-only font file).
+13. **The test samples live in the ignored folder.** The reference reader and renderer from PyPI (open question 2,
+    agreed) and the fixture generator write every sample and every expected result under `test-output/` (git ignores
+    it), never into the repository: see D5.
+14. **Ready for any workload; plan 38 waits.** Size, count and speed are part of "finished": D13 measures and bounds them.
+    Plan 38 starts only when every phase here is closed, however long that takes.
+15. **The branch:** this plan is worked on the branch `documents`, taken from `migration` (not `main`), until the owner
+    says otherwise.
+
 **Proposed, for the owner to confirm:**
 
-5. ~~Scope of the first version: text and images, not rendering.~~ Superseded by decisions 7-9: reading covers text,
-   images, vector paths and drawing a page to pixels; writing covers images, paths and text. Still out: forms,
-   annotations, signatures and editing a file in place (see "Not in this plan", and the open questions).
-6. **The contract, the PDF reader and the PDF writer** ("just implement the contract"): no CLI command, no dataset rows,
+5. ~~Scope of the first version: text and images, not rendering.~~ Superseded by decisions 7-14: reading covers text,
+   images, vector paths, forms, annotations, navigation and signatures, and drawing a page to pixels; writing covers
+   images, paths, text, fields, annotations, bookmarks and signatures; editing covers changes in place and page
+   operations.
+6. **The contract, the PDF reader, writer and editor, and the font writers** ("just implement the contract"): no CLI command, no dataset rows,
    no retrieval chunking from documents here, except what plan 38 needs (its commands are plan 38's F6). Other users of
    the contract are listed under "Not in this plan".
 
@@ -83,7 +112,8 @@ registered format the same way.
 
 CLAUDE.md and [docs/optimization.md](../../docs/optimization.md) apply in full. The ones that shape this plan:
 
-- **Contract plus registry (decision 10).** `DocumentFormats`, `DocumentTextLayouts` and `DocumentWriters` are `SlotTable`s with
+- **Contract plus registry (plan 10's decision 10).** `DocumentFormats`, `DocumentTextLayouts`, `DocumentWriters`,
+  `DocumentPageDrawers` and `FontWriters` are `SlotTable`s with
   `Register`, `Unregister`, `Names`, `Get` ("not registered", naming the registered ones), `Default`, `Origin`,
   `SetPolicy`, guarded as `ImageCodecs` is (an app's format over the library's falls back or is compared in shadow); their
   library defaults come through `LibraryDefaults.Ensure`; the inventory and the API dump are regenerated.
@@ -195,14 +225,28 @@ Added 2026-11-18 (decisions 7-9, proposals A-E):
 | C16 | `IDocumentPageDrawer` + `DocumentPageDrawers` (registry) | `Draw(DocumentPage page, DocumentDrawOptions options) → ImageData`; options: `PixelsPerPoint` (or `Dpi`), `Colour` (grey or RGB), `Background`, `Fonts` (a folder of fonts for runs whose font is not embedded, matched by name, then by the registered fonts' coverage; none: the run is left out and counted in `Issues`), `Parts` (paths, text, images: any of them, so a scan's image can be drawn without its hidden text, or the text alone); the library's drawer, "coverage", in `Idrak.Imaging` |
 | C17 | `IDocument.DrawPage(int index, DocumentDrawOptions options) → ImageData` | a shortcut: reads the page with the parts drawing needs and draws it through `DocumentPageDrawers`; a format whose pages cannot be drawn says so (`NotSupportedException` naming it) |
 
+Added 2026-11-18, second round (decisions 10-14):
+
+| # | Type | What |
+|---|---|---|
+| C18 | `IFontWriter` + `FontWriters` (registry, `Idrak.Abstraction.Data`, beside `FontFormats`) | `Name` ("truetype", "opentype-cff", "woff", "woff2"), `Extensions`, `Write(IFontFace face, Stream destination, FontWriteOptions options)`; options: `Glyphs` (a subset: these glyph ids, composite parts and, when `KeepLayout`, every glyph the layout tables can reach), `KeepLayout`, `Names` (family, style, version, copyright and licence strings the caller gives; nothing invented), `CurveTolerance` (cubic to quadratic for TrueType outlines, in font units), `Hinting` (dropped by default; kept when written whole); registry as `FontFormats`. Built in (`Idrak.Imaging`). `FontFormats` gains `woff` and `woff2` readers |
+| C19 | `DocumentField` | `Name` (full, dotted), `Kind` (text, check box, radio, list, combo, push button, signature), `Value` / `Values`, `Options` (choices, with export values), `Flags` (read-only, required, multi-line, password, comb, ...), `MaxLength`, `Widgets` (page, box, appearance state), `Tooltip`; `IDocument.Fields` (read on demand); XFA forms: their data (`datasets`) read as fields, their layout not drawn (reported in `Issues`) |
+| C20 | `DocumentAnnotation` | `Kind` (text note, free text, line, square, circle, polygon, polyline, highlight, underline, squiggly, strike-out, ink, stamp, caret, link, file attachment, popup, redaction, widget, and any other by its name), `Page`, `Box`, `Contents`, `Author`, `Created` / `Modified`, `Colour`, `Opacity`, `Points` (quad points, a line's ends, a polygon's vertices), `Ink` (`DocumentPath`s: strokes written on the page), `Target` (a link's URI or destination), `Replies` (its thread), `Appearance` (drawn by the drawer when asked); `DocumentPage.Annotations` |
+| C21 | `DocumentOutline`, `DocumentDestination`, `DocumentPageLabel` | the bookmarks tree (title, destination, open, colour, style, children), destinations (page, a position and zoom, or a name), page labels (`iv`, `A-3`); `IDocument.Outline`, `IDocument.PageLabel(index)`; tagged files: the structure tree's order used by a `tagged` text layout (C10), the reading order the author gave |
+| C22 | `DocumentSignature` | `Field`, `Signer` (the certificate), `SignedAt` (claimed, and from a timestamp), `Reason`, `Location`, `ByteRange`, `CoversWholeFile` (or changed after signing, and how: allowed by its permissions or not), `Kind` (CMS, PAdES baseline levels, the legacy PKCS #1 and PKCS #7 SHA-1 forms), `Check(SignatureCheckOptions) → SignatureCheck` (digest, signature, chain against the trust the app gives, timestamp, revocation from the file's DSS, and online only when the app turns it on) |
+| C23 | `IDocumentEditor` (from `IDocumentWriter.Edit(IDocument source, Stream destination, DocumentWriteOptions options)`) | `SetField(name, value)`, `AddAnnotation`, `RemoveAnnotation`, `SetInfo`, `AddOutline`, `InsertPages(index, IDocument from, pages)`, `RemovePages`, `MovePage`, `RotatePage`, `AddPage(width, height) → IDocumentPageBuilder` (new content over a page too: a stamp, a watermark), `Sign(field, SigningOptions)`, `Save(DocumentSaveMode)` (`Incremental`: the source's bytes kept, changes appended, earlier signatures stay valid; `Rewrite`: one clean file, unused objects dropped, object streams); a format that cannot edit says so |
+| C24 | `IDocumentBuilder` and `IDocumentPageBuilder` widened | `AddField`, `AddAnnotation`, `AddOutline`, `AddLink`, `SetPageLabels`, `CopyPage(IDocument from, int index)` (a page with its resources from another document: merge and split), `Encrypt(DocumentEncryption)` (AES-256, revision 6: user and owner passwords, permissions), `Sign(field, SigningOptions)` at `Finish` |
+| C25 | `SigningOptions` | the certificate and its private key (`X509Certificate2`), the chain to embed, the digest (SHA-256 by default), the level (PAdES B-B, B-T with a timestamp authority the app names, B-LT with revocation data embedded), `Reason`, `Location`, the field's appearance (text, an image, or none); nothing fetched unless the app names the authority |
+
 The contract is format-neutral: a Word file has no fixed pages or boxes, so an Office plug-in gives one page per section
-(or one for the whole file), runs without boxes (`Box` empty) and `Lines` from its paragraphs. Nothing in C1-C17 names
-PDF.
+(or one for the whole file), runs without boxes (`Box` empty) and `Lines` from its paragraphs. Nothing in C1-C25 names
+PDF, and nothing in C18 names one font format.
 
 **Settings:** the options in C8, C15 and C16, with `IDRAK_DOCUMENT_LAYOUT`, `IDRAK_DOCUMENT_READING_ORDER`,
 `IDRAK_DOCUMENT_MAX_STREAM_BYTES`, `IDRAK_DOCUMENT_CACHE_BYTES`, `IDRAK_DOCUMENT_IMAGE_ENCODING`,
-`IDRAK_DOCUMENT_JPEG_QUALITY`, `IDRAK_DOCUMENT_EMBED_FONTS`, `IDRAK_DOCUMENT_DPI` and `IDRAK_DOCUMENT_FONTS` read by the
-library (names proposed), added to the
+`IDRAK_DOCUMENT_JPEG_QUALITY`, `IDRAK_DOCUMENT_EMBED_FONTS`, `IDRAK_DOCUMENT_DPI`, `IDRAK_DOCUMENT_FONTS`,
+`IDRAK_DOCUMENT_SAVE_MODE`, `IDRAK_DOCUMENT_SIGNATURE_ONLINE` (off by default) and `IDRAK_FONT_CURVE_TOLERANCE` read by
+the library (names proposed), added to the
 CLI's variables table (`src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`, which a test checks). Defaults: the stream limit and
 the cache from the machine's measured memory, never a fixed size in GB.
 
@@ -210,9 +254,11 @@ the cache from the machine's measured memory, never a fixed size in GB.
 
 ## Phase D0: the contract and its registries
 
-- C1-C17 in `Idrak.Abstraction.Data`, with XML docs; `DocumentFormats`, `DocumentTextLayouts`, `DocumentWriters` and
-  `DocumentPageDrawers` with guarded wrappers (shadow: the same page's runs, text and image list compared, the same
-  written bytes, the same drawn pixels within a tolerance; fall back per call), `Ensure`d defaults.
+- C1-C25 in `Idrak.Abstraction.Data`, with XML docs; `DocumentFormats`, `DocumentTextLayouts`, `DocumentWriters`,
+  `DocumentPageDrawers` and `FontWriters` with guarded wrappers (shadow: the same page's runs, text and image list
+  compared, the same written bytes, the same drawn pixels within a tolerance; fall back per call), `Ensure`d defaults.
+  The parts of C19-C25 a later phase fills (forms, annotations, signatures, editing) are in the contract from D0, so
+  the API is designed once; a format answers "not supported yet" naming the phase until it lands.
 - The `lines` and `content` layouts (in `Idrak.Abstraction`, as they need nothing but the runs and `ReadingOrders`).
 - Contract suites in `Idrak.Abstraction.Testing`: `DocumentFormatSuite` (a format's `Accepts` on its own and others'
   headers, page count against pages read, every run's box inside its page, thread-safety: pages read in parallel give the
@@ -220,13 +266,14 @@ the cache from the machine's measured memory, never a fixed size in GB.
   `DocumentWriterSuite` (pages of each kind written then read back through the registered format: paths, glyphs, text
   and raw pixels exact; the same input, the same bytes; a page's memory bounded); `DocumentPageDrawerSuite` (a page of
   known paths, glyphs and images drawn: coverage within its tolerance of the rasterizer's own drawing; parts left out
-  when asked; a missing font counted, never thrown).
+  when asked; a missing font counted, never thrown); `FontWriterSuite` (a face written and read back through
+  `FontFormats`: outlines, advances, characters and shaping kept; a subset keeps its glyphs and their parts).
 - **The plug-in path proven:** a toy format and a toy writer in `tests/Idrak.PluginTests` (an outside assembly, public
   API only) register, open and write their files through `DocumentFormats` and `DocumentWriters`, override a name, shadow
   and fall back, as the existing proof families do for their contracts. This is the path Office will take.
 
 **Done when:** the suites pass on the toy format and the toy writer, the inventory and API dump list the new contracts,
-and "not registered" names the registered formats, writers and drawers.
+and "not registered" names the registered formats, writers, drawers and font writers.
 
 **Tests (CPU here):** one build; `documents contracts|document layouts|outside plug-in|override loop:|public API|
 abstraction inventory|conformance kit:`.
@@ -318,15 +365,27 @@ bytes.
 
 ## Phase D5: fixtures, docs, the owner's runs
 
-- `tools/documents/make_fixtures.py` writes the fixtures into `tests/Idrak.Tests/data/documents/` from PyPI packages
-  (run with `-I`, as Plan 24's tokenizer tools), each with a JSON of what it holds (text, boxes, images): classic and
+- **The samples live in the ignored folder (decision 13).** `tools/documents/make_fixtures.py` writes every sample and
+  its expected results into `test-output/documents/samples/` (git ignores `test-output/`; nothing of it is committed),
+  from PyPI packages pinned in `tools/documents/requirements.txt` (run with `-I`, as plan 24's tokenizer tools): the
+  sample files, a JSON of what each holds, the reference reader's text and the reference renderer's pages as PNG, and
+  the reference font tools' dumps for D8. The tests read them from `IDRAK_DOCUMENTS_SAMPLES` (default
+  `test-output/documents/samples`); a group whose samples are missing fails at once, naming the one command that makes
+  them, never passes empty. The session makes them in its container before a targeted run; the owner's command list
+  makes them once after the pull. Only the fonts already under `tests/Idrak.Tests/data/fonts/` are inputs from the
+  repository.
+- The samples, each with a JSON of what it holds (text, boxes, images): classic and
   stream cross-references, incremental updates, a broken table, every filter and predictor, every encryption revision,
   simple and composite fonts with and without `ToUnicode`, embedded TrueType, Type 3, right-to-left and mixed text,
   vertical text, hidden text over a scan, each image kind, embedded files; and the hostile ones (a stream bomb, cycles,
   deep nesting). The fonts come from the test data already in the repository. Added for D6 and D7: vector pages (every
   path operator, both fill rules, caps, joins, dashes, clips), each colour space, shadings and patterns, transparency,
   embedded Type 1 and Type 3 fonts, a page drawn by the reference renderer saved beside each as PNG, and image PDFs as
-  scanners and phones write them (one JPEG a page, a Flate page, a hidden text layer).
+  scanners and phones write them (one JPEG a page, a Flate page, a hidden text layer). Added for D8-D12: each font
+  format (and a subset of each test font, dumped by the reference font tools), every field kind filled and empty, every
+  annotation kind with and without appearances, outlines, destinations and page labels, tagged files, files edited by
+  incremental updates, encrypted with AES-256, and signed (a test certificate made by the generator, never a real one)
+  with valid, broken and changed-after-signing signatures.
 - A real-files group, `documents real:`, for the owner: every PDF in a folder (`IDRAK_DOCUMENTS_REAL`) opens, every page
   reads within the limits, and a summary (pages, runs, images, issues, time per page cold and warm, rule 76) is written;
   differences against a reference extractor's text are listed, not failed (the reference fixes what the text must say,
@@ -334,8 +393,9 @@ bytes.
 - The README's `Idrak.Data` line and `src/Idrak.Data/README.md` name the document formats; the Office plug-in is named as
   to come.
 
-**Done when:** the generator reproduces every fixture byte for byte from its seed, the docs say what is read, written
-and drawn and what is not, and the owner's command list is in the as-built note.
+**Done when:** the generator reproduces every sample byte for byte from its seed and its pinned versions, nothing under
+`tests/` or `src/` holds a generated sample, the docs say what is read, written, edited, signed and drawn and what is
+not, and the owner's command list is in the as-built note.
 
 ## Phase D6: PDF writing
 
@@ -355,9 +415,9 @@ In `Idrak.Data` (`src/Idrak.Data/Pdf/`, beside the reader, sharing its objects a
 - **Text:** a face embedded once per document as a composite font (`Type0`, `Identity-H`, `CIDToGIDMap Identity`) with its
   program (`FontFile2` for TrueType outlines, `FontFile3` / `OpenType` for CFF), `/W` widths from its advances, a
   `ToUnicode` CMap from the runs' text and glyphs, `/ActualText` where a glyph stands for several characters or a
-  character for several glyphs. **Subsetting** (`Subset`, the default): only the glyphs used, with `glyf`, `loca`, `hmtx`
-  and `cmap` rebuilt (and `CFF` charstrings kept by index), so a page in one font is not the font's whole size; `Whole`
-  embeds the file as read. A face a font map made (legacy fonts) is written as its glyphs, like any face.
+  character for several glyphs. **Subsetting** (`Subset`, the default): only the glyphs used, written through
+  `FontWriters` (D8: "truetype" or "opentype-cff" with `Glyphs` set), so a page in one font is not the font's whole size;
+  `Whole` embeds the file as read. A face a font map made (legacy fonts) is written as its glyphs, like any face.
 - **Pages the library draws:** a helper turns a page of shapes (`ShapePath`, `ShapeArea`) and shaped text into page
   builder calls, so a synthetic page or plan 38's glyph sheet is written as vector PDF, not only as an image.
 
@@ -397,6 +457,116 @@ when asked, its hidden text; existing glyph drawing is byte-identical.
 **Tests (CPU here):** one build; `documents pdf: vector|documents drawers|documents pdf: write|documents pdf: images|
 fonts|synthetic pages`.
 
+## Phase D8: fonts written and read in the common formats
+
+In `Idrak.Imaging`, beside `OpenTypeFormat` and `CffOutlines`, registered in `FontWriters` (C18) and `FontFormats`:
+- **"truetype" (`.ttf`):** the tables a face needs, from any `IFontFace`: `head`, `hhea`, `maxp`, `hmtx`, `cmap` (formats
+  4 and 12, from the face's characters), `glyf` and `loca` (quadratic outlines; a cubic outline turned into quadratics
+  within `CurveTolerance`, measured), `name` (only the strings given), `OS/2` (metrics and ranges from the glyphs),
+  `post` (glyph names when the face has them); the face's layout tables (`GSUB`, `GDEF`, `GPOS`) written as they are, so
+  a mapped legacy face or plan 38's made face shapes in any software, not only in Idrak; checksums and the table order
+  the specification asks for.
+- **"opentype-cff" (`.otf`):** the same with `CFF ` outlines (Type 2 charstrings, cubic: quadratics raised exactly,
+  subroutines for repeated runs, a setting).
+- **"woff" (`.woff`):** a written font's tables, each zlib-compressed through `ZLibStream` when that is smaller; and read.
+- **"woff2" (`.woff2`):** the tables Brotli-compressed through the base library's `BrotliEncoder` / `BrotliDecoder`, with
+  the `glyf` / `loca` and `hmtx` transforms; and read.
+- **Subsetting:** `Glyphs` keeps those glyphs, their composite parts and, with `KeepLayout`, every glyph the layout
+  tables can reach (a closure over `GSUB`), with the layout tables rewritten to the kept glyphs; without it the layout
+  tables are dropped (what a PDF embedding needs).
+- **Results proven:** every test font written in each format reads back through `FontFormats` with the same outlines
+  (exact for the same outline kind, within `CurveTolerance` across kinds), advances, characters and shaping (every
+  sample line shaped the same before and after); the reference font tools (PyPI, D5) open every written font, and the
+  sanitizer browsers use accepts it.
+
+**Tests (CPU here):** one build; `fonts write|fonts woff|fonts|shaping|public API|abstraction inventory`.
+
+## Phase D9: forms
+
+- **Read:** the `AcroForm` tree (inherited values, kids, widgets), every field kind (C19), its value and options, its
+  widgets' places and appearance states; XFA forms' data (`datasets`) read as fields.
+- **Fill and create:** `SetField` (C23) and `AddField` (C24) for every kind; each widget's appearance stream generated
+  (text laid out in the field's font, size, alignment, comb and multi-line rules, through the shapers, so every script
+  fills right); `NeedAppearances` not relied on.
+- **Flatten:** a field's appearance drawn into its page's content and the field removed (an option per field or all).
+
+**Done when:** every sample's fields read as written; a form filled by Idrak reads back with its values in Idrak and in
+the reference reader, and draws (D7) with the values in place; a flattened form keeps its look and has no fields.
+
+**Tests (CPU here):** one build; `documents pdf: forms|documents pdf: write|documents drawers`.
+
+## Phase D10: annotations and navigation
+
+- **Annotations (C20):** every kind read with its points, ink strokes, replies and appearance; drawn by the drawer when
+  asked (their appearance streams; one without is drawn from its properties); created (with an appearance made) and
+  removed; redaction annotations applied on request (the content under them removed from text, paths and image pixels,
+  not only covered).
+- **Navigation (C21):** links (URI and destinations), bookmarks read and written, named destinations, page labels.
+- **Tagged files:** the structure tree read, and a `tagged` text layout in `DocumentTextLayouts` that orders text as the
+  author tagged it (the `lines` layout stays the default for files without tags).
+
+**Done when:** every sample's annotations, outlines, destinations and labels read as written; created ones read back in
+Idrak and the reference reader; a redacted area holds no text, path or pixel of what it covered; a tagged sample's text
+comes in its tagged order.
+
+**Tests (CPU here):** one build; `documents pdf: annotations|document layouts|documents pdf: write|documents drawers`.
+
+## Phase D11: editing in place, and saving
+
+- **Incremental updates (C23, `Incremental`):** changed and new objects appended after the source's bytes with a new
+  cross-reference section pointing back (`/Prev`), so the source is untouched and earlier signatures stay valid; an
+  update on a file with a cross-reference stream keeps a stream.
+- **Rewrite (`Rewrite`):** one clean file: only the objects reachable from the root, renumbered, object streams,
+  streams recompressed when it pays (measured), duplicate images and fonts written once (by content hash).
+- **Pages:** insert from another document (its resources carried and renamed where they clash), remove, move, rotate,
+  merge files, split a file; content added over an existing page (a stamp, a watermark, page numbers).
+- **Saved encrypted:** AES-256 (revision 6) with a user and an owner password and permissions, through D2's handler;
+  removing encryption when the owner password is given.
+
+**Done when:** each edit reads back as made; an incremental update leaves the source's bytes as its prefix; a signed
+sample edited incrementally keeps its signature valid (D12); a rewritten file is never larger than its source unless
+asked to add, and reads the same; an encrypted file opens with each password and not without.
+
+**Tests (CPU here):** one build; `documents pdf: edit|documents pdf: encryption|documents pdf: write|documents pdf: file`.
+
+## Phase D12: signatures
+
+- **Read and check (C22):** signature fields and their CMS (`SignedData`, detached), the byte range against the file,
+  the digest, the signature (RSA, RSA-PSS, ECDSA through `System.Security.Cryptography`), the signer's chain built
+  against the trust the app gives (`SignatureCheckOptions`: certificates, or the machine's store when the app asks),
+  timestamps (RFC 3161 tokens checked), revocation from the file's DSS (OCSP responses and CRLs), online only when
+  `IDRAK_DOCUMENT_SIGNATURE_ONLINE` or the option turns it on; changes after signing found by comparing the signed
+  revision with the current one (form filling and annotations allowed by the signature's permissions, or not).
+- **Sign (C25):** a signature field (new or empty), its appearance, the byte range reserved and filled, CMS built on the
+  DER here (the base library's `System.Formats.Asn1` when the shared framework has it, checked at the phase's start;
+  otherwise a small DER writer here: no NuGet package, rule 70), PAdES B-B, B-T (a timestamp from the authority the app
+  names) and B-LT (revocation data added to the DSS), always as an incremental update.
+- **Untrusted input:** a signature never makes a file trusted on its own; a check reports each step and why it failed.
+
+**Done when:** every sample's signatures check as the generator made them (valid, broken digest, wrong chain, changed
+after signing); a file Idrak signs checks valid in Idrak and in the reference tool, and a second signature keeps the
+first valid.
+
+**Tests (CPU here):** one build; `documents pdf: signatures|documents pdf: edit|documents pdf: file`.
+
+## Phase D13: any workload
+
+- **The documents bench** (`idrak bench documents`, with the library's settings as variables, `--save` and `--compare`):
+  opening, reading text, reading images, drawing a page at chosen DPIs, writing an image PDF and a vector PDF, editing
+  incrementally and rewriting, signing and checking; each measured cold and warm apart (rule 76), on the samples and on
+  a generated large set (thousands of pages, many small files, one huge image, deep forms).
+- **Bounded memory at any size:** a large file read page by page with the cache's measured bound; a large file written
+  and drawn with one page (or one band) of buffers; many files read in parallel within `ComputeResources` (rule 79,
+  checked to pay); every limit (C8) defaulted from the machine's measured memory and settable.
+- **The owner's real files** (D5's `documents real:`) also written back, edited, drawn and timed, the summary under
+  `test-output/documents/`.
+
+**Done when:** the bench's numbers are saved for the owner's devices as the baseline; no case grows memory with page
+count beyond its cache and one page's buffers; each slow path the bench finds is fixed in the library (CLAUDE.md:
+speed and memory first), its results unchanged.
+
+**Tests (CPU here):** one build; `documents|fonts write`; the bench's real numbers come from the owner's devices.
+
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 
 Plan 38 (handwriting fonts from images) takes everything PDF from here and starts only after this plan is finished
@@ -409,14 +579,19 @@ Plan 38 (handwriting fonts from images) takes everything PDF from here and start
   PDF gives its ink as paths (D7), and either kind can be drawn to pixels at a chosen DPI (D7) so the reading code sees
   one kind of input.
 - **Shared, not copied:** the `Homography` / `Warp` helper made shared in D7 is the one plan 38 straightens sheets with.
+- **A made font exported in a common format** (owner, 2026-11-18): plan 38's face is written through `FontWriters` (D8)
+  as `.ttf`, `.otf`, `.woff` or `.woff2`, with the layout tables its font map made, so it works in any software and
+  `data synth --fonts` reads it like any other font.
+- **Tablet ink:** ink annotations (D10) give a pen's strokes as paths, another way a sheet written on a tablet comes in.
 
 ## Not in this plan
 
-- **Office** (Word, Excel, PowerPoint): a later plug-in on C1-C17 (a package such as `Idrak.Data.Plugins`, namespace
+- **Office** (Word, Excel, PowerPoint): a later plug-in on C1-C25 (a package such as `Idrak.Data.Plugins`, namespace
   `Idrak.Data.Plugins.Office`, on the base library's `ZipArchive` and `XmlReader`, no outside dependency).
-- **Forms** (field values), **annotations** (comments, highlights), **signatures** (validation), **editing** an existing
-  PDF in place (an incremental update written over a file read): open question 5 asks whether "finished for good"
-  includes them.
+- **Running anything a file carries:** JavaScript, launch actions, and fetching outside references are never done (the
+  untrusted-input rule); they are reported in `Issues`.
+- **XFA layout** (drawing a dynamic XFA form's own layout: a deprecated format; its data is read, D9), **3D and
+  multimedia** content (reported, not played).
 - **Users of the contract:** a `pdf` dataset format in `DataFileFormats` (a row per page), document chunking for
   retrieval (`Idrak.Text`), an `idrak` command that reads or writes a document, OCR of pages with issues, a searchable
   PDF made from an OCR run. Each is a small follow-up once D3 and D6 land; plan 38's commands are plan 38's F6.
@@ -427,17 +602,21 @@ At most two agents at a time, each in its own worktree; a merge is built and its
 
 | Step | Lane A | Lane B |
 |---|---|---|
-| 1 | D0, the contract | none |
-| 2 | D1, the file | D5's generator and the first fixtures (no library code) |
+| 1 | D0, the contract | D5's generator and the first samples (no library code; into `test-output/`) |
+| 2 | D1, the file | D8, fonts written and read (`Idrak.Imaging` only, needs nothing from D1) |
 | 3 | D3, text (after D1) | D2, encryption (after D1) |
-| 4 | D4, images and embedded files (after D3) | D6, writing (after D1; its read-back checks grow as D3 and D4 land) |
-| 5 | D7, vector content and drawing (after D3, D4 and D6) | D5, docs and the owner's runs |
-| then | plan 38 starts (decision 9) | |
+| 4 | D4, images and embedded files (after D3) | D6, writing (after D1 and D8; its read-back checks grow as D3 and D4 land) |
+| 5 | D7, vector content and drawing (after D3, D4 and D6) | D11, editing and saving (after D2 and D6) |
+| 6 | D9, forms (after D7 and D11) | D10, annotations and navigation (after D7 and D11) |
+| 7 | D12, signatures (after D11) | D5, docs and the owner's runs |
+| 8 | D13, any workload (after all) | none |
+| then | plan 38 starts (decisions 9 and 14) | |
 
-D2 and D3 touch different files (`Pdf/Security*.cs`, `Pdf/Content*.cs` and `Pdf/Fonts*.cs`); D4 and D6 too
-(`Pdf/Images*.cs`, `Pdf/Writer*.cs` and `Idrak.Imaging`'s `jpeg` encoder registration); D7 touches `Pdf/Content*.cs`
-after D3 is merged, and `Idrak.Imaging` (the drawer, the Type 1 reader, the rasterizer's fill rule). The files both
-lanes touch (`api/*.txt`, the inventory, the test list, the variables table) are merged one lane at a time and
+D2 and D3 touch different files (`Pdf/Security*.cs`, `Pdf/Content*.cs` and `Pdf/Fonts*.cs`); D1 and D8 too (`Pdf/` and
+`Idrak.Imaging`'s font files); D4 and D6 too (`Pdf/Images*.cs`, `Pdf/Writer*.cs` and `Idrak.Imaging`'s `jpeg` encoder
+registration); D7 and D11 too (`Pdf/Content*.cs` and `Idrak.Imaging`'s drawer, the Type 1 reader and the rasterizer's
+fill rule; `Pdf/Edit*.cs`); D9 and D10 too (`Pdf/Forms*.cs`, `Pdf/Annotations*.cs` and `Pdf/Outline*.cs`). The files
+both lanes touch (`api/*.txt`, the inventory, the test list, the variables table) are merged one lane at a time and
 regenerated, never merged by hand.
 
 ## The owner's runs
@@ -445,8 +624,10 @@ regenerated, never merged by hand.
 Each phase's as-built note gives the exact PowerShell list (from `D:\Projects\Idrak`). The pattern:
 
 ```powershell
-cd D:\Projects\Idrak; git checkout main; git pull origin main
+cd D:\Projects\Idrak; git checkout documents; git pull origin documents
 dotnet build -c Release tests\Idrak.Tests
+# the samples, into the ignored folder (once per pull that changes tools\documents)
+python -I tools\documents\make_fixtures.py -o test-output\documents\samples
 # D3 onwards: the owner's own PDFs (a folder of real files; nothing is written into it). From D6 each is also written
 # back and read again, and from D7 its pages are drawn: the summary, the copies and the drawn pages go to test-output.
 $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents real:"; $env:IDRAK_DOCUMENTS_REAL = "D:\Documents\pdf-samples"; $env:IDRAK_DOCUMENTS_OUT = "test-output\documents"
@@ -464,7 +645,7 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:I
   one (or an app's) replaces `lines` without touching the reader.
 - **Hostile files:** bombs, cycles and deep nesting are covered by limits and fixtures; the reader never runs or fetches
   anything.
-- **The API grows** by the contract (C1-C17): each in the API dump with its reason; no version bump, no CHANGELOG
+- **The API grows** by the contract (C1-C25): each in the API dump with its reason; no version bump, no CHANGELOG
   (CLAUDE.md).
 - **Drawing is the largest piece** (shadings, transparency, Type 1 and Type 3 fonts). Answered by the reference
   renderer's pixels per fixture, a stated tolerance, and `Issues` naming what a page used that is not drawn, never a
@@ -475,14 +656,19 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:I
 - **The rasterizer's fill rule** touches every glyph drawn today: the current behaviour stays the default, and existing
   synthetic pages are checked byte-identical (rule 71).
 
+- **Signatures are security:** a wrong "valid" is worse than no check. Answered by the generator's broken and changed
+  samples, every step of a check reported, and nothing trusted that the app did not give as trusted.
+- **WOFF2 and CFF writing** are exacting formats: answered by the reference font tools and the browsers' sanitizer on
+  every written font (D8).
+
 ## Open questions for the owner (2026-11-18)
 
-1. "Finished for good": are forms (field values), annotations (comments, highlights), signatures (validation) and
-   editing a PDF in place in this plan, or a later one?
-2. The reference tools for D6 and D7's checks: a reader and a renderer from PyPI in `tools/documents/` (run with `-I`,
-   as plan 24's tools), used only to make expected results, never by the library. Agreed?
-3. The writer's default for image pages: `Auto` (JPEG for photographs and scans, Flate for line art, measured per image),
-   or always `Flate` (exact pixels, larger files)?
+Answered the same day: 1 (forms, annotations, signatures and editing are in: decision 10), 2 (the reference tools from
+PyPI, their samples under `test-output/`: decision 13), 3 (`Auto`: decision 11). Open:
+
+4. Signing's trust by default: only the certificates the app gives (proposed), or the machine's certificate store too?
+5. Redaction (D10) removes content for real; should it also be offered as a CLI command once the contract lands, or stay
+   a library call?
 
 ## Runs
 

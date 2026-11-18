@@ -4,19 +4,20 @@
 
 **Status (2026-11-18, `imaging`):** planned 2026-11-13 from the owner's question "can Idrak extract a font from an image
 and use it?", against the code at b96ff2e; refreshed 2026-11-18 against the code at da19bfc (the pieces it was waiting
-on have landed, see "What exists"). **Nothing is built.** Everything PDF moved to [plan 28](28-documents.md), which is
-built and finished first (owner, 2026-11-18): this plan starts after plan 28, so it never waits on PDF. No phase starts
-before the owner names it.
+on have landed, see "What exists"). **Nothing is built.** Everything PDF moved to [plan 28](28-documents.md), and
+font writing (TrueType, OpenType, WOFF, WOFF2) is plan 28's D8. Plan 28 is built and finished first, for any workload,
+however long it takes (owner, 2026-11-18): this plan waits until every plan 28 phase is closed. Worked on the branch
+`documents` (taken from `migration`). No phase starts before the owner names it.
 
 | Phase | What | Lane | Needs | State |
 |---|---|---|---|---|
-| F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs, its file format (`IFontFormat` "glyphs"), their suites | A | — | Planned |
+| F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs (written through plan 28's `FontWriters`), their suites | A | plan 28 D8 | Planned |
 | F1 | The tracer: a glyph's pixels to an outline (contours, simplified, curves fitted, one winding) | A | F0 | Planned |
 | F2 | The glyph sheet: a blank sheet drawn by the shape pipeline (PNG and PDF), the filled sheet read back from an image or a PDF (found, straightened, cut, cleaned, traced) | A | F1; plan 28 D4, D6, D7 | Planned |
 | F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Planned |
 | F4 | Glyphs from real scans with their transcription: separate characters (digits in cells, unjoined letters) | B | F1, F3; plan 28 D4, D7 for PDF scans | Planned |
 | F5 | Joined handwriting: a written word cut into its letters by alignment with its transcription | B | F4 | Research, after F4 |
-| F6 | The command line: `idrak data font-sheet` and `idrak data font-from`, and `data synth` reading the made fonts | A | F2, F3; plan 28 D6 | Planned |
+| F6 | The command line: `idrak data font-sheet` and `idrak data font-from` (a `.ttf`, `.otf`, `.woff` or `.woff2` out), and `data synth` reading the made fonts | A | F2, F3; plan 28 D6, D8 | Planned |
 
 ## Goal
 
@@ -58,17 +59,17 @@ table's cells), then joined handwriting (research).
 - **The command line:** `idrak data fonts`, `idrak data synth --fonts DIR` (fonts read through `SyntheticPages.Fonts`,
   that is `FontFormats.ReadFolder`, so a registered format is picked up with nothing else changed).
 
-**What is missing:** tracing pixels to outlines; knowing which ink is which character; a face made from traced glyphs
-and a way to keep it on disk; finding a sheet's corner marks; PDF in and out (plan 28).
+**What is missing:** tracing pixels to outlines; knowing which ink is which character; a face made from traced glyphs;
+finding a sheet's corner marks; writing a font file in a common format (plan 28, D8); PDF in and out (plan 28).
 
 ## Gaps found in the code (2026-11-18)
 
 | Sev | Gap | Where | What F0-F6 does about it |
 |---|---|---|---|
-| 🔴 | A made font named `X.glyphs.json` clashes with the font maps beside fonts: `ReadFolder` matches `Path.GetExtension`, which gives `.json`, so a format listing `.json` would also try every `FONT.map.json` as a font | `src/Idrak.Abstraction/Data/Fonts.cs:244` | F0: open question 1 picks the name; a two-part extension needs `ReadFolder` to match the end of the name |
-| 🔴 | A format decides from 16 bytes (`FontFormats.HeaderBytes`); every JSON file starts with `{` | `src/Idrak.Abstraction/Data/Fonts.cs:161` | F0: the made font's file starts with a fixed signature inside those 16 bytes |
-| 🟡 | `IFontFormat` reads only; the plan's "glyphs" format must also write | `src/Idrak.Abstraction/Data/Fonts.cs:134` | F0: a writing side (a method on the made format, or a contract of its own), a public API change |
-| 🟡 | The map beside `X.glyphs.json` would be `X.glyphs.map.json` (`SidecarOf` drops one extension) | `src/Idrak.Abstraction/Data/FontMaps.cs:917` | Settled with open question 1 |
+| 🟢 | ~~A made font named `X.glyphs.json` clashes with the font maps beside fonts (`ReadFolder` matches `Path.GetExtension`, `.json`)~~ | `src/Idrak.Abstraction/Data/Fonts.cs:244` | Gone: a made font is a `.ttf`, `.otf`, `.woff` or `.woff2` (owner, 2026-11-18), no Idrak-only file |
+| 🟢 | ~~A format decides from 16 bytes; every JSON file starts with `{`~~ | `src/Idrak.Abstraction/Data/Fonts.cs:161` | Gone with it: the common formats have their own signatures (`0x00010000`, `OTTO`, `wOFF`, `wOF2`) |
+| 🟡 | `IFontFormat` reads only; a made font must be written | `src/Idrak.Abstraction/Data/Fonts.cs:134` | Plan 28 D8: `IFontWriter` / `FontWriters` ("truetype", "opentype-cff", "woff", "woff2"), and `woff` / `woff2` readers |
+| 🟢 | ~~The map beside `X.glyphs.json` would be `X.glyphs.map.json`~~ | `src/Idrak.Abstraction/Data/FontMaps.cs:917` | Gone: `FONT.ttf` and `FONT.map.json`, as for any font; a made font needs no map once written (its layout tables are in the file) |
 | 🟡 | `FontMap` is made only from JSON (`Read`, `Parse`), with no builder | `src/Idrak.Abstraction/Data/FontMaps.cs:244-254` | F3 writes the map as JSON bytes and parses them, or adds a builder |
 | 🟡 | `salt` / `aalt` (alternate glyphs) are not in the map's keys | `src/Idrak.Abstraction/Data/FontMaps.cs:177` | F3: several fills of a character as a map key, or a random pick per glyph |
 | 🟡 | No PDF anywhere in `src/` | — | Plan 28 (D0-D7), finished before this plan |
@@ -83,20 +84,23 @@ first.
 - **PDF is built in, read and written, vector and image pages,** and lives in [plan 28](28-documents.md) (the document
   contract, the reader and writer in `Idrak.Data/Pdf/`, the page drawer in Idrak.Imaging). This plan's PDF needs moved
   there ("Plan 38's needs").
-- **Plan 28 first.** Plan 28 is built and finished before this plan starts, so no phase here waits on PDF.
+- **Plan 28 first, for any workload.** Plan 28 is built and finished (all its phases, D0-D13) before this plan starts,
+  however long it takes, so no phase here waits on PDF or on font writing.
+- **A made font is exported in a common format:** TrueType (`.ttf`), OpenType (`.otf`), WOFF or WOFF2, through plan 28's
+  `FontWriters` (D8). This replaces the proposed Idrak-only JSON file ("glyphs" format): there is none.
 
 **Proposed, for the owner to confirm:**
 
-1. **No font-file writer.** A made font is kept in Idrak's own file, a JSON of outlines and their characters ("glyphs"
-   format), read by a built-in `IFontFormat`, so `--fonts DIR` takes it beside `.ttf` files. Its name is open question
-   1 (the `.json` clash above). Writing TrueType (glyf, cmap, hmtx, GSUB...) is several times the work and is not needed
-   to draw pages; it can be a later phase if a made font must leave Idrak. A made font still goes into a PDF: plan 28's
-   writer embeds any `IFontFace`.
+1. **The made font is the exported file.** The face F3 makes (outlines, metrics, and the GSUB / GDEF / GPOS its font map
+   made) is written straight to `.ttf` (default) or `.otf`, `.woff`, `.woff2`, and read back by `FontFormats` like any
+   font, so `--fonts DIR`, other software and the web take it with nothing else changed. Several fills of a character
+   go in as alternates (`salt` and `aalt` in the written GSUB, and a random pick per glyph in Idrak, a setting); the
+   family and style names are what the user gives (`--name`), nothing invented.
 2. **Language-neutral.** The library knows sheets, cells, ink, outlines, characters and joining forms. Which characters
    and forms a sheet asks for is data (a character list per sheet, e.g. one script's letters in their four forms,
    digits, marks); no C# names a script.
-3. **Placement:** the contracts in `Idrak.Abstraction.Data` (any package can use them); tracer, face and format in
-   Idrak.Imaging beside the fonts; finding glyphs on a page in Idrak.Vision, which already segments; the commands in
+3. **Placement:** the contracts in `Idrak.Abstraction.Data` (any package can use them); tracer and made face in
+   Idrak.Imaging beside the fonts and their writers; finding glyphs on a page in Idrak.Vision, which already segments; the commands in
    Idrak.Cli.Commands.
 
 ## Rules that hold for every phase
@@ -126,12 +130,11 @@ CLAUDE.md and [docs/optimization.md](../../docs/optimization.md) apply in full. 
 - `IOutlineTracer : IConfigurableKind`: coverage to a `GlyphOutline` (font units, y up, one winding), with the tolerance
   it promises. Built-in: "contour" (F1).
 - A face made from glyphs (`IFontFace`): characters, outlines, advances, metrics; the shaping tables come from the font
-  maps (F3).
-- `IFontFormat` "glyphs": reads the made font's file, and a writing side for it (gap above); `ReadFolder` and `Accepts`
-  made to tell it from a font map (gaps above).
+  maps (F3); written through plan 28's `FontWriters` (D8), read back through `FontFormats`.
 - Suites: tracer (a drawn outline rasterized and traced back stays within the promised tolerance; one winding; holes
-  kept), glyph source (every glyph labelled once, inside its cell or its component), the "glyphs" format (round trip,
-  and a fonts folder holding `.ttf`, `.map.json` and made fonts reads each as what it is).
+  kept), glyph source (every glyph labelled once, inside its cell or its component), the made face (written as `.ttf`
+  and each other format, read back: outlines, advances, characters and shaping kept; a fonts folder holding `.ttf`,
+  `.map.json` and made fonts reads each as what it is).
 
 ### F1: the tracer ("contour")
 
@@ -160,8 +163,10 @@ Metrics from the sheet's guides (baseline, x-height, ascender and descender from
 from each glyph's ink; joining forms and two-letter ligatures as the sheet labelled them, given to a font map (glyphs
 by `#id`) so `FontMappers` "opentype" makes the GSUB / GDEF / GPOS that shape it; marks anchored from the ink as the map
 does; whatever the sheet lacks drawn by `DrawnGlyphs` from pen strokes measured from the written glyphs (the map's
-`measure`). Several fills of the same character are kept as alternates (a map key for them, or a random pick per glyph,
-a setting), so a made font does not repeat one shape; `GlyphPoses` still varies each drawn glyph on top.
+`measure`). Several fills of the same character are kept as alternates (`salt` / `aalt` in the written GSUB, and a
+random pick per glyph in Idrak, a setting), so a made font does not repeat one shape; `GlyphPoses` still varies each
+drawn glyph on top. The face is then written through `FontWriters` (plan 28 D8): `.ttf` by default, or `.otf`, `.woff`,
+`.woff2`.
 
 ### F4: glyphs from real scans with their transcription
 
@@ -181,22 +186,24 @@ only after F4, and only kept where its glyphs make better pages than a sheet's.
 
 - `idrak data font-sheet --chars FILE -o test-output\fonts\sheet.pdf|sheet.png` (the blank sheet; the character list as
   data; PDF through plan 28's writer).
-- `idrak data font-from IMAGES|PDFS... --source sheet|cells [--text FILE] -o test-output\fonts\FONT` (live progress:
+- `idrak data font-from IMAGES|PDFS... --source sheet|cells [--text FILE] --name FAMILY
+  -o test-output\fonts\FONT.ttf|.otf|.woff|.woff2` (the format from the extension, through `FontWriters`; live progress:
   pages read, glyphs found, traced, left out and why).
-- `idrak data synth --fonts DIR` reads made fonts beside `.ttf` (through the "glyphs" format, nothing else changes); its
-  help lists the made font's extension.
+- `idrak data synth --fonts DIR` reads made fonts like any `.ttf` or `.otf` (nothing else changes); its help lists
+  `.woff` and `.woff2` once plan 28's D8 reads them.
 - `idrak data fonts DIR` shows a made font's coverage like any other.
 
 ## Not in this plan
 
-Writing TrueType or OpenType files; a model that generates new handwriting (that is plan 20's kind of work); recognizing
-text it is not given (F4 and F5 need the transcription); reading, writing or drawing PDF (plan 28, finished first).
+A model that generates new handwriting (that is plan 20's kind of work); recognizing text it is not given (F4 and F5
+need the transcription); writing font files (plan 28's D8) and reading, writing or drawing PDF (plan 28), both
+finished first.
 
 ## Open questions for the owner
 
-1. The made font's file: Idrak's own JSON (proposed), or TrueType too? And its name, given the `.json` clash: `FONT.glyphs`
-   (one extension, a fixed signature at its start) or `FONT.glyphs.json` (with `ReadFolder` matching two-part
-   extensions)?
+1. ~~The made font's file~~: answered 2026-11-18: exported in a common format (TrueType, OpenType, WOFF, WOFF2) through
+   plan 28's D8; no Idrak-only file. Proposal 1 (the exported file is the made font, `.ttf` by default) awaits
+   confirmation.
 2. Which character list goes on the first sheet (letters in their four forms, both digit sets, marks, punctuation)?
 3. The first real scans for F4: which of the owner's crops under `test-output\` (generic ones: digits in a table's
    cells, unjoined letters)?

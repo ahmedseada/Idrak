@@ -375,25 +375,33 @@ No leftovers.
 
 ## Plan 28: documents ([28-documents.md](opened/28-documents.md))
 
-**Status:** Not started. **Where it stands:** Planned, nothing built — planned 2026-10-22 against 99872b8, widened 2026-11-18 against da19bfc (owner: PDF read and written, vector and image pages, finished before plan 38; plan 38's PDF needs moved here); no phase started ("No phase starts before the owner names it"); no `IDocumentFormat` and no PDF code in `src/` (checked).
+**Status:** Not started. **Where it stands:** Planned, nothing built — planned 2026-10-22 against 99872b8, widened 2026-11-18 against da19bfc (owner: PDF read, written, edited and signed, vector and image pages, forms and annotations, fonts written as TTF/OTF/WOFF/WOFF2, samples in the ignored `test-output/`, finished for any workload before plan 38; plan 38's PDF needs moved here; worked on the branch `documents` from `migration`); no phase started ("No phase starts before the owner names it"); no `IDocumentFormat` and no PDF code in `src/` (checked).
 **Owner's runs:** none.
 
 | # | Leftover | Kind | From |
 |---|---|---|---|
-| 28.1 | Phase D0, not started: the contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`, `IDocumentPageDrawer`, `DocumentPageDrawers`; C1-C17), the `lines` and `content` layouts, `DocumentFormatSuite`, `DocumentWriterSuite`, `DocumentPageDrawerSuite`, a toy format and writer from `Idrak.PluginTests`. | feature | Phase D0 |
+| 28.1 | Phase D0, not started: the contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`, `IDocumentPageDrawer`, `DocumentPageDrawers`, `IFontWriter`, `FontWriters`; C1-C25), the `lines` and `content` layouts, `DocumentFormatSuite`, `DocumentWriterSuite`, `DocumentPageDrawerSuite`, `FontWriterSuite`, a toy format and writer from `Idrak.PluginTests`. | feature | Phase D0 |
 | 28.2 | Phase D1, not started: PDF the file (lexer, cross-references and streams, object streams, incremental updates, repair, filters, limits, document information). | feature | Phase D1 |
 | 28.3 | Phase D2, not started: PDF encryption (standard handler revisions 2-6: RC4, AES-128, AES-256; empty or given password). | feature | Phase D2 |
 | 28.4 | Phase D3, not started: PDF text (pages, the content interpreter, fonts to Unicode, widths, runs with boxes, the `lines` layout). | feature | Phase D3 |
 | 28.5 | Phase D4, not started: PDF images and embedded files. | feature | Phase D4 |
-| 28.6 | Phase D5, not started: the fixture generator, docs, and the owner's `documents real:` group. | feature | Phase D5 |
+| 28.6 | Phase D5, not started: the sample generator (writing into the ignored `test-output/documents/samples/`, PyPI versions pinned), docs, and the owner's `documents real:` group. | feature | Phase D5 |
 | 28.7 | ~~Decision 5: text and images first, no rendering.~~ Answered 2026-11-18 by decisions 7-9: read and write, vector and image pages, pages drawn to pixels (D6, D7). | question (answered) | Questions for the owner (1) |
 | 28.8 | Decision 6: the contract, the reader and the writer; users later except plan 38's. Confirm, or name the first user to add. | question | Questions for the owner (2) |
-| 28.9 | Forms, annotations, signatures and editing in place: in "finished for good", or a later plan? (open question 1 of 2026-11-18) | question | Questions for the owner (3) |
-| 28.10 | The Office plug-in's package name (`Idrak.Data.Plugins` proposed) and the variable names in C8, C15 and C16. | question | Questions for the owner (4) |
+| 28.9 | ~~Forms, annotations, signatures and editing in place: in or later?~~ Answered 2026-11-18: in (decision 10; D9-D12). | question (answered) | Questions for the owner (3) |
+| 28.10 | The Office plug-in's package name (`Idrak.Data.Plugins` proposed) and the variable names in C8, C15, C16 and C18. | question | Questions for the owner (4) |
 | 28.11 | Phase D6, not started: PDF writing (image, vector and text pages, fonts embedded and subset, searchable hidden text, the same bytes from the same input, a `jpeg` encoder registered in `ImageEncoders`). | feature | Phase D6 |
 | 28.12 | Phase D7, not started: PDF vector content read, pages drawn to pixels (the `coverage` drawer in `Idrak.Imaging`, a Type 1 font reader, Type 3 glyphs, shadings, transparency, a fill rule on the rasterizer, `Homography` / `Warp` shared). | feature | Phase D7 |
-| 28.13 | Reference reader and renderer from PyPI in `tools/documents/` for D6 and D7's expected results: agreed? (open question 2) | question | Open questions (2) |
-| 28.14 | The writer's default image encoding: `Auto` or always `Flate`? (open question 3) | question | Open questions (3) |
+| 28.13 | ~~Reference reader and renderer from PyPI: agreed?~~ Answered 2026-11-18: agreed, their samples under the ignored `test-output/` (decision 13). | question (answered) | Open questions (2) |
+| 28.14 | ~~The writer's default image encoding~~ Answered 2026-11-18: `Auto` (decision 11). | question (answered) | Open questions (3) |
+| 28.15 | Phase D8, not started: fonts written (`truetype`, `opentype-cff`, `woff`, `woff2`) and WOFF / WOFF2 read, subsetting with layout closure; D6 embeds and plan 38 exports through it. | feature | Phase D8 |
+| 28.16 | Phase D9, not started: forms (every field kind read, filled, created, flattened; appearances generated; XFA data read). | feature | Phase D9 |
+| 28.17 | Phase D10, not started: annotations (every kind read, drawn, created, removed; redaction applied), links, bookmarks, destinations, page labels, the `tagged` layout. | feature | Phase D10 |
+| 28.18 | Phase D11, not started: editing in place (incremental updates, rewrite, page operations, merge and split, saved with AES-256). | feature | Phase D11 |
+| 28.19 | Phase D12, not started: signatures read and checked (CMS, chain, timestamps, revocation from the file) and signing (PAdES B-B, B-T, B-LT). | feature | Phase D12 |
+| 28.20 | Phase D13, not started: any workload (`idrak bench documents`, large and many files, bounded memory, the owner's real files written back and drawn). | feature | Phase D13 |
+| 28.21 | Signing's trust by default: only the app's certificates (proposed), or the machine's store too? (open question 4) | question | Open questions (4) |
+| 28.22 | Redaction as a CLI command too, or a library call only? (open question 5) | question | Open questions (5) |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 
