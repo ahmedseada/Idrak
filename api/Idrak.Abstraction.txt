@@ -2116,6 +2116,10 @@ public readonly record struct Idrak.Abstraction.Data.ImageInfo : System.IEquatab
   public int Width { get; init; }
   public string Format { get; init; }
 
+public static class Idrak.Abstraction.Data.ImageThresholds
+  public const float OtsuLeast = 0.1f
+  public static float Otsu(System.ReadOnlySpan<float> values)
+
 public enum Idrak.Abstraction.Data.ImageTransformInput : int
   Choice = 2
   Integer = 1
@@ -2239,6 +2243,7 @@ public class Idrak.Abstraction.Data.OutlineTracerSettings
   public static Idrak.Abstraction.Data.OutlineTracerSettings None { get; }
 
 public static class Idrak.Abstraction.Data.OutlineTracers
+  public const string Contour = "contour"
   public static Idrak.Abstraction.Data.IOutlineTracer Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Data.IOutlineTracer? Default(string name)
   public static Idrak.Abstraction.Data.IOutlineTracer? Find(System.ReadOnlySpan<char> name)

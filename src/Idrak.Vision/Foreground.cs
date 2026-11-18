@@ -74,45 +74,10 @@ public static class Foreground
 
     /// <summary>
     /// Otsu's threshold of values in [0, 1]: the level that best separates their histogram (256 bins) into two groups,
-    /// at least 0.1 so a blank image does not turn noise into foreground.
+    /// at least 0.1 so a blank image does not turn noise into foreground (<see cref="ImageThresholds.Otsu"/>, shared with
+    /// the packages that cut ink from paper without Idrak.Vision).
     /// </summary>
-    public static float Otsu(ReadOnlySpan<float> values)
-    {
-        Span<int> histogram = stackalloc int[256];
-        histogram.Clear();
-        foreach (float v in values)
-        {
-            histogram[Math.Clamp((int)(v * 255f), 0, 255)]++;
-        }
-
-        double total = values.Length, sum = 0;
-        for (int i = 0; i < 256; i++)
-        {
-            sum += i * (double)histogram[i];
-        }
-
-        double backgroundSum = 0, best = -1;
-        long backgroundCount = 0;
-        int level = 128;
-        for (int i = 0; i < 256; i++)
-        {
-            backgroundCount += histogram[i];
-            if (backgroundCount == 0 || backgroundCount == total)
-            {
-                continue;
-            }
-
-            backgroundSum += i * (double)histogram[i];
-            double meanBack = backgroundSum / backgroundCount, meanFore = (sum - backgroundSum) / (total - backgroundCount);
-            double between = backgroundCount * (total - backgroundCount) * (meanBack - meanFore) * (meanBack - meanFore);
-            if (between > best)
-            {
-                (best, level) = (between, i);
-            }
-        }
-
-        return Math.Max((level + 1) / 255f, 0.1f);   // bins up to `level` are background: values below (level + 1) / 255
-    }
+    public static float Otsu(ReadOnlySpan<float> values) => ImageThresholds.Otsu(values);
 
     private static double Mean(float[] values)
     {

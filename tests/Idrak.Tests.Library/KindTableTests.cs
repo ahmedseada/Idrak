@@ -209,7 +209,7 @@ internal abstract partial class Tests
             ("TextBindings", None, TextBindings.Names, $"Text binding '{None}' is not registered (registered: {Listed(TextBindings.Names)}); add it with TextBindings.Register.",
                 () => TextBindings.Get(None)),
             ("OutlineTracers", None, OutlineTracers.Names,
-                $"Outline tracer '{None}' is not registered (registered: {(OutlineTracers.Names.Count == 0 ? "none" : Listed(OutlineTracers.Names))}); add it with OutlineTracers.Register, or reference a package that registers it.",
+                $"Outline tracer '{None}' is not registered (registered: {(OutlineTracers.Names.Count == 0 ? "none" : Listed(OutlineTracers.Names))}); add it with OutlineTracers.Register, or reference a package that registers it (Idrak.Imaging registers contour).",
                 () => OutlineTracers.Get(None)),
             ("GlyphSources", None, GlyphSources.Names,
                 $"Glyph source '{None}' is not registered (registered: {(GlyphSources.Names.Count == 0 ? "none" : Listed(GlyphSources.Names))}); add it with GlyphSources.Register, or reference a package that registers it.",

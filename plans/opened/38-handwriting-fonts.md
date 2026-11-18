@@ -13,7 +13,7 @@ however long it takes (owner, 2026-11-18): this plan waits until every plan 28 p
 | Phase | What | Lane | Needs | State |
 |---|---|---|---|---|
 | F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs (written through plan 28's `FontWriters`), their suites | A | plan 28 D8 | Built (2026-11-18) |
-| F1 | The tracer: a glyph's pixels to an outline (contours, simplified, curves fitted, one winding) | A | F0 | Planned |
+| F1 | The tracer: a glyph's pixels to an outline (contours, simplified, curves fitted, one winding) | A | F0 | Built (2026-11-18) |
 | F2 | The glyph sheet: a blank sheet drawn by the shape pipeline (PNG and PDF), the filled sheet read back from an image or a PDF (found, straightened, cut, cleaned, traced) | A | F1; plan 28 D4, D6, D7 | Planned |
 | F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Planned |
 | F4 | Glyphs from real scans with their transcription: separate characters (digits in cells, unjoined letters) | B | F1, F3; plan 28 D4, D7 for PDF scans | Planned |
@@ -203,6 +203,67 @@ Threshold the coverage (setting; `Foreground.Otsu` as the measured default), fin
 marching squares), keep holes as opposite contours, simplify (Douglas-Peucker, tolerance a setting), fit quadratic
 curves where the boundary bends smoothly, corners where it turns sharply (angle a setting), scale to font units. Tested
 on outlines from repo fonts: rasterize ("coverage"), trace, rasterize again, compare pixels.
+
+**As built (2026-11-18):**
+- **The tracer** "contour" (`ContourTracer`, `src/Idrak.Imaging/ContourTracer.cs`, internal; `OutlineTracers.Contour`),
+  a library default registered by Idrak.Imaging (one line in `LibraryRegistrations`), pure C#. Its options, read once:
+  `trace-threshold` (the ink level: `auto`, Otsu's level of the coverage kept from 0.1 to 0.9, the default; or 0.01 to
+  0.99), `trace-simplify` (the simplification tolerance, pixels: 0.5, from 0 to 8), `trace-corner` (degrees: 60, from 0
+  to 180), `trace-smoothing` (the length, pixels, over which the boundary's direction is measured either side of a point,
+  for its corners and its curves' tangents: 1.5, from 0.5 to 16); a key it does not take or a value out of range is
+  refused naming it. The boundary in one pass over the rows (marching squares between pixel centres, two rows of
+  coverage at a time, the row above's crossings carried along; each crossing placed between its two pixels by their
+  coverage; a cell whose opposite corners are ink joined when its middle is); each contour walked once with the ink on
+  its right, so outer contours turn clockwise in font units and holes the other way (one winding). Corners: a turn of at
+  least the corner angle within the smoothing length, the sharpest there. Between corners, Douglas-Peucker's splits: a
+  piece is a line when its chord holds every boundary point within the tolerance, else a quadratic curve whose control
+  point is where the tangents at its ends meet (curves meet smoothly away from corners), held within the tolerance both
+  ways, else split at its farthest point; a piece is kept only when no pixel centre beside it changes side. A last check
+  of every pixel centre the outline can reach (its winding row by row, curves crossed exactly) splits any piece that
+  misplaces one: filled, the outline holds exactly the pixel centres whose coverage reaches the level. Placed in font
+  units through the `OutlinePlacement`. Every buffer rented and returned; no state, so glyphs trace from several threads.
+- **The tolerance it promises:** the simplification plus the most the level's edge strays from a straight edge's
+  half-ink line, `0.1 + 1.5 d + 2 d²` (d the level's distance from 0.5; `auto` at its farthest, 0.4), bounding what was
+  measured over every angle on exact coverage (0.086 px at 0.5, 0.24 at 0.4 and 0.6, 0.61 at 0.2 and 0.8, 0.87 at 0.1
+  and 0.9, 1.30 at 0.01 and 0.99): 1.52 px by default, 0.60 at the level 0.5. Sharp tips and strokes thinner than a pixel
+  move further with a level away from the half. Met: drawn again, the glyphs below differ by 0.08 to 0.16 pixels of ink
+  per pixel of edge.
+- **The threshold moved:** Otsu's method from Idrak.Vision's `Foreground` to `ImageThresholds.Otsu`
+  (`src/Idrak.Abstraction/Data/ImageThresholds.cs`, with `OtsuLeast`, 0.1), the lowest place Idrak.Imaging and
+  Idrak.Vision both reach; `Foreground.Otsu` calls it, the code unchanged; proven bit for bit against the method written
+  out as loops, and by Vision's groups that use it (foreground, framing, region classifier, line segmentation).
+- **The registry:** its docs name "contour"; a name nobody registered is refused with "(Idrak.Imaging registers
+  contour)"; `IOutlineTracer` and `OutlineTracers` are on `tests/Idrak.Tests/data/shared-contracts.txt` (decision 10:
+  used by Idrak.Imaging alone today, kept in Idrak.Abstraction for the glyph sources of F2 and F4 and the command line of
+  F6). The API dump (`Idrak.Abstraction`) and the inventory regenerated through the runner.
+- **Tests,** in the group `outline tracers` (five new): the time and allocation per glyph and the points before and after
+  simplification, measured; the options, their refusals and the promise; the tracer suite with its defaults and three
+  other settings on the suite's shapes and the glyphs of DejaVu, Amiri, Reem Kufi and Cairo; the round trip of those
+  glyphs at 24, 48 and 96 px per em under three settings (848,638 pixel centres each inside exactly when its coverage
+  reaches the level, 746 on the edge itself left out; one winding; holes kept turning the other way; the coverage drawn
+  again within the promise along the outline's length; fewer points than the traced boundary); Otsu's results unchanged.
+  One build (clean, no warning), one run on the CPU with `outline tracers|made fonts|kind table:|conformance kit:|public
+  API|abstraction inventory|outside plug-in: an outline tracer|override loop:|vision: foreground|vision:
+  ContentFrame|vision: RegionClassifier|generic components: line segmentation` and the update flags: 45 tests, 44 passed,
+  1 failed (decision 10, the contracts used by Idrak.Imaging alone; fixed by the shared-contracts lines, a data file);
+  the same filter again (the inventory flag set): 45 passed, none failed.
+- **Measured** (this 4-core x64 container, 96 px per em, 20 glyphs of DejaVu and Amiri: a sheet cell of about 120 pixels):
+  the first trace of the process 14.8 ms and 24,000 bytes (compiling); warm 367 µs and 852 bytes a glyph (the outline's
+  own arrays 660 bytes; the working buffers are rented and returned); 378 points per outline as traced, 63 simplified
+  (6.0x fewer). Over the four fonts: 88 to 28 points a glyph at 24 px per em, 172 to 41 at 48, 332 to 60 at 96.
+- **Decided here (the plan did not say):** the keys carry `trace-` (a glyph source's own options sit beside them);
+  `auto` keeps Otsu's level from 0.1 to 0.9 (a level near 0 or 1 strays far, and 1 cuts float coverage apart); the
+  smoothing setting measures directions and moves no point, so the promise holds; specks are kept (F2 cleans them).
+- **Left:** the Idrak.Imaging README's fonts row does not name the tracer yet (it is the row the TrueType writer's piece
+  edits; one line for the merge). The warm time was not profiled further; F2 traces a sheet's cells in parallel (rule 79).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "outline tracers|made fonts|kind table:|conformance kit:|public API|abstraction inventory|outside plug-in: an outline tracer|override loop:|vision: foreground|vision: ContentFrame|vision: RegionClassifier|generic components: line segmentation"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-p38f1.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ### F2: the glyph sheet
 

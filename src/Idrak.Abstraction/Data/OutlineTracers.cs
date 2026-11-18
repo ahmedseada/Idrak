@@ -196,13 +196,18 @@ public interface IOutlineTracer : IConfigurableKind
 }
 
 /// <summary>
-/// The outline tracers, by name (ignoring case). None is built in yet; a package registers its own with
-/// <see cref="Register"/>, and one registered under a library name shadows the library's, which <see cref="Unregister"/>
-/// brings back, guarded by its <see cref="SetPolicy">policy</see>.
+/// The outline tracers, by name (ignoring case). Built in (Idrak.Imaging): "contour" (<see cref="Contour"/>: the ink's
+/// edge at a level, Otsu's unless set, traced in one pass, simplified into lines and quadratic curves with its corners
+/// kept). A package registers its own with <see cref="Register"/>, and one registered under a library name shadows the
+/// library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
 public static class OutlineTracers
 {
-    private static readonly KindTable<IOutlineTracer> Table = new(nameof(OutlineTracers), "Outline tracer", "add it with OutlineTracers.Register, or reference a package that registers it",
+    /// <summary>The library's tracer (Idrak.Imaging): the ink's edge at a level, simplified into lines and quadratic curves, its corners kept.</summary>
+    public const string Contour = "contour";
+
+    private static readonly KindTable<IOutlineTracer> Table = new(nameof(OutlineTracers), "Outline tracer",
+        "add it with OutlineTracers.Register, or reference a package that registers it (Idrak.Imaging registers contour)",
         (slot, app, library) => new GuardedTracer(slot, app, library), StringComparer.OrdinalIgnoreCase);
 
     static OutlineTracers() => LibraryDefaults.Ensure(typeof(OutlineTracers));
