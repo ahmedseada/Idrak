@@ -584,21 +584,25 @@ No leftovers.
 
 ## Plan 28: documents ([28-documents.md](opened/28-documents.md))
 
-**Status:** Not started. **Where it stands:** Planned, nothing built — planned 2026-10-22 against 99872b8; no phase started ("No phase starts before the owner names it"); no `IDocumentFormat` in `src/` (checked).
+**Status:** Not started. **Where it stands:** Planned, nothing built — planned 2026-10-22 against 99872b8, widened 2026-11-18 against da19bfc (owner: PDF read and written, vector and image pages, finished before plan 38; plan 38's PDF needs moved here); no phase started ("No phase starts before the owner names it"); no `IDocumentFormat` and no PDF code in `src/` (checked).
 **Owner's runs:** none.
 
 | # | Leftover | Kind | From |
 |---|---|---|---|
-| 28.1 | Phase D0, not started: the contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`), the `lines` and `content` layouts, `DocumentFormatSuite`, a toy format from `Idrak.PluginTests`. | feature | Phase D0 |
+| 28.1 | Phase D0, not started: the contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`, `IDocumentPageDrawer`, `DocumentPageDrawers`; C1-C17), the `lines` and `content` layouts, `DocumentFormatSuite`, `DocumentWriterSuite`, `DocumentPageDrawerSuite`, a toy format and writer from `Idrak.PluginTests`. | feature | Phase D0 |
 | 28.2 | Phase D1, not started: PDF the file (lexer, cross-references and streams, object streams, incremental updates, repair, filters, limits, document information). | feature | Phase D1 |
 | 28.3 | Phase D2, not started: PDF encryption (standard handler revisions 2-6: RC4, AES-128, AES-256; empty or given password). | feature | Phase D2 |
 | 28.4 | Phase D3, not started: PDF text (pages, the content interpreter, fonts to Unicode, widths, runs with boxes, the `lines` layout). | feature | Phase D3 |
 | 28.5 | Phase D4, not started: PDF images and embedded files. | feature | Phase D4 |
 | 28.6 | Phase D5, not started: the fixture generator, docs, and the owner's `documents real:` group. | feature | Phase D5 |
-| 28.7 | Decision 5: text and images first, no rendering. Confirm, or add rendering. | question | Questions for the owner (1) |
-| 28.8 | Decision 6: only the contract and the reader, users of it later. Confirm, or name the first user to add. | question | Questions for the owner (2) |
-| 28.9 | Forms and annotations: later (as planned), or with D3? | question | Questions for the owner (3) |
-| 28.10 | The Office plug-in's package name (`Idrak.Data.Plugins` proposed) and the variable names in C8. | question | Questions for the owner (4) |
+| 28.7 | ~~Decision 5: text and images first, no rendering.~~ Answered 2026-11-18 by decisions 7-9: read and write, vector and image pages, pages drawn to pixels (D6, D7). | question (answered) | Questions for the owner (1) |
+| 28.8 | Decision 6: the contract, the reader and the writer; users later except plan 38's. Confirm, or name the first user to add. | question | Questions for the owner (2) |
+| 28.9 | Forms, annotations, signatures and editing in place: in "finished for good", or a later plan? (open question 1 of 2026-11-18) | question | Questions for the owner (3) |
+| 28.10 | The Office plug-in's package name (`Idrak.Data.Plugins` proposed) and the variable names in C8, C15 and C16. | question | Questions for the owner (4) |
+| 28.11 | Phase D6, not started: PDF writing (image, vector and text pages, fonts embedded and subset, searchable hidden text, the same bytes from the same input, a `jpeg` encoder registered in `ImageEncoders`). | feature | Phase D6 |
+| 28.12 | Phase D7, not started: PDF vector content read, pages drawn to pixels (the `coverage` drawer in `Idrak.Imaging`, a Type 1 font reader, Type 3 glyphs, shadings, transparency, a fill rule on the rasterizer, `Homography` / `Warp` shared). | feature | Phase D7 |
+| 28.13 | Reference reader and renderer from PyPI in `tools/documents/` for D6 and D7's expected results: agreed? (open question 2) | question | Open questions (2) |
+| 28.14 | The writer's default image encoding: `Auto` or always `Flate`? (open question 3) | question | Open questions (3) |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 
