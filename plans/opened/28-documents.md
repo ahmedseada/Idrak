@@ -1,7 +1,8 @@
 # Plan 28: documents (a document contract, PDF read and written built in, vector and image pages, Office as a plug-in later)
 
-**In progress (on the branch `documents`).** Built: D0 (the contract, 2026-11-18); D5's first piece (the sample
-generator and the D1-D4 samples). Running: D5's second piece (the D6-D13 samples), D1 (the file).
+**In progress (on the branch `documents`).** Built 2026-11-18: D0 (the contract), D1 (the file), and D5's sample
+generator with every phase's samples (D1-D13) and the checkers. Nothing running: the owner paused the work after D1
+("wait for me"); no phase starts before the owner names it. Next in the order: D3 and D2, D8.
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
@@ -19,7 +20,7 @@ Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Planned |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
-| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (generator and D1-D4 samples built; D6-D13 samples running) |
+| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
 | D8 | Fonts written and read in the common formats: TrueType (`.ttf`), OpenType CFF (`.otf`), WOFF, WOFF2; subsetting (D6 embeds through it; plan 38 exports through it) | B | Planned |
