@@ -75,12 +75,16 @@ def pdfminer_text(path, password):
     return pages
 
 
-def pdfium_run(path, password, dpi=DPI):
-    """Text, character boxes and renders of every page pdfium loads; the pages it cannot load are listed."""
+def pdfium_run(path, password, dpi=DPI, forms=False):
+    """Text, character boxes and renders of every page pdfium loads; the pages it cannot load are listed. `forms`
+    starts pdfium's form environment first, so form fields are drawn as a viewer draws them (appearances made for
+    fields without one when the form asks with /NeedAppearances)."""
     import pypdfium2 as pdfium
     import pypdfium2.raw as raw
 
     doc = pdfium.PdfDocument(path, password=password or None)
+    if forms:
+        doc.init_forms()
     pages, errors = [], []
     try:
         count = len(doc)
@@ -106,6 +110,52 @@ def pdfium_run(path, password, dpi=DPI):
     finally:
         doc.close()
     return {"pageCount": count, "pages": pages, "errors": errors}
+
+
+def light_check(path, exp, notes, label):
+    """The large set's reference check (no renders kept, nothing slow): qpdf opens the file and counts its pages,
+    pdfium counts them and draws the first page at a low DPI, pdfminer.six reads the text of the pages the JSON lists
+    (`checks.textPages`), which must equal the expected text."""
+    import pikepdf
+    import pypdfium2 as pdfium
+
+    out = {"qpdf": {"opened": False}, "pdfium": {"opened": False}, "pdfminer": {"opened": False}}
+    try:
+        with pikepdf.open(path) as pdf:
+            out["qpdf"] = {"opened": True, "pages": len(pdf.pages)}
+    except Exception as e:  # noqa: BLE001 - recorded
+        out["qpdf"]["error"] = _msg(e, path)
+    try:
+        doc = pdfium.PdfDocument(path)
+        try:
+            n = len(doc)
+            page = doc[0]
+            bitmap = page.render(scale=24 / 72)
+            out["pdfium"] = {"opened": True, "pageCount": n, "firstPageDrawn": [bitmap.width, bitmap.height]}
+            page.close()
+        finally:
+            doc.close()
+    except Exception as e:  # noqa: BLE001 - recorded
+        out["pdfium"]["error"] = _msg(e, path)
+    pages = (exp.get("checks") or {}).get("textPages") or []
+    if pages:
+        _quiet_logs()
+        from pdfminer.high_level import extract_text
+
+        mismatches = []
+        for index, want in pages:
+            got = extract_text(path, page_numbers=[index])
+            if " ".join(got.split()) != " ".join(want.split()):
+                mismatches.append({"page": index, "pdfminer": got.strip()[:200]})
+        out["pdfminer"] = {"opened": True, "pagesRead": len(pages), "mismatches": mismatches}
+    else:
+        out["pdfminer"] = {"run": False, "why": "no page of text listed (checks.textPages is empty)"}
+    for tool in ("qpdf", "pdfium"):
+        if not out[tool].get("opened"):
+            notes.append(f"{label}: {tool} could not open it: {out[tool].get('error')}")
+    if out["pdfminer"].get("mismatches"):
+        notes.append(f"{label}: pdfminer.six's text differs on {len(out['pdfminer']['mismatches'])} page(s)")
+    return out
 
 
 def _strip_path(text, path):

@@ -18,6 +18,7 @@ import math
 
 from .filters import flate
 from .pdf import N, PdfFile, Stream, String, U16, Writer, escape_literal, fmt_num, ser
+from .vector import VectorContent, new_vstate
 
 IDENT = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
@@ -60,6 +61,9 @@ class Page:
         self.order = 0
         self.annotations = []
         self.issues = {}
+        self.paths = []  # vector content (D7): painted paths, clips and shadings, as vector.py records them
+        self.clips = []
+        self.shadings = []
 
     def next_order(self):
         self.order += 1
@@ -99,9 +103,12 @@ class Page:
         self.lines.append({"text": text, "direction": direction})
 
 
-class Content:
-    def __init__(self, page, ctm, resources=None):
+class Content(VectorContent):
+    def __init__(self, page, ctm, resources=None, vstate=None):
         self.page = page
+        self.vs = dict(vstate) if vstate is not None else new_vstate()
+        self.vstack = []
+        self.path_ops = []
         self.resources = resources  # a form's own resources (None: the page's)
         self.ops = []
         self.ctm = ctm
@@ -136,10 +143,12 @@ class Content:
 
     def q(self):
         self.stack.append((self.ctm, self.font, self.size, self.tc, self.tw, self.th, self.tl, self.rise, self.mode))
+        self.vstack.append(dict(self.vs))
         self.emit("q")
 
     def Q(self):
         (self.ctm, self.font, self.size, self.tc, self.tw, self.th, self.tl, self.rise, self.mode) = self.stack.pop()
+        self.vs = self.vstack.pop()
         self.emit("Q")
 
     def cm(self, a, b, c, d, e, f):
@@ -250,6 +259,8 @@ class Content:
         size = self.size * math.hypot(m[2], m[3])
         rec = {"text": "".join(texts), "quads": quads, "origin": origin, "end": end, "font": self.font,
                "size": size, "hidden": self.mode in (3, 7), "glyphs": glyphs, "mode": self.mode}
+        if self.page.doc.vector:
+            rec["vector"] = self.vector_extras()
         if self.span is not None:
             self.span["parts"].append(rec)
         else:
@@ -310,6 +321,11 @@ class Content:
         rec["quad"] = quad
         rec["ctm"] = [r4(v) for v in self.ctm]
         rec["order"] = self.page.next_order()
+        if self.page.doc.vector:
+            extras = self.vector_extras()
+            rec.update({k: extras[k] for k in ("clip", "alpha", "blend")})
+            if info.get("imageMask"):
+                rec["fillColour"] = extras["fillColour"]
         self.page.images.append(rec)
         return rec
 
@@ -332,18 +348,28 @@ class Content:
         return rec
 
     @contextlib.contextmanager
-    def form(self, name, bbox, matrix=IDENT, resources=None):
-        """A form XObject drawn here (/name Do); what the block writes into the yielded content is the form's."""
-        child = Content(self.page, mul(matrix, self.ctm), resources if resources is not None else {})
+    def form(self, name, bbox, matrix=IDENT, resources=None, extra=None, draw=True):
+        """A form XObject drawn here (/name Do); what the block writes into the yielded content is the form's. The form
+        starts from this content's graphics state (colours, line state, clip), as a reader's interpreter runs it.
+        `extra` adds entries (a transparency /Group); `draw` False defines the form without drawing it (a soft mask's
+        group): the yielded content then records nothing on the page."""
+        child = Content(self.page, mul(matrix, self.ctm), resources if resources is not None else {}, vstate=self.vs)
+        child.record = draw and getattr(self, "record", True)
+        if child.record and self.page.doc.vector:
+            child.vs["clip"] = self.form_clip(bbox, matrix)
         yield child
         data = child.data()
         d = {"Type": N("XObject"), "Subtype": N("Form"), "BBox": list(bbox), "Resources": child.resources,
              "Filter": N("FlateDecode")}
         if matrix != IDENT:
             d["Matrix"] = list(matrix)
+        if extra:
+            d.update(extra)
         ref = self.page.doc.pdf.add(Stream(d, flate(data), data))
-        self._use("XObject", name, ref)
-        self.emit(f"/{name} Do")
+        child.ref = ref
+        if draw:
+            self._use("XObject", name, ref)
+            self.emit(f"/{name} Do")
 
 
 def run_json(page, rec):
@@ -363,6 +389,8 @@ def run_json(page, rec):
     if rec.get("actualText"):
         out["actualText"] = True
         out["glyphText"] = rec["glyphText"]
+    if rec.get("vector"):
+        out.update(rec["vector"])
     unmapped = sum(1 for g in rec["glyphs"] if g.text == "�")
     if unmapped:
         out["unmappedGlyphs"] = unmapped
@@ -387,6 +415,7 @@ class Doc:
         self.page_tree = None  # a function (doc) -> writes the tree itself
         self.file_id = hashlib.md5(f"{seed}|{name}".encode("utf-8")).digest()
         self.notes = {}
+        self.vector = False  # D6 onwards: each expected page lists its paths, clips and shadings
 
     def font(self, cls, *args, **kw):
         f = cls(self, f"F{len(self.fonts) + 1}", *args, **kw)
@@ -478,5 +507,9 @@ class Doc:
                     "text": "\n".join(line["text"] for line in p.lines), "lines": p.lines,
                     "runs": runs, "images": images,
                     "issues": {"unmappedGlyphs": unmapped, **p.issues}}
+            if self.vector:
+                page["paths"] = p.paths
+                page["clips"] = p.clips
+                page["shadings"] = p.shadings
             out.append(page)
         return out

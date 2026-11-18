@@ -481,6 +481,38 @@ minute. The owner makes them with `python -I tools\documents\make_fixtures.py -o
 `python -m pip install -r tools\documents\requirements.txt`. To come in D5: the samples of D6-D13 (each phase adds a
 `docfixtures/samples_dN.py`, see the README), the `documents real:` group and the docs.
 
+**As built, second piece (2026-11-18): the D6-D13 samples, the checkers, the large set.** 75 more samples (150 in all,
+767 files and the manifest; two runs identical, `--compare` exit 0; about 90 seconds a run), each with its JSON and the
+reference tools' results, the README giving every key the tests read: **D6** the writer's inputs (seven PNGs with
+what `Auto` measures and must choose) and image PDFs as scanners and phones write them; **D7** eleven vector pages (every
+path operator, both fill rules, caps, joins, miter limits, dashes, clips, every colour space and function type, every
+shading type, tiling and shading patterns, ca/CA, the 16 blend modes, a soft mask, isolated and knockout groups, a
+Type 1 font made here from DejaVu Sans' outlines with fontTools' eexec, Type 3, TrueType, Type1C and OpenType CFF,
+images on turned and skewed matrices, turned and cropped pages), each page's paths, clips and shadings by construction
+and every path matched exactly against pdfium's own path objects; **D8** WOFF, WOFF2 (with the glyf/loca and hmtx
+transforms), CFF from TrueType, TrueType from CFF and subsets with and without layout closure of the four test fonts
+whose licences allow it, each with its dump (tables, metrics, cmap, advances, every outline, names, each lookup's
+glyphs) and HarfBuzz's shaping, each passing the OpenType Sanitizer and keeping its source's outlines, advances,
+characters and shaping; **D9** every field kind filled, empty, under /NeedAppearances, inherited, XFA, flattened (pdfium's
+form reading agrees with every field); **D10** every annotation kind with and without appearances, replies, popups,
+links, named destinations, bookmarks, page labels, a tagged page, redaction and its applied result (pdfium agrees with
+every annotation, link, bookmark, label and the structure tree); **D11** classic and stream incremental updates with
+each revision's end, merge inputs whose inherited resource names clash, a stamp, a split, AES-256 with passwords and
+permissions, page operations (qpdf performs each and gives the pages the JSON says); **D12** a test PKI made here (root,
+intermediate, RSA, EC, revoked and timestamp certificates, an untrusted root, two CRLs, an OCSP response, an in-process
+timestamp authority; RSA keys from seeded primes, deterministic ECDSA, a seeded RSA-PSS salt) and 13 signed files
+(PAdES B-B with RSA, RSA-PSS and ECDSA, B-T, B-LT, a revoked signer, a broken digest, a wrong chain, changes after
+certification allowed and not, two signatures, the two legacy SHA-1 forms), each validated by pyHanko exactly as its
+JSON expects (the legacy forms through pyHanko's CMS check, cryptography and pyhanko-certvalidator). **D13**, only with
+`--large`, into `test-output/documents/large` (16 seconds, 1,007 files, two runs identical): 3,000 pages of text and images, 1,000 small files, an A0
+page with a 418 MB image, forms nested 24 deep, with timing-free checks. Two checkers for what Idrak will write:
+`tools/documents/check_written.py` (qpdf, pdfminer.six, pdfium, warnings listed, an expected JSON compared) and
+`tools/documents/check_font.py` (fontTools, the Sanitizer, HarfBuzz, a source compared). New pins: pyHanko 0.38.1,
+pyhanko-certvalidator 0.33.0, asn1crypto 1.5.1, Brotli 1.2.1, opentype-sanitizer 9.2.0 and their dependencies. The
+reference tools' gaps found are in the README (pdfium ignores knockout groups and has no XFA; pdfminer.six cannot
+read an embedded Type 1 font's built-in encoding; pyHanko reads neither legacy SHA-1 form). The owner makes the large
+set with `python -I tools\documents\make_fixtures.py --only none --large` after the samples.
+
 ## Phase D6: PDF writing
 
 In `Idrak.Data` (`src/Idrak.Data/Pdf/`, beside the reader, sharing its objects and filters), registered in

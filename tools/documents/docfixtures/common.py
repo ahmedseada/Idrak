@@ -15,7 +15,13 @@ SCHEMA = 1
 
 
 class Sample:
-    def __init__(self, name, folder, kind, phases, description, data, expected, files=None, hostile=None):
+    """One sample: its bytes (None for a set of inputs whose files are all beside its JSON), what a reader must get
+    (`expected`), the files beside it, and how the reference tools check it: `reference` "pdf" (qpdf, pdfminer.six,
+    pdfium), "font" (fontTools, the OpenType Sanitizer, HarfBuzz) or None; `checks` more checks run with the reference
+    tools (functions of the written file's path and the expected JSON, returning (key, result, files))."""
+
+    def __init__(self, name, folder, kind, phases, description, data, expected, files=None, hostile=None, ext="pdf",
+                 reference="pdf", checks=None, render_forms=False, filename=None):
         self.name = name
         self.folder = folder
         self.kind = kind
@@ -25,10 +31,17 @@ class Sample:
         self.expected = expected
         self.files = files or {}  # name beside the sample -> bytes (expected pixels, attachments' bytes)
         self.hostile = hostile
+        self.ext = ext
+        self.reference = reference if data is not None else None
+        self.checks = checks or []
+        self.render_forms = render_forms
+        self.filename = filename
 
     @property
     def file(self):
-        return f"{self.name}.pdf"
+        if self.data is None:
+            return None
+        return self.filename or f"{self.name}.{self.ext}"
 
 
 def canonical(v):
