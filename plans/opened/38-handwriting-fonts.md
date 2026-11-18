@@ -85,7 +85,9 @@ first.
   contract, the reader and writer in `Idrak.Data/Pdf/`, the page drawer in Idrak.Imaging). This plan's PDF needs moved
   there ("Plan 38's needs").
 - **Plan 28 first, for any workload.** Plan 28 is built and finished (all its phases, D0-D13) before this plan starts,
-  however long it takes, so no phase here waits on PDF or on font writing.
+  however long it takes, so no phase here waits on PDF or on font writing. **Except, for the session of 2026-11-18**
+  (owner: "for this session slot 4 takes what could be finished from phase 38"): a slot with no ready plan 28 piece
+  takes this plan's phases that need nothing unmerged — F0, then F1, then F3 (plan 28's decision 23).
 - **A made font is exported as TrueType** (`.ttf`), through plan 28's `FontWriters` (D8), or as WOFF through the one
   font plug-in (plan 28, decision 20: one plug-in format, only to prove the path). This replaces the proposed
   Idrak-only JSON file ("glyphs" format): there is none. TrueType is built into Idrak and is what Idrak works from (the

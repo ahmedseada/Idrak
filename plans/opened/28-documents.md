@@ -106,6 +106,9 @@ registered format the same way.
     (`dotnet build -c Release tests/Idrak.Tests -nodeReuse:false`, and `tests/Idrak.PluginTests` when the piece touched
     it); a failed build is fixed before the push. A merge with conflicts also runs the test groups the merge touched.
     Up to four agents may run when pieces with no unmerged dependency are ready; a slot with none waits.
+23. **Plan 38 may fill a waiting slot, this session only** (owner, 2026-11-18: "for this session slot 4 takes what could
+    be finished from phase 38"): a slot with no ready plan 28 piece takes plan 38's phases that need nothing unmerged
+    (F0, then F1, then F3); a ready plan 28 piece still takes a free slot first. Decisions 9 and 14 hold otherwise.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
