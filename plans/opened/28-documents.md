@@ -109,7 +109,9 @@ registered format the same way.
 23. **Slot 4 is plan 38's, this session only** (owner, 2026-11-18: "for this session slot 4 takes what could be
     finished from phase 38", then "keep the fourth always for plan 38 f0, f1, f3 the other three works on plan 28"):
     three slots work on plan 28 only; the fourth works on plan 38's phases that need nothing unmerged — F0, then F1,
-    then F3 — and on nothing else. Decisions 9 and 14 hold otherwise.
+    then F3 — and on nothing else. When F3 is merged the fourth slot stops for good: it takes no piece from either plan
+    ("when those 38 phases finish stop agent 4 and don't give it any pieces from either plans"). Decisions 9 and 14
+    hold otherwise.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).

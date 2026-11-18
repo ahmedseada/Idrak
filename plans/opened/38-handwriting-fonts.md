@@ -87,7 +87,8 @@ first.
 - **Plan 28 first, for any workload.** Plan 28 is built and finished (all its phases, D0-D13) before this plan starts,
   however long it takes, so no phase here waits on PDF or on font writing. **Except, for the session of 2026-11-18**
   (owner: "keep the fourth always for plan 38 f0, f1, f3 the other three works on plan 28"): one agent slot is this
-  plan's alone and takes F0, then F1, then F3; the other three work on plan 28 (plan 28's decision 23).
+  plan's alone and takes F0, then F1, then F3; the other three work on plan 28 (plan 28's decision 23). After F3 that
+  slot stops: no further piece from either plan; F2 and F4-F6 wait for plan 28 as decision 14 says.
 - **A made font is exported as TrueType** (`.ttf`), through plan 28's `FontWriters` (D8), or as WOFF through the one
   font plug-in (plan 28, decision 20: one plug-in format, only to prove the path). This replaces the proposed
   Idrak-only JSON file ("glyphs" format): there is none. TrueType is built into Idrak and is what Idrak works from (the
