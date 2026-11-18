@@ -322,6 +322,27 @@ internal sealed class LayoutTable
     /// <summary>The tag of feature <paramref name="index"/>.</summary>
     public uint FeatureTag(int index) => Bytes.Tag(Data.Span, _features + 2 + 6 * index);
 
+    /// <summary>Whether the feature list holds a feature tagged <paramref name="tag"/> (four characters).</summary>
+    public bool HasFeature(string tag)
+    {
+        if (tag.Length != 4 || _features == 0)
+        {
+            return false;
+        }
+
+        uint wanted = Bytes.Tag(tag);
+        int count = Bytes.U16(Data.Span, _features);
+        for (int i = 0; i < count; i++)
+        {
+            if (FeatureTag(i) == wanted)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>The lookup indices of feature <paramref name="index"/>.</summary>
     public int[] FeatureLookups(int index)
     {

@@ -130,9 +130,10 @@ public interface IFontWriter
 }
 
 /// <summary>
-/// The font file writers, by name (ignoring case), beside <see cref="FontFormats"/>. None is built in yet; a package
-/// registers its own with <see cref="Register"/>, and one registered under a library name takes its place, which stays
-/// behind it (see <see cref="SetPolicy"/>).
+/// The font file writers, by name (ignoring case), beside <see cref="FontFormats"/>. Built in (Idrak.Imaging):
+/// "truetype" (.ttf, whole fonts and subsets, the format Idrak works from). A package registers its own with
+/// <see cref="Register"/>, and one registered under a library name takes its place, which stays behind it (see
+/// <see cref="SetPolicy"/>).
 /// </summary>
 public static class FontWriters
 {

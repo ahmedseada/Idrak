@@ -40,7 +40,9 @@ internal sealed class DataSynthCommand : Command
                                   blank-marks (on: a mark without ink is drawn), slant (0.15), wobble (0.012), seed (7),
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                   mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
-                                  joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each)
+                                  joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each),
+                                  cache (on: a legacy font converted to TrueType once and kept, IDRAK_FONT_CACHE; off;
+                                  or a folder)
               --parts FILE        header, subject, signature and footer parts, with slots such as {digits:6} or {hijri}
                                   (JSON: "headerStart", "headerCenter", "headerEnd", "titles", "subjects", "signatures",
                                   "footers", "chances", "digits", "nativeDigits", "language"); none: the text alone

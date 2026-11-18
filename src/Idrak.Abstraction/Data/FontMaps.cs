@@ -193,6 +193,9 @@ public sealed class FontMap
     /// <summary>Where the map was read from (a file's path, or a resource's name).</summary>
     public string Source { get; }
 
+    // The SHA-256 of the bytes the map was read from: what a font converted with it is kept under (FontCache).
+    internal string Digest { get; private set; } = "";
+
     /// <summary>The OpenType script tags of the tables made from it.</summary>
     public IReadOnlyList<string> Scripts { get; private set; } = [];
 
@@ -268,6 +271,7 @@ public sealed class FontMap
         {
             var map = new FontMap(source);
             map.Read(document.RootElement);
+            map.Digest = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(utf8.Span));
             return map;
         }
     }
@@ -906,12 +910,18 @@ public static class FontMaps
     /// <summary>Each registered map as "name: summary", one per line.</summary>
     public static string Describe() => string.Join("\n", Registry.Values.Select(m => $"{m.Name}: {m.Summary}"));
 
-    /// <summary>The map that made <paramref name="face"/>, or null for a face no map made.</summary>
+    /// <summary>
+    /// The map that made <paramref name="face"/> (also of the converted font <see cref="FontCache"/> gave back for a face
+    /// it made), or null for a face no map made.
+    /// </summary>
     public static FontMap? MappedBy(IFontFace face)
     {
         ArgumentNullException.ThrowIfNull(face);
         return Mapped.TryGetValue(face, out var map) ? map : null;
     }
+
+    // A converted font is the map's work too: MappedBy names the map for it.
+    internal static void Remember(IFontFace face, FontMap map) => Mapped.AddOrUpdate(face, map);
 
     /// <summary>The map file that belongs beside the font file <paramref name="fontPath"/>: FONT.ttf, FONT.map.json.</summary>
     public static string SidecarOf(string fontPath)

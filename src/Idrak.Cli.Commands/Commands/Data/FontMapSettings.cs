@@ -23,14 +23,17 @@ internal sealed class FontMapSettings : IDisposable
                                   mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
                                   joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each),
                                   short-marks (auto: lower marks on bases under the height they clear; a share of the
-                                  tall letters' height; off)
+                                  tall letters' height; off), cache (on: a legacy font converted to TrueType once and
+                                  kept, IDRAK_FONT_CACHE; off; or a folder)
         """;
 
     private static readonly string[] Keys =
         ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share",
-         "pairs", "style2", "words", "short-marks"];
+         "pairs", "style2", "words", "short-marks", "cache"];
 
-    private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars;
+    private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars, _cache = FontCache.Enabled;
+    private readonly string _cacheFolder = FontCache.Folder;
+    private bool _cacheFolderSet;
     private readonly FontMapDrawing _drawing = FontMaps.Drawing;
     private readonly List<string> _added = [];
 
@@ -92,6 +95,19 @@ internal sealed class FontMapSettings : IDisposable
             switch (key)
             {
                 case "builtin": FontMaps.Builtin = Switch(); break;
+                case "cache":
+                    if (value is "on" or "1" or "true" or "yes" or "off" or "0" or "false" or "no")
+                    {
+                        FontCache.Enabled = Switch();
+                    }
+                    else
+                    {
+                        FontCache.Enabled = value.Length > 0 ? true : throw new ArgumentException("--font-maps cache=: on, off or a folder.");
+                        FontCache.Folder = value;
+                        _cacheFolderSet = true;
+                    }
+
+                    break;
                 case "sidecars": FontMaps.Sidecars = Switch(); break;
                 case "digits": drawing = drawing with { Digits = Switch() }; break;
                 case "marks": drawing = drawing with { Marks = Switch() }; break;
@@ -130,5 +146,11 @@ internal sealed class FontMapSettings : IDisposable
         FontMaps.Builtin = _builtin;
         FontMaps.Sidecars = _sidecars;
         FontMaps.Drawing = _drawing;
+        FontCache.Enabled = _cache;
+        if (_cacheFolderSet)
+        {
+            FontCache.Folder = _cacheFolder;
+            _cacheFolderSet = false;
+        }
     }
 }

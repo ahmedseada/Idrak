@@ -202,18 +202,32 @@ public static class FontFormats
     /// The faces of a font file, read by the format that accepts its first bytes, then mapped: by the map beside the file
     /// (FONT.map.json, <see cref="FontMaps.Sidecars"/>), else by the first registered map that fits a face
     /// (<see cref="FontMaps.Apply(IFontFace)"/>: a legacy font becomes usable directly); a face no map fits is the face read.
+    /// A face a map made is converted once into a complete font and kept (<see cref="FontCache"/>), and that font is the
+    /// face given back, now and on every later read.
     /// </summary>
     /// <exception cref="InvalidDataException">No registered format reads the file, it is damaged, or the map beside it is not valid.</exception>
-    public static IReadOnlyList<IFontFace> Read(string path) => FontMaps.ForFile(path, ReadFaces(File.ReadAllBytes(path), Path.GetFileNameWithoutExtension(path)));
+    public static IReadOnlyList<IFontFace> Read(string path)
+    {
+        byte[] file = File.ReadAllBytes(path);
+        string name = Path.GetFileNameWithoutExtension(path);
+        var read = ReadFaces(file, name);
+        return FontCache.Through(file, name, read, FontMaps.ForFile(path, read));
+    }
 
     /// <summary>
     /// The faces of a font file held in memory (kept by the faces, not copied), each mapped by the first registered map
-    /// that fits it (<see cref="FontMaps.Apply(IFontFace)"/>); a face no map fits is the face read.
+    /// that fits it (<see cref="FontMaps.Apply(IFontFace)"/>); a face no map fits is the face read. A face a map made is
+    /// converted once into a complete font and kept (<see cref="FontCache"/>), and that font is the face given back.
     /// </summary>
     /// <exception cref="InvalidDataException">No registered format reads the bytes, or they are damaged.</exception>
-    public static IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name = "font") => FontMaps.Apply(ReadFaces(file, name));
+    public static IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name = "font")
+    {
+        var read = ReadFaces(file, name);
+        return FontCache.Through(file, name, read, FontMaps.Apply(read));
+    }
 
-    private static IReadOnlyList<IFontFace> ReadFaces(ReadOnlyMemory<byte> file, string name)
+    // The faces as the first format that accepts the file reads them, no map applied.
+    internal static IReadOnlyList<IFontFace> ReadFaces(ReadOnlyMemory<byte> file, string name)
     {
         var header = file.Span[..Math.Min(file.Length, HeaderBytes)];
         foreach (var format in Registry.Values)

@@ -1534,6 +1534,15 @@ public static class Idrak.Abstraction.Data.DocumentWriters
   public static void Register(Idrak.Abstraction.Data.IDocumentWriter writer)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Abstraction.Data.FontCache
+  public const string Variable = "IDRAK_FONT_CACHE"
+  public static bool Enabled { get; set; }
+  public static long Converted { get; }
+  public static long Failed { get; }
+  public static long Hits { get; }
+  public static string Folder { get; set; }
+  public static string Writer { get; set; }
+
 public static class Idrak.Abstraction.Data.FontFormats
   public const int HeaderBytes = 16
   public static Idrak.Abstraction.Data.IFontFormat Get(string name)

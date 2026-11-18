@@ -221,6 +221,57 @@ internal sealed class OpenTypeFace : IFontFace
 
     public ReadOnlyMemory<byte> Table(string tag) => _tables.TryGetValue(tag, out var t) ? _file.Slice(t.Offset, t.Length) : ReadOnlyMemory<byte>.Empty;
 
+    /// <summary>Whether the outlines are TrueType glyph records (glyf and loca), which a writer can copy as they are.</summary>
+    internal bool HasGlyphRecords => _locations is not null;
+
+    /// <summary>Glyph <paramref name="glyph"/>'s record in glyf as loca places it (padding included; empty for a glyph with no outline).</summary>
+    /// <exception cref="InvalidDataException">The record lies outside the glyf table.</exception>
+    internal ReadOnlySpan<byte> GlyphRecord(int glyph)
+    {
+        int start = _locations![glyph], end = _locations[glyph + 1];
+        if (end <= start)
+        {
+            return default;
+        }
+
+        var glyf = Span("glyf");
+        if (start < 0 || end > glyf.Length)
+        {
+            throw new InvalidDataException($"{_name}: glyph {glyph} ({start} to {end}) lies outside the glyf table.");
+        }
+
+        return glyf[start..end];
+    }
+
+    /// <summary>The code points the character map lists, ascending (<see cref="Glyph"/> answers each; some may answer 0).</summary>
+    internal int[] MappedCodes()
+    {
+        if (_groups is { } groups)
+        {
+            var codes = new SortedSet<int>();
+            foreach (var (start, end, _) in groups)
+            {
+                for (uint c = start; c <= Math.Min(end, 0x10FFFFu); c++)
+                {
+                    codes.Add((int)c);
+                }
+            }
+
+            return [.. codes];
+        }
+
+        var list = new List<int>();
+        for (int c = 0; c < _basic!.Length; c++)
+        {
+            if (_basic[c] != 0)
+            {
+                list.Add(c);
+            }
+        }
+
+        return [.. list];
+    }
+
     private ReadOnlySpan<byte> Span(string tag) => Table(tag).Span;
 
     // A contour's points in font units, each on the curve or a quadratic control point.

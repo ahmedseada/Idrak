@@ -24,7 +24,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
-| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Planned |
+| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | In progress (built-in part built 2026-11-18; the WOFF plug-in part next, in `Idrak.Imaging.Plugins`, decision 21) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
@@ -786,6 +786,97 @@ format; no OpenType CFF writer and no WOFF2 (decision 20).
   sanitizer browsers use accepts it.
 
 **Tests (CPU here):** one build; `fonts write|fonts woff|fonts|shaping|public API|abstraction inventory`.
+
+**As built, the built-in part (2026-11-18): the "truetype" writer, subsets, legacy fonts converted once, the gap fixed.**
+- **The writer** (`src/Idrak.Imaging/TrueTypeWriter.cs`, `TrueTypeGlyphs.cs`, `LayoutClosure.cs`; public `TrueTypeWriter`,
+  registered as "truetype" through Idrak.Imaging's `LibraryRegistrations`): any `IFontFace` as a `.ttf`. The library's own
+  TrueType faces (and a mapped face's own glyphs) keep their glyph records as they are, composites included, so their
+  outlines read back the same points and their left side bearings stay the font's; any other outline is written as
+  quadratic contours (an on-curve point exactly midway between two controls left implied, a contour's closing segment its
+  own), a cubic curve turned into the fewest quadratics within `CurveTolerance` (the method of fontTools' cu2qu) and every
+  point rounded half up to whole units. cmap formats 4 (delta or glyph-array segments, whichever is smaller per run) and 12
+  from the face's characters (the library's faces list their own; any other face is asked every code point); name: the
+  face's records kept, the options' strings over them; OS/2: the face's, its Unicode ranges (the specification's blocks),
+  code pages (FontForge's rule, as fontTools'), first and last character, average width and `usMaxContext` measured from
+  what is written, upgraded to version 4 when older, made from the face when it has none; post 2.0 with the face's names
+  (a glyph past them named by its character or id) or 3.0; GDEF, GPOS and GSUB as they are; hinting (cvt, fpgm, prep,
+  gasp, the glyphs' programs, maxp's limits) kept only for a whole face with `KeepHinting`. The directory by tag, the data
+  in the order the specification recommends, checksums and `checkSumAdjustment`; the same face and options write the same
+  bytes (head's dates are the face's).
+- **Subsets:** glyph 0, the glyphs asked for, with `KeepLayout` the GSUB closure as fontTools' subsetter computes it (the
+  lookups of the features every script's language systems list, feature variations included, applied until nothing is
+  added; contextual rules only where their whole context can be there, each nested lookup on the glyphs its place can
+  hold), then the parts of composites; ids kept, the others written empty with their advances, cmap holding the kept
+  glyphs' characters; without `KeepLayout` GDEF, GPOS and GSUB are left out.
+- **Legacy fonts converted once** (`FontCache` in Idrak.Abstraction, beside `FontMaps`): `FontFormats.Read(path)` and
+  `Read(memory)` hand every face a map made to the cache, which writes it once through `FontWriters` ("truetype",
+  `FontCache.Writer`) with its layout tables and hinting, keeps it in `FontCache.Folder` and gives the converted face back,
+  on the first read and every later one; a font no map fits is read exactly as before (the same list, the same faces).
+  The folder: `IDRAK_FONT_CACHE` (a folder; 0, off, false or no turn the cache off and a legacy font is mapped and drawn at
+  every read, as before), default `fonts` in `ComputeResources.CacheFolder` (`~/.cache/idrak`, the local application data
+  where there is no profile); `--font-maps cache=on|off|DIR` for `data synth` and `data fonts`; in the CLI's variables
+  table. A kept file is named by a SHA-256 of the font file, the face's index, the map (its name and the SHA-256 of its
+  JSON), the mapper, the writer and the builds of the assemblies that made it, the curve tolerance and hinting, and the
+  drawing settings (`FontMapDrawing`, a page's chances of the hand's features aside); written to a temporary file then
+  moved into place, only where the drive has the room; a damaged one is made again. Read back it is a plain TrueType face
+  with its own GSUB (the maps' detection leaves it alone), still named by `FontMaps.MappedBy` (so `data fonts` names the
+  map). Counted by `FontCache.Hits`, `Converted` and `Failed` (a face the writer refuses is used as mapped).
+- **The gap fixed:** `PageDrawing.Asked` reads the hand's features (`PAIR`, `PAI2`, `WORD`) from the font's own GSUB
+  feature list (`LayoutTable.HasFeature`), not from `FontMaps.MappedBy`: a mapped face and its converted font ask the same.
+  Proven unchanged (rule 71) by the decision itself: for every legacy face mapped by every library map that fits it and
+  every one of the eight hands, the GSUB's answer is the map's rule's, and the drawing code that consumes it is unchanged.
+- **Tests:** group `fonts write` (5): every test font's face (14: TrueType, CFF, a collection's two, the variable fonts'
+  default instance, the three legacy fonts as mapped) written and read back with the same metrics, names, glyph count,
+  characters (every code point), advances and outlines (5,640 glyphs the same points; 408 cubic glyphs within 0.485 units at
+  tolerance 1; 320 other glyphs, drawn and composed ones and CFF's straight ones, within 0.006), the font's own left side
+  bearings, and the shaping of 79 generic lines with and without the hand's features; the eight subsets of the D8 samples
+  keep exactly fontTools' glyphs; `FontWriterSuite` on TrueType, CFF and a mapped face; names, hinting, a face of no tables
+  (a cubic glyph, a character past the basic plane), the file's structure; the cache (converted, found, another setting,
+  a damaged file, off, the command's setting); the hand's features (32 faces and hands asked the same; MCS-HAND's page from
+  its converted font has the mapped face's text, description and pixels). Run once on the CPU with
+  `fonts write|fonts:|shaping:|pages:|plain:|shapes:|glyph poses:|scans:|synthetic data:|documents contracts|document
+  layouts|conformance kit:|override loop:|outside plug-in|public API|abstraction inventory|every environment variable read
+  in src|the environment table names real commands|no command, option or help text names a provider|test runner` and the
+  update flags: 136 passed, 0 failed; the API dumps (`Idrak.Abstraction`, `Idrak.Imaging`) and the inventory regenerated
+  through the runner and checked again without the flags (passed). The checker then found two faults, fixed: the variable
+  fonts' GDEF 1.3 still named an item variation store, which the Sanitizer refuses without fvar (the default instance is
+  written, so GDEF's store and GSUB's and GPOS's feature variations are unlinked); and mcs-diwany-jaly-s-u's emdash keeps
+  an hmtx bearing of 4 against an xMin of 0 (head's "lsb at x=0" flag clear), which the written font had moved (copied
+  records now keep their font's bearing; a check added). Rebuilt, rerun: `fonts write|conformance kit:|documents contracts`
+  19 passed, `fonts:` 16 passed.
+- **The checker's verdicts** (`tools/documents/check_font.py` on the 26 fonts the tests write into
+  `test-output/fonts/written`: every test font whole, the eight subsets, the three converted legacy fonts, the face of no
+  tables): fontTools opens each and decompiles every table, the OpenType Sanitizer (opentype-sanitizer 9.2.0) accepts each
+  (its only warning: arbfonts-diwany-thuluth's own GSUB lists its tags out of order). The nine whole fonts with a source of
+  one font compared with it: outlines exactly (TrueType) or within 0.34 units by bounds, area and centroid (the CFF font),
+  every advance and character, and HarfBuzz's shaping of the seven sample lines kept.
+- **Timings** (this container, 4 cores; the owner's devices give the real ones): a legacy font mapped and its glyphs and
+  tables made at every read 74-203 ms; converted once 94-267 ms (cold: mapped, drawn, written, read back, kept); read from
+  the cache 2.7-6.9 ms (warm, median of five), for FS_Hand_Style, MCS-HAND and mohareb-hand.
+- **Decisions the plan did not settle, taken here:** (1) The cache hooks into both `FontFormats.Read` overloads and gives
+  the converted face cold and warm alike, so what is drawn never depends on the cache's state; pages from a legacy font read
+  through them now draw from the converted TrueType: its own glyphs exactly, the drawn and composed ones at whole units
+  (half a unit at most; MCS-HAND's sample page came out pixel for pixel the same); `IDRAK_FONT_CACHE=off` gives back the
+  mapped face exactly. (2) Glyph 0 is always kept in a subset, as fontTools and the specification do. (3) A subset's layout
+  tables are written as they are, not rewritten to the kept glyphs: with the ids kept they stay valid (pruning them for
+  size is left). (4) Contours keep their direction (a CFF font's stay counter-clockwise; the fill rule is nonzero either
+  way). (5) A variable font is written as its default instance (no fvar, gvar, HVAR, MVAR, avar, STAT). (6) kern, BASE,
+  JSTF and MATH are not written (the shapers read GDEF, GPOS and GSUB). (7) One edge of the gap fix: a map whose hand
+  feature has ligatures none of which resolve in a font used to turn the feature on (the description said ", pairs" with
+  nothing joined); now it does not. No repository font hits it. (8) The cache has counters, not a telemetry event yet (a gap
+  for rule 78); kept files of an older build are not pruned; the MAUI app has no font-map settings to carry it to.
+- **Left:** the plug-in part (OpenType CFF writing, WOFF and WOFF2 read and written) waits for open question 6, the
+  project's name.
+- **The owner's run** (held with the others until asked; the legacy fonts' tests convert into the cache folder):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "fonts write|fonts:|shaping:|pages:|plain:|shapes:|glyph poses:|scans:|synthetic data:|documents contracts|document layouts|conformance kit:|override loop:|outside plug-in|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|no command, option or help text names a provider|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d8.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_font.py (Get-ChildItem test-output\fonts\written\*.ttf).FullName -o test-output\fonts\check-written.json
+  ```
 
 ## Phase D9: forms
 

@@ -202,15 +202,17 @@ internal static class PageDrawing
     internal static TextStyle Style(PageStyle style, IFontFace font, float size, float spacing, string? language, IReadOnlyList<string>? hand = null) =>
         new(font, size) { Fallbacks = style.Fallbacks, LineSpacing = spacing, Language = language, Features = Asked(font, hand) };
 
-    // The hand's features a page asks for that the font's map has, each turned on ("+PAIR"); null for none.
-    private static string[]? Asked(IFontFace font, IReadOnlyList<string>? hand)
+    // The hand's features a page asks for that the font's own GSUB lists, each turned on ("+PAIR"); null for none. Read from
+    // the font, not from the map that made it, so a mapped face and the font converted from it (FontCache) ask the same.
+    internal static string[]? Asked(IFontFace font, IReadOnlyList<string>? hand)
     {
-        if (hand is null || hand.Count == 0 || FontMaps.MappedBy(font) is not { } map)
+        if (hand is null || hand.Count == 0)
         {
             return null;
         }
 
-        var on = hand.Where(tag => map.Ligatures.Any(l => l.Feature == tag)).Select(tag => "+" + tag).ToArray();
+        var substitutions = FontLayout.For(font).Substitutions;
+        var on = hand.Where(substitutions.HasFeature).Select(tag => "+" + tag).ToArray();
         return on.Length == 0 ? null : on;
     }
 

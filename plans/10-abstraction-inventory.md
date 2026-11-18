@@ -86,10 +86,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | — | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | — | Abstraction |
 | `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | — | — | Abstraction |
-| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.FontWriters` | registry | public | — |  | — | — | Abstraction |
+| `Idrak.Abstraction.Data.FontWriters` | registry | public | — |  | truetype | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.GlyphPoses` | registry | public | — |  | drift, none | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.GlyphSources` | registry | public | — |  | — | — | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
@@ -106,7 +106,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MadeFontFace, MappedFontFace, OpenTypeFace |  | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter, TrueTypeWriter |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphSource` | interface | public | — | GlyphSources.GuardedSource |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Imaging, Vision, Vision.Plugins | Abstraction |

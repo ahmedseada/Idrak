@@ -10,7 +10,7 @@ namespace Idrak.Imaging;
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
-/// the "images" sample source, the "opentype" font format and font mapper, the library's font maps (legacy layouts, as data), the "coverage"
+/// the "images" sample source, the "opentype" font format and font mapper, the "truetype" font writer, the library's font maps (legacy layouts, as data), the "coverage"
 /// outline rasterizer, the reading orders (bidi, runs), the page layouts (letter, plain, shapes), the shapes, shape profiles, pens and text
 /// bindings the "shapes" layout draws with, and the glyph poses every layout writes its text with. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once
@@ -35,6 +35,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         },                            // png, jpeg, bmp, netpbm (asked newest first)
         [typeof(SampleSources)] = () => SampleSources.Register(new ImagesSource()),
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
+        [typeof(FontWriters)] = () => FontWriters.Register(new TrueTypeWriter()),            // .ttf, whole and subsets, the format Idrak works from
         [typeof(FontMappers)] = () => FontMappers.Register(new OpenTypeFontMapper()),       // a map's forms, ligatures and marks as OpenType tables
         [typeof(FontMaps)] = RegisterFontMaps,                                   // the legacy layouts the library ships, as data
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),

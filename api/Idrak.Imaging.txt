@@ -273,3 +273,10 @@ public sealed record Idrak.Imaging.TextStyle : System.IEquatable<Idrak.Imaging.T
   public float Scale(Idrak.Abstraction.Data.IFontFace font)
   public float Size { get; init; }
   public string? Language { get; init; }
+
+public sealed class Idrak.Imaging.TrueTypeWriter : Idrak.Abstraction.Data.IFontWriter
+  public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
+  public TrueTypeWriter()
+  public const string WriterName = "truetype"
+  public string Name { get; }
+  public void Write(Idrak.Abstraction.Data.IFontFace face, System.IO.Stream destination, Idrak.Abstraction.Data.FontWriteOptions options)

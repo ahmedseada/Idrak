@@ -161,7 +161,7 @@ internal sealed class GlyphResolver(IFontFace face, FontMap map)
 internal static class PostNames
 {
     // The 258 standard Macintosh glyph names (the OpenType post table's list).
-    private static readonly string[] Standard =
+    internal static readonly string[] Standard =
         (".notdef .null nonmarkingreturn space exclam quotedbl numbersign dollar percent ampersand quotesingle parenleft parenright asterisk plus comma "
          + "hyphen period slash zero one two three four five six seven eight nine colon semicolon less equal greater question at A B C D E F G H I J K L M "
          + "N O P Q R S T U V W X Y Z bracketleft backslash bracketright asciicircum underscore grave a b c d e f g h i j k l m n o p q r s t u v w x y z "
@@ -176,6 +176,60 @@ internal static class PostNames
          + "Ugrave dotlessi circumflex tilde macron breve dotaccent ring cedilla hungarumlaut ogonek caron Lslash lslash Scaron scaron Zcaron zcaron "
          + "brokenbar Eth eth Yacute yacute Thorn thorn minus multiply onesuperior twosuperior threesuperior onehalf onequarter threequarters franc "
          + "Gbreve gbreve Idotaccent Scedilla scedilla Cacute cacute Ccaron ccaron dcroat").Split(' ');
+
+    /// <summary>
+    /// Each glyph's name (version 1.0: the standard order; version 2.0: the font's, its own names read as Latin-1 so their
+    /// bytes come back as they were), null for a glyph past the names; null when the table names no glyph.
+    /// </summary>
+    public static string?[]? Each(ReadOnlySpan<byte> post, int glyphCount)
+    {
+        if (post.Length < 32)
+        {
+            return null;
+        }
+
+        uint version = BinaryPrimitives.ReadUInt32BigEndian(post);
+        var names = new string?[glyphCount];
+        if (version == 0x00010000)
+        {
+            Array.Copy(Standard, names, Math.Min(glyphCount, Standard.Length));
+            return glyphCount > 0 ? names : null;
+        }
+
+        if (version != 0x00020000 || post.Length < 34)
+        {
+            return null;
+        }
+
+        int count = Math.Min(BinaryPrimitives.ReadUInt16BigEndian(post[32..]), glyphCount), strings = 34 + 2 * count;
+        if (strings > post.Length)
+        {
+            return null;
+        }
+
+        var own = new List<string>();
+        for (int at = strings; at < post.Length;)
+        {
+            int length = post[at];
+            if (at + 1 + length > post.Length)
+            {
+                break;
+            }
+
+            own.Add(Encoding.Latin1.GetString(post.Slice(at + 1, length)));
+            at += 1 + length;
+        }
+
+        bool any = false;
+        for (int g = 0; g < count; g++)
+        {
+            int index = BinaryPrimitives.ReadUInt16BigEndian(post[(34 + 2 * g)..]);
+            names[g] = index < Standard.Length ? Standard[index] : index - Standard.Length < own.Count ? own[index - Standard.Length] : null;
+            any |= names[g] is not null;
+        }
+
+        return any ? names : null;
+    }
 
     /// <summary>Each name's first glyph; empty when the table has no names.</summary>
     public static Dictionary<string, int> Read(ReadOnlySpan<byte> post, int glyphCount)
@@ -505,6 +559,12 @@ internal sealed class MappedFontFace : IFontFace
     public string Family => _inner.Family;
 
     public string Style => _inner.Style;
+
+    /// <summary>The face the map was applied to: glyph ids below its count are its glyphs.</summary>
+    internal IFontFace Inner => _inner;
+
+    /// <summary>The code points the map answers (the others are the inner face's).</summary>
+    internal IEnumerable<int> MappedCodes => _cmap.Keys;
 
     public string Format => _inner.Format;
 
