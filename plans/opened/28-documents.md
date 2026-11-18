@@ -18,7 +18,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 |---|---|---|---|
 | D0 | The contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`), their suites, a test format from outside proving the plug-in path | A | Built (2026-11-18) |
 | D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Built (2026-11-18) |
-| D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Planned |
+| D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Built (2026-11-18) |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
@@ -484,6 +484,86 @@ yet).
 unencrypted twins; a wrong password fails with the message.
 
 **Tests (CPU here):** one build; `documents pdf: encryption|documents pdf: file`.
+
+**As built (2026-11-18):**
+- **The handler** (`src/Idrak.Data/Pdf/PdfSecurity.cs`, `PdfCrypt.cs`, internal): the standard security handler,
+  revisions 2-6. Revisions 2-4: the file key by Algorithm 2 (40 to 128 bits: revision 2 five bytes, revision 3 its
+  `/Length`, revision 4 its stream filter's `/Length` in bytes, or in bits as some writers put it), checked against `/U`
+  (Algorithms 4 and 5), the owner password through `/O` (Algorithms 3 and 7); crypt filters from `/V 4` (`/CF` with
+  `/CFM` `None`, `V2`, `AESV2`, `AESV3`; `/StmF`, `/StrF`, `/EFF`, `Identity`, a stream's own `/Crypt` filter first in
+  its chain), `/EncryptMetadata false` (in the key and for metadata streams). Revisions 5 and 6: AES-256, the file key
+  from `/UE` or `/OE` under the hash of Algorithm 2.B (SHA-256, -384 and -512 rounds over AES-128-CBC; revision 5 SHA-256
+  alone). RC4 written here; AES, MD5 and SHA-2 through `System.Security.Cryptography`, one MD5 context reused across a
+  check's 50 rounds. Passwords: PDFDocEncoding up to 32 bytes (revisions 2-4), SASLprep (RFC 3454 tables B.1 and C.1.2,
+  then NFKC through the library's own `UnicodeNormalization`, the same on every platform) and UTF-8 up to 127 bytes
+  (5-6); when it differs, the UTF-8 the user typed is tried too (writers that skipped either step).
+- **Opening:** the empty user password first (and, with no password given, the empty owner password), then
+  `DocumentOptions.Password` as the user's, then the owner's. Neither: an `InvalidDataException` naming
+  `DocumentOptions.Password` that says which case it is ("opens only with a password" or "neither the user nor the owner
+  password"). Another handler (the public-key `Adobe.PubSec`), another revision, `/V 3` or an unknown `/CFM`: a
+  `NotSupportedException` naming it, the message saying the file is encrypted. A damaged encryption dictionary (no `/O`,
+  `/U` or `/P`, keys too short, a key length outside 40-128 bits): an `InvalidDataException`. Every buffer holding a
+  password or a key (pooled ones returned cleared, stack ones zeroed) is cleared before it is left; the file key is held
+  by the open document only and cleared on `Dispose`, with the AES contexts keyed with it. `DocumentInfo.Encrypted` says
+  so.
+- **Decryption, done once per object:** strings when their object is read at its offset (its key made once per object
+  and only when it holds a string; containers copied only where a string changed), cached decrypted with the object;
+  objects inside object streams come with their stream; not the encryption dictionary's, a cross-reference stream's
+  dictionary or a signature's `/Contents` (for D12). Streams before their filters into a pooled buffer never longer than
+  the stored bytes (so `MaxStreamBytes`, checked on the stored length, bounds them too); not cross-reference streams,
+  metadata under `/EncryptMetadata false`, or what `Identity` leaves plain. AES data is its IV and whole blocks: a block
+  cut short is left out and the padding removed only when it is one (damaged data fails later, as damage). AES contexts
+  are pooled per document, the AES-256 ones keyed once. Safe from several threads.
+- **Hooks in the D1 files (small, for the merge with D3):** `PdfFile.cs` (the `Security` field and property, `Unlock`,
+  one line where `ReadIndirect` returns an object, four lines in `Decode` before the filters, one in `Dispose`),
+  `PdfDocument.cs` (`PdfSecurity.Attach` in place of D1's refusal, which is removed; `Encrypted` in the information),
+  `PdfBytes.cs` (`PdfWindow.Own`, added), `PdfFormat.cs` (its summary). The contract's docs say what a wrong password
+  throws (`IDocumentFormat.Open`, `DocumentOptions.Password`); no public API changed.
+- **Decisions the plan did not settle, taken here:** (1) A wrong or missing password is an `InvalidDataException` (the
+  contract's documented failure for a file that cannot be opened with the options given, as a limit is), not a new
+  exception type: callers that catch it keep working, and the message names the option. (2) No environment variable for
+  the password (a secret in the environment; no command reads documents yet). Nothing else in D2 is a policy to set: the
+  standard fixes the algorithms. (3) As readers do: a crypt filter `/CF` does not hold is `Identity`; `/Perms` is not
+  checked (a reader enforces no permissions, and `/U` or `/O` already proves the key). (4) No registry of security
+  handlers: the plan names none, and a whole format can be replaced through `DocumentFormats`.
+- **Tests:** group `documents pdf: encryption` (3): every encrypted sample (the 21 of D2 and D11's `encrypted-aes256`)
+  opened with its JSON's, its user and its owner password (44 opens; `Grüße-2024` through SASLprep), encrypted and
+  opened as user or owner as expected, its cross-reference, every object (420 objects in the canonical form, the
+  encryption dictionary's strings plain), every stream (to its SHA-256, the metadata under `/EncryptMetadata false`
+  too), its information and pages as its JSON says, the unencrypted twin's objects (but a stream's stored `/Length` and
+  revision 5's `/Extensions`), information, pages and text the same, and every object read alike from several threads;
+  a wrong password, none and an empty one refused naming the option, a wrong one opening a file whose user password is
+  empty, `Adobe.PubSec` refused naming it, the document format suite on the encrypted samples (with the D2 user
+  password), 126 cut or changed encrypted files failing only as damaged or as a variant not read; RC4 on the published
+  vectors, passwords prepared, `/V 3`, revision 7, a 129-bit key, `/CFM /AESV9` and another handler refused naming
+  them, the stream limit on encrypted streams, the key cleared on dispose. `documents pdf: file` updated: the encrypted
+  samples open with their password and not without, the format suite refuses those needing one naming the option.
+  Run with `documents pdf: file|documents contracts|public API|abstraction inventory|every environment variable read in
+  src|test runner`: first 28 tests, 7 failed, all at the samples' loader (the manifest also lists D5's later fonts,
+  writer inputs, merge plan and PKI, which have no PDF or no JSON: `Value cannot be null (path2)`; the loader now takes
+  the PDF samples only), then 1 (revision 5's `/Extensions` in the twin comparison, set aside), then 28 passed, 0
+  failed, also after the MD5 change.
+- **Timings** (this container, 4 cores, Linux, load average 14 from two other agents' builds: noisy; the owner's devices
+  give the real ones): opening and reading the 22 D2 samples (every page with every part, the information) cold 176 ms
+  (125 ms the first document, mostly compiling), warm median 14.2 ms a pass (646 µs a document, 9 ms of it the five
+  revision 6 files). A document warm, against the unencrypted twin's 98 µs and 18.9 KiB: RC4 revision 2 157 µs and
+  22.8 KiB, RC4 128 bits 209-278 µs and 23-26 KiB, AES-128 206-328 µs and 26-32 KiB, AES-256 revision 5 210 µs and
+  28.7 KiB, revision 6 1.3-2.2 ms and 47-62 KiB. The revision 6 hash on its own: 0.66 ms warm (0.71 ms cold) for a user
+  check, 1.14 ms for an owner check (the 48 bytes of `/U` in each round), about 9.5 KB allocated a call (the base
+  library's one-shot AES context, one a round); revision 5's hash 0.6 µs. A revision 6 file costs two hashes opened by
+  the empty password, three by the user's, four by the owner's: the standard's own cost, paid once at open.
+- **Left:** a damaged encrypted file whose cross-reference must be rebuilt by scanning and whose catalog lies in an object
+  stream does not open (the scan lists object streams before the key is known; it fails as damaged). Writing encrypted
+  files is D11's.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: encryption|documents pdf: file|documents contracts|public API|abstraction inventory|every environment variable read in src|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d2.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase D3: PDF text
 

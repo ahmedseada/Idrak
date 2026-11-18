@@ -50,16 +50,19 @@ internal sealed class PdfDocument : IDocument
 
     public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => DocumentPageDrawers.DrawPage(this, index, options);
 
-    /// <summary>Opens the document <paramref name="stream"/> holds.</summary>
-    /// <exception cref="InvalidDataException">Not a PDF file, damaged beyond repair, a cycle, or a limit passed (each named).</exception>
-    /// <exception cref="NotSupportedException">The file is encrypted (decryption comes with phase D2).</exception>
+    /// <summary>Opens the document <paramref name="stream"/> holds (an encrypted one with the empty password or <see cref="DocumentOptions.Password"/>).</summary>
+    /// <exception cref="InvalidDataException">
+    /// Not a PDF file, damaged beyond repair, a cycle, or a limit passed (each named); or encrypted, and neither the empty
+    /// password nor <see cref="DocumentOptions.Password"/> opens it (the message names the option).
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is encrypted by a security handler that is not read (a public-key one: named).</exception>
     public static PdfDocument Open(Stream stream, string name, DocumentOptions options)
     {
         PdfFile? file = null;
         try
         {
             file = PdfFile.Open(stream, name, options);
-            RefuseEncrypted(file);
+            PdfSecurity.Attach(file, options.Password);
             var catalog = Catalog(file);
             var pages = Pages(file, catalog);
             if (pages.Length == 0 && !file.Repaired && file.RepairNow(file.Xref))
@@ -242,37 +245,6 @@ internal sealed class PdfDocument : IDocument
     private static NotSupportedException NotYet(string what, string phase) =>
         new($"PDF {what} are not read yet: they come with phase {phase} of the documents plan.");
 
-    // An encrypted file is refused until phase D2 builds the security handlers; the handler is named.
-    private static void RefuseEncrypted(PdfFile file)
-    {
-        var encrypt = file.Trailer["Encrypt"u8];
-        if (encrypt.IsNull)
-        {
-            return;
-        }
-
-        PdfDictionary? dictionary = null;
-        try
-        {
-            dictionary = file.Dictionary(encrypt);
-        }
-        catch (InvalidDataException e) when (!PdfLimit.Is(e))
-        {
-            // An encryption dictionary that cannot be read: still encrypted.
-        }
-
-        string handler = dictionary?["Filter"u8].AsName?.ToString() ?? "unknown";
-        if (handler != "Standard")
-        {
-            throw new NotSupportedException(
-                $"{file.Name}: the file is encrypted with the security handler {handler}, which is not read (the standard handler is, from phase D2 of the documents plan).");
-        }
-
-        string revision = dictionary?["R"u8].TryInteger(out long r) == true ? r.ToString(CultureInfo.InvariantCulture) : "?";
-        throw new NotSupportedException(
-            $"{file.Name}: the file is encrypted (the standard security handler, revision {revision}); encrypted documents are read from phase D2 of the documents plan, not built yet.");
-    }
-
     private static PdfDictionary Catalog(PdfFile file)
     {
         var root = file.Trailer["Root"u8];
@@ -446,7 +418,7 @@ internal sealed class PdfDocument : IDocument
         return new DocumentInfo
         {
             Title = title, Author = author, Subject = subject, Keywords = keywords, Creator = creator, Producer = producer, Created = created, Modified = modified,
-            Version = _version, Encrypted = false, Repaired = _file.Repaired, Entries = entries.AsReadOnly(),
+            Version = _version, Encrypted = _file.Security is not null, Repaired = _file.Repaired, Entries = entries.AsReadOnly(),
         };
     }
 

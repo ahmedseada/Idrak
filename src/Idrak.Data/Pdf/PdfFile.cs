@@ -24,6 +24,7 @@ internal sealed class PdfFile : IDisposable
     private readonly PdfCache _cache;
     private readonly Lock _repairGate = new();
     private volatile PdfXref _xref;
+    private PdfSecurity? _security;
     private bool _repairTried;
     private volatile bool _disposed;
 
@@ -60,6 +61,19 @@ internal sealed class PdfFile : IDisposable
     public bool Repaired => _xref.Repaired;
 
     public PdfDictionary Trailer => _xref.Trailer;
+
+    /// <summary>The security handler that decrypts the file's strings and streams (null when the file is not encrypted).</summary>
+    public PdfSecurity? Security => _security;
+
+    /// <summary>
+    /// Decrypts every string and stream read from now on through <paramref name="security"/> (its key found at open),
+    /// which is disposed with the file; what was read before (the encryption dictionary) is read again when asked.
+    /// </summary>
+    public void Unlock(PdfSecurity security)
+    {
+        _security = security;
+        _cache.Clear();
+    }
 
     /// <summary>The file <paramref name="stream"/> holds: its header and cross-reference read, nothing else.</summary>
     /// <exception cref="InvalidDataException">Not a PDF file, damaged beyond repair, or a limit passed (named).</exception>
@@ -224,6 +238,11 @@ internal sealed class PdfFile : IDisposable
 
             var filters = Filters(stream.Dictionary);
             var window = PdfWindow.Read(Source, stream.Offset, stream.Length);
+            if (_security is { } security)
+            {
+                window = security.Decrypt(stream, window, ref filters);   // never longer than the stored bytes
+            }
+
             return PdfFilters.Decode(window.Memory, window, filters, MaxStreamBytes,
                 string.Create(CultureInfo.InvariantCulture,
                     $"{Name}: object {stream.Number}: a stream decodes to more than {MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to read this file."));
@@ -308,7 +327,7 @@ internal sealed class PdfFile : IDisposable
             var value = ParseAt(entry.Offset + xref.Shift, header: true, StreamMode.Resolved, out int found, out _, out _, out bytes);
             if (found == number)
             {
-                return value;
+                return _security is { } security ? security.DecryptStrings(value, number, entry.Generation) : value;
             }
         }
         catch (Exception e) when (PdfXrefReader.Repairable(e))
@@ -616,6 +635,7 @@ internal sealed class PdfFile : IDisposable
     {
         _disposed = true;
         _cache.Clear();
+        _security?.Dispose();   // the file key is held only while the document is open
     }
 
     // Marks `number` as being read by this thread: reading it again before it is done is a cycle.

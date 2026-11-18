@@ -128,6 +128,9 @@ internal sealed class PdfWindow : IDisposable
         }
     }
 
+    /// <summary>The first <paramref name="length"/> bytes of <paramref name="rented"/>, a buffer rented from the pool that the window now owns (a stream's data decrypted).</summary>
+    public static PdfWindow Own(byte[] rented, int length) => new(rented.AsMemory(0, length), rented);
+
     public void Dispose()
     {
         if (_rented is { } rented)

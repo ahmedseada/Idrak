@@ -19,7 +19,7 @@ internal abstract partial class Tests
     [
         ("documents pdf: file: the library's pdf format is registered (name, extension, media type, the header within the first KiB) and opens every sample that is not encrypted or hostile with its page count, version, information (PDFDocEncoding, UTF-16, UTF-8, escapes, dates whole, partial and odd), each page's size and rotation (inherited, crop boxes, the kids' count winning over /Count) and the repaired flag", PdfSamplesOpen),
         ("documents pdf: file: each D1 sample's cross-reference as written (tables, streams, object streams, hybrids, incremental updates through /Prev with a freed object gone, offsets after junk), every live object in the canonical form, read alike from several threads, and every listed stream of every sample decoded through its filters and predictors to its SHA-256", PdfSamplesObjects),
-        ("documents pdf: file: hostile samples fail fast with an InvalidDataException naming their limit (MaxStreamBytes, MaxDepth, MaxObjects) or the cycle (references, the page tree, /Prev, an object stream holding itself), where their JSON says; encrypted samples are refused naming phase D2, the public-key handler naming its handler", PdfHostileAndEncrypted),
+        ("documents pdf: file: hostile samples fail fast with an InvalidDataException naming their limit (MaxStreamBytes, MaxDepth, MaxObjects) or the cycle (references, the page tree, /Prev, an object stream holding itself), where their JSON says; encrypted samples open with their password and not without one (the encryption group reads them whole), the public-key handler is refused naming its handler", PdfHostileAndEncrypted),
         ("documents pdf: file: the document format suite passes on pdf with the samples (pages read in parallel the same, tight limits named, cut and changed files failing only as damaged)", PdfFormatSuite),
         ("documents pdf: file: the lexer on hand-made bytes (names with #xx, literal strings with escapes, octal, nested parentheses, line ends and continuations, hex strings, numbers and references); hand-made files read alike from a file, memory and a plain stream, with no cache, a stream bomb and a deep page tree failing naming their limits", PdfHandMade),
     ];
@@ -57,7 +57,13 @@ internal abstract partial class Tests
             var samples = new List<PdfSampleEntry>();
             foreach (var entry in manifest["samples"]!.AsArray())
             {
-                string path = Path.Combine(folder, (string)entry!["file"]!);
+                // The PDF samples only: the manifest also lists the fonts (D8), the writer's inputs (D6), a merge plan and a PKI.
+                if ((string?)entry!["file"] is not { } file || !file.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) || entry["expected"] is null)
+                {
+                    continue;
+                }
+
+                string path = Path.Combine(folder, file);
                 Check(File.Exists(path), $"{path} is in the manifest but not on disk: make the samples again (tools/documents/make_fixtures.py).");
                 string hash = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)));
                 Check(hash == (string?)entry["sha256"], $"{path}'s SHA-256 is not the manifest's: make the samples again (tools/documents/make_fixtures.py).");
@@ -420,15 +426,39 @@ internal abstract partial class Tests
         int encrypted = 0;
         foreach (var sample in samples.Where(s => s.Encrypted))
         {
-            try
+            if ((string?)sample.Expected["openError"]?["handler"] is { } handler)
             {
-                using var document = DocumentFormats.Open(sample.Path);
-                Check(false, $"{sample.Name}: an encrypted file opened before phase D2");
+                try
+                {
+                    using var document = DocumentFormats.Open(sample.Path);
+                    Check(false, $"{sample.Name}: a file encrypted by the handler {handler} opened");
+                }
+                catch (NotSupportedException e)
+                {
+                    Check(e.Message.Contains(handler, StringComparison.Ordinal) && e.Message.Contains("encrypted", StringComparison.Ordinal), $"{sample.Name}: \"{e.Message}\" does not name {handler}");
+                }
             }
-            catch (NotSupportedException e)
+            else
             {
-                string handler = (string?)sample.Expected["openError"]?["handler"] ?? "D2";
-                Check(e.Message.Contains(handler, StringComparison.Ordinal) && e.Message.Contains("encrypted", StringComparison.Ordinal), $"{sample.Name}: \"{e.Message}\" does not name {handler}");
+                string password = (string)sample.Expected["open"]!["password"]!;
+                using (var document = DocumentFormats.Open(sample.Path, new DocumentOptions { Password = password.Length > 0 ? password : null }))
+                {
+                    Check(document.Info.Encrypted && document.PageCount == (int)sample.Expected["open"]!["pageCount"]!,
+                        $"{sample.Name}: opened with its password, encrypted {document.Info.Encrypted}, {document.PageCount} pages");
+                }
+
+                if (password.Length > 0)
+                {
+                    try
+                    {
+                        using var document = DocumentFormats.Open(sample.Path);
+                        Check(false, $"{sample.Name}: opened without its password");
+                    }
+                    catch (InvalidDataException e)
+                    {
+                        Check(e.Message.Contains("DocumentOptions.Password", StringComparison.Ordinal), $"{sample.Name}: \"{e.Message}\" does not name DocumentOptions.Password");
+                    }
+                }
             }
 
             encrypted++;
@@ -448,9 +478,11 @@ internal abstract partial class Tests
             {
                 samples.Add(new DocumentSample(sample.Path, Pages: (int)sample.Expected["open"]!["pageCount"]!));
             }
-            else if (sample.Encrypted)
+            else if (sample.Encrypted && ((string?)sample.Expected["openError"]?["handler"]
+                                          ?? ((string?)sample.Expected["open"]?["password"] is { Length: > 0 } ? "DocumentOptions.Password" : null)) is { } refused)
             {
-                samples.Add(new DocumentSample(sample.Path, Error: (string?)sample.Expected["openError"]?["handler"] ?? "D2"));
+                // Those that need a password or another handler are refused naming it; the encryption group reads the rest.
+                samples.Add(new DocumentSample(sample.Path, Error: refused));
             }
             else if (sample.Hostile && sample.Phases.Contains("D1") && (string)sample.Expected["hostile"]!["limit"]! is "cycle" or "MaxDepth")
             {

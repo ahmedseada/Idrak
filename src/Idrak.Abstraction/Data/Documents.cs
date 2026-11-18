@@ -106,7 +106,10 @@ public sealed record DocumentOptions
     private readonly float _wordGap = 0.2f, _lineTolerance = 0.5f;
     private readonly int _maxDepth = 64;
 
-    /// <summary>The password to open an encrypted file with (as either of its passwords); null tries the empty one only.</summary>
+    /// <summary>
+    /// The password to open an encrypted file with (as either of its passwords), tried after the empty one; null tries the
+    /// empty one only. When neither opens the file, opening it is an <see cref="InvalidDataException"/> naming this option.
+    /// </summary>
     public string? Password { get; init; }
 
     /// <summary>The layout that arranges a page's runs into lines and text: a <see cref="DocumentTextLayouts"/> name ("lines" unless <see cref="LayoutVariable"/> names another).</summary>
@@ -274,7 +277,10 @@ public interface IDocumentFormat
     /// <param name="stream">A seekable stream of the file.</param>
     /// <param name="name">A name for messages (the file's).</param>
     /// <param name="options">How to open it.</param>
-    /// <exception cref="InvalidDataException">The file is damaged beyond repair, or a limit was passed (the message names it).</exception>
+    /// <exception cref="InvalidDataException">
+    /// The file is damaged beyond repair, a limit was passed, or it is encrypted and <see cref="DocumentOptions.Password"/>
+    /// does not open it (the message names the limit or the option).
+    /// </exception>
     /// <exception cref="NotSupportedException">A valid file in a variant the format does not read (the message names it).</exception>
     IDocument Open(Stream stream, string name, DocumentOptions options);
 }
