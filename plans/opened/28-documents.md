@@ -415,6 +415,17 @@ bytes.
 `tests/` or `src/` holds a generated sample, the docs say what is read, written, edited, signed and drawn and what is
 not, and the owner's command list is in the as-built note.
 
+**As built, first piece (2026-11-18): the generator and the D1-D4 samples.** `tools/documents/make_fixtures.py` (the
+`docfixtures` package beside it, `requirements.txt` pinned with every dependency, `README.md` with the JSON format)
+writes 75 samples into `test-output/documents/samples` (D1 25, D2 23, D3 20, D4 10; 10 hostile, each with the limit it
+must trip), each with its expected JSON, the reference reader's and renderer's text, the renderer's pages (PNG, 100
+DPI) and its images' expected pixels; `manifest.json` lists every file's SHA-256. Every PDF byte is written by the
+generator; qpdf (pikepdf) decodes every listed stream to its hash, pdfminer.six is the reference reader, pdfium
+(pypdfium2) the reference renderer and the check of every run box. Two runs give the same 396 files; a run takes about a
+minute. The owner makes them with `python -I tools\documents\make_fixtures.py -o test-output\documents\samples` after
+`python -m pip install -r tools\documents\requirements.txt`. To come in D5: the samples of D6-D13 (each phase adds a
+`docfixtures/samples_dN.py`, see the README), the `documents real:` group and the docs.
+
 ## Phase D6: PDF writing
 
 In `Idrak.Data` (`src/Idrak.Data/Pdf/`, beside the reader, sharing its objects and filters), registered in
