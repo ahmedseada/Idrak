@@ -23,7 +23,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Built (2026-11-18) |
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Built (2026-11-18) |
-| D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
+| D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Built (2026-11-18) |
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
@@ -1141,6 +1141,151 @@ when asked, its hidden text; existing glyph drawing is byte-identical.
 
 **Tests (CPU here):** one build; `documents pdf: vector|documents drawers|documents pdf: write|documents pdf: images|
 fonts|synthetic pages`.
+
+**As built (2026-11-18):**
+- **Vector content read** (`src/Idrak.Data/Pdf/PdfContentVector.cs`, a part of D3's `PdfContentReader`; on when a read
+  asks for paths, glyphs or images): paths built in page points through the current matrix (`m l c v y h re`), a cubic
+  whose controls lie two thirds of the way to one point read as the quadratic it raises (D6's decision 4); painting and
+  order as D3 counts them (`S s f F f* B B* b b* sh`; `n` paints nothing); clips `W W*`, a form's `/BBox`, and text
+  clips (render modes 4-7: the runs between `BT` and `ET` named by `ClipRun`/`ClipRunCount`); the line state `w J j M
+  d`; colours in every space (`PdfColours.cs`: device, ICC by its component count, `CalGray`, `CalRGB`, `Lab`,
+  `Indexed`, `Separation` and `DeviceN` through their tint transforms); functions of types 0, 2, 3 and 4
+  (`PdfFunctions.cs`; the calculator compiled once, a 100-value stack, a million-step budget); `ExtGState` (`LW LC LJ
+  ML D ca CA BM SMask`); shadings of types 1-7 (`PdfShadings.cs`; patches cut into 16 x 16 cells of two triangles);
+  tiling patterns (the cell as a page of its own; an uncoloured one in the fill colour) and shading patterns;
+  transparency groups (a form's `/Group`) and soft masks (luminosity or alpha, the mask's content as a page of its own,
+  its backdrop). Images (D4) now take their opacity, a stencil's colour, blend, group and soft mask; a `Separation` or
+  `DeviceN` image decodes through its tint transform (D4 counted it as not supported).
+- **Fonts for drawing:** `CffFontFormat` ("cff", a bare CFF program; CID-keyed glyphs by `cidNNNNN` names) and
+  `Type1FontFormat` ("type1": PFB, PFA or the PDF's `FontFile` with `/Length1-3`, eexec and `lenIV`, `Subrs`, flex and
+  hint replacement, `seac` accents, `div`) in `src/Idrak.Imaging/PostScriptFonts.cs`, registered in `FontFormats`
+  with no file extension (read by their first bytes); each gives a `post` table of its glyph names and a `cmap` of its
+  built-in encoding (`PostScriptFontTables.cs`: the CFF standard strings and encoding, made from fontTools 4.68, credited
+  in `NOTICE`). `CffOutlines` reads names, charset, encoding and widths. Type 3 fonts (`PdfType3.cs`): each glyph's
+  filled paths from its `/CharProcs` stream through `/FontMatrix`, read once when first drawn. `PdfFont` finds a simple
+  font's glyph by its name (`/Differences`, the built-in encoding) for Type 1, bare CFF and Type 3 programs; a vertical
+  run's glyphs move by their position vector (`/DW2`). Fonts not embedded come from `DocumentDrawOptions.Fonts` (the
+  existing `IDRAK_DOCUMENT_FONTS`), matched by name and then by the characters they cover; a substitute's glyphs are
+  stretched to the document's widths (0.75 to 4/3), slanted 0.21 for an `Italic` or `Oblique` name and emboldened by a
+  stroke of 3% of the size for a `Bold` one; with no folder or no match the run is left out and counted (`missing-font`).
+- **The drawer** ("coverage", `src/Idrak.Imaging/DocumentDrawer.cs`, `DocumentScene.cs`, `DocumentPaints.cs`,
+  `DocumentStroker.cs`; one line in `LibraryRegistrations.cs`): the page's parts become a scene once (outlines in
+  pixels, in content order), then drawn band by band (`BandRows`: 128 Ki pixels a band, 8 to 1,024 rows), bands in
+  parallel, on premultiplied float RGBA; 8-bit planes out, grey by 0.299/0.587/0.114. Fills by their rule; strokes
+  through `Pens` and an offset outline (`DocumentStroker`: butt, round and square caps; miter, round and bevel joins
+  with the miter limit; dashes; a closed path as two loops); glyph runs through their faces' outlines and `GlyphMatrix`
+  (stroked and clipping render modes too); images by their homography (`PerspectiveWarp`, the scan helpers' `Homography`
+  and `Warp` moved out of `ScanImageOps` unchanged): nearest when magnified, the area's mean when shrunk; clips as
+  coverage masks cached per band; shadings (axial and radial through a 1,024-step lookup, function-based a pixel at a
+  time, meshes as triangles by their pixel centres, `Extend`, `Background`); tilings (an upright cell snapped to whole
+  pixels as pdfium does, the others mapped back into a tile at the page's resolution); the 16 blend modes (separable,
+  and hue, saturation, colour and luminosity); groups (isolated, knockout; a non-isolated, non-knockout opaque `Normal`
+  group drawn straight through) and soft masks drawn per band from their own scenes. `DocumentDrawing.DrawPages` draws
+  several pages in parallel (`ComputeResources.ParallelOptions`; `parallel: false` one after another). **The
+  rasterizer's fill rule** (`CoverageRasterizer.Fill(..., OutlineFill)`): `NonZero` and `EvenOdd` accumulate signed
+  coverage in the box clipped to the pixels (edges left of it folded onto its left side) and fold it as AGG does;
+  `OutlineFill.Glyph`, the default, runs the glyph code as it was (not a line of it changed).
+- **Contract changes (public API, dumps regenerated through the runner):** `OutlineFill` and
+  `IOutlineRasterizer.Fill(outline, scale, x, y, coverage, width, height, rule)` (a default member: `Glyph` forwards to
+  the old `Fill`, any other rule `NotSupportedException`; `OutlineRasterizers`' guard forwards both); `DocumentPath`
+  (`FillPattern`, `StrokePattern`, `Blend`, `Group`, `SoftMask`, `ClipRun`, `ClipRunCount`), `DocumentTextRun`
+  (`StrokeColour`, `StrokeWidth`, `GlyphMatrix`, `Blend`, `Group`, `SoftMask`), `DocumentImage` (`Alpha`, `Stencil`,
+  `Blend`, `Group`, `SoftMask`), `DocumentPage` (`Shadings`, `Groups`, `SoftMasks`); new in `DocumentPaint.cs`:
+  `DocumentBlend`, `DocumentShadingKind`, `DocumentShading`, `DocumentPattern` (a shading, or a tiling's cell, box,
+  steps and matrix), `DocumentGroup`, `DocumentSoftMask`; `DocumentDrawing.DrawPages`; `CoverageRasterizer.Fill` with
+  the rule (Idrak.Imaging). `IDocument`, `IDocumentPageDrawer` and `DocumentPageDrawers`, now used by Idrak.Data and
+  Idrak.Imaging, left `tests/Idrak.Tests/data/shared-contracts.txt`; the inventory regenerated. No new environment
+  variable.
+- **The tolerance and why:** pdfium (`pypdfium2`, the generator's reference) and the library are two rasterizers whose
+  edges differ by up to half a pixel, so both drawings are first averaged 3 x 3, then the share of pixels with a channel
+  off by more than 32 levels is held to **2%**, or **8%** on a page with a run in a standard font not embedded (DejaVu
+  Sans in every style here, pdfium's own substitutes there: the glyphs differ in shape, and 8% is about the share such
+  text covers). Where pdfium departs from the colour rules the samples' JSON states (D4's), the JSON wins: those parts
+  are left out of the comparison by their boxes, each with its reason, and their colours checked against the JSON
+  (`vector-colour-spaces` paths 3, 7, 11, 14, 15, 17: pdfium's own CMYK to RGB, and a `DeviceN` with a one-input
+  stitching tint transform painted white; `colour-spaces` images 3, 5, 6, 11: pdfium's CMYK and Lab conversions and an
+  index past the highest not clamped; `predictors` image 7: pdfium misreads the TIFF predictor on 4-bit samples, whose
+  pixels D1 and D4 check exactly). pdfium sizes a page up where the contract rounds (583.3 points to 584 pixels): the
+  shared region is compared when the sizes differ by one. The knockout group and every shading are also probed at their
+  JSON's points within its tolerance.
+- **How each sample scored** (53 pages of the D3, D4 and D7 samples at their references' resolution; the share off by
+  more than 32 levels): at 2%: `truetype-simple` 0.23, `type0-identity` 0.27, `type0-no-tounicode` 0.16 and 0.40,
+  `type0-no-cmap` 1.46, `cidtogidmap-stream` 0.17, `type3` 0.01, `rtl` 0.54, `mixed-direction` 0.50, `vertical` 0.24 and
+  0.08, `searchable-scan` 0.06 and 0.07; at 8%: `standard14` 5.16, `predictors` 4.16, `colour-spaces` 4.24, `bit-depths`
+  3.82, `decode-arrays` 3.37, `masks` 2.86, `text-state` 2.81, `inline-images` 2.68, `encodings` 1.84, `dct` 1.80,
+  `image-placement` 1.72 and 0.36, `render-modes` 1.21, `text-matrix` 0.71, `actual-text` 0.69, `page-tree` 0.40, 0.47
+  and 0.40, `rotated-pages` 0.55, 0.41, 0.57, 0.54, 0.15 and 0.20, `cropbox` 0.55 and 0.50, `scan-ocr` 0.33,
+  `attachments` 0.23, `vector-paths` 0.48, `vector-fill-rules` 0.18, `vector-strokes` 0.89, `vector-clipping` 2.07,
+  `vector-colour-spaces` 0.18, `vector-shadings` 3.76, `vector-patterns` 3.87, `vector-transparency` 3.02,
+  `vector-fonts` 1.04, `vector-images` 3.21, `vector-turned-pages` 0.66 and 1.30. Pages the pdf writer wrote draw back
+  as the library draws the same parts in memory with no pixel off by more than 8 levels (the vector page, the page of
+  shapes), and an image page as its image, exactly.
+- **Tests** (`tests/Idrak.Tests.Library/DocumentPdfVectorTests.cs`): group `documents pdf: vector` (3): every D7 sample
+  page's 111 paths, 13 clips, 7 shadings, groups and the 21 runs' and 8 images' paint as their JSON says (points within
+  0.002 point); `vector-fonts`' four kinds of face, its 23 Type 1 glyphs' outlines and widths as fontTools reads them;
+  D6's quadratic read back, functions of every type on known values, hand-made pages (every operator, a dash, nested
+  clips, tint transforms). Group `documents drawers` (3): the drawer registered and `DocumentPageDrawerSuite` on it;
+  every sample page against pdfium (scores above, each drawn page saved to `test-output/documents/drawn/`); written
+  pages drawn back; a scan with and without its hidden text; a missing font counted; the fill rules on hand-made
+  outlines; a large page with bounded memory; pages in parallel giving the same pixels as one by one; the timings.
+  D6's read-back (`DocumentPdfWriteReadBack.cs`) now takes the reader's own parts (its path and image reading removed).
+  **Runs:** the targeted filter (below) with the API and inventory flags: 177 tests, 172 passed, 5 failed: the inventory
+  (three new abstract classes outside `Idrak.Abstraction`: made sealed classes holding a delegate), the shared-contracts
+  list (the three lines above), the vector test's floor of 150 paths (the samples have 111), the drawer comparing only
+  11 pages (pdfium's sizes rounded up: the shared region compared) and the fill-rule test's own expectation (a square
+  wound against the one it overlaps empties the overlap under nonzero); then `documents pdf: vector|documents
+  drawers|abstraction inventory`: 9 passed, 1 failed, five pages past 2% (`predictors` 7.16%, `standard14` 6.69%,
+  `colour-spaces` 10.03%, `vector-colour-spaces` 6.76%, `vector-patterns` 16.56%): upright tilings snapped to whole
+  pixels as pdfium does, substitutes stretched, slanted and emboldened, the standard-font pages held to 8% and pdfium's
+  departures left out as above; then 10 passed; then the whole filter again without the flags (the API and the
+  inventory checked): **177 passed, 0 failed**. Existing glyph drawing: the glyph code is unchanged and every synthetic
+  page group in the filter passes.
+- **Timings and memory** (this container, 4 cores, other agents building beside it: noisy; measured apart cold and
+  warm, managed allocation per call; the owner's devices give the real ones):
+  - a vector page (`vector-transparency`): 100 dpi (556 x 417) cold 10.6 ms and 0.85 MiB, warm 8.9 ms and 0.79 MiB
+    (0.66 MiB the pixels); 300 dpi (1667 x 1250) cold 65.4 ms and 18.1 MiB, warm 46.0 ms and 6.10 MiB (5.96 MiB the
+    pixels).
+  - a text page (`truetype-simple`): 100 dpi cold 2.9 ms and 1.17 MiB, warm 1.9 ms and 0.77 MiB (0.70 the pixels);
+    300 dpi cold 11.8 ms and 6.73 MiB, warm 8.9 ms and 6.34 MiB (6.26 the pixels).
+  - a scan page (`scan-ocr`, A4): 100 dpi cold 15.7 ms and 4.04 MiB, warm 15.3 ms and 3.77 MiB (2.76 the pixels);
+    300 dpi (2479 x 3508) cold 104 ms and 25.9 MiB, warm 127 ms (noise: slower than cold) and 25.9 MiB (24.9 the pixels).
+  - a large page (`vector-transparency` at 1200 dpi, 6667 x 5000): 674 ms, 95.9 MiB allocated of which 95.4 MiB the
+    pixels returned, 0.5 MiB besides (the bands); the GC's peak heap 329 MiB with 211 MiB of the test process before it.
+  - the 11 D7 samples at 150 dpi, warm: one after another 170 ms, in parallel 162 ms: little gain, since each page's
+    bands already take every core; the pixels are the same either way.
+- **Left for later:** a non-isolated group with another blend or opacity is drawn as an isolated one; a stroke under a
+  matrix that is not uniform has its width scaled by the root of its determinant (its pen not sheared); a `d0` Type 3
+  glyph's own colours and images and every glyph's strokes are not kept; a TrueType font's Mac standard glyph names
+  (`post` version 1, and version 2's indices below 258) are not read when a font's glyph is found by name; a CFF
+  Expert encoding reads as the standard one; a tiling cell's `/BBox` is not a clip; a pixel at an edge is the AGG
+  rule's approximation; annotations are not drawn (D10); no command of the CLI draws a page yet (D13's bench). The
+  band size (128 Ki pixels), the shading lookup's 1,024 steps, the largest tile (1 Mi pixels) and the substitutes'
+  stretch, slant and stroke are constants, not options: say if any should become one.
+- **Decisions the plan did not settle, taken here:** (1) The fill rule is a default member of `IOutlineRasterizer`
+  with its own enum, so every rasterizer keeps working and the glyph path is not touched. (2) Vector paint (patterns,
+  shadings, groups, soft masks, blend modes) is new public data on the page, not a drawer's private reading of the PDF,
+  so any format and any drawer can carry it. (3) The inventory's rule against new abstract classes holds: the scene's
+  items, paints and PDF functions are sealed classes holding a delegate. (4) Upright tilings are snapped to whole pixels
+  as pdfium draws them (no seams, and it matches); others are mapped exactly. (5) Where the reference departs from the
+  samples' JSON, the JSON (the plan's rules) wins and the part is left out of the pixel comparison with its reason.
+  (6) The shared warp is named `PerspectiveWarp` (`ImageWarp` is Idrak.Vision's). (7) The Type 1 and CFF formats claim
+  no extension: they are read from PDFs and by their first bytes, not chosen by a file's name.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: vector|documents drawers|documents pdf: write|documents pdf: images|documents pdf: text|documents pdf: file|documents pdf: encryption|documents contracts|document layouts|conformance kit:|fonts:|fonts write|fonts woff|shapes:|pages:|plain:|glyph poses:|scans:|synthetic data:|hidden boxing|override loop:|outside plug-in|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d7.txt
+  $env:IDRAK_FILTER = "documents drawers: the fill rules"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d7-timing.txt
+  $env:IDRAK_FILTER = "documents drawers: the library's coverage drawer"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d7-scores.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+  The last run draws every D3, D4 and D7 sample page into `test-output\documents\drawn\` (for example
+  `vector-transparency.p1.png`, beside pdfium's `test-output\documents\samples\d7\vector-transparency.p1.png`) and
+  writes each page's score.
 
 ## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 

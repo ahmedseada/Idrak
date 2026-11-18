@@ -17,9 +17,65 @@ internal sealed class PdfFontProgram
     private readonly int[] _codePoints;
     private readonly Dictionary<int, int>? _symbol;
     private readonly Dictionary<int, int>? _macintosh;
+    private readonly Lazy<Dictionary<string, int>> _names;
 
-    private PdfFontProgram(IFontFace face, int[] codePoints, Dictionary<int, int>? symbol, Dictionary<int, int>? macintosh) =>
+    private PdfFontProgram(IFontFace face, int[] codePoints, Dictionary<int, int>? symbol, Dictionary<int, int>? macintosh, Dictionary<string, int>? names = null)
+    {
         (Face, _codePoints, _symbol, _macintosh) = (face, codePoints, symbol, macintosh);
+        _names = names is not null ? new Lazy<Dictionary<string, int>>(() => names) : new Lazy<Dictionary<string, int>>(() => PostNames(face.Table("post").Span, face.GlyphCount));
+    }
+
+    /// <summary>A face made here (a Type 3 font's), its glyphs found by <paramref name="names"/>.</summary>
+    public static PdfFontProgram Of(IFontFace face, Dictionary<string, int> names) =>
+        new(face, new int[Math.Max(0, face.GlyphCount)].Select(_ => -1).ToArray(), null, null, names) { Bytes = 4096 + 64L * names.Count };
+
+    /// <summary>The glyph its own name (the font's "post" names: a PostScript font's, a TrueType font's of its own) gives, or -1.</summary>
+    public int GlyphByName(string name) => _names.Value.TryGetValue(name, out int glyph) ? glyph : -1;
+
+    /// <summary>A CID-keyed program's glyph for <paramref name="cid"/> (its glyphs named "cid" and five digits), or -1.</summary>
+    public int CidGlyph(int cid) => cid >= 0 && _names.Value.Count > 0 ? GlyphByName(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"cid{cid:D5}")) : -1;
+
+    // A "post" table of version 2's names given as strings of its own (an index of 258 or more), each glyph's.
+    private static Dictionary<string, int> PostNames(ReadOnlySpan<byte> post, int glyphCount)
+    {
+        var names = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (post.Length < 34 || BinaryPrimitives.ReadUInt32BigEndian(post) != 0x00020000)
+        {
+            return names;
+        }
+
+        int count = Math.Min(BinaryPrimitives.ReadUInt16BigEndian(post[32..]), glyphCount);
+        int strings = 34 + 2 * count;
+        if (strings > post.Length)
+        {
+            return names;
+        }
+
+        // The strings in order, then each glyph's index into them.
+        var list = new List<string>();
+        for (int at = strings; at < post.Length;)
+        {
+            int length = post[at];
+            if (at + 1 + length > post.Length)
+            {
+                break;
+            }
+
+            list.Add(System.Text.Encoding.Latin1.GetString(post.Slice(at + 1, length)));
+            at += 1 + length;
+        }
+
+        for (int g = 0; g < count; g++)
+        {
+            int index = BinaryPrimitives.ReadUInt16BigEndian(post[(34 + 2 * g)..]) - 258;
+            if ((uint)index < (uint)list.Count)
+            {
+                names.TryAdd(list[index], g);
+            }
+        }
+
+        return names;
+    }
 
     /// <summary>The program as a face.</summary>
     public IFontFace Face { get; }

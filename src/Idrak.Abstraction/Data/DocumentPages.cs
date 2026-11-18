@@ -308,6 +308,31 @@ public sealed class DocumentPath
     /// <summary>The path's place in its page's content: text runs, images and paths share one count, so a drawer draws them in this order.</summary>
     public int Order { get; init; }
 
+    /// <summary>The pattern the path is filled with (a tiling or a shading), or null: <see cref="FillColour"/>.</summary>
+    public DocumentPattern? FillPattern { get; init; }
+
+    /// <summary>The pattern its stroke is painted with, or null: <see cref="StrokeColour"/>.</summary>
+    public DocumentPattern? StrokePattern { get; init; }
+
+    /// <summary>How it is composed with what is under it (<see cref="DocumentBlend.Normal"/>).</summary>
+    public DocumentBlend Blend { get; init; }
+
+    /// <summary>The transparency group it is drawn in: an index into its page's <see cref="DocumentPage.Groups"/>, or -1 for none.</summary>
+    public int Group { get; init; } = -1;
+
+    /// <summary>The soft mask it is drawn through: an index into its page's <see cref="DocumentPage.SoftMasks"/>, or -1 for none.</summary>
+    public int SoftMask { get; init; } = -1;
+
+    /// <summary>
+    /// For a clip made of text (runs shown to clip, as PDF's render modes 4 to 7): the <see cref="DocumentTextRun.Order"/>
+    /// of its first run, the clip being the glyphs of the <see cref="ClipRunCount"/> runs from it (no verbs of its own); -1
+    /// for a clip that is the path itself.
+    /// </summary>
+    public int ClipRun { get; init; } = -1;
+
+    /// <summary>How many runs, in content order from <see cref="ClipRun"/>, make a clip of text (0 for a path).</summary>
+    public int ClipRunCount { get; init; }
+
     /// <summary>Whether the path has no contour.</summary>
     public bool IsEmpty => Verbs.Length == 0;
 
@@ -391,8 +416,22 @@ public sealed record DocumentTextRun(string Text, DocumentBox Box, float FontSiz
     /// </summary>
     public bool Logical { get; init; }
 
-    /// <summary>The colour it is painted in (black).</summary>
+    /// <summary>The colour it is painted in (black); its opacity the fill's.</summary>
     public DocumentColour Colour { get; init; }
+
+    /// <summary>The colour its outlines are stroked in, for <see cref="DocumentTextMode.Stroke"/> and <see cref="DocumentTextMode.FillStroke"/> (black).</summary>
+    public DocumentColour StrokeColour { get; init; }
+
+    /// <summary>The width its outlines are stroked with, in points (1).</summary>
+    public float StrokeWidth { get; init; } = 1f;
+
+    /// <summary>
+    /// How each glyph is drawn: its outline at one unit an em (font units over the face's units per em, y up) through this
+    /// map onto the page (points, y down), from the glyph's origin (<see cref="DocumentGlyph.X"/>, <see cref="DocumentGlyph.Y"/>;
+    /// the map's own shift is not used); null: upright at <see cref="FontSize"/>, (size, 0, 0, -size). A turned, slanted
+    /// or stretched run gives its map.
+    /// </summary>
+    public DocumentMatrix? GlyphMatrix { get; init; }
 
     /// <summary>The glyphs, when they were asked for (<see cref="DocumentParts.Glyphs"/>); empty otherwise.</summary>
     public ReadOnlyMemory<DocumentGlyph> Glyphs { get; init; }
@@ -402,6 +441,15 @@ public sealed record DocumentTextRun(string Text, DocumentBox Box, float FontSiz
 
     /// <summary>The clip the run was drawn under: an index into its page's <see cref="DocumentPage.Clips"/>, or -1 for none.</summary>
     public int Clip { get; init; } = -1;
+
+    /// <summary>How it is composed with what is under it (<see cref="DocumentBlend.Normal"/>).</summary>
+    public DocumentBlend Blend { get; init; }
+
+    /// <summary>The transparency group it is drawn in: an index into its page's <see cref="DocumentPage.Groups"/>, or -1 for none.</summary>
+    public int Group { get; init; } = -1;
+
+    /// <summary>The soft mask it is drawn through: an index into its page's <see cref="DocumentPage.SoftMasks"/>, or -1 for none.</summary>
+    public int SoftMask { get; init; } = -1;
 }
 
 /// <summary>
@@ -468,6 +516,21 @@ public sealed class DocumentImage
 
     /// <summary>The clip the image was drawn under: an index into its page's <see cref="DocumentPage.Clips"/>, or -1 for none.</summary>
     public int Clip { get; init; } = -1;
+
+    /// <summary>Its opacity, 0 (transparent) to 1 (opaque, the default).</summary>
+    public float Alpha { get; init; } = 1f;
+
+    /// <summary>For an image that is a stencil (an image mask): the colour it paints where its <see cref="Mask"/> covers; null for an image of its own colours.</summary>
+    public DocumentColour? Stencil { get; init; }
+
+    /// <summary>How it is composed with what is under it (<see cref="DocumentBlend.Normal"/>).</summary>
+    public DocumentBlend Blend { get; init; }
+
+    /// <summary>The transparency group it is drawn in: an index into its page's <see cref="DocumentPage.Groups"/>, or -1 for none.</summary>
+    public int Group { get; init; } = -1;
+
+    /// <summary>The soft mask it is drawn through: an index into its page's <see cref="DocumentPage.SoftMasks"/>, or -1 for none.</summary>
+    public int SoftMask { get; init; } = -1;
 
     /// <summary>The placement in use: <see cref="Matrix"/>, or the map onto <see cref="Box"/>.</summary>
     public DocumentMatrix Placement => Matrix ?? DocumentMatrix.FromBox(Box);
@@ -638,6 +701,15 @@ public sealed class DocumentPage
 
     /// <summary>The clips the page's parts were drawn under, each a path whose <see cref="DocumentPath.Clip"/> is the clip it was made under (they intersect).</summary>
     public IReadOnlyList<DocumentPath> Clips { get; init; } = [];
+
+    /// <summary>The shadings painted on their own (filling their clip), in content order (empty unless <see cref="DocumentParts.Paths"/> was asked).</summary>
+    public IReadOnlyList<DocumentShading> Shadings { get; init; } = [];
+
+    /// <summary>The transparency groups the page's parts are drawn in (each part names its innermost by <c>Group</c>).</summary>
+    public IReadOnlyList<DocumentGroup> Groups { get; init; } = [];
+
+    /// <summary>The soft masks the page's parts are drawn through (each part names its own by <c>SoftMask</c>).</summary>
+    public IReadOnlyList<DocumentSoftMask> SoftMasks { get; init; } = [];
 
     /// <summary>The annotations (empty unless <see cref="DocumentParts.Annotations"/> was asked).</summary>
     public IReadOnlyList<DocumentAnnotation> Annotations { get; init; } = [];

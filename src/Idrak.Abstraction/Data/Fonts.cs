@@ -152,8 +152,9 @@ public interface IFontFormat
 }
 
 /// <summary>
-/// The font file formats, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (.ttf, .otf, .ttc: TrueType
-/// outlines, single fonts and collections). Register another with <see cref="Register"/>.
+/// The font file formats, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (.ttf, .otf, .ttc: TrueType and
+/// CFF outlines, single fonts and collections), and "cff" and "type1" (bare CFF and Type 1 programs, as documents embed
+/// them: read by their first bytes, no file extension). Register another with <see cref="Register"/>.
 /// </summary>
 public static class FontFormats
 {
@@ -320,6 +321,26 @@ public static class FontFormats
     }
 }
 
+/// <summary>How a rasterizer finds an outline's inside (<see cref="IOutlineRasterizer.Fill(GlyphOutline, float, float, float, Span{float}, int, int, OutlineFill)"/>).</summary>
+public enum OutlineFill : byte
+{
+    /// <summary>
+    /// The rasterizer's own glyph drawing, the default: a glyph's contours, which never wind against each other, filled by
+    /// the nonzero rule over the outline's whole box (what every glyph and page has always been drawn with).
+    /// </summary>
+    Glyph,
+
+    /// <summary>
+    /// The nonzero winding rule for contours that overlap in any direction: a point is inside when the contours wind around
+    /// it a nonzero number of times, either way. Only the target's rows and columns are worked (an outline may reach far
+    /// past them: a band of a page).
+    /// </summary>
+    NonZero,
+
+    /// <summary>The even-odd rule: a point is inside when a ray from it crosses the contours an odd number of times. Only the target is worked, as <see cref="NonZero"/>.</summary>
+    EvenOdd,
+}
+
 /// <summary>
 /// Fills outlines into coverage: how much of each pixel the shape covers, 0 to 1. Register one with
 /// <see cref="OutlineRasterizers.Register"/>.
@@ -336,9 +357,29 @@ public interface IOutlineRasterizer
     /// (the baseline at y). A pixel's coverage combines with what is there as ink over ink: 1 - (1 - a)(1 - b).
     /// </summary>
     void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height);
+
+    /// <summary>
+    /// <see cref="Fill(GlyphOutline, float, float, float, Span{float}, int, int)"/> by <paramref name="rule"/>:
+    /// <see cref="OutlineFill.Glyph"/> is that fill itself; <see cref="OutlineFill.NonZero"/> and
+    /// <see cref="OutlineFill.EvenOdd"/> find the inside of contours that overlap in any direction, working only the
+    /// target's pixels. A rasterizer that does not implement this overload fills the glyph rule alone.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The rasterizer has no such rule (the message names it).</exception>
+    void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule)
+    {
+        if (rule != OutlineFill.Glyph)
+        {
+            throw new NotSupportedException($"The outline rasterizer '{Name}' fills glyphs by its own rule only, not by the {rule} rule; register one that implements it with OutlineRasterizers.Register.");
+        }
+
+        Fill(outline, scale, x, y, coverage, width, height);
+    }
 }
 
-/// <summary>The outline rasterizers, by name. Built in (Idrak.Imaging): "coverage" (exact area coverage per pixel, nonzero winding, no hinting).</summary>
+/// <summary>
+/// The outline rasterizers, by name. Built in (Idrak.Imaging): "coverage" (exact area coverage per pixel, no hinting; the
+/// glyph rule by default, and the nonzero and even-odd rules for contours that overlap, <see cref="OutlineFill"/>).
+/// </summary>
 public static class OutlineRasterizers
 {
     /// <summary>The library's rasterizer.</summary>
@@ -384,19 +425,22 @@ public static class OutlineRasterizers
     {
         public string Name => app.Name;
 
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height)
+        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
+            Fill(outline, scale, x, y, coverage, width, height, OutlineFill.Glyph);
+
+        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule)
         {
             if (slot.Policy == SlotPolicy.Shadow)
             {
                 var run = slot.Shadow();
                 float[]? before = run is null ? null : coverage.ToArray();
-                library.Fill(outline, scale, x, y, coverage, width, height);
+                library.Fill(outline, scale, x, y, coverage, width, height, rule);
                 if (run is not null)
                 {
                     run.Answered();
                     try
                     {
-                        app.Fill(outline, scale, x, y, before, width, height);
+                        app.Fill(outline, scale, x, y, before, width, height, rule);
                         run.Done(Comparisons.Difference(coverage.ToArray(), before!, 1e-3f));
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
@@ -411,12 +455,12 @@ public static class OutlineRasterizers
             float[]? copy = slot.Policy == SlotPolicy.FallBack ? coverage.ToArray() : null;   // only a fallback needs the coverage before
             try
             {
-                app.Fill(outline, scale, x, y, coverage, width, height);
+                app.Fill(outline, scale, x, y, coverage, width, height, rule);
             }
             catch (Exception e) when (slot.Failed(e))                       // true only under FallBack, which made the copy
             {
                 copy?.CopyTo(coverage);
-                library.Fill(outline, scale, x, y, coverage, width, height);
+                library.Fill(outline, scale, x, y, coverage, width, height, rule);
             }
         }
     }

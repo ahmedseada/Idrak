@@ -19,6 +19,8 @@ internal sealed class CffOutlines
     private readonly byte[]? _fdSelect;                                                   // the font DICT of each glyph (CID-keyed)
     private readonly float _scaleX, _scaleY;
     private readonly string _name;
+    private readonly (int Offset, int Count, int OffSize, int DataStart, int End) _names, _strings;
+    private readonly Dictionary<int, double[]> _top;
 
     public CffOutlines(ReadOnlyMemory<byte> table, int unitsPerEm, int glyphCount, string name)
     {
@@ -43,6 +45,7 @@ internal sealed class CffOutlines
 
         var (topStart, topEnd) = Item(topDicts, 0);
         var top = Dict(topStart, topEnd);
+        (_names, _strings, _top) = (names, strings, top);
         if (!top.TryGetValue(17, out var charStrings))
         {
             throw new InvalidDataException($"{name}: the CFF font has no CharStrings.");
@@ -81,6 +84,178 @@ internal sealed class CffOutlines
 
     /// <summary>The number of charstrings.</summary>
     public int Count => _charStrings.Count;
+
+    /// <summary>Whether the font is CID-keyed (its charset gives CIDs, not names).</summary>
+    public bool CidKeyed => _top.ContainsKey(1230);
+
+    /// <summary>The font's name (the first of the Name INDEX), or null.</summary>
+    public string? FontName => _names.Count > 0 ? Latin1(Item(_names, 0)) : null;
+
+    /// <summary>A Top DICT entry's operands (12 x as 1200 + x), or null.</summary>
+    public double[]? Top(int op) => _top.TryGetValue(op, out var value) ? value : null;
+
+    /// <summary>The string a SID names: one of the 391 standard strings, else the String INDEX's.</summary>
+    public string String(int sid)
+    {
+        if ((uint)sid < (uint)PostScriptFontTables.StandardStrings.Length)
+        {
+            return PostScriptFontTables.StandardStrings[sid];
+        }
+
+        int i = sid - PostScriptFontTables.StandardStrings.Length;
+        return i < _strings.Count ? Latin1(Item(_strings, i)) : $"sid{sid}";
+    }
+
+    /// <summary>
+    /// The charset: each glyph's SID (a name-keyed font) or CID (a CID-keyed one), glyph 0 the .notdef; the predefined
+    /// ISOAdobe charset (0) is the SIDs in order.
+    /// </summary>
+    public int[] Charset()
+    {
+        var t = _data.Span;
+        int count = _charStrings.Count;
+        var ids = new int[count];
+        int at = _top.TryGetValue(15, out var c) && c.Length > 0 ? (int)c[0] : 0;
+        if (at <= 2)
+        {
+            for (int g = 0; g < count; g++)
+            {
+                ids[g] = g;                                                       // ISOAdobe (the experts' sets are not read)
+            }
+
+            return ids;
+        }
+
+        int format = (uint)at < (uint)t.Length ? t[at] : -1, glyph = 1, i = at + 1;
+        while (glyph < count && i < t.Length)
+        {
+            if (format == 0)
+            {
+                ids[glyph++] = Bytes(t, i, 2);
+                i += 2;
+            }
+            else if (format is 1 or 2)
+            {
+                int first = Bytes(t, i, 2), left = format == 1 ? Bytes(t, i + 2, 1) : Bytes(t, i + 2, 2);
+                i += format == 1 ? 3 : 4;
+                for (int k = 0; k <= left && glyph < count; k++)
+                {
+                    ids[glyph++] = first + k;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return ids;
+    }
+
+    /// <summary>
+    /// The built-in encoding as a glyph a code (0: none), or null for the standard encoding (0; the expert one, 1, is
+    /// read as standard): a custom encoding's codes (formats 0 and 1) and its supplements.
+    /// </summary>
+    public int[]? Encoding(int[] charset)
+    {
+        var t = _data.Span;
+        int at = _top.TryGetValue(16, out var e) && e.Length > 0 ? (int)e[0] : 0;
+        if (at <= 1 || (uint)at >= (uint)t.Length)
+        {
+            return null;
+        }
+
+        var glyphs = new int[256];
+        int format = t[at], i = at + 1;
+        if ((format & 0x7F) == 0)
+        {
+            int n = Bytes(t, i, 1);
+            for (int k = 0; k < n; k++)
+            {
+                int code = Bytes(t, i + 1 + k, 1);
+                glyphs[code] = k + 1;
+            }
+
+            i += 1 + n;
+        }
+        else if ((format & 0x7F) == 1)
+        {
+            int ranges = Bytes(t, i, 1), glyph = 1;
+            for (int r = 0; r < ranges; r++)
+            {
+                int first = Bytes(t, i + 1 + 2 * r, 1), left = Bytes(t, i + 2 + 2 * r, 1);
+                for (int k = 0; k <= left && first + k < 256; k++)
+                {
+                    glyphs[first + k] = glyph++;
+                }
+            }
+
+            i += 1 + 2 * ranges;
+        }
+
+        if ((format & 0x80) != 0)
+        {
+            int sups = Bytes(t, i, 1);
+            for (int k = 0; k < sups; k++)
+            {
+                int code = Bytes(t, i + 1 + 3 * k, 1), sid = Bytes(t, i + 2 + 3 * k, 2);
+                int glyph = Array.IndexOf(charset, sid);
+                if (glyph > 0)
+                {
+                    glyphs[code] = glyph;
+                }
+            }
+        }
+
+        return glyphs;
+    }
+
+    /// <summary>A glyph's advance in font units: its charstring's width (from the nominal width), else the default width.</summary>
+    public float Width(int glyph)
+    {
+        if ((uint)glyph >= (uint)_charStrings.Count)
+        {
+            return 0;
+        }
+
+        var (start, end) = Item((_charStrings.Offset, _charStrings.Count, _charStrings.OffSize, _charStrings.DataStart, 0), glyph);
+        int fd = _fdSelect is { } select && glyph < select.Length ? select[glyph] : 0;
+        var local = _localSubrs[Math.Min(fd, _localSubrs.Length - 1)];
+        var state = new State();
+        Run(start, end, local, new PathBuilder(1f, 1f), ref state, 0);
+        var (defaultWidth, nominalWidth) = Widths(fd);
+        return (float)((state.HasWidth ? nominalWidth + state.Width : defaultWidth) * _scaleX);
+    }
+
+    // The Private DICT's defaultWidthX and nominalWidthX (font DICT `fd` of a CID-keyed font).
+    private (double Default, double Nominal) Widths(int fd)
+    {
+        var dict = _top;
+        if (CidKeyed && _top.TryGetValue(1236, out var fdArray) && fdArray.Length > 0)
+        {
+            var index = Index((int)fdArray[0]);
+            if (fd < index.Count)
+            {
+                var (s, e) = Item(index, fd);
+                dict = Dict(s, e);
+            }
+        }
+
+        if (!dict.TryGetValue(18, out var priv) || priv.Length < 2)
+        {
+            return (0, 0);
+        }
+
+        var p = Dict((int)priv[1], (int)priv[1] + (int)priv[0]);
+        return (p.TryGetValue(20, out var d) && d.Length > 0 ? d[0] : 0, p.TryGetValue(21, out var n) && n.Length > 0 ? n[0] : 0);
+    }
+
+    private string Latin1((int Start, int End) item)
+    {
+        var t = _data.Span;
+        int start = Math.Clamp(item.Start, 0, t.Length), end = Math.Clamp(item.End, start, t.Length);
+        return System.Text.Encoding.Latin1.GetString(t[start..end]);
+    }
 
     /// <summary>A glyph's outline (empty for a glyph out of range or with no path).</summary>
     public GlyphOutline Outline(int glyph)
@@ -282,6 +457,8 @@ internal sealed class CffOutlines
         public int Stems;
         public bool WidthTaken;
         public bool Ended;
+        public bool HasWidth;
+        public float Width;
     }
 
     // Runs the charstring [start, end); returns false when it ended (endchar).
@@ -577,6 +754,7 @@ internal sealed class CffOutlines
             return 0;
         }
 
+        (s.HasWidth, s.Width) = (true, s.Stack[0]);
         Array.Copy(s.Stack, 1, s.Stack, 0, s.Top - 1);
         s.Top--;
         return 0;

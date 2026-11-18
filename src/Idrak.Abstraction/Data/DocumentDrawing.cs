@@ -94,9 +94,9 @@ public interface IDocumentPageDrawer : IKind
 }
 
 /// <summary>
-/// The page drawers, by name (ignoring case). None is built in yet; a package registers one (the library's is to be
-/// <see cref="Coverage"/>) with <see cref="Register"/>, and one registered under a library name takes its place, which stays
-/// behind it (see <see cref="SetPolicy"/>).
+/// The page drawers, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Coverage"/>. Register another with
+/// <see cref="Register"/>; one registered under a library name takes its place, which stays behind it (see
+/// <see cref="SetPolicy"/>).
 /// </summary>
 public static class DocumentPageDrawers
 {
@@ -180,6 +180,34 @@ public static class DocumentPageDrawers
         options ??= new DocumentDrawOptions();
         var drawer = Get(options.Drawer);
         return drawer.Draw(document.ReadPage(index, PartsFor(options)), options);
+    }
+
+    /// <summary>
+    /// Pages <paramref name="indices"/> of <paramref name="document"/> read with the parts drawing needs and drawn, in the
+    /// order given: several at once over the cores (<see cref="ComputeResources.ParallelOptions"/>) when
+    /// <paramref name="parallel"/>, else one after another (each page's own drawing still spread over the cores).
+    /// </summary>
+    /// <exception cref="NotRegisteredException">The drawer the options name is not registered.</exception>
+    public static IReadOnlyList<DocumentDrawing> DrawPages(IDocument document, IReadOnlyList<int> indices, DocumentDrawOptions? options = null, bool parallel = true)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(indices);
+        options ??= new DocumentDrawOptions();
+        var drawer = Get(options.Drawer);
+        var parts = PartsFor(options);
+        var drawings = new DocumentDrawing[indices.Count];
+        if (!parallel || indices.Count < 2)
+        {
+            for (int i = 0; i < drawings.Length; i++)
+            {
+                drawings[i] = drawer.Draw(document.ReadPage(indices[i], parts), options);
+            }
+
+            return drawings;
+        }
+
+        Parallel.For(0, drawings.Length, ComputeResources.ParallelOptions, i => drawings[i] = drawer.Draw(document.ReadPage(indices[i], parts), options));
+        return drawings;
     }
 
     // The library's drawing against the app's: the same size, every pixel within the tolerance, the same issue kinds.

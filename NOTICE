@@ -11,3 +11,7 @@ src/Idrak.Data/Pdf/PdfFontTables.Data.cs is generated (tools/documents/make_pdf_
 the ITC Zapf Dingbats glyph list, Copyright 2002-2019 Adobe, used under the BSD 3-clause licence quoted in that file, and
 holds the standard 14 fonts' widths and metrics taken from Adobe's Core 14 AFM files, under the notice those files carry
 (quoted in that file).
+
+src/Idrak.Imaging/PostScriptFontTables.cs holds the CFF specification's 391 standard strings and the standard encoding
+(Adobe Technical Note #5176, appendices A and B), copied as fontTools 4.68 carries them (its cffLib and encodings;
+fontTools is under the MIT licence, Copyright (c) 2017 Just van Rossum and the fontTools contributors).

@@ -27,7 +27,10 @@ internal enum PdfImageColour : byte
     /// <summary>An image mask: one bit, painted or not.</summary>
     Stencil,
 
-    /// <summary>A space read from a later phase (Separation, DeviceN, Pattern): named, not decoded.</summary>
+    /// <summary>Separation or DeviceN: its components through a tint transform into an alternate space (<see cref="PdfColourSpace.Base"/>).</summary>
+    Tint,
+
+    /// <summary>A space an image cannot be painted in (Pattern): named, not decoded.</summary>
     Unsupported,
 
     /// <summary>Not a colour space (damaged).</summary>
@@ -54,8 +57,41 @@ internal sealed class PdfColourSpace
     /// <summary>Its name as the file gives it ("DeviceRGB", "ICCBased", "Separation").</summary>
     public string Name { get; init; } = "";
 
-    /// <summary>An indexed space's base (grey, RGB, CMYK or Lab).</summary>
+    /// <summary>An indexed space's base (grey, RGB, CMYK, Lab or a tint), or a tint's alternate space.</summary>
     public PdfColourSpace? Base { get; init; }
+
+    /// <summary>A Separation's or DeviceN's tint transform (its components to the alternate space's).</summary>
+    public PdfFunction? Function { get; init; }
+
+    private byte[]? _table;
+
+    /// <summary>An indexed space's table read once ((highest + 1) x the base's components bytes, zeros past what the file holds).</summary>
+    public byte[] Table(PdfFile file)
+    {
+        if (Volatile.Read(ref _table) is { } known)
+        {
+            return known;
+        }
+
+        byte[] table = new byte[(Highest + 1) * (Base?.Components ?? 1)];
+        var lookup = file.Resolve(Lookup);
+        if (lookup.AsString is { } text)
+        {
+            text.Bytes.AsSpan(0, Math.Min(text.Bytes.Length, table.Length)).CopyTo(table);
+        }
+        else if (lookup.AsStream is { } stream)
+        {
+            using var decoded = file.Decode(stream);
+            decoded.Span[..Math.Min(decoded.Length, table.Length)].CopyTo(table);
+        }
+        else
+        {
+            throw new InvalidDataException($"an Indexed space's table is {lookup}, not a string or a stream");
+        }
+
+        Volatile.Write(ref _table, table);
+        return table;
+    }
 
     /// <summary>An indexed space's highest index (0-255).</summary>
     public int Highest { get; init; }
@@ -73,7 +109,12 @@ internal sealed class PdfColourSpace
     public string? Problem { get; init; }
 
     /// <summary>The channels its pixels have: 1 for grey (and an index into grey), else 3.</summary>
-    public int Channels => Kind == PdfImageColour.Grey || (Kind == PdfImageColour.Indexed && Base?.Kind == PdfImageColour.Grey) ? 1 : 3;
+    public int Channels => Kind switch
+    {
+        PdfImageColour.Grey => 1,
+        PdfImageColour.Indexed or PdfImageColour.Tint => Base?.Channels ?? 3,
+        _ => 3,
+    };
 
     /// <summary>The default /Decode of one component at <paramref name="bits"/> bits (8.9.5.2, table 89).</summary>
     public (double Low, double High) DefaultDecode(int component, int bits) => Kind switch
@@ -151,7 +192,7 @@ internal sealed class PdfColourSpace
             }
 
             var baseSpace = Read(file, array[1], resources, depth + 1);
-            if (baseSpace.Kind is not (PdfImageColour.Grey or PdfImageColour.Rgb or PdfImageColour.Cmyk or PdfImageColour.Lab))
+            if (baseSpace.Kind is not (PdfImageColour.Grey or PdfImageColour.Rgb or PdfImageColour.Cmyk or PdfImageColour.Lab or PdfImageColour.Tint))
             {
                 return baseSpace.Kind == PdfImageColour.Unsupported
                     ? new PdfColourSpace { Kind = PdfImageColour.Unsupported, Components = 1, Name = $"Indexed over {baseSpace.Name}", Problem = baseSpace.Problem }
@@ -169,7 +210,46 @@ internal sealed class PdfColourSpace
             return Named(file, family, resources, depth);
         }
 
-        return family.Is("Separation"u8) || family.Is("DeviceN"u8) || family.Is("Pattern"u8) ? Later(family.ToString()) : Damaged($"the colour space /{family}");
+        if (family.Is("Separation"u8) || family.Is("DeviceN"u8))
+        {
+            return Tint(file, array, resources, depth, family.ToString(), family.Is("DeviceN"u8));
+        }
+
+        return family.Is("Pattern"u8) ? Later(family.ToString()) : Damaged($"the colour space /{family}");
+    }
+
+    // [/Separation name alternate tintTransform] or [/DeviceN names alternate tintTransform attributes]: one component a
+    // colourant, through the transform into the alternate space (a device, ICC-based, calibrated, Lab or indexed one).
+    private static PdfColourSpace Tint(PdfFile file, PdfArray array, PdfDictionary? resources, int depth, string family, bool deviceN)
+    {
+        if (array.Count < 4)
+        {
+            return Damaged($"a {family} space without its alternate space and tint transform");
+        }
+
+        int components = deviceN ? file.Resolve(array[1]).AsArray?.Count ?? 0 : 1;
+        if (components is < 1 or > 32)
+        {
+            return Damaged($"a DeviceN space of {components} colourants");
+        }
+
+        var alternate = Read(file, array[2], resources, depth + 1);
+        if (alternate.Kind is not (PdfImageColour.Grey or PdfImageColour.Rgb or PdfImageColour.Cmyk or PdfImageColour.Lab or PdfImageColour.Indexed))
+        {
+            return Damaged($"a {family} space over {alternate.Name}");
+        }
+
+        PdfFunction function;
+        try
+        {
+            function = PdfFunction.Read(file, array[3]);
+        }
+        catch (InvalidDataException e) when (!PdfLimit.Is(e))
+        {
+            return Damaged($"a {family} space's tint transform: {e.Message}");
+        }
+
+        return new PdfColourSpace { Kind = PdfImageColour.Tint, Components = components, Name = family, Base = alternate, Function = function };
     }
 
     private static PdfColourSpace Named(PdfFile file, PdfName name, PdfDictionary? resources, int depth)
@@ -189,9 +269,14 @@ internal sealed class PdfColourSpace
             return Cmyk;
         }
 
-        if (name.Is("Pattern"u8) || name.Is("Separation"u8) || name.Is("DeviceN"u8))
+        if (name.Is("Pattern"u8))
         {
             return Later(name.ToString());
+        }
+
+        if (name.Is("Separation"u8) || name.Is("DeviceN"u8))
+        {
+            return Damaged($"the colour space /{name} without its colourants, alternate space and tint transform");
         }
 
         // A name the resources give (an inline image's colour space, or a writer's habit).
@@ -206,7 +291,7 @@ internal sealed class PdfColourSpace
     private static PdfColourSpace Later(string name) => new()
     {
         Kind = PdfImageColour.Unsupported, Components = 1, Name = name,
-        Problem = $"a raw image in the colour space {name}, which is read from phase D7 of the documents plan (its tint transform or pattern)",
+        Problem = $"a raw image in the colour space {name}, which images are not painted in (a pattern paints a path)",
     };
 
     private static PdfColourSpace Damaged(string what) => new() { Kind = PdfImageColour.Unknown, Components = 1, Name = "unknown", Problem = what };
@@ -439,7 +524,7 @@ internal sealed class PdfImage
     /// The image placed by <paramref name="ctm"/> (its unit square in the file's user space, mapped onto the page as
     /// shown): its matrix from its top-left corner, the box around it, its place in the content.
     /// </summary>
-    public DocumentImage Place(PdfMatrix ctm, int order)
+    public DocumentImage Place(PdfMatrix ctm, int order, PdfPartStyle style)
     {
         // The image's rows run down from its top: (u, v) from its top-left corner is (u, 1 - v) of its unit square.
         var m = new PdfMatrix(1, 0, 0, -1, 0, 1).Then(ctm);
@@ -453,6 +538,7 @@ internal sealed class PdfImage
             Box = finite ? new DocumentBox((float)minX, (float)minY, (float)(maxX - minX), (float)(maxY - minY)) : DocumentBox.Empty,
             Matrix = finite ? new DocumentMatrix((float)m.A, (float)m.B, (float)m.C, (float)m.D, (float)m.E, (float)m.F) : null,
             Order = order,
+            Clip = style.Clip, Alpha = style.Alpha, Stencil = Info.Stencil ? style.Colour : null, Blend = style.Blend, Group = style.Group, SoftMask = style.SoftMask,
         };
     }
 
@@ -544,6 +630,10 @@ internal sealed class PdfImage
         int channels = mode == PdfPixelMode.Pixels ? Info.Channels : 1;
         CheckPixels(Info.Width, Info.Height, channels, mode == PdfPixelMode.Pixels && Info.Sixteen ? sizeof(float) : 1);
         CheckPixels(Info.Width, 1, Info.Components, sizeof(ushort));   // a row's samples, unpacked
+        if (mode == PdfPixelMode.Pixels && Info.Space.Kind == PdfImageColour.Tint && !Info.Stencil)
+        {
+            return DecodeTint();
+        }
 
         byte[]? palette = mode == PdfPixelMode.Pixels && Info.Space.Kind == PdfImageColour.Indexed && !Info.Stencil ? Palette() : null;
         using var data = Data();
@@ -554,29 +644,88 @@ internal sealed class PdfImage
         return converter.Sixteen ? new ImageData(converter.Values!, channels, Info.Height, Info.Width) : new ImageData(converter.Planes!, Info.Height, Info.Width, Levels);
     }
 
+    // A Separation or DeviceN image: each pixel's samples through /Decode and the tint transform into the alternate
+    // space, as 8-bit planes (grey, or RGB); a pixel's samples met before are not transformed again.
+    private ImageData DecodeTint()
+    {
+        int width = Info.Width, height = Info.Height, components = Info.Components, bits = Info.Bits, channels = Info.Channels;
+        var planes = new byte[channels][];
+        for (int c = 0; c < channels; c++)
+        {
+            planes[c] = new byte[width * height];
+        }
+
+        using var data = Data();
+        var bytes = data.Span;
+        long rowBits = (long)width * components * bits, rowBytes = (rowBits + 7) / 8;
+        double max = (1L << bits) - 1;
+        var cache = new Dictionary<ulong, int>();
+        Span<double> tint = stackalloc double[32];
+        Span<byte> rgb = stackalloc byte[3];
+        for (int y = 0; y < height; y++)
+        {
+            long rowStart = y * rowBytes * 8;
+            for (int x = 0; x < width; x++)
+            {
+                ulong key = 0;
+                long bit = rowStart + (long)x * components * bits;
+                for (int c = 0; c < components; c++)
+                {
+                    int v = 0;
+                    for (int k = 0; k < bits; k++, bit++)
+                    {
+                        long at = bit >> 3;
+                        v = v << 1 | (at < bytes.Length ? (bytes[(int)at] >> (7 - (int)(bit & 7))) & 1 : 0);
+                    }
+
+                    tint[c] = Info.Decode[2 * c] + v * (Info.Decode[2 * c + 1] - Info.Decode[2 * c]) / max;
+                    key = key * 65537 + (ulong)v;
+                }
+
+                if (!cache.TryGetValue(key, out int packed) || cache.Count > 1 << 16)
+                {
+                    PdfColours.ToBytes(_file, Info.Space, tint[..components], rgb);
+                    packed = rgb[0] << 16 | rgb[1] << 8 | rgb[2];
+                    if (cache.Count <= 1 << 16)
+                    {
+                        cache[key] = packed;
+                    }
+                }
+
+                int i = y * width + x;
+                if (channels == 1)
+                {
+                    planes[0][i] = (byte)(packed >> 16);
+                }
+                else
+                {
+                    (planes[0][i], planes[1][i], planes[2][i]) = ((byte)(packed >> 16), (byte)(packed >> 8), (byte)packed);
+                }
+            }
+        }
+
+        return new ImageData(planes, height, width, Levels);
+    }
+
     // An indexed space's colours, each as the decoded pixels hold it (one byte, or three), (highest + 1) of them.
     private byte[] Palette()
     {
         var space = Info.Space;
         var baseSpace = space.Base!;
         int count = space.Highest + 1, components = baseSpace.Components, channels = space.Channels;
-        byte[] table = new byte[count * components];
-        var lookup = _file.Resolve(space.Lookup);
-        if (lookup.AsString is { } text)
+        byte[] table;
+        try
         {
-            text.Bytes.AsSpan(0, Math.Min(text.Bytes.Length, table.Length)).CopyTo(table);
+            table = space.Table(_file);
         }
-        else if (lookup.AsStream is { } stream)
+        catch (InvalidDataException e) when (!PdfLimit.Is(e))
         {
-            using var decoded = _file.Decode(stream);
-            decoded.Span[..Math.Min(decoded.Length, table.Length)].CopyTo(table);
-        }
-        else
-        {
-            throw new InvalidDataException($"{_where}: its Indexed space's table is {lookup}, not a string or a stream.");
+            throw new InvalidDataException($"{_where}: {e.Message}.", e);
         }
 
         byte[] palette = new byte[count * channels];
+        Span<double> tint = stackalloc double[32];
+        Span<byte> rgb = stackalloc byte[3];
         for (int i = 0; i < count; i++)
         {
             var entry = table.AsSpan(i * components, components);
@@ -594,6 +743,25 @@ internal sealed class PdfImage
                         baseSpace.Range[0] + entry[1] * (baseSpace.Range[1] - baseSpace.Range[0]) / 255,
                         baseSpace.Range[2] + entry[2] * (baseSpace.Range[3] - baseSpace.Range[2]) / 255, baseSpace.White, colour);
                     break;
+                case PdfImageColour.Tint:
+                {
+                    for (int c = 0; c < components; c++)
+                    {
+                        tint[c] = entry[c] / 255.0;
+                    }
+
+                    PdfColours.ToBytes(_file, baseSpace, tint[..components], rgb);
+                    if (channels == 1)
+                    {
+                        colour[0] = rgb[0];
+                    }
+                    else
+                    {
+                        rgb.CopyTo(colour);
+                    }
+
+                    break;
+                }
             }
         }
 
@@ -1169,7 +1337,7 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
     public List<DocumentImage> Images { get; } = [];
 
     /// <summary>The image XObject <paramref name="stream"/>, drawn by the name <paramref name="name"/>.</summary>
-    public void Add(PdfStream stream, ReadOnlySpan<byte> name, PdfDictionary? resources, PdfMatrix ctm, int order)
+    public void Add(PdfStream stream, ReadOnlySpan<byte> name, PdfDictionary? resources, PdfMatrix ctm, int order, PdfPartStyle style)
     {
         if (!_byObject.TryGetValue(stream.Number, out var image))
         {
@@ -1180,12 +1348,12 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
 
         if (image is not null)
         {
-            Images.Add(image.Place(ctm, order));
+            Images.Add(image.Place(ctm, order, style));
         }
     }
 
     /// <summary>An inline image: the bytes of its entries (between BI and ID) and of its data (between ID and EI).</summary>
-    public void AddInline(ReadOnlySpan<byte> entries, ReadOnlySpan<byte> data, PdfDictionary? resources, PdfMatrix ctm, int order)
+    public void AddInline(ReadOnlySpan<byte> entries, ReadOnlySpan<byte> data, PdfDictionary? resources, PdfMatrix ctm, int order, PdfPartStyle style)
     {
         string label = string.Create(CultureInfo.InvariantCulture, $"inline image {order}");
         PdfDictionary dictionary;
@@ -1203,7 +1371,7 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
         var image = Read(label, (out string? skipped) => PdfImage.FromInline(file, dictionary, copy, resources, Where(label), out skipped));
         if (image is not null)
         {
-            Images.Add(image.Place(ctm, order));
+            Images.Add(image.Place(ctm, order, style));
         }
     }
 
@@ -1242,7 +1410,7 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
         {
             if (info.NotSupported)
             {
-                issues.Add(DocumentIssue.NotSupported, $"page {page}: images in the colour space {info.Space.Name} (read from phase D7 of the documents plan): DocumentImage.Decode refuses them");
+                issues.Add(DocumentIssue.NotSupported, $"page {page}: images in the colour space {info.Space.Name}, which images are not painted in: DocumentImage.Decode refuses them");
             }
             else
             {

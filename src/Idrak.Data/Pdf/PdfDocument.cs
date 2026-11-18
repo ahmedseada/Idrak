@@ -7,8 +7,9 @@ namespace Idrak.Data.Pdf;
 
 /// <summary>
 /// An open PDF document: its information, its pages (each page's size and rotation, its text: runs with their boxes, the
-/// lines and text the layout makes of them; its images, placed, their pixels decoded when asked; paths come with a later
-/// phase) and the files it carries. Opening reads the cross-reference and the page tree only; a page's objects are read
+/// lines and text the layout makes of them; its images, placed, their pixels decoded when asked; its vector paths, clips,
+/// shadings, patterns, transparency groups and soft masks; drawn to pixels through <see cref="DocumentPageDrawers"/>) and
+/// the files it carries. Opening reads the cross-reference and the page tree only; a page's objects are read
 /// when it is, and the fonts its pages share are kept for the others. Safe to read from several threads.
 /// </summary>
 internal sealed class PdfDocument : IDocument
@@ -175,6 +176,10 @@ internal sealed class PdfDocument : IDocument
         IReadOnlyList<DocumentTextRun> runs = [];
         IReadOnlyList<DocumentLine> lines = [];
         IReadOnlyList<DocumentImage> images = [];
+        IReadOnlyList<DocumentPath> paths = [], clips = [];
+        IReadOnlyList<DocumentShading> shadings = [];
+        IReadOnlyList<DocumentGroup> groups = [];
+        IReadOnlyList<DocumentSoftMask> softMasks = [];
         string text = "";
         if ((parts & (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | DocumentParts.Glyphs)) != 0)
         {
@@ -194,8 +199,19 @@ internal sealed class PdfDocument : IDocument
                 reader.ReadImages();
             }
 
+            // Colours, clips and transparency come with what is drawn (paths, glyphs or images); text alone stays as cheap as before.
+            if ((parts & (DocumentParts.Paths | DocumentParts.Glyphs | DocumentParts.Images)) != 0)
+            {
+                reader.ReadVector();
+            }
+
             reader.Read(page["Contents"u8], resources, Display(crop, rotation, unit));
             images = reader.Images;
+            (clips, groups, softMasks) = (reader.Clips, reader.Groups, reader.SoftMasks);
+            if ((parts & DocumentParts.Paths) != 0)
+            {
+                (paths, shadings) = (reader.Paths, reader.Shadings);
+            }
             if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
             {
                 var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
@@ -213,7 +229,11 @@ internal sealed class PdfDocument : IDocument
             }
         }
 
-        return new DocumentPage(index, (float)width, (float)height) { Rotation = rotation, Runs = runs, Lines = lines, Text = text, Images = images, Issues = issues.ToList() };
+        return new DocumentPage(index, (float)width, (float)height)
+        {
+            Rotation = rotation, Runs = runs, Lines = lines, Text = text, Images = images, Paths = paths, Clips = clips, Shadings = shadings, Groups = groups, SoftMasks = softMasks,
+            Issues = issues.ToList(),
+        };
     }
 
     // The map from the page's user space onto the page as shown: the crop box's lower left to the origin, y turned down,

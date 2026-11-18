@@ -9,7 +9,10 @@ namespace Idrak.Imaging;
 /// "coverage": fills an outline with each pixel's exact covered area (signed area accumulated along every edge, then one
 /// running sum per row: the nonzero rule for contours that do not overlap the other way, which glyph outlines do not).
 /// Curves are flattened to lines within 1/32 of a pixel (as FreeType). No hinting: an outline is drawn as designed, at any size and
-/// any fractional position.
+/// any fractional position. The <see cref="OutlineFill.NonZero"/> and <see cref="OutlineFill.EvenOdd"/> rules (a
+/// document's paths) work only the target's rows and columns, edges past its left side counted as standing on it: each
+/// row's running sum of winding is folded by the rule (its size held to one for nonzero, its parity for even-odd), the
+/// coverage the anti-aliasing rasterizers of PDF readers give; the glyph rule stays as it was.
 /// </summary>
 public sealed class CoverageRasterizer : IOutlineRasterizer
 {
@@ -62,6 +65,254 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         finally
         {
             ArrayPool<float>.Shared.Return(area);
+        }
+    }
+
+    /// <inheritdoc/>
+    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule)
+    {
+        if (rule == OutlineFill.Glyph)
+        {
+            Fill(outline, scale, x, y, coverage, width, height);
+            return;
+        }
+
+        ArgumentNullException.ThrowIfNull(outline);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        if (coverage.Length < (long)width * height)
+        {
+            throw new ArgumentException($"{coverage.Length} values hold no {width} x {height} image.", nameof(coverage));
+        }
+
+        if (outline.IsEmpty || !(scale > 0f) || rule is not (OutlineFill.NonZero or OutlineFill.EvenOdd))
+        {
+            return;
+        }
+
+        // The outline's box in pixels, clipped to the target: rows outside it are never worked, and columns left of it
+        // carry their winding into its first column.
+        var (minX, minY, maxX, maxY) = outline.Bounds();
+        float leftF = MathF.Floor(x + minX * scale), rightF = MathF.Ceiling(x + maxX * scale), topF = MathF.Floor(y - maxY * scale), bottomF = MathF.Ceiling(y - minY * scale);
+        if (!(rightF > 0f) || !(bottomF > 0f) || !(leftF < width) || !(topF < height))
+        {
+            return;                                                             // nothing of it on the target (or not finite)
+        }
+
+        int left = (int)MathF.Max(0f, leftF), right = (int)MathF.Min(width, rightF), top = (int)MathF.Max(0f, topF), bottom = (int)MathF.Min(height, bottomF);
+        int visible = right - left, boxWidth = visible + 2, boxHeight = bottom - top;
+        if (boxHeight <= 0 || visible <= 0)
+        {
+            return;
+        }
+
+        int size = boxWidth * boxHeight;
+        float[] area = ArrayPool<float>.Shared.Rent(size);
+        try
+        {
+            var accumulation = area.AsSpan(0, size);
+            accumulation.Clear();
+            TraceClipped(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight, visible);
+            CompositeRule(accumulation, boxWidth, boxHeight, visible, left, top, coverage, width, rule == OutlineFill.EvenOdd);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(area);
+        }
+    }
+
+    // Every edge of the outline, flattened as Trace flattens it, into a box `visible` columns wide (plus the carry's two):
+    // an edge's stretch left of the box stands on its left side, a stretch right of it on its right side.
+    private static void TraceClipped(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h, int visible)
+    {
+        var verbs = outline.Verbs.Span;
+        var p = outline.Points.Span;
+        int at = 0;
+        float sx = 0, sy = 0, cx = 0, cy = 0;
+        foreach (var verb in verbs)
+        {
+            switch (verb)
+            {
+                case OutlineVerb.Move:
+                    if (cx != sx || cy != sy)
+                    {
+                        Clipped(cx, cy, sx, sy, a, w, h, visible);
+                    }
+
+                    sx = cx = ox + p[at] * scale;
+                    sy = cy = oy - p[at + 1] * scale;
+                    at += 2;
+                    break;
+                case OutlineVerb.Line:
+                {
+                    float nx = ox + p[at] * scale, ny = oy - p[at + 1] * scale;
+                    Clipped(cx, cy, nx, ny, a, w, h, visible);
+                    (cx, cy) = (nx, ny);
+                    at += 2;
+                    break;
+                }
+
+                case OutlineVerb.Quadratic:
+                {
+                    float qx = ox + p[at] * scale, qy = oy - p[at + 1] * scale, nx = ox + p[at + 2] * scale, ny = oy - p[at + 3] * scale;
+                    float dd = MathF.Sqrt(Square(cx - 2 * qx + nx) + Square(cy - 2 * qy + ny));
+                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(dd / (8 * Tolerance))), 1, MaxSteps);
+                    float px = cx, py = cy;
+                    for (int i = 1; i <= n; i++)
+                    {
+                        float t = (float)i / n, u = 1 - t;
+                        float qxi = u * u * cx + 2 * u * t * qx + t * t * nx, qyi = u * u * cy + 2 * u * t * qy + t * t * ny;
+                        Clipped(px, py, qxi, qyi, a, w, h, visible);
+                        (px, py) = (qxi, qyi);
+                    }
+
+                    (cx, cy) = (nx, ny);
+                    at += 4;
+                    break;
+                }
+
+                case OutlineVerb.Cubic:
+                {
+                    float c1x = ox + p[at] * scale, c1y = oy - p[at + 1] * scale, c2x = ox + p[at + 2] * scale, c2y = oy - p[at + 3] * scale;
+                    float nx = ox + p[at + 4] * scale, ny = oy - p[at + 5] * scale;
+                    float dd = MathF.Max(MathF.Sqrt(Square(cx - 2 * c1x + c2x) + Square(cy - 2 * c1y + c2y)),
+                        MathF.Sqrt(Square(c1x - 2 * c2x + nx) + Square(c1y - 2 * c2y + ny)));
+                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(3 * dd / (4 * Tolerance))), 1, MaxSteps);
+                    float px = cx, py = cy;
+                    for (int i = 1; i <= n; i++)
+                    {
+                        float t = (float)i / n, u = 1 - t;
+                        float b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+                        float qx = b0 * cx + b1 * c1x + b2 * c2x + b3 * nx, qy = b0 * cy + b1 * c1y + b2 * c2y + b3 * ny;
+                        Clipped(px, py, qx, qy, a, w, h, visible);
+                        (px, py) = (qx, qy);
+                    }
+
+                    (cx, cy) = (nx, ny);
+                    at += 6;
+                    break;
+                }
+
+                case OutlineVerb.Close:
+                    if (cx != sx || cy != sy)
+                    {
+                        Clipped(cx, cy, sx, sy, a, w, h, visible);
+                    }
+
+                    (cx, cy) = (sx, sy);
+                    break;
+            }
+        }
+
+        if (cx != sx || cy != sy)
+        {
+            Clipped(cx, cy, sx, sy, a, w, h, visible);
+        }
+    }
+
+    // A curve far larger than the target is cut into this many lines at most (its stretches off the target matter only by
+    // where they cross rows, which so many lines keep within a fraction of a pixel on any page).
+    private const int MaxSteps = 1 << 14;
+
+    // An edge cut where it crosses the box's left (x 0) and right (x visible) sides; each stretch outside lies on the side
+    // it passed (its winding counted the same in every row it spans), so Line works the box alone.
+    private static void Clipped(float x0, float y0, float x1, float y1, Span<float> a, int w, int h, int visible)
+    {
+        if (y0 == y1 || !float.IsFinite(x0) || !float.IsFinite(x1) || !float.IsFinite(y0) || !float.IsFinite(y1))
+        {
+            return;
+        }
+
+        if ((y0 < 0 && y1 < 0) || (y0 >= h && y1 >= h))
+        {
+            return;                                                             // above or below every row
+        }
+
+        float lo = MathF.Min(x0, x1), hi = MathF.Max(x0, x1);
+        if (lo >= 0f && hi <= visible)
+        {
+            Line(x0, y0, x1, y1, a, w, h);
+            return;
+        }
+
+        Span<float> cuts = stackalloc float[4];
+        int count = 0;
+        cuts[count++] = 0f;
+        float dx = x1 - x0;
+        if (dx != 0f)
+        {
+            float t0 = (0f - x0) / dx, t1 = (visible - x0) / dx;
+            if (t0 > 0f && t0 < 1f)
+            {
+                cuts[count++] = t0;
+            }
+
+            if (t1 > 0f && t1 < 1f)
+            {
+                cuts[count++] = t1;
+            }
+        }
+
+        cuts[count++] = 1f;
+        cuts[..count].Sort();
+        float dy = y1 - y0;
+        for (int k = 0; k + 1 < count; k++)
+        {
+            float ta = cuts[k], tb = cuts[k + 1];
+            if (tb <= ta)
+            {
+                continue;
+            }
+
+            float ya = k == 0 ? y0 : y0 + dy * ta, yb = k + 2 == count ? y1 : y0 + dy * tb;
+            float xa = x0 + dx * ta, xb = x0 + dx * tb;
+            float mid = 0.5f * (xa + xb);
+            if (mid < 0f)
+            {
+                (xa, xb) = (0f, 0f);                                          // left of the box: on its left side
+            }
+            else if (mid > visible)
+            {
+                (xa, xb) = (visible, visible);                                // right of it: only cells past the box
+            }
+            else
+            {
+                (xa, xb) = (Math.Clamp(xa, 0f, visible), Math.Clamp(xb, 0f, visible));
+            }
+
+            Line(xa, ya, xb, yb, a, w, h);
+        }
+    }
+
+    // Each row's running sum folded by the rule (nonzero: its size, held to one; even-odd: its distance from the nearest
+    // even number), laid onto the target as ink over ink.
+    private static void CompositeRule(ReadOnlySpan<float> a, int boxWidth, int boxHeight, int visible, int left, int top, Span<float> coverage, int width, bool evenOdd)
+    {
+        for (int row = 0; row < boxHeight; row++)
+        {
+            var source = a.Slice(row * boxWidth, boxWidth);
+            var target = coverage.Slice((top + row) * width + left, visible);
+            float sum = 0f;
+            for (int col = 0; col < visible; col++)
+            {
+                sum += source[col];
+                float c;
+                if (evenOdd)
+                {
+                    float m = MathF.Abs(sum) % 2f;
+                    c = m > 1f ? 2f - m : m;
+                }
+                else
+                {
+                    c = MathF.Min(1f, MathF.Abs(sum));
+                }
+
+                if (c > 1e-6f)
+                {
+                    float t = target[col];
+                    target[col] = t + c - t * c;                                 // 1 - (1 - t)(1 - c)
+                }
+            }
         }
     }
 

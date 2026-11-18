@@ -8,7 +8,7 @@ namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// A glyph's ink as coverage: how much of each pixel is ink, from 0 (paper) to 1 (full ink), <see cref="Height"/> rows
-/// of <see cref="Width"/>, row 0 at the top. It is what <see cref="IOutlineRasterizer.Fill"/> writes and an
+/// of <see cref="Width"/>, row 0 at the top. It is what <see cref="IOutlineRasterizer.Fill(GlyphOutline, float, float, float, Span{float}, int, int)"/> writes and an
 /// <see cref="IOutlineTracer"/> reads back, and what an <see cref="IGlyphSource"/> cuts out of a page for each glyph.
 /// The values are checked once on the way in, in the same pass that finds the box around the ink
 /// (<see cref="InkBox"/>); the coverage is not changed after, so it is safe to read from several threads.
@@ -129,7 +129,7 @@ public sealed class GlyphCoverage
 }
 
 /// <summary>
-/// Where coverage sits against font units, as <see cref="IOutlineRasterizer.Fill"/> takes it: <see cref="Scale"/> pixels
+/// Where coverage sits against font units, as <see cref="IOutlineRasterizer.Fill(GlyphOutline, float, float, float, Span{float}, int, int)"/> takes it: <see cref="Scale"/> pixels
 /// per font unit, and the glyph's origin (on its baseline) at pixel (<see cref="X"/>, <see cref="Y"/>); y grows downwards
 /// in pixels and upwards in font units. A tracer gives the outline that, filled with the same placement, covers the same
 /// pixels.

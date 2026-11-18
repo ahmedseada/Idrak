@@ -25,6 +25,8 @@ internal sealed class PdfFont
     private readonly int[]? _nameCodePoints;
     private readonly bool _programGlyphs;
     private readonly bool _symbolic;
+    private readonly string?[]? _glyphNames;   // a font drawn by its glyphs' names (Type 1, a bare CFF, Type 3): each code's name
+    private readonly bool _builtIn;            // a bare CFF with no /Encoding: its program's own encoding first
 
     // A composite font's codes.
     private readonly PdfCMap? _encoding;
@@ -36,20 +38,22 @@ internal sealed class PdfFont
 
     /// <summary>A simple font (<paramref name="programGlyphs"/>: whether codes reach glyphs through the embedded program's cmap, as TrueType and OpenType programs' do).</summary>
     public PdfFont(string? name, char[] single, string?[]? several, double[] widths, int[] nameCodePoints, bool programGlyphs, bool symbolic, double ascent, double descent,
-        Func<PdfFontProgram?>? program)
+        Func<PdfFontProgram?>? program, string?[]? glyphNames = null, bool builtIn = false)
     {
         Name = name;
         _program = new Lazy<PdfFontProgram?>(program ?? (() => null), LazyThreadSafetyMode.ExecutionAndPublication);
         (_single, _several, _widths, _nameCodePoints, _programGlyphs, _symbolic) = (single, several, widths, nameCodePoints, programGlyphs, symbolic);
+        (_glyphNames, _builtIn) = (glyphNames, builtIn);
         (Ascent, Descent) = (ascent, descent);
         Bytes = 4096 + 32L * (several?.Count(t => t is not null) ?? 0);
     }
 
     /// <summary>A composite font.</summary>
     public PdfFont(string? name, PdfCMap encoding, PdfCMap? toUnicode, PdfCidMetrics widths, PdfCidMetrics? vertical, double defaultVertical, byte[]? cidToGid,
-        double ascent, double descent, Func<PdfFontProgram?>? program)
+        double ascent, double descent, Func<PdfFontProgram?>? program, bool cidKeyed = false)
     {
         Name = name;
+        _cidKeyed = cidKeyed;
         _program = new Lazy<PdfFontProgram?>(program ?? (() => null), LazyThreadSafetyMode.ExecutionAndPublication);
         (_encoding, _toUnicode, _cidWidths, _verticalMetrics, _defaultVertical, _cidToGid) = (encoding, toUnicode, widths, vertical, defaultVertical, cidToGid);
         (Ascent, Descent, Vertical) = (ascent, descent, encoding.Vertical);
@@ -61,6 +65,9 @@ internal sealed class PdfFont
 
     /// <summary>Whether its text is written top to bottom.</summary>
     public bool Vertical { get; }
+
+    /// <summary>A vertical font's origin above a glyph's horizontal one, in text space units at size 1 (/DW2's first number; 0.88).</summary>
+    public double VerticalOrigin { get; init; } = 0.88;
 
     /// <summary>How far its glyphs reach above the baseline, in text space units at size 1.</summary>
     public double Ascent { get; }
@@ -133,12 +140,32 @@ internal sealed class PdfFont
         return _programGlyphs && _program.Value is { } program ? ProgramText(SimpleGlyph(program, (int)(code & 0xFF)), destination) : 0;
     }
 
-    /// <summary>The code's glyph in <see cref="Face"/>, or the code itself for a simple font with no program read.</summary>
+    /// <summary>
+    /// The code's glyph in <see cref="Face"/>, or the code itself for a simple font with no program read. A font drawn by
+    /// its glyphs' names takes the code's name in the program (a bare CFF with no /Encoding its own encoding first, and
+    /// any such font its own encoding when the name is not there).
+    /// </summary>
     public int GlyphId(uint code, int length)
     {
         if (_encoding is { } encoding)
         {
             return CidGlyph(encoding.Cid(code, length));
+        }
+
+        if (_glyphNames is { } names && _program.Value is { } named)
+        {
+            int c = (int)(code & 0xFF);
+            if (_builtIn && named.SymbolGlyph(c) is > 0 and var own)
+            {
+                return own;
+            }
+
+            if (names[c] is { } glyphName && named.GlyphByName(glyphName) is > 0 and var byName)
+            {
+                return byName;
+            }
+
+            return Math.Max(0, named.SymbolGlyph(c));
         }
 
         return _programGlyphs && _program.Value is { } program ? Math.Max(0, SimpleGlyph(program, (int)(code & 0xFF))) : (int)code;
@@ -168,7 +195,8 @@ internal sealed class PdfFont
         return program.SymbolGlyph(code);
     }
 
-    // A CID's glyph: through the CIDToGIDMap stream (two bytes a CID), or the CID itself.
+    // A CID's glyph: through the CIDToGIDMap stream (two bytes a CID), a CID-keyed CFF program's charset (its glyphs
+    // named by their CIDs), or the CID itself.
     private int CidGlyph(int cid)
     {
         if (_cidToGid is { } map)
@@ -177,8 +205,16 @@ internal sealed class PdfFont
             return at >= 0 && at + 1 < map.Length ? map[at] << 8 | map[at + 1] : 0;
         }
 
+        if (_cidKeyed && _program.Value is { } program && program.CidGlyph(cid) is >= 0 and var glyph)
+        {
+            return glyph;
+        }
+
         return cid;
     }
+
+    // A composite font whose program may be a CID-keyed CFF (FontFile3).
+    private readonly bool _cidKeyed;
 }
 
 /// <summary>A CIDFont's per-CID metrics (<c>/W</c>: one value a CID; <c>/W2</c>: the vertical advance), as sorted ranges with a default.</summary>
@@ -360,18 +396,33 @@ internal static class PdfFonts
         var toUnicode = ToUnicode(file, dictionary);
         bool programGlyphs = (trueType && fontFile2 is not null) || fontFile3 is not null;
         var program = programGlyphs ? ProgramReader(file, fontFile2 ?? fontFile3, baseFont) : null;
+        // Fonts drawn by their glyphs' names: a Type 1 program (read for drawing only: its text comes from its encoding),
+        // a bare CFF (FontFile3 that is not OpenType), Type 3's own glyphs.
+        var subtype3 = fontFile3 is null ? null : file.Resolve(fontFile3.Dictionary["Subtype"u8]).AsName;
+        bool bareCff = fontFile3 is not null && (subtype3 is null || !subtype3.Is("OpenType"u8));
+        bool byName = !trueType && (fontFile is not null || (fontFile3 is not null && bareCff) || type3);
+        if (type3)
+        {
+            program = () => PdfType3Face.Read(file, dictionary, baseFont) is { } face ? PdfFontProgram.Of(face, face.Names) : null;
+        }
+        else if (fontFile is not null && program is null)
+        {
+            program = ProgramReader(file, fontFile, baseFont);
+        }
+
         var widths = file.Resolve(dictionary["Widths"u8]).AsArray;
         long firstChar = file.Resolve(dictionary["FirstChar"u8]).TryInteger(out long first) ? first : 0;
         double missing = descriptor is not null && file.Resolve(descriptor["MissingWidth"u8]).TryNumber(out double m) ? m : 0;
         return Simple(baseFont, names, baseEncoding, toUnicode, widths?.Items.Select(file.Resolve).ToArray(), (int)Math.Clamp(firstChar, -256, 256), standard, zapf, programGlyphs, symbolic, scale,
-            ascent, descent, program, missing);
+            ascent, descent, program, missing, byName, builtIn: byName && fontFile3 is not null && encoding.IsNull);
     }
 
     // A simple font's codes: each one's glyph name (an override of `names`, a Differences entry or the program's own
     // encoding, else the base encoding's), its text (the ToUnicode map's, else the name's) and its width.
     private static PdfFont Simple(string? name, byte[]?[] names, int baseEncoding, PdfCMap? toUnicode, PdfValue[]? widths, int? firstChar, int standard, bool zapf, bool programGlyphs,
-        bool symbolic, double scale, double ascent, double descent, Func<PdfFontProgram?>? program, double missing = 0)
+        bool symbolic, double scale, double ascent, double descent, Func<PdfFontProgram?>? program, double missing = 0, bool byName = false, bool builtIn = false)
     {
+        string?[]? glyphNames = byName ? new string?[256] : null;
         var single = new char[256];
         string?[]? several = null;
         var advance = new double[256];
@@ -381,6 +432,11 @@ internal static class PdfFonts
         for (int code = 0; code < 256; code++)
         {
             ReadOnlySpan<byte> glyph = names[code] is { } own ? own : baseEncoding >= 0 ? PdfFontTables.EncodingName(baseEncoding, code) : default;
+            if (glyphNames is not null && !glyph.IsEmpty)
+            {
+                glyphNames[code] = System.Text.Encoding.Latin1.GetString(glyph);
+            }
+
             int named = glyph.IsEmpty ? 0 : PdfFontTables.GlyphText(glyph, zapf, chars);
             nameCodePoints[code] = named switch
             {
@@ -428,7 +484,7 @@ internal static class PdfFonts
             advance[code] = (double.IsNaN(width) ? missing : width) * scale;
         }
 
-        return new PdfFont(name, single, several, advance, nameCodePoints, programGlyphs, symbolic, ascent, descent, program);
+        return new PdfFont(name, single, several, advance, nameCodePoints, programGlyphs, symbolic, ascent, descent, program, glyphNames, builtIn);
     }
 
     // The font's ascent and descent (thousandths): its descriptor's, its bounding box's, the standard font's, or a default.
@@ -492,12 +548,13 @@ internal static class PdfFonts
         double defaultWidth = file.Resolve(descendant["DW"u8]).TryNumber(out double dw) ? dw : 1000;
         var widths = new PdfCidMetrics(CidRanges(file, file.Resolve(descendant["W"u8]).AsArray, 1), defaultWidth);
         PdfCidMetrics? vertical = null;
-        double defaultVertical = -1000;
+        double defaultVertical = -1000, verticalOrigin = 880;
         if (encoding.Vertical)
         {
             if (file.Resolve(descendant["DW2"u8]).AsArray is { Count: >= 2 } dw2)
             {
                 defaultVertical = Number(file, dw2, 1, -1000);
+                verticalOrigin = Number(file, dw2, 0, 880);
             }
 
             vertical = new PdfCidMetrics(CidRanges(file, file.Resolve(descendant["W2"u8]).AsArray, 3), defaultVertical);
@@ -512,8 +569,9 @@ internal static class PdfFonts
 
         var fontFile = descriptor is null ? null : file.Resolve(descriptor["FontFile2"u8]).AsStream ?? file.Resolve(descriptor["FontFile3"u8]).AsStream;
         var (ascent, descent) = Extents(file, descriptor, -1);
+        bool cidKeyed = file.Resolve(descendant["Subtype"u8]).AsName is { } cidType && cidType.Is("CIDFontType0"u8);
         return new PdfFont(name, encoding, toUnicode, widths, vertical, defaultVertical, cidToGid, ascent, descent,
-            fontFile is null ? null : ProgramReader(file, fontFile, name)) { Note = note };
+            fontFile is null ? null : ProgramReader(file, fontFile, name), cidKeyed) { Note = note, VerticalOrigin = verticalOrigin / 1000 };
     }
 
     // /W ([c [w1 w2 ...]] or [cfirst clast w]) or /W2 ([c [w1y vx vy ...]] or [cfirst clast w1y vx vy]): the first of each

@@ -54,7 +54,7 @@ internal sealed class PdfIssues
 /// the page as shown. Runs, images and painted paths share one count, their place in the content. One reader reads one
 /// page, on one thread; the fonts it reads are kept by the document for its other pages.
 /// </summary>
-internal sealed class PdfContentReader : IDisposable
+internal sealed partial class PdfContentReader : IDisposable
 {
     private const int MaxOperands = 1 << 16;
 
@@ -118,6 +118,7 @@ internal sealed class PdfContentReader : IDisposable
     public void Read(PdfValue contents, PdfDictionary? resources, PdfMatrix display)
     {
         _state = new State { Ctm = display, Scale = 1 };
+        StartVector(display);
         PdfValue resolved;
         try
         {
@@ -318,8 +319,10 @@ internal sealed class PdfContentReader : IDisposable
                 break;
             case OpBeginText:
                 _tm = _tlm = PdfMatrix.Identity;
+                (_textClipFirst, _textClipCount) = (-1, 0);
                 break;
             case OpEndText:
+                EndTextClip();
                 break;
             case OpFont:
                 if (_operandCount >= 2 && _operands[_operandCount - 2].Kind == PdfToken.Name && _operands[_operandCount - 1].Kind == PdfToken.Number)
@@ -457,7 +460,14 @@ internal sealed class PdfContentReader : IDisposable
                 break;
             case OpStroke or OpCloseStroke or OpFill or OpFillOld or OpFillEvenOdd or OpFillStroke or OpFillStrokeEvenOdd or OpCloseFillStroke or OpCloseFillStrokeEvenOdd
                 or OpShade:
-                _order++;   // a painted path or a shading takes its place in the content (read from phase D7)
+                Paint(op, data, resources);   // a painted path or a shading takes its place in the content
+                break;
+            default:
+                if (_vector)
+                {
+                    Vector(op, data, resources, depth);
+                }
+
                 break;
         }
     }
@@ -686,7 +696,7 @@ internal sealed class PdfContentReader : IDisposable
         double size = _state.Size, scale = _state.Scale;
         _segments.Add(new Segment(size * scale * p.A, size * scale * p.B, size * p.C, size * p.D, font.Ascent, font.Descent, font.Vertical, font));
         _runStart = _glyphCount;
-        _runStyle = new RunStyle(font, _state.Mode, (float)(Math.Abs(size) * Math.Sqrt(p.C * p.C + p.D * p.D)), _segments.Count - 1);
+        _runStyle = new RunStyle(font, _state.Mode, (float)(Math.Abs(size) * Math.Sqrt(p.C * p.C + p.D * p.D)), _segments.Count - 1, _vector ? Snapshot() : -1);
         _gapPending = false;
     }
 
@@ -780,6 +790,7 @@ internal sealed class PdfContentReader : IDisposable
     private void AddRun(int first, int count, RunStyle style, string? actualText)
     {
         int order = _order++;
+        ClipRun(order, style.Mode);
         bool hidden = style.Mode is 3 or 7;
         if (hidden && !_includeHidden)
         {
@@ -865,7 +876,7 @@ internal sealed class PdfContentReader : IDisposable
         if (subtype.Is("Image"u8))
         {
             int order = _order++;   // an image takes its place in the content
-            _images?.Add(stream!, name, resources, _state.Ctm, order);
+            _images?.Add(stream!, name, resources, _state.Ctm, order, ImageStyle());
             return;
         }
 
@@ -909,6 +920,7 @@ internal sealed class PdfContentReader : IDisposable
             var (state, saved, skipped, tm, tlm) = (_state, _stack.Count, _skippedSaves, _tm, _tlm);
             _stack.Add(_state);
             _state.Ctm = matrix.Then(_state.Ctm);
+            EnterForm(stream.Dictionary);
             try
             {
                 Run(decoded.Span, formResources, depth + 1);
@@ -1039,7 +1051,7 @@ internal sealed class PdfContentReader : IDisposable
             if (size >= 0 && dataStart + size <= data.Length && EndAt(data, (int)(dataStart + size)) is int after and >= 0)
             {
                 lexer.Position = after;
-                _images?.AddInline(data[entries..entriesEnd], data.Slice(dataStart, (int)size), resources, _state.Ctm, order);
+                _images?.AddInline(data[entries..entriesEnd], data.Slice(dataStart, (int)size), resources, _state.Ctm, order, ImageStyle());
                 return;
             }
         }
@@ -1051,7 +1063,7 @@ internal sealed class PdfContentReader : IDisposable
             if (found < 0)
             {
                 lexer.Position = data.Length;   // no end: the rest is the image's
-                _images?.AddInline(data[entries..entriesEnd], data[Math.Min(dataStart, data.Length)..], resources, _state.Ctm, order);
+                _images?.AddInline(data[entries..entriesEnd], data[Math.Min(dataStart, data.Length)..], resources, _state.Ctm, order, ImageStyle());
                 return;
             }
 
@@ -1060,7 +1072,7 @@ internal sealed class PdfContentReader : IDisposable
                 && LooksLikeContent(data[(p + 2)..]))
             {
                 lexer.Position = p + 2;
-                _images?.AddInline(data[entries..entriesEnd], data[dataStart..(p - 1)], resources, _state.Ctm, order);   // the whitespace before EI is not the image's
+                _images?.AddInline(data[entries..entriesEnd], data[dataStart..(p - 1)], resources, _state.Ctm, order, ImageStyle());   // the whitespace before EI is not the image's
                 return;
             }
 
@@ -1127,6 +1139,7 @@ internal sealed class PdfContentReader : IDisposable
                 }
             }
 
+            var paint = run.Style.Paint >= 0 ? _paints[run.Style.Paint] : new RunPaint(DocumentColour.Black, DocumentColour.Black, 1f, -1, DocumentBlend.Normal, -1, -1);
             runs[r] = new DocumentTextRun(text, box, run.Style.Size)
             {
                 Font = run.Style.Font.Name,
@@ -1136,6 +1149,8 @@ internal sealed class PdfContentReader : IDisposable
                 Logical = run.ActualText is not null,
                 Glyphs = glyphs ? Glyphs(run) : default,
                 Face = glyphs ? run.Style.Font.Face : null,
+                Colour = paint.Fill, StrokeColour = paint.Stroke, StrokeWidth = paint.StrokeWidth, Clip = paint.Clip, Blend = paint.Blend, Group = paint.Group, SoftMask = paint.SoftMask,
+                GlyphMatrix = glyphs ? new DocumentMatrix((float)segment.A, (float)segment.B, (float)segment.C, (float)segment.D, 0f, 0f) : null,
             };
         }
 
@@ -1143,14 +1158,23 @@ internal sealed class PdfContentReader : IDisposable
         return runs;
     }
 
+    // Each glyph's id and origin: a vertical glyph's origin moved by its position vector (half its width across, the
+    // font's vertical origin up) to where its outline is drawn from.
     private DocumentGlyph[] Glyphs(ReadRun run)
     {
         var glyphs = new DocumentGlyph[run.Count];
         for (int i = 0; i < glyphs.Length; i++)
         {
             var g = _glyphs[run.First + i];
-            var font = _segments[g.Segment].Font;
-            glyphs[i] = new DocumentGlyph(font.GlyphId(g.Code, g.CodeLength), (float)g.X, (float)g.Y, (float)Math.Sqrt(g.AdvanceX * g.AdvanceX + g.AdvanceY * g.AdvanceY));
+            var s = _segments[g.Segment];
+            double x = g.X, y = g.Y;
+            if (s.Vertical)
+            {
+                double vx = g.Width / 2, vy = s.Font.VerticalOrigin;
+                (x, y) = (x - (s.A * vx + s.C * vy), y - (s.B * vx + s.D * vy));
+            }
+
+            glyphs[i] = new DocumentGlyph(s.Font.GlyphId(g.Code, g.CodeLength), (float)x, (float)y, (float)Math.Sqrt(g.AdvanceX * g.AdvanceX + g.AdvanceY * g.AdvanceY));
         }
 
         return glyphs;
@@ -1334,8 +1358,8 @@ internal sealed class PdfContentReader : IDisposable
     /// <summary>A run read: its glyphs, its place in the content, how it is drawn, and the text a span gives it.</summary>
     internal readonly record struct ReadRun(int First, int Count, int Order, RunStyle Style, string? ActualText);
 
-    /// <summary>How a run is drawn: its font, render mode, size on the page and first segment.</summary>
-    internal readonly record struct RunStyle(PdfFont Font, int Mode, float Size, int Segment);
+    /// <summary>How a run is drawn: its font, render mode, size on the page, first segment, and its paint (an index of the reader's, or -1).</summary>
+    internal readonly record struct RunStyle(PdfFont Font, int Mode, float Size, int Segment, int Paint = -1);
 
     // One glyph shown: its text in the page's characters, its origin and advance on the page, its width and vertical
     // advance (text space units at size 1), its code, and whether a TJ offset came before it or it has no text.
@@ -1362,9 +1386,28 @@ internal sealed class PdfContentReader : IDisposable
 
     private readonly record struct Operand(PdfToken Kind, int Start, int Length, double Number);
 
-    // The parts of the graphics state the text needs.
+    // The parts of the graphics state the text needs, and the vector content's (from D7).
     private struct State
     {
+        public PdfColourSpace? FillSpace;
+        public PdfColourSpace? StrokeSpace;
+        public DocumentColour FillColour;
+        public DocumentColour StrokeColour;
+        public DocumentPattern? FillPattern;
+        public DocumentPattern? StrokePattern;
+        public double LineWidth;
+        public int Cap;
+        public int Join;
+        public double MiterLimit;
+        public double[]? Dash;
+        public double DashPhase;
+        public int Clip;
+        public float FillAlpha;
+        public float StrokeAlpha;
+        public DocumentBlend Blend;
+        public int SoftMask;
+        public int Group;
+        public PdfMatrix BaseCtm;
         public PdfMatrix Ctm;
         public PdfFont? Font;
         public string? FontLabel;

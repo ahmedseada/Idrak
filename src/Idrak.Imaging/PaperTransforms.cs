@@ -635,7 +635,7 @@ internal static partial class PaperImageOps
 
         double lightX = PortableMath.Cos(0.8), lightY = PortableMath.Sin(0.8), shift = 2.5 * strength;
         var shade = new float[w * h];
-        var warped = ScanImageOps.WarpRows(image, (y, sxs, sys) =>
+        var warped = PerspectiveWarp.WarpRows(image, (y, sxs, sys) =>
         {
             for (int x = 0; x < sxs.Length; x++)
             {
@@ -1240,7 +1240,7 @@ internal static partial class PaperImageOps
         int edge = random.Next(4);
         double band = 0.15 + 0.2 * random.NextDouble(), lift = amount * 0.04;
         var shade = new float[w * h];
-        var bent = ScanImageOps.WarpRows(image, (y, sxs, sys) =>
+        var bent = PerspectiveWarp.WarpRows(image, (y, sxs, sys) =>
         {
             for (int x = 0; x < sxs.Length; x++)
             {

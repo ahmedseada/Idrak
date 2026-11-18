@@ -19,7 +19,7 @@ internal abstract partial class Tests
         ("documents pdf: images: every image of every sample that lists them (D4's colour spaces, bit depths, /Decode arrays, masks, JPEGs, inline images and placements; D1's predictors, D6's scans, D7's and D10's images) in content order with its encoding, size, box and matrix (turned, slanted, flipped, mirrored, on a turned page), its bytes as stored (a raw image's samples, a JPEG's file) and its pixels exactly (raw against the expected hashes, Lab within its tolerance, a JPEG as the jpeg codec decodes the same bytes), its mask as coverage (a soft mask's levels, an explicit mask and a stencil 255 where they paint, a colour key 0 inside its ranges)", PdfImagesSamples),
         ("documents pdf: images: the scan-like pages give their one JPEG over the whole page and their hidden OCR text, read together; every image page read in parallel gives the same images (boxes, matrices, pixels, masks) as read in order", PdfImagesScanAndParallel),
         ("documents pdf: images: embedded files (an EmbeddedFiles name tree with kids and limits, file-attachment annotations) with their names, media types, sizes and descriptions, their bytes read back exactly and again, none in the other samples, refused once the document is closed", PdfImagesAttachments),
-        ("documents pdf: images: hand-made files: an encrypted file's XObject and inline image decode; an image drawn by a form takes the form's matrix; JPEG 2000, CCITT and JBIG2 are handed over as stored and named (an issue, a NotSupportedException) until a codec of that name is registered; the pixel limit is named; a damaged image is left out or refused as damaged with its place kept; a colour space read later is named; a JPEG whose size is not its dictionary's is refused naming both", PdfImagesHandMade),
+        ("documents pdf: images: hand-made files: an encrypted file's XObject and inline image decode; an image drawn by a form takes the form's matrix; JPEG 2000, CCITT and JBIG2 are handed over as stored and named (an issue, a NotSupportedException) until a codec of that name is registered; the pixel limit is named; a damaged image is left out or refused as damaged with its place kept; a Separation image decodes through its tint transform (D7); a JPEG whose size is not its dictionary's is refused naming both", PdfImagesHandMade),
     ];
 
     private static readonly float[] PdfImageLevels = [.. Enumerable.Range(0, 256).Select(k => k * (1f / 255f))];
@@ -629,7 +629,7 @@ internal abstract partial class Tests
     }
 
     // The pixel limit; damaged images (no size: left out, its place kept; an unknown colour space; data cut short); a
-    // colour space read later; a JPEG whose size is not its dictionary's.
+    // Separation image through its tint transform; a JPEG whose size is not its dictionary's.
     private static void PdfImagesLimitsAndDamage()
     {
         byte[] jpeg;
@@ -658,7 +658,7 @@ internal abstract partial class Tests
         string issues = string.Join("; ", page.Issues.Select(i => $"{i.Kind}: {i.Detail}"));
         Check(page.Issues.Any(i => i.Kind == DocumentIssue.DamagedStream && i.Detail.Contains("/Im2", StringComparison.Ordinal) && i.Detail.Contains("left out", StringComparison.Ordinal))
               && page.Issues.Any(i => i.Kind == DocumentIssue.DamagedStream && i.Detail.Contains("/Im3", StringComparison.Ordinal) && i.Detail.Contains("NoSuchSpace", StringComparison.Ordinal))
-              && page.Issues.Any(i => i.Kind == DocumentIssue.NotSupported && i.Detail.Contains("Separation", StringComparison.Ordinal)), $"the issues: {issues}");
+              && !page.Issues.Any(i => i.Kind == DocumentIssue.NotSupported), $"the issues: {issues}");
 
         // The stencil's pixels (160,000 bytes) pass the limit its samples (20,000) do not: named when decoded.
         foreach (var read in new Func<ImageData?>[] { page.Images[0].Decode, page.Images[0].Mask })
@@ -675,9 +675,10 @@ internal abstract partial class Tests
             }
         }
 
-        // An unknown colour space is damage; a space read later is not supported yet, named.
+        // An unknown colour space is damage; a Separation space decodes through its tint transform (tint 0: no ink, white).
         PdfImagesRefused<InvalidDataException>(page.Images[1], "NoSuchSpace");
-        PdfImagesRefused<NotSupportedException>(page.Images[2], "Separation");
+        var spot = page.Images[2].Decode();
+        Check(spot.Channels == 3 && spot.Width == 4 && spot.Height == 4 && PdfInterleaved(spot).All(v => v == 255), $"a Separation image of no tint: {spot.Channels} channels, {string.Join(" ", PdfInterleaved(spot).Take(6))}");
 
         // Data cut short: what it holds, then zeros.
         Check(PdfInterleaved(page.Images[3].Decode()).AsSpan().SequenceEqual((byte[])[1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]), "an image whose data is cut short");
