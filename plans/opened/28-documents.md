@@ -1060,6 +1060,24 @@ abstraction inventory`.
   The sample run writes `test-output\documents\written\sample.pdf` (a vector page with text, a photograph, a searchable
   scan and a page of shapes) to open.
 
+**JPEG encoder memory (2026-11-18):** the writer's pages found `JpegEncoder` allocating about 6 MB a page (an 827 x 1,169
+grey page: a 64-entry array per block, the planes copied, padded sample planes, a scan list, a growing `MemoryStream`).
+Now an 8-bit image's planes are read in place and floats rounded a row at a time (`ImagePreprocessor.Byte`, `ToBytes`'
+rounding); colour conversion, downsampling, DCT and quantization run an MCU row at a time on all cores into pooled
+coefficient buffers (4 x `ComputeResources.MaxCpuThreads` MCU rows at a time with the standard tables, each chunk written
+before the next; the whole image with optimized tables, whose statistics need every block first); the entropy coder
+writes 32 bits at a time into one pooled buffer copied once into the file; the hot loops are compiled optimized at once
+(a process's first float page ran 130 ms of unoptimized code, 54 ms optimized). The same files byte for byte: 147 cases
+recorded from 0e13af7 before the change (`data/image-transforms/jpeg-encoder.sha256`, `--bench-jpeg cases`) and Pillow's
+51. `--bench-jpeg`, 0e13af7 against the change, three alternated rounds on a loaded 4-thread container, medians, warm
+(KiB allocated a call; the file): grey page q75 from 8 bits 26.6 → 7.1 ms (5,462 → 157 KiB; 136), from floats
+15.5 → 8.0 (5,464 → 157), optimized 18.8 → 8.7 (5,206 → 146; 122); colour 1,600 x 1,200 q90 4:2:0 79.0 → 23.6
+(26,162 → 949; 938), optimized 90.7 → 32.0 (26,109 → 876; 859), 4:4:4 134.7 → 46.4 (41,049 → 1,907; 1,886); colour page
+1,654 x 2,339 from floats 133.3 → 52.6 (52,116 → 1,171; 1,150). Cold (the process's first encode, the grey page):
+74.8 → 38.4 ms. Not done: the DCT and colour conversion in vectors; the entropy coding (serial) overlapped with the next
+chunk's DCT. Tests: `image transforms|image data: 8-bit|jpeg:|synthetic data|scans:|cli vision: ImageEncoders|naming:|
+public API|test runner`, 42 passed.
+
 ## Phase D7: PDF vector content, and pages drawn to pixels
 
 - **Vector content read:** the content interpreter (D3) also gives paths: construction (`m l c v y h re`), painting

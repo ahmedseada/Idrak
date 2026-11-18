@@ -10,6 +10,7 @@ same bytes. Checked by `IDRAK_FILTER="image transforms"`.
 | `manifest.json` | `transforms`: 238 cases (an input, a pipeline in Idrak's syntax, the output's mode and size, the SHA-256 of its bytes in planar order, and `png` for outputs of 64 K pixels or fewer); `jpeg`: 51 encoder cases (input, quality, subsampling, the SHA-256 of Pillow's file and of its decoded bytes, and `file` for small ones) |
 | `out-NNN.png` | Pillow's result of transform case NNN (lossless), for reporting the largest difference |
 | `pillow-NNN.jpg` | Pillow's `save(quality=Q, optimize=True)` file of JPEG case NNN |
+| `jpeg-encoder.sha256` | not the script's: the SHA-256 and name of each of the 147 files Idrak's JPEG encoder wrote at 0e13af7, before its buffers were pooled (generic images made by the test from integers: grey and colour; floats, 8-bit images, planes, 16-bit-like floats; 1 x 1 to 1,001 x 701; qualities 1 to 100; 4:2:0, 4:2:2, 4:4:4; standard and optimized tables), printed by `--bench-jpeg cases`; every encode must still give them byte for byte |
 
 The inputs are also the fixtures of phase 0 (`../vlm/image.png`, `image-gray.jpg`, `image-rgba.png`) and of the JPEG
 decoder (`../jpeg/baseline-420-odd.jpg`, `grey-progressive-odd.jpg`, `exif-comment.jpg`), each first brought to what

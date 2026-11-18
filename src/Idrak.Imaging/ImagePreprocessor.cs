@@ -708,26 +708,28 @@ public sealed class ImagePreprocessor
         }
 
         return planes;
+    }
 
-        // The byte Pillow gives: a value that is a whole number of 255ths (8-bit sources, and those the codecs widen to 8
-        // bits as Pillow does) is that byte; any other (16-bit sources) is its high byte, as Pillow reads 16-bit PNG and
-        // PPM. The high byte of a 16-bit k * 257 is k, so both agree where both apply.
-        static int Byte(float v)
+    // The byte Pillow gives: a value that is a whole number of 255ths (8-bit sources, and those the codecs widen to 8
+    // bits as Pillow does) is that byte; any other (16-bit sources) is its high byte, as Pillow reads 16-bit PNG and
+    // PPM. The high byte of a 16-bit k * 257 is k, so both agree where both apply. (ToBytes, and the JPEG encoder a row
+    // at a time: inlined into their loops.)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static int Byte(float v)
+    {
+        if (v <= 0)
         {
-            if (v <= 0)
-            {
-                return 0;
-            }
-
-            if (v >= 1)
-            {
-                return 255;
-            }
-
-            float scaled = v * 255f;
-            float nearest = MathF.Round(scaled);
-            return MathF.Abs(scaled - nearest) < 1e-3f ? (int)nearest : (int)MathF.Round(v * 65535f) >> 8;
+            return 0;
         }
+
+        if (v >= 1)
+        {
+            return 255;
+        }
+
+        float scaled = v * 255f;
+        float nearest = MathF.Round(scaled);
+        return MathF.Abs(scaled - nearest) < 1e-3f ? (int)nearest : (int)MathF.Round(v * 65535f) >> 8;
     }
 
     // ---------------------------------------------------------------- Pillow's resize (Resample.c)

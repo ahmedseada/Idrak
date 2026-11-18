@@ -18,6 +18,7 @@
 //   … -- --bench-conv                                                            time convolutions (forward, both gradients) per path: host fallback, composed, implicit tiles, depthwise, the measured choice (IDRAK_DEVICES, default every GPU)
 //   … -- --bench-vision [bf16]                                                   time Gemma 3 4B's image encoder and projector (random weights, one 896 x 896 image; IDRAK_DEVICES, default the CPU); bf16: packed bfloat16 weights as the checkpoint stores them, float32 and bfloat16 products, batches of 1 and 5
 //   … -- --bench-image                                                         time the CPU side of reading a page (decoders, every image transform, the preprocessor, the preview PNG): cold, warm, bytes, output hashes
+//   … -- --bench-jpeg [cases]                                                    time the JPEG encoder (a grey page, colour images; inputs 8-bit and float): cold, warm, bytes allocated a call, file size and hash; cases: the SHA-256 of every case of the encoder's byte-identity test instead
 //   … -- --bench-dispatch                                                        time a million tiny operations through the dispatcher and straight to the CPU's kernel
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text ("a|b": any of several)
@@ -155,6 +156,11 @@ if (args is ["--bench-vision", .. var visionArguments] && visionArguments.Length
 if (args is ["--bench-image"])
 {
     return Tests.BenchImage();
+}
+
+if (args is ["--bench-jpeg", .. var jpegArguments] && jpegArguments.Length <= 1)
+{
+    return Tests.BenchJpeg(jpegArguments.FirstOrDefault());
 }
 
 if (args is ["--bench-read"])

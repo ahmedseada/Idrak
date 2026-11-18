@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Buffers.Binary;
+using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Imaging;
 
@@ -27,6 +31,13 @@ public enum JpegSubsampling
 /// (Pillow's <c>optimize=True</c>), built from the image's own statistics by jchuff.c's <c>jpeg_gen_optimal_table</c>:
 /// they change the size of the file, not its pixels. The coefficients are the reference encoder's, so any decoder gives
 /// the same pixels for this file as for Pillow's.
+/// <para>
+/// One encode allocates its file and little else: an 8-bit image's planes are read in place and floats brought to bytes
+/// a row at a time; the colour conversion, downsampling, DCT and quantization run an MCU row at a time on all cores
+/// (<see cref="ComputeResources.MaxCpuThreads"/>) into pooled coefficient buffers, a few MCU rows at a time with the
+/// standard tables (each written out before the next are made) and the whole image with optimized ones (their
+/// statistics need every block first); the entropy-coded bytes go to one pooled buffer, copied once into the file.
+/// </para>
 /// </summary>
 public static class JpegEncoder
 {
@@ -40,13 +51,6 @@ public static class JpegEncoder
     [
         17, 18, 24, 47, 99, 99, 99, 99, 18, 21, 26, 66, 99, 99, 99, 99, 24, 26, 56, 99, 99, 99, 99, 99, 47, 66, 99, 99, 99, 99, 99, 99,
         99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
-    ];
-
-    // Zigzag order: the natural (row-major) index of the k-th coefficient written.
-    private static readonly int[] Zigzag =
-    [
-        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
-        35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
     ];
 
     // The standard Huffman tables (jcparam.c's std_huff_tables): code-length counts 1..16, then the symbols.
@@ -78,6 +82,26 @@ public static class JpegEncoder
         0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa,
     ];
 
+    // The standard tables, made once: [0] luminance, [1] chrominance.
+    private static readonly HuffmanTable[] StandardDc = [new(DcLuminanceBits, DcValues), new(DcChrominanceBits, DcValues)];
+    private static readonly HuffmanTable[] StandardAc = [new(AcLuminanceBits, AcLuminanceValues), new(AcChrominanceBits, AcChrominanceValues)];
+
+    // jccolor.c rgb_ycc_convert's factors: 16-bit fixed point, Y rounded by ONE_HALF, Cb and Cr by ONE_HALF - 1 with the
+    // 128 offset.
+    private const int ColourBits = 16, ColourHalf = 1 << (ColourBits - 1), ColourOffset = 128 << ColourBits;
+    private static readonly int RedY = Fix(0.29900), GreenY = Fix(0.58700), BlueY = Fix(0.11400), RedCb = -Fix(0.16874), GreenCb = -Fix(0.33126),
+        HalfFactor = Fix(0.5), GreenCr = -Fix(0.41869), BlueCr = -Fix(0.08131);
+
+    // Zigzag order: the natural (row-major) index of the k-th coefficient written. Blocks are kept in this order.
+    private static ReadOnlySpan<byte> Zigzag =>
+    [
+        0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+        35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+    ];
+
+    // The symbols of a table class: 256, and the reserved one jpeg_gen_optimal_table adds; a count array's length.
+    private const int Symbols = 257;
+
     /// <summary>
     /// The image (grey: one channel; colour: three) as a JPEG file at <paramref name="quality"/> (1 to 100; Pillow's
     /// default is 75), its pixels first brought to 8 bits as Pillow holds them.
@@ -90,439 +114,170 @@ public static class JpegEncoder
             throw new ArgumentException($"A JPEG holds a grey or an RGB image, not {image.Channels} channels.", nameof(image));
         }
 
-        return Encode(ImagePreprocessor.ToBytes(image, grayscale: false), image.Height, image.Width, quality, optimize, subsampling);
+        CheckSettings(quality, image.Height, image.Width);
+
+        // An 8-bit image is read in place (its planes are the bytes ImagePreprocessor.ToBytes would copy); floats are
+        // brought to bytes a row at a time, rounded as ToBytes rounds them.
+        var source = image.TryGetPlanes(out var planes, out _)
+            ? new Source(planes, null, image.Height, image.Width)
+            : new Source(null, image.Pixels, image.Height, image.Width);
+        return Write(source, image.Channels == 3, quality, optimize, subsampling);
     }
 
     /// <summary>8-bit planes (one grey, or red, green and blue) of <paramref name="height"/> x <paramref name="width"/> as a JPEG file.</summary>
     public static byte[] Encode(byte[][] planes, int height, int width, int quality = 75, bool optimize = false, JpegSubsampling subsampling = JpegSubsampling.Half420)
     {
         ArgumentNullException.ThrowIfNull(planes);
+        CheckSettings(quality, height, width);
+        bool given = planes.Length is 1 or 3;
+        var held = new ReadOnlyMemory<byte>[planes.Length];
+        for (int i = 0; i < planes.Length && given; i++)
+        {
+            given = planes[i] is { } plane && plane.Length == (long)width * height;
+            held[i] = planes[i];
+        }
+
+        if (!given)
+        {
+            throw new ArgumentException($"Give one or three planes of {width} x {height} bytes.", nameof(planes));
+        }
+
+        return Write(new Source(held, null, height, width), planes.Length == 3, quality, optimize, subsampling);
+    }
+
+    private static void CheckSettings(int quality, int height, int width)
+    {
         ArgumentOutOfRangeException.ThrowIfLessThan(quality, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(quality, 100);
         if (width is < 1 or > 65535 || height is < 1 or > 65535)
         {
             throw new ArgumentException($"A JPEG is 1 to 65,535 pixels a side, not {width} x {height}.");
         }
+    }
 
-        if (planes.Length is not 1 and not 3 || planes.Any(p => p.Length != width * height))
-        {
-            throw new ArgumentException($"Give one or three planes of {width} x {height} bytes.", nameof(planes));
-        }
-
-        bool colour = planes.Length == 3;
+    private static byte[] Write(Source source, bool colour, int quality, bool optimize, JpegSubsampling subsampling)
+    {
         int scale = quality < 50 ? 5000 / quality : 200 - quality * 2;                     // jpeg_quality_scaling
-        int[][] tables = colour ? [Scaled(StdLuminance, scale), Scaled(StdChrominance, scale)] : [Scaled(StdLuminance, scale)];
-
-        // Components: (plane, horizontal and vertical sampling, table).
-        int hs = colour && subsampling != JpegSubsampling.Full444 ? 2 : 1, vs = colour && subsampling == JpegSubsampling.Half420 ? 2 : 1;
-        var components = new List<Component>();
-        if (colour)
-        {
-            var (y, cb, cr) = ToYCbCr(planes, width * height);
-            components.Add(new Component(1, hs, vs, 0, y));
-            components.Add(new Component(2, 1, 1, 1, cb));
-            components.Add(new Component(3, 1, 1, 1, cr));
-        }
-        else
-        {
-            components.Add(new Component(1, 1, 1, 0, planes[0]));
-        }
-
-        int maxH = components.Max(c => c.H), maxV = components.Max(c => c.V);
-        int mcusAcross = DivUp(width, 8 * maxH), mcusDown = DivUp(height, 8 * maxV);
-        bool interleaved = components.Count > 1;
-        foreach (var c in components)
-        {
-            c.Prepare(width, height, maxH, maxV, interleaved ? mcusAcross * c.H : -1, interleaved ? mcusDown * c.V : -1);
-            c.Coefficients = Transform(c, tables[c.Table]);
-        }
-
-        // Blocks in scan order: interleaved MCUs (each component's H x V blocks, dummies past its edge), or one component's blocks.
-        var sequence = new List<(int Component, short[] Block)>();
-        if (interleaved)
-        {
-            for (int my = 0; my < mcusDown; my++)
-            {
-                for (int mx = 0; mx < mcusAcross; mx++)
-                {
-                    for (int ci = 0; ci < components.Count; ci++)
-                    {
-                        var c = components[ci];
-                        for (int by = 0; by < c.V; by++)
-                        {
-                            for (int bx = 0; bx < c.H; bx++)
-                            {
-                                sequence.Add((ci, c.Coefficients[(my * c.V + by) * c.PaddedBlocksAcross + mx * c.H + bx]));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        else
-        {
-            sequence.AddRange(components[0].Coefficients.Select(b => (0, b)));
-        }
-
         int tableCount = colour ? 2 : 1;
-        var dc = new HuffmanTable[tableCount];
-        var ac = new HuffmanTable[tableCount];
-        if (optimize)
+        int hs = colour && subsampling != JpegSubsampling.Full444 ? 2 : 1, vs = colour && subsampling == JpegSubsampling.Half420 ? 2 : 1;
+        var quantizers = ArrayPool<Quantizer>.Shared.Rent(64 * tableCount);
+        short[]?[] buffers = [];
+        long[]? counts = null;
+        var writer = default(BitWriter);
+        try
         {
-            var dcFrequency = new long[tableCount][];
-            var acFrequency = new long[tableCount][];
             for (int t = 0; t < tableCount; t++)
             {
-                dcFrequency[t] = new long[257];
-                acFrequency[t] = new long[257];
-            }
-
-            var last = new int[components.Count];
-            foreach (var (ci, block) in sequence)
-            {
-                int t = components[ci].Table;
-                int diff = block[0] - last[ci];
-                last[ci] = block[0];
-                dcFrequency[t][Bits(diff)]++;
-                int run = 0;
-                for (int k = 1; k < 64; k++)
+                for (int k = 0; k < 64; k++)
                 {
-                    int v = block[Zigzag[k]];
-                    if (v == 0)
-                    {
-                        run++;
-                        continue;
-                    }
-
-                    while (run > 15)
-                    {
-                        acFrequency[t][0xF0]++;
-                        run -= 16;
-                    }
-
-                    acFrequency[t][(run << 4) + Bits(v)]++;
-                    run = 0;
-                }
-
-                if (run > 0)
-                {
-                    acFrequency[t][0]++;
+                    quantizers[t * 64 + k] = Divisor(Quantized(t, Zigzag[k], scale) << 3);
                 }
             }
 
-            for (int t = 0; t < tableCount; t++)
+            // A chunk of MCU rows: enough for every core (HostParallel splits a count into four parts a thread), made and
+            // written before the next with the standard tables; every chunk kept until the optimized tables are known.
+            var job = new Job(source, colour, hs, vs, quantizers);
+            int chunkRows = Math.Min(job.McusDown, 4 * Math.Max(1, ComputeResources.MaxCpuThreads));
+            int chunkCount = DivUp(job.McusDown, chunkRows), chunkLength = checked(chunkRows * job.RowStride);
+            buffers = new short[optimize ? chunkCount : 1][];
+            writer = new BitWriter(ArrayPool<byte>.Shared.Rent((int)Math.Clamp((long)source.Width * source.Height * (colour ? 3 : 1) / 4, 1 << 12, 1 << 24)));
+            Action<int, int> transform = [MethodImpl(MethodImplOptions.AggressiveOptimization)] (from, to) => TransformRows(job, from, to);
+
+            // The chunk's coefficients into its buffer; the MCU rows it held.
+            int Transform(int chunk, short[] buffer)
             {
-                dc[t] = OptimalTable(dcFrequency[t]);
-                ac[t] = OptimalTable(acFrequency[t]);
-            }
-        }
-        else
-        {
-            dc[0] = new HuffmanTable(DcLuminanceBits, DcValues);
-            ac[0] = new HuffmanTable(AcLuminanceBits, AcLuminanceValues);
-            if (colour)
-            {
-                dc[1] = new HuffmanTable(DcChrominanceBits, DcValues);
-                ac[1] = new HuffmanTable(AcChrominanceBits, AcChrominanceValues);
-            }
-        }
-
-        var output = new MemoryStream();
-        output.Write([0xFF, 0xD8]);
-        output.Write([0xFF, 0xE0, 0, 16, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]);   // JFIF 1.01, aspect 1:1
-        for (int t = 0; t < tables.Length; t++)
-        {
-            output.Write([0xFF, 0xDB, 0, 67, (byte)t]);
-            for (int k = 0; k < 64; k++)
-            {
-                output.WriteByte((byte)tables[t][Zigzag[k]]);
-            }
-        }
-
-        int sofLength = 8 + 3 * components.Count;
-        output.Write([0xFF, 0xC0, (byte)(sofLength >> 8), (byte)sofLength, 8, (byte)(height >> 8), (byte)height, (byte)(width >> 8), (byte)width, (byte)components.Count]);
-        foreach (var c in components)
-        {
-            output.Write([(byte)c.Id, (byte)(c.H << 4 | c.V), (byte)c.Table]);
-        }
-
-        for (int t = 0; t < tableCount; t++)
-        {
-            WriteTable(output, dc[t], (byte)t);
-            WriteTable(output, ac[t], (byte)(0x10 | t));
-        }
-
-        int sosLength = 6 + 2 * components.Count;
-        output.Write([0xFF, 0xDA, (byte)(sosLength >> 8), (byte)sosLength, (byte)components.Count]);
-        foreach (var c in components)
-        {
-            output.Write([(byte)c.Id, (byte)(c.Table << 4 | c.Table)]);
-        }
-
-        output.Write([0, 63, 0]);
-        var writer = new BitWriter(output);
-        var previous = new int[components.Count];
-        foreach (var (ci, block) in sequence)
-        {
-            int t = components[ci].Table;
-            int diff = block[0] - previous[ci];
-            previous[ci] = block[0];
-            int size = Bits(diff);
-            writer.Write(dc[t].Codes[size], dc[t].Lengths[size]);
-            if (size > 0)
-            {
-                writer.Write(diff < 0 ? diff - 1 : diff, size);
+                job.Buffer = buffer;
+                job.ChunkStart = chunk * chunkRows;
+                int rows = Math.Min(chunkRows, job.McusDown - job.ChunkStart);
+                HostParallel.For(rows, 1, transform);
+                return rows;
             }
 
-            int run = 0;
-            for (int k = 1; k < 64; k++)
+            Span<int> last = stackalloc int[3];
+            HuffmanTable[] dc = StandardDc, ac = StandardAc;
+            if (optimize)
             {
-                int v = block[Zigzag[k]];
-                if (v == 0)
+                counts = ArrayPool<long>.Shared.Rent(2 * Symbols * tableCount);
+                counts.AsSpan(0, 2 * Symbols * tableCount).Clear();
+                for (int chunk = 0; chunk < chunkCount; chunk++)
                 {
-                    run++;
-                    continue;
+                    short[] buffer = ArrayPool<short>.Shared.Rent(chunkLength);
+                    buffers[chunk] = buffer;
+                    Count(job, buffer, Transform(chunk, buffer), counts, last);
                 }
 
-                while (run > 15)
+                (dc, ac) = (new HuffmanTable[tableCount], new HuffmanTable[tableCount]);
+                for (int t = 0; t < tableCount; t++)
                 {
-                    writer.Write(ac[t].Codes[0xF0], ac[t].Lengths[0xF0]);
-                    run -= 16;
+                    dc[t] = OptimalTable(counts.AsSpan(2 * Symbols * t, Symbols));
+                    ac[t] = OptimalTable(counts.AsSpan(2 * Symbols * t + Symbols, Symbols));
                 }
 
-                int bits = Bits(v), symbol = (run << 4) + bits;
-                writer.Write(ac[t].Codes[symbol], ac[t].Lengths[symbol]);
-                writer.Write(v < 0 ? v - 1 : v, bits);
-                run = 0;
+                last.Clear();
             }
 
-            if (run > 0)
+            WriteHeaders(ref writer, job, scale, dc, ac);
+            for (int chunk = 0; chunk < chunkCount; chunk++)
             {
-                writer.Write(ac[t].Codes[0], ac[t].Lengths[0]);
+                if (optimize)
+                {
+                    Scan(ref writer, job, buffers[chunk]!, Math.Min(chunkRows, job.McusDown - chunk * chunkRows), dc, ac, last);
+                }
+                else
+                {
+                    short[] buffer = buffers[0] ?? (buffers[0] = ArrayPool<short>.Shared.Rent(chunkLength));
+                    Scan(ref writer, job, buffer, Transform(chunk, buffer), dc, ac, last);
+                }
+            }
+
+            writer.Flush();
+            writer.Write([0xFF, 0xD9]);
+            return writer.ToFile();
+        }
+        finally
+        {
+            foreach (var buffer in buffers)
+            {
+                if (buffer is not null)
+                {
+                    ArrayPool<short>.Shared.Return(buffer);
+                }
+            }
+
+            if (counts is not null)
+            {
+                ArrayPool<long>.Shared.Return(counts);
+            }
+
+            ArrayPool<Quantizer>.Shared.Return(quantizers);
+            if (writer.Buffer is { } output)
+            {
+                ArrayPool<byte>.Shared.Return(output);
             }
         }
-
-        writer.Flush();
-        output.Write([0xFF, 0xD9]);
-        return output.ToArray();
     }
 
     private static int DivUp(int a, int b) => (a + b - 1) / b;
 
+    private static int Fix(double x) => (int)(x * (1L << ColourBits) + 0.5);
+
+    // jpeg_add_quant_table with force_baseline: (base * scale + 50) / 100 within 1 to 255, for table t's natural index.
+    private static int Quantized(int table, int index, int scale) => Math.Clamp(((table == 0 ? StdLuminance : StdChrominance)[index] * scale + 50) / 100, 1, 255);
+
     // The bits of a coefficient's magnitude (its category): 0 for 0.
-    private static int Bits(int value)
-    {
-        int magnitude = Math.Abs(value), bits = 0;
-        while (magnitude > 0)
-        {
-            bits++;
-            magnitude >>= 1;
-        }
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int Category(int value) => 32 - BitOperations.LeadingZeroCount((uint)(value < 0 ? -value : value));
 
-        return bits;
-    }
-
-    // jpeg_add_quant_table with force_baseline: (base * scale + 50) / 100 within 1 to 255.
-    private static int[] Scaled(int[] table, int scale) => [.. table.Select(q => Math.Clamp((q * scale + 50) / 100, 1, 255))];
-
-    // jccolor.c rgb_ycc_convert: 16-bit fixed point, Y rounded by ONE_HALF, Cb and Cr by ONE_HALF - 1 with the 128 offset.
-    private static (byte[] Y, byte[] Cb, byte[] Cr) ToYCbCr(byte[][] rgb, int size)
-    {
-        const int Scale = 16, Half = 1 << (Scale - 1), Offset = 128 << Scale;
-        static int Fix(double x) => (int)(x * (1L << Scale) + 0.5);
-        int ry = Fix(0.29900), gy = Fix(0.58700), by = Fix(0.11400), rcb = -Fix(0.16874), gcb = -Fix(0.33126), half = Fix(0.5), gcr = -Fix(0.41869), bcr = -Fix(0.08131);
-        var y = new byte[size];
-        var cb = new byte[size];
-        var cr = new byte[size];
-        byte[] r = rgb[0], g = rgb[1], b = rgb[2];
-        for (int i = 0; i < size; i++)
-        {
-            int R = r[i], G = g[i], B = b[i];
-            y[i] = (byte)((ry * R + gy * G + (by * B + Half)) >> Scale);
-            cb[i] = (byte)((rcb * R + gcb * G + (half * B + Offset + Half - 1)) >> Scale);
-            cr[i] = (byte)((half * R + Offset + Half - 1 + gcr * G + bcr * B) >> Scale);
-        }
-
-        return (y, cb, cr);
-    }
-
-    private sealed class Component(int id, int h, int v, int table, byte[] full)
-    {
-        public int Id { get; } = id;
-
-        public int H { get; } = h;
-
-        public int V { get; } = v;
-
-        public int Table { get; } = table;
-
-        // The component's samples, padded as libjpeg pads them, PaddedBlocksAcross * 8 wide and PaddedBlocksDown * 8 high.
-        public byte[] Samples { get; private set; } = [];
-
-        // Blocks with real samples (width_in_blocks, height_in_blocks), and the blocks the scan holds (MCU-padded).
-        public int BlocksAcross { get; private set; }
-
-        public int BlocksDown { get; private set; }
-
-        public int PaddedBlocksAcross { get; private set; }
-
-        public int PaddedBlocksDown { get; private set; }
-
-        public short[][] Coefficients { get; set; } = [];
-
-        // Downsample (jcsample.c) from the full-size plane, padding edges by repetition (jcprepct.c, jcsample.c).
-        public void Prepare(int width, int height, int maxH, int maxV, int paddedAcross, int paddedDown)
-        {
-            BlocksAcross = DivUp(width * H, maxH * 8);
-            BlocksDown = DivUp(height * V, maxV * 8);
-            PaddedBlocksAcross = paddedAcross > 0 ? paddedAcross : BlocksAcross;
-            PaddedBlocksDown = paddedDown > 0 ? paddedDown : BlocksDown;
-            int fx = maxH / H, fy = maxV / V;
-            int outW = BlocksAcross * 8;                                                         // output_cols
-            int outRows = DivUp(height, fy);                                                     // rows the image's row groups give
-            int samplesW = PaddedBlocksAcross * 8, samplesH = Math.Max(PaddedBlocksDown * 8, BlocksDown * 8);
-            var samples = new byte[samplesW * samplesH];
-            var input = full;
-
-            byte In(int row, int x) => input[Math.Min(row, height - 1) * width + Math.Min(x, width - 1)];
-
-            for (int oy = 0; oy < outRows; oy++)
-            {
-                var line = samples.AsSpan(oy * samplesW, samplesW);
-                if (fx == 1 && fy == 1)
-                {
-                    for (int x = 0; x < outW; x++)
-                    {
-                        line[x] = In(oy, x);
-                    }
-                }
-                else if (fx == 2 && fy == 1)
-                {
-                    int bias = 0;                                                                // h2v1_downsample: 0, 1, 0, 1, ...
-                    for (int x = 0; x < outW; x++)
-                    {
-                        line[x] = (byte)((In(oy, 2 * x) + In(oy, 2 * x + 1) + bias) >> 1);
-                        bias ^= 1;
-                    }
-                }
-                else if (fx == 2 && fy == 2)
-                {
-                    int bias = 1;                                                                // h2v2_downsample: 1, 2, 1, 2, ...
-                    for (int x = 0; x < outW; x++)
-                    {
-                        line[x] = (byte)((In(2 * oy, 2 * x) + In(2 * oy, 2 * x + 1) + In(2 * oy + 1, 2 * x) + In(2 * oy + 1, 2 * x + 1) + bias) >> 2);
-                        bias ^= 3;
-                    }
-                }
-                else
-                {
-                    throw new NotSupportedException($"Sampling {fx} x {fy} is not supported.");
-                }
-
-                for (int x = outW; x < samplesW; x++)
-                {
-                    line[x] = line[outW - 1];
-                }
-            }
-
-            for (int oy = outRows; oy < samplesH; oy++)
-            {
-                samples.AsSpan((outRows - 1) * samplesW, samplesW).CopyTo(samples.AsSpan(oy * samplesW, samplesW));   // expand_bottom_edge
-            }
-
-            Samples = samples;
-        }
-    }
-
-    // The forward DCT and quantization of every block the scan holds: real blocks from the samples, dummy blocks (past the
-    // component's width or height in an MCU) all zero but for a DC equal to the block before (right edge) or the last
-    // block of the row above (bottom edge), as jccoefct.c makes them.
-    private static short[][] Transform(Component c, int[] table)
-    {
-        var divisors = new (int Reciprocal, int Correction, int Shift)[64];
-        for (int i = 0; i < 64; i++)
-        {
-            divisors[i] = Reciprocal(table[i] << 3);
-        }
-
-        int across = c.PaddedBlocksAcross, down = c.PaddedBlocksDown, stride = across * 8;
-        var blocks = new short[across * down][];
-        Abstraction.Devices.HostParallel.For(Math.Min(down, c.BlocksDown), 1, (first, last) =>
-        {
-            var workspace = new int[64];
-            for (int by = first; by < last; by++)
-            {
-                for (int bx = 0; bx < c.BlocksAcross; bx++)
-                {
-                    for (int y = 0; y < 8; y++)
-                    {
-                        for (int x = 0; x < 8; x++)
-                        {
-                            workspace[y * 8 + x] = c.Samples[(by * 8 + y) * stride + bx * 8 + x] - 128;
-                        }
-                    }
-
-                    ForwardDct(workspace);
-                    var block = new short[64];
-                    for (int i = 0; i < 64; i++)
-                    {
-                        int temp = workspace[i];
-                        var (recip, corr, shift) = divisors[i];
-                        if (temp < 0)
-                        {
-                            temp = -(int)((uint)(-temp + corr) * (uint)recip >> (shift + 16));
-                        }
-                        else
-                        {
-                            temp = (int)((uint)(temp + corr) * (uint)recip >> (shift + 16));
-                        }
-
-                        block[i] = (short)temp;
-                    }
-
-                    blocks[by * across + bx] = block;
-                }
-            }
-        });
-
-        for (int by = 0; by < down; by++)
-        {
-            for (int bx = 0; bx < across; bx++)
-            {
-                if (blocks[by * across + bx] is not null)
-                {
-                    continue;
-                }
-
-                var dummy = new short[64];
-                if (by < c.BlocksDown)
-                {
-                    dummy[0] = blocks[by * across + bx - 1][0];                                  // right edge: the block before
-                }
-                else
-                {
-                    // Bottom edge: the DC of the last block of the MCU row above in this MCU (jccoefct.c's blkn - 1).
-                    int mcuX = bx / c.H * c.H;
-                    int rowAbove = by - 1;
-                    dummy[0] = blocks[rowAbove * across + mcuX + c.H - 1][0];
-                }
-
-                blocks[by * across + bx] = dummy;
-            }
-        }
-
-        return blocks;
-    }
-
-    // jcdctmgr.c compute_reciprocal for a 16-bit DCTELEM (libjpeg-turbo with SIMD, as Pillow's wheels build it).
-    private static (int Reciprocal, int Correction, int Shift) Reciprocal(int divisor)
+    // jcdctmgr.c compute_reciprocal for a 16-bit DCTELEM (libjpeg-turbo with SIMD, as Pillow's wheels build it); the
+    // shift kept with its 16 added, as the quantization shifts.
+    private static Quantizer Divisor(int divisor)
     {
         if (divisor == 1)
         {
-            return (1, 0, -16);
+            return new Quantizer(1, 0, 0);
         }
 
-        int b = 31 - System.Numerics.BitOperations.LeadingZeroCount((uint)divisor);        // flss(divisor) - 1
+        int b = 31 - BitOperations.LeadingZeroCount((uint)divisor);                          // flss(divisor) - 1
         int r = 16 + b;
         long fq = (1L << r) / divisor, fr = (1L << r) % divisor;
         int c = divisor / 2;
@@ -540,30 +295,306 @@ public static class JpegEncoder
             fq++;
         }
 
-        return ((int)(fq & 0xFFFF), c, r - 16);
+        return new Quantizer((int)(fq & 0xFFFF), c, r);
+    }
+
+    // The MCU rows [first, last) of the job's chunk: each one's blocks transformed and quantized into its part of the
+    // chunk's buffer (component by component, each component's block rows in turn), with the scratch they need.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void TransformRows(Job job, int first, int last)
+    {
+        Span<int> workspace = stackalloc int[64];
+        Span<int> upper = stackalloc int[8];
+        Span<int> lower = stackalloc int[8];
+        byte[]? scratch = job.ScratchLength > 0 ? ArrayPool<byte>.Shared.Rent(job.ScratchLength) : null;
+        try
+        {
+            for (int local = first; local < last; local++)
+            {
+                var row = job.Buffer.AsSpan(local * job.RowStride, job.RowStride);
+                if (job.Colour)
+                {
+                    ColourRow(job, job.ChunkStart + local, row, scratch, workspace, upper, lower);
+                }
+                else
+                {
+                    GreyRow(job, job.ChunkStart + local, row, scratch, workspace, upper);
+                }
+            }
+        }
+        finally
+        {
+            if (scratch is not null)
+            {
+                ArrayPool<byte>.Shared.Return(scratch);
+            }
+        }
+    }
+
+    // A grey MCU row (eight rows of the image, one block each MCU), read from the plane, or from its floats brought to
+    // bytes; rows past the bottom repeat the last, columns past the right edge the last (jcprepct.c's padding).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void GreyRow(Job job, int m, Span<short> row, byte[]? scratch, Span<int> workspace, Span<int> starts)
+    {
+        int width = job.Width, height = job.Height, top = m * 8;
+        ReadOnlySpan<byte> plane;
+        if (job.Source.Floats)
+        {
+            var rows = scratch.AsSpan(0, 8 * width);
+            int real = Math.Min(8, height - top);
+            for (int r = 0; r < real; r++)
+            {
+                job.Source.Convert(0, top + r, rows.Slice(r * width, width));
+            }
+
+            plane = rows;
+            for (int y = 0; y < 8; y++)
+            {
+                starts[y] = Math.Min(y, real - 1) * width;
+            }
+        }
+        else
+        {
+            plane = job.Source.Plane(0);
+            for (int y = 0; y < 8; y++)
+            {
+                starts[y] = Math.Min(top + y, height - 1) * width;
+            }
+        }
+
+        ReadOnlySpan<Quantizer> divisors = job.Quantizers.AsSpan(0, 64);
+        for (int bx = 0; bx < job.McusAcross; bx++)
+        {
+            int left = bx * 8;
+            if (left + 8 <= width)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    var source = plane.Slice(starts[y] + left, 8);
+                    for (int x = 0; x < 8; x++)
+                    {
+                        workspace[y * 8 + x] = source[x] - 128;
+                    }
+                }
+            }
+            else
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    for (int x = 0; x < 8; x++)
+                    {
+                        workspace[y * 8 + x] = plane[starts[y] + Math.Min(left + x, width - 1)] - 128;
+                    }
+                }
+            }
+
+            ForwardDct(workspace);
+            Quantize(workspace, row.Slice(bx * 64, 64), divisors);
+        }
+    }
+
+    // A colour MCU row (8 x maxV rows of the image): its real rows to YCbCr (jccolor.c) in a stripe as wide as the MCUs,
+    // the columns past the right edge repeating the last; luma's blocks read from it (rows past the bottom repeating the
+    // last), chroma's downsampled from it as jcsample.c does (h2v1: bias 0, 1, 0, 1, ...; h2v2: 1, 2, 1, 2, ...; the
+    // downsampled rows past the image's repeating its last, jcsample.c's expand_bottom_edge); then luma's dummy blocks.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void ColourRow(Job job, int m, Span<short> row, byte[]? scratch, Span<int> workspace, Span<int> upper, Span<int> lower)
+    {
+        int width = job.Width, height = job.Height, rows = 8 * job.MaxV, stripe = job.StripeWidth, top = m * rows;
+        int real = Math.Min(rows, height - top);
+        var lumaPlane = scratch.AsSpan(0, rows * stripe);
+        var cbPlane = scratch.AsSpan(rows * stripe, rows * stripe);
+        var crPlane = scratch.AsSpan(2 * rows * stripe, rows * stripe);
+        for (int r = 0; r < real; r++)
+        {
+            ReadOnlySpan<byte> red, green, blue;
+            if (job.Source.Floats)
+            {
+                var converted = scratch.AsSpan(3 * rows * stripe, 3 * width);
+                job.Source.Convert(0, top + r, converted[..width]);
+                job.Source.Convert(1, top + r, converted.Slice(width, width));
+                job.Source.Convert(2, top + r, converted.Slice(2 * width, width));
+                red = converted[..width];
+                green = converted.Slice(width, width);
+                blue = converted.Slice(2 * width, width);
+            }
+            else
+            {
+                int offset = (top + r) * width;
+                red = job.Source.Plane(0).Slice(offset, width);
+                green = job.Source.Plane(1).Slice(offset, width);
+                blue = job.Source.Plane(2).Slice(offset, width);
+            }
+
+            ToYCbCr(red, green, blue, lumaPlane.Slice(r * stripe, stripe), cbPlane.Slice(r * stripe, stripe), crPlane.Slice(r * stripe, stripe));
+        }
+
+        // Luma: the real blocks of each of the MCU row's block rows.
+        var luma = job.Components[0];
+        ReadOnlySpan<Quantizer> divisors = job.Quantizers.AsSpan(0, 64);
+        for (int by = 0; by < luma.V; by++)
+        {
+            int blockRow = m * luma.V + by;
+            if (blockRow >= luma.BlocksDown)
+            {
+                continue;
+            }
+
+            for (int y = 0; y < 8; y++)
+            {
+                upper[y] = (Math.Min(blockRow * 8 + y, height - 1) - top) * stripe;
+            }
+
+            for (int bx = 0; bx < luma.BlocksAcross; bx++)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    var source = lumaPlane.Slice(upper[y] + bx * 8, 8);
+                    for (int x = 0; x < 8; x++)
+                    {
+                        workspace[y * 8 + x] = source[x] - 128;
+                    }
+                }
+
+                ForwardDct(workspace);
+                Quantize(workspace, row.Slice(luma.Offset + ((by * luma.PaddedAcross + bx) << 6), 64), divisors);
+            }
+        }
+
+        // Chroma: one block row, every block real; each sample from fx x fy samples of the stripe.
+        int fx = job.MaxH, fy = job.MaxV, outRows = DivUp(height, fy);
+        for (int y = 0; y < 8; y++)
+        {
+            int downsampled = Math.Min(m * 8 + y, outRows - 1);
+            upper[y] = (Math.Min(fy * downsampled, height - 1) - top) * stripe;
+            lower[y] = (Math.Min(fy * downsampled + fy - 1, height - 1) - top) * stripe;
+        }
+
+        divisors = job.Quantizers.AsSpan(64, 64);
+        for (int ci = 1; ci < 3; ci++)
+        {
+            var plane = ci == 1 ? cbPlane : crPlane;
+            int offset = job.Components[ci].Offset;
+            for (int bx = 0; bx < job.McusAcross; bx++)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    if (fx == 1)
+                    {
+                        var source = plane.Slice(upper[y] + bx * 8, 8);
+                        for (int x = 0; x < 8; x++)
+                        {
+                            workspace[y * 8 + x] = source[x] - 128;
+                        }
+                    }
+                    else if (fy == 1)
+                    {
+                        var source = plane.Slice(upper[y] + bx * 16, 16);
+                        for (int x = 0; x < 8; x++)
+                        {
+                            workspace[y * 8 + x] = ((source[2 * x] + source[2 * x + 1] + (x & 1)) >> 1) - 128;
+                        }
+                    }
+                    else
+                    {
+                        var above = plane.Slice(upper[y] + bx * 16, 16);
+                        var below = plane.Slice(lower[y] + bx * 16, 16);
+                        for (int x = 0; x < 8; x++)
+                        {
+                            workspace[y * 8 + x] = ((above[2 * x] + above[2 * x + 1] + below[2 * x] + below[2 * x + 1] + 1 + (x & 1)) >> 2) - 128;
+                        }
+                    }
+                }
+
+                ForwardDct(workspace);
+                Quantize(workspace, row.Slice(offset + (bx << 6), 64), divisors);
+            }
+        }
+
+        // Luma's dummy blocks (past its width or height in an MCU), all zero but for a DC equal to the block before (right
+        // edge) or the last block of the MCU's block row above (bottom edge), as jccoefct.c makes them; in row order, so
+        // each one's source is already there.
+        for (int by = 0; by < luma.V; by++)
+        {
+            bool below = m * luma.V + by >= luma.BlocksDown;
+            for (int bx = below ? 0 : luma.BlocksAcross; bx < luma.PaddedAcross; bx++)
+            {
+                int source = below ? (by - 1) * luma.PaddedAcross + bx / luma.H * luma.H + luma.H - 1 : by * luma.PaddedAcross + bx - 1;
+                short dc = row[luma.Offset + (source << 6)];
+                var block = row.Slice(luma.Offset + ((by * luma.PaddedAcross + bx) << 6), 64);
+                block.Clear();
+                block[0] = dc;
+            }
+        }
+    }
+
+    // jccolor.c rgb_ycc_convert for one row, then the columns past it repeating its last (the stripe's width).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void ToYCbCr(ReadOnlySpan<byte> red, ReadOnlySpan<byte> green, ReadOnlySpan<byte> blue, Span<byte> y, Span<byte> cb, Span<byte> cr)
+    {
+        int width = red.Length;
+        green = green[..width];
+        blue = blue[..width];
+        for (int x = 0; x < width; x++)
+        {
+            int r = red[x], g = green[x], b = blue[x];
+            y[x] = (byte)((RedY * r + GreenY * g + (BlueY * b + ColourHalf)) >> ColourBits);
+            cb[x] = (byte)((RedCb * r + GreenCb * g + (HalfFactor * b + ColourOffset + ColourHalf - 1)) >> ColourBits);
+            cr[x] = (byte)((HalfFactor * r + ColourOffset + ColourHalf - 1 + GreenCr * g + BlueCr * b) >> ColourBits);
+        }
+
+        y[width..].Fill(y[width - 1]);
+        cb[width..].Fill(cb[width - 1]);
+        cr[width..].Fill(cr[width - 1]);
+    }
+
+    // libjpeg-turbo's quantization by reciprocals (jcdctmgr.c quantize), written in zigzag order.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void Quantize(ReadOnlySpan<int> workspace, Span<short> block, ReadOnlySpan<Quantizer> divisors)
+    {
+        var zigzag = Zigzag;
+        divisors = divisors[..64];
+        block = block[..64];
+        for (int k = 0; k < 64; k++)
+        {
+            int temp = workspace[zigzag[k]];
+            var (recip, corr, shift) = divisors[k];
+            if (temp < 0)
+            {
+                temp = -(int)((uint)(-temp + corr) * (uint)recip >> shift);
+            }
+            else
+            {
+                temp = (int)((uint)(temp + corr) * (uint)recip >> shift);
+            }
+
+            block[k] = (short)temp;
+        }
     }
 
     // jfdctint.c jpeg_fdct_islow: outputs scaled up by 8.
-    private static void ForwardDct(int[] data)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void ForwardDct(Span<int> data)
     {
         const int ConstBits = 13, Pass1Bits = 2;
         const int F0298 = 2446, F0390 = 3196, F0541 = 4433, F0765 = 6270, F0899 = 7373, F1175 = 9633, F1501 = 12299,
             F1847 = 15137, F1961 = 16069, F2053 = 16819, F2562 = 20995, F3072 = 25172;
         static int Descale(int x, int n) => (x + (1 << (n - 1))) >> n;
 
+        data = data[..64];
         for (int row = 0; row < 8; row++)
         {
-            int o = row * 8;
-            int tmp0 = data[o] + data[o + 7], tmp7 = data[o] - data[o + 7];
-            int tmp1 = data[o + 1] + data[o + 6], tmp6 = data[o + 1] - data[o + 6];
-            int tmp2 = data[o + 2] + data[o + 5], tmp5 = data[o + 2] - data[o + 5];
-            int tmp3 = data[o + 3] + data[o + 4], tmp4 = data[o + 3] - data[o + 4];
+            var d = data.Slice(row * 8, 8);
+            int tmp0 = d[0] + d[7], tmp7 = d[0] - d[7];
+            int tmp1 = d[1] + d[6], tmp6 = d[1] - d[6];
+            int tmp2 = d[2] + d[5], tmp5 = d[2] - d[5];
+            int tmp3 = d[3] + d[4], tmp4 = d[3] - d[4];
             int tmp10 = tmp0 + tmp3, tmp13 = tmp0 - tmp3, tmp11 = tmp1 + tmp2, tmp12 = tmp1 - tmp2;
-            data[o] = (tmp10 + tmp11) << Pass1Bits;
-            data[o + 4] = (tmp10 - tmp11) << Pass1Bits;
+            d[0] = (tmp10 + tmp11) << Pass1Bits;
+            d[4] = (tmp10 - tmp11) << Pass1Bits;
             int z1 = (tmp12 + tmp13) * F0541;
-            data[o + 2] = Descale(z1 + tmp13 * F0765, ConstBits - Pass1Bits);
-            data[o + 6] = Descale(z1 + tmp12 * -F1847, ConstBits - Pass1Bits);
+            d[2] = Descale(z1 + tmp13 * F0765, ConstBits - Pass1Bits);
+            d[6] = Descale(z1 + tmp12 * -F1847, ConstBits - Pass1Bits);
             z1 = tmp4 + tmp7;
             int z2 = tmp5 + tmp6, z3 = tmp4 + tmp6, z4 = tmp5 + tmp7;
             int z5 = (z3 + z4) * F1175;
@@ -577,10 +608,10 @@ public static class JpegEncoder
             z4 *= -F0390;
             z3 += z5;
             z4 += z5;
-            data[o + 7] = Descale(tmp4 + z1 + z3, ConstBits - Pass1Bits);
-            data[o + 5] = Descale(tmp5 + z2 + z4, ConstBits - Pass1Bits);
-            data[o + 3] = Descale(tmp6 + z2 + z3, ConstBits - Pass1Bits);
-            data[o + 1] = Descale(tmp7 + z1 + z4, ConstBits - Pass1Bits);
+            d[7] = Descale(tmp4 + z1 + z3, ConstBits - Pass1Bits);
+            d[5] = Descale(tmp5 + z2 + z4, ConstBits - Pass1Bits);
+            d[3] = Descale(tmp6 + z2 + z3, ConstBits - Pass1Bits);
+            d[1] = Descale(tmp7 + z1 + z4, ConstBits - Pass1Bits);
         }
 
         for (int col = 0; col < 8; col++)
@@ -615,19 +646,410 @@ public static class JpegEncoder
         }
     }
 
+    // The nonzero AC coefficients of a block in zigzag order: bit k for coefficient k (1 to 63), without branches.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static ulong NonZero(ReadOnlySpan<short> block)
+    {
+        block = block[..64];
+        ulong mask = 0;
+        for (int k = 1; k < 64; k++)
+        {
+            int v = block[k];
+            mask |= (ulong)((uint)(v | -v) >> 31) << k;
+        }
+
+        return mask;
+    }
+
+    // The MCU rows of a chunk in scan order (each MCU: each component's H x V blocks, row by row), as the scan holds them.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void Scan(ref BitWriter writer, Job job, short[] buffer, int rows, HuffmanTable[] dc, HuffmanTable[] ac, Span<int> last)
+    {
+        var components = job.Components;
+        for (int r = 0; r < rows; r++)
+        {
+            ReadOnlySpan<short> row = buffer.AsSpan(r * job.RowStride, job.RowStride);
+            for (int mx = 0; mx < job.McusAcross; mx++)
+            {
+                for (int ci = 0; ci < components.Length; ci++)
+                {
+                    var c = components[ci];
+                    HuffmanTable dcTable = dc[c.Table], acTable = ac[c.Table];
+                    for (int by = 0; by < c.V; by++)
+                    {
+                        for (int bx = 0; bx < c.H; bx++)
+                        {
+                            EncodeBlock(ref writer, row.Slice(c.Offset + ((by * c.PaddedAcross + mx * c.H + bx) << 6), 64), ref last[ci], dcTable, acTable);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // A block's DC difference and its AC runs: each code and its value's bits written together.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void EncodeBlock(ref BitWriter writer, ReadOnlySpan<short> block, ref int last, HuffmanTable dc, HuffmanTable ac)
+    {
+        int diff = block[0] - last;
+        last = block[0];
+        int size = Category(diff);
+        writer.Put(((uint)dc.Codes[size] << size) | ((uint)(diff < 0 ? diff - 1 : diff) & ((1u << size) - 1)), dc.Lengths[size] + size);
+        ulong nonzero = NonZero(block);
+        int previous = 0;
+        while (nonzero != 0)
+        {
+            int k = BitOperations.TrailingZeroCount(nonzero);
+            nonzero &= nonzero - 1;
+            int run = k - previous - 1;
+            previous = k;
+            for (; run > 15; run -= 16)
+            {
+                writer.Put((uint)ac.Codes[0xF0], ac.Lengths[0xF0]);
+            }
+
+            int v = block[k], bits = Category(v), symbol = (run << 4) + bits;
+            writer.Put(((uint)ac.Codes[symbol] << bits) | ((uint)(v < 0 ? v - 1 : v) & ((1u << bits) - 1)), ac.Lengths[symbol] + bits);
+        }
+
+        if (previous != 63)
+        {
+            writer.Put((uint)ac.Codes[0], ac.Lengths[0]);                                   // end of block
+        }
+    }
+
+    // The symbols the scan would write (jchuff.c's htest_one_block), counted per table: [t] DC then [t] AC.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void Count(Job job, short[] buffer, int rows, Span<long> counts, Span<int> last)
+    {
+        var components = job.Components;
+        for (int r = 0; r < rows; r++)
+        {
+            ReadOnlySpan<short> row = buffer.AsSpan(r * job.RowStride, job.RowStride);
+            for (int mx = 0; mx < job.McusAcross; mx++)
+            {
+                for (int ci = 0; ci < components.Length; ci++)
+                {
+                    var c = components[ci];
+                    var dc = counts.Slice(2 * Symbols * c.Table, Symbols);
+                    var ac = counts.Slice(2 * Symbols * c.Table + Symbols, Symbols);
+                    for (int by = 0; by < c.V; by++)
+                    {
+                        for (int bx = 0; bx < c.H; bx++)
+                        {
+                            var block = row.Slice(c.Offset + ((by * c.PaddedAcross + mx * c.H + bx) << 6), 64);
+                            int diff = block[0] - last[ci];
+                            last[ci] = block[0];
+                            dc[Category(diff)]++;
+                            ulong nonzero = NonZero(block);
+                            int previous = 0;
+                            while (nonzero != 0)
+                            {
+                                int k = BitOperations.TrailingZeroCount(nonzero);
+                                nonzero &= nonzero - 1;
+                                int run = k - previous - 1;
+                                previous = k;
+                                for (; run > 15; run -= 16)
+                                {
+                                    ac[0xF0]++;
+                                }
+
+                                ac[(run << 4) + Category(block[k])]++;
+                            }
+
+                            if (previous != 63)
+                            {
+                                ac[0]++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void WriteHeaders(ref BitWriter writer, Job job, int scale, HuffmanTable[] dc, HuffmanTable[] ac)
+    {
+        int tableCount = job.Colour ? 2 : 1, count = job.Components.Length;
+        writer.Write([0xFF, 0xD8]);
+        writer.Write([0xFF, 0xE0, 0, 16, (byte)'J', (byte)'F', (byte)'I', (byte)'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]);   // JFIF 1.01, aspect 1:1
+        for (int t = 0; t < tableCount; t++)
+        {
+            writer.Write([0xFF, 0xDB, 0, 67, (byte)t]);
+            for (int k = 0; k < 64; k++)
+            {
+                writer.Write([(byte)Quantized(t, Zigzag[k], scale)]);
+            }
+        }
+
+        int sofLength = 8 + 3 * count;
+        writer.Write([0xFF, 0xC0, (byte)(sofLength >> 8), (byte)sofLength, 8, (byte)(job.Height >> 8), (byte)job.Height, (byte)(job.Width >> 8), (byte)job.Width, (byte)count]);
+        foreach (var c in job.Components)
+        {
+            writer.Write([(byte)c.Id, (byte)(c.H << 4 | c.V), (byte)c.Table]);
+        }
+
+        for (int t = 0; t < tableCount; t++)
+        {
+            WriteTable(ref writer, dc[t], (byte)t);
+            WriteTable(ref writer, ac[t], (byte)(0x10 | t));
+        }
+
+        int sosLength = 6 + 2 * count;
+        writer.Write([0xFF, 0xDA, (byte)(sosLength >> 8), (byte)sosLength, (byte)count]);
+        foreach (var c in job.Components)
+        {
+            writer.Write([(byte)c.Id, (byte)(c.Table << 4 | c.Table)]);
+        }
+
+        writer.Write([0, 63, 0]);
+    }
+
+    private static void WriteTable(ref BitWriter writer, HuffmanTable table, byte classAndId)
+    {
+        int length = 2 + 1 + 16 + table.Values.Length;
+        writer.Write([0xFF, 0xC4, (byte)(length >> 8), (byte)length, classAndId]);
+        writer.Write(table.Bits);
+        writer.Write(table.Values);
+    }
+
+    // jchuff.c jpeg_gen_optimal_table: Huffman code lengths from the symbol counts (a reserved symbol 256 keeps any code
+    // from being all ones), lengths over 16 folded as Annex K.3 does.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static HuffmanTable OptimalTable(ReadOnlySpan<long> counts)
+    {
+        const int MaxLength = 32;
+        long[] freq = ArrayPool<long>.Shared.Rent(Symbols);
+        int[] work = ArrayPool<int>.Shared.Rent(MaxLength + 1 + 2 * Symbols);
+        try
+        {
+            counts[..Symbols].CopyTo(freq);
+            var bits = work.AsSpan(0, MaxLength + 1);
+            var codeSize = work.AsSpan(MaxLength + 1, Symbols);
+            var others = work.AsSpan(MaxLength + 1 + Symbols, Symbols);
+            bits.Clear();
+            codeSize.Clear();
+            others.Fill(-1);
+            freq[256] = 1;
+            while (true)
+            {
+                int c1 = -1, c2 = -1;
+                long v = 1000000000L;
+                for (int i = 0; i <= 256; i++)
+                {
+                    if (freq[i] != 0 && freq[i] <= v)
+                    {
+                        v = freq[i];
+                        c1 = i;
+                    }
+                }
+
+                v = 1000000000L;
+                for (int i = 0; i <= 256; i++)
+                {
+                    if (freq[i] != 0 && freq[i] <= v && i != c1)
+                    {
+                        v = freq[i];
+                        c2 = i;
+                    }
+                }
+
+                if (c2 < 0)
+                {
+                    break;
+                }
+
+                freq[c1] += freq[c2];
+                freq[c2] = 0;
+                codeSize[c1]++;
+                while (others[c1] >= 0)
+                {
+                    c1 = others[c1];
+                    codeSize[c1]++;
+                }
+
+                others[c1] = c2;
+                codeSize[c2]++;
+                while (others[c2] >= 0)
+                {
+                    c2 = others[c2];
+                    codeSize[c2]++;
+                }
+            }
+
+            for (int i = 0; i <= 256; i++)
+            {
+                if (codeSize[i] != 0)
+                {
+                    bits[codeSize[i]]++;
+                }
+            }
+
+            for (int i = MaxLength; i > 16; i--)
+            {
+                while (bits[i] > 0)
+                {
+                    int j = i - 2;
+                    while (bits[j] == 0)
+                    {
+                        j--;
+                    }
+
+                    bits[i] -= 2;
+                    bits[i - 1]++;
+                    bits[j + 1] += 2;
+                    bits[j]--;
+                }
+            }
+
+            int lastLength = 16;
+            while (bits[lastLength] == 0)
+            {
+                lastLength--;
+            }
+
+            bits[lastLength]--;                                                                  // drop the reserved symbol
+            Span<byte> lengths = stackalloc byte[16];
+            for (int length = 1; length <= 16; length++)
+            {
+                lengths[length - 1] = (byte)bits[length];
+            }
+
+            Span<byte> values = stackalloc byte[256];
+            int n = 0;
+            for (int length = 1; length <= MaxLength; length++)
+            {
+                for (int symbol = 0; symbol <= 255; symbol++)
+                {
+                    if (codeSize[symbol] == length)
+                    {
+                        values[n++] = (byte)symbol;
+                    }
+                }
+            }
+
+            return new HuffmanTable(lengths, values[..n]);
+        }
+        finally
+        {
+            ArrayPool<long>.Shared.Return(freq);
+            ArrayPool<int>.Shared.Return(work);
+        }
+    }
+
+    // jccoefct.c's quantization divisor of one coefficient: the reciprocal, its rounding correction and the shift.
+    private readonly record struct Quantizer(int Reciprocal, int Correction, int Shift);
+
+    // A component of the frame: its sampling, table, the blocks with real samples (width_in_blocks, height_in_blocks),
+    // the blocks a row of MCUs holds across, and where its blocks start in an MCU row's coefficients.
+    private readonly record struct Component(int Id, int H, int V, int Table, int BlocksAcross, int BlocksDown, int PaddedAcross, int Offset);
+
+    // The image to encode: 8-bit planes read in place, or float pixels ([channel, row, column] in [0, 1]) brought to bytes.
+    private readonly struct Source(ReadOnlyMemory<byte>[]? planes, float[]? pixels, int height, int width)
+    {
+        public int Height { get; } = height;
+
+        public int Width { get; } = width;
+
+        public bool Floats => planes is null;
+
+        public ReadOnlySpan<byte> Plane(int channel) => planes![channel].Span;
+
+        // A row of a channel's floats as bytes (ImagePreprocessor.ToBytes' rounding); compiled optimized at once, as a
+        // process's first float pages otherwise ran its unoptimized loop (130 ms against 54 for a colour A4 page at 200 dpi).
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public void Convert(int channel, int row, Span<byte> destination)
+        {
+            var values = pixels.AsSpan((channel * Height + row) * Width, Width);
+            destination = destination[..values.Length];
+            for (int x = 0; x < values.Length; x++)
+            {
+                destination[x] = (byte)ImagePreprocessor.Byte(values[x]);
+            }
+        }
+    }
+
+    // One encode's frame (its components and MCUs), its quantizers, and the chunk of MCU rows being transformed.
+    private sealed class Job
+    {
+        public Job(Source source, bool colour, int hs, int vs, Quantizer[] quantizers)
+        {
+            Source = source;
+            Colour = colour;
+            Quantizers = quantizers;
+            Width = source.Width;
+            Height = source.Height;
+            MaxH = hs;
+            MaxV = vs;
+            McusAcross = DivUp(Width, 8 * hs);
+            McusDown = DivUp(Height, 8 * vs);
+            if (colour)
+            {
+                int chroma = vs * McusAcross * hs * 64;
+                Components =
+                [
+                    new Component(1, hs, vs, 0, DivUp(Width, 8), DivUp(Height, 8), McusAcross * hs, 0),
+                    new Component(2, 1, 1, 1, McusAcross, McusDown, McusAcross, chroma),
+                    new Component(3, 1, 1, 1, McusAcross, McusDown, McusAcross, chroma + McusAcross * 64),
+                ];
+                RowStride = chroma + 2 * McusAcross * 64;
+                StripeWidth = McusAcross * 8 * hs;
+                ScratchLength = 3 * 8 * vs * StripeWidth + (source.Floats ? 3 * Width : 0);
+            }
+            else
+            {
+                Components = [new Component(1, 1, 1, 0, McusAcross, McusDown, McusAcross, 0)];
+                RowStride = McusAcross * 64;
+                ScratchLength = source.Floats ? 8 * Width : 0;
+            }
+        }
+
+        public Source Source { get; }
+
+        public bool Colour { get; }
+
+        public Quantizer[] Quantizers { get; }
+
+        public int Width { get; }
+
+        public int Height { get; }
+
+        public int MaxH { get; }
+
+        public int MaxV { get; }
+
+        public int McusAcross { get; }
+
+        public int McusDown { get; }
+
+        public Component[] Components { get; }
+
+        // Coefficients of one MCU row (every component's blocks, zigzag order); a colour stripe's width; a worker's scratch.
+        public int RowStride { get; }
+
+        public int StripeWidth { get; }
+
+        public int ScratchLength { get; }
+
+        // The chunk being transformed: its buffer (RowStride a row) and its first MCU row.
+        public short[] Buffer { get; set; } = [];
+
+        public int ChunkStart { get; set; }
+    }
+
     private sealed class HuffmanTable
     {
-        public HuffmanTable(byte[] bits, byte[] values)
+        public HuffmanTable(ReadOnlySpan<byte> bits, ReadOnlySpan<byte> values)
         {
-            Bits = bits;
-            Values = values;
+            Bits = bits.ToArray();
+            Values = values.ToArray();
             int code = 0, k = 0;
             for (int length = 1; length <= 16; length++)
             {
                 for (int i = 0; i < bits[length - 1]; i++)
                 {
                     Codes[values[k]] = code++;
-                    Lengths[values[k]] = length;
+                    Lengths[values[k]] = (byte)length;
                     k++;
                 }
 
@@ -641,153 +1063,99 @@ public static class JpegEncoder
 
         public int[] Codes { get; } = new int[256];
 
-        public int[] Lengths { get; } = new int[256];
+        public byte[] Lengths { get; } = new byte[256];
     }
 
-    // jchuff.c jpeg_gen_optimal_table: Huffman code lengths from the symbol counts (a reserved symbol 256 keeps any code
-    // from being all ones), lengths over 16 folded as Annex K.3 does.
-    private static HuffmanTable OptimalTable(long[] counts)
+    // The file being written, in a pooled buffer that grows by doubling: header bytes as they are, the scan's bits
+    // gathered in a 64-bit word and written 32 at a time, a 0 stuffed after every 0xFF the scan writes.
+    private struct BitWriter(byte[] buffer)
     {
-        const int MaxLength = 32;
-        var freq = (long[])counts.Clone();
-        var bits = new int[MaxLength + 1];
-        var codeSize = new int[257];
-        var others = Enumerable.Repeat(-1, 257).ToArray();
-        freq[256] = 1;
-        while (true)
+        private ulong _bits;
+        private int _count;
+
+        public byte[] Buffer { get; private set; } = buffer;
+
+        public int Position { get; private set; }
+
+        // The low `length` bits of value (at most 32), first bit first.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Put(uint value, int length)
         {
-            int c1 = -1, c2 = -1;
-            long v = 1000000000L;
-            for (int i = 0; i <= 256; i++)
+            _bits = (_bits << length) | value;
+            _count += length;
+            if (_count >= 32)
             {
-                if (freq[i] != 0 && freq[i] <= v)
-                {
-                    v = freq[i];
-                    c1 = i;
-                }
-            }
-
-            v = 1000000000L;
-            for (int i = 0; i <= 256; i++)
-            {
-                if (freq[i] != 0 && freq[i] <= v && i != c1)
-                {
-                    v = freq[i];
-                    c2 = i;
-                }
-            }
-
-            if (c2 < 0)
-            {
-                break;
-            }
-
-            freq[c1] += freq[c2];
-            freq[c2] = 0;
-            codeSize[c1]++;
-            while (others[c1] >= 0)
-            {
-                c1 = others[c1];
-                codeSize[c1]++;
-            }
-
-            others[c1] = c2;
-            codeSize[c2]++;
-            while (others[c2] >= 0)
-            {
-                c2 = others[c2];
-                codeSize[c2]++;
+                _count -= 32;
+                Emit((uint)(_bits >> _count));
             }
         }
 
-        for (int i = 0; i <= 256; i++)
-        {
-            if (codeSize[i] != 0)
-            {
-                bits[codeSize[i]]++;
-            }
-        }
-
-        for (int i = MaxLength; i > 16; i--)
-        {
-            while (bits[i] > 0)
-            {
-                int j = i - 2;
-                while (bits[j] == 0)
-                {
-                    j--;
-                }
-
-                bits[i] -= 2;
-                bits[i - 1]++;
-                bits[j + 1] += 2;
-                bits[j]--;
-            }
-        }
-
-        int last = 16;
-        while (bits[last] == 0)
-        {
-            last--;
-        }
-
-        bits[last]--;                                                                            // drop the reserved symbol
-        var values = new List<byte>();
-        for (int length = 1; length <= MaxLength; length++)
-        {
-            for (int symbol = 0; symbol <= 255; symbol++)
-            {
-                if (codeSize[symbol] == length)
-                {
-                    values.Add((byte)symbol);
-                }
-            }
-        }
-
-        return new HuffmanTable([.. bits.Skip(1).Take(16).Select(b => (byte)b)], [.. values]);
-    }
-
-    private static void WriteTable(Stream output, HuffmanTable table, byte classAndId)
-    {
-        int length = 2 + 1 + 16 + table.Values.Length;
-        output.Write([0xFF, 0xC4, (byte)(length >> 8), (byte)length, classAndId]);
-        output.Write(table.Bits);
-        output.Write(table.Values);
-    }
-
-    private sealed class BitWriter(Stream output)
-    {
-        private int _buffer, _count;
-
-        public void Write(int value, int length)
-        {
-            for (int i = length - 1; i >= 0; i--)
-            {
-                _buffer = _buffer << 1 | (value >> i & 1);
-                if (++_count == 8)
-                {
-                    Emit((byte)_buffer);
-                    _buffer = 0;
-                    _count = 0;
-                }
-            }
-        }
-
+        // Pads the last byte with ones and writes what is left.
         public void Flush()
         {
-            while (_count != 0)
+            int pad = (8 - (_count & 7)) & 7;
+            _bits = (_bits << pad) | ((1UL << pad) - 1);
+            _count += pad;
+            while (_count > 0)
             {
-                Write(1, 1);                                                                     // pad with ones
+                _count -= 8;
+                Stuffed((byte)(_bits >> _count));
             }
         }
 
-        private void Emit(byte value)
+        public void Write(ReadOnlySpan<byte> bytes)
         {
-            output.WriteByte(value);
+            Reserve(bytes.Length);
+            bytes.CopyTo(Buffer.AsSpan(Position));
+            Position += bytes.Length;
+        }
+
+        public readonly byte[] ToFile()
+        {
+            var file = GC.AllocateUninitializedArray<byte>(Position);
+            Buffer.AsSpan(0, Position).CopyTo(file);
+            return file;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        private void Emit(uint word)
+        {
+            Reserve(8);
+            uint inverted = ~word;
+            if (((inverted - 0x01010101u) & ~inverted & 0x80808080u) == 0)
+            {
+                BinaryPrimitives.WriteUInt32BigEndian(Buffer.AsSpan(Position), word);                // no 0xFF byte
+                Position += 4;
+                return;
+            }
+
+            for (int shift = 24; shift >= 0; shift -= 8)
+            {
+                Stuffed((byte)(word >> shift));
+            }
+        }
+
+        private void Stuffed(byte value)
+        {
+            Reserve(2);
+            Buffer[Position++] = value;
             if (value == 0xFF)
             {
-                output.WriteByte(0);
+                Buffer[Position++] = 0;
             }
+        }
+
+        private void Reserve(int bytes)
+        {
+            if (Position + bytes <= Buffer.Length)
+            {
+                return;
+            }
+
+            var larger = ArrayPool<byte>.Shared.Rent(Math.Max(Position + bytes, 2 * Buffer.Length));
+            Buffer.AsSpan(0, Position).CopyTo(larger);
+            ArrayPool<byte>.Shared.Return(Buffer);
+            Buffer = larger;
         }
     }
 }
