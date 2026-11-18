@@ -1,14 +1,16 @@
 # Plan 28: documents (a document contract, PDF read and written built in, vector and image pages, Office as a plug-in later)
 
-**Not started.**
+**In progress (on the branch `documents`).** Built: D0 (the contract, 2026-11-18); D5's first piece (the sample
+generator and the D1-D4 samples). Running: D5's second piece (the D6-D13 samples), D1 (the file).
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
 before plan 38) and 10-15 (forms, annotations, signatures and editing in; fonts written in the common formats; the test
 samples in the ignored `test-output/`; ready for any workload, plan 38 waits; worked on the branch `documents`, taken
 from `migration`) and 16-19 (only the app's certificates trusted; `idrak data redact`; TrueType built in and used by
-Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a fresh one per piece). The PDF parts of [plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). **Nothing is
-built.** No phase starts before the owner names it.
+Idrak, no JSON font file, OTF / WOFF / WOFF2 in a plug-in; two agents at most, a fresh one per piece). The PDF parts of
+[plan 38](38-handwriting-fonts.md) moved here (see "Plan 38's needs"). The owner started the work 2026-11-18 ("start
+2 agents at max in parallel"); the owner tests later, so the command lists are held.
 
 | Phase | What | Lane | State |
 |---|---|---|---|
@@ -17,7 +19,7 @@ built.** No phase starts before the owner names it.
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Planned |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
-| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | Planned |
+| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (generator and D1-D4 samples built; D6-D13 samples running) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
 | D8 | Fonts written and read in the common formats: TrueType (`.ttf`), OpenType CFF (`.otf`), WOFF, WOFF2; subsetting (D6 embeds through it; plan 38 exports through it) | B | Planned |
