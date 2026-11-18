@@ -3,7 +3,7 @@
 **In progress (on the branch `documents`).** Built 2026-11-18: D0 (the contract), D1 (the file), and D5's sample
 generator with every phase's samples (D1-D13) and the checkers. Paused after D1, resumed the same day by the owner
 ("resume"): running D3 (text) and D8's built-in part (the TrueType writer, subsetting, the converted-font cache); D8's
-plug-in part (WOFF alone, decision 20) waits for open question 6 (the plug-in project's name).
+plug-in part (WOFF alone in `Idrak.Imaging.Plugins`, decisions 20 and 21) follows once the built-in part is merged.
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
@@ -99,6 +99,8 @@ registered format the same way.
     abstraction works but not all of them"): **WOFF** (read and write) in a plug-in project, registering into
     `FontWriters` and `FontFormats` from outside the library. OpenType CFF writing and WOFF2 are not built (dropped from
     this plan; a later plug-in can add them through the same registries).
+21. **The font plug-in project is `Idrak.Imaging.Plugins`** (open question 6): new, beside the other `*.Plugins`
+    projects, namespace `Idrak.Imaging.Plugins.Fonts`; it references only the public API.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
@@ -655,8 +657,8 @@ fonts|synthetic pages`.
 ## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 
 Two packages (decisions 18 and 20): **built in**, in `Idrak.Imaging` beside `OpenTypeFormat` and `CffOutlines`, the
-"truetype" writer, the one Idrak works from; **a plug-in project** (proposed `Idrak.Imaging.Plugins`, namespace
-`Idrak.Imaging.Plugins.Fonts`, open question 6) with "woff" alone, read and written, registering into the same
+"truetype" writer, the one Idrak works from; **a plug-in project**, `Idrak.Imaging.Plugins` (new, beside the other
+`*.Plugins` projects; namespace `Idrak.Imaging.Plugins.Fonts`; decision 21) with "woff" alone, read and written, registering into the same
 `FontWriters` (C18) and `FontFormats` from outside the library: the proof that a font format plugs in. No JSON font
 format; no OpenType CFF writer and no WOFF2 (decision 20).
 - **"truetype" (`.ttf`, built in):** the tables a face needs, from any `IFontFace`: `head`, `hhea`, `maxp`, `hmtx`, `cmap` (formats
@@ -879,10 +881,8 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:I
 
 Answered the same day: 1 (forms, annotations, signatures and editing are in: decision 10), 2 (the reference tools from
 PyPI, their samples under `test-output/`: decision 13), 3 (`Auto`: decision 11), 4 (only the app's certificates:
-decision 16), 5 (redaction is a command too: decision 17). Open:
-
-6. The font plug-in project's name (D8): `Idrak.Imaging.Plugins` (proposed, new, beside the other `*.Plugins`
-   projects), or inside an existing plug-in project?
+decision 16), 5 (redaction is a command too: decision 17), 6 (the font plug-in project is `Idrak.Imaging.Plugins`, new:
+decision 21). None open.
 
 ## Runs
 

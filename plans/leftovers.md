@@ -402,7 +402,7 @@ No leftovers.
 | 28.20 | Phase D13, not started: any workload (`idrak bench documents`, large and many files, bounded memory, the owner's real files written back and drawn). | feature | Phase D13 |
 | 28.21 | ~~Signing's trust by default~~ Answered 2026-11-18: only the app's certificates (decision 16). | question (answered) | Open questions (4) |
 | 28.22 | ~~Redaction as a command~~ Answered 2026-11-18: `idrak data redact` in D10 (decision 17). | question (answered) | Open questions (5) |
-| 28.23 | The font plug-in project's name: `Idrak.Imaging.Plugins` (proposed) or an existing plug-in project? (open question 6) | question | Open questions (6) |
+| 28.23 | ~~The font plug-in project's name~~ Answered 2026-11-18: `Idrak.Imaging.Plugins`, new (decision 21). | question (answered) | Open questions (6) |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 
