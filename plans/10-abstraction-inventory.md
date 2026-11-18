@@ -84,12 +84,12 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.Augmentations` | registry | public | — |  | affine, color-jitter, cutout, flip, mixup, mosaic, noise, resize, +3 | Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.DocumentFormats` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | — | Data | Abstraction |
-| `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | — | Abstraction |
+| `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | — | — | Abstraction |
-| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.FontWriters` | registry | public | — |  | truetype | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontMappers` | registry | public | — |  | opentype | Abstraction, Data, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontMaps` | registry | public | — |  | arabic-glyph-names, arabic-pua-f200 | Abstraction, Data, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.FontWriters` | registry | public | — |  | truetype | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.GlyphPoses` | registry | public | — |  | drift, none | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.GlyphSources` | registry | public | — |  | — | — | Abstraction |
 | `Idrak.Abstraction.Data.IAugmentation` | interface | public | — | Augmentations.Guarded, ColorJitter, Cutout, MixUp, Mosaic, PixelNoise, +5 |  | Abstraction, Imaging, Vision | Abstraction |
@@ -100,13 +100,13 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat, PdfFormat |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | DocumentPageDrawers.GuardedDrawer |  | Data | Abstraction |
-| `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout |  | — | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentWriter` | interface | public | — | DocumentWriters.GuardedWriter |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | MadeFontFace, MappedFontFace, OpenTypeFace |  | Abstraction, Data, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter, TrueTypeWriter |  | Abstraction, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IFontFormat` | interface | public | — | FontFormats.GuardedFormat, OpenTypeFormat |  | Abstraction, Data, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IFontMapper` | interface | public | — | FontMappers.GuardedMapper, OpenTypeFontMapper |  | Abstraction, Data, Imaging, Text | Abstraction |
+| `Idrak.Abstraction.Data.IFontWriter` | interface | public | — | FontWriters.GuardedWriter, TrueTypeWriter |  | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphPose` | interface | public | — | DriftPose, GlyphPoses.GuardedPose, NonePose |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IGlyphSource` | interface | public | — | GlyphSources.GuardedSource |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IImageCodec` | interface | public | — | BmpCodec, ImageCodecs.GuardedCodec, JpegCodec, NetpbmCodec, PngCodec |  | Abstraction, Data, Imaging, Vision, Vision.Plugins | Abstraction |
@@ -116,7 +116,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IOutlineTracer` | interface | public | — | OutlineTracers.GuardedTracer |  | — | Abstraction |
 | `Idrak.Abstraction.Data.IPageLayout` | interface | public | — | LetterLayout, PageLayouts.GuardedLayout, PlainLayout, ShapesLayout |  | Abstraction, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IPen` | interface | public | — | BallpointPen, IdealPen, Pens.GuardedPen |  | Abstraction, Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.IReadingOrder` | interface | public | — | BidiReadingOrder, ReadingOrders.GuardedOrder, RunsReadingOrder |  | Abstraction, Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.IReadingOrder` | interface | public | — | BidiReadingOrder, ReadingOrders.GuardedOrder, RunsReadingOrder |  | Abstraction, Data, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleReader` | interface | public | — | CsvSource.Reader, TableSamples.Reader |  | Abstraction, Data, Idrak | Abstraction |
 | `Idrak.Abstraction.Data.ISampleSource` | interface | public | — | CsvSource, Dataset, ImageFolderSource, NpySource, SampleSourceExtensions.ConcatSource, SampleSourceExtensions.SubsetSource, +1 |  | Abstraction, Data, Idrak, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.ISampleSourceKind` | interface | public | — | LibraryRegistrations.ImagesSource, LibrarySampleSources.SourceKind, SampleSources.GuardedKind, TableSamples.TableKind |  | Abstraction, Data, Idrak, Imaging | Abstraction |
@@ -134,7 +134,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.OutlineTracers` | registry | public | — |  | — | — | Abstraction |
 | `Idrak.Abstraction.Data.PageLayouts` | registry | public | — |  | letter, plain, shapes | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.Pens` | registry | public | — |  | ballpoint, ideal | Imaging, Text | Abstraction |
-| `Idrak.Abstraction.Data.ReadingOrders` | registry | public | — |  | bidi, runs | Imaging, Vision | Abstraction |
+| `Idrak.Abstraction.Data.ReadingOrders` | registry | public | — |  | bidi, runs | Data, Imaging, Vision | Abstraction |
 | `Idrak.Abstraction.Data.SampleSources` | registry | public | — |  | csv, images, npy, tokens | Idrak, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.ScanProfiles` | registry | public | — |  | aged, clean, copied, damaged, fax, handled, marked, mixed, +7 | Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.ShapeProfiles` | registry | public | — |  | boxed, circled, framed, grid, none, ruled, text-grid-text | Imaging, Text | Abstraction |
