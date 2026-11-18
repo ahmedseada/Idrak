@@ -1,8 +1,9 @@
 # Plan 28: documents (a document contract, PDF read and written built in, vector and image pages, Office as a plug-in later)
 
 **In progress (on the branch `documents`).** Built 2026-11-18: D0 (the contract), D1 (the file), and D5's sample
-generator with every phase's samples (D1-D13) and the checkers. Nothing running: the owner paused the work after D1
-("wait for me"); no phase starts before the owner names it. Next in the order: D3 and D2, D8.
+generator with every phase's samples (D1-D13) and the checkers. Paused after D1, resumed the same day by the owner
+("resume"): running D3 (text) and D8's built-in part (the TrueType writer, subsetting, the converted-font cache); D8's
+plug-in part (OTF, WOFF, WOFF2) waits for open question 6 (the plug-in project's name).
 
 **Status (2026-11-18, `abstraction`):** planned 2026-10-22 against the code at 99872b8; widened 2026-11-18 against the
 code at da19bfc by the owner's decisions 7-9 (PDF read **and written**, vector **and** image pages, finished for good
