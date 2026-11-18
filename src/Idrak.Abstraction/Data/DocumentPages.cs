@@ -438,7 +438,7 @@ public sealed class DocumentImage
     /// Decodes it when the format does so itself (raw pixels, a colour space to convert); null to decode the stored bytes
     /// with the image codec named as the encoding.
     /// </param>
-    /// <param name="mask">Reads its mask (a stencil or a soft mask) as grey, or null when it has none; null when the format reads none.</param>
+    /// <param name="mask">Reads its mask as grey (see <see cref="Mask"/>), or null when it has none; null when the format reads none.</param>
     public DocumentImage(string encoding, int pixelWidth, int pixelHeight, Func<ReadOnlyMemory<byte>> bytes, Func<ImageData>? decode = null, Func<ImageData?>? mask = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(encoding);
@@ -504,7 +504,11 @@ public sealed class DocumentImage
         return codec.Decode(_bytes().Span);
     }
 
-    /// <summary>The image's mask (a stencil or a soft mask) as grey, or null when it has none.</summary>
+    /// <summary>
+    /// The image's mask (a stencil, a soft mask or a colour key) as grey at its own size (spread over the image's place
+    /// when the sizes differ): how much of the image shows at each pixel, 255 fully and 0 not at all (a soft mask's levels;
+    /// a stencil 255 where it paints); null when it has none.
+    /// </summary>
     public ImageData? Mask() => _mask?.Invoke();
 }
 

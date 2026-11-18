@@ -48,7 +48,8 @@ internal sealed class PdfIssues
 /// The content-stream interpreter (ISO 32000-2, 8 and 9): the graphics state stack (<c>q Q cm</c>), text objects and
 /// their state (<c>BT ET Tf Tm Td TD T* TL Tc Tw Tz Ts Tr</c>), showing (<c>Tj TJ ' "</c>), form XObjects drawn by
 /// <c>Do</c> within <see cref="DocumentOptions.MaxDepth"/>, inline images (<c>BI ID EI</c>) passed over by their size or
-/// their end, and marked content whose <c>/ActualText</c> stands for its glyphs; other operators are passed over. Every
+/// their end, images (XObjects and inline) placed by the CTM when <see cref="ReadImages"/> asks for them, and marked
+/// content whose <c>/ActualText</c> stands for its glyphs; other operators are passed over. Every
 /// glyph is placed through the text matrix, the CTM and the page's crop box, rotation and unit, so each run's box is on
 /// the page as shown. Runs, images and painted paths share one count, their place in the content. One reader reads one
 /// page, on one thread; the fonts it reads are kept by the document for its other pages.
@@ -93,6 +94,7 @@ internal sealed class PdfContentReader : IDisposable
     private bool _gapPending;
     private int _runStart = -1;
     private RunStyle _runStyle;
+    private PdfPageImages? _images;
 
     public PdfContentReader(PdfFile file, int page, PdfIssues issues, bool includeHidden)
     {
@@ -101,6 +103,12 @@ internal sealed class PdfContentReader : IDisposable
 
     /// <summary>The runs read, in content order (the page's <see cref="DocumentPage.Runs"/>, before they are made).</summary>
     public IReadOnlyList<ReadRun> Runs => _runs;
+
+    /// <summary>The images read, in content order, when <see cref="ReadImages"/> was called before <see cref="Read"/> (else none).</summary>
+    public IReadOnlyList<DocumentImage> Images => _images?.Images ?? [];
+
+    /// <summary>Reads the page's images too (image XObjects at any depth of forms, and inline images), placed by the CTM.</summary>
+    public void ReadImages() => _images ??= new PdfPageImages(_file, _page, _issues);
 
     /// <summary>
     /// Interprets the page's <paramref name="contents"/> (one stream or an array of them, read as one) with
@@ -233,7 +241,7 @@ internal sealed class PdfContentReader : IDisposable
 
                 if (word.SequenceEqual("BI"u8))
                 {
-                    InlineImage(ref lexer, data);
+                    InlineImage(ref lexer, data, resources);
                 }
                 else
                 {
@@ -856,7 +864,8 @@ internal sealed class PdfContentReader : IDisposable
 
         if (subtype.Is("Image"u8))
         {
-            _order++;   // an image takes its place in the content (read from phase D4)
+            int order = _order++;   // an image takes its place in the content
+            _images?.Add(stream!, name, resources, _state.Ctm, order);
             return;
         }
 
@@ -932,11 +941,13 @@ internal sealed class PdfContentReader : IDisposable
     }
 
     // BI, its entries, ID, the data, EI: the data passed over by its size when it is unfiltered and the size is known,
-    // else up to an "EI" between whitespace and followed by content-like bytes. The image takes its place in the content.
-    private void InlineImage(ref PdfContentLexer lexer, ReadOnlySpan<byte> data)
+    // else up to an "EI" between whitespace and followed by content-like bytes. The image takes its place in the content
+    // (and, when images are read, its entries and data go to them).
+    private void InlineImage(ref PdfContentLexer lexer, ReadOnlySpan<byte> data, PdfDictionary? resources)
     {
         long width = -1, height = -1, bits = -1, components = -1;
         bool filtered = false, mask = false;
+        int entries = lexer.Position, entriesEnd;
         while (true)
         {
             var token = lexer.Next(out int start, out int length, out _);
@@ -947,6 +958,7 @@ internal sealed class PdfContentReader : IDisposable
 
             if (token == PdfToken.Keyword && data.Slice(start, length).SequenceEqual("ID"u8))
             {
+                entriesEnd = start;
                 break;
             }
 
@@ -1009,7 +1021,7 @@ internal sealed class PdfContentReader : IDisposable
             }
         }
 
-        _order++;
+        int order = _order++;
         int dataStart = lexer.Position;
         if (dataStart < data.Length && PdfParser.IsWhitespace(data[dataStart]))
         {
@@ -1027,6 +1039,7 @@ internal sealed class PdfContentReader : IDisposable
             if (size >= 0 && dataStart + size <= data.Length && EndAt(data, (int)(dataStart + size)) is int after and >= 0)
             {
                 lexer.Position = after;
+                _images?.AddInline(data[entries..entriesEnd], data.Slice(dataStart, (int)size), resources, _state.Ctm, order);
                 return;
             }
         }
@@ -1038,6 +1051,7 @@ internal sealed class PdfContentReader : IDisposable
             if (found < 0)
             {
                 lexer.Position = data.Length;   // no end: the rest is the image's
+                _images?.AddInline(data[entries..entriesEnd], data[Math.Min(dataStart, data.Length)..], resources, _state.Ctm, order);
                 return;
             }
 
@@ -1046,6 +1060,7 @@ internal sealed class PdfContentReader : IDisposable
                 && LooksLikeContent(data[(p + 2)..]))
             {
                 lexer.Position = p + 2;
+                _images?.AddInline(data[entries..entriesEnd], data[dataStart..(p - 1)], resources, _state.Ctm, order);   // the whitespace before EI is not the image's
                 return;
             }
 

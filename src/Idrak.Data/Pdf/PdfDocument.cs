@@ -6,10 +6,10 @@ using System.Globalization;
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// An open PDF document: its information and its pages (each page's size and rotation, and its text: runs with their
-/// boxes, the lines and text the layout makes of them; images and paths come with the later phases). Opening reads the
-/// cross-reference and the page tree only; a page's objects are read when it is, and the fonts its pages share are kept
-/// for the others. Safe to read from several threads.
+/// An open PDF document: its information, its pages (each page's size and rotation, its text: runs with their boxes, the
+/// lines and text the layout makes of them; its images, placed, their pixels decoded when asked; paths come with a later
+/// phase) and the files it carries. Opening reads the cross-reference and the page tree only; a page's objects are read
+/// when it is, and the fonts its pages share are kept for the others. Safe to read from several threads.
 /// </summary>
 internal sealed class PdfDocument : IDocument
 {
@@ -18,6 +18,7 @@ internal sealed class PdfDocument : IDocument
     private readonly string _version;
     private readonly DocumentOptions _options;
     private DocumentInfo? _info;
+    private IReadOnlyList<DocumentAttachment>? _attachments;
     private volatile bool _disposed;
 
     private PdfDocument(PdfFile file, PageNode[] pages, string version, DocumentOptions options) => (_file, _pages, _version, _options) = (file, pages, version, options);
@@ -39,8 +40,38 @@ internal sealed class PdfDocument : IDocument
         }
     }
 
-    /// <summary>The files the document carries: read from phase D4 of the documents plan (none listed before it).</summary>
-    public IReadOnlyList<DocumentAttachment> Attachments => [];
+    /// <summary>
+    /// The files the document carries: its <c>EmbeddedFiles</c> name tree's, then its pages' file-attachment annotations'
+    /// (a file listed once), found on the first call; each file's bytes are read when it is opened.
+    /// </summary>
+    public IReadOnlyList<DocumentAttachment> Attachments
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Volatile.Read(ref _attachments) is { } known)
+            {
+                return known;
+            }
+
+            string name = _file.Name;
+            IReadOnlyList<DocumentAttachment> found;
+            try
+            {
+                found = PdfAttachments.Read(_file, [.. _pages.Select(p => p.Node)]);
+            }
+            catch (InvalidDataException e) when (!e.Message.StartsWith(name, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"{name}: its embedded files: {e.Message}", e);
+            }
+            catch (Exception e) when (Unexpected(e))
+            {
+                throw new InvalidDataException($"{name}: its embedded files: damaged ({e.GetType().Name}: {e.Message}).", e);
+            }
+
+            return Interlocked.CompareExchange(ref _attachments, found, null) ?? found;
+        }
+    }
 
     public IReadOnlyList<DocumentField> Fields => throw NotYet("form fields", "D9");
 
@@ -143,6 +174,7 @@ internal sealed class PdfDocument : IDocument
         var issues = new PdfIssues();
         IReadOnlyList<DocumentTextRun> runs = [];
         IReadOnlyList<DocumentLine> lines = [];
+        IReadOnlyList<DocumentImage> images = [];
         string text = "";
         if ((parts & (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | DocumentParts.Glyphs)) != 0)
         {
@@ -157,7 +189,13 @@ internal sealed class PdfDocument : IDocument
             }
 
             using var reader = new PdfContentReader(_file, index + 1, issues, _options.IncludeHidden);
+            if ((parts & DocumentParts.Images) != 0)
+            {
+                reader.ReadImages();
+            }
+
             reader.Read(page["Contents"u8], resources, Display(crop, rotation, unit));
+            images = reader.Images;
             if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
             {
                 var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
@@ -175,7 +213,7 @@ internal sealed class PdfDocument : IDocument
             }
         }
 
-        return new DocumentPage(index, (float)width, (float)height) { Rotation = rotation, Runs = runs, Lines = lines, Text = text, Issues = issues.ToList() };
+        return new DocumentPage(index, (float)width, (float)height) { Rotation = rotation, Runs = runs, Lines = lines, Text = text, Images = images, Issues = issues.ToList() };
     }
 
     // The map from the page's user space onto the page as shown: the crop box's lower left to the origin, y turned down,

@@ -20,7 +20,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Built (2026-11-18) |
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Built (2026-11-18) |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Built (2026-11-18) |
-| D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
+| D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Built (2026-11-18) |
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
@@ -722,6 +722,99 @@ bytes), with their boxes; a scan-like page (one image, a hidden text layer) give
 bytes.
 
 **Tests (CPU here):** one build; `documents pdf: images|documents pdf: text|documents contracts`.
+
+**As built (2026-11-18):**
+- **Images** (`src/Idrak.Data/Pdf/PdfImages.cs`, internal): D3's interpreter hands each `Do` of an image XObject (at any
+  depth of forms) and each inline image (its entries between `BI` and `ID`, keys spelled out, and its data, copied) to
+  the page's images when `DocumentParts.Images` is asked, with the place D3 already counted (runs, images and paths share
+  one order). Each `DocumentImage` gets its `Matrix` (the unit square from its top-left corner through the CTM and the
+  page's display map: turned, slanted, flipped, mirrored, on a turned page, inside forms), its `Box` (the bounds),
+  `PixelWidth`, `PixelHeight` and `Encoding` (`raw`, or the first image filter of its chain: `jpeg`, `jpeg2000`,
+  `ccitt`, `jbig2`); an XObject drawn again is read once a page. Nothing is decoded until asked: `Bytes()` is the data
+  through every filter before the image encoding (a raw image's samples, a JPEG's file; decrypted), `Decode()` the
+  pixels, `Mask()` the mask, each bounded by `MaxStreamBytes` (the pixels' bytes checked before anything is decoded).
+- **Raw pixels:** samples of 1, 2, 4, 8 and 16 bits (rows padded to bytes) through tables made once from `/Decode` (16-bit
+  samples mapped one at a time); `DeviceGray`, `CalGray`, ICC-based with one component to a grey plane, `DeviceRGB`,
+  `CalRGB`, ICC-based with three to RGB planes (profiles and calibrations not applied), 16-bit grey and RGB to values
+  (v / 65535); `DeviceCMYK` and ICC-based with four through the library's JPEG rule ((255 - K) - X (255 - K) / 255, its
+  MULDIV255); `Indexed` (over grey, RGB, CMYK or Lab; a string or stream table; the index rounded half to even and
+  clamped) through its colours; `Lab` through XYZ (its white point scaled to D65) to sRGB; image masks as grey (0 where
+  they paint). Rounding as the samples' reference: half to even, the same arithmetic in the same order. Rows walked in
+  order, chunks of rows spread over the cores (`HostParallel`, so `ComputeResources` bounds it) for images of 128 Ki
+  pixels or more; 8-bit grey with a plain `/Decode` is copied. Data cut short reads as zeros past its end.
+- **Encoded images:** `DCTDecode` through `ImageCodecs` "jpeg" (the codec's own decode: the colour space and `/Decode`
+  not applied again, as the samples' README says for Adobe CMYK), the JPEG's header read first for its size and the
+  limit; `JPXDecode`, `CCITTFaxDecode` and `JBIG2Decode` through a codec registered under `jpeg2000`, `ccitt` or `jbig2`,
+  else a `NotRegisteredException` (a `NotSupportedException`) naming the encoding and `ImageCodecs.Register`.
+- **Masks** (`Mask()`, the contract's doc now says it): coverage, 255 where the image shows and 0 where it does not, at
+  the mask's own size: a soft mask's levels (decoded as an image, its own `/Decode` and encoding), an explicit `/Mask`
+  and an image mask 255 where they paint (their `Decode()` grey turned over), a colour key 0 where every component's
+  sample lies in its range.
+- **Embedded files** (`src/Idrak.Data/Pdf/PdfAttachments.cs`): the catalog's `/Names /EmbeddedFiles` tree (kids and
+  leaves in order, a node met again passed over, `MaxDepth` its limit), then the pages' file-attachment annotations, a
+  file listed once; `Name` from `/UF`, `/F` (or the platform entries), else the tree's key, `MediaType` the stream's
+  `/Subtype`, `Size` its `/Params /Size` (else -1), `Description` `/Desc` (else the annotation's `/Contents`); `Read()`
+  decodes and decrypts within `MaxStreamBytes` into a read-only seekable stream that owns the pooled buffer (no second
+  copy, returned on dispose). Listed once a document, on the first call; a damaged entry passed over.
+- **Issues:** `image-encoding` once a page for each encoding no registered codec reads (counting its images);
+  `not-supported` for images in `Separation`, `DeviceN` or `Pattern` (and `Indexed` over them), which `Decode()` refuses
+  naming the space (their tint transforms come with D7's functions); `damaged-stream` for an image left out (no readable
+  size: its place in the order kept) or one that cannot be decoded (an unknown colour space, bits other than 1-16).
+- **Hooks in the files of D1-D3 (small, local):** `PdfContent.cs` (the `_images` field, `ReadImages()` and `Images`, the
+  image `Do` and the inline image's three ends passing what they found, `InlineImage` given the resources),
+  `PdfDocument.cs` (images into the page, `Attachments`), `PdfFile.cs` (`Filters` internal, for inline images'
+  filters). `DocumentPages.cs` (Idrak.Abstraction): the docs of `DocumentImage.Mask` and its constructor's `mask` only.
+  No public API changed; the API dumps and the inventory pass as they are.
+- **Decisions the plan did not settle, taken here:** (1) `Mask()` is coverage for every kind of mask (above), so a
+  drawer needs no kind to use it; an image mask's own `Mask()` is its coverage. (2) An encoded image whose own size is
+  not its dictionary's is refused as damaged naming both, so `Decode()` always gives `PixelWidth` x `PixelHeight` (the
+  format suite's contract). (3) 16-bit grey and RGB keep their 16 bits as values, the other 16-bit spaces go through
+  8-bit levels. (4) An attachment's `Name` is the last part of the path the file gives (control characters replaced),
+  so it never leads out of a folder an app writes it to. (5) CCITT's and JBIG2's parameters (`/DecodeParms`,
+  `/JBIG2Globals`) are not handed to a codec: `IImageCodec.Decode` takes the bytes alone (a contract question for when an
+  app brings such a codec). (6) Reading images alone still runs the text interpreter, so the orders are the same as
+  with text.
+- **Tests:** group `documents pdf: images` (5): the timing below; every image of every sample whose JSON lists images (D4's
+  nine, D1's predictors, D6's scans, D7's and D10's: 75 images, 9 with masks, 6 inline, 12 JPEGs) in order with its
+  encoding, size, box and matrix (within 0.01 point), its bytes' SHA-256 (samples or JPEG file), its pixels (the
+  interleaved samples' SHA-256, 16 bits big-endian where the depth is 16; Lab within its tolerance 2 against the PNG; a
+  JPEG also against the jpeg codec's decode of its bytes) and its mask (soft masks exactly, explicit masks and stencils
+  turned over, the colour key against the samples), no image issue; the scan-like pages (`scan-ocr`, D6's
+  `searchable-scan`) read with text and images together, their JPEG over the page and their hidden text as D3 checks
+  it; every image page read in parallel the same as in order (boxes, matrices, pixel and mask hashes, issues); the
+  embedded files of `attachments` and the D10 annotation samples (names, media types, sizes, descriptions, bytes against
+  the files beside them, read again, seeking), none in the other samples, refused after the document is closed;
+  hand-made files: an RC4 (revision 2) encrypted file's XObject and inline image, an image in a form with its matrix,
+  JPEG 2000, CCITT (inline, abbreviated) and JBIG2 (after ASCIIHex) as stored with their issues and refusals, then a
+  stand-in `jpeg2000` codec registered and unregistered, the pixel limit named on `Decode()` and `Mask()`, damaged and
+  later-phase colour spaces, data cut short, a JPEG whose size is not its dictionary's. Run with `documents pdf:
+  images|documents pdf: text|documents pdf: file|documents pdf: encryption|documents contracts|public API|abstraction
+  inventory|hidden boxing|test runner`: 38 passed, 0 failed at the first run; after the 16-bit change (one rebuild) 38
+  passed, 0 failed. D1's format suite now decodes every sample's images and reads its attachments too.
+- **Timings** (this container, 4 cores, load about 5 from other agents' builds; the owner's devices give the real ones):
+  the 59 images of the D4-phase samples (2.92 megapixels, most of them the three scan pages): cold 45-55 ms, warm median
+  8.4 ms a pass (2.9 ms a megapixel), 1.05 MiB allocated a megapixel (about the decoded pixels themselves); the scan-like
+  page's image (826 x 1169 grey JPEG): cold 47-63 ms (the first JPEG decode, mostly compiling), warm median 1.8 ms
+  (1.9 ms a megapixel), 0.97 MiB a megapixel (its one byte a pixel), and its page read with text and image listed
+  0.37 ms warm. Small raw images 5-33 µs and 1.5-3.7 KiB each (half of it D1's Flate filter), Lab 96 µs for 384 pixels
+  (a power a pixel); D6's raw page images 8.2 ms a megapixel, its scanner JPEG pages 2.7. One change measured before and
+  after: 16-bit samples mapped one at a time instead of through 65,536-entry tables (16-bit grey 357 µs and 258 KiB to
+  9 µs and 1.8 KiB a decode, RGB 934 µs and 771 KiB to 14 µs and 2.7 KiB; the D4 pass 10.9 to 8.4 ms and 1.74 to
+  1.05 MiB a megapixel), the pixels the same (the expected hashes).
+- **Left:** CCITT's and JBIG2's parameters for a codec (decision 5); images-only reading without the text interpreter
+  (decision 6); Lab pixels a power at a time (a table or cache if real files need it); images in Type 3 glyphs,
+  patterns and annotation appearances (D7, D10); an image's clip and fill colour for a stencil (D7).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: images|documents pdf: text|documents pdf: file|documents pdf: encryption|documents contracts|public API|abstraction inventory|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d4.txt
+  $env:IDRAK_FILTER = "documents pdf: images: decoding every D4 sample image"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d4-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase D5: fixtures, docs, the owner's runs
 

@@ -254,8 +254,8 @@ internal sealed class PdfFile : IDisposable
         }
     }
 
-    // A stream's filters and their parameters, every reference resolved.
-    private PdfFilter[] Filters(PdfDictionary dictionary)
+    /// <summary>A stream's (or an inline image's) filters and their parameters, every reference resolved.</summary>
+    internal PdfFilter[] Filters(PdfDictionary dictionary)
     {
         var filter = Resolve(dictionary["Filter"u8]);
         var parameters = Resolve(dictionary.TryGet("DecodeParms"u8, out var parms) ? parms : dictionary["DP"u8]);
