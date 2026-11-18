@@ -37,3 +37,5 @@ Idrak.Abstraction.Data.DocumentFormats | the document formats by name, chosen by
 Idrak.Abstraction.Data.IDocument | an open document as every format gives it and every package reads it (retrieval over attachments, OCR of scanned pages, the apps), whatever registered the format
 Idrak.Abstraction.Data.IDocumentPageDrawer | how any format's page becomes pixels: the library's drawer is Idrak.Imaging's (plan 28, D7), and every format's IDocument.DrawPage draws through it
 Idrak.Abstraction.Data.DocumentPageDrawers | the page drawers by name, overridable once for every format whose pages are drawn (Idrak.Imaging registers its drawer in plan 28's D7)
+Idrak.Abstraction.Data.IDocumentTextLayout | how any format's runs become lines and text (plan 28, C10): the library's lines and content layouts live beside it, every format arranges through it (PDF in Idrak.Data, the Office plug-in to come), and an app may register its own
+Idrak.Abstraction.Data.DocumentTextLayouts | the text layouts by name, overridable once for every format that arranges a page's runs into lines (DocumentOptions.Layout names one)

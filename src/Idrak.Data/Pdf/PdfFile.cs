@@ -353,6 +353,15 @@ internal sealed class PdfFile : IDisposable
         return stream.Read(this, number, entry.Generation, 0, out bytes);
     }
 
+    /// <summary>The cache key of the font read from object <paramref name="number"/> (apart from objects' and object streams' keys).</summary>
+    public static long FontKey(int number) => long.MinValue + number;
+
+    /// <summary>A part read from the file and kept under <paramref name="key"/> (a font), or null.</summary>
+    public object? Part(long key) => _cache.TryGet(key, out _, out object? kept) ? kept : null;
+
+    /// <summary>Keeps a part read from the file (a font) for the document's other pages, while the cache has room.</summary>
+    public void KeepPart(long key, object part, long bytes) => _cache.Add(key, PdfValue.Null, part, bytes);
+
     /// <summary>The object stream <paramref name="number"/>, decoded once and kept while the cache has room.</summary>
     public PdfObjectStream ObjectStream(int number)
     {

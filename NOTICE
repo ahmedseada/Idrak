@@ -6,3 +6,8 @@ Versions 0.1.0 through 0.1.6 were released under the MIT License, which continue
 
 src/Idrak.Cli/Shared/UnicodeTables.cs is generated from the Unicode Character Database, Copyright (c) 1991-2026
 Unicode, Inc., used under the Unicode License v3 (https://www.unicode.org/license.txt).
+
+src/Idrak.Data/Pdf/PdfFontTables.Data.cs is generated (tools/documents/make_pdf_tables.py) from the Adobe Glyph List and
+the ITC Zapf Dingbats glyph list, Copyright 2002-2019 Adobe, used under the BSD 3-clause licence quoted in that file, and
+holds the standard 14 fonts' widths and metrics taken from Adobe's Core 14 AFM files, under the notice those files carry
+(quoted in that file).

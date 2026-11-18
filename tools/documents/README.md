@@ -48,6 +48,12 @@ Two checkers for files Idrak will write, sharing the generator's reference runs:
   advance, character and the shaping are compared with the source (a subset through `--mapping`: a JSON list of
   source glyph ids, or a D8 sample's JSON; its shaping on the lines it covers). Exit code 1 when a font fails.
 
+The PDF reader's font tables (D3) are made here too: `make_pdf_tables.py [OUT_FILE]` writes
+`src/Idrak.Data/Pdf/PdfFontTables.Data.cs` (committed: the library reads it, nothing is generated at build) from the pinned
+fontTools (the Adobe Glyph List and the ITC Zapf Dingbats list) and pdfminer.six (the base encodings and the standard 14
+fonts' AFM metrics), with the Symbol and ZapfDingbats built-in encodings of ISO 32000-2 Annex D checked code by code
+against pdfium; the licence notices go into the file. Reruns give the same bytes.
+
 ## Reproducible
 
 Every byte comes from the seed and the pinned versions (`requirements.txt`): no dates, no random identifiers (the file

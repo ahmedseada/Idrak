@@ -117,7 +117,7 @@ internal abstract partial class Tests
                 var read = document.ReadPage(index, DocumentParts.None);
                 Check(read.Index == index && MathF.Abs(read.Width - (float)page["width"]!) < 1e-3f && MathF.Abs(read.Height - (float)page["height"]!) < 1e-3f && read.Rotation == (int)page["rotation"]!,
                     $"{what}: page {index} is {read.Width} x {read.Height} turned {read.Rotation}, expected {page["width"]} x {page["height"]} turned {page["rotation"]}");
-                Check(read.Runs.Count == 0 && read.Images.Count == 0 && read.Issues.Count == 0, $"{what}: page {index}: nothing read yet but its size (D3 and D4 read its text and images)");
+                Check(read.Runs.Count == 0 && read.Images.Count == 0 && read.Issues.Count == 0, $"{what}: page {index}: nothing read but its size when no part is asked");
             }
 
             opened++;
@@ -474,6 +474,11 @@ internal abstract partial class Tests
         var samples = new List<DocumentSample>();
         foreach (var sample in all)
         {
+            if (sample.Readable && PdfTextOffPage(sample.Expected))
+            {
+                continue;   // text the file sets past its crop box or its page (by design): the sample's own group checks it, the suite wants every run on the page
+            }
+
             if (sample.Readable)
             {
                 samples.Add(new DocumentSample(sample.Path, Pages: (int)sample.Expected["open"]!["pageCount"]!));
@@ -493,6 +498,12 @@ internal abstract partial class Tests
 
         Conformance.CheckDocumentFormat(DocumentFormats.Get(PdfFormat.FormatName), samples, options: new ContractCheckOptions { RandomCases = 60 }).ThrowIfFailed();
     }
+
+    // Whether a sample's JSON places a run (partly) outside its page as shown.
+    private static bool PdfTextOffPage(JsonObject expected) =>
+        (expected["pages"] as JsonArray ?? []).Any(page => (page!["runs"] as JsonArray ?? []).Any(run =>
+            run!["box"] is JsonArray { Count: 4 } box && ((double)box[0]! < -0.5 || (double)box[1]! < -0.5
+                || (double)box[0]! + (double)box[2]! > (double)page["width"]! + 0.5 || (double)box[1]! + (double)box[3]! > (double)page["height"]! + 0.5)));
 
     private static void PdfHandMade(Device device)
     {
@@ -539,7 +550,7 @@ internal abstract partial class Tests
         byte[] content = Encoding.ASCII.GetBytes("BT /F1 12 Tf 72 720 Td (A letter of thanks) Tj ET");
         byte[] plain = PdfHandMadeFile([
             "<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 7 /MediaBox [0 0 612 792] /Rotate 90 >>",
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 7 /MediaBox [0 0 612 792] /Rotate 90 /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>",
             "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /CropBox [10 10 210 310] /Rotate -90 /UserUnit 2 >>",
             PdfHandMadeStream("/Filter /FlateDecode", PdfDeflate(content, header: false)),
@@ -557,7 +568,8 @@ internal abstract partial class Tests
                 for (int i = 0; i < 2; i++)
                 {
                     var page = document.ReadPage(i, DocumentParts.All);
-                    Check((page.Width, page.Height, page.Rotation) == expected[i] && page.Issues.Count == 0, $"{how}: page {i} is {page.Width} x {page.Height} turned {page.Rotation}");
+                    Check((page.Width, page.Height, page.Rotation) == expected[i] && page.Issues.Count == 0 && page.Text == (i == 0 ? "A letter of thanks" : ""),
+                        $"{how}: page {i} is {page.Width} x {page.Height} turned {page.Rotation}, reads \"{page.Text}\", issues {string.Join("; ", page.Issues.Select(e => e.Detail))}");
                 }
             }
 

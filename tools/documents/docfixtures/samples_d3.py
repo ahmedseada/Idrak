@@ -130,7 +130,7 @@ def truetype_simple(seed):
     p.line(line)
     c.Td(0, -28)
     c.Tf(mapped, 14)
-    line = "Invoice total: 1,250.00 EUR (paid)"
+    line = "Storage total: 1,250.00 GB (free)"
     c.show(line)
     p.line(line)
     c.ET()

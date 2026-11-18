@@ -19,7 +19,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D0 | The contract and its registries (`IDocumentFormat`, `DocumentFormats`, `IDocumentTextLayout`, `DocumentTextLayouts`, `IDocumentWriter`, `DocumentWriters`), their suites, a test format from outside proving the plug-in path | A | Built (2026-11-18) |
 | D1 | PDF, the file: objects, cross-reference tables and streams, object streams, incremental updates, repair, filters, limits | A | Built (2026-11-18) |
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Built (2026-11-18) |
-| D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Planned |
+| D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Built (2026-11-18) |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Planned |
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
@@ -603,6 +603,99 @@ into the fixture; a page with an unmapped font reports its count; a page in righ
 come out in logical order through `bidi` with no language code; pages read in parallel give the same as in order.
 
 **Tests (CPU here):** one build; `documents pdf: text|document layouts|documents pdf: file|documents contracts`.
+
+**As built (2026-11-18):**
+- **The reader** (`src/Idrak.Data/Pdf/`, all internal): `PdfContentLexer` (content streams and CMaps as spans: each token
+  located, numbers parsed from the bytes, strings and names decoded into the caller's buffer, dictionaries passed over
+  balanced, damaged bytes never an error); `PdfContentReader`, the interpreter (`q Q cm`; `BT ET Tf Tm Td TD T* TL Tc Tw
+  Tz Ts Tr`; `Tj TJ ' "`; `Do`: forms within `MaxDepth` through their `/Matrix` and `/Resources` or the caller's, images
+  taking their place in the content; `BI ID EI` passed over by the image's size when it is unfiltered and known, else to
+  an `EI` between whitespace followed by content-like bytes; `BMC BDC EMC` with `/ActualText` inline or in
+  `/Properties`; unknown operators passed over; a page's content streams read as one); `PdfFont` (simple: Type 1,
+  TrueType, Type 3 by its `/FontMatrix` and `/FontBBox`; composite: Type0 with Identity-H, Identity-V or an embedded
+  CMap and the one it uses, `/W /DW /W2 /DW2`, `/CIDToGIDMap`); `PdfCMap` (code spaces of one to four bytes, `bfchar`,
+  `bfrange` by a start or an array, `cidchar`, `cidrange`, `notdef`, `/WMode`, kept as ranges); `PdfFontProgram` (the
+  embedded TrueType or OpenType program read through `FontFormats` at run time: the face, the best Unicode `cmap`
+  reversed to each glyph's lowest code point, the (3,0) and (1,0) subtables); `PdfFontTables` over
+  `PdfFontTables.Data.cs`, made by `tools/documents/make_pdf_tables.py` from the venv's pins: the Adobe Glyph List and
+  the ITC Zapf Dingbats list (fontTools.agl), the four base encodings (pdfminer.six's latin_enc), the Symbol and
+  ZapfDingbats built-in encodings (ISO 32000-2 Annex D.5 and D.6, checked code by code against pdfium: no difference),
+  the standard 14 fonts' metrics (pdfminer.six's copy of Adobe's Core 14 AFMs). Stored as the repository's other tables
+  are: spans of constants in the assembly's data, names sorted for a binary search (nothing parsed or allocated when the
+  reader starts, about 60 KB); the licences quoted in the file and in NOTICE; reruns give the same bytes.
+- **Text,** in the plan's order: ToUnicode (a simple font's codes looked up as one byte, then as two, as some writers
+  write them); the encoding's glyph names by the Adobe Glyph List's rules (suffix dropped, components joined, the list,
+  `uniXXXX...`, `uXXXX[XX]`, the Zapf Dingbats list for that font); the embedded program's own `cmap` (composite: CID to
+  glyph through `/CIDToGIDMap`, then the glyph's lowest code point; simple TrueType: code to glyph by 9.6.5.4); else
+  U+FFFD, counted in an `unmapped-glyphs` issue naming the fonts. A Type 1 program's own encoding is read from its clear
+  text. Render modes 3 and 7 are `Hidden`, 1 and 5 `Stroke`, 2 and 6 `FillStroke`.
+- **Widths and boxes:** `/Widths` from `/FirstChar`, past them the standard 14's AFM width by the glyph name's character,
+  else `/MissingWidth`; composite `/W /DW`, vertical `/W2 /DW2`. Each glyph is placed through the text matrix, the CTM
+  and the page's display map (crop box, `/Rotate`, `/UserUnit`): its advance along the baseline by the font's descent to
+  ascent (descriptor, the standard 14's AFM, Type 3's `/FontBBox`), a vertical glyph its width centred by its vertical
+  advance; a run's size is the size times the text matrix and CTM's vertical unit; upright runs give `Baseline`.
+- **Lines and text** through `DocumentTextLayouts` (the layout the options name): the reader gives the layout its runs as
+  pieces in the frame of the page's main text direction (a turned page, turned text and vertical columns read as lines),
+  split where a `TJ` offset moves the pen (the layout's `WordGap` decides the space) and around a glyph that stands for
+  several characters (a logical piece, so a ligature keeps its characters' order in right-to-left text: D0's layout
+  reverses a run by text elements, which would turn DejaVu's lam-alef round); an `/ActualText` span is one logical piece.
+  The lines' runs are given back as the page's runs (a layout that makes a line of each piece, as `content` does, has its
+  pieces' lines joined back: a line a run).
+- **Glyphs and faces** when `DocumentParts.Glyphs` is asked: each run's glyph ids (through `/CIDToGIDMap`, or a simple
+  TrueType font's cmap route; the code for a font with no program read), origins and advances on the page; `Face` is the
+  embedded TrueType or OpenType program read through `FontFormats` (null for the standard 14, Type 1, a bare CFF and
+  Type 3: D7's Type 1 reader adds those). Programs are read only when needed (a glyph with no other text, or glyphs
+  asked); fonts are kept in the document's cache by object, read once a page otherwise.
+- **Issues:** `unmapped-glyphs`; `missing-font` (a font the page lacks, or none set: read as Helvetica in the standard
+  encoding); `not-supported` (a predefined CMap other than Identity, each tied to one script: codes read as two bytes,
+  their text from ToUnicode alone); `damaged-stream` (contents, a form or a font that cannot be read).
+- **Decisions the plan did not settle, taken here:** (1) a run's `Order` counts runs, images (`Do` of an image, inline
+  images) and painted paths and shadings (`S s f F f* B B* b b* sh`, not `n`), as the D4 and D7 samples count them, so a
+  run's order does not change when D4 and D7 add their parts. (2) Text set past the crop box or the page keeps its box
+  there, as the samples' JSON says (`vector-turned-pages`, `split-source`); D1's format-suite run leaves those two out,
+  since the suite wants every run on the page. (3) A font the page lacks is read as Helvetica and counted, not left out.
+  (4) `IDocumentTextLayout` and `DocumentTextLayouts`, now used by Idrak.Data alone, are listed in
+  `tests/Idrak.Tests/data/shared-contracts.txt` (decision 1), as D1 listed the other document contracts; the inventory is
+  regenerated through the runner. (5) D1's sample loader skips the manifest's entries with no document (the D6 inputs,
+  the D8 dumps, the test PKI), which the full set of 150 samples has; D1's group passes on the full set. (6) `q` nested
+  past 16 times `MaxDepth` is counted, not stored (its `Q` matched), so a stream of `q`s cannot grow memory.
+- **Generic sample text:** truetype-simple's second line "Invoice total: 1,250.00 EUR (paid)" is now "Storage total:
+  1,250.00 GB (free)" (the same feature: a simple TrueType font with a ToUnicode map, capitals, digits and punctuation).
+  `make_fixtures.py --compare` against a run of the old generator: 767 files each, only `d3/truetype-simple.json`, `.pdf`,
+  `.text.json` and `.p1.png` differ, and the manifest only in those entries.
+- **Tests:** group `documents pdf: text` (5): the timing below; every D3 sample page (20 samples, 31 pages, 109 runs)
+  against its JSON (text, box within 0.005 point, size within 0.001, font, hidden, order, `/ActualText`), its lines with
+  their direction and its text; `hostile-form-recursion` tripping `MaxDepth` (the limit, its option and the file named)
+  and every page with its glyphs read in parallel the same as in order; the options (`IncludeHidden`, `WordGap` 0.2 and
+  0.5 on TJ gaps, the `content` layout, glyphs and faces); hand-made bytes (the glyph-name rules, standard font names,
+  CMaps, a page with a font it lacks, an inline image holding " EIQ", a `/Properties` span, an unknown operator, a path
+  in the order). First run: 41 passed, 11 failed (D1's sample loader on the full set: 9; the two layout contracts now
+  used by Idrak.Data alone: 2; a glyph-name expectation of the test); second: 48 passed, 4 failed (the inventory's line,
+  the two samples with text past their page in the suite, the test's run-count floor, a Zapf Dingbats width the test
+  wrote from memory); after the fixes and the inventory regenerated: `documents pdf: text|documents pdf: file|document
+  layouts|documents contracts|outside plug-in|public API|abstraction inventory|every environment variable read in
+  src|hidden boxing` 52 passed, 0 failed, and `conformance kit:|override loop:|test runner|generic components: reading
+  order|the environment table names real commands` 26 passed.
+- **Timings** (this container, 4 cores, another agent building beside it; the owner's devices give the real ones): the
+  31 pages of the 20 D3 samples opened from memory and their text read: cold 166-178 ms (the first call, mostly
+  compiling), warm median 15-19 ms a pass (486-601 µs a page, each document opened and its fonts read every pass), 65 KiB
+  allocated a page; the same pages of documents kept open (fonts read once): 6.1-6.4 ms a pass (196-205 µs a page), 32
+  KiB a page. One change measured before and after: the page's glyphs in a pooled buffer and simple fonts' one-character
+  texts in a table (94.7 to 65.2 and 48.6 to 31.8 KiB a page, the text the same).
+- **Left for later phases:** CFF programs' built-in encodings (StandardEncoding stands in), runs' colours and clips,
+  vertical position vectors and faces for Type 1, CFF and Type 3 (D7); images (D4). Most of the 32 KiB a page is D0's
+  `lines` layout's own (strings, groups, the reading order), a piece of its own.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: text|documents pdf: file|document layouts|documents contracts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable read in src|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d3.txt
+  $env:IDRAK_FILTER = "documents pdf: text: reading every D3 sample page"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d3-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Phase D4: PDF images and embedded files
 

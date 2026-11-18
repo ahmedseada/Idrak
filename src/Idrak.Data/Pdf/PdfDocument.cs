@@ -6,19 +6,21 @@ using System.Globalization;
 namespace Idrak.Data.Pdf;
 
 /// <summary>
-/// An open PDF document: its information and its pages (each page's size and rotation; the content is read and checked,
-/// its text, images and paths come with the later phases). Opening reads the cross-reference and the page tree only; a
-/// page's objects are read when it is. Safe to read from several threads.
+/// An open PDF document: its information and its pages (each page's size and rotation, and its text: runs with their
+/// boxes, the lines and text the layout makes of them; images and paths come with the later phases). Opening reads the
+/// cross-reference and the page tree only; a page's objects are read when it is, and the fonts its pages share are kept
+/// for the others. Safe to read from several threads.
 /// </summary>
 internal sealed class PdfDocument : IDocument
 {
     private readonly PdfFile _file;
     private readonly PageNode[] _pages;
     private readonly string _version;
+    private readonly DocumentOptions _options;
     private DocumentInfo? _info;
     private volatile bool _disposed;
 
-    private PdfDocument(PdfFile file, PageNode[] pages, string version) => (_file, _pages, _version) = (file, pages, version);
+    private PdfDocument(PdfFile file, PageNode[] pages, string version, DocumentOptions options) => (_file, _pages, _version, _options) = (file, pages, version, options);
 
     /// <summary>The object layer (the tests read objects through it).</summary>
     internal PdfFile File => _file;
@@ -71,7 +73,7 @@ internal sealed class PdfDocument : IDocument
                 pages = Pages(file, catalog);
             }
 
-            var document = new PdfDocument(file, pages, Version(file, catalog));
+            var document = new PdfDocument(file, pages, Version(file, catalog), options);
             file = null;
             return document;
         }
@@ -138,71 +140,57 @@ internal sealed class PdfDocument : IDocument
             throw new InvalidDataException($"{_file.Name}: page {index + 1} is {width} x {height} points.");
         }
 
-        var issues = new List<DocumentIssue>();
+        var issues = new PdfIssues();
+        IReadOnlyList<DocumentTextRun> runs = [];
+        IReadOnlyList<DocumentLine> lines = [];
+        string text = "";
         if ((parts & (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | DocumentParts.Glyphs)) != 0)
         {
-            ReadContents(index, page, issues);
-        }
-
-        return new DocumentPage(index, (float)width, (float)height) { Rotation = rotation, Issues = issues };
-    }
-
-    // The page's content streams, decoded and checked (the content interpreter reads them from phase D3): a damaged one
-    // is counted in the page's issues; a limit passed or a cycle fails the page.
-    private void ReadContents(int index, PdfDictionary page, List<DocumentIssue> issues)
-    {
-        int damaged = 0;
-        var detail = new List<string>();
-        PdfValue contents;
-        try
-        {
-            contents = _file.Resolve(page["Contents"u8]);
-        }
-        catch (InvalidDataException e) when (!PdfLimit.Is(e))
-        {
-            issues.Add(new DocumentIssue(DocumentIssue.DamagedStream, $"page {index + 1}: its contents: {e.Message}"));
-            return;
-        }
-
-        void One(PdfValue part)
-        {
+            PdfDictionary? resources = null;
             try
             {
-                if (_file.Resolve(part).AsStream is not { } stream)
-                {
-                    return;
-                }
-
-                using var decoded = _file.Decode(stream);
-                if (decoded.Damaged)
-                {
-                    damaged++;
-                    detail.Add($"object {stream.Number} is damaged part of the way");
-                }
+                resources = _file.Dictionary(page.TryGet("Resources"u8, out own) ? own : inherited.Resources);
             }
             catch (InvalidDataException e) when (!PdfLimit.Is(e))
             {
-                damaged++;
-                detail.Add(e.Message);
+                issues.Add(DocumentIssue.DamagedStream, $"page {index + 1}: its resources: {e.Message}");
             }
-        }
 
-        if (contents.AsArray is { } array)
-        {
-            foreach (var part in array.Items)
+            using var reader = new PdfContentReader(_file, index + 1, issues, _options.IncludeHidden);
+            reader.Read(page["Contents"u8], resources, Display(crop, rotation, unit));
+            if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
             {
-                One(part);
+                var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
+                if (unmapped > 0)
+                {
+                    issues.Add(DocumentIssue.UnmappedGlyphs, $"page {index + 1}: glyphs of {fonts} have no code point (no ToUnicode, glyph name or cmap gives one): their text is U+FFFD", unmapped);
+                }
+
+                runs = read;
+                if ((parts & DocumentParts.Text) != 0)
+                {
+                    var arranged = reader.Arrange(read, (float)width, (float)height, _options);
+                    (lines, text) = (arranged.Lines, arranged.Text);
+                }
             }
         }
-        else if (contents.Kind == PdfKind.Stream)
-        {
-            One(contents);
-        }
 
-        if (damaged > 0)
+        return new DocumentPage(index, (float)width, (float)height) { Rotation = rotation, Runs = runs, Lines = lines, Text = text, Issues = issues.ToList() };
+    }
+
+    // The map from the page's user space onto the page as shown: the crop box's lower left to the origin, y turned down,
+    // the page's rotation (clockwise), and its unit.
+    private static PdfMatrix Display((double Left, double Bottom, double Right, double Top) crop, int rotation, double unit)
+    {
+        double w = crop.Right - crop.Left, h = crop.Top - crop.Bottom, x0 = crop.Left, y0 = crop.Bottom;
+        var map = rotation switch
         {
-            issues.Add(new DocumentIssue(DocumentIssue.DamagedStream, $"page {index + 1}: {string.Join("; ", detail)}", damaged));
-        }
+            90 => new PdfMatrix(0, 1, 1, 0, -y0, -x0),
+            180 => new PdfMatrix(-1, 0, 0, 1, w + x0, -y0),
+            270 => new PdfMatrix(0, -1, -1, 0, h + y0, w + x0),
+            _ => new PdfMatrix(1, 0, 0, -1, -x0, h + y0),
+        };
+        return unit == 1 ? map : map.Then(new PdfMatrix(unit, 0, 0, unit, 0, 0));
     }
 
     // A rectangle [llx lly urx ury] (its corners in any order), or null when it is not one.
