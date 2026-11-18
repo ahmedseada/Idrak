@@ -24,7 +24,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Planned |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Planned |
-| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | In progress (built-in part built 2026-11-18; the WOFF plug-in part next, in `Idrak.Imaging.Plugins`, decision 21) |
+| D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built-in part built (2026-11-18); the WOFF plug-in deferred (decision 26) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Planned |
@@ -126,6 +126,10 @@ registered format the same way.
     legacy font gives the same outlines, and a page the same bytes, with the cache on or off. Pages drawn from legacy
     fonts change once (decision 24's rounding, now in both paths) and never differ between the two paths again
     (rule 71 holds from here). Built as D8c.
+26. **The WOFF plug-in waits** (owner, 2026-11-18: "can the plugin be implemented later and the agent takes a real
+    work, the plugin is an extra so it can wait"): D8's plug-in part (WOFF in `Idrak.Imaging.Plugins`, decisions 20
+    and 21) is deferred to after the real phases; its agent was stopped before committing anything, and its slot took
+    D6. D8 counts as built for every phase that depends on it (they need the built-in TrueType writer only).
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
