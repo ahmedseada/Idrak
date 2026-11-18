@@ -101,6 +101,11 @@ registered format the same way.
     this plan; a later plug-in can add them through the same registries).
 21. **The font plug-in project is `Idrak.Imaging.Plugins`** (open question 6): new, beside the other `*.Plugins`
     projects, namespace `Idrak.Imaging.Plugins.Fonts`; it references only the public API.
+22. **Every merge is built before it is pushed** (owner, 2026-11-18: "you need to build before push even if merged
+    cleanly there still could be errors"): after each cherry-pick onto `documents`, one build of the merged code
+    (`dotnet build -c Release tests/Idrak.Tests -nodeReuse:false`, and `tests/Idrak.PluginTests` when the piece touched
+    it); a failed build is fixed before the push. A merge with conflicts also runs the test groups the merge touched.
+    Up to four agents may run when pieces with no unmerged dependency are ready; a slot with none waits.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
