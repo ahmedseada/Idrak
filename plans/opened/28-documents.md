@@ -116,6 +116,11 @@ registered format the same way.
     then F3 — and on nothing else. When F3 is merged the fourth slot stops for good: it takes no piece from either plan
     ("when those 38 phases finish stop agent 4 and don't give it any pieces from either plans"). Decisions 9 and 14
     hold otherwise.
+24. **The converted-font cache is on by default** (owner, 2026-11-18, "1a"): a legacy font is mapped and drawn once,
+    kept as a TrueType file and opened from it afterwards (about 3 ms instead of 75-200 ms in this container). The
+    drawn and composed glyphs are kept at whole font units (at most half a unit off, what the TrueType format holds);
+    that rounding is the new reference for pages drawn from legacy fonts, an accepted exception to rule 71's
+    byte-identical pages. `IDRAK_FONT_CACHE=off` (or `--font-maps cache=off`) gives the exact mapped face back.
 19. **How the work runs:** at most two agents at a time; each piece goes to a fresh agent, started the moment a slot
     frees with the next piece whose inputs are merged; the owner tests later (the command lists are held and given as
     one list when asked).
