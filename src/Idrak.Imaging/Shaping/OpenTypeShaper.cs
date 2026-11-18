@@ -130,7 +130,7 @@ internal class OpenTypeShaper : ITextShaper
 
         SetupMasks(plan, glyphs, text, run);
 
-        var context = new LayoutContext(font, layout.Definitions, glyphs, run.RightToLeft);
+        var context = new LayoutContext(font, layout.Definitions, glyphs, run.RightToLeft) { Seed = run.Seed };
         if (plan.SubstitutionFeatures.Count == 0)
         {
             FallbackSubstitution(font, plan, glyphs, text, run);
@@ -600,20 +600,26 @@ internal class OpenTypeShaper : ITextShaper
         var positionTags = new List<string>(PositionFeatures(run.RightToLeft));
 
         // A feature's value, as HarfBuzz reads "tag=value": 0 turns it off; for an alternate substitution it chooses the
-        // alternate (1, the default, the first; 2 the second; past the last, none), so "salt=2" takes a glyph's second.
+        // alternate (1, the default, the first; 2 the second; past the last, none), so "salt=2" takes a glyph's second;
+        // "random" picks one per glyph (itself or an alternate) from the run's seed (LayoutEngine.RandomAlternate).
         var alternates = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (string change in features ?? [])
         {
             int equals = change.IndexOf('=', StringComparison.Ordinal);
             string tag = (equals < 0 ? change : change[..equals]).TrimStart('+', '-');
             int value = 1;
+            bool random = equals >= 0 && change.AsSpan(equals + 1).SequenceEqual("random");
             if (tag.Length != 4 || equals >= 0 && (change.StartsWith('-')
-                    || !int.TryParse(change.AsSpan(equals + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value)))
+                    || !random && !int.TryParse(change.AsSpan(equals + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value)))
             {
-                throw new ArgumentException($"'{change}' is not an OpenType feature tag of four characters with + or -, or tag=value with a whole value (salt=2).", nameof(features));
+                throw new ArgumentException($"'{change}' is not an OpenType feature tag of four characters with + or -, or tag=value with a whole value (salt=2) or random (ALTS=random).", nameof(features));
             }
 
-            if (value > 1)
+            if (random)
+            {
+                alternates[tag] = LayoutEngine.RandomAlternate;
+            }
+            else if (value > 1)
             {
                 alternates[tag] = value - 1;
             }

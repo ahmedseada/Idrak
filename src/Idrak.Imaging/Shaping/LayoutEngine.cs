@@ -17,6 +17,9 @@ internal sealed class LayoutContext(IFontFace font, GlyphDefinitions definitions
 
     public bool RightToLeft { get; } = rightToLeft;
 
+    /// <summary>The run's seed: what an alternate substitution applied with <see cref="LayoutEngine.RandomAlternate"/> picks from.</summary>
+    public int Seed { get; init; }
+
     private int _ligatureId;
 
     public int NextLigatureId() => _ligatureId = _ligatureId % 255 + 1;            // HarfBuzz's ids wrap at 3 bits; 8 here
@@ -45,6 +48,9 @@ internal sealed class LayoutContext(IFontFace font, GlyphDefinitions definitions
 /// </summary>
 internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, bool positioning)
 {
+    /// <summary>The alternate that asks an alternate substitution to pick per glyph: itself or one of its alternates, from the run's seed, the glyph and its cluster.</summary>
+    public const int RandomAlternate = -1;
+
     private const int MaxNesting = 64;
 
     private readonly LayoutContext _c = context;
@@ -383,12 +389,23 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
                 }
 
                 int set = sub + Bytes.U16(t, sub + 6 + 2 * index);
-                if (_alternate >= Bytes.U16(t, set))
+                int alternate = _alternate;
+                if (alternate == RandomAlternate)
+                {
+                    // Itself (0) or one of its alternates, picked from the seed, the glyph and its cluster: the same each time.
+                    alternate = Pick(_c.Seed, G[i].Cluster, glyph, Bytes.U16(t, set) + 1) - 1;
+                    if (alternate < 0)
+                    {
+                        return -1;
+                    }
+                }
+
+                if (alternate >= Bytes.U16(t, set))
                 {
                     return -1;                                                  // no alternate that far (or none at all)
                 }
 
-                Replace(i, Bytes.U16(t, set + 2 + 2 * _alternate));             // the feature's value less one: 0, the first, by default
+                Replace(i, Bytes.U16(t, set + 2 + 2 * alternate));              // the feature's value less one: 0, the first, by default
                 return i + 1;
             }
 
@@ -401,6 +418,15 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
             default:
                 return -1;
         }
+    }
+
+    // A number from 0 to choices - 1 from the seed, the cluster and the glyph (SplitMix64: the same on every machine).
+    private static int Pick(int seed, int cluster, int glyph, int choices)
+    {
+        ulong z = ((ulong)(uint)seed << 32 | (uint)cluster) + (ulong)(uint)glyph * 0xD1B54A32D192ED03UL + 0x9E3779B97F4A7C15UL;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        return (int)((z ^ (z >> 31)) % (ulong)choices);
     }
 
     private void Replace(int i, int glyph)

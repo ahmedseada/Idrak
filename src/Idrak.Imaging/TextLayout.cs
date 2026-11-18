@@ -48,6 +48,13 @@ public sealed record TextStyle(IFontFace Font, float Size)
     /// </summary>
     public IReadOnlyCollection<string>? Features { get; init; }
 
+    /// <summary>
+    /// The seed of the features given the value "random" ("ALTS=random": each glyph an alternate substitution covers takes
+    /// itself or one of its alternates): mixed with each paragraph's place in the text into its runs' seeds
+    /// (<see cref="TextRun.Seed"/>), so the same seed and text give the same picks (0 unless set).
+    /// </summary>
+    public int Seed { get; init; }
+
     /// <summary>Pixels per font unit of <paramref name="font"/> at this size.</summary>
     public float Scale(IFontFace font) => Size / font.Metrics.UnitsPerEm;
 }
@@ -145,12 +152,13 @@ public static class TextLayout
             }
 
             var (levels, classes, rtl) = Bidi.Resolve(p, rightToLeft);
-            var breaks = BreakLines(p, levels, style, maxWidth);
+            int seed = PageDrawing.Mix(style.Seed, paragraphStart);
+            var breaks = BreakLines(p, levels, style, maxWidth, seed);
             for (int b = 0; b < breaks.Count; b++)
             {
                 var (start, end) = breaks[b];
                 bool last = b == breaks.Count - 1;
-                lines.Add(SetLine(p, paragraphStart, start, end, levels, classes, rtl, style, maxWidth, alignment, last, baseline));
+                lines.Add(SetLine(p, paragraphStart, start, end, levels, classes, rtl, style, maxWidth, alignment, last, baseline, seed));
                 baseline += lineHeight;
             }
 
@@ -164,14 +172,15 @@ public static class TextLayout
     /// <summary>The width of <paramref name="text"/> set on one line (pixels).</summary>
     public static float Measure(string text, TextStyle style) => Layout(text, style).Lines.Sum(l => l.Width);
 
-    // The shaped runs of [start, end) of a paragraph with its levels, in text order, each with the font that shapes it.
-    private static List<(TextRun Run, byte Level, IFontFace Font, ShapedGlyph[] Glyphs)> Shape(string p, byte[] levels, int start, int end, TextStyle style)
+    // The shaped runs of [start, end) of a paragraph with its levels, in text order, each with the font that shapes it and
+    // the paragraph's seed.
+    private static List<(TextRun Run, byte Level, IFontFace Font, ShapedGlyph[] Glyphs)> Shape(string p, byte[] levels, int start, int end, TextStyle style, int seed)
     {
         var shaped = new List<(TextRun, byte, IFontFace, ShapedGlyph[])>();
         foreach (var (run, level) in Itemizer.Runs(p, levels, start, end, style.Language))
         {
             var font = FontFor(p, run, style);
-            shaped.Add((run, level, font, TextShapers.Shape(font, p, run, style.Features)));
+            shaped.Add((run, level, font, TextShapers.Shape(font, p, run with { Seed = seed }, style.Features)));
         }
 
         return shaped;
@@ -218,10 +227,10 @@ public static class TextLayout
 
     // Greedy breaks: the widths of each character's clusters from one shaping of the whole paragraph, a line ending after
     // the last space (or between CJK characters) that keeps it within the width, inside a word when no such place fits.
-    private static List<(int Start, int End)> BreakLines(string p, byte[] levels, TextStyle style, float maxWidth)
+    private static List<(int Start, int End)> BreakLines(string p, byte[] levels, TextStyle style, float maxWidth, int seed)
     {
         var widths = new float[p.Length];
-        foreach (var (_, _, font, glyphs) in Shape(p, levels, 0, p.Length, style))
+        foreach (var (_, _, font, glyphs) in Shape(p, levels, 0, p.Length, style, seed))
         {
             float s = style.Scale(font);
             foreach (var g in glyphs)
@@ -284,7 +293,7 @@ public static class TextLayout
     }
 
     private static TextLine SetLine(string p, int paragraphStart, int start, int end, byte[] paragraphLevels, BidiClass[] classes, bool rtl, TextStyle style,
-        float maxWidth, TextAlignment alignment, bool lastOfParagraph, float baseline)
+        float maxWidth, TextAlignment alignment, bool lastOfParagraph, float baseline, int seed)
     {
         // Trailing spaces stay in the line but are not drawn or counted.
         int inkEnd = end;
@@ -296,7 +305,7 @@ public static class TextLayout
         var (_, lineLevels) = Bidi.Reorder(paragraphLevels, classes, start, inkEnd, rtl);
         var levels = (byte[])paragraphLevels.Clone();
         Array.Copy(lineLevels, 0, levels, start, inkEnd - start);
-        var runs = Shape(p, levels, start, inkEnd, style);
+        var runs = Shape(p, levels, start, inkEnd, style, seed);
 
         // L2 over runs: from the highest level down to the lowest odd one, each sequence at or above it reversed.
         var order = Enumerable.Range(0, runs.Count).ToArray();

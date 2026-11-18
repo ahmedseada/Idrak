@@ -29,6 +29,13 @@ public readonly record struct TextRun(int Start, int Length, string Script, bool
 {
     /// <summary>How characters share clusters (<see cref="TextClusters.Graphemes"/> unless set).</summary>
     public TextClusters Clusters { get; init; }
+
+    /// <summary>
+    /// The seed of the features given the value "random" ("ALTS=random", <see cref="ITextShaper.Shape"/>): each glyph their
+    /// alternate substitutions cover takes itself or one of its alternates, picked from this seed, the glyph and its
+    /// cluster, so the same seed and text give the same picks (0 unless set).
+    /// </summary>
+    public int Seed { get; init; }
 }
 
 /// <summary>How a shaper groups characters into clusters (HarfBuzz's monotone cluster levels).</summary>
@@ -54,7 +61,9 @@ public interface ITextShaper
     /// <summary>
     /// Shapes <paramref name="run"/> of <paramref name="text"/> with <paramref name="font"/>. The text around the run is
     /// context (an Arabic letter joins across a run's edge). <paramref name="features"/> turn OpenType features on
-    /// ("+smcp") or off ("-liga") over the script's defaults; null for the defaults.
+    /// ("+smcp") or off ("-liga") over the script's defaults, or give a value as HarfBuzz reads it ("salt=2": an alternate
+    /// substitution's second alternate), or "random" ("ALTS=random": each glyph an alternate substitution covers takes
+    /// itself or one of its alternates, picked from <see cref="TextRun.Seed"/>); null for the defaults.
     /// </summary>
     ShapedGlyph[] Shape(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features = null);
 }

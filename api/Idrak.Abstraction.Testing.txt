@@ -135,6 +135,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckEnvironmentKind<TObservation, TAction>(Idrak.Abstraction.Reinforcement.IEnvironmentKind kind, System.Func<System.Random, TObservation, TAction> act, System.Collections.Generic.IReadOnlyDictionary<string, string>? kindOptions = null, int maxSteps = 64, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Generation.IFeatureCache cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFillInMiddleFormat(string name, Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IFillInMiddleFormat? format = null, Idrak.Abstraction.Generation.IFillInMiddleFormat? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckFontMaker(Idrak.Abstraction.Data.IFontMaker maker, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.FontMakerSample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFontMapper(string name, Idrak.Abstraction.Data.IFontFace legacy, Idrak.Abstraction.Data.FontMap map, Idrak.Abstraction.Data.IFontFace unicode, Idrak.Abstraction.Data.IFontMapper? mapper = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFontWriter(Idrak.Abstraction.Data.IFontWriter writer, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> faces, bool exact = true, System.Func<System.ReadOnlyMemory<byte>, Idrak.Abstraction.Data.IFontFace>? read = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckGlyphPose(string name, Idrak.Abstraction.Data.IGlyphPose? pose = null, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyDictionary<string, string>>? settings = null, bool identity = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -335,6 +336,23 @@ public sealed class Idrak.Abstraction.Testing.FillInMiddleFormatSuite : Idrak.Ab
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.IFillInMiddleFormat implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed record Idrak.Abstraction.Testing.FontMakerSample : System.IEquatable<Idrak.Abstraction.Testing.FontMakerSample>
+  public FontMakerSample(Idrak.Abstraction.Data.FoundGlyphs Glyphs)
+  public Idrak.Abstraction.Data.FoundGlyphs Glyphs { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Options { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? TracerOptions { get; init; }
+  public string Name { get; init; }
+  public string Tracer { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.FontMakerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IFontMaker>
+  public FontMakerSuite(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.FontMakerSample> samples)
+  public const string Family = "Suite Hand"
+  public const string UnknownOption = "font-maker-suite-unknown-option"
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Data.IFontMaker implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed class Idrak.Abstraction.Testing.FontMapperSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Data.IFontMapper>
   public FontMapperSuite(Idrak.Abstraction.Data.IFontFace legacy, Idrak.Abstraction.Data.FontMap map, Idrak.Abstraction.Data.IFontFace unicode)

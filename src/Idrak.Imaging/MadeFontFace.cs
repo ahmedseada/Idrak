@@ -14,8 +14,9 @@ namespace Idrak.Imaging;
 /// advances, the vertical metrics and the names the caller gave, made by a <see cref="MadeFontFaceBuilder"/> and not
 /// changed after, so it is safe to read from several threads at once. It is used like any face read from a file (drawn,
 /// shaped through <see cref="TextShapers"/>, mapped by a font map) and written to a font file through
-/// <see cref="FontWriters"/>. Its only table is <c>name</c>, made from the names given (nothing else is made up); it has no
-/// layout tables of its own (the forms and alternates a sheet labelled are given their GSUB, GDEF and GPOS by a font map).
+/// <see cref="FontWriters"/>. Its tables are <c>name</c>, made from the names given, and <c>OS/2</c> when the heights the
+/// caller measured are given (<see cref="MadeFontFaceBuilder.Heights"/>); nothing else is made up. It has no layout tables
+/// of its own (the forms and alternates a sheet labelled are given their GSUB, GDEF and GPOS by a font map).
 /// </summary>
 public sealed class MadeFontFace : IFontFace
 {
@@ -26,9 +27,12 @@ public sealed class MadeFontFace : IFontFace
     private readonly int[] _advances;
     private readonly FrozenDictionary<int, int> _glyphs;
     private readonly byte[] _nameTable;
+    private readonly byte[] _os2;
 
-    internal MadeFontFace(FontMetrics metrics, IReadOnlyDictionary<FontNameKind, string> names, GlyphOutline[] outlines, int[] advances, Dictionary<int, int> glyphs, byte[] nameTable)
+    internal MadeFontFace(FontMetrics metrics, IReadOnlyDictionary<FontNameKind, string> names, GlyphOutline[] outlines, int[] advances, Dictionary<int, int> glyphs, byte[] nameTable,
+        byte[] os2)
     {
+        _os2 = os2;
         Metrics = metrics;
         Names = names;
         _outlines = outlines;
@@ -72,8 +76,16 @@ public sealed class MadeFontFace : IFontFace
     /// <summary>The outline of <paramref name="glyph"/> (<see cref="GlyphOutline.Empty"/> for one with none, or one the face does not have).</summary>
     public GlyphOutline Outline(int glyph) => (uint)glyph < (uint)_outlines.Length ? _outlines[glyph] : GlyphOutline.Empty;
 
-    /// <summary>The <c>name</c> table made from the names given (Windows, Unicode, English); empty for every other tag.</summary>
-    public ReadOnlyMemory<byte> Table(string tag) => tag == "name" ? _nameTable : ReadOnlyMemory<byte>.Empty;
+    /// <summary>
+    /// The <c>name</c> table made from the names given (Windows, Unicode, English), the <c>OS/2</c> table of the heights given
+    /// (empty when none were); empty for every other tag.
+    /// </summary>
+    public ReadOnlyMemory<byte> Table(string tag) => tag switch
+    {
+        "name" => _nameTable,
+        "OS/2" => _os2,
+        _ => ReadOnlyMemory<byte>.Empty,
+    };
 
     /// <summary>"Family Style (n glyphs, m characters, made)".</summary>
     public override string ToString() => $"{Family} {Style} ({GlyphCount} glyphs, {Characters.Count} characters, made)";
@@ -103,6 +115,7 @@ public sealed class MadeFontFaceBuilder
     private readonly List<int> _advances;
     private readonly Dictionary<int, int> _glyphs = [];
     private readonly SortedDictionary<FontNameKind, string> _names = [];
+    private (int XHeight, int CapHeight)? _heights;
 
     /// <summary>A builder of a face of the family <paramref name="family"/> with <paramref name="metrics"/>.</summary>
     /// <param name="family">The family name (the name the caller gives the hand).</param>
@@ -164,6 +177,24 @@ public sealed class MadeFontFaceBuilder
         }
 
         _names[kind] = value;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the heights the face's <c>OS/2</c> table records, measured by the caller from the glyphs' ink: the short glyphs'
+    /// height (<paramref name="xHeight"/>) and the tall glyphs' (<paramref name="capHeight"/>), in font units. Without them
+    /// the face has no <c>OS/2</c> table (a font writer then makes its own).
+    /// </summary>
+    /// <exception cref="ArgumentException">A height below 0 or past <see cref="MostCoordinate"/>.</exception>
+    public MadeFontFaceBuilder Heights(int xHeight, int capHeight)
+    {
+        if (xHeight is < 0 or > MostCoordinate || capHeight is < 0 or > MostCoordinate)
+        {
+            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"The heights are from 0 to {MostCoordinate:N0} font units: x-height {xHeight}, cap height {capHeight}."),
+                nameof(xHeight));
+        }
+
+        _heights = (xHeight, capHeight);
         return this;
     }
 
@@ -233,7 +264,52 @@ public sealed class MadeFontFaceBuilder
     /// <exception cref="ArgumentException">The names take more than a name table holds (65,535 bytes).</exception>
     public MadeFontFace Build() =>
         new(Metrics, new ReadOnlyDictionary<FontNameKind, string>(new SortedDictionary<FontNameKind, string>(_names)), [.. _outlines], [.. _advances],
-            new Dictionary<int, int>(_glyphs), NameTable(_names));
+            new Dictionary<int, int>(_glyphs), NameTable(_names), _heights is { } heights ? Os2(Metrics, heights.XHeight, heights.CapHeight, _outlines) : []);
+
+    // An OS/2 table of version 4 (96 bytes) of the metrics and heights given: a regular weight and width, installable, the
+    // typographic metrics the face's (and used: USE_TYPO_METRICS), the Windows ones reaching every glyph's extent, the
+    // sub- and superscript sizes and the strikeout as the usual shares of the em and the x-height. A font writer fills in
+    // what follows from the glyphs it writes (the average width, the character and code page ranges, first and last
+    // character, the longest context).
+    private static byte[] Os2(FontMetrics metrics, int xHeight, int capHeight, List<GlyphOutline> outlines)
+    {
+        float top = metrics.Ascender, bottom = metrics.Descender;
+        foreach (var outline in outlines)
+        {
+            if (!outline.IsEmpty)
+            {
+                var (_, minY, _, maxY) = outline.Bounds();
+                (top, bottom) = (MathF.Max(top, maxY), MathF.Min(bottom, minY));
+            }
+        }
+
+        int em = metrics.UnitsPerEm;
+        short Share(double share) => (short)Math.Round(share * em);
+        var table = new byte[96];
+        var o = table.AsSpan();
+        BinaryPrimitives.WriteUInt16BigEndian(o, 4);                                   // version 4
+        BinaryPrimitives.WriteUInt16BigEndian(o[4..], 400);                            // regular weight
+        BinaryPrimitives.WriteUInt16BigEndian(o[6..], 5);                              // normal width
+        BinaryPrimitives.WriteInt16BigEndian(o[10..], Share(0.65));                    // subscript x and y size, x and y offset
+        BinaryPrimitives.WriteInt16BigEndian(o[12..], Share(0.6));
+        BinaryPrimitives.WriteInt16BigEndian(o[16..], Share(0.075));
+        BinaryPrimitives.WriteInt16BigEndian(o[18..], Share(0.65));                    // superscript x and y size, x and y offset
+        BinaryPrimitives.WriteInt16BigEndian(o[20..], Share(0.6));
+        BinaryPrimitives.WriteInt16BigEndian(o[24..], Share(0.35));
+        BinaryPrimitives.WriteInt16BigEndian(o[26..], Share(0.05));                    // strikeout size and position
+        BinaryPrimitives.WriteInt16BigEndian(o[28..], (short)(xHeight > 0 ? Math.Round(xHeight * 0.6) : Share(0.22)));
+        "NONE"u8.CopyTo(o[58..]);
+        BinaryPrimitives.WriteUInt16BigEndian(o[62..], 0x40 | 0x80);                   // regular, typographic metrics used
+        BinaryPrimitives.WriteInt16BigEndian(o[68..], (short)metrics.Ascender);
+        BinaryPrimitives.WriteInt16BigEndian(o[70..], (short)metrics.Descender);
+        BinaryPrimitives.WriteInt16BigEndian(o[72..], (short)metrics.LineGap);
+        BinaryPrimitives.WriteUInt16BigEndian(o[74..], (ushort)Math.Clamp((int)MathF.Ceiling(top), 0, MostCoordinate));
+        BinaryPrimitives.WriteUInt16BigEndian(o[76..], (ushort)Math.Clamp((int)MathF.Ceiling(-bottom), 0, MostCoordinate));
+        BinaryPrimitives.WriteInt16BigEndian(o[86..], (short)xHeight);
+        BinaryPrimitives.WriteInt16BigEndian(o[88..], (short)capHeight);
+        BinaryPrimitives.WriteUInt16BigEndian(o[92..], 32);                            // the break character: space
+        return table;
+    }
 
     // A name table of format 0 holding the names given, each a Windows Unicode (UTF-16, big-endian) English record, sorted
     // by name id as the format asks.

@@ -315,6 +315,7 @@ internal sealed class MappedFontFace : IFontFace
     private readonly Dictionary<int, int[]> _letterForms;                    // each letter's glyph in each form (a composed recipe measures its source letter)
     private readonly Lazy<(GlyphOutline Outline, int Advance)[]> _drawnGlyphs;     // the drawn and composed glyphs, after the font's own
     private readonly List<(int From, int To)> _short;                       // marks placed above and their alternates over short bases
+    private readonly List<(int From, List<int> To)> _alternates;            // glyphs' other fills (the map's alternates), by glyph
     private readonly Lazy<byte[]> _gsub, _gdef, _gpos;
     private readonly Lazy<ShortBases?> _shortBases;
 
@@ -490,6 +491,36 @@ internal sealed class MappedFontFace : IFontFace
             }
         }
 
+        // Alternates: each glyph's other fills, the font's own glyphs found as any of the map's are; one entry a glyph, each
+        // alternate once, in the map's order.
+        _alternates = [];
+        foreach (var entry in map.Alternates)
+        {
+            int from = resolver.Resolve([entry.Glyph]);
+            if (from == 0 || from >= inner.GlyphCount)
+            {
+                continue;
+            }
+
+            int at = _alternates.FindIndex(a => a.From == from);
+            var to = at >= 0 ? _alternates[at].To : new List<int>();
+            foreach (var r in entry.Alternates)
+            {
+                int glyph = resolver.Resolve([r]);
+                if (glyph != 0 && glyph != from && glyph < inner.GlyphCount && !to.Contains(glyph))
+                {
+                    to.Add(glyph);
+                }
+            }
+
+            if (at < 0 && to.Count > 0)
+            {
+                _alternates.Add((from, to));
+            }
+        }
+
+        _alternates.Sort((a, b) => a.From.CompareTo(b.From));
+
         // Marks' alternates over short bases: a mark placed above and its alternate, both the font's own and inked.
         _short = [];
         if (drawing.ShortMarks != 0)
@@ -537,6 +568,23 @@ internal sealed class MappedFontFace : IFontFace
             marks.Add(glyph);
         }
 
+        // A mark's alternates are marks placed as it is; a ligature's are ligatures.
+        foreach (var (from, to) in _alternates)
+        {
+            if (marks.Contains(from))
+            {
+                marks.UnionWith(to);
+                if (_places.TryGetValue(from, out var place))
+                {
+                    to.ForEach(g => _places.TryAdd(g, place));
+                }
+            }
+            else if (ligatureGlyphs.Contains(from))
+            {
+                ligatureGlyphs.UnionWith(to);
+            }
+        }
+
         for (int g = 1; g < next; g++)
         {
             _classes[g] = marks.Contains(g) ? (byte)3 : ligatureGlyphs.Contains(g) ? (byte)2 : (byte)1;
@@ -546,13 +594,14 @@ internal sealed class MappedFontFace : IFontFace
         var bases = new SortedSet<int>(forms.Values.SelectMany(g => g).Where(g => g != 0));
         bases.UnionWith(ligatureGlyphs);
         bases.UnionWith(cmap.Values.Where(g => _classes[g] != 3));
+        bases.UnionWith(_alternates.Where(a => _classes[a.From] != 3).SelectMany(a => a.To));
         bases.Remove(0);
         _bases = [.. bases];
 
         _drawnGlyphs = new(DrawGlyphs);
         _shortBases = new(MeasureShortBases);
         _gsub = new(() => FontMapTables.Substitutions(_map.Scripts, _singles, _ligatures,
-            _shortBases.Value is { } shortBases ? (_short, shortBases.Glyphs, [.. Enumerable.Range(1, _classes.Length - 1).Where(g => _classes[g] == 3)]) : null));
+            _shortBases.Value is { } shortBases ? (_short, shortBases.Glyphs, [.. Enumerable.Range(1, _classes.Length - 1).Where(g => _classes[g] == 3)]) : null, _alternates));
         _gdef = new(() => FontMapTables.Definitions(_classes));
         _gpos = new(Positions);
     }
@@ -890,11 +939,12 @@ internal static class FontMapTables
     /// <summary>
     /// GSUB: a single substitution lookup per form feature, a ligature lookup per feature (marks' ligatures apart), then the
     /// marks' alternates over short bases: a chained context (a mark right after a short base, up to two marks between)
-    /// applying a single substitution that no feature lists.
+    /// applying a single substitution that no feature lists; last, the glyphs' alternates: one alternate substitution that
+    /// "aalt", "salt" and <see cref="FontMap.AlternatesFeature"/> all list.
     /// </summary>
     public static byte[] Substitutions(IReadOnlyList<string> scripts, List<(string Feature, int From, int To)> singles,
         List<(string Feature, int[] Components, int Glyph, bool Mark)> ligatures,
-        (List<(int From, int To)> Pairs, List<int> Bases, List<int> Marks)? shortMarks = null)
+        (List<(int From, int To)> Pairs, List<int> Bases, List<int> Marks)? shortMarks = null, List<(int From, List<int> To)>? alternates = null)
     {
         var lookups = new List<(string Feature, int Type, int Flags, Action<TableWriter, int> Write)>();
         foreach (var group in ligatures.Where(l => l.Mark).GroupBy(l => l.Feature, StringComparer.Ordinal))
@@ -923,6 +973,11 @@ internal static class FontMapTables
             int single = lookups.Count + 1;
             lookups.Add((ShortFeature, 6, 0, (w, at) => ShortContext(w, at, shortSet.Pairs, shortSet.Bases, shortSet.Marks, single)));
             lookups.Add(("", 1, 0, (w, at) => Singles(w, at, shortSet.Pairs)));
+        }
+
+        if (alternates is { Count: > 0 })
+        {
+            lookups.Add(($"aalt salt {FontMap.AlternatesFeature}", 3, 0, (w, at) => AlternateSets(w, at, alternates)));
         }
 
         return Layout(scripts, lookups);
@@ -984,10 +1039,12 @@ internal static class FontMapTables
         return Layout(scripts, lookups);
     }
 
-    // The script, feature and lookup lists, every script's default language system listing every feature.
+    // The script, feature and lookup lists, every script's default language system listing every feature. A lookup lists
+    // under each tag of its Feature (tags between spaces; none for "").
     private static byte[] Layout(IReadOnlyList<string> scripts, List<(string Feature, int Type, int Flags, Action<TableWriter, int> Write)> lookups)
     {
-        var features = lookups.Select((l, i) => (l.Feature, Index: i)).Where(l => l.Feature.Length > 0).GroupBy(l => l.Feature, StringComparer.Ordinal)
+        var features = lookups.SelectMany((l, i) => l.Feature.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(tag => (Feature: tag, Index: i)))
+            .GroupBy(l => l.Feature, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => (Tag: g.Key, Lookups: g.Select(x => x.Index).ToList())).ToList();
         var w = new TableWriter();
         w.U32(0x00010000);
@@ -1117,6 +1174,27 @@ internal static class FontMapTables
 
         w.Offset(coverage, st);
         Coverage(w, [.. sets.Select(s => s.First)]);
+    }
+
+    // AlternateSubst format 1: each glyph (in increasing order) and its alternates.
+    private static void AlternateSets(TableWriter w, int st, List<(int From, List<int> To)> alternates)
+    {
+        w.U16(1);
+        int coverage = w.Reserve();
+        w.U16(alternates.Count);
+        var slots = alternates.Select(_ => w.Reserve()).ToArray();
+        for (int s = 0; s < alternates.Count; s++)
+        {
+            w.Offset(slots[s], st);
+            w.U16(alternates[s].To.Count);
+            foreach (int glyph in alternates[s].To)
+            {
+                w.U16(glyph);
+            }
+        }
+
+        w.Offset(coverage, st);
+        Coverage(w, [.. alternates.Select(a => a.From)]);
     }
 
     // ChainContextSubst format 2: a mark of `pairs` (input class 1) after a short base (backtrack class 1), right after it

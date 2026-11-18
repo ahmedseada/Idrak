@@ -45,6 +45,7 @@ internal sealed class DataFontsCommand : Command
                                 digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                 mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
                                 joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each),
+                                alternates (the chance a page picks a hand's alternates per glyph; 1),
                                 cache (on: a legacy font converted to TrueType once and kept, IDRAK_FONT_CACHE; off;
                                 or a folder)
 

@@ -113,6 +113,7 @@ public sealed class Idrak.Imaging.MadeFontFace : Idrak.Abstraction.Data.IFontFac
 public sealed class Idrak.Imaging.MadeFontFaceBuilder
   public Idrak.Abstraction.Data.FontMetrics Metrics { get; }
   public Idrak.Imaging.MadeFontFace Build()
+  public Idrak.Imaging.MadeFontFaceBuilder Heights(int xHeight, int capHeight)
   public Idrak.Imaging.MadeFontFaceBuilder Map(int codePoint, int glyph)
   public Idrak.Imaging.MadeFontFaceBuilder Missing(Idrak.Abstraction.Data.GlyphOutline outline, int advance)
   public Idrak.Imaging.MadeFontFaceBuilder Name(Idrak.Abstraction.Data.FontNameKind kind, string value)
@@ -287,6 +288,7 @@ public sealed record Idrak.Imaging.TextStyle : System.IEquatable<Idrak.Imaging.T
   public float LineSpacing { get; init; }
   public float Scale(Idrak.Abstraction.Data.IFontFace font)
   public float Size { get; init; }
+  public int Seed { get; init; }
   public string? Language { get; init; }
 
 public sealed class Idrak.Imaging.TrueTypeWriter : Idrak.Abstraction.Data.IFontWriter

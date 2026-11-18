@@ -330,6 +330,22 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a font maker (<see cref="FontMakerSuite"/>) on glyphs of its own, whole and as random parts: every glyph made
+    /// (each fill once) or reported, every character answering with its first fill, each glyph where its ink sat, advances
+    /// holding the ink, the metrics measured, the face written as TrueType and read back the same, the same face again and
+    /// from several threads, no glyphs refused, an option it does not take refused. Two random parts unless
+    /// <paramref name="options"/> says otherwise.
+    /// </summary>
+    /// <param name="maker">The maker.</param>
+    /// <param name="samples">Glyphs in its kind (at least one sample).</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckFontMaker(IFontMaker maker, IReadOnlyList<FontMakerSample> samples, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(maker);
+        return Check(maker, new FontMakerSuite(samples), options ?? new ContractCheckOptions { RandomCases = 2 });
+    }
+
+    /// <summary>
     /// Checks a shape (<see cref="ShapeSuite"/>): the same plan for the same step and context, regions inside the box
     /// asked for and not overlapping, widths honoured from the start side, paths inside the box give or take their
     /// stroke, and an option it does not take refused; on <paramref name="steps"/> (its name alone when none: give steps

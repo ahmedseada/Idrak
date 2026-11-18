@@ -244,7 +244,7 @@ public static class FontCache
         foreach (var property in typeof(FontMapDrawing).GetProperties(BindingFlags.Public | BindingFlags.Instance).OrderBy(p => p.Name, StringComparer.Ordinal))
         {
             // A page's chances of the hand's features are not the font's: the same converted font serves every chance.
-            if (property.Name is nameof(FontMapDrawing.Pairs) or nameof(FontMapDrawing.SecondStyle) or nameof(FontMapDrawing.Words))
+            if (property.Name is nameof(FontMapDrawing.Pairs) or nameof(FontMapDrawing.SecondStyle) or nameof(FontMapDrawing.Words) or nameof(FontMapDrawing.Alternates))
             {
                 continue;
             }

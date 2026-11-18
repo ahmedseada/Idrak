@@ -1572,6 +1572,34 @@ public enum Idrak.Abstraction.Data.FontGlyphRefKind : int
   Id = 1
   Name = 2
 
+public sealed record Idrak.Abstraction.Data.FontMakerRequest : System.IEquatable<Idrak.Abstraction.Data.FontMakerRequest>
+  public FontMakerRequest(Idrak.Abstraction.Data.FoundGlyphs Glyphs, string Family, Idrak.Abstraction.Data.FontMakerSettings Settings)
+  public Idrak.Abstraction.Data.FontMakerSettings Settings { get; init; }
+  public Idrak.Abstraction.Data.FoundGlyphs Glyphs { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Data.FontNameKind, string>? Names { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? TracerOptions { get; init; }
+  public string Family { get; init; }
+  public string Tracer { get; init; }
+  public string? Style { get; init; }
+
+public class Idrak.Abstraction.Data.FontMakerSettings
+  public FontMakerSettings(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public static Idrak.Abstraction.Data.FontMakerSettings None { get; }
+
+public static class Idrak.Abstraction.Data.FontMakers
+  public const string Traced = "traced"
+  public static Idrak.Abstraction.Data.IFontMaker Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IFontMaker? Default(string name)
+  public static Idrak.Abstraction.Data.IFontMaker? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> AllKeys()
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IFontMaker maker)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
 public sealed class Idrak.Abstraction.Data.FontMap
   public System.Collections.Generic.IReadOnlyDictionary<int, Idrak.Abstraction.Data.FontMapComponent> Aliases { get; }
   public System.Collections.Generic.IReadOnlyDictionary<int, Idrak.Abstraction.Data.FontMapLetter> Letters { get; }
@@ -1579,11 +1607,13 @@ public sealed class Idrak.Abstraction.Data.FontMap
   public System.Collections.Generic.IReadOnlyDictionary<int, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef>> Characters { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef>> Fallbacks { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>> Prefixes { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapAlternates> Alternates { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapLigature> Ligatures { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontMapShortMark> ShortMarks { get; }
   public System.Collections.Generic.IReadOnlyList<int> Measure { get; }
   public System.Collections.Generic.IReadOnlyList<string> DetectWithoutTables { get; }
   public System.Collections.Generic.IReadOnlyList<string> Scripts { get; }
+  public const string AlternatesFeature = "ALTS"
   public const string PairFeature = "PAIR"
   public const string SecondStyleFeature = "PAI2"
   public const string WordFeature = "WORD"
@@ -1600,6 +1630,11 @@ public sealed class Idrak.Abstraction.Data.FontMap
   public string Source { get; }
   public string Summary { get; }
 
+public sealed record Idrak.Abstraction.Data.FontMapAlternates : System.IEquatable<Idrak.Abstraction.Data.FontMapAlternates>
+  public FontMapAlternates(Idrak.Abstraction.Data.FontGlyphRef Glyph, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Alternates)
+  public Idrak.Abstraction.Data.FontGlyphRef Glyph { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.FontGlyphRef> Alternates { get; init; }
+
 public readonly record struct Idrak.Abstraction.Data.FontMapComponent : System.IEquatable<Idrak.Abstraction.Data.FontMapComponent>
   public FontMapComponent(int CodePoint, string? Form)
   public int CodePoint { get; init; }
@@ -1612,6 +1647,7 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public bool Letters { get; init; }
   public bool Marks { get; init; }
   public bool ReplaceBlankMarks { get; init; }
+  public const string AlternatesVariable = "IDRAK_FONT_MAP_ALTERNATES"
   public const string DigitsVariable = "IDRAK_FONT_MAP_DIGITS"
   public const string LettersVariable = "IDRAK_FONT_MAP_LETTERS"
   public const string MarksVariable = "IDRAK_FONT_MAP_MARKS"
@@ -1619,6 +1655,7 @@ public sealed record Idrak.Abstraction.Data.FontMapDrawing : System.IEquatable<I
   public const string SecondStyleVariable = "IDRAK_FONT_MAP_STYLE2"
   public const string ShortMarksVariable = "IDRAK_FONT_MAP_SHORT_MARKS"
   public const string WordsVariable = "IDRAK_FONT_MAP_WORDS"
+  public double Alternates { get; init; }
   public double MarkPenShare { get; init; }
   public double MarkShare { get; init; }
   public double Pairs { get; init; }
@@ -1962,6 +1999,10 @@ public interface Idrak.Abstraction.Data.IFontFormat
   public bool Accepts(System.ReadOnlySpan<byte> header)
   public string Name { get; }
 
+public interface Idrak.Abstraction.Data.IFontMaker : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.FontMakerSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public Idrak.Abstraction.Data.MadeFont Make(Idrak.Abstraction.Data.FontMakerRequest request)
+
 public interface Idrak.Abstraction.Data.IFontMapper : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Data.IFontFace? Map(Idrak.Abstraction.Data.IFontFace face, Idrak.Abstraction.Data.FontMap map, bool detect, Idrak.Abstraction.Data.FontMapDrawing drawing)
 
@@ -2196,6 +2237,35 @@ public sealed record Idrak.Abstraction.Data.LabelledGlyph : System.IEquatable<Id
   public override string ToString()
   public string Text { get; }
   public string? Form { get; }
+
+public sealed record Idrak.Abstraction.Data.MadeFont : System.IEquatable<Idrak.Abstraction.Data.MadeFont>
+  public Idrak.Abstraction.Data.FontMap Map { get; init; }
+  public Idrak.Abstraction.Data.IFontFace Face { get; init; }
+  public Idrak.Abstraction.Data.MadeFontMetrics Metrics { get; init; }
+  public MadeFont(Idrak.Abstraction.Data.IFontFace Face, Idrak.Abstraction.Data.FontMap Map, Idrak.Abstraction.Data.MadeFontMetrics Metrics, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.MadeGlyph> Glyphs, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.GlyphLeftOut> LeftOut)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.GlyphLeftOut> LeftOut { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.MadeGlyph> Glyphs { get; init; }
+
+public sealed record Idrak.Abstraction.Data.MadeFontMetrics : System.IEquatable<Idrak.Abstraction.Data.MadeFontMetrics>
+  public MadeFontMetrics(int UnitsPerEm, int Ascender, int Descender, int LineGap, int XHeight, int CapHeight, int Pen, int SideBearing, int Space, string Measured)
+  public int Ascender { get; init; }
+  public int CapHeight { get; init; }
+  public int Descender { get; init; }
+  public int LineGap { get; init; }
+  public int Pen { get; init; }
+  public int SideBearing { get; init; }
+  public int Space { get; init; }
+  public int UnitsPerEm { get; init; }
+  public int XHeight { get; init; }
+  public override string ToString()
+  public string Measured { get; init; }
+
+public readonly record struct Idrak.Abstraction.Data.MadeGlyph : System.IEquatable<Idrak.Abstraction.Data.MadeGlyph>
+  public MadeGlyph(int Glyph, string Text, string? Form, int Fill)
+  public int Fill { get; init; }
+  public int Glyph { get; init; }
+  public string Text { get; init; }
+  public string? Form { get; init; }
 
 public sealed record Idrak.Abstraction.Data.ObjectAnnotation : System.IEquatable<Idrak.Abstraction.Data.ObjectAnnotation>
   public Idrak.Abstraction.Data.BoundingBox Box { get; init; }
@@ -2663,6 +2733,7 @@ public readonly record struct Idrak.Abstraction.Data.TextRun : System.IEquatable
   public TextRun(int Start, int Length, string Script, bool RightToLeft, string? Language = null)
   public bool RightToLeft { get; init; }
   public int Length { get; init; }
+  public int Seed { get; init; }
   public int Start { get; init; }
   public string Script { get; init; }
   public string? Language { get; init; }

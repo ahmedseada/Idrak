@@ -41,6 +41,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         [typeof(FontMaps)] = RegisterFontMaps,                                   // the legacy layouts the library ships, as data
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(OutlineTracers)] = () => OutlineTracers.Register(new ContourTracer()),     // contour (plan 38, F1)
+        [typeof(FontMakers)] = () => FontMakers.Register(new TracedFontMaker()),           // traced (plan 38, F3)
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
         [typeof(ReadingOrders)] = () =>                                          // bidi (UAX #9), runs
         {

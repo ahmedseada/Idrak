@@ -115,6 +115,15 @@ public sealed record FontMapShortMark(IReadOnlyList<FontGlyphRef> Glyph, IReadOn
 }
 
 /// <summary>
+/// A glyph of a <see cref="FontMap"/> and its alternates: other fills of the same glyph (a hand's several ways of writing
+/// it), every one kept, in order. The mapper lists them as one alternate substitution under "aalt", "salt" and
+/// <see cref="FontMap.AlternatesFeature"/>, so any software reaches them and a page drawn in Idrak picks among them.
+/// </summary>
+/// <param name="Glyph">The glyph (the one the character, its form or its ligature gives).</param>
+/// <param name="Alternates">Its alternates, in order (each found is kept; one not found is passed over).</param>
+public sealed record FontMapAlternates(FontGlyphRef Glyph, IReadOnlyList<FontGlyphRef> Alternates);
+
+/// <summary>
 /// A font map: rules, as data, that make a "legacy" font usable directly, without converting the file: one whose letters
 /// sit under other code points (the Private Use Area) or are found by their glyph names, with no Unicode character map for
 /// them and no shaping tables. A <see cref="IFontMapper"/> applies it to an <see cref="IFontFace"/> and gives back a
@@ -144,6 +153,9 @@ public sealed record FontMapShortMark(IReadOnlyList<FontGlyphRef> Glyph, IReadOn
 /// <item><term>fallbacks</term><description>a glyph to use when one is missing, by the missing one as written ({"U+F264": "U+F263"}).</description></item>
 /// <item><term>anchors</term><description>how marks are placed: {"gap": units between ink and mark (60), "window": half the width, in units, where a base's ink is measured (130)}.</description></item>
 /// <item><term>measure</term><description>characters whose glyphs size the drawn glyphs of kind "base" (the font's own digits): their ink height, stroke and width.</description></item>
+/// <item><term>alternates</term><description>{"#12": ["#40", "#41"]}: a glyph (as written: a code point, an id or a name) and its
+/// alternates, every one kept (a hand's other fills of it): one alternate substitution under "aalt", "salt" and
+/// <see cref="AlternatesFeature"/>.</description></item>
 /// </list>
 /// A glyph is "U+F241" (the font's own code point), "#12" (a glyph id) or a name, or a list of these, the first found
 /// winning (one without ink passed over for a later one with ink). Unknown keys and bad values are refused, naming the
@@ -171,10 +183,18 @@ public sealed class FontMap
     /// </summary>
     public const string WordFeature = "WORD";
 
+    /// <summary>
+    /// The feature a map's alternates (<see cref="Alternates"/>) are given under besides "aalt" and "salt" ("ALTS", private):
+    /// a hand's several fills of a glyph, which a page drawn in Idrak picks among per glyph at random
+    /// (<see cref="FontMapDrawing.Alternates"/>); other software reaches them through "salt" and "aalt". A font of no
+    /// alternates has no such feature, so its pages are drawn as before.
+    /// </summary>
+    public const string AlternatesFeature = "ALTS";
+
     /// <summary>The positional forms a letter may have (OpenType feature tags).</summary>
     public static readonly IReadOnlyList<string> Forms = ["isol", "init", "medi", "fina"];
 
-    private static readonly string[] TopKeys = ["name", "summary", "scripts", "detect", "prefixes", "letters", "characters", "aliases", "ligatures", "marks", "shortMarks", "fallbacks", "anchors", "measure"];
+    private static readonly string[] TopKeys = ["name", "summary", "scripts", "detect", "prefixes", "letters", "characters", "aliases", "ligatures", "marks", "shortMarks", "fallbacks", "anchors", "measure", "alternates"];
     private static readonly string[] DetectKeys = ["share", "minGlyphs", "withoutTables"];
     private static readonly string[] LigatureKeys = ["feature", "components", "glyph", "place", "fonts"];
     private static readonly string[] MarkKeys = ["glyph", "place"];
@@ -240,6 +260,9 @@ public sealed class FontMap
 
     /// <summary>The characters whose glyphs are measured for the font's digit height and pen width, in order of preference.</summary>
     public IReadOnlyList<int> Measure { get; private set; } = [];
+
+    /// <summary>Glyphs' alternates (a hand's other fills of a glyph), in order.</summary>
+    public IReadOnlyList<FontMapAlternates> Alternates { get; private set; } = [];
 
     /// <inheritdoc/>
     public override string ToString() => $"{Name} ({Source})";
@@ -605,6 +628,24 @@ public sealed class FontMap
                 ? [.. measure.EnumerateArray().Select(e => Code(Text(e, "measure"), "measure"))]
                 : throw Bad("measure", "must be a list of characters (\"U+0661\")");
         }
+
+        var alternates = new List<FontMapAlternates>();
+        if (root.TryGetProperty("alternates", out var alternateList))
+        {
+            if (alternateList.ValueKind != JsonValueKind.Object)
+            {
+                throw Bad("alternates", "must be an object of a glyph (as written: \"#12\", \"U+F241\" or a name) to its alternates (a glyph or a list, every one kept)");
+            }
+
+            foreach (var a in alternateList.EnumerateObject())
+            {
+                string key = $"alternates.{a.Name}";
+                var glyph = FontGlyphRef.Parse(a.Name) ?? throw Bad(key, "names no glyph: \"U+F241\" (the font's own code point), \"#12\" (a glyph id) or a glyph name");
+                alternates.Add(new FontMapAlternates(glyph, Glyphs(a.Value, key)));
+            }
+        }
+
+        Alternates = alternates;
     }
 }
 
@@ -658,6 +699,18 @@ public sealed record FontMapDrawing
     /// as often (0 turns it off); <see cref="WordsVariable"/> sets it.
     /// </summary>
     public double Words { get; init; } = Chance(Environment.GetEnvironmentVariable(WordsVariable), 0.5);
+
+    /// <summary>The variable that sets the chance a page picks a hand's alternates (<see cref="Alternates"/>): "IDRAK_FONT_MAP_ALTERNATES".</summary>
+    public const string AlternatesVariable = "IDRAK_FONT_MAP_ALTERNATES";
+
+    /// <summary>
+    /// The chance (0 to 1) a page drawn in a font with a hand's alternates (<see cref="FontMap.AlternatesFeature"/>: several
+    /// fills of a glyph, as a made font holds them) picks among them: on such a page each glyph with alternates takes itself
+    /// or one of them at random, from the page's seed and its place in the text (the same seed, the same picks), so a hand
+    /// does not repeat one shape; the glyph poses still vary each glyph on top. 1 by default (every page; 0 turns it off);
+    /// <see cref="AlternatesVariable"/> sets it. A font without the feature is drawn as before.
+    /// </summary>
+    public double Alternates { get; init; } = Chance(Environment.GetEnvironmentVariable(AlternatesVariable), 1);
 
     /// <summary>The variable that sets which bases are short for marks (<see cref="ShortMarks"/>; auto, off, or a share from 0 to 1): "IDRAK_FONT_MAP_SHORT_MARKS".</summary>
     public const string ShortMarksVariable = "IDRAK_FONT_MAP_SHORT_MARKS";

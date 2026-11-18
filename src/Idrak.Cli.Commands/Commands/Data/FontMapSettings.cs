@@ -22,6 +22,7 @@ internal sealed class FontMapSettings : IDisposable
                                   digit-pen, digit-height, digit-width, mark-size, mark-pen (font units; measured unless set),
                                   mark-share (0.3), mark-pen-share (0.6), pairs, style2, words (the chances a page
                                   joins letter pairs, writes their second style, writes whole-word ligatures; 0.5 each),
+                                  alternates (the chance a page picks a hand's alternates per glyph; 1),
                                   short-marks (auto: lower marks on bases under the height they clear; a share of the
                                   tall letters' height; off), cache (on: a legacy font converted to TrueType once and
                                   kept, IDRAK_FONT_CACHE; off; or a folder)
@@ -29,7 +30,7 @@ internal sealed class FontMapSettings : IDisposable
 
     private static readonly string[] Keys =
         ["builtin", "sidecars", "digits", "marks", "letters", "blank-marks", "slant", "wobble", "seed", "digit-pen", "digit-height", "digit-width", "mark-size", "mark-pen", "mark-share", "mark-pen-share",
-         "pairs", "style2", "words", "short-marks", "cache"];
+         "pairs", "style2", "words", "alternates", "short-marks", "cache"];
 
     private readonly bool _builtin = FontMaps.Builtin, _sidecars = FontMaps.Sidecars, _cache = FontCache.Enabled;
     private readonly string _cacheFolder = FontCache.Folder;
@@ -144,6 +145,8 @@ internal sealed class FontMapSettings : IDisposable
                 case "pairs": drawing = drawing with { Pairs = Number() is var chance && chance <= 1 ? chance : throw new ArgumentException($"--font-maps pairs={value}: a chance from 0 to 1.") }; break;
                 case "style2": drawing = drawing with { SecondStyle = Number() is var second && second <= 1 ? second : throw new ArgumentException($"--font-maps style2={value}: a chance from 0 to 1.") }; break;
                 case "words": drawing = drawing with { Words = Number() is var words && words <= 1 ? words : throw new ArgumentException($"--font-maps words={value}: a chance from 0 to 1.") }; break;
+                case "alternates": drawing = drawing with { Alternates = value is "off" or "false" or "no" ? 0
+                    : Number() is var alternates && alternates <= 1 ? alternates : throw new ArgumentException($"--font-maps alternates={value}: a chance from 0 to 1, or off.") }; break;
                 case "short-marks": drawing = drawing with { ShortMarks = value is "auto" or "on" ? null : value is "off" or "false" or "no" ? 0
                     : Number() is var share && share <= 1 ? share : throw new ArgumentException($"--font-maps short-marks={value}: auto, off or a share from 0 to 1.") }; break;
                 default: drawing = drawing with { MarkPenShare = Number() }; break;

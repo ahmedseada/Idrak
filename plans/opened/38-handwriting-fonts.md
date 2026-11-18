@@ -15,7 +15,7 @@ however long it takes (owner, 2026-11-18): this plan waits until every plan 28 p
 | F0 | The contracts and registries (`IGlyphSource` / `GlyphSources`, `IOutlineTracer` / `OutlineTracers`), the face made from glyphs (written through plan 28's `FontWriters`), their suites | A | plan 28 D8 | Built (2026-11-18) |
 | F1 | The tracer: a glyph's pixels to an outline (contours, simplified, curves fitted, one winding) | A | F0 | Built (2026-11-18) |
 | F2 | The glyph sheet: a blank sheet drawn by the shape pipeline (PNG and PDF), the filled sheet read back from an image or a PDF (found, straightened, cut, cleaned, traced) | A | F1; plan 28 D4, D6, D7 | Planned |
-| F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Planned |
+| F3 | The face: metrics, advances and the shaping data from the glyphs (the font maps' synthesized tables), missing glyphs drawn | A | F0 | Built (2026-11-18) |
 | F4 | Glyphs from real scans with their transcription: separate characters (digits in cells, unjoined letters) | B | F1, F3; plan 28 D4, D7 for PDF scans | Planned |
 | F5 | Joined handwriting: a written word cut into its letters by alignment with its transcription | B | F4 | Research, after F4 |
 | F6 | The command line: `idrak data font-sheet` and `idrak data font-from` (a `.ttf`, or a `.woff` through the plug-in, out), and `data synth` reading the made fonts | A | F2, F3; plan 28 D6, D8 | Planned |
@@ -289,6 +289,117 @@ does; whatever the sheet lacks drawn by `DrawnGlyphs` from pen strokes measured 
 random pick per glyph in Idrak, a setting), so a made font does not repeat one shape; `GlyphPoses` still varies each
 drawn glyph on top. The face is then written through `FontWriters` (plan 28 D8): `.ttf` by default, or `.woff` through
 the plug-in.
+
+**As built (2026-11-18):**
+- **The contract** (`src/Idrak.Abstraction/Data/FontMakers.cs`, proposal 3's placement): `IFontMaker : IConfigurableKind`
+  (`Read` its options once into `FontMakerSettings`; `Make(FontMakerRequest)` to a `MadeFont`) and the guarded registry
+  `FontMakers` (Register, Unregister, Names, Find, Get "not registered ... (Idrak.Imaging registers traced)", Default,
+  Origin, SetPolicy, Describe, AllKeys; under FallBack a failed make is the library's, under Shadow the two are compared by
+  their metrics and each labelled glyph's advance). The request: the glyph source's `FoundGlyphs`, the family (and style,
+  more names) the caller gives, the tracer by name (`contour` unless set) with its options, the settings. The result:
+  the face, the `FontMap` it made and applied (as data, for F6 to show or keep), the `MadeFontMetrics` with the measure
+  stated in words, each `MadeGlyph` (its id, text, form as labelled and which fill), and what was left out with why (the
+  source's left-out passed on). **Why this shape:** it is the tracer's and the source's (a configurable kind, settings read
+  once, one request record, so a field added later breaks no maker), and it makes a face, not a file: the export is
+  already a contract (`FontWriters`, plan 28 D8), so a maker never chooses a format; the labels and the map come back so a
+  caller (the suite, F6's progress, an app) knows which glyph is which fill without reading the GSUB.
+- **The library's maker** "traced" (`TracedFontMaker`, `src/Idrak.Imaging/TracedFontMaker.cs`, internal; one line in
+  `LibraryRegistrations`). Each glyph traced at its baseline and size (`LabelledGlyph.Placement`) and its ink measured as the
+  font maps measure it (`InkMeasure`, 256 px per em), on every core (`Parallel.For`; `threads`). Metrics from the ink of the
+  glyphs that are not marks (`TracedFontMaker.Heights`): the ascender and descender hold `ink-share` (0.95) of the tops and
+  bottoms, the rest outliers; the x-height and cap height are the median tops of the short and the tall glyphs among those
+  at least half the median ink height (a dot, a comma or a dash is neither), split by Otsu's level of their tops; the pen is
+  the strokes' median thickness. Each glyph placed with `side-bearing` (auto: half the pen) either side of its ink, none for
+  `joined-forms` (init:medi:fina) and marks, its advance the bearing past its ink; every outline kept as TrueType gives it
+  back (`GlyphEncoder.Whole`, decision 25's rule), so the exported font is the face. The face (`MadeFontFaceBuilder`, now
+  with `Heights`: an OS/2 table of version 4 holding the measured x-height and cap height) holds each character's first
+  fill under its code and every other glyph by id, and a space when none was written (no ink is found on a sheet; `space`:
+  auto, half the plain characters' median advance; U+00A0 shares it). The font map is written as JSON and parsed
+  (`FontMap.Parse`): every plain character a letter with its positional forms, the marks placed above or below from where
+  their ink sat against half the x-height, the ligatures (a text of several characters) under `ligature-feature` (liga)
+  with their components' forms (a ligature's form names the whole's: its first letter init or medi, its last fina or medi;
+  or each component's form between '+'; no form: plain letters), the alternates, the anchors (`mark-gap`, `mark-window`)
+  and `measure`; the script tags are `scripts` (DFLT, the default script every shaper falls back to: no script named in
+  code). `FontMaps.Apply(face, map)` makes the GSUB, GDEF and GPOS through "opentype", anchors the marks from the ink and
+  draws the digits and marks the glyphs lack, sized from the written glyphs, as for legacy fonts. A form that is not a
+  positional form, a mark with a form, a form without its plain glyph, a ligature whose letters lack their forms, and (with
+  `alternates=off`) a further fill are reported left out with why.
+- **Alternates:** the font map has a new key, `alternates` ({"#12": ["#40"]}, `FontMapAlternates`), which the mapper
+  writes as one alternate substitution (GSUB type 3) listed under `aalt`, `salt` and a private `ALTS`
+  (`FontMap.AlternatesFeature`): other software reaches the fills through `salt` and `aalt`; a mark's alternates are marks
+  placed as it is, a ligature's ligatures, every alternate a base for marks. **The pick inside Idrak** is the shaper's: a
+  feature given the value `random` ("ALTS=random") picks per glyph, itself or one of its alternates, from the run's seed
+  (`TextRun.Seed`, new), the glyph and its cluster (SplitMix64, the same on every machine); `TextStyle.Seed` is mixed with
+  each paragraph's place into its runs' seeds. A page asks for `ALTS` among the hand's features (`PageDrawing.Hand`, at the
+  chance `FontMapDrawing.Alternates`: 1 by default, `IDRAK_FONT_MAP_ALTERNATES`, `--font-maps alternates=`), only where the
+  font's own GSUB lists it, picks from its own part of the page's seed and says ", alternates" in its description; the
+  glyph poses still vary each glyph on top. The converted-font cache leaves the chance out of its key, as it does the pairs'.
+- **Results proven (rule 71):** no repository font has `ALTS` (DejaVu's `salt`/`aalt` and Cairo's `aalt` are stylistic
+  alternates, which is why Idrak picks under `ALTS` and not `salt`: picking `salt` at random would change DejaVu's pages),
+  so every existing page, shaping and converted font is unchanged; a map without alternates writes the same GSUB bytes (no
+  lookup added; a lookup lists under each tag of its feature string, one tag as before); the cache's keys are as before.
+  The groups that compare pages, shaping and written fonts passed unchanged (below).
+- **Tests:** groups `made fonts` (5 new beside F0's 5) and `font makers` (3), sheets simulated without a human: glyphs of
+  DejaVu (letters, punctuation, fi, fl, ffi, second fills of a and e) and of Cairo (17 letters in the forms the test's data
+  gives, found through joining contexts; lam-alef alone and after a letter; a fatha and a kasra; second fills of an isolated
+  beh and a medial meem) drawn into cells at 96 px per em, kept at 8-bit levels, labelled and made with the defaults.
+  Checked: the generic lines (an ordinary letter, a report, a sales report, a team meeting) shape like the source fonts
+  glyph for glyph by role (forms and ligatures); the ascender, descender and x-height within 0.02 em of the same measure on
+  DejaVu's own outlines (made 0.762, -0.208, 0.560 em; DejaVu's 0.760, -0.209, 0.560; its x 0.547); every advance its ink
+  and the bearing (half the pen, 49 units), none for joined forms; a fatha and a kasra their gap (60 units) from their
+  base's ink; the digits (Latin, Arabic-Indic) and the marks the sheet lacks drawn, the written marks not; the alternates in
+  the GSUB under all three tags, `+salt` taking the second fills, `ALTS=random` picking both fills from the seed (the same
+  seed the same, other seeds others), after the joining forms too; a page in the made font picking them and saying so, the
+  same seed the same pixels, none at a chance of 0, none in DejaVu; both faces written as TrueType and read back through
+  `FontFormats` with every point, advance, character (U+0000-U+FFFF), GSUB, GDEF and GPOS the same and the lines shaped the
+  same (with picks too), a fonts folder reading it as any font; the maker's options and refusals; `FontMakerSuite`
+  (`Conformance.CheckFontMaker`) passing on "traced" with DejaVu's sheet (defaults, and 2,048 units, a set bearing,
+  alternates off, contour at level 0.5) and Cairo's, and failing a maker that drops a character, leaves y down, narrows
+  its advances, answers differently each time, drops a fill unreported, or takes any option. One build (clean, no warning),
+  one run on the CPU with `made fonts|font makers|outline tracers|glyph sources|fonts write|fonts:|shaping:|pages:|plain:|
+  composed pages:|shapes:|glyph poses:|synthetic data:|kind table:|conformance kit:|override loop:|outside plug-in|public
+  API|abstraction inventory|every environment variable read in src|the environment table names real commands|no command,
+  option or help text names a provider|test runner` and the update flags (the D8 samples made first with
+  `make_fixtures.py --only d8`): 146 tests, 145 passed, 1 failed: the suite's "each made glyph sits where its ink sat" on
+  the 0.5-level sheet, measured against the ink's box, which held the rasterizer's faint running-sum residue right of a
+  glyph; fixed in the suite (the box of the pixels whose coverage reaches half, where a tracer's edge is promised) and in
+  the test's sheet (8-bit levels, as a scan). Rebuilt, `made fonts|font makers`: 12 passed, 1 failed (the same check on 'G':
+  a curve's control point below its ink; fixed: the outline's true extent, curves' turning points). Rebuilt, rerun: 13
+  passed, 0 failed. The API dumps (`Idrak.Abstraction`, `Idrak.Abstraction.Testing`, `Idrak.Imaging`) and the inventory
+  regenerated through the runner; `IFontMaker` and `FontMakers` on the shared-contracts list (decision 10: used by
+  Idrak.Imaging alone today, for F6's command line and an app's maker next).
+- **The checker's verdicts** (`tools/documents/check_font.py` on `test-output/fonts/made/latin-hand.ttf` and
+  `joined-hand.ttf`): fontTools opens both and decompiles every table, the OpenType Sanitizer accepts both with no message,
+  HarfBuzz shapes the seven lines; and HarfBuzz (uharfbuzz) shapes the three generic Arabic lines with `joined-hand.ttf`
+  like Cairo by role (21, 25 and 3 glyphs, lam-alef joined), `salt` giving a beh its second fill.
+- **Measured** (this 4-core container while three other agents built: load average 6.5 to 8.5; the owner's machine gives
+  the real figures): 132 glyphs at 96 px per em (DejaVu's sheet 67, Cairo's 65). The first make of the process (DejaVu's
+  sheet, cold) 154 ms and its completion 107 ms (the map's tables, anchors and drawn glyphs, made on first use), 6.2 MB.
+  Warm, both sheets: made in 41 ms on 4 threads (307 µs a glyph) and 45 ms on one (344 µs, 1.12x: little left to spread
+  under that load), the same faces both ways; completed in 73 ms (the mapper's serial work); 42 KB managed allocation a
+  glyph.
+- **Decided here (the plan did not say):** (1) the random pick is under a private `ALTS` besides `salt` and `aalt` (above),
+  and not `rand`, which HarfBuzz applies before the joining forms (a picked isolated glyph would never take its forms);
+  (2) the pick is in the shaper, before positioning, so the picked fill's advance and anchors are used; (3) a ligature's
+  form names the whole's, or each component's between '+'; (4) joined forms and marks take no side bearing; (5) a space is
+  added when none was written; (6) scripts default to DFLT; (7) the x-height leaves out glyphs under half the median ink
+  height; (8) the measured heights go into the face's OS/2; (9) `MadeGlyph.Form` keeps the label as given (a single
+  character's isol is its plain glyph); (10) only the four positional forms a font map shapes are made, others reported.
+- **Left:** F6 (`idrak data font-from`: `FontMakers` then `FontWriters.Save`); the face's completion (the mapper measures
+  every base's ink again for its anchors, serially, after the maker measured it once) is the larger part of a warm make: a
+  candidate to share or spread when the owner's bench shows it matters; the parallel trace measured again on a quiet machine
+  (`idrak bench`); the Idrak.Imaging README's fonts row (shared with the font-writer pieces) not edited; `.woff` export when
+  the plug-in lands; F2's and F4's sources give real ink to the same maker.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples --only d8
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "made fonts|font makers|outline tracers|glyph sources|fonts write|fonts:|shaping:|pages:|plain:|composed pages:|shapes:|glyph poses:|synthetic data:|kind table:|conformance kit:|override loop:|outside plug-in|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|no command, option or help text names a provider|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-p38f3.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_font.py test-output\fonts\made\latin-hand.ttf test-output\fonts\made\joined-hand.ttf -o test-output\fonts\check-made.json
+  ```
 
 ### F4: glyphs from real scans with their transcription
 
