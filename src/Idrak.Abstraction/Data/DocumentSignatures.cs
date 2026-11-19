@@ -96,11 +96,23 @@ public sealed record SignatureCheckOptions
     /// <summary>Whether the machine's store of trusted roots is trusted too (false).</summary>
     public bool UseMachineStore { get; init; }
 
-    /// <summary>Whether revocation data the document lacks may be fetched online (off unless <see cref="OnlineVariable"/> turns it on).</summary>
+    /// <summary>
+    /// Whether revocation data the document lacks may be fetched online (off unless <see cref="OnlineVariable"/> turns it on),
+    /// from the addresses the certificates name, through <see cref="SignatureServices"/>.
+    /// </summary>
     public bool Online { get; init; } = DocumentSettings.Switch(OnlineVariable) ?? false;
 
     /// <summary>The time the chain is checked at, or null for the signature's trusted time (its timestamp's), else now.</summary>
     public DateTimeOffset? At { get; init; }
+
+    /// <summary>
+    /// Whether a certificate with no revocation data (in the document, or online when <see cref="Online"/>) fails the
+    /// revocation step (true), or passes it as "not checked" (false: what is found revoked always fails).
+    /// </summary>
+    public bool RequireRevocation { get; init; }
+
+    /// <summary>How long a service asked online may take to answer (30 seconds).</summary>
+    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>
@@ -185,11 +197,34 @@ public sealed record SigningOptions(X509Certificate2 Certificate)
     /// <summary>The digest (SHA-256).</summary>
     public HashAlgorithmName Digest { get; init; } = HashAlgorithmName.SHA256;
 
+    /// <summary>How an RSA key signs (<see cref="RSASignaturePadding.Pkcs1"/>; <see cref="RSASignaturePadding.Pss"/> for RSA-PSS); not used by other keys.</summary>
+    public RSASignaturePadding RsaPadding { get; init; } = RSASignaturePadding.Pkcs1;
+
     /// <summary>The level (<see cref="DocumentSignatureLevel.BaselineB"/>).</summary>
     public DocumentSignatureLevel Level { get; init; }
 
     /// <summary>The timestamp authority's address, for <see cref="DocumentSignatureLevel.BaselineT"/> and above; null for none.</summary>
     public Uri? TimestampAuthority { get; init; }
+
+    /// <summary>The time the signer claims to sign at (the signature dictionary's), or null for now.</summary>
+    public DateTimeOffset? SigningTime { get; init; }
+
+    /// <summary>
+    /// Revocation data for <see cref="DocumentSignatureLevel.BaselineLt"/>, as the issuers sign it (DER): revocation lists and
+    /// status responses for the chain's certificates (the signer's, the chain's and the timestamp authority's), added to the
+    /// document with the certificates.
+    /// </summary>
+    public IReadOnlyList<ReadOnlyMemory<byte>> Revocation { get; init; } = [];
+
+    /// <summary>
+    /// Whether revocation data <see cref="Revocation"/> lacks for <see cref="DocumentSignatureLevel.BaselineLt"/> may be
+    /// fetched from the addresses the certificates name, through <see cref="SignatureServices"/> (off unless
+    /// <see cref="SignatureCheckOptions.OnlineVariable"/> turns it on).
+    /// </summary>
+    public bool Online { get; init; } = DocumentSettings.Switch(SignatureCheckOptions.OnlineVariable) ?? false;
+
+    /// <summary>How long a service asked (the timestamp authority, a revocation address) may take to answer (30 seconds).</summary>
+    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>Why it is signed, or null.</summary>
     public string? Reason { get; init; }

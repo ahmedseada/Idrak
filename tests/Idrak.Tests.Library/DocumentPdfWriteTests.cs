@@ -838,7 +838,7 @@ internal abstract partial class Tests
             ExpectRefusal<NotSupportedException>(() => builder.AddField(null!), "D9", "form fields");
             ExpectRefusal<NotSupportedException>(() => builder.AddOutline(null!), "D10", "bookmarks");
             ExpectRefusal<NotSupportedException>(() => builder.SetPageLabels([]), "D10", "page labels");
-            ExpectRefusal<NotSupportedException>(() => builder.Sign("Signature1", null!), "D12", "signing");
+            ExpectRefusal<ArgumentNullException>(() => builder.Sign("Signature1", null!), "options", "signing without options");
             ExpectRefusal<NotSupportedException>(() => page.AddLink(null!), "D10", "links");
             ExpectRefusal<NotSupportedException>(() => page.AddAnnotation(null!), "D10", "annotations");
             builder.AddPage(100, 100);

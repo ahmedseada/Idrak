@@ -2187,6 +2187,9 @@ public interface Idrak.Abstraction.Data.IShape : Idrak.Abstraction.IConfigurable
 public interface Idrak.Abstraction.Data.IShapeProfile : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Data.ShapePipeline Sample(int seed)
 
+public interface Idrak.Abstraction.Data.ISignatureService : Idrak.Abstraction.IKind
+  public byte[] Send(Idrak.Abstraction.Data.SignatureServiceRequest request, System.Threading.CancellationToken cancellation = default)
+
 public interface Idrak.Abstraction.Data.ITextBinding : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Data.BoundText Bind(System.Collections.Generic.IReadOnlyList<string> lines, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeRegion> regions, Idrak.Abstraction.Data.TextBindingSettings settings, int seed)
   public Idrak.Abstraction.Data.TextBindingSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
@@ -2792,7 +2795,9 @@ public sealed record Idrak.Abstraction.Data.SignatureCheckOptions : System.IEqua
   public SignatureCheckOptions()
   public System.Collections.Generic.IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> Trusted { get; init; }
   public System.DateTimeOffset? At { get; init; }
+  public System.TimeSpan Timeout { get; init; }
   public bool Online { get; init; }
+  public bool RequireRevocation { get; init; }
   public bool UseMachineStore { get; init; }
   public const string OnlineVariable = "IDRAK_DOCUMENT_SIGNATURE_ONLINE"
 
@@ -2802,15 +2807,45 @@ public readonly record struct Idrak.Abstraction.Data.SignatureCheckStep : System
   public string Detail { get; init; }
   public string Name { get; init; }
 
+public enum Idrak.Abstraction.Data.SignatureServiceKind : byte
+  Ocsp = 2
+  RevocationList = 1
+  Timestamp = 0
+
+public sealed record Idrak.Abstraction.Data.SignatureServiceRequest : System.IEquatable<Idrak.Abstraction.Data.SignatureServiceRequest>
+  public Idrak.Abstraction.Data.SignatureServiceKind Kind { get; init; }
+  public SignatureServiceRequest(System.Uri Address, Idrak.Abstraction.Data.SignatureServiceKind Kind)
+  public System.ReadOnlyMemory<byte> Body { get; init; }
+  public System.TimeSpan Timeout { get; init; }
+  public System.Uri Address { get; init; }
+  public long MaxResponseBytes { get; init; }
+
+public static class Idrak.Abstraction.Data.SignatureServices
+  public static Idrak.Abstraction.Data.ISignatureService For(System.Uri address)
+  public static Idrak.Abstraction.Data.ISignatureService Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.ISignatureService? Default(string name)
+  public static Idrak.Abstraction.Data.ISignatureService? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static byte[] Send(Idrak.Abstraction.Data.SignatureServiceRequest request, System.Threading.CancellationToken cancellation = default)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.ISignatureService service)
+
 public sealed record Idrak.Abstraction.Data.SigningOptions : System.IEquatable<Idrak.Abstraction.Data.SigningOptions>
   public Idrak.Abstraction.Data.DocumentBox? Box { get; init; }
   public Idrak.Abstraction.Data.DocumentSignatureLevel Level { get; init; }
   public Idrak.Abstraction.Data.ImageData? AppearanceImage { get; init; }
   public SigningOptions(System.Security.Cryptography.X509Certificates.X509Certificate2 Certificate)
+  public System.Collections.Generic.IReadOnlyList<System.ReadOnlyMemory<byte>> Revocation { get; init; }
   public System.Collections.Generic.IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> Chain { get; init; }
+  public System.DateTimeOffset? SigningTime { get; init; }
   public System.Security.Cryptography.HashAlgorithmName Digest { get; init; }
+  public System.Security.Cryptography.RSASignaturePadding RsaPadding { get; init; }
   public System.Security.Cryptography.X509Certificates.X509Certificate2 Certificate { get; init; }
+  public System.TimeSpan Timeout { get; init; }
   public System.Uri? TimestampAuthority { get; init; }
+  public bool Online { get; init; }
   public int Page { get; init; }
   public string? AppearanceText { get; init; }
   public string? Location { get; init; }

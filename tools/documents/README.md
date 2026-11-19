@@ -34,7 +34,7 @@ The run prints each phase as it is made, then each sample as it is written with 
 left, then the counts and the reference tools' notes. The default run takes about 90 seconds here (70 of them the
 reference tools, most of that the hostile files' probes); `--large` adds about 16 seconds.
 
-Two checkers for files Idrak will write, sharing the generator's reference runs:
+Three checkers for files Idrak writes, sharing the generator's reference runs:
 
 - `check_written.py FILES|DIR -o REPORT.json [--expected auto|FILE.json] [--password PW] [--render DIR] [--dpi N]`
   (D6 onwards): qpdf (pikepdf) opens each PDF, runs its syntax check and decodes every stream (a JPEG or JPEG 2000
@@ -48,6 +48,11 @@ Two checkers for files Idrak will write, sharing the generator's reference runs:
   same outline kind; across TrueType and CFF each glyph's exact bounds, area and centroid within the tolerance),
   advance, character and the shaping are compared with the source (a subset through `--mapping`: a JSON list of
   source glyph ids, or a D8 sample's JSON; its shaping on the lines it covers). Exit code 1 when a font fails.
+- `check_signed.py FILES|DIR -o REPORT.json [--password PW] [--pki DIR]` (D12): pyHanko validates every signature of
+  each PDF Idrak signed with the test root alone as trusted, at the JSON's validation time, nothing fetched (and a B-LT
+  signature again with the file's DSS alone, revocation required, at its timestamp's time), and compares what it finds
+  with `NAME.json` beside `NAME.pdf` (each signature's field, kind, validity, coverage, timestamp, revocation and
+  changes, as the tests write it; the PKI is the folder it names, or `--pki`). Exit code 1 when a signature differs.
 
 The PDF reader's font tables (D3) are made here too: `make_pdf_tables.py [OUT_FILE]` writes
 `src/Idrak.Data/Pdf/PdfFontTables.Data.cs` (committed: the library reads it, nothing is generated at build) from the pinned

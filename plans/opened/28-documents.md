@@ -28,7 +28,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Built (2026-11-18) |
-| D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Planned |
+| D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Built (2026-11-19) |
 | D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Planned |
 
 ## Goal
@@ -1770,6 +1770,149 @@ after signing); a file Idrak signs checks valid in Idrak and in the reference to
 first valid.
 
 **Tests (CPU here):** one build; `documents pdf: signatures|documents pdf: edit|documents pdf: file`.
+
+**As built (2026-11-19):**
+- **The DER, on the base library:** `System.Formats.Asn1` is in the shared framework (`Microsoft.NETCore.App.Ref/10.0`
+  holds `System.Formats.Asn1.dll`; `System.Security.Cryptography.Pkcs` is not there, so `SignedCms` and
+  `Rfc3161TimestampToken` are not used): every structure is read with `AsnReader` (BER taken, as signers write it) and
+  written with `AsnWriter` (DER), no DER code of its own and no package (`src/Idrak.Data/Pdf/Cms*.cs`, internal):
+  `CmsCertificate` (X.509 read here the same on every platform: the signed part, names, validity, key, basic constraints,
+  key usage, extended key usage, key identifiers, OCSP and list addresses; the `X509Certificate2` the contract hands out made
+  when asked), `CmsSignedData` (ContentInfo, SignedData, signers by issuer and serial or key identifier, signed attributes
+  kept as signed, unsigned ones, certificates and lists), `CmsVerifier` (message digest; signature over the signed
+  attributes with the content type and the ESS signing-certificate v1 or v2 they bind, which PAdES asks for), `CmsWriter`
+  (SignedData written: content type, message digest and signing-certificate-v2 signed in DER order, the timestamp
+  unsigned), `CmsCrl` and `CmsOcsp` (lists and basic responses read, signatures checked by the issuer or a responder it
+  authorized, a status at a time; delta, indirect and unread critical extensions refused by name; OCSP requests written),
+  `CmsTimestamp` (RFC 3161 tokens and TSTInfo read, the imprint, the token's own signature and the timeStamping purpose
+  checked; requests written, responses read against their nonce and digest), `CmsPath` (paths built and checked here: each
+  link's signature, validity at the time, CA, path length, key usage, the first certificate's usage, critical extensions
+  not read fail the path by name), `CmsKeys` (RSA verified on `BigInteger`, PKCS #1 v1.5 with or without the DigestInfo's
+  NULL and PSS with any digest, mask and salt; ECDSA through the base library's `ECDsa`; signing with the app's key as the
+  base library holds it).
+- **Read and checked** (`PdfSignatures.cs`, `PdfSignatureCheck.cs`, `PdfSignatureChanges.cs`): `IDocument.Signatures`
+  lists every signature field of the form whose value is a signature dictionary, in the order made (by where their signed
+  bytes end), found once a document: field (full name), kind (`ETSI.CAdES.detached` B-B, B-T with a signature timestamp,
+  B-LT when the DSS holds a VRI entry for it, or revocation data and no VRI; B-LTA when a document timestamp follows;
+  `adbe.pkcs7.detached` CMS; the two legacy forms; `ETSI.RFC3161` document timestamps as Other, checked by their own
+  rules), `KindName` (the SubFilter), signer, `SignedAt` (/M, else the CMS signing time), `TimestampedAt` (genTime, not yet
+  checked), reason, location, the byte range and the changes. The byte range is checked against the file: two pairs from
+  byte 0, its hole exactly this dictionary's own `/Contents` hex string (its digits are the string read) inside its object,
+  ending at the file's end or after a revision's `%%EOF`. `Check` reports six steps in order, each with why: **digest** (the
+  byte range read in 1 MiB windows and hashed; `adbe.pkcs7.sha1` the carried SHA-1 too; `adbe.x509.rsa_sha1` the digest its
+  PKCS #1 signature opens to, so a signature that opens to another digest is a digest that differs), **signature**,
+  **chain** (only the certificates in `SignatureCheckOptions.Trusted`, and the machine's roots with `UseMachineStore`;
+  certificates the signature, the DSS, `/Cert` and the timestamp carry are only links), **timestamp** (none passes saying
+  so; else its imprint over the signature's value, its token, its authority's chain and revocation), **revocation** (every
+  certificate of the path but the anchor, from the DSS, VRI entries, the CMS's own lists and Adobe's revocation attribute;
+  online through `SignatureServices` only with `Online` or `IDRAK_DOCUMENT_SIGNATURE_ONLINE`, the responder first, then the
+  lists), **changes**. The chain's time is `At`, else the valid timestamp's time, else now.
+- **Changes after signing:** the signed revision opened alone (the file's bytes to the signature's end, with the
+  document's options and password), every object a later section writes or frees compared with what it was (numbers by
+  value, references, containers member by member, streams by their dictionaries and decoded bytes; written again as it was
+  is no change), and each that differs placed by walking the current document from the trailer (the DSS, information and
+  metadata; the form, its fields and widgets with their names, appearances and signature dictionaries; pages and their
+  annotations; pages' content and resources; the rest), the walk stopping once all are placed; then classified as
+  validation data, form filling (values and appearances, new signature fields and their widgets, the form's `/Fields`,
+  `/SigFlags`, `/DR`), annotations, or other (anything else; a field the signature's FieldMDP lock names). Allowed unless
+  other or past the DocMDP permission (pyHanko's rule): the signature's own (`/Reference` DocMDP), else its field's `/Lock`,
+  else the certification's when it came first. New objects nothing reaches change nothing.
+- **Signing** (`PdfSigning.cs`; `IDocumentEditor.Sign`, `IDocumentBuilder.Sign`): each signature an incremental update of
+  its own on what came before: an empty signature field of the form (its widget given the appearance) or a new one (no
+  period in its name) on `SigningOptions.Page`, in `Box` (points from the page's top-left as shown, so it stands upright on
+  a turned page; invisible without one), added to the page's `/Annots` and the form's `/Fields` with `/SigFlags 3` (a form
+  made as an object of its own when there is none); the appearance: text in the standard Helvetica (WinAnsi), an image
+  fitted, or both; the signature dictionary (`ETSI.CAdES.detached`, `/M`, reason, location) never packed, its byte range
+  and `/Contents` reserved (from the certificates and the key, plus 16 KiB for a timestamp), filled, the bytes hashed
+  around the hole (the source's once, each attempt from a copy of that state), the CMS written and timestamped, written into
+  the hole; when a token does not fit, made once more with the room it needed. B-T asks the authority the app names through
+  `SignatureServices` (nothing else is asked); B-LT then adds one more update: the DSS (existing items kept, the same bytes
+  not written twice) with the chain's and the authority's certificates, the revocation data the app gives
+  (`SigningOptions.Revocation`) or, with `Online`, fetches, and a VRI entry. An editor with no other change signs over the
+  source as it is; with other changes (or a rewrite) the edited file is written to a temporary file first, opened and
+  signed onto the destination; several signatures follow each other. A file keeps its encryption (strings and streams by
+  its own key, `/Contents` never). The builder signs at `Finish`: `Sign` is called before the first page (as `Encrypt`),
+  from then on the file goes to a temporary file (deleted when closed), which is signed onto the destination at the end
+  (disposed unfinished, it is copied as far as it got, unsigned).
+- **Contract (public API; dumps regenerated through the runner):** `SignatureServices` (a `KindTable` by address scheme;
+  the library's "http" and "https" in Idrak.Data over the base library's `HttpClient`, a request bounded by its timeout
+  and `MaxResponseBytes`, measured like `MaxStreamBytes`), `ISignatureService`, `SignatureServiceKind`,
+  `SignatureServiceRequest`; `SigningOptions.RsaPadding`, `SigningTime`, `Revocation`, `Online`, `Timeout`;
+  `SignatureCheckOptions.RequireRevocation`, `Timeout`. `ISignatureService` and `SignatureServices`, used by Idrak.Data
+  alone today, are in `tests/Idrak.Tests/data/shared-contracts.txt`; the inventory regenerated. No new environment
+  variable (`IDRAK_DOCUMENT_SIGNATURE_ONLINE`, D0's, now read by both options).
+- **Hooks in the existing files (small, local):** `PdfDocument.cs` (`Signatures` read once, `Options`, `Disposed`),
+  `PdfEditor.cs` (`Sign`, `SaveSigned`, `_destination` settable for the temporary file), `PdfWriter.cs` (the builder's
+  output through `PdfSpillStream`, `Sign`, `Finish` and `Dispose`; `Date` internal), `LibraryRegistrations.cs` (http,
+  https), `DocumentSignatures.cs` (the options). The D6 and D11 refusals of `Sign` now refuse a call without options.
+- **Decisions the plan did not settle, taken here:** (1) Paths are built and checked here, not by `X509Chain`, whose
+  answers differ by platform (OpenSSL, CryptoAPI, Security.framework, Android), which would fetch what the file lacks and
+  cannot take the file's lists and responses offline. (2) RSA is verified on `BigInteger`: some platforms' policies refuse
+  SHA-1 signatures (the legacy forms) and the base library takes no PSS salt length but the digest's. (3) A certificate with
+  no revocation data passes the revocation step as "not checked" (soft-fail, as pyHanko's default and the samples' JSON),
+  failing only with `RequireRevocation`; what is found revoked at the time always fails. The revoked sample's JSON says
+  "untrusted" for its chain (pyHanko's verdict on the whole path): here the chain step passes and the revocation step
+  fails, and the test reads it so. (4) The network goes through a registry of its own, unguarded (a service answers for an
+  authority: another asked in its place would answer for itself, so nothing is compared or fallen back to); the tests stand
+  in a timestamp authority under "idrak-test" and the PKI's addresses over "http". (5) B-LT needs revocation data given or
+  `Online`, refused at `Sign` otherwise; signing digests are SHA-256, -384 or -512 (SHA-1 is read only); RSA signs with
+  PKCS #1 v1.5 unless `RsaPadding` is PSS. (6) `/M` is `SigningTime`, else now: a signed file does not repeat byte for byte
+  (ECDSA and PSS are random anyway). (7) An appearance's text is WinAnsi in the standard Helvetica (other characters `?`);
+  any script goes through `AppearanceImage` until D9's appearances are shaped. (8) The certification's permission also
+  bounds later approval signatures (stricter than pyHanko, which reads each signature's own).
+- **Tests:** group `documents pdf: signatures` (6, `tests/Idrak.Tests.Library/DocumentPdfSignaturesTests.cs`): the timing
+  below (first, so its cold is cold); every D12 sample (13 files, 14 signatures) read and checked as its JSON says (kind,
+  field, signer by SHA-256, `/M`, the timestamp's time, reason, location, byte range, coverage, changes; each step and its
+  detail against `results`, at the JSON's validation time and at the timestamp's, with the JSON's trust alone) and as the
+  pyHanko verdicts it records (intact, valid, docmdpOk), alike from four threads; the reasons each step gives (a changed
+  byte, the untrusted root named, the revoked signer's date and keyCompromise, the page's content changed under permission
+  2), nothing trusted without trust given, the intermediate or the signer itself as the anchor, a time past expiry, required
+  revocation (B-LT from the file alone passes it), a disposed document; fetching only when turned on (nothing asked when
+  off; the OCSP responder and the root's list asked when on, through an app's "http" over the library's; the variable
+  turning both options on; a scheme no service serves refused naming them); signing (B-B with RSA, RSA-PSS and ECDSA; B-T
+  and B-LT with RSA and ECDSA; forms-empty's own signature field; a second signature on page 2 keeping the first valid as
+  form filling; the builder's; after other edits; after a rewrite; D11's AES-256 sample by its owner password), each
+  checking valid (B-LT with revocation required), the source's bytes its prefix, one timestamp asked for B-T and B-LT and
+  nothing of "http"; misuse refused (no options, no key, SHA-1, B-T without an authority, B-LT without data, a text field,
+  a signed field, a dotted name, a page out of range, the builder after its first page, an unregistered scheme, a token for
+  another request). D6's and D11's `Sign` refusals updated. Run with `documents pdf: signatures|documents pdf: edit|documents
+  pdf: encryption|documents pdf: write|documents pdf: file|documents contracts|document layouts|outside plug-in|override
+  loop:|kind table:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the environment
+  table names real commands|hidden boxing|test runner` and the update flags, one build (two compile errors at the first:
+  a collection expression typed `int` against a byte span, a pattern variable read past an `||`; fixed, rebuilt once): 104
+  passed, 0 failed. Then one change (a form the signing makes is an object of its own, so a later signature writes the form
+  alone again), rebuilt once; `documents pdf: signatures|public API|abstraction inventory` without the flags: 12 passed, 0
+  failed.
+- **The reference validator's verdicts** (`tools/documents/check_signed.py`, new: pyHanko with the test root alone, at the
+  validation time, nothing fetched; B-LT again with the file's DSS alone, revocation required, at the timestamp's time):
+  the 12 files the tests sign into `test-output/documents/signed` and `signed-encrypted` (13 signatures) are all as their
+  JSON says: every signature intact, valid and trusted; B-B and B-T over the entire file; the two B-LT entire-revision with
+  the DSS update a change of level none, trusted from the DSS alone; the first of `signed-twice` entire-revision at form
+  filling, allowed; the timestamps valid and trusted; the encrypted file read with its user password. `check_written.py`
+  on the 11 plain files: qpdf, pdfminer.six and pdfium open each without a warning.
+- **Timings** (this container, 4 cores, other agents building beside it; the owner's devices give the real ones): the 13
+  D12 samples' 14 signatures listed (opened, read, byte ranges, changes: the five that do not cover their file open their signed
+  revision and compare it) cold 104 ms, warm 9.7 ms a pass (692 µs and 70.7 KiB a signature); checked (every step, the DSS read once a
+  document) cold 46.5 ms, warm 12.3 ms (880 µs and 27.8 KiB a signature). A two-page document of 4,720 bytes signed at
+  B-B: 9,933 bytes added, cold 53.5 ms (the process's first signature), warm 1.30 ms, 103 KiB allocated; at B-LT (a
+  timestamp from the stand-in authority, then the DSS update): 47,643 bytes added, cold 14.9 ms, warm 2.82 ms, 296 KiB.
+- **Left:** document timestamps written (B-LTA); appearance text in any script (D9's shaped appearances); a list's or a
+  response's signature verified once a check, not once a certificate it is asked about; delta and indirect lists, name
+  constraints and policy constraints (a critical one fails the path, named); DSA and EdDSA keys; freshness beyond a
+  list's or a response's next update.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: signatures|documents pdf: edit|documents pdf: encryption|documents pdf: write|documents pdf: file|documents contracts|document layouts|outside plug-in|override loop:|kind table:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d12.txt
+  $env:IDRAK_FILTER = "documents pdf: signatures: timings"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d12-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_signed.py test-output\documents\signed -o test-output\documents\signed-check.json
+  python -I tools\documents\check_signed.py test-output\documents\signed-encrypted -o test-output\documents\signed-encrypted-check.json --password reader-2026
+  ```
 
 ## Phase D13: any workload
 

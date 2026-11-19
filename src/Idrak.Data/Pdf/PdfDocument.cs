@@ -20,6 +20,7 @@ internal sealed class PdfDocument : IDocument
     private readonly DocumentOptions _options;
     private DocumentInfo? _info;
     private IReadOnlyList<DocumentAttachment>? _attachments;
+    private IReadOnlyList<DocumentSignature>? _signatures;
     private volatile bool _disposed;
 
     private PdfDocument(PdfFile file, PageNode[] pages, string version, DocumentOptions options) => (_file, _pages, _version, _options) = (file, pages, version, options);
@@ -78,7 +79,38 @@ internal sealed class PdfDocument : IDocument
 
     public IReadOnlyList<DocumentOutline> Outline => throw NotYet("bookmarks", "D10");
 
-    public IReadOnlyList<DocumentSignature> Signatures => throw NotYet("signatures", "D12");
+    /// <summary>
+    /// The signatures (D12): every signature field's signature, in the order they were made, each with its byte range read
+    /// against the file, what changed after it, and its check (<see cref="PdfSignatureCheck"/>); found on the first call.
+    /// </summary>
+    public IReadOnlyList<DocumentSignature> Signatures
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Volatile.Read(ref _signatures) is { } known)
+            {
+                return known;
+            }
+
+            string name = _file.Name;
+            IReadOnlyList<DocumentSignature> found;
+            try
+            {
+                found = PdfSignatures.Read(this);
+            }
+            catch (InvalidDataException e) when (!e.Message.StartsWith(name, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"{name}: its signatures: {e.Message}", e);
+            }
+            catch (Exception e) when (Unexpected(e))
+            {
+                throw new InvalidDataException($"{name}: its signatures: damaged ({e.GetType().Name}: {e.Message}).", e);
+            }
+
+            return Interlocked.CompareExchange(ref _signatures, found, null) ?? found;
+        }
+    }
 
     public string? PageLabel(int index) => throw NotYet("page labels", "D10");
 
@@ -479,6 +511,12 @@ internal sealed class PdfDocument : IDocument
 
     /// <summary>The format version the document states (the header's, or the catalog's when later).</summary>
     internal string StatedVersion => _version;
+
+    /// <summary>The options it was opened with (a revision of it is opened alike: the limits, the password).</summary>
+    internal DocumentOptions Options => _options;
+
+    /// <summary>Whether it was disposed (a signature's check reads the file).</summary>
+    internal bool Disposed => _disposed;
 
     /// <summary>
     /// Page <paramref name="index"/>'s object (a reference, or the dictionary itself) and what the page tree above it sets

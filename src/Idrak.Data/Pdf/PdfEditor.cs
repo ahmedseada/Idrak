@@ -37,15 +37,18 @@ internal sealed class PdfEditPage(PdfDocument? document, int index)
 /// the source and the encryption is removed.</item>
 /// </list>
 /// The documents pages are inserted from stay open until <see cref="Save"/>, and an image given to a page is read then.
-/// Forms, annotations, bookmarks and signing come with phases D9, D10 and D12. Not safe from several threads.
+/// <see cref="Sign"/> (D12) adds each signature as an update of its own after the others (<see cref="PdfSigning"/>): over
+/// the source as it is when nothing else changed, else over the edited file, written first to a temporary file. Forms,
+/// annotations and bookmarks come with phases D9 and D10. Not safe from several threads.
 /// </summary>
 internal sealed class PdfEditor : IDocumentEditor
 {
     private readonly IDocument _given;
     private readonly PdfDocument _source;
-    private readonly Stream _destination;
     private readonly DocumentWriteOptions _options;
     private readonly List<PdfEditPage> _pages = [];
+    private readonly List<PdfSignRequest> _signatures = [];
+    private Stream _destination;
     private readonly Dictionary<IFontFace, PdfWriterFont> _fonts = new(ReferenceEqualityComparer.Instance);
     private readonly List<PdfWriterFont> _fontOrder = [];
     private readonly List<(ImageData? Image, DocumentImageEncoding Encoding, int Number)> _images = [];
@@ -83,7 +86,17 @@ internal sealed class PdfEditor : IDocumentEditor
 
     public void AddOutline(DocumentOutline outline) => throw NotYet("bookmarks", "D10");
 
-    public void Sign(string field, SigningOptions options) => throw NotYet("signatures", "D12");
+    /// <summary>
+    /// Signs the document in the signature field <paramref name="field"/> (an empty one of the form, or a new one on
+    /// <see cref="SigningOptions.Page"/>) when it is saved: each signature an incremental update of its own, after the
+    /// other changes, in the order asked.
+    /// </summary>
+    public void Sign(string field, SigningOptions options)
+    {
+        ThrowIfDone();
+        PdfSigning.Validate(field, options);
+        _signatures.Add(new PdfSignRequest(field, options));
+    }
 
     public void InsertPages(int index, IDocument from, params ReadOnlySpan<int> pages)
     {
@@ -197,6 +210,12 @@ internal sealed class PdfEditor : IDocumentEditor
         }
 
         _saved = true;
+        if (_signatures.Count > 0)
+        {
+            SaveSigned(mode);
+            return;
+        }
+
         if (mode == DocumentSaveMode.Incremental)
         {
             SaveIncremental();
@@ -207,6 +226,45 @@ internal sealed class PdfEditor : IDocumentEditor
         }
 
         _destination.Flush();
+    }
+
+    // The signatures, each its own update: over the source as it is when nothing else changed; else the edited file is
+    // written to a temporary file (as an update or a rewrite), opened, and signed onto the destination.
+    private void SaveSigned(DocumentSaveMode mode)
+    {
+        bool edited = _info is not null || _encryptSet || _fontOrder.Count > 0 || _images.Count > 0 || !SamePages()
+                      || _pages.Exists(p => p.Rotation is not null || p.Content is not null);
+        if (mode == DocumentSaveMode.Incremental && !edited)
+        {
+            PdfSigning.WriteSigned(_source, _signatures, _destination, _options);
+            return;
+        }
+
+        var destination = _destination;
+        using var spill = PdfSpillStream.Create();
+        _destination = spill;
+        try
+        {
+            if (mode == DocumentSaveMode.Incremental)
+            {
+                SaveIncremental();
+            }
+            else
+            {
+                SaveRewrite();
+            }
+        }
+        finally
+        {
+            _destination = destination;
+        }
+
+        spill.Flush();
+        // The edited file opens with the password of its encryption: a new one's owner (else user) password, none when it
+        // was removed, else the source's own.
+        string? password = _encryptSet ? _encryption?.OwnerPassword ?? _encryption?.UserPassword : _source.Options.Password;
+        using var based = PdfDocument.Open(spill, _source.File.Name, _source.Options with { Password = password });
+        PdfSigning.WriteSigned(based, _signatures, destination, _options);
     }
 
     public void Dispose()

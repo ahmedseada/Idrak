@@ -21,9 +21,10 @@ namespace Idrak.Data.Pdf;
 /// and says the file was repaired (fonts, written at the end, are missing). Pages are copied from other PDF documents
 /// (merging and splitting, <see cref="IDocumentBuilder.CopyPage"/>: what each uses copied once, duplicates written once)
 /// and a document is saved encrypted (<see cref="IDocumentBuilder.Encrypt"/>: AES-256, revision 6); a PDF document is
-/// edited through <see cref="Edit"/> (<see cref="PdfEditor"/>). Forms, annotations, links, bookmarks, page labels and
-/// signing come with the later phases of the documents plan (D9, D10, D12), each a <see cref="NotSupportedException"/>
-/// naming its phase until it lands.
+/// edited through <see cref="Edit"/> (<see cref="PdfEditor"/>) and signed (<see cref="IDocumentBuilder.Sign"/>, D12: the
+/// finished file signed as incremental updates, <see cref="PdfSigning"/>). Forms, annotations, links, bookmarks and page
+/// labels come with the later phases of the documents plan (D9, D10), each a <see cref="NotSupportedException"/> naming
+/// its phase until it lands.
 /// </summary>
 internal sealed class PdfWriter : IDocumentWriter
 {
@@ -75,9 +76,12 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     private const int CatalogNumber = 1, PagesNumber = 2;
 
     private readonly Stream _destination;
+    private readonly PdfSpillStream _output;
+    private readonly List<PdfSignRequest> _signatures = [];
     private readonly DocumentWriteOptions _options;
     private readonly string _version;
     private readonly PdfFileWriter _file;
+    private DocumentEncryption? _encryption;
     private readonly bool _classic;
     private readonly List<int> _pages = [];
     private readonly Dictionary<IFontFace, PdfWriterFont> _fonts = new(ReferenceEqualityComparer.Instance);
@@ -101,7 +105,8 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
 
         (_destination, _options, _version) = (destination, options, version);
         _classic = string.CompareOrdinal(version, "1.5") < 0;                  // cross-reference and object streams came with 1.5
-        _file = new PdfFileWriter(destination, version, options.Compression, packing: !_classic && options.ObjectStreams);
+        _output = new PdfSpillStream(destination);                             // the destination, or a temporary file once signing is asked
+        _file = new PdfFileWriter(_output, version, options.Compression, packing: !_classic && options.ObjectStreams);
         _file.Allocate();                                                      // 1: the catalog
         _file.Allocate();                                                      // 2: the page tree's root
     }
@@ -215,11 +220,29 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         }
 
         _security = PdfSecurity.Create(encryption);
+        _encryption = encryption;                                              // its passwords open the file again when it is signed
         int number = _file.Allocate();
         (_file.Security, _file.PlainNumber, _file.EncryptNumber) = (_security, number, number);
     }
 
-    public void Sign(string field, SigningOptions options) => throw NotYet("signatures", "D12");
+    /// <summary>
+    /// Signs the document in the signature field <paramref name="field"/> when it is finished: the file is written whole
+    /// (to a temporary file, from this call on), then each signature appended to it as an incremental update of its own on
+    /// the destination (<see cref="PdfSigning"/>); called before the first page or file, like <see cref="Encrypt"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A page or a file was added already (written to the destination as it is).</exception>
+    public void Sign(string field, SigningOptions options)
+    {
+        ThrowIfDone();
+        PdfSigning.Validate(field, options);
+        if (_started)
+        {
+            throw new InvalidOperationException("Sign is called before the first page or attached file: what was written before it went to the destination already, outside the file the signature is added to.");
+        }
+
+        _output.Spill();
+        _signatures.Add(new PdfSignRequest(field, options));
+    }
 
     public void Finish()
     {
@@ -238,6 +261,14 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             int info = WriteInfo();
             WriteEncryption();
             _file.Finish(CatalogNumber, info, Identifier(), _classic);
+            if (_output.Spilled is { } spill)
+            {
+                // The finished file, opened from the temporary file, signed onto the destination.
+                spill.Flush();
+                using var written = PdfDocument.Open(spill, "the PDF document being signed", new DocumentOptions { Password = _encryption?.OwnerPassword ?? _encryption?.UserPassword });
+                PdfSigning.WriteSigned(written, _signatures, _destination, _options);
+            }
+
             _destination.Flush();
         }
         finally
@@ -265,6 +296,13 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
                 WriteStructure(packed: false);
                 WriteEncryption();
                 _file.Unfinished(CatalogNumber);
+                if (_output.Spilled is { } spill)
+                {
+                    spill.Flush();
+                    spill.Position = 0;
+                    spill.CopyTo(_destination);                               // unsigned, as far as it got
+                }
+
                 _destination.Flush();
             }
         }
@@ -279,6 +317,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             _copier?.Dispose();
             _security?.Dispose();                                              // the file key cleared
             _file.Dispose();
+            _output.Dispose();                                                 // the temporary file deleted
         }
     }
 
@@ -489,7 +528,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     }
 
     // A date as PDF writes it: D:YYYYMMDDHHmmSS and the offset from UT (Z, or +HH'mm').
-    private static string Date(DateTimeOffset when)
+    internal static string Date(DateTimeOffset when)
     {
         var offset = when.Offset;
         string zone = offset == TimeSpan.Zero ? "Z"
