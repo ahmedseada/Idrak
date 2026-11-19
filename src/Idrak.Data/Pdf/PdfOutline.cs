@@ -72,7 +72,7 @@ internal sealed partial class PdfDocument
     /// The page's marked content's tags (by <c>/MCID</c>) in a tagged file, for the content reader; null when the file has
     /// no structure tree.
     /// </summary>
-    internal Func<int, DocumentTag?>? Marks(PdfValue page)
+    internal PdfMarks? Marks(PdfValue page)
     {
         lock (_navigationGate)
         {
@@ -88,8 +88,7 @@ internal sealed partial class PdfDocument
             return null;
         }
 
-        int number = page.IsReference ? page.AsReference.Number : -1;
-        return mcid => structure.TryGetValue((number, mcid), out var tag) ? tag : null;
+        return new PdfMarks(structure, page.IsReference ? page.AsReference.Number : -1);
     }
 
     /// <summary>

@@ -22,26 +22,77 @@ internal readonly record struct PdfMatrix(double A, double B, double C, double D
     public PdfMatrix Translated(double x, double y) => this with { E = x * A + y * C + E, F = x * B + y * D + F };
 }
 
-/// <summary>A page's issues, counted by kind and detail in the order first met.</summary>
+/// <summary>
+/// A page's issues, counted by kind and detail in the order first met: nothing is made until the first comes, a few are
+/// found by a scan of their list, and an index of where each is is made once there are more than a scan should pass.
+/// </summary>
 internal sealed class PdfIssues
 {
-    private readonly Dictionary<(string Kind, string Detail), int> _counts = [];
-    private readonly List<(string Kind, string Detail)> _order = [];
+    private const int ScanUpTo = 16;
+
+    private List<(string Kind, string Detail, int Count)>? _issues;
+    private Dictionary<(string Kind, string Detail), int>? _index;
 
     public void Add(string kind, string detail, int count = 1)
     {
-        var key = (kind, detail);
-        if (_counts.TryGetValue(key, out int seen))
+        var issues = _issues ??= [];
+        int at = IndexOf(issues, kind, detail);
+        if (at >= 0)
         {
-            _counts[key] = seen + count;
+            var seen = issues[at];
+            issues[at] = (seen.Kind, seen.Detail, seen.Count + count);
             return;
         }
 
-        _counts[key] = count;
-        _order.Add(key);
+        issues.Add((kind, detail, count));
+        if (_index is not null)
+        {
+            _index[(kind, detail)] = issues.Count - 1;
+        }
+        else if (issues.Count > ScanUpTo)
+        {
+            _index = new Dictionary<(string Kind, string Detail), int>(issues.Count * 2);
+            for (int i = 0; i < issues.Count; i++)
+            {
+                _index[(issues[i].Kind, issues[i].Detail)] = i;
+            }
+        }
     }
 
-    public List<DocumentIssue> ToList() => [.. _order.Select(k => new DocumentIssue(k.Kind, k.Detail, _counts[k]))];
+    private int IndexOf(List<(string Kind, string Detail, int Count)> issues, string kind, string detail)
+    {
+        if (_index is not null)
+        {
+            return _index.TryGetValue((kind, detail), out int at) ? at : -1;
+        }
+
+        for (int i = 0; i < issues.Count; i++)
+        {
+            if (string.Equals(issues[i].Kind, kind, StringComparison.Ordinal) && string.Equals(issues[i].Detail, detail, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The issues in the order first met; none: an empty list.</summary>
+    public IReadOnlyList<DocumentIssue> ToList()
+    {
+        if (_issues is not { Count: > 0 } issues)
+        {
+            return [];
+        }
+
+        var list = new List<DocumentIssue>(issues.Count);
+        foreach (var (kind, detail, count) in issues)
+        {
+            list.Add(new DocumentIssue(kind, detail, count));
+        }
+
+        return list;
+    }
 }
 
 /// <summary>
@@ -52,7 +103,10 @@ internal sealed class PdfIssues
 /// content whose <c>/ActualText</c> stands for its glyphs; other operators are passed over. Every
 /// glyph is placed through the text matrix, the CTM and the page's crop box, rotation and unit, so each run's box is on
 /// the page as shown. Runs, images and painted paths share one count, their place in the content. One reader reads one
-/// page, on one thread; the fonts it reads are kept by the document for its other pages.
+/// page at a time, on one thread; the fonts it reads are kept by the document for its other pages. A document keeps a
+/// reader from page to page (<see cref="Begin"/>, <see cref="End"/>): its working buffers (operands, glyphs, characters,
+/// runs, the graphics state stack) come from the shared array pools for a page and go back at its end, and its font and
+/// colour space caches are emptied for the next page; what a page is given (runs, paths, clips, images) is its own.
 /// </summary>
 internal sealed partial class PdfContentReader : IDisposable
 {
@@ -69,21 +123,24 @@ internal sealed partial class PdfContentReader : IDisposable
     private const int OpMarked = 'B' | 'M' << 8 | 'C' << 16, OpMarkedProperties = 'B' | 'D' << 8 | 'C' << 16, OpEndMarked = 'E' | 'M' << 8 | 'C' << 16;
 
     private readonly PdfFile _file;
-    private readonly int _page;
-    private readonly PdfIssues _issues;
-    private readonly bool _includeHidden;
+    private int _page;
+    private PdfIssues _issues = null!;                                     // set by Begin
+    private bool _includeHidden;
+
+    // The fonts the page has shown, by object number and by direct dictionary: emptied each page (a font's note is
+    // counted on each page that shows it), the fonts themselves kept by the document.
     private readonly Dictionary<int, PdfFont> _fontsByObject = [];
     private readonly Dictionary<PdfDictionary, PdfFont> _fontsByDictionary = new(ReferenceEqualityComparer.Instance);
-    private Glyph[] _glyphs = ArrayPool<Glyph>.Shared.Rent(256);   // the page's glyphs, pooled (plain values: nothing to clear)
+    private Glyph[] _glyphs = [];                                          // the page's glyphs, pooled (plain values: nothing to clear)
     private int _glyphCount;
-    private readonly List<Segment> _segments = [];
-    private readonly List<ReadRun> _runs = [];
-    private readonly List<State> _stack = [];
+    private PdfPooledList<Segment> _segments;                              // pooled lists: fields of their own, never readonly or copied
+    private PdfPooledList<ReadRun> _runs;
+    private PdfPooledList<State> _stack;
     private readonly HashSet<string> _missingFonts = [];
-    private Operand[] _operands = new Operand[32];
+    private Operand[] _operands = [];                                      // pooled
     private int _operandCount;
-    private byte[] _bytes = ArrayPool<byte>.Shared.Rent(1024);
-    private char[] _chars = ArrayPool<char>.Shared.Rent(4096);
+    private byte[] _bytes = [];                                            // pooled
+    private char[] _chars = [];                                            // pooled
     private int _charCount;
     private State _state;
     private int _skippedSaves;
@@ -96,13 +153,66 @@ internal sealed partial class PdfContentReader : IDisposable
     private RunStyle _runStyle;
     private PdfPageImages? _images;
 
+    /// <summary>A reader of page <paramref name="page"/> (from 1) of <paramref name="file"/>, read once and disposed.</summary>
     public PdfContentReader(PdfFile file, int page, PdfIssues issues, bool includeHidden)
     {
-        (_file, _page, _issues, _includeHidden) = (file, page, issues, includeHidden);
+        _file = file;
+        Begin(page, issues, includeHidden);
     }
 
-    /// <summary>The runs read, in content order (the page's <see cref="DocumentPage.Runs"/>, before they are made).</summary>
-    public IReadOnlyList<ReadRun> Runs => _runs;
+    /// <summary>A reader a document keeps for its pages: each page is read between <see cref="Begin"/> and <see cref="End"/>.</summary>
+    public PdfContentReader(PdfFile file) => _file = file;
+
+    /// <summary>
+    /// Starts page <paramref name="page"/> (from 1), its issues counted in <paramref name="issues"/>: whatever a page
+    /// before left (one that failed part of the way) is let go, and the page's working buffers are rented.
+    /// </summary>
+    public void Begin(int page, PdfIssues issues, bool includeHidden)
+    {
+        End();
+        (_page, _issues, _includeHidden) = (page, issues, includeHidden);
+        _glyphs = ArrayPool<Glyph>.Shared.Rent(256);
+        _operands = ArrayPool<Operand>.Shared.Rent(32);
+        _bytes = ArrayPool<byte>.Shared.Rent(1024);
+        _chars = ArrayPool<char>.Shared.Rent(4096);
+    }
+
+    /// <summary>
+    /// Ends the page: its working buffers go back to the shared pools, its caches are emptied, and nothing it was given
+    /// (runs, paths, clips, images) is held any more. Safe to call again.
+    /// </summary>
+    public void End()
+    {
+        Release(ref _glyphs);
+        Release(ref _operands);
+        Release(ref _bytes);
+        Release(ref _chars);
+        _segments.Return();
+        _runs.Return();
+        _stack.Return();
+        _fontsByObject.Clear();
+        _fontsByDictionary.Clear();
+        _missingFonts.Clear();
+        (_glyphCount, _charCount, _operandCount, _skippedSaves, _order, _marked, _runStart) = (0, 0, 0, 0, 0, 0, -1);
+        _state = default;
+        _tm = _tlm = PdfMatrix.Identity;
+        _runStyle = default;
+        _span = null;
+        _gapPending = false;
+        _images = null;
+        _rewrite = null;
+        EndVector();
+        EndTags();
+    }
+
+    private static void Release<T>(ref T[] array)
+    {
+        if (array.Length > 0)
+        {
+            ArrayPool<T>.Shared.Return(array);   // plain values: nothing to clear
+            array = [];
+        }
+    }
 
     /// <summary>The images read, in content order, when <see cref="ReadImages"/> was called before <see cref="Read"/> (else none).</summary>
     public IReadOnlyList<DocumentImage> Images => _images?.Images ?? [];
@@ -130,7 +240,9 @@ internal sealed partial class PdfContentReader : IDisposable
             return;
         }
 
-        var parts = new List<PdfDecoded>();
+        // One stream (the most pages have) needs no list; an array of several is listed as it decodes.
+        var parts = resolved.AsArray is { Count: > 1 } several ? new List<PdfDecoded>(several.Count) : null;
+        PdfDecoded? one = null;
         PdfBuffer? joined = null;
         try
         {
@@ -140,24 +252,40 @@ internal sealed partial class PdfContentReader : IDisposable
                 {
                     if (Decode(part) is { } decoded)
                     {
-                        parts.Add(decoded);
+                        if (parts is null)
+                        {
+                            one = decoded;
+                        }
+                        else
+                        {
+                            parts.Add(decoded);
+                        }
                     }
                 }
             }
-            else if (resolved.Kind == PdfKind.Stream && Decode(resolved) is { } decoded)
+            else if (resolved.Kind == PdfKind.Stream)
             {
-                parts.Add(decoded);
+                one = Decode(resolved);
             }
 
-            if (parts.Count == 1)
+            if (one is not null)
+            {
+                Run(one.Span, resources, 0);
+            }
+            else if (parts is { Count: 1 })
             {
                 Run(parts[0].Span, resources, 0);
             }
-            else if (parts.Count > 1)
+            else if (parts is { Count: > 1 })
             {
                 // Streams of one page are one content (an operator's operands may end one and its name start the next).
-                joined = new PdfBuffer((int)Math.Min(parts.Sum(p => p.Length + 1L), int.MaxValue), _file.MaxStreamBytes,
-                    $"{_file.Name}: page {_page}: its content streams together pass {_file.MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}).");
+                long size = 0;
+                foreach (var part in parts)
+                {
+                    size += part.Length + 1L;
+                }
+
+                joined = new PdfBuffer((int)Math.Min(size, int.MaxValue), _file.MaxStreamBytes, PdfLimitMessage.JoinedContent(_file, _page));
                 foreach (var part in parts)
                 {
                     joined.Write(part.Span);
@@ -175,9 +303,13 @@ internal sealed partial class PdfContentReader : IDisposable
         finally
         {
             joined?.Dispose();
-            foreach (var part in parts)
+            one?.Dispose();
+            if (parts is not null)
             {
-                part.Dispose();
+                foreach (var part in parts)
+                {
+                    part.Dispose();
+                }
             }
         }
     }
@@ -194,7 +326,7 @@ internal sealed partial class PdfContentReader : IDisposable
         StartVector(placement);
         if (_vector && opacity < 1f)
         {
-            _groups.Add(new DocumentGroup { Isolated = true, Alpha = Math.Clamp(opacity, 0f, 1f) });
+            (_groups ??= []).Add(new DocumentGroup { Isolated = true, Alpha = Math.Clamp(opacity, 0f, 1f) });
             _state.Group = _groups.Count - 1;
         }
 
@@ -230,15 +362,7 @@ internal sealed partial class PdfContentReader : IDisposable
         }
     }
 
-    public void Dispose()
-    {
-        ArrayPool<byte>.Shared.Return(_bytes);
-        ArrayPool<char>.Shared.Return(_chars);
-        ArrayPool<Glyph>.Shared.Return(_glyphs);
-        _bytes = [];
-        _chars = [];
-        _glyphs = [];
-    }
+    public void Dispose() => End();
 
     // ---- the interpreter -----------------------------------------------------------------------------------------
 
@@ -295,7 +419,10 @@ internal sealed partial class PdfContentReader : IDisposable
 
         if (_operandCount == _operands.Length)
         {
-            Array.Resize(ref _operands, _operands.Length * 2);
+            var larger = ArrayPool<Operand>.Shared.Rent(Math.Max(32, _operands.Length * 2));
+            _operands.AsSpan(0, _operandCount).CopyTo(larger);
+            Release(ref _operands);
+            _operands = larger;
         }
 
         _operands[_operandCount++] = new Operand(kind, start, length, number);
@@ -333,7 +460,7 @@ internal sealed partial class PdfContentReader : IDisposable
                 else if (_stack.Count > 0)
                 {
                     _state = _stack[^1];
-                    _stack.RemoveAt(_stack.Count - 1);
+                    _stack.Truncate(_stack.Count - 1);
                 }
 
                 break;
@@ -562,33 +689,47 @@ internal sealed partial class PdfContentReader : IDisposable
         Span<byte> buffer = stackalloc byte[128];
         var name = NameBytes(rawName, buffer);
         _state.Size = double.IsFinite(size) ? size : 0;
-        _state.FontLabel = PdfText.Utf8OrLatin1(name);
         _state.Font = null;
         PdfValue entry;
+        PdfName? key;
         try
         {
-            entry = Lookup(resources, "Font"u8, name);
+            entry = Lookup(resources, "Font"u8, name, out key);
         }
         catch (InvalidDataException e) when (!PdfLimit.Is(e))
         {
+            _state.FontLabel = PdfText.Utf8OrLatin1(name);
             _issues.Add(DocumentIssue.DamagedStream, $"page {_page}: the font /{_state.FontLabel}: {e.Message}");
             return;
         }
 
+        // The resources' own key names the font (its text made once, kept with the key); a name they lack is made here.
+        _state.FontLabel = key?.ToString() ?? PdfText.Utf8OrLatin1(name);
         if (!entry.IsNull)
         {
             _state.Font = Font(entry, _state.FontLabel);
         }
     }
 
-    private PdfValue Lookup(PdfDictionary? resources, ReadOnlySpan<byte> category, ReadOnlySpan<byte> name)
+    private PdfValue Lookup(PdfDictionary? resources, ReadOnlySpan<byte> category, ReadOnlySpan<byte> name) => Lookup(resources, category, name, out _);
+
+    // The resources' entry `name` of `category` (unresolved), with its key; null and none when there is none.
+    private PdfValue Lookup(PdfDictionary? resources, ReadOnlySpan<byte> category, ReadOnlySpan<byte> name, out PdfName? key)
     {
+        key = null;
         if (resources is null || _file.Dictionary(resources[category]) is not { } group)
         {
             return PdfValue.Null;
         }
 
-        return group[name];
+        int at = group.IndexOf(name);
+        if (at < 0)
+        {
+            return PdfValue.Null;
+        }
+
+        key = group.KeyAt(at);
+        return group.ValueAt(at);
     }
 
     // A font resource, read once per page and kept by the document for its other pages.
@@ -965,7 +1106,7 @@ internal sealed partial class PdfContentReader : IDisposable
             }
             finally
             {
-                _stack.RemoveRange(saved, _stack.Count - saved);
+                _stack.Truncate(saved);
                 (_state, _skippedSaves, _tm, _tlm) = (state, skipped, tm, tlm);
             }
         }
@@ -1152,7 +1293,8 @@ internal sealed partial class PdfContentReader : IDisposable
     {
         var runs = new DocumentTextRun[_runs.Count];
         unmapped = 0;
-        var fonts = new SortedSet<string>(StringComparer.Ordinal);
+        string? font = null;                                                   // the fonts of glyphs with no text: the first,
+        List<string>? fonts = null;                                            // then a list once another comes
         for (int r = 0; r < runs.Length; r++)
         {
             var run = _runs[r];
@@ -1173,7 +1315,15 @@ internal sealed partial class PdfContentReader : IDisposable
                 if (missing > 0)
                 {
                     unmapped += missing;
-                    fonts.Add(run.Style.Font.Name ?? "a font with no name");
+                    string name = run.Style.Font.Name ?? "a font with no name";
+                    if (font is null)
+                    {
+                        font = name;
+                    }
+                    else if (fonts is not null ? !fonts.Contains(name) : !string.Equals(font, name, StringComparison.Ordinal))
+                    {
+                        (fonts ??= [font]).Add(name);
+                    }
                 }
             }
 
@@ -1193,7 +1343,9 @@ internal sealed partial class PdfContentReader : IDisposable
             };
         }
 
-        unmappedFonts = fonts.Count == 0 ? null : string.Join(", ", fonts);
+        // Each font once, in ordinal order (one font: its name as it is).
+        fonts?.Sort(StringComparer.Ordinal);
+        unmappedFonts = fonts is not null ? string.Join(", ", fonts) : font;
         return runs;
     }
 
@@ -1272,7 +1424,10 @@ internal sealed partial class PdfContentReader : IDisposable
     /// of the page's main text direction (turned text, a turned page and vertical columns read as lines): a run splits where
     /// a TJ offset moves the pen (a gap the layout's word-gap share judges) and around a glyph that stands for several
     /// characters (a piece in logical order, so a ligature keeps its characters' order in right-to-left text); an
-    /// /ActualText span is one logical piece. The lines' runs are given back as the page's runs.
+    /// /ActualText span is one logical piece. A run that is one piece already (its text, box, baseline, size, order, tag
+    /// and direction what its piece would have: upright text on a page read along its width) is given as itself, and a
+    /// piece that is a whole run shares its text, so a page's text is made once. The lines' runs are given back as the
+    /// page's runs.
     /// </summary>
     public DocumentText Arrange(DocumentTextRun[] runs, float width, float height, DocumentOptions options)
     {
@@ -1283,74 +1438,83 @@ internal sealed partial class PdfContentReader : IDisposable
 
         var (cos, sin) = MainDirection();
         var pieces = new List<DocumentTextRun>(runs.Length);
-        var owners = new List<int>(runs.Length);
-        for (int r = 0; r < runs.Length; r++)
+        var owners = new PdfPooledList<int>();                                 // each piece's run, pooled
+        try
         {
-            var run = _runs[r];
-            if (run.ActualText is { } actual)
+            for (int r = 0; r < runs.Length; r++)
             {
-                AddPiece(pieces, owners, r, actual, run.First, run.Count, cos, sin, logical: true);
-                continue;
-            }
-
-            int start = run.First, end = run.First + run.Count;
-            for (int g = run.First; g < end; g++)
-            {
-                var glyph = _glyphs[g];
-                bool several = SeveralCharacters(glyph);
-                if ((glyph.Gap || several) && g > start)
+                var run = _runs[r];
+                if (run.ActualText is { } actual)
                 {
-                    AddPiece(pieces, owners, r, Text(start, g), start, g - start, cos, sin, logical: false);
-                    start = g;
+                    AddPiece(pieces, ref owners, runs, r, actual, run.First, run.Count, cos, sin, logical: true);
+                    continue;
                 }
 
-                if (several)
+                int start = run.First, end = run.First + run.Count;
+                for (int g = run.First; g < end; g++)
                 {
-                    AddPiece(pieces, owners, r, Text(g, g + 1), g, 1, cos, sin, logical: true);
-                    start = g + 1;
+                    var glyph = _glyphs[g];
+                    bool several = SeveralCharacters(glyph);
+                    if ((glyph.Gap || several) && g > start)
+                    {
+                        AddPiece(pieces, ref owners, runs, r, PieceText(runs, r, start, g), start, g - start, cos, sin, logical: false);
+                        start = g;
+                    }
+
+                    if (several)
+                    {
+                        AddPiece(pieces, ref owners, runs, r, PieceText(runs, r, g, g + 1), g, 1, cos, sin, logical: true);
+                        start = g + 1;
+                    }
+                }
+
+                if (start < end)
+                {
+                    AddPiece(pieces, ref owners, runs, r, PieceText(runs, r, start, end), start, end - start, cos, sin, logical: false);
                 }
             }
 
-            if (start < end)
+            bool turned = Math.Abs(sin) > Math.Abs(cos);
+            var arranged = DocumentTextLayouts.Arrange(pieces, turned ? height : width, turned ? width : height, options);
+            var lines = new List<DocumentLine>(arranged.Lines.Count);
+            for (int l = 0; l < arranged.Lines.Count; l++)                      // by index: the layout's lists are interfaces (no enumerator made)
             {
-                AddPiece(pieces, owners, r, Text(start, end), start, end - start, cos, sin, logical: false);
+                var line = arranged.Lines[l];
+                var own = new List<int>(line.Runs.Count);
+                for (int k = 0; k < line.Runs.Count; k++)
+                {
+                    int piece = line.Runs[k];
+                    if ((uint)piece < (uint)owners.Count && !own.Contains(owners[piece]))
+                    {
+                        own.Add(owners[piece]);
+                    }
+                }
+
+                var box = DocumentBox.Empty;
+                foreach (int r in own)
+                {
+                    box = box.Union(runs[r].Box);
+                }
+
+                // A layout that gives each piece a line of its own (content order) gives each run one: its pieces' lines join.
+                if (own.Count == 1 && lines.Count > 0 && lines[^1].Runs.Count == 1 && lines[^1].Runs[0] == own[0])
+                {
+                    var previous = lines[^1];
+                    lines[^1] = previous with { Text = previous.Text + line.Text };
+                    continue;
+                }
+
+                lines.Add(new DocumentLine(line.Text, box, line.RightToLeft, own));
             }
+
+            // Lines joined back keep the layout's text, unless the layout gave its lines one a line (then so are the joined ones).
+            bool joined = lines.Count != arranged.Lines.Count && arranged.Text == string.Join('\n', arranged.Lines.Select(l => l.Text));
+            return new DocumentText(lines, joined ? string.Join('\n', lines.Select(l => l.Text)) : arranged.Text);
         }
-
-        bool turned = Math.Abs(sin) > Math.Abs(cos);
-        var arranged = DocumentTextLayouts.Arrange(pieces, turned ? height : width, turned ? width : height, options);
-        var lines = new List<DocumentLine>(arranged.Lines.Count);
-        foreach (var line in arranged.Lines)
+        finally
         {
-            var own = new List<int>(line.Runs.Count);
-            foreach (int piece in line.Runs)
-            {
-                if ((uint)piece < (uint)owners.Count && !own.Contains(owners[piece]))
-                {
-                    own.Add(owners[piece]);
-                }
-            }
-
-            var box = DocumentBox.Empty;
-            foreach (int r in own)
-            {
-                box = box.Union(runs[r].Box);
-            }
-
-            // A layout that gives each piece a line of its own (content order) gives each run one: its pieces' lines join.
-            if (own.Count == 1 && lines.Count > 0 && lines[^1].Runs.Count == 1 && lines[^1].Runs[0] == own[0])
-            {
-                var previous = lines[^1];
-                lines[^1] = previous with { Text = previous.Text + line.Text };
-                continue;
-            }
-
-            lines.Add(new DocumentLine(line.Text, box, line.RightToLeft, own));
+            owners.Return();
         }
-
-        // Lines joined back keep the layout's text, unless the layout gave its lines one a line (then so are the joined ones).
-        bool joined = lines.Count != arranged.Lines.Count && arranged.Text == string.Join('\n', arranged.Lines.Select(l => l.Text));
-        return new DocumentText(lines, joined ? string.Join('\n', lines.Select(l => l.Text)) : arranged.Text);
     }
 
     private string Text(int first, int end)
@@ -1360,39 +1524,76 @@ internal sealed partial class PdfContentReader : IDisposable
         return new string(_chars, a.TextStart, b.TextStart + b.TextLength - a.TextStart);
     }
 
+    // The text of glyphs [first, end) of run `run`: the run's own when they are all of it (the same characters), else made.
+    private string PieceText(DocumentTextRun[] runs, int run, int first, int end) =>
+        first == _runs[run].First && end == _runs[run].First + _runs[run].Count ? runs[run].Text : Text(first, end);
+
     private bool SeveralCharacters(in Glyph glyph) =>
         glyph.TextLength > 2 || (glyph.TextLength == 2 && !char.IsSurrogatePair(_chars[glyph.TextStart], _chars[glyph.TextStart + 1]));
 
-    private void AddPiece(List<DocumentTextRun> pieces, List<int> owners, int run, string text, int first, int count, double cos, double sin, bool logical)
+    // A piece of run `run` for the layout: the run itself when every part of a piece is the run's already (the text the
+    // same string, the box, baseline, direction, size, order and tag equal; the layouts read no other), else a piece.
+    private void AddPiece(List<DocumentTextRun> pieces, ref PdfPooledList<int> owners, DocumentTextRun[] runs, int run, string text, int first, int count, double cos,
+        double sin, bool logical)
     {
         var glyph = _glyphs[first];
         var box = Bounds(first, count, cos, sin);
-        pieces.Add(new DocumentTextRun(text, box, _runs[run].Style.Size)
-        {
-            Order = _runs[run].Order,
-            Tag = _tags[run],
-            Logical = logical,
-            Baseline = (float)(-glyph.X * sin + glyph.Y * cos),
-        });
+        float baseline = (float)(-glyph.X * sin + glyph.Y * cos);
+        var read = _runs[run];
+        var tag = _tags[run];
+        var whole = runs[run];
+        bool same = ReferenceEquals(text, whole.Text) && whole.Box == box && whole.Baseline == baseline && whole.Logical == logical && whole.FontSize == read.Style.Size
+                    && whole.Order == read.Order && whole.Tag == tag;
+        pieces.Add(same ? whole : new DocumentTextRun(text, box, read.Style.Size) { Order = read.Order, Tag = tag, Logical = logical, Baseline = baseline });
         owners.Add(run);
     }
 
     // The direction most of the page's glyphs run in (to a tenth of a degree), as a cosine and sine: the frame lines are
-    // found in.
+    // found in. Each run's direction (in tenths of a degree) and index are sorted together in a buffer of the shared pool,
+    // so a direction's runs sit together, its first run first; the direction of the most glyphs wins, the earlier of two
+    // with as many.
     private (double Cos, double Sin) MainDirection()
     {
-        var weights = new Dictionary<int, (int Glyphs, double Angle, int First)>();
-        for (int r = 0; r < _runs.Count; r++)
+        int count = _runs.Count;
+        long[] keys = ArrayPool<long>.Shared.Rent(count);
+        try
         {
-            var run = _runs[r];
-            var s = _segments[_glyphs[run.First].Segment];
-            double angle = s.Vertical ? Math.Atan2(-s.D, -s.C) : Math.Atan2(s.B, s.A);
-            int key = (int)Math.Round(angle * 1800 / Math.PI);
-            weights[key] = weights.TryGetValue(key, out var seen) ? (seen.Glyphs + run.Count, seen.Angle, seen.First) : (run.Count, angle, r);
-        }
+            for (int r = 0; r < count; r++)
+            {
+                keys[r] = (long)(int)Math.Round(Angle(r) * 1800 / Math.PI) << 32 | (uint)r;
+            }
 
-        var main = weights.Values.OrderByDescending(w => w.Glyphs).ThenBy(w => w.First).First();
-        return Math.Abs(main.Angle) < 1e-9 ? (1, 0) : (Math.Cos(main.Angle), Math.Sin(main.Angle));
+            var sorted = keys.AsSpan(0, count);
+            sorted.Sort();
+            int best = -1, bestGlyphs = 0;
+            for (int i = 0; i < count;)
+            {
+                int key = (int)(sorted[i] >> 32), first = (int)(uint)sorted[i], glyphs = 0;
+                for (; i < count && (int)(sorted[i] >> 32) == key; i++)
+                {
+                    glyphs += _runs[(int)(uint)sorted[i]].Count;
+                }
+
+                if (best < 0 || glyphs > bestGlyphs || (glyphs == bestGlyphs && first < best))
+                {
+                    (best, bestGlyphs) = (first, glyphs);
+                }
+            }
+
+            double angle = Angle(best);
+            return Math.Abs(angle) < 1e-9 ? (1, 0) : (Math.Cos(angle), Math.Sin(angle));
+        }
+        finally
+        {
+            ArrayPool<long>.Shared.Return(keys);
+        }
+    }
+
+    // Run `run`'s direction: the angle of its first glyph's baseline (a vertical run's, down its column).
+    private double Angle(int run)
+    {
+        var s = _segments[_glyphs[_runs[run].First].Segment];
+        return s.Vertical ? Math.Atan2(-s.D, -s.C) : Math.Atan2(s.B, s.A);
     }
 
     /// <summary>A run read: its glyphs, its place in the content, how it is drawn, and the text a span gives it.</summary>
@@ -1470,5 +1671,92 @@ internal sealed partial class PdfContentReader : IDisposable
         public int FirstGlyph { get; } = firstGlyph;
 
         public RunStyle? Style { get; set; }
+    }
+}
+
+/// <summary>
+/// A list over an array of the shared pool, for a reader's working parts: the array is rented when the first item comes
+/// (a larger one as it grows) and given back by <see cref="Return"/>, its references cleared so the pool holds none. Kept
+/// in a field (or a local) of its own and passed by reference: a copy would share the array.
+/// </summary>
+internal struct PdfPooledList<T>
+{
+    private T[]? _items;
+    private int _count;
+
+    public readonly int Count => _count;
+
+    /// <summary>Item <paramref name="index"/>, by reference.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">It is not below <see cref="Count"/>.</exception>
+    public readonly ref T this[int index]
+    {
+        get
+        {
+            if ((uint)index >= (uint)_count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(index));
+            }
+
+            return ref _items![index];
+        }
+    }
+
+    public void Add(in T item)
+    {
+        var items = _items;
+        if (items is null || _count == items.Length)
+        {
+            items = Grow();
+        }
+
+        items[_count++] = item;
+    }
+
+    /// <summary>Keeps the first <paramref name="count"/> items (0 or more).</summary>
+    public void Truncate(int count)
+    {
+        if (count < _count)
+        {
+            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+            {
+                Array.Clear(_items!, count, _count - count);
+            }
+
+            _count = count;
+        }
+    }
+
+    /// <summary>Empties the list and gives its array back to the pool.</summary>
+    public void Return()
+    {
+        if (_items is { } items)
+        {
+            _items = null;
+            Release(items, _count);
+        }
+
+        _count = 0;
+    }
+
+    private T[] Grow()
+    {
+        var larger = ArrayPool<T>.Shared.Rent(_items is null ? 16 : _items.Length * 2);
+        if (_items is { } items)
+        {
+            items.AsSpan(0, _count).CopyTo(larger);
+            Release(items, _count);
+        }
+
+        return _items = larger;
+    }
+
+    private static void Release(T[] items, int count)
+    {
+        if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+        {
+            Array.Clear(items, 0, count);
+        }
+
+        ArrayPool<T>.Shared.Return(items);
     }
 }

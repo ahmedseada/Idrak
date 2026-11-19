@@ -23,6 +23,7 @@ internal sealed partial class PdfDocument : IDocument
     private IReadOnlyList<DocumentSignature>? _signatures;
     private PdfForm? _form;
     private int _xfa = -1;
+    private PdfContentReader? _reader;                                         // the last page's reader, for the next page
     private volatile bool _disposed;
 
     private PdfDocument(PdfFile file, PageNode[] pages, string version, DocumentOptions options) => (_file, _pages, _version, _options) = (file, pages, version, options);
@@ -277,15 +278,16 @@ internal sealed partial class PdfDocument : IDocument
                 issues.Add(DocumentIssue.DamagedStream, $"page {index + 1}: its resources: {e.Message}");
             }
 
-            content = Content(index, (float)width, (float)height, parts, issues, reader =>
-            {
-                if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
+            content = Content(index, (float)width, (float)height, parts, issues, (Document: this, Parts: parts, Node: node, Page: page, Resources: resources, Display: display),
+                static (reader, at) =>
                 {
-                    reader.Marks = Marks(node);                                // a tagged file: each run's place in its structure (D10)
-                }
+                    if ((at.Parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
+                    {
+                        reader.Marks = at.Document.Marks(at.Node);             // a tagged file: each run's place in its structure (D10)
+                    }
 
-                reader.Read(page["Contents"u8], resources, display);
-            });
+                    reader.Read(at.Page["Contents"u8], at.Resources, at.Display);
+                });
         }
 
         // The page's annotations (D10: every kind, a form's widgets among them, each with its appearance read as content of
@@ -313,44 +315,62 @@ internal sealed partial class PdfDocument : IDocument
     /// content, or a form XObject drawn on its own: an annotation's appearance) on page <paramref name="index"/> of
     /// <paramref name="width"/> x <paramref name="height"/> points, what could not be read counted in <paramref name="issues"/>.
     /// </summary>
-    internal ContentParts Content(int index, float width, float height, DocumentParts parts, PdfIssues issues, Action<PdfContentReader> interpret)
+    internal ContentParts Content(int index, float width, float height, DocumentParts parts, PdfIssues issues, Action<PdfContentReader> interpret) =>
+        Content(index, width, height, parts, issues, interpret, static (reader, act) => act(reader));
+
+    /// <summary>
+    /// <see cref="Content(int, float, float, DocumentParts, PdfIssues, Action{PdfContentReader})"/> with what
+    /// <paramref name="interpret"/> needs passed as <paramref name="state"/> (a static lambda: nothing made to hold it).
+    /// The document keeps a reader from one page to the next (taken by one thread at a time: a page read beside another
+    /// makes its own), its working buffers rented for a page and given back at its end.
+    /// </summary>
+    internal ContentParts Content<TState>(int index, float width, float height, DocumentParts parts, PdfIssues issues, TState state, Action<PdfContentReader, TState> interpret)
     {
-        using var reader = new PdfContentReader(_file, index + 1, issues, _options.IncludeHidden);
-        if ((parts & DocumentParts.Images) != 0)
+        var reader = Interlocked.Exchange(ref _reader, null) ?? new PdfContentReader(_file);
+        try
         {
-            reader.ReadImages();
-        }
-
-        // Colours, clips and transparency come with what is drawn (paths, glyphs or images); text alone stays as cheap as before.
-        if ((parts & (DocumentParts.Paths | DocumentParts.Glyphs | DocumentParts.Images)) != 0)
-        {
-            reader.ReadVector();
-        }
-
-        interpret(reader);
-        var content = ContentParts.None with { Images = reader.Images, Clips = reader.Clips, Groups = reader.Groups, SoftMasks = reader.SoftMasks };
-        if ((parts & DocumentParts.Paths) != 0)
-        {
-            content = content with { Paths = reader.Paths, Shadings = reader.Shadings };
-        }
-
-        if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
-        {
-            var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
-            if (unmapped > 0)
+            reader.Begin(index + 1, issues, _options.IncludeHidden);
+            if ((parts & DocumentParts.Images) != 0)
             {
-                issues.Add(DocumentIssue.UnmappedGlyphs, $"page {index + 1}: glyphs of {fonts} have no code point (no ToUnicode, glyph name or cmap gives one): their text is U+FFFD", unmapped);
+                reader.ReadImages();
             }
 
-            content = content with { Runs = read };
-            if ((parts & DocumentParts.Text) != 0)
+            // Colours, clips and transparency come with what is drawn (paths, glyphs or images); text alone stays as cheap as before.
+            if ((parts & (DocumentParts.Paths | DocumentParts.Glyphs | DocumentParts.Images)) != 0)
             {
-                var arranged = reader.Arrange(read, width, height, _options);
-                content = content with { Lines = arranged.Lines, Text = arranged.Text };
+                reader.ReadVector();
             }
-        }
 
-        return content;
+            interpret(reader, state);
+            var content = ContentParts.None with { Images = reader.Images, Clips = reader.Clips, Groups = reader.Groups, SoftMasks = reader.SoftMasks };
+            if ((parts & DocumentParts.Paths) != 0)
+            {
+                content = content with { Paths = reader.Paths, Shadings = reader.Shadings };
+            }
+
+            if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
+            {
+                var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
+                if (unmapped > 0)
+                {
+                    issues.Add(DocumentIssue.UnmappedGlyphs, $"page {index + 1}: glyphs of {fonts} have no code point (no ToUnicode, glyph name or cmap gives one): their text is U+FFFD", unmapped);
+                }
+
+                content = content with { Runs = read };
+                if ((parts & DocumentParts.Text) != 0)
+                {
+                    var arranged = reader.Arrange(read, width, height, _options);
+                    content = content with { Lines = arranged.Lines, Text = arranged.Text };
+                }
+            }
+
+            return content;
+        }
+        finally
+        {
+            reader.End();
+            Volatile.Write(ref _reader, reader);
+        }
     }
 
     /// <summary>What a content's reading gives a page (each part empty unless asked).</summary>

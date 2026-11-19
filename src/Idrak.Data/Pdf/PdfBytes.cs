@@ -152,15 +152,15 @@ internal sealed class PdfBuffer : IDisposable
     private const int ExactAbove = 1 << 20;
 
     private readonly long _limit;
-    private readonly string _overLimit;
+    private readonly PdfLimitMessage _overLimit;
     private byte[] _array;
     private bool _pooled = true;
     private int _length;
 
     /// <param name="capacity">The first size to rent (grows by doubling).</param>
     /// <param name="limit">The most bytes it may hold.</param>
-    /// <param name="overLimit">The message thrown when the limit is passed.</param>
-    public PdfBuffer(int capacity, long limit, string overLimit)
+    /// <param name="overLimit">The message thrown when the limit is passed (a text, or one made only then).</param>
+    public PdfBuffer(int capacity, long limit, PdfLimitMessage overLimit)
     {
         _limit = Math.Min(limit, Array.MaxLength);
         _overLimit = overLimit;
@@ -180,7 +180,7 @@ internal sealed class PdfBuffer : IDisposable
     public Span<byte> Written => _array.AsSpan(0, _length);
 
     /// <summary>The error for passing the limit (for a writer that finds more to write when <see cref="Full"/>).</summary>
-    public InvalidDataException OverLimit() => PdfLimit.Error(_overLimit);
+    public InvalidDataException OverLimit() => PdfLimit.Error(_overLimit.ToString());
 
     /// <summary>
     /// Room to write into: at least one byte and, when the limit allows, <paramref name="sizeHint"/>; never past the limit.
@@ -264,6 +264,33 @@ internal sealed class PdfBuffer : IDisposable
 
         (_array, _pooled) = (larger, !exact);
     }
+}
+
+/// <summary>
+/// What a <see cref="PdfBuffer"/> says when its limit is passed: a text given whole, or a message a file makes only when
+/// it is thrown (a page's content stream is decoded on every read of the page, and its limit is almost never passed).
+/// </summary>
+internal readonly struct PdfLimitMessage
+{
+    private readonly string? _text;
+    private readonly PdfFile? _file;
+    private readonly int _number;
+    private readonly bool _page;
+
+    private PdfLimitMessage(string? text, PdfFile? file, int number, bool page) => (_text, _file, _number, _page) = (text, file, number, page);
+
+    public static implicit operator PdfLimitMessage(string text) => new(text, null, 0, false);
+
+    /// <summary>Object <paramref name="number"/> of <paramref name="file"/>, a stream, decodes to more than the file's limit.</summary>
+    public static PdfLimitMessage Stream(PdfFile file, int number) => new(null, file, number, false);
+
+    /// <summary>Page <paramref name="page"/>'s (from 1) content streams of <paramref name="file"/> together pass the file's limit.</summary>
+    public static PdfLimitMessage JoinedContent(PdfFile file, int page) => new(null, file, page, true);
+
+    public override string ToString() =>
+        _text ?? (_page
+            ? $"{_file!.Name}: page {_number}: its content streams together pass {_file.MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."
+            : _file!.StreamOverLimit(_number));
 }
 
 /// <summary>

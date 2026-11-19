@@ -243,9 +243,7 @@ internal sealed class PdfFile : IDisposable
                 window = security.Decrypt(stream, window, ref filters);   // never longer than the stored bytes
             }
 
-            return PdfFilters.Decode(window.Memory, window, filters, MaxStreamBytes,
-                string.Create(CultureInfo.InvariantCulture,
-                    $"{Name}: object {stream.Number}: a stream decodes to more than {MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to read this file."));
+            return PdfFilters.Decode(window.Memory, window, filters, MaxStreamBytes, PdfLimitMessage.Stream(this, stream.Number));
         }
         catch (InvalidDataException e) when (!e.Message.StartsWith(Name, StringComparison.Ordinal))
         {
@@ -253,6 +251,10 @@ internal sealed class PdfFile : IDisposable
             throw PdfLimit.Is(e) ? PdfLimit.Error(message) : new InvalidDataException(message, e);
         }
     }
+
+    /// <summary>What <see cref="Decode"/> throws when stream <paramref name="number"/> decodes past <see cref="MaxStreamBytes"/> (made only then).</summary>
+    internal string StreamOverLimit(int number) => string.Create(CultureInfo.InvariantCulture,
+        $"{Name}: object {number}: a stream decodes to more than {MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to read this file.");
 
     /// <summary>A stream's (or an inline image's) filters and their parameters, every reference resolved.</summary>
     internal PdfFilter[] Filters(PdfDictionary dictionary)

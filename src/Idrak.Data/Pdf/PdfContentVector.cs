@@ -24,11 +24,11 @@ internal sealed partial class PdfContentReader
     private const int OpColourN = 's' | 'c' << 8 | 'n' << 16, OpColourNStroke = 'S' | 'C' << 8 | 'N' << 16;
 
     private readonly PdfPathBuilder _path = new();
-    private readonly List<DocumentPath> _paths = [];
-    private readonly List<DocumentPath> _clips = [];
-    private readonly List<DocumentShading> _shadings = [];
-    private readonly List<DocumentGroup> _groups = [];
-    private readonly List<DocumentSoftMask> _softMasks = [];
+    private List<DocumentPath>? _paths;           // what the page is given: made with its first part, the page's own
+    private List<DocumentPath>? _clips;
+    private List<DocumentShading>? _shadings;
+    private List<DocumentGroup>? _groups;
+    private List<DocumentSoftMask>? _softMasks;
     private readonly List<RunPaint> _paints = [];
     private readonly Dictionary<string, PdfColourSpace> _spaces = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DocumentPattern?> _patterns = new(StringComparer.Ordinal);
@@ -42,19 +42,36 @@ internal sealed partial class PdfContentReader
     public void ReadVector() => _vector = true;
 
     /// <summary>The painted paths, in content order.</summary>
-    public IReadOnlyList<DocumentPath> Paths => _paths;
+    public IReadOnlyList<DocumentPath> Paths => (IReadOnlyList<DocumentPath>?)_paths ?? [];
 
     /// <summary>The clips the parts were drawn under.</summary>
-    public IReadOnlyList<DocumentPath> Clips => _clips;
+    public IReadOnlyList<DocumentPath> Clips => (IReadOnlyList<DocumentPath>?)_clips ?? [];
 
     /// <summary>The shadings painted by <c>sh</c>, in content order.</summary>
-    public IReadOnlyList<DocumentShading> Shadings => _shadings;
+    public IReadOnlyList<DocumentShading> Shadings => (IReadOnlyList<DocumentShading>?)_shadings ?? [];
 
     /// <summary>The transparency groups.</summary>
-    public IReadOnlyList<DocumentGroup> Groups => _groups;
+    public IReadOnlyList<DocumentGroup> Groups => (IReadOnlyList<DocumentGroup>?)_groups ?? [];
 
     /// <summary>The soft masks.</summary>
-    public IReadOnlyList<DocumentSoftMask> SoftMasks => _softMasks;
+    public IReadOnlyList<DocumentSoftMask> SoftMasks => (IReadOnlyList<DocumentSoftMask>?)_softMasks ?? [];
+
+    // The vector part at a page's end: what it made is the page's (the next page makes its own), the path, the paints and
+    // the colour space and pattern caches start again.
+    private void EndVector()
+    {
+        _path.Reset();
+        _paths = _clips = null;
+        _shadings = null;
+        _groups = null;
+        _softMasks = null;
+        _paints.Clear();
+        _spaces.Clear();
+        _patterns.Clear();
+        _vector = false;
+        (_clipRule, _textClipFirst, _textClipCount, _nesting) = (0, -1, 0, 0);
+        _fixed = null;
+    }
 
     // The graphics state's vector part at the start of a content: black, a line of 1, no clip, opaque, normal.
     private void StartVector(PdfMatrix baseCtm)
@@ -249,7 +266,7 @@ internal sealed partial class PdfContentReader
         {
             double scale = Math.Sqrt(Math.Abs(_state.Ctm.A * _state.Ctm.D - _state.Ctm.B * _state.Ctm.C));
             var (verbs, points) = _path.ToArrays();
-            _paths.Add(new DocumentPath(verbs, points)
+            (_paths ??= []).Add(new DocumentPath(verbs, points)
             {
                 Fill = fill,
                 Stroke = stroke ? (float)(_state.LineWidth * scale) : null,
@@ -279,7 +296,7 @@ internal sealed partial class PdfContentReader
         if (_clipRule != 0 && !_path.IsEmpty)
         {
             var (verbs, points) = _path.ToArrays();
-            _clips.Add(new DocumentPath(verbs, points) { Fill = _clipRule == 2 ? DocumentFill.EvenOdd : DocumentFill.NonZero, Clip = _state.Clip });
+            (_clips ??= []).Add(new DocumentPath(verbs, points) { Fill = _clipRule == 2 ? DocumentFill.EvenOdd : DocumentFill.NonZero, Clip = _state.Clip });
             _state.Clip = _clips.Count - 1;
         }
 
@@ -300,7 +317,7 @@ internal sealed partial class PdfContentReader
             }
 
             var shading = PdfShadings.Read(_file, value, resources, _state.Ctm);
-            _shadings.Add(new DocumentShading(shading.Kind, shading.Colour)
+            (_shadings ??= []).Add(new DocumentShading(shading.Kind, shading.Colour)
             {
                 Coords = shading.Coords, DomainStart = shading.DomainStart, DomainEnd = shading.DomainEnd, ExtendStart = shading.ExtendStart, ExtendEnd = shading.ExtendEnd,
                 Matrix = shading.Matrix, Triangles = shading.Triangles, Background = shading.Background,
@@ -539,7 +556,7 @@ internal sealed partial class PdfContentReader
 
             var ctm = PdfShadings.Matrix(_file, group.Dictionary["Matrix"u8]).Then(_state.Ctm);
             var content = SubPage(group, _file.Dictionary(group.Dictionary["Resources"u8]) ?? resources, ctm, ctm, depth, clipToBox: true, colour: null);
-            _softMasks.Add(new DocumentSoftMask(content, luminosity) { Backdrop = backdrop });
+            (_softMasks ??= []).Add(new DocumentSoftMask(content, luminosity) { Backdrop = backdrop });
             return _softMasks.Count - 1;
         }
         catch (InvalidDataException e) when (!PdfLimit.Is(e))
@@ -661,7 +678,7 @@ internal sealed partial class PdfContentReader
 
         if (_file.Dictionary(form["Group"u8]) is { } group && _file.Resolve(group["S"u8]).AsName is { } kind && kind.Is("Transparency"u8))
         {
-            _groups.Add(new DocumentGroup
+            (_groups ??= []).Add(new DocumentGroup
             {
                 Isolated = _file.Resolve(group["I"u8]).AsBoolean, Knockout = _file.Resolve(group["K"u8]).AsBoolean, Parent = _state.Group,
                 Alpha = _state.FillAlpha, Blend = _state.Blend, SoftMask = _state.SoftMask,
@@ -681,7 +698,7 @@ internal sealed partial class PdfContentReader
         float[] points = [(float)x0, (float)y0, (float)x1, (float)y1, (float)x2, (float)y2, (float)x3, (float)y3];
         if (points.All(float.IsFinite))
         {
-            _clips.Add(new DocumentPath([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], points) { Clip = _state.Clip });
+            (_clips ??= []).Add(new DocumentPath([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], points) { Clip = _state.Clip });
             _state.Clip = _clips.Count - 1;
         }
     }
@@ -718,7 +735,7 @@ internal sealed partial class PdfContentReader
     {
         if (_textClipFirst >= 0)
         {
-            _clips.Add(new DocumentPath([], []) { Fill = DocumentFill.NonZero, Clip = _state.Clip, ClipRun = _textClipFirst, ClipRunCount = _textClipCount });
+            (_clips ??= []).Add(new DocumentPath([], []) { Fill = DocumentFill.NonZero, Clip = _state.Clip, ClipRun = _textClipFirst, ClipRunCount = _textClipCount });
             _state.Clip = _clips.Count - 1;
         }
 
@@ -821,6 +838,13 @@ internal sealed class PdfPathBuilder
         _verbs.Clear();
         _points.Clear();
         _open = false;
+    }
+
+    /// <summary>Clears the path and puts the pen back at the origin, as a new builder has it (a reader's next page).</summary>
+    public void Reset()
+    {
+        Clear();
+        Current = _start = default;
     }
 
     public (OutlineVerb[] Verbs, float[] Points) ToArrays() => ([.. _verbs], [.. _points]);

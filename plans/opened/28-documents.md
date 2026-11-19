@@ -733,6 +733,39 @@ come out in logical order through `bidi` with no language code; pages read in pa
   the two stacks came from the pool: `stackalloc` had the JIT compile two methods fully optimized at the first call (2-3
   ms more). A D3 page 44.2 to 43.2 KiB opened each pass, 10.8 to 9.8 kept open, the time the same within the noise of
   another build running (this container's CPU).
+- **Reader memory (2026-11-19):** a page of a document kept open allocated, beyond what it gives back: the content
+  reader made again each page (its 13 lists, 4 dictionaries, a set, 32 operands: 2,584 B before any content) and its
+  lists grown again (segments, runs, tags, fonts), a font label string each `Tf`, the content stream's over-limit message
+  built on every decode, the issues' dictionary and list, the main direction's dictionary and LINQ, a second
+  `DocumentTextRun` and a copy of its text for each run the layout is given, boxed enumerators over the layout's lines, a
+  parse of each inline `BDC` dictionary for its `/MCID` and a closure for the page's structure. Now the document keeps one
+  reader between pages (one thread takes it at a time; a page read beside another makes its own): its working buffers
+  are rented from the shared pools for a page and given back at its end (references cleared), its caches emptied; the
+  main direction comes from sorted pooled keys; a run that is one piece already is given to the layout as itself (its
+  text, box, baseline, size, order, tag and direction equal: the layouts read no other), a whole run's piece shares its
+  text; the font label is the resources' key's text; the over-limit message is made when thrown; issues, clips, groups
+  and soft masks are made with their first; a flat `/MCID` dictionary (names, numbers, true, false, null) is read by the
+  lexer, any other by the parser as before. Numbers were bytes already (`PdfParser.TryNumber`). What is left of the
+  reader's own: the content stream's inflater and buffer objects (584 B a page; .NET 10 has no span inflater) and the
+  list the layout is given; the layout's lines are its own (a mixed line's UAX #9 still the most). Warm, a page, start to
+  now (B): `standard14` (16 runs, 14 fonts) with `lines` 26,200 to 11,328 (8,984 given back), with no layout (glyphs)
+  23,856 to 12,928 (12,344); `rtl` 8,856 to 2,920; `vertical` 6,848 to 1,728; `type0-identity` 10,520 to 4,976 (a
+  ligature makes pieces); `scan-ocr` (D4's scan with its text layer) 14,128 to 4,752; `searchable-scan` 10,304 to 2,952;
+  `tagged` 14,576 to 4,592; `mixed-direction` 50,797 to 39,712 (the bidi order's own); with no layout every page 584 B
+  past what it gives back (5,120 to 11,480 before). No D3 or D4 sample holds CJK text: the Type 0 pages stand in. The
+  same results: the 123 sample files' pages through every layout and reading order, as text and with every part, glyphs
+  alone, images and paths, hidden runs left out (16 ways, 2,864 page reads) hash the same before and after, and each
+  build the same twice (the limits fixed: their defaults are measured from free memory, and two hostile samples quote
+  them). Interleaved, three processes each (this container, other agents building): kept open 11.5 to 5.0 KiB a page,
+  warm 2.28-6.27 to 1.93-2.57 ms a pass, its first pass 11.9-23.0 to 6.3-17.4 ms; opened each pass 45.1 to 39.4 KiB a
+  page, warm 9.6-13.2 to 9.3-10.3 ms, cold 182-244 to 198-245 ms (compiling, the same). A test in `documents pdf: text`
+  holds five pages (many fonts, right to left, two Type 0, TrueType) to what they give back, the layout's own and the
+  reader's own within 1,024 B + 8 a run (seen: 688-832). Tests (`documents pdf: text|file|images|encryption|vector|forms|
+  annotations|edit|write|signatures`, `documents drawers|document layouts|documents contracts|outside plug-in|override
+  loop:|conformance kit:|cli: data redact|public API|abstraction inventory|hidden boxing|test runner`): first 131 passed,
+  1 failed (the new test on `type0-identity`, whose ligature splits its runs: two other Type 0 pages took its place);
+  second 131 passed, 1 failed (`type0-no-cmap`'s reader's own 1,256 B: the issues' dictionary and the unmapped fonts'
+  sorted set, now a scanned list and one name); third 132 passed, 0 failed.
 
 ## Phase D4: PDF images and embedded files
 

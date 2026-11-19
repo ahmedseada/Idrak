@@ -40,7 +40,7 @@ internal static class PdfFilters
     /// An output passed <paramref name="limit"/> (a <see cref="PdfLimit"/> error saying <paramref name="overLimit"/>), a filter is
     /// unknown, or its data is damaged before any of it decoded.
     /// </exception>
-    public static PdfDecoded Decode(ReadOnlyMemory<byte> stored, PdfWindow? window, ReadOnlySpan<PdfFilter> filters, long limit, string overLimit)
+    public static PdfDecoded Decode(ReadOnlyMemory<byte> stored, PdfWindow? window, ReadOnlySpan<PdfFilter> filters, long limit, PdfLimitMessage overLimit)
     {
         var input = stored;
         PdfBuffer? current = null;

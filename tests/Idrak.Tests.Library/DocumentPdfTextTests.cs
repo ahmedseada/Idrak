@@ -19,7 +19,13 @@ internal abstract partial class Tests
         ("documents pdf: text: a form that draws itself trips MaxDepth when its page is read, naming the limit and the file; pages read in parallel give the same runs, lines, glyphs and issues as read in order", PdfTextHostileAndParallel),
         ("documents pdf: text: the options (IncludeHidden leaves invisible runs out with the others' order kept, WordGap decides TJ word gaps, the content layout gives one line a run), glyphs and faces when asked (embedded programs through FontFormats, none for the standard 14)", PdfTextOptions),
         ("documents pdf: text: glyph names to text by the Adobe Glyph List's rules, the standard fonts and their common other names, CMaps (code spaces, bfchar, bfrange with arrays, cidrange, notdef), and a hand-made page (a font the page lacks counted, an inline image holding \" EIQ\", spans named in /Properties, unknown operators passed over, paths in the order)", PdfTextHandMade),
+        ("documents pdf: text: once warm, a page of a document kept open allocates what it gives back (runs, their text, lines, text, issues), what the lines layout makes of its runs, and at most a named bound of the reader's own (the content stream's decoding, the list the layout is given): many fonts, right to left, two-byte codes, unmapped glyphs, TrueType", PdfTextAllocation),
     ];
+
+    // A kept-open page's warm allocation beyond what it gives back and what the layout makes of its runs: the reader's own,
+    // which is the content stream's decoding (its filter list, window, buffer and the inflater's objects), the page's issues
+    // and the list of runs the layout is given (a reference a run). The numbers seen are in plan 28's note "Reader memory".
+    private const long PdfReaderOwnBytes = 1024, PdfReaderOwnBytesPerRun = 8;
 
     // The D3 samples that open (not hostile, not encrypted).
     private static List<PdfSampleEntry> PdfTextSamplesReadable()
@@ -169,6 +175,129 @@ internal abstract partial class Tests
         Check(unmapped == (int)expected["issues"]!["unmappedGlyphs"]!, $"{what}: {unmapped} unmapped glyphs, expected {expected["issues"]!["unmappedGlyphs"]}");
         Check(page.Issues.All(i => i.Kind == DocumentIssue.UnmappedGlyphs), $"{what}: issues {string.Join("; ", page.Issues.Select(i => $"{i.Kind}: {i.Detail}"))}");
         return runs.Count;
+    }
+
+    private static void PdfTextAllocation(Device device)
+    {
+        CpuOnly(device);
+        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines, ReadingOrder = ReadingOrders.Bidi };
+        var samples = PdfTextSamplesReadable();
+        static long Allocated(Func<object?> call)
+        {
+            for (int i = 0; i < 1_000; i++)
+            {
+                call();
+            }
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1_000; i++)
+            {
+                call();
+            }
+
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / 1_000;
+        }
+
+        // Upright pages whose runs are the layout's pieces as they are (shown by Tj, no TJ gap, no glyph of several
+        // characters, which is a piece of its own): many fonts, right to left, two-byte codes (Type 0, one with no text
+        // map: its unmapped glyphs an issue), a TrueType font.
+        foreach (string name in (string[])["standard14", "rtl", "cidtogidmap-stream", "type0-no-cmap", "truetype-simple"])
+        {
+            var sample = samples.Single(s => s.Name == name);
+            using var document = DocumentFormats.Open(File.ReadAllBytes(sample.Path).AsMemory(), name + ".pdf", options);
+            DocumentPage Read() => document.ReadPage(0, DocumentParts.Text);
+            var page = Read();
+            var again = Read();
+            Check(PdfTextSignature(page) == PdfTextSignature(again), $"{name}: the page read again from the document kept open reads otherwise");
+
+            // What the page gives back, made by hand: the same objects of the same sizes, kept in a holder made once.
+            int[] strings = PdfPageStrings(page, again);
+            int[] lineRuns = [.. page.Lines.Select(l => l.Runs is List<int> indices ? indices.Capacity : l.Runs.Count)];
+            int lines = page.Lines is List<DocumentLine> kept ? kept.Capacity : page.Lines.Count, issues = page.Issues.Count, runCount = page.Runs.Count;
+            var holder = new object?[strings.Length + 4];
+            object? Given()
+            {
+                for (int i = 0; i < strings.Length; i++)
+                {
+                    holder[i] = new string('x', strings[i]);
+                }
+
+                var runs = new DocumentTextRun[runCount];
+                for (int i = 0; i < runs.Length; i++)
+                {
+                    runs[i] = new DocumentTextRun("", DocumentBox.Empty, 0f);
+                }
+
+                var made = new List<DocumentLine>(lines);
+                foreach (int capacity in lineRuns)
+                {
+                    made.Add(new DocumentLine("", DocumentBox.Empty, false, new List<int>(capacity)));
+                }
+
+                holder[^4] = runs;
+                holder[^3] = made;
+                holder[^2] = issues > 0 ? new List<DocumentIssue>(issues) : null;
+                holder[^1] = new DocumentPage(0, 1f, 1f);
+                return holder;
+            }
+
+            // What the lines layout makes of the page's runs (its pieces), less the texts it gives that the page gives back.
+            var arranged = DocumentTextLayouts.Arrange(page.Runs, page.Width, page.Height, options);
+            var runTexts = new HashSet<string>(page.Runs.Select(r => r.Text), ReferenceEqualityComparer.Instance);
+            int[] texts = [.. arranged.Lines.Select(l => l.Text).Append(arranged.Text).Where(t => t.Length > 0 && !runTexts.Contains(t)).Distinct<string>(ReferenceEqualityComparer.Instance).Select(t => t.Length)];
+            var textHolder = new object[texts.Length];
+            object? Texts()
+            {
+                for (int i = 0; i < texts.Length; i++)
+                {
+                    textHolder[i] = new string('x', texts[i]);
+                }
+
+                return textHolder;
+            }
+
+            long read = Allocated(Read), given = Allocated(Given);
+            long layout = Allocated(() => DocumentTextLayouts.Arrange(page.Runs, page.Width, page.Height, options)) - Allocated(Texts);
+            long own = read - given - layout, bound = PdfReaderOwnBytes + PdfReaderOwnBytesPerRun * runCount;
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    {name}: {read:N0} B a page read once warm: {given:N0} given back ({runCount} runs, {page.Lines.Count} lines), {layout:N0} the layout's own, {own:N0} the reader's own (bound {bound:N0})"));
+            Check(own <= bound, $"{name}: a page of a document kept open allocates {read} bytes once warm: {given} for what it gives back, {layout} for what the layout makes of its runs, "
+                + $"so {own} of the reader's own, past the bound of {bound} (PdfReaderOwnBytes {PdfReaderOwnBytes} + PdfReaderOwnBytesPerRun {PdfReaderOwnBytesPerRun} a run)"
+                + (own <= bound ? "" : $": {AllocatedTypes(() => Read())}"));
+        }
+    }
+
+    // The lengths of the strings a page read made (its runs', lines', text's and issues', each object once), less those
+    // that are the same object on another read (kept by the reader from page to page).
+    private static int[] PdfPageStrings(DocumentPage page, DocumentPage again)
+    {
+        var seen = new HashSet<string>(ReferenceEqualityComparer.Instance);
+        var lengths = new List<int>();
+        void Add(string text, string other)
+        {
+            if (text.Length > 0 && !ReferenceEquals(text, other) && seen.Add(text))
+            {
+                lengths.Add(text.Length);
+            }
+        }
+
+        for (int i = 0; i < page.Runs.Count; i++)
+        {
+            Add(page.Runs[i].Text, again.Runs[i].Text);
+        }
+
+        for (int i = 0; i < page.Lines.Count; i++)
+        {
+            Add(page.Lines[i].Text, again.Lines[i].Text);
+        }
+
+        Add(page.Text, again.Text);
+        for (int i = 0; i < page.Issues.Count; i++)
+        {
+            Add(page.Issues[i].Detail, again.Issues[i].Detail);
+        }
+
+        return [.. lengths];
     }
 
     private static void PdfTextHostileAndParallel(Device device)

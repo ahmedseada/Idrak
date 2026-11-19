@@ -315,17 +315,23 @@ internal sealed class PdfDictionary
 
     public bool TryGet(ReadOnlySpan<byte> key, out PdfValue value)
     {
+        int at = IndexOf(key);
+        value = at >= 0 ? _values[at] : PdfValue.Null;
+        return at >= 0;
+    }
+
+    /// <summary>Where <paramref name="key"/> is (its <see cref="KeyAt"/> and <see cref="ValueAt"/>), or -1.</summary>
+    public int IndexOf(ReadOnlySpan<byte> key)
+    {
         for (int i = 0; i < _keys.Length; i++)
         {
             if (_keys[i].Is(key))
             {
-                value = _values[i];
-                return true;
+                return i;
             }
         }
 
-        value = PdfValue.Null;
-        return false;
+        return -1;
     }
 
     public bool Contains(ReadOnlySpan<byte> key) => TryGet(key, out var value) && !value.IsNull;

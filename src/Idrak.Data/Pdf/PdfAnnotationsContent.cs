@@ -1,7 +1,16 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+
 namespace Idrak.Data.Pdf;
+
+/// <summary>A page's place in a tagged file's structure: the tag of each marked-content id (<c>/MCID</c>) on it.</summary>
+internal readonly struct PdfMarks(Dictionary<(int Page, int Mcid), DocumentTag> structure, int page)
+{
+    /// <summary>The tag of marked-content id <paramref name="mcid"/> on the page, or null.</summary>
+    public DocumentTag? Find(int mcid) => structure.TryGetValue((page, mcid), out var tag) ? tag : null;
+}
 
 /// <summary>
 /// The content interpreter's part for tagged files (ISO 32000-2, 14.6-14.8): each run's place in
@@ -11,12 +20,25 @@ namespace Idrak.Data.Pdf;
 /// </summary>
 internal sealed partial class PdfContentReader
 {
+    // What an inline dictionary's bytes hold that the parser reads (an escape, a comment, a string, an array, an inner
+    // dictionary): without them, a flat dictionary's numbers are read by the lexer.
+    private static readonly SearchValues<byte> NotPlain = SearchValues.Create("#%()<>[]{}"u8);
+
     private readonly List<(int Depth, DocumentTag? Tag)> _marks = [];
-    private readonly List<DocumentTag?> _tags = [];
+    private PdfPooledList<DocumentTag?> _tags;                             // each run's tag, pooled (a field of its own, never readonly)
     private DocumentTag? _tag;
 
     /// <summary>A tagged file's structure for this page: the tag of a marked-content id; null when the file is not tagged.</summary>
-    public Func<int, DocumentTag?>? Marks { get; set; }
+    public PdfMarks? Marks { get; set; }
+
+    // The tags at a page's end: the runs' go back to the pool, the marked content in force and the structure are let go.
+    private void EndTags()
+    {
+        _marks.Clear();
+        _tags.Return();
+        _tag = null;
+        Marks = null;
+    }
 
     // BMC or BDC: the marked content's tag (an artifact, or the structure's place of its /MCID), kept until its EMC.
     private void Tagging(ReadOnlySpan<byte> data, bool properties, PdfDictionary? resources)
@@ -31,7 +53,7 @@ internal sealed partial class PdfContentReader
             {
                 tag = DocumentTag.Artifact;
             }
-            else if (properties && Marks is { } marks && Mcid(data, _operands[_operandCount - 1], resources) is { } mcid && marks(mcid) is { } found)
+            else if (properties && Marks is { } marks && Mcid(data, _operands[_operandCount - 1], resources) is { } mcid && marks.Find(mcid) is { } found)
             {
                 tag = found;
             }
@@ -62,6 +84,12 @@ internal sealed partial class PdfContentReader
                 var raw = data.Slice(properties.Start, properties.Length);
                 if (raw.IndexOf("MCID"u8) >= 0)
                 {
+                    if (PlainNumber(raw, "MCID"u8, out double number))
+                    {
+                        // As the parser's integer would be: a whole number from 0 to int.MaxValue (NaN: none, or not a number).
+                        return number >= 0 && number <= int.MaxValue && number == Math.Floor(number) ? (int)number : null;
+                    }
+
                     var parser = new PdfParser(raw, _file.MaxDepth, complete: true);
                     dictionary = parser.ReadValue().AsDictionary;
                 }
@@ -78,6 +106,62 @@ internal sealed partial class PdfContentReader
         {
             _issues.Add(DocumentIssue.DamagedStream, $"page {_page}: a marked-content span's properties: {e.Message}");
             return null;
+        }
+    }
+
+    // The value of `key` in a dictionary written in the content (`<< ... >>`, as the lexer gives it) when the dictionary is
+    // flat and plain, read by the lexer with nothing made: only names, numbers, true, false and null (no reference, string,
+    // array, inner dictionary, comment or escape, which the parser reads, its errors the page's issues), each key a name
+    // with one value; a key given twice keeps its last value, as the parser keeps it. `number` is NaN when the key's
+    // value is not a number or the key is not there. False when the dictionary is not that plain: the parser reads it.
+    private static bool PlainNumber(ReadOnlySpan<byte> raw, ReadOnlySpan<byte> key, out double number)
+    {
+        number = double.NaN;
+        if (raw.Length < 4 || !raw.StartsWith("<<"u8) || !raw.EndsWith(">>"u8))
+        {
+            return false;
+        }
+
+        var inside = raw[2..^2];
+        if (inside.IndexOfAny(NotPlain) >= 0)
+        {
+            return false;
+        }
+
+        var lexer = new PdfContentLexer(inside);
+        bool atKey = true, wanted = false;
+        while (true)
+        {
+            var token = lexer.Next(out int start, out int length, out double value);
+            if (token == PdfToken.End)
+            {
+                return atKey;                                                  // a key without its value: the parser's to say
+            }
+
+            var word = inside.Slice(start, length);
+            if (atKey)
+            {
+                if (token != PdfToken.Name)
+                {
+                    return false;
+                }
+
+                wanted = word.SequenceEqual(key);
+            }
+            else if (token == PdfToken.Number)
+            {
+                number = wanted ? value : number;
+            }
+            else if (token == PdfToken.Name || (token == PdfToken.Keyword && (word.SequenceEqual("true"u8) || word.SequenceEqual("false"u8) || word.SequenceEqual("null"u8))))
+            {
+                number = wanted ? double.NaN : number;
+            }
+            else
+            {
+                return false;                                                  // a reference's R, or a word the parser refuses
+            }
+
+            atKey = !atKey;
         }
     }
 }
