@@ -1346,6 +1346,19 @@ fonts|synthetic pages`.
     expectation that 256 shading steps change the drawing: they draw the same bytes, so a fine value is now held to the
     tolerance only); then that test, the API and the inventory without the flags: 7 passed. The API dumps gained the
     settings, their variables and the rasterizer's overload; the inventory did not change.
+  - **Bands never change the drawing** (a second commit, so it can be taken or left on its own): `CoverageRasterizer`'s
+    nonzero and even-odd fills work each row in the outline's own frame (y's fraction kept in the points, its whole
+    pixels moved to the row index) and find each row's stretch of an edge from the edge's ends (`LineRows`) instead of
+    carrying it from the row above, so a band gets exactly the rows the whole target would; the glyph rule's code is
+    untouched. Now one-row bands and one band for the whole page draw the 47 D3, D4 and D7 pages exactly as the default
+    bands do (0 of 80.9 M values). The price, measured against the drawings before: 1,392 of 87.1 M values (0.0016%)
+    move by one level, in 49 of the 94 drawings of those pages at 150 dpi RGB and 72 dpi grey, none by more; of the 668
+    hashed drawings, 316 change by such values. No old drawing can be kept while bands stop mattering, since the old
+    one depended on where the default bands fell. Test `documents drawers: bands never change the drawing`: outlines
+    filled into bands of one, seven and 64 rows (y with and without a fraction, nonzero and even-odd) equal the whole
+    fill row for row; every D3, D4 and D7 sample page drawn with one-row, seven-row and one band equals the default
+    bands' drawing and issues. **Run:** the same filter, no flags: 151 passed, 0 failed (every sample still within its
+    tolerance against pdfium).
 
 ## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 

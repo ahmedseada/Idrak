@@ -47,7 +47,7 @@ public sealed partial record DocumentDrawOptions
     /// sets it; 1 to 67,108,864). A page is drawn a band of rows at a time, the bands spread over the cores: a band's rows
     /// are this many pixels over the page's width, within <see cref="MinBandRows"/> and <see cref="MaxBandRows"/>. Each
     /// band in work holds its coverage, colours and layers (about 40 bytes a pixel): more pixels a band, more memory a
-    /// core and fewer bands to spread.
+    /// core and fewer bands to spread. The library's drawer draws the same pixels whatever the bands.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Not within 1 to 67,108,864 (the message names the setting).</exception>
     public int BandPixels

@@ -254,6 +254,80 @@ internal abstract partial class Tests
         Check(PdfInterleaved(plainDrawn.Image).AsSpan().SequenceEqual(PdfInterleaved(library.Image)), "a rasterizer that takes no flatness fills by its own measure (the library's 1/32 here)");
     }
 
+    // Bands never change the drawing: the rule fill of an outline into bands of a target (y moved by whole rows, with a
+    // fraction too, one a float holds exactly at every row) is the whole target's fill row for row; every D3, D4 and D7 sample page drawn at its reference's dpi
+    // with one-row bands, seven-row bands and the whole page as one band is the default bands' drawing, byte for byte.
+    private static void PdfDrawBands(Device device)
+    {
+        CpuOnly(device);
+        var rasterizer = OutlineRasterizers.Get();
+        float[] square = [10f, -10f, 70f, -10f, 70f, -70f, 10f, -70f];
+        var outlines = new (string Name, GlyphOutline Outline)[]
+        {
+            ("a circle", DrawSettingsCircle(50f, 50f, 30f)),
+            ("a circle reaching past the target", DrawSettingsCircle(60f, 30f, 75f)),
+            ("a sliver from far above", new GlyphOutline([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], [3f, 5000f, 97f, -90f, 40f, -95f])),
+            ("squares wound both ways", new GlyphOutline(
+                [OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close, OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close],
+                [.. square, 30f, -30f, 30f, -90f, 90f, -90f, 90f, -30f])),
+        };
+        foreach (var (name, outline) in outlines)
+        {
+            foreach (var rule in (OutlineFill[])[OutlineFill.NonZero, OutlineFill.EvenOdd])
+            {
+                foreach (float fraction in (float[])[0f, 0.375f])
+                {
+                    var whole = new float[100 * 100];
+                    rasterizer.Fill(outline, 1f, 0f, fraction, whole, 100, 100, rule, 1f / 32);
+                    foreach (int rows in (int[])[1, 7, 64])
+                    {
+                        var band = new float[100 * rows];
+                        for (int top = 0; top < 100; top += rows)
+                        {
+                            int count = Math.Min(rows, 100 - top);
+                            Array.Clear(band);
+                            rasterizer.Fill(outline, 1f, 0f, fraction - top, band.AsSpan(0, 100 * count), 100, count, rule, 1f / 32);
+                            Check(band.AsSpan(0, 100 * count).SequenceEqual(whole.AsSpan(top * 100, 100 * count)),
+                                string.Create(CultureInfo.InvariantCulture, $"{name}, {rule}, y {fraction}: the band of {rows} rows at row {top} is not those rows of the whole fill"));
+                        }
+                    }
+                }
+            }
+        }
+
+        string fonts = PdfDrawFonts();
+        int pages = 0;
+        foreach (var sample in PdfSamples().Where(s => s.Readable && (s.Phases.Contains("D3") || s.Phases.Contains("D4") || s.Phases.Contains("D7"))))
+        {
+            double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
+            using var document = DocumentFormats.Open(sample.Path);
+            for (int index = 0; index < document.PageCount; index++)
+            {
+                var options = new DocumentDrawOptions { Dpi = (float)dpi, Fonts = fonts };
+                var standard = document.DrawPage(index, options);
+                byte[] expected = PdfInterleaved(standard.Image);
+                string issues = string.Join("; ", standard.Issues.Select(i => $"{i.Kind} {i.Count}"));
+                foreach (var (bands, banded) in new (string, DocumentDrawOptions)[]
+                         {
+                             ("one-row bands", options with { BandPixels = 1, MinBandRows = 1 }),
+                             ("seven-row bands", options with { BandPixels = 1, MinBandRows = 7, MaxBandRows = 7 }),
+                             ("one band", options with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }),
+                         })
+                {
+                    var drawing = document.DrawPage(index, banded);
+                    byte[] pixels = PdfInterleaved(drawing.Image);
+                    int differ = pixels.Length == expected.Length ? pixels.Zip(expected).Count(p => p.First != p.Second) : -1;
+                    Check(differ == 0 && string.Join("; ", drawing.Issues.Select(i => $"{i.Kind} {i.Count}")) == issues,
+                        $"{sample.Name}: page {index + 1} drawn with {bands}: {differ} values differ from the default bands' drawing (issues '{issues}')");
+                }
+
+                pages++;
+            }
+        }
+
+        Check(pages >= 50, $"{pages} sample pages drawn; the D3, D4 and D7 samples hold more (make them again: tools/documents/make_fixtures.py)");
+    }
+
     // A circle of four cubics about (cx, cy) in y-up units, as glyph outlines are held.
     private static GlyphOutline DrawSettingsCircle(float cx, float cy, float r)
     {

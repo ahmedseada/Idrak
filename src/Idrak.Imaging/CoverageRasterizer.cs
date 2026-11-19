@@ -12,7 +12,9 @@ namespace Idrak.Imaging;
 /// any fractional position. The <see cref="OutlineFill.NonZero"/> and <see cref="OutlineFill.EvenOdd"/> rules (a
 /// document's paths) work only the target's rows and columns, edges past its left side counted as standing on it: each
 /// row's running sum of winding is folded by the rule (its size held to one for nonzero, its parity for even-odd), the
-/// coverage the anti-aliasing rasterizers of PDF readers give; the glyph rule stays as it was.
+/// coverage the anti-aliasing rasterizers of PDF readers give. They work each row in the outline's own frame (only y's
+/// whole pixels move it) and find each row's stretch of an edge from the edge's ends, so a band (a target moved by whole
+/// rows) gets exactly the rows the whole target would. The glyph rule stays as it was.
 /// </summary>
 public sealed class CoverageRasterizer : IOutlineRasterizer
 {
@@ -126,7 +128,10 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         {
             var accumulation = area.AsSpan(0, size);
             accumulation.Clear();
-            TraceClipped(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight, visible, flatness);
+            // The outline's own frame: y's fraction kept in the points, its whole pixels moved to the rows (the box's first
+            // row is `top - whole` in the frame), so the band a target is changes no row's arithmetic.
+            float whole = MathF.Floor(y);
+            TraceClipped(outline, scale, x - left, y - whole, accumulation, boxWidth, top - (int)whole, boxHeight, visible, flatness);
             CompositeRule(accumulation, boxWidth, boxHeight, visible, left, top, coverage, width, rule == OutlineFill.EvenOdd);
         }
         finally
@@ -135,9 +140,10 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         }
     }
 
-    // Every edge of the outline, flattened as Trace flattens it, into a box `visible` columns wide (plus the carry's two):
-    // an edge's stretch left of the box stands on its left side, a stretch right of it on its right side.
-    private static void TraceClipped(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h, int visible, float tolerance)
+    // Every edge of the outline, flattened as Trace flattens it, into a box `visible` columns wide (plus the carry's two)
+    // holding the frame's rows [rowFrom, rowFrom + rows): an edge's stretch left of the box stands on its left side, a
+    // stretch right of it on its right side.
+    private static void TraceClipped(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int rowFrom, int rows, int visible, float tolerance)
     {
         var verbs = outline.Verbs.Span;
         var p = outline.Points.Span;
@@ -150,7 +156,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                 case OutlineVerb.Move:
                     if (cx != sx || cy != sy)
                     {
-                        Clipped(cx, cy, sx, sy, a, w, h, visible);
+                        Clipped(cx, cy, sx, sy, a, w, rowFrom, rows, visible);
                     }
 
                     sx = cx = ox + p[at] * scale;
@@ -160,7 +166,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                 case OutlineVerb.Line:
                 {
                     float nx = ox + p[at] * scale, ny = oy - p[at + 1] * scale;
-                    Clipped(cx, cy, nx, ny, a, w, h, visible);
+                    Clipped(cx, cy, nx, ny, a, w, rowFrom, rows, visible);
                     (cx, cy) = (nx, ny);
                     at += 2;
                     break;
@@ -176,7 +182,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                     {
                         float t = (float)i / n, u = 1 - t;
                         float qxi = u * u * cx + 2 * u * t * qx + t * t * nx, qyi = u * u * cy + 2 * u * t * qy + t * t * ny;
-                        Clipped(px, py, qxi, qyi, a, w, h, visible);
+                        Clipped(px, py, qxi, qyi, a, w, rowFrom, rows, visible);
                         (px, py) = (qxi, qyi);
                     }
 
@@ -198,7 +204,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                         float t = (float)i / n, u = 1 - t;
                         float b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
                         float qx = b0 * cx + b1 * c1x + b2 * c2x + b3 * nx, qy = b0 * cy + b1 * c1y + b2 * c2y + b3 * ny;
-                        Clipped(px, py, qx, qy, a, w, h, visible);
+                        Clipped(px, py, qx, qy, a, w, rowFrom, rows, visible);
                         (px, py) = (qx, qy);
                     }
 
@@ -210,7 +216,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                 case OutlineVerb.Close:
                     if (cx != sx || cy != sy)
                     {
-                        Clipped(cx, cy, sx, sy, a, w, h, visible);
+                        Clipped(cx, cy, sx, sy, a, w, rowFrom, rows, visible);
                     }
 
                     (cx, cy) = (sx, sy);
@@ -220,7 +226,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
 
         if (cx != sx || cy != sy)
         {
-            Clipped(cx, cy, sx, sy, a, w, h, visible);
+            Clipped(cx, cy, sx, sy, a, w, rowFrom, rows, visible);
         }
     }
 
@@ -229,23 +235,23 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
     private const int MaxSteps = 1 << 14;
 
     // An edge cut where it crosses the box's left (x 0) and right (x visible) sides; each stretch outside lies on the side
-    // it passed (its winding counted the same in every row it spans), so Line works the box alone.
-    private static void Clipped(float x0, float y0, float x1, float y1, Span<float> a, int w, int h, int visible)
+    // it passed (its winding counted the same in every row it spans), so LineRows works the box alone.
+    private static void Clipped(float x0, float y0, float x1, float y1, Span<float> a, int w, int rowFrom, int rows, int visible)
     {
         if (y0 == y1 || !float.IsFinite(x0) || !float.IsFinite(x1) || !float.IsFinite(y0) || !float.IsFinite(y1))
         {
             return;
         }
 
-        if ((y0 < 0 && y1 < 0) || (y0 >= h && y1 >= h))
+        if ((y0 < rowFrom && y1 < rowFrom) || (y0 >= rowFrom + rows && y1 >= rowFrom + rows))
         {
-            return;                                                             // above or below every row
+            return;                                                             // above or below every row of the box
         }
 
         float lo = MathF.Min(x0, x1), hi = MathF.Max(x0, x1);
         if (lo >= 0f && hi <= visible)
         {
-            Line(x0, y0, x1, y1, a, w, h);
+            LineRows(x0, y0, x1, y1, a, w, rowFrom, rows);
             return;
         }
 
@@ -294,7 +300,74 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                 (xa, xb) = (Math.Clamp(xa, 0f, visible), Math.Clamp(xb, 0f, visible));
             }
 
-            Line(xa, ya, xb, yb, a, w, h);
+            LineRows(xa, ya, xb, yb, a, w, rowFrom, rows);
+        }
+    }
+
+    // One edge's signed area into the box's rows, the frame's rows [rowFrom, rowFrom + rows), spread over each row's
+    // cells as Line spreads it; each row's stretch of the edge found from the edge's own ends (not carried from the row
+    // above), so a row gets the same area whichever rows the box holds: a band of a page is those rows of the whole page.
+    private static void LineRows(float x0, float y0, float x1, float y1, Span<float> a, int w, int rowFrom, int rows)
+    {
+        if (y0 == y1)
+        {
+            return;
+        }
+
+        float direction = 1f;
+        if (y0 > y1)
+        {
+            (x0, y0, x1, y1) = (x1, y1, x0, y0);
+            direction = -1f;
+        }
+
+        float dxdy = (x1 - x0) / (y1 - y0);
+        int first = Math.Max(rowFrom, (int)MathF.Floor(y0)), end = Math.Min(rowFrom + rows, (int)MathF.Ceiling(y1));
+        for (int row = first; row < end; row++)
+        {
+            int start = (row - rowFrom) * w;
+            float enter = MathF.Max(row, y0), leave = MathF.Min(row + 1, y1);
+            float x = enter == y0 ? x0 : x0 + (enter - y0) * dxdy;
+            float xNext = leave == y1 ? x1 : x0 + (leave - y0) * dxdy;
+            float d = (leave - enter) * direction;
+            float lo = MathF.Min(x, xNext), hi = MathF.Max(x, xNext);
+            lo = MathF.Max(lo, 0f);
+            hi = MathF.Min(hi, w - 1.000001f);
+            float loFloor = MathF.Floor(lo);
+            int loCell = (int)loFloor, hiCell = (int)MathF.Ceiling(hi);
+            if (hiCell <= loCell + 1)
+            {
+                float mid = 0.5f * (x + xNext) - loFloor;
+                a[start + loCell] += d - d * mid;
+                a[start + loCell + 1] += d * mid;
+            }
+            else
+            {
+                float s = 1f / (hi - lo);
+                float loFraction = lo - loFloor;
+                float firstShare = 0.5f * s * (1f - loFraction) * (1f - loFraction);
+                float hiFraction = hi - hiCell + 1f;
+                float last = 0.5f * s * hiFraction * hiFraction;
+                a[start + loCell] += d * firstShare;
+                if (hiCell == loCell + 2)
+                {
+                    a[start + loCell + 1] += d * (1f - firstShare - last);
+                }
+                else
+                {
+                    float second = s * (1.5f - loFraction);
+                    a[start + loCell + 1] += d * (second - firstShare);
+                    for (int cell = loCell + 2; cell < hiCell - 1; cell++)
+                    {
+                        a[start + cell] += d * s;
+                    }
+
+                    float before = second + (hiCell - loCell - 3) * s;
+                    a[start + hiCell - 1] += d * (1f - before - last);
+                }
+
+                a[start + hiCell] += d * last;
+            }
         }
     }
 
