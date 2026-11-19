@@ -362,34 +362,63 @@ internal abstract partial class Tests
     }
 
     // Crafted pages drawn through the library's rasterizer (each clip over its own box) and through an app's rasterizer
-    // that forwards every fill to the library's (each clip over the whole band, as the drawer always did): the same bytes
-    // and the same issues, at 150 dpi, at 2 pixels a point in grey, with one-row bands and with one band.
+    // that forwards every fill to the library's (each clip over the whole band, as the drawer always did), each with the
+    // default bands, one-row bands, seven-row bands and one band: the same bytes and the same issues every time, and the
+    // drawing of the same page lifted (each text clip whose runs were not read gone from under its parts and clips, which
+    // are made under the clip it was made under; each part under a text clip with no glyphs under a clip off the page):
+    // what those clips mean. At 150 dpi and at 2 pixels a point in grey.
     private static void PdfDrawClipPages()
     {
         const string forward = "test-clips-band-wide";
-        var page = ClipCraftedPage();
+        var face = SubsetFace();
         var failures = new List<string>();
         OutlineRasterizers.Register(new ClipsForwardRasterizer(forward));
         try
         {
-            foreach (var (name, options) in new (string, DocumentDrawOptions)[]
+            foreach (var (name, page, lifted) in new (string, DocumentPage, DocumentPage)[]
                      {
-                         ("150 dpi", new DocumentDrawOptions { Dpi = 150, Fonts = null }),
-                         ("2 pixels a point, grey", new DocumentDrawOptions { PixelsPerPoint = 2f, Colour = DocumentDrawColour.Grey, Fonts = null }),
-                         ("150 dpi, one-row bands", new DocumentDrawOptions { Dpi = 150, Fonts = null, BandPixels = 1, MinBandRows = 1 }),
-                         ("150 dpi, one band", new DocumentDrawOptions { Dpi = 150, Fonts = null, BandPixels = 1 << 26, MaxBandRows = 1 << 16 }),
+                         ("the crafted page", ClipCraftedPage(), ClipCraftedPage(lifted: true)),
+                         ("the text clips' page", ClipTextPage(face), ClipTextPage(face, lifted: true)),
                      })
             {
-                var own = DocumentPageDrawers.Draw(page, options);
-                var wide = DocumentPageDrawers.Draw(page, options with { Rasterizer = forward });
-                byte[] a = PdfInterleaved(own.Image), b = PdfInterleaved(wide.Image);
-                int differ = a.Length == b.Length ? a.Zip(b).Count(p => p.First != p.Second) : -1;
-                string issues = string.Join("; ", own.Issues.Select(i => $"{i.Kind} {i.Detail} {i.Count}")), wideIssues = string.Join("; ", wide.Issues.Select(i => $"{i.Kind} {i.Detail} {i.Count}"));
-                int inked = a.Count(v => v < 250);
-                Console.WriteLine($"    the crafted page at {name}: {differ} of {a.Length} values differ from the band-wide clips' drawing; {inked} values inked");
-                if (differ != 0 || issues != wideIssues || inked == 0 || inked == a.Length)
+                foreach (var (resolution, at) in new (string, DocumentDrawOptions)[]
+                         {
+                             ("150 dpi", new DocumentDrawOptions { Dpi = 150, Fonts = null }),
+                             ("2 pixels a point, grey", new DocumentDrawOptions { PixelsPerPoint = 2f, Colour = DocumentDrawColour.Grey, Fonts = null }),
+                         })
                 {
-                    failures.Add($"{name}: {differ} values differ, issues '{issues}' against '{wideIssues}', {inked} of {a.Length} inked");
+                    var expected = DocumentPageDrawers.Draw(lifted, at);
+                    byte[] want = PdfInterleaved(expected.Image);
+                    string wantIssues = ClipIssues(expected);
+                    int inked = want.Count(v => v < 250), drawings = 0, worst = 0;
+                    if (inked == 0 || inked == want.Length)
+                    {
+                        failures.Add($"{name} lifted at {resolution}: {inked} of {want.Length} values inked");
+                    }
+
+                    foreach (var (bands, options) in new (string, DocumentDrawOptions)[]
+                             {
+                                 ("default bands", at),
+                                 ("one-row bands", at with { BandPixels = 1, MinBandRows = 1 }),
+                                 ("seven-row bands", at with { BandPixels = 1, MinBandRows = 7, MaxBandRows = 7 }),
+                                 ("one band", at with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }),
+                             })
+                    {
+                        foreach (var (through, drawn) in new (string, DocumentDrawOptions)[] { ("the library's rasterizer", options), ("an app's rasterizer", options with { Rasterizer = forward }) })
+                        {
+                            var drawing = DocumentPageDrawers.Draw(page, drawn);
+                            int differ = ClipValuesDiffer(PdfInterleaved(drawing.Image), want);
+                            string issues = ClipIssues(drawing);
+                            drawings++;
+                            worst = Math.Max(worst, differ);
+                            if (differ != 0 || issues != wantIssues)
+                            {
+                                failures.Add($"{name} at {resolution}, {bands}, through {through}: {differ} values differ from the lifted page's drawing, issues '{issues}' against '{wantIssues}'");
+                            }
+                        }
+                    }
+
+                    Console.WriteLine($"    {name} at {resolution}: {drawings} drawings (default, one-row and seven-row bands and one band, through the library's rasterizer and an app's), at most {worst} values differing from the lifted page's; {inked} of {want.Length} values inked");
                 }
             }
         }
@@ -398,16 +427,41 @@ internal abstract partial class Tests
             OutlineRasterizers.Unregister(forward);
         }
 
-        Check(failures.Count == 0, $"the crafted page drawn with each clip over its own box is not the band-wide clips' drawing:\n      {string.Join("\n      ", failures)}");
+        Check(failures.Count == 0, $"a crafted page's drawing depends on its bands or its rasterizer, or is not what its clips mean:\n      {string.Join("\n      ", failures)}");
     }
+
+    // D13's clip-memory finding, as it failed (regression): the crafted page's text clip whose runs are not there answered
+    // the rectangle it was made under only the first time a band asked and nothing after, so whether a part under it, or
+    // the clip made under it, was cut by the rectangle depended on where the bands fell: the default bands and one band
+    // drew the page differently at 3,150 values at 150 dpi. Every ask answers the rectangle now.
+    private static void PdfDrawTextClipBands(Device device)
+    {
+        CpuOnly(device);
+        var options = new DocumentDrawOptions { Dpi = 150, Fonts = null };
+        var page = ClipCraftedPage();
+        byte[] standard = PdfInterleaved(DocumentPageDrawers.Draw(page, options).Image);
+        byte[] oneBand = PdfInterleaved(DocumentPageDrawers.Draw(page, options with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }).Image);
+        byte[] lifted = PdfInterleaved(DocumentPageDrawers.Draw(ClipCraftedPage(lifted: true), options).Image);
+        int bands = ClipValuesDiffer(standard, oneBand), meaning = ClipValuesDiffer(standard, lifted);
+        Console.WriteLine($"    the crafted page at 150 dpi: the default bands and one band differ at {bands} of {standard.Length} values (3,150 before the fix); the page and the page with the text clip's parts and clip under its rectangle at {meaning}");
+        Check(bands == 0 && meaning == 0,
+            $"the crafted page at 150 dpi: the default bands and one band differ at {bands} values (3,150 when a text clip whose runs were not read answered the clip it was made under only the first time a band asked), and the page differs from the page with that text clip's parts and clip under its rectangle at {meaning}");
+    }
+
+    // The values that differ between two drawings' bytes, or -1 when their sizes differ.
+    private static int ClipValuesDiffer(byte[] a, byte[] b) => a.Length == b.Length ? a.Zip(b).Count(p => p.First != p.Second) : -1;
+
+    // A drawing's issues, each its kind, detail and count.
+    private static string ClipIssues(DocumentDrawing drawing) => string.Join("; ", drawing.Issues.Select(i => $"{i.Kind} {i.Detail} {i.Count}"));
 
     // A page of 300 x 220 points with every kind of clip under parts that reach past it: upright rectangles at sub-pixel
     // and whole-pixel edges, smaller than a pixel, of no width or height, off the page and past its edges, closed by a fifth
     // line; turned ones, a circle, an even-odd frame; nested (each kind in another, six deep, one missing its parent); a
     // text clip whose runs are not there (clipping nothing of its own) with parts and a clip under it; a shading, a
     // shading-filled path, an image and a stroke larger than their clips; parts wholly outside their clips (one filled with a
-    // tiling); clips shared by parts far apart in the order; a group and a soft mask with clips of its own.
-    private static DocumentPage ClipCraftedPage()
+    // tiling); clips shared by parts far apart in the order; a group and a soft mask with clips of its own. Lifted: the text
+    // clip's parts and clip made under the rectangle it was made under instead (the text clip left with nothing under it).
+    private static DocumentPage ClipCraftedPage(bool lifted = false)
     {
         var clips = new List<DocumentPath>();
         var paths = new List<DocumentPath>();
@@ -500,9 +554,10 @@ internal abstract partial class Tests
         // A text clip whose runs are not there, under a rectangle: the parts under it, and a clip made under it.
         int box = Clip(Rect(220.2f, 180.3f, 70f, 30f));
         int text = Clip(new DocumentPath([], []) { ClipRun = 9999, ClipRunCount = 1 }, box);
-        Fill(215f, 175f, 40f, 20f, text, green);
-        Fill(250f, 175f, 45f, 20f, text, blue);
-        Fill(225f, 195f, 60f, 20f, Clip(Rect(230.5f, 200.5f, 50f, 15f), text), red);
+        int under = lifted ? box : text;
+        Fill(215f, 175f, 40f, 20f, under, green);
+        Fill(250f, 175f, 45f, 20f, under, blue);
+        Fill(225f, 195f, 60f, 20f, Clip(Rect(230.5f, 200.5f, 50f, 15f), under), red);
 
         // Clips shared by parts far apart; a group and a soft mask with clips of their own.
         Fill(20f, 15f, 20f, 10f, subPixel, blue.WithAlpha(0.7f));
@@ -522,6 +577,120 @@ internal abstract partial class Tests
             Paths = paths, Clips = clips, Shadings = [shading], Images = [image],
             Groups = [new DocumentGroup { Isolated = true, Alpha = 0.6f }], SoftMasks = [mask],
         };
+    }
+
+    // A page of 300 x 220 points of text clips under parts that reach past them. Clips of text whose runs were not read
+    // (left out, as the reader leaves out hidden runs it was not asked for, or in a font neither embedded nor found): one at
+    // the top with a part and a rectangle under it; one under a turned rectangle with parts under it far apart in the
+    // order, a rectangle under it, another under that and a circle under that; two, one under the other, under a rectangle,
+    // with a part and an even-odd frame under them; one under a text clip whose glyphs were read (filled, then clipping);
+    // one under a text clip of spaces (read, no glyphs: it lets nothing through); one in a soft mask's content, under a
+    // rectangle with two parts under it. Lifted: each unread text clip's parts and clips made under the clip it was made
+    // under, and each part under the clip of spaces under a rectangle off the page: what those clips mean.
+    private static DocumentPage ClipTextPage(IFontFace face, bool lifted = false)
+    {
+        var clips = new List<DocumentPath>();
+        var paths = new List<DocumentPath>();
+        var runs = new List<DocumentTextRun>();
+        int order = 0;
+        int Clip(DocumentPath path, int parent = -1)
+        {
+            clips.Add(new DocumentPath(path.Verbs.ToArray(), path.Points.ToArray()) { Clip = parent, Fill = path.Fill });
+            return clips.Count - 1;
+        }
+
+        // A clip of the text of `count` runs from the run of order `first` (an order no run has: its runs left out).
+        int TextClip(int first, int count, int parent)
+        {
+            clips.Add(new DocumentPath([], []) { Clip = parent, ClipRun = first, ClipRunCount = count });
+            return clips.Count - 1;
+        }
+
+        // A run shown to clip, in `font` (null: a font neither embedded nor found), hidden (clip only) unless it is filled:
+        // its order.
+        int Run(string text, float x, float baseline, float size, IFontFace? font, int clip, DocumentColour? fill = null)
+        {
+            runs.Add(new DocumentTextRun(text, new DocumentBox(x, baseline - size, 0.6f * size * text.Length, 1.2f * size), size)
+            {
+                Glyphs = PdfShapedGlyphs(face, text, x, baseline, size), Face = font, Font = font is null ? "Example-Absent" : null, Baseline = baseline,
+                Order = order++, Clip = clip, Mode = fill is null ? DocumentTextMode.Hidden : DocumentTextMode.Fill, Colour = fill ?? DocumentColour.Grey(0f),
+            });
+            return runs[^1].Order;
+        }
+
+        static DocumentPath Rect(float x, float y, float w, float h, DocumentFill fill = DocumentFill.NonZero) =>
+            new([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], [x, y, x + w, y, x + w, y + h, x, y + h]) { Fill = fill };
+        void Fill(float x, float y, float w, float h, int clip, DocumentColour colour, int softMask = -1) =>
+            paths.Add(new DocumentPath(Rect(x, y, w, h).Verbs.ToArray(), Rect(x, y, w, h).Points.ToArray())
+            {
+                FillColour = colour, Clip = clip, Order = order++, SoftMask = softMask,
+            });
+        int Lift(int text, int parent) => lifted ? parent : text;
+
+        var red = DocumentColour.Rgb(0.85f, 0.15f, 0.1f);
+        var green = DocumentColour.Rgb(0.1f, 0.6f, 0.2f);
+        var blue = DocumentColour.Rgb(0.1f, 0.3f, 0.85f);
+        var grey = DocumentColour.Grey(0.35f);
+
+        // At the top: a part under it (nothing clips it) and a rectangle made under it.
+        int top = TextClip(9001, 1, -1);
+        Fill(10f, 10f, 40f, 30f, Lift(top, -1), red);
+        Fill(15f, 15f, 70f, 50f, Clip(Rect(20.3f, 20.6f, 50f, 40f), Lift(top, -1)), blue.WithAlpha(0.6f));
+
+        // Under a turned rectangle, in a font that is not there: a part, a rectangle with another unread clip and a circle under it.
+        int turned = Clip(ClipTurned(new DocumentBox(105f, 15f, 90f, 90f), 12f));
+        int absent = TextClip(Run("Report", 110f, 60f, 30f, null, turned), 1, turned);
+        Fill(95f, 5f, 110f, 50f, Lift(absent, turned), green);
+        int inside = Clip(Rect(110.4f, 20.2f, 70f, 80f), Lift(absent, turned));
+        int inner = TextClip(9002, 1, inside);
+        Fill(100f, 10f, 100f, 100f, Lift(inner, inside), red.WithAlpha(0.5f));
+        const float k = 0.5522848f;
+        float cx = 150f, cy = 60f, r = 30f, c = k * r;
+        Fill(110f, 20f, 80f, 80f, Clip(new DocumentPath(
+            [OutlineVerb.Move, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Close],
+            [cx + r, cy, cx + r, cy + c, cx + c, cy + r, cx, cy + r, cx - c, cy + r, cx - r, cy + c, cx - r, cy, cx - r, cy - c, cx - c, cy - r, cx, cy - r, cx + c, cy - r, cx + r, cy - c, cx + r, cy]),
+            Lift(inner, inside)), blue);
+
+        // Two, one under the other, under a rectangle: a part and an even-odd frame under them.
+        int frame = Clip(Rect(215.5f, 15.5f, 70f, 90f));
+        int first = TextClip(9003, 1, frame);
+        int second = TextClip(9004, 2, first);
+        Fill(205f, 5f, 90f, 110f, Lift(second, frame), green);
+        Fill(205f, 5f, 90f, 110f, Clip(new DocumentPath(
+            [OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close, OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close],
+            [210f, 10f, 290f, 10f, 290f, 110f, 210f, 110f, 230f, 35f, 270f, 35f, 270f, 85f, 230f, 85f]) { Fill = DocumentFill.EvenOdd }, Lift(second, frame)), grey.WithAlpha(0.7f));
+
+        // Under a text clip whose glyphs were read (filled, then clipping) under a rectangle: a part, and a rectangle with a part.
+        int box = Clip(Rect(12.5f, 125.5f, 130f, 60f));
+        int glyphs = TextClip(Run("Report", 15f, 170f, 36f, face, box, grey), 1, box);
+        int unread = TextClip(Run("Report", 15f, 170f, 36f, null, glyphs), 1, glyphs);
+        Fill(5f, 120f, 150f, 90f, Lift(unread, glyphs), blue.WithAlpha(0.7f));
+        Fill(10f, 130f, 100f, 70f, Clip(Rect(20f, 140f, 60f, 40f), Lift(unread, glyphs)), red);
+
+        // Under a text clip of spaces (read, no glyphs): nothing shows; lifted, under a rectangle off the page.
+        int off = Clip(Rect(-60f, -60f, 10f, 10f));
+        int spaces = TextClip(Run("    ", 170f, 150f, 30f, face, -1), 1, -1);
+        Fill(160f, 120f, 70f, 40f, lifted ? off : spaces, red);
+        int below = TextClip(9005, 1, spaces);
+        Fill(200f, 130f, 90f, 40f, lifted ? off : below, green);
+
+        // Parts under the clips above far apart from their first parts in the order.
+        Fill(150f, 80f, 60f, 40f, Lift(absent, turned), grey.WithAlpha(0.6f));
+        Fill(240f, 60f, 60f, 60f, Lift(second, frame), blue.WithAlpha(0.5f));
+
+        // A soft mask whose content has one under a rectangle, two parts under it reaching past the rectangle.
+        var mask = new DocumentSoftMask(new DocumentPage(0, 300f, 220f)
+        {
+            Paths =
+            [
+                new DocumentPath(Rect(160f, 180f, 130f, 35f).Verbs.ToArray(), Rect(160f, 180f, 130f, 35f).Points.ToArray()) { FillColour = DocumentColour.White, Clip = lifted ? 0 : 1, Order = 0 },
+                new DocumentPath(Rect(200f, 185f, 95f, 30f).Verbs.ToArray(), Rect(200f, 185f, 95f, 30f).Points.ToArray()) { FillColour = DocumentColour.Grey(0.6f), Clip = lifted ? 0 : 1, Order = 1 },
+            ],
+            Clips = [Rect(170.5f, 190.5f, 90f, 20f), new DocumentPath([], []) { Clip = 0, ClipRun = 9006, ClipRunCount = 1 }],
+        }, luminosity: true);
+        Fill(150f, 175f, 145f, 42f, -1, blue, softMask: 0);
+
+        return new DocumentPage(0, 300f, 220f) { Paths = paths, Clips = clips, Runs = runs, SoftMasks = [mask] };
     }
 
     // An app's rasterizer that hands every fill to the library's: the drawer fills each clip over the whole band for it.

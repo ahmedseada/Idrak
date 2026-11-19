@@ -2546,10 +2546,11 @@ speed and memory first), its results unchanged.
     they decide whether the hostile flate bomb is drawn): every hash the same, the same 12 refused; the tests' crafted
     page and clip pages (49 drawings in seven settings, bands of one, seven and all rows among them) the same; the
     bench's 10 hashed `draw` cases the same.
-  - **Found, left as it was (the owner decides):** a clip of text whose runs were not read clips nothing of its own and
-    answers its parent's coverage only the first time a band asks, nothing after, so a part or a clip under it is cut by
-    the parent or not by where the bands fall: the crafted page differs between the default bands and one band at 3,150
-    values, in both builds. Answering the parent every time would change such drawings, so it is not done here.
+  - **Found, left as it was (the owner decides; fixed since: "Text clips in every band, 2026-11-19" below):** a clip of
+    text whose runs were not read clips nothing of its own and answers its parent's coverage only the first time a band
+    asks, nothing after, so a part or a clip under it is cut by the parent or not by where the bands fall: the crafted
+    page differs between the default bands and one band at 3,150 values, in both builds. Answering the parent every time
+    would change such drawings, so it is not done here.
   - **Tests** (`tests/Idrak.Tests.Library/DocumentDrawClipTests.cs`, group `documents drawers`, 2 new): pages of 11,
     101 and 1,001 clips as the pdf writer writes them (siblings under a page clip; upright, turned, three nested)
     render every band within `ClipRenderBytes` (64 KiB) past the pools whatever the count (seen 2.2, 2.2 and 3.7 KiB),
@@ -2563,6 +2564,34 @@ speed and memory first), its results unchanged.
     abstraction inventory|every environment variable read in src|the environment table names real commands|hidden
     boxing|test runner`: 114 passed, 0 failed (one build, no error or warning). No public API, inventory or variable
     changed.
+- **Text clips in every band, 2026-11-19** (the clip-memory note's finding, fixed in
+  `src/Idrak.Imaging/DocumentScene.cs` alone):
+  - **The cause:** a band cached a clip of text whose runs were not read (its font neither embedded nor found, its runs
+    left out by `IncludeHidden = false`, or runs the page does not have) as clipping nothing once it had answered the
+    clip it was made under the first time, so in each band only the first part to ask (directly, or through a clip made
+    under it) was cut by that clip, and where the bands fell decided which.
+  - **The fix, the drawer's documented rule kept:** such a clip clips nothing of its own (its glyphs are not known); a
+    text clip whose runs were read but hold no glyphs (spaces) still lets nothing through, as PDF has it. The scene puts
+    every part and clip made under it under the clip it was made under, once a scene, and drops it, so no band asks for
+    it. A page without one is left as it is; the clips' own boxes, a rectangle's shared rows and the early release are
+    unchanged (deep-forms' fourth page at 150 dpi: 3.75 MiB a draw either way, warm 18.6-20.3 to 19.4-22.9 ms, noise).
+  - **Drawings:** the 1,341 drawings of the clip-memory note (every sample and the large set, six settings, the reader's
+    limits pinned) hash the same before and after, the same 12 refused: no sample has an unread text clip under another
+    clip with a part under it. Changed: the tests' crafted page (default bands and one band differed at 3,150 values at
+    150 dpi, one-row and seven-row bands from the default at 1,000 at 2 pixels a point) and a new page of text clips (up
+    to 9,984 values between bands); each now draws as its lifted page (each unread text clip's parts and clips under the
+    clip it was made under), which drew the same before and after, in every band and through an app's rasterizer too.
+    Neither has a pdfium reference (pages made in memory).
+  - **Tests** (`tests/Idrak.Tests.Library/DocumentDrawClipTests.cs`, group `documents drawers`, 1 new): the crafted
+    pages' test draws the crafted page and a page of text clips (left out or in a font not there, at the top, nested
+    under and over rectangles, a turned one, a circle, an even-odd frame and each other, under a text clip whose glyphs
+    were read and one of spaces, in a soft mask) with default, one-row and seven-row bands and one band, through the
+    library's rasterizer and an app's, each the same bytes and issues as its lifted page; the case that failed is a
+    named regression (`documents drawers: a text clip whose runs were not read answers the clip it was made under every
+    time, in every band`). **Run:** the filter `documents drawers|documents pdf: vector|documents pdf: forms|documents
+    pdf: annotations|documents workload:|documents contracts|outline tracers:|fonts:|pages:|shapes:|glyph poses:|public
+    API|abstraction inventory|hidden boxing|test runner`: 111 passed, 0 failed (one build, no error or warning). No
+    public API, inventory or variable changed.
 
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 

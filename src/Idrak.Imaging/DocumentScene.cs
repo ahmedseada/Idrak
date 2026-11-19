@@ -89,6 +89,7 @@ internal sealed class DocumentScene
             clips[c] = builder.Clip(c);
         }
 
+        Unread(items, clips);
         builder.ReportMissing();
 
         var masks = new SceneMask[page.SoftMasks.Count];
@@ -99,6 +100,58 @@ internal sealed class DocumentScene
         }
 
         return new DocumentScene(items, clips, page.Groups, masks, width, context);
+    }
+
+    // A clip of text whose runs were not read (their font not there, or the runs left out) clips nothing of its own: every
+    // part and every clip made under it is put under the clip it was made under (the nearest one that clips, or none), once
+    // a scene, and the clip itself dropped. So no band asks for it, and every part under it is cut by the same clips in
+    // every band, whatever the band asked before. A page with no such clip is left as it is.
+    private static void Unread(List<SceneItem> items, SceneClip?[] clips)
+    {
+        int first = 0;
+        while (first < clips.Length && clips[first] is not { Ignored: true })
+        {
+            first++;
+        }
+
+        if (first == clips.Length)
+        {
+            return;
+        }
+
+        // Each clip's stand-in: itself, or for one dropped the stand-in of the clip it was made under (a parent comes first).
+        var under = new int[clips.Length];
+        for (int c = 0; c < clips.Length; c++)
+        {
+            if (clips[c] is not { } clip)
+            {
+                under[c] = -1;
+                continue;
+            }
+
+            int parent = clip.Parent >= 0 && clip.Parent < c ? under[clip.Parent] : -1;
+            if (clip.Ignored)
+            {
+                under[c] = parent;
+                clips[c] = null;
+            }
+            else
+            {
+                under[c] = c;
+                if (parent != clip.Parent)
+                {
+                    clips[c] = clip with { Parent = parent };
+                }
+            }
+        }
+
+        foreach (var item in items)
+        {
+            if (item.Clip >= 0)
+            {
+                item.Clip = under[item.Clip];
+            }
+        }
     }
 
     // For each item (in drawing order), the clips no item after it needs, directly or as the clip a later item's clip was
@@ -332,8 +385,7 @@ internal sealed class DocumentScene
     // ---- clips and soft masks ----------------------------------------------------------------------------------------
 
     // A clip's coverage over the band, intersected with the clips it was made under; none for one that clips nothing. A
-    // clip of text whose runs were not read clips nothing of its own: it answers its parent's coverage the first time and
-    // none after, as the drawer always has.
+    // clip of text whose runs were not read is never asked: the scene put what was made under it under its parent (Unread).
     private ClipCover Cover(int index, Dictionary<int, ClipCover> cache, SceneWork work)
     {
         if (cache.TryGetValue(index, out var known))
@@ -345,12 +397,6 @@ internal sealed class DocumentScene
         if (index < _clips.Length && _clips[index] is { } clip)
         {
             var parent = clip.Parent >= 0 && clip.Parent < index ? Cover(clip.Parent, cache, work) : default;
-            if (clip.Ignored)
-            {
-                cache[index] = default;
-                return parent;
-            }
-
             cover = _bounded ? ClipCover.Bounded(clip, parent, work) : ClipCover.Banded(clip, parent, work);
         }
 
@@ -994,7 +1040,7 @@ internal sealed class DocumentScene
     }
 }
 
-/// <summary>A clip made ready: its outline in the surface's pixels and its rule, the clip it was made under, whether it clips nothing of its own (text whose runs were not read), and where its fill reaches.</summary>
+/// <summary>A clip made ready: its outline in the surface's pixels and its rule, the clip it was made under, whether it clips nothing of its own (text whose runs were not read: the scene puts what is under it under its parent), and where its fill reaches.</summary>
 internal sealed record SceneClip(GlyphOutline Outline, OutlineFill Rule, int Parent, bool Ignored, ClipBox Box);
 
 /// <summary>
