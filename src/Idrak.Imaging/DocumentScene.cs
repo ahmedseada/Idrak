@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Numerics;
 using System.Text;
 
 namespace Idrak.Imaging;
@@ -9,20 +10,31 @@ namespace Idrak.Imaging;
 /// <summary>
 /// A page's parts made ready to draw once (outlines in the surface's pixels, strokes outlined, glyph runs as outlines,
 /// images placed, shadings and tilings prepared, clips, groups and soft masks), then drawn into any band of rows:
-/// <see cref="Render"/> is safe from several threads at once, each band with buffers of its own.
+/// <see cref="Render"/> is safe from several threads at once, each band with buffers of its own. A band works a clip's
+/// coverage once, over the clip's own box (<see cref="ClipCover"/>), and gives it back after the last part that needs it,
+/// so the memory a band holds follows the clips in use, not the clips on the page.
 /// </summary>
 internal sealed class DocumentScene
 {
     private readonly List<SceneItem> _items;
     private readonly SceneClip?[] _clips;
+    private readonly int[] _releaseStart;   // item k's clips no later item needs: _releases[_releaseStart[k] .. _releaseStart[k + 1])
+    private readonly int[] _releases;
+    private readonly bool _bounded;         // the library's rasterizer: a clip worked over its own box (ClipCover.Bounded)
     private readonly IReadOnlyList<DocumentGroup> _groups;
     private readonly SceneMask[] _masks;
     private readonly int _width;
     private readonly DrawContext _context;
     private readonly float _flatness;   // pixels a fill's flattened curve may stray (DocumentDrawOptions.FillFlatness)
 
-    private DocumentScene(List<SceneItem> items, SceneClip?[] clips, IReadOnlyList<DocumentGroup> groups, SceneMask[] masks, int width, DrawContext context) =>
+    private DocumentScene(List<SceneItem> items, SceneClip?[] clips, IReadOnlyList<DocumentGroup> groups, SceneMask[] masks, int width, DrawContext context)
+    {
         (_items, _clips, _groups, _masks, _width, _context, _flatness) = (items, clips, groups, masks, width, context, context.Options.FillFlatness);
+        (_releaseStart, _releases) = Lifetimes(items, clips);
+        // The library's rasterizer works each row and column in the outline's own frame, so a clip filled over its own box
+        // is that box of the band-wide fill, value for value; any other rasterizer fills the band, as the drawer always did.
+        _bounded = context.Rasterizer is CoverageRasterizer;
+    }
 
     /// <summary>
     /// <paramref name="page"/>'s parts (those of <paramref name="parts"/>; hidden text only when <paramref name="hidden"/>)
@@ -89,6 +101,56 @@ internal sealed class DocumentScene
         return new DocumentScene(items, clips, page.Groups, masks, width, context);
     }
 
+    // For each item (in drawing order), the clips no item after it needs, directly or as the clip a later item's clip was
+    // made under: a band gives their coverage back there, so it holds the clips in use, never every clip it met.
+    private static (int[] Start, int[] Clips) Lifetimes(List<SceneItem> items, SceneClip?[] clips)
+    {
+        var last = new int[clips.Length];
+        Array.Fill(last, -1);
+        for (int k = 0; k < items.Count; k++)
+        {
+            if (items[k].Clip >= 0)
+            {
+                last[items[k].Clip] = k;
+            }
+        }
+
+        // A clip's parent comes before it, so walking back carries each clip's last use to its parents.
+        for (int c = clips.Length - 1; c > 0; c--)
+        {
+            if (clips[c] is { Parent: >= 0 } clip && last[c] > last[clip.Parent])
+            {
+                last[clip.Parent] = last[c];
+            }
+        }
+
+        var start = new int[items.Count + 1];
+        foreach (int k in last)
+        {
+            if (k >= 0)
+            {
+                start[k + 1]++;
+            }
+        }
+
+        for (int k = 0; k < items.Count; k++)
+        {
+            start[k + 1] += start[k];
+        }
+
+        var released = new int[start[items.Count]];
+        var next = start[..^1];
+        for (int c = 0; c < last.Length; c++)
+        {
+            if (last[c] >= 0)
+            {
+                released[next[last[c]]++] = c;
+            }
+        }
+
+        return (start, released);
+    }
+
     /// <summary>Draws every part over rows [<paramref name="top"/>, top + <paramref name="rows"/>) of the surface into <paramref name="target"/> (premultiplied red, green, blue and alpha, a band of the surface's width).</summary>
     public void Render(Span<float> target, int top, int rows)
     {
@@ -96,42 +158,58 @@ internal sealed class DocumentScene
         float[] coverage = ArrayPool<float>.Shared.Rent(size);
         float[] colour = ArrayPool<float>.Shared.Rent(4 * size);
         var work = new SceneWork(w, top, rows, coverage, colour, _context.Rasterizer, _flatness);
-        var clipMasks = new Dictionary<int, float[]?>();
+        var covers = new Dictionary<int, ClipCover>();
         var softMasks = new Dictionary<int, float[]>();
         var open = new List<Layer>();
         try
         {
             coverage.AsSpan(0, size).Clear();
             Span<int> chain = stackalloc int[64];
-            foreach (var item in _items)
+            for (int index = 0; index < _items.Count; index++)
             {
+                var item = _items[index];
                 int y0 = Math.Max(item.Top, top), y1 = Math.Min(item.Bottom, top + rows);
                 int x0 = Math.Max(item.Left, 0), x1 = Math.Min(item.Right, w);
-                if (y0 >= y1 || x0 >= x1)
+                if (y0 < y1 && x0 < x1)
                 {
-                    continue;
+                    // The groups the item sits in, outermost first: the layers not in its chain are closed, the missing opened.
+                    int depth = Chain(item.Group, chain);
+                    while (open.Count > depth || (open.Count > 0 && open[^1].Group != chain[open.Count - 1]))
+                    {
+                        Close(open, target, softMasks, work);
+                    }
+
+                    for (int k = open.Count; k < depth; k++)
+                    {
+                        open.Add(Open(chain[k], size));
+                    }
+
+                    var clip = item.Clip >= 0 ? Cover(item.Clip, covers, work) : default;
+                    float[]? soft = item.SoftMask >= 0 && item.SoftMask < _masks.Length ? SoftMask(item.SoftMask, softMasks, work) : null;
+                    // Nothing of the item shows outside its clip's box: its colours are made and composed within it alone. An
+                    // item wholly clipped away still renders, on an empty box, so what it reads and reports (an image
+                    // decoded, a tiling's cell drawn) is as it was.
+                    var (cx0, cx1, cy0, cy1) = clip.Clips ? clip.Within(x0, x1, y0, y1) : (x0, x1, y0, y1);
+                    bool solid = item.Render(work, cx0, cx1, cy0, cy1, out var paint);
+                    var layer = TargetOf(open, target, out bool knockout);
+                    if (cx0 < cx1 && cy0 < cy1)
+                    {
+                        Composite(work, layer, cx0, cx1, cy0, cy1, solid, paint, clip, soft, item.Blend, knockout);
+                    }
+
+                    // The item's whole box: its fill wrote its coverage there, whatever its clip.
+                    for (int y = y0; y < y1; y++)
+                    {
+                        coverage.AsSpan((y - top) * w + x0, x1 - x0).Clear();
+                    }
                 }
 
-                // The groups the item sits in, outermost first: the layers not in its chain are closed, the missing opened.
-                int depth = Chain(item.Group, chain);
-                while (open.Count > depth || (open.Count > 0 && open[^1].Group != chain[open.Count - 1]))
+                for (int r = _releaseStart[index]; r < _releaseStart[index + 1]; r++)
                 {
-                    Close(open, target, softMasks, work);
-                }
-
-                for (int k = open.Count; k < depth; k++)
-                {
-                    open.Add(Open(chain[k], size));
-                }
-
-                float[]? clip = item.Clip >= 0 ? ClipMask(item.Clip, clipMasks, work) : null;
-                float[]? soft = item.SoftMask >= 0 && item.SoftMask < _masks.Length ? SoftMask(item.SoftMask, softMasks, work) : null;
-                bool solid = item.Render(work, x0, x1, y0, y1, out var paint);
-                var layer = TargetOf(open, target, out bool knockout);
-                Composite(work, layer, x0, x1, y0, y1, solid, paint, clip, soft, item.Blend, knockout);
-                for (int y = y0; y < y1; y++)
-                {
-                    coverage.AsSpan((y - top) * w + x0, x1 - x0).Clear();
+                    if (covers.Remove(_releases[r], out var done))
+                    {
+                        done.Return();
+                    }
                 }
             }
 
@@ -150,12 +228,9 @@ internal sealed class DocumentScene
                 }
             }
 
-            foreach (var mask in clipMasks.Values)
+            foreach (var cover in covers.Values)
             {
-                if (mask is not null)
-                {
-                    ArrayPool<float>.Shared.Return(mask);
-                }
+                cover.Return();
             }
 
             foreach (var mask in softMasks.Values)
@@ -256,44 +331,31 @@ internal sealed class DocumentScene
 
     // ---- clips and soft masks ----------------------------------------------------------------------------------------
 
-    // A clip's coverage over the band, intersected with the clips it was made under; null for one that clips nothing.
-    private float[]? ClipMask(int index, Dictionary<int, float[]?> cache, SceneWork work)
+    // A clip's coverage over the band, intersected with the clips it was made under; none for one that clips nothing. A
+    // clip of text whose runs were not read clips nothing of its own: it answers its parent's coverage the first time and
+    // none after, as the drawer always has.
+    private ClipCover Cover(int index, Dictionary<int, ClipCover> cache, SceneWork work)
     {
         if (cache.TryGetValue(index, out var known))
         {
             return known;
         }
 
-        float[]? mask = null;
+        ClipCover cover = default;
         if (index < _clips.Length && _clips[index] is { } clip)
         {
-            float[]? parent = clip.Parent >= 0 && clip.Parent < index ? ClipMask(clip.Parent, cache, work) : null;
+            var parent = clip.Parent >= 0 && clip.Parent < index ? Cover(clip.Parent, cache, work) : default;
             if (clip.Ignored)
             {
-                cache[index] = null;
+                cache[index] = default;
                 return parent;
             }
 
-            int size = work.Width * work.Rows;
-            mask = ArrayPool<float>.Shared.Rent(size);
-            var span = mask.AsSpan(0, size);
-            span.Clear();
-            if (!clip.Outline.IsEmpty)
-            {
-                work.Rasterizer.Fill(clip.Outline, 1f, 0f, -work.Top, span, work.Width, work.Rows, clip.Rule, work.Flatness);
-            }
-
-            if (parent is not null)
-            {
-                for (int i = 0; i < size; i++)
-                {
-                    span[i] *= parent[i];
-                }
-            }
+            cover = _bounded ? ClipCover.Bounded(clip, parent, work) : ClipCover.Banded(clip, parent, work);
         }
 
-        cache[index] = mask;
-        return mask;
+        cache[index] = cover;
+        return cover;
     }
 
     // A soft mask's values over the band: its content drawn on its backdrop (luminosity) or on nothing (opacity).
@@ -340,16 +402,20 @@ internal sealed class DocumentScene
 
     // ---- composing ---------------------------------------------------------------------------------------------------
 
-    // The item's coverage (times the clip and the soft mask) and colour composed onto the layer, row by row in order.
+    // The item's coverage (times the clip and the soft mask) and colour composed onto the layer, row by row in order; a
+    // clip's box holds [x0, x1) x [y0, y1).
     private static void Composite(SceneWork work, Span<float> layer, int x0, int x1, int y0, int y1, bool solid, (float R, float G, float B, float A) paint,
-        float[]? clip, float[]? soft, DocumentBlend blend, bool knockout)
+        in ClipCover clip, float[]? soft, DocumentBlend blend, bool knockout)
     {
         int w = work.Width;
         var coverage = work.Coverage;
         var colour = work.Colour;
+        bool clipped = clip.Clips;
+        int origin = clip.Origin;
         for (int y = y0; y < y1; y++)
         {
             int row = (y - work.Top) * w;
+            ReadOnlySpan<float> cut = clipped ? clip.Row(y) : default;
             for (int x = x0; x < x1; x++)
             {
                 int i = row + x;
@@ -359,9 +425,9 @@ internal sealed class DocumentScene
                     continue;
                 }
 
-                if (clip is not null)
+                if (clipped)
                 {
-                    shape *= clip[i];
+                    shape *= cut[x - origin];
                     if (shape <= 0f)
                     {
                         continue;
@@ -567,12 +633,14 @@ internal sealed class DocumentScene
                     }
                 }
 
-                return found == 0 ? new SceneClip(Abstraction.Data.GlyphOutline.Empty, OutlineFill.NonZero, parent, Ignored: true) : new SceneClip(outline.Build(), OutlineFill.NonZero, parent, false);
+                return found == 0 ? new SceneClip(Abstraction.Data.GlyphOutline.Empty, OutlineFill.NonZero, parent, Ignored: true, default) : Made(outline.Build(), OutlineFill.NonZero, parent);
             }
 
             var path = Outline(clip.Verbs.Span, clip.Points.Span);
-            return new SceneClip(path.Build(), clip.Fill == DocumentFill.EvenOdd ? OutlineFill.EvenOdd : OutlineFill.NonZero, parent, false);
+            return Made(path.Build(), clip.Fill == DocumentFill.EvenOdd ? OutlineFill.EvenOdd : OutlineFill.NonZero, parent);
         }
+
+        private SceneClip Made(GlyphOutline outline, OutlineFill rule, int parent) => new(outline, rule, parent, false, ClipBox.Of(outline, width, height));
 
         // The paint of a fill or a stroke: its pattern (a shading, a tiling), else its colour.
         private ScenePaint Paint(DocumentPattern? pattern, DocumentColour colour)
@@ -926,8 +994,282 @@ internal sealed class DocumentScene
     }
 }
 
-/// <summary>A clip made ready: its outline in the surface's pixels and its rule, the clip it was made under, and whether it clips nothing of its own (text whose runs were not read).</summary>
-internal sealed record SceneClip(GlyphOutline Outline, OutlineFill Rule, int Parent, bool Ignored);
+/// <summary>A clip made ready: its outline in the surface's pixels and its rule, the clip it was made under, whether it clips nothing of its own (text whose runs were not read), and where its fill reaches.</summary>
+internal sealed record SceneClip(GlyphOutline Outline, OutlineFill Rule, int Parent, bool Ignored, ClipBox Box);
+
+/// <summary>
+/// Where a clip's fill reaches on the surface, as the library's rasterizer finds it (<see cref="CoverageRasterizer"/>:
+/// the outline's box in whole pixels, within the surface; empty when it fills nothing), and, for an upright rectangle (one
+/// contour of four lines, two exactly level and two exactly upright: a <c>re</c>, a form's box at a right angle), the
+/// first and last rows its sides reach: every row strictly between them gets the same values from the rasterizer (each
+/// upright side lays one whole row's winding in the same cells, the level ones lay none).
+/// </summary>
+internal readonly record struct ClipBox(int Left, int Top, int Right, int Bottom, bool Rectangle, int FirstRow, int LastRow)
+{
+    public bool IsEmpty => Left >= Right || Top >= Bottom;
+
+    /// <summary>A rectangle's kind of row: 0 its first, 2 its last, 1 any row between (the same values).</summary>
+    public int Kind(int y) => y == FirstRow ? 0 : y == LastRow ? 2 : 1;
+
+    /// <summary><paramref name="outline"/>'s box on a surface <paramref name="width"/> x <paramref name="height"/> pixels, by the rasterizer's own arithmetic for a fill at the surface's origin.</summary>
+    public static ClipBox Of(GlyphOutline outline, int width, int height)
+    {
+        if (outline.IsEmpty)
+        {
+            return default;
+        }
+
+        // The outline is held with y up: its rows run from -maxY down to -minY.
+        var (minX, minY, maxX, maxY) = outline.Bounds();
+        float leftF = MathF.Floor(minX), rightF = MathF.Ceiling(maxX), topF = MathF.Floor(-maxY), bottomF = MathF.Ceiling(-minY);
+        if (!(rightF > 0f) || !(bottomF > 0f) || !(leftF < width) || !(topF < height))
+        {
+            return default;                                                     // nothing of it on the surface (or not finite)
+        }
+
+        int left = (int)MathF.Max(0f, leftF), right = (int)MathF.Min(width, rightF), top = (int)MathF.Max(0f, topF), bottom = (int)MathF.Min(height, bottomF);
+        if (right <= left || bottom <= top)
+        {
+            return default;
+        }
+
+        bool rectangle = Upright(outline);
+        return new ClipBox(left, top, right, bottom, rectangle, rectangle ? Row(topF, height) : -1, rectangle ? Row(bottomF - 1f, height) : -1);
+    }
+
+    // A row of the surface, or -1 above it and `height` below it (never a row a band holds).
+    private static int Row(float y, int height) => y < 0f ? -1 : y >= height ? height : (int)y;
+
+    // One contour of four lines (closed, or with a fifth back to its start) whose sides are exactly level and upright.
+    private static bool Upright(GlyphOutline outline)
+    {
+        var verbs = outline.Verbs.Span;
+        var p = outline.Points.Span;
+        bool four = verbs is [OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close] && p.Length == 8;
+        bool five = verbs is [OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close] && p.Length == 10
+                    && p[8] == p[0] && p[9] == p[1];
+        return (four || five)
+               && ((p[1] == p[3] && p[2] == p[4] && p[5] == p[7] && p[6] == p[0]) || (p[0] == p[2] && p[3] == p[5] && p[4] == p[6] && p[7] == p[1]));
+    }
+}
+
+/// <summary>
+/// A clip's coverage over a band, worked once and shared by every part under it: nothing clipped (<see cref="Clips"/>
+/// false), or values over a box of the surface, [<see cref="Left"/>, <see cref="Right"/>) x [<see cref="Top"/>,
+/// <see cref="Bottom"/>), and nothing outside it. Row y's values are a row of <see cref="Values"/> (the one
+/// <see cref="Rows"/> names, or row y - <see cref="Top"/> when every row is its own) from column <see cref="Origin"/>; the
+/// rows an upright rectangle fills alike share one. Its arrays are rented from the shared pools and given back by
+/// <see cref="Return"/>.
+/// </summary>
+internal readonly struct ClipCover
+{
+    private ClipCover(float[]? values, int[]? rows, int left, int top, int right, int bottom, int origin, int stride)
+    {
+        (Values, Rows, Left, Top, Right, Bottom, Origin, Stride) = (values, rows, left, top, right, bottom, origin, stride);
+        Clips = true;
+    }
+
+    /// <summary>Whether it clips (false: the default, nothing clipped).</summary>
+    public bool Clips { get; }
+
+    /// <summary>The stored rows, <see cref="Stride"/> values each.</summary>
+    public float[]? Values { get; }
+
+    /// <summary>Each row's stored row from <see cref="Top"/>, or null when row y is stored row y - <see cref="Top"/>.</summary>
+    public int[]? Rows { get; }
+
+    public int Left { get; }
+
+    public int Top { get; }
+
+    public int Right { get; }
+
+    public int Bottom { get; }
+
+    /// <summary>The surface column of a stored row's first value.</summary>
+    public int Origin { get; }
+
+    public int Stride { get; }
+
+    // A clip that lets nothing through: its fill covers none of the band, or misses the clip it was made under.
+    private static ClipCover Nothing => new(null, null, 0, 0, 0, 0, 0, 0);
+
+    /// <summary>Row <paramref name="y"/>'s values (from column <see cref="Origin"/>); <paramref name="y"/> within [<see cref="Top"/>, <see cref="Bottom"/>).</summary>
+    public Span<float> Row(int y) => Values.AsSpan(StoredRow(y) * Stride, Stride);
+
+    private int StoredRow(int y) => Rows is { } rows ? rows[y - Top] : y - Top;
+
+    /// <summary>The box [x0, x1) x [y0, y1) within this one's, or an empty box at (x0, y0) when they do not meet.</summary>
+    public (int X0, int X1, int Y0, int Y1) Within(int x0, int x1, int y0, int y1)
+    {
+        int a = Math.Max(x0, Left), b = Math.Min(x1, Right), c = Math.Max(y0, Top), d = Math.Min(y1, Bottom);
+        return a < b && c < d ? (a, b, c, d) : (x0, x0, y0, y0);
+    }
+
+    /// <summary>Gives its arrays back to the shared pools.</summary>
+    public void Return()
+    {
+        if (Values is { } values)
+        {
+            ArrayPool<float>.Shared.Return(values);
+        }
+
+        if (Rows is { } rows)
+        {
+            ArrayPool<int>.Shared.Return(rows);
+        }
+    }
+
+    /// <summary>
+    /// The clip filled over the whole band by any rasterizer, times <paramref name="parent"/> (a band-wide coverage too):
+    /// the drawer's way for a rasterizer that is not the library's.
+    /// </summary>
+    public static ClipCover Banded(SceneClip clip, in ClipCover parent, SceneWork work)
+    {
+        int size = work.Width * work.Rows;
+        float[] mask = ArrayPool<float>.Shared.Rent(size);
+        bool kept = false;
+        try
+        {
+            var span = mask.AsSpan(0, size);
+            span.Clear();
+            if (!clip.Outline.IsEmpty)
+            {
+                work.Rasterizer.Fill(clip.Outline, 1f, 0f, -work.Top, span, work.Width, work.Rows, clip.Rule, work.Flatness);
+            }
+
+            if (parent.Clips)
+            {
+                Product(span, parent.Values.AsSpan(0, size), span);
+            }
+
+            kept = true;
+            return new ClipCover(mask, null, 0, work.Top, work.Width, work.Top + work.Rows, 0, work.Width);
+        }
+        finally
+        {
+            if (!kept)
+            {
+                ArrayPool<float>.Shared.Return(mask);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The clip by the library's rasterizer over its own box within the band and <paramref name="parent"/>'s box, times
+    /// <paramref name="parent"/>: each value the band-wide fill's at that pixel (the fill's columns are the clip's own, so
+    /// its arithmetic is the band-wide fill's; its rows are worked alone, as bands are). An upright rectangle fills only
+    /// the rows that differ (its first, its last, one between), each under its parent's row.
+    /// </summary>
+    public static ClipCover Bounded(SceneClip clip, in ClipCover parent, SceneWork work)
+    {
+        var box = clip.Box;
+        int top = Math.Max(box.Top, work.Top), bottom = Math.Min(box.Bottom, work.Top + work.Rows), left = box.Left, right = box.Right;
+        if (parent.Clips)
+        {
+            (top, bottom, left, right) = (Math.Max(top, parent.Top), Math.Min(bottom, parent.Bottom), Math.Max(left, parent.Left), Math.Min(right, parent.Right));
+        }
+
+        if (box.IsEmpty || top >= bottom || left >= right)
+        {
+            return Nothing;
+        }
+
+        int stride = box.Right - box.Left, rows = bottom - top;
+        int stored = rows;
+        if (box.Rectangle)
+        {
+            // The rows that differ: a change of the rectangle's kind of row, or of the parent's row.
+            stored = 0;
+            for (int y = top, kind = -1, under = -1; y < bottom; y++)
+            {
+                int k = box.Kind(y), u = parent.Clips ? parent.StoredRow(y) : -1;
+                if (k != kind || u != under)
+                {
+                    (stored, kind, under) = (stored + 1, k, u);
+                }
+            }
+        }
+
+        float[] values = ArrayPool<float>.Shared.Rent(stored * stride);
+        int[]? map = stored < rows ? ArrayPool<int>.Shared.Rent(rows) : null;
+        bool kept = false;
+        try
+        {
+            if (!box.Rectangle)
+            {
+                var span = values.AsSpan(0, rows * stride);
+                span.Clear();
+                work.Rasterizer.Fill(clip.Outline, 1f, -box.Left, -top, span, stride, rows, clip.Rule, work.Flatness);
+                if (parent.Clips)
+                {
+                    for (int y = top; y < bottom; y++)
+                    {
+                        var row = values.AsSpan((y - top) * stride + left - box.Left, right - left);
+                        Product(row, parent.Row(y).Slice(left - parent.Origin, right - left), row);
+                    }
+                }
+            }
+            else
+            {
+                for (int y = top, at = -1, kind = -1, under = -1; y < bottom; y++)
+                {
+                    int k = box.Kind(y), u = parent.Clips ? parent.StoredRow(y) : -1;
+                    if (k != kind || u != under)
+                    {
+                        (at, kind, under) = (at + 1, k, u);
+                        var row = values.AsSpan(at * stride, stride);
+                        row.Clear();
+                        work.Rasterizer.Fill(clip.Outline, 1f, -box.Left, -y, row, stride, 1, clip.Rule, work.Flatness);
+                        if (parent.Clips)
+                        {
+                            var inside = row.Slice(left - box.Left, right - left);
+                            Product(inside, parent.Row(y).Slice(left - parent.Origin, right - left), inside);
+                        }
+                    }
+
+                    if (map is not null)
+                    {
+                        map[y - top] = at;
+                    }
+                }
+            }
+
+            kept = true;
+            return new ClipCover(values, map, left, top, right, bottom, box.Left, stride);
+        }
+        finally
+        {
+            if (!kept)
+            {
+                ArrayPool<float>.Shared.Return(values);
+                if (map is not null)
+                {
+                    ArrayPool<int>.Shared.Return(map);
+                }
+            }
+        }
+    }
+
+    // into[i] = a[i] * b[i] (into may be a): a vector at a time, then the rest one by one; each product rounded once, so the
+    // same values either way.
+    private static void Product(ReadOnlySpan<float> a, ReadOnlySpan<float> b, Span<float> into)
+    {
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            for (; i <= a.Length - Vector<float>.Count; i += Vector<float>.Count)
+            {
+                (new Vector<float>(a[i..]) * new Vector<float>(b[i..])).CopyTo(into[i..]);
+            }
+        }
+
+        for (; i < a.Length; i++)
+        {
+            into[i] = a[i] * b[i];
+        }
+    }
+}
 
 /// <summary>A soft mask and its content made ready when a band first needs it.</summary>
 internal sealed record SceneMask(DocumentSoftMask Mask, Lazy<DocumentScene> Scene);

@@ -2461,7 +2461,8 @@ speed and memory first), its results unchanged.
   clip of a band (`DocumentScene.ClipMask`), and the reader gives each form's `/BBox` as a clip of its own
   (`PdfContent`): `deep-forms`' page drawing one form 1,000 times allocates about 372 MiB a draw at 150 dpi and raises the
   working set by 490 MiB (its other three pages 7.8 MiB together). Masks over a clip's own box, identical clips shared, or
-  a mask dropped after the last part that uses it would each bound it.
+  a mask dropped after the last part that uses it would each bound it. **Fixed 2026-11-19:** see "Clip memory,
+  2026-11-19" at the end of this phase (that page: about 380 to 3.7 MiB a draw at 150 dpi).
 - **Decisions the plan did not settle, taken here:** (1) The bench is a command, `bench documents`, not a kind of
   `bench`'s positional (a model named `documents` stays possible). (2) The large set's members are sets of their own, so
   each workload is timed apart; the samples are one set. (3) Drawing takes at most 50 files of a set and 10 pages of a
@@ -2494,7 +2495,7 @@ speed and memory first), its results unchanged.
   a file, text 59 µs (19 over 4 threads), write-vector 534 µs a file (228 MiB: a font subset a file), signing 557 µs,
   checking 651 µs. `huge-image`: decoded 237 ms (400 MiB, the planes), drawn at 300 dpi 1.45 s (800 MiB: the planes and
   the page), written by `Auto` (Flate) 4.9 s. The process's working set at most 1.7 GiB (the huge image's runs).
-- **Left:** the drawer's clip masks (above); a fully streamed Flate image (decision 5, leftovers 28.24); `write-vector`
+- **Left:** the drawer's clip masks (above; fixed, "Clip memory, 2026-11-19" below); a fully streamed Flate image (decision 5, leftovers 28.24); `write-vector`
   of many small files spends most of its 228 KiB a file on each file's font subset and its first runs' matching.
 - **The owner's real files** (the plan's third bullet): built with D5's `documents real:` group (6765477), which writes
   each file back, edits, draws and times it.
@@ -2510,6 +2511,58 @@ speed and memory first), its results unchanged.
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d13-workload.txt
   Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
   ```
+
+- **Clip memory, 2026-11-19** (D13's deep-forms finding, fixed in `src/Idrak.Imaging/DocumentScene.cs` alone; the
+  reader unchanged: a form's `/BBox` already reads as a plain `m l l l h` path).
+  - **Where the bytes went:** 355 of the 358 MiB a warm draw of deep-forms' fourth page allocated at 150 dpi were
+    `float[]` (the runtime's allocation ticks): each band (875 x 149 pixels) rented a band-sized mask for every clip one
+    of its parts used and kept it to the band's end, about 260 at once, far more than the shared pool holds.
+  - **The change:** a band works a clip's coverage once over the clip's own box (`ClipCover`, `ClipBox`): the library's
+    rasterizer works each row and column in the outline's own frame, so a fill over the box's columns and any of its rows
+    is that box of the band-wide fill, value for value; within the parent's box, times the parent's values. An upright
+    rectangle (a `re`, a form's box at a right angle: four lines exactly level and upright) fills only the rows that
+    differ, its first, its last and one between (every row between gets the same values), each under its parent's row.
+    A part's colours are made and composed within its clip's box alone (a part wholly outside it still renders, on an
+    empty box, so what it decodes and reports is as before). Each clip goes back to the pool after the last part that
+    needs it, directly or under a clip made within it (the release points worked out once a scene), so a band holds the
+    clips in use: a few a nesting level. An app's rasterizer keeps the band-wide masks (with the same release), so its
+    clips are filled as they always were. No setting: nothing here is a threshold, and no drawing changes.
+  - **Numbers** (this container, 4 cores; the owner's devices give the real ones). Deep-forms' fourth page, three
+    processes each, before and after interleaved, the page read each draw: 150 dpi cold 176-190 to 79-86 ms, 473-481 to
+    21.7 MiB, the working set +469-478 to +16 MiB; warm 45-50 to 19-25 ms, 378-383 to 3.7 MiB a draw (1.56 MiB the
+    pixels), the working set +10-55 to +2.6 MiB. 300 dpi cold 164-180 to 92-97 ms, 255-368 to 26.4 MiB, +249-362 to +21
+    MiB; warm 64-75 to 32-37 ms, 229-265 to 8.4 MiB a draw. The bench's `draw` (`--hash`, `--save`, `--compare`):
+    deep-forms' four pages at 150 dpi warm 51.2 to 14.4 ms and 345 to 8.3 MiB, cold 130 to 15.6 ms and 477 to 8.6 MiB;
+    at 300 dpi 85.2 to 49.9 ms and 242 to 27.1 MiB; the samples, the huge image, `pages-3000` and `many-small` the same
+    within the noise (the samples at 150 dpi 470 to 458 ms, at 300 dpi 1,370 to 1,380 ms). Large clips on a letter page
+    of 300 blocks, each case alone in its process (150 dpi, warm): one page clip 11.3-11.6 to 10.5-10.9 ms (no clip
+    10.3-11.2 to 9.0-9.1); a large upright rectangle a block 38-46 to 13-15 ms; a large turned one 42-43 to 38-40 ms; a
+    small rectangle a block under a page clip 26-27 to 12-16 ms (300 dpi: 72 to 33-36, 73-75 to 59-69, 55 to 31-32).
+  - **The same drawings, proven:** 1,341 drawings hashed (planes and issues, SHA-256) with the build before and after:
+    every sample PDF (102 files drawn, 177 pages) and the large set (deep-forms' four pages, `pages-3000`'s first two,
+    the huge image's page, every 25th of the 1,000 small files), at 150 dpi RGB with the fonts folder, 72 dpi grey, 300
+    dpi with annotations, 150 dpi in one-row bands, 100 dpi without fonts and with hidden text, and 150 dpi through an
+    app's rasterizer (the band-wide path), the reader's limits fixed by their variables (measured from the free memory,
+    they decide whether the hostile flate bomb is drawn): every hash the same, the same 12 refused; the tests' crafted
+    page and clip pages (49 drawings in seven settings, bands of one, seven and all rows among them) the same; the
+    bench's 10 hashed `draw` cases the same.
+  - **Found, left as it was (the owner decides):** a clip of text whose runs were not read clips nothing of its own and
+    answers its parent's coverage only the first time a band asks, nothing after, so a part or a clip under it is cut by
+    the parent or not by where the bands fall: the crafted page differs between the default bands and one band at 3,150
+    values, in both builds. Answering the parent every time would change such drawings, so it is not done here.
+  - **Tests** (`tests/Idrak.Tests.Library/DocumentDrawClipTests.cs`, group `documents drawers`, 2 new): pages of 11,
+    101 and 1,001 clips as the pdf writer writes them (siblings under a page clip; upright, turned, three nested)
+    render every band within `ClipRenderBytes` (64 KiB) past the pools whatever the count (seen 2.2, 2.2 and 3.7 KiB),
+    each clip adds at most `ClipSceneBytes` (1 KiB) to a draw (seen 474-551 B), and deep-forms' page, when the large set
+    is there, within `DeepFormsDrawBytes` (8 MiB) beyond its pixels (seen 1.06 MiB); a clip's coverage over its own box
+    equals the band-wide one value for value (13 clips alone and 13 chains, bands of 1, 7, 64 and 83 rows: 4,214
+    coverages, a rectangle's rows shared 185 times), and a crafted page of every kind of clip draws the same bytes and
+    issues through an app's rasterizer at 150 dpi, 2 pixels a point in grey, one-row bands and one band. **Run:** the
+    filter `documents drawers|documents pdf: vector|documents pdf: forms|documents pdf: annotations|documents
+    workload:|documents bench:|documents contracts|outline tracers:|fonts:|pages:|shapes:|glyph poses:|public API|
+    abstraction inventory|every environment variable read in src|the environment table names real commands|hidden
+    boxing|test runner`: 114 passed, 0 failed (one build, no error or warning). No public API, inventory or variable
+    changed.
 
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 
