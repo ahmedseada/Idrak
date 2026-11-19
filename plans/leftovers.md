@@ -480,9 +480,9 @@ No leftovers.
 | CLI.22 | Later, not in this build: a plug-in marketplace listing; remote devices (a command run on another machine's `idrak serve`). | feature | More from a second pass, "Later" |
 | CLI.23 | Arabic: the bodies of commands' help and other commands' messages are English; a streamed Arabic answer appears line by line; the user's typing is echoed unreordered where the terminal has no bidirectional support. | feature | Arabic messages, "Remains" |
 | CLI.24 | Arabic in real terminals (Windows Terminal, console host, Git Bash, a Linux terminal): `help`, `doctor`, `devices --lang ar` and `--lang-render logical`. | check | open-questions, hardware check 11; Arabic messages |
-| CLI.25 | R9 leftovers: `TrainSession.cs` CSV relabelling (strings and `Split` per row); `ImageTraining.cs:906` uploads two tiny per-channel tensors per batch; `ServeHost` auth allocates two small byte arrays per request; the bidi algorithm allocates per right-to-left line; `DataProfile` keeps each row's JSON string. | speed | Plan 14 backlog (R9) |
+| CLI.25 | R9 leftovers: `TrainSession.cs` CSV relabelling (strings and `Split` per row); `ImageTraining.cs:906` uploads two tiny per-channel tensors per batch; `ServeHost` auth allocates two small byte arrays per request; `DataProfile` keeps each row's JSON string. | speed | Plan 14 backlog (R9) |
 
-**Dropped as done:** `/stats` memory (the device's usage, `RunSupport.cs:167`); eval metrics waiting on plug-in gap 16 (`TuningMetrics` names); JPEG training only with a registered codec (`JpegCodec` is a library default).
+**Dropped as done:** `/stats` memory (the device's usage, `RunSupport.cs:167`); eval metrics waiting on plug-in gap 16 (`TuningMetrics` names); JPEG training only with a registered codec (`JpegCodec` is a library default); CLI.25's bidi algorithm allocating per right-to-left line (pooled span forms, plan 28's "Bidi pooled", 2026-11-19).
 
 ## Open questions and checks (removed 2026-10-22: its items are filed under their plans here)
 

@@ -13,10 +13,14 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] BidiConformanceGroup =
     [
-        ("bidi: every case of Unicode's BidiTest.txt (the tables' Unicode version): the levels and the visual order of each class sequence at each paragraph level its bitset names (auto, left to right, right to left)",
+        ("bidi: every case of Unicode's BidiTest.txt (the tables' Unicode version): the levels and the visual order of each class sequence at each paragraph level its bitset names (auto, left to right, right to left), through the array forms and the span forms",
             d => { if (d == Device.Cpu) BidiClassConformance(); }),
-        ("bidi: every line of Unicode's BidiCharacterTest.txt (the tables' Unicode version): the resolved paragraph level, the levels and the visual order of each code point sequence, paired brackets included",
+        ("bidi: every line of Unicode's BidiCharacterTest.txt (the tables' Unicode version): the resolved paragraph level, the levels and the visual order of each code point sequence, paired brackets included, through the array forms and the span forms",
             d => { if (d == Device.Cpu) BidiCharacterConformance(); }),
+        ("bidi: the span forms and the array forms of Levels, VisualOrder, Resolve and Reorder, and the bidi reading order both ways, give the levels, orders and texts of the algorithm before its pooled path (kept in the test) on 20,000 random mixed texts from a fixed seed: L, R, AL, EN, AN, NSM, separators, brackets, embeddings, overrides and isolates (past their limits too), lone surrogates",
+            d => { if (d == Device.Cpu) BidiPooledAgainstReference(); }),
+        ("bidi: once warm, the span forms of Levels, VisualOrder and Reorder allocate nothing, and Resolve and the array forms only the arrays they give back",
+            d => { if (d == Device.Cpu) BidiPooledAllocation(); }),
     ];
 
     // A gzipped file of tests/Idrak.Tests/data/unicode, its first line checked to name the tables' Unicode version.
@@ -39,8 +43,9 @@ internal abstract partial class DesktopTests : Tests
         using var reader = BidiData("bidi-test.txt.gz");
         sbyte[] levels = [];
         int[] order = [];
-        int cases = 0, failed = 0;
+        int cases = 0, failed = 0, spanFailed = 0;
         var first = new List<string>();
+        var firstSpan = new List<string>();
         (int Bit, int Level)[] paragraphs = [(1, -1), (2, 0), (4, 1)];
         for (string? line = reader.ReadLine(); line is not null; line = reader.ReadLine())
         {
@@ -83,19 +88,32 @@ internal abstract partial class DesktopTests : Tests
                                   + $"order {string.Join(' ', visual)} (want {string.Join(' ', order)})");
                     }
                 }
+
+                var spans = BidiSpanForms(types, ReadOnlySpan<int>.Empty, paragraph);
+                if (!spans.Levels.AsSpan().SequenceEqual(levels) || !spans.Order.AsSpan().SequenceEqual(order) || !spans.Untouched)
+                {
+                    spanFailed++;
+                    if (firstSpan.Count < 5)
+                    {
+                        firstSpan.Add($"{line[..semicolon]} at paragraph level {paragraph}: levels {string.Join(' ', spans.Levels)} (want {string.Join(' ', levels)}), "
+                                      + $"order {string.Join(' ', spans.Order)} (want {string.Join(' ', order)}), the rest of the buffers untouched: {spans.Untouched}");
+                    }
+                }
             }
         }
 
         Check(cases > 100_000, $"only {cases} cases read: the file or its reading is broken");
-        Check(failed == 0, $"{failed} of {cases} BidiTest.txt cases differ; the first: {string.Join("; ", first)}");
-        Console.WriteLine($"    BidiTest.txt: {cases} cases, all equal");
+        Check(failed == 0, $"{failed} of {cases} BidiTest.txt cases differ through the array forms; the first: {string.Join("; ", first)}");
+        Check(spanFailed == 0, $"{spanFailed} of {cases} BidiTest.txt cases differ through the span forms; the first: {string.Join("; ", firstSpan)}");
+        Console.WriteLine($"    BidiTest.txt: {cases} cases, all equal through the array forms and the span forms");
     }
 
     private static void BidiCharacterConformance()
     {
         using var reader = BidiData("bidi-character-test.txt.gz");
-        int cases = 0, failed = 0;
+        int cases = 0, failed = 0, spanFailed = 0;
         var first = new List<string>();
+        var firstSpan = new List<string>();
         for (string? line = reader.ReadLine(); line is not null; line = reader.ReadLine())
         {
             if (line.Length == 0 || line[0] == '#')
@@ -122,10 +140,22 @@ internal abstract partial class DesktopTests : Tests
                               + $"order {string.Join(' ', visual)} (want {fields[4]})");
                 }
             }
+
+            var spans = BidiSpanForms(types, codePoints, direction == 2 ? -1 : direction);
+            if (spans.Paragraph != paragraph || !spans.Levels.AsSpan().SequenceEqual(levels) || !spans.Order.AsSpan().SequenceEqual(order) || !spans.Untouched)
+            {
+                spanFailed++;
+                if (firstSpan.Count < 5)
+                {
+                    firstSpan.Add($"{fields[0]} (direction {direction}): paragraph {spans.Paragraph} (want {paragraph}), levels {string.Join(' ', spans.Levels)} (want {fields[3]}), "
+                                  + $"order {string.Join(' ', spans.Order)} (want {fields[4]}), the rest of the buffers untouched: {spans.Untouched}");
+                }
+            }
         }
 
         Check(cases > 50_000, $"only {cases} lines read: the file or its reading is broken");
-        Check(failed == 0, $"{failed} of {cases} BidiCharacterTest.txt lines differ; the first: {string.Join("; ", first)}");
-        Console.WriteLine($"    BidiCharacterTest.txt: {cases} lines, all equal");
+        Check(failed == 0, $"{failed} of {cases} BidiCharacterTest.txt lines differ through the array forms; the first: {string.Join("; ", first)}");
+        Check(spanFailed == 0, $"{spanFailed} of {cases} BidiCharacterTest.txt lines differ through the span forms; the first: {string.Join("; ", firstSpan)}");
+        Console.WriteLine($"    BidiCharacterTest.txt: {cases} lines, all equal through the array forms and the span forms");
     }
 }

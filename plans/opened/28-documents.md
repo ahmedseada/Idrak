@@ -719,6 +719,20 @@ come out in logical order through `bidi` with no language code; pages read in pa
   (13.7-14.2 to 10.1-11.2 ms). Left: a mixed line still runs the whole UAX #9 (4.6-7.6 KB a `FromColumns`, two thirds in
   `Bidi.Levels` and `Bidi.Reorder`), a pooled path through them a piece of its own; the rest of a kept-open page's 9.4
   KiB is the reader's own (its main direction's LINQ and dictionary, the page's font dictionary, operands, the pieces).
+  Bidi pooled, 2026-11-19: `Bidi.Levels`, `VisualOrder` and `Reorder` have span forms that write into the caller's
+  buffers, their working space (isolate matches, level runs, each isolating run sequence, bracket pairs, the bracket and
+  directional status stacks) from the shared pools, no list, closure or LINQ left; the array forms and `Resolve` wrap
+  them and allocate what they return. `bidi`, `TextLayout` (L1 alone, in place) and the CLI's `VisualText` use the span
+  forms: a mixed line allocates the string it gives back. The same results: both conformance files through both forms,
+  20,000 random mixed texts against the old algorithm kept in the test ("bidi:"), equal output hashes of the old and new
+  builds on 20,000 more, the 41 D3 and D4 pages' lines and text under seven options byte-identical; a `document layouts`
+  test holds a page of mixed lines to what it gives back. Before and after, interleaved, warm: `FromColumns` on a mixed
+  line of 20, 80 and 300 characters 4,632, 12,312 and 41,064 to 64, 184 and 624 bytes, 3.1, 8.9 and 27.2 to 2.1, 6.6 and
+  21.4 µs; `ToColumns` 2,136-18,672 to 64-624 bytes, 1.4-12.0 to 1.0-10.4 µs; `Levels` and `Reorder` 1,504-13,000 to
+  200-1,880 bytes as arrays (their results), 0 as spans. Cold (a process's first line, compiling) the same, 6-7 ms, once
+  the two stacks came from the pool: `stackalloc` had the JIT compile two methods fully optimized at the first call (2-3
+  ms more). A D3 page 44.2 to 43.2 KiB opened each pass, 10.8 to 9.8 kept open, the time the same within the noise of
+  another build running (this container's CPU).
 
 ## Phase D4: PDF images and embedded files
 

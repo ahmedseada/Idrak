@@ -316,51 +316,61 @@ internal static class VisualText
         var shaped = ArabicPresentationForms.Shape(source, out var shapedFrom);
         var from = Array.ConvertAll(shapedFrom, k => offsets[k]);
         var types = Array.ConvertAll(shaped, Bidi.ClassOf);
-        var levels = Bidi.Levels(types, shaped, paragraphLevel, out int paragraph);
-        var order = Bidi.VisualOrder(levels);
-        var points = new List<int>(order.Length);
-        var origins = new List<int>(order.Length);
-        for (int v = 0; v < order.Length; v++)
+        var levels = ArrayPool<sbyte>.Shared.Rent(shaped.Length);              // the levels and the visual order: pooled
+        var order = ArrayPool<int>.Shared.Rent(shaped.Length);
+        try
         {
-            int index = order[v];
-            // L3: marks of a right-to-left run come before their base after reversing; put them back after it.
-            if (types[index] == BidiClass.NSM && (levels[index] & 1) == 1)
+            int paragraph = Bidi.Levels(types, shaped, paragraphLevel, levels);
+            int kept = Bidi.VisualOrder(levels.AsSpan(0, shaped.Length), order);
+            var points = new List<int>(kept);
+            var origins = new List<int>(kept);
+            for (int v = 0; v < kept; v++)
             {
-                int end = v;
-                while (end + 1 < order.Length && types[order[end + 1]] == BidiClass.NSM && (levels[order[end + 1]] & 1) == 1)
+                int index = order[v];
+                // L3: marks of a right-to-left run come before their base after reversing; put them back after it.
+                if (types[index] == BidiClass.NSM && (levels[index] & 1) == 1)
                 {
-                    end++;
-                }
-
-                if (end + 1 < order.Length)
-                {
-                    end++;
-                    Add(order[end]);
-                    for (int m = end - 1; m >= v; m--)
+                    int end = v;
+                    while (end + 1 < kept && types[order[end + 1]] == BidiClass.NSM && (levels[order[end + 1]] & 1) == 1)
                     {
-                        Add(order[m]);
+                        end++;
                     }
 
-                    v = end;
-                    continue;
+                    if (end + 1 < kept)
+                    {
+                        end++;
+                        Add(order[end]);
+                        for (int m = end - 1; m >= v; m--)
+                        {
+                            Add(order[m]);
+                        }
+
+                        v = end;
+                        continue;
+                    }
                 }
+
+                Add(index);
             }
 
-            Add(index);
-        }
+            return ([.. points], [.. origins], paragraph);
 
-        return ([.. points], [.. origins], paragraph);
-
-        void Add(int index)
-        {
-            int cp = shaped[index];
-            if (cp is 0x200E or 0x200F or 0x061C)
+            void Add(int index)
             {
-                return;                                                          // direction marks: done their work
-            }
+                int cp = shaped[index];
+                if (cp is 0x200E or 0x200F or 0x061C)
+                {
+                    return;                                                      // direction marks: done their work
+                }
 
-            points.Add((levels[index] & 1) == 1 ? Bidi.Mirror(cp) : cp);
-            origins.Add(from[index]);
+                points.Add((levels[index] & 1) == 1 ? Bidi.Mirror(cp) : cp);
+                origins.Add(from[index]);
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(order);
+            ArrayPool<sbyte>.Shared.Return(levels);
         }
     }
 

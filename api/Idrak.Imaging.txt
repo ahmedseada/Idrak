@@ -209,11 +209,14 @@ public static class Idrak.Imaging.Shaping.Bidi
   public static (int[], byte[]) Reorder(System.ReadOnlySpan<byte> levels, System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> classes, int start, int end, bool rightToLeft)
   public static Idrak.Imaging.Shaping.BidiClass ClassOf(int codePoint)
   public static bool Removed(Idrak.Imaging.Shaping.BidiClass type)
+  public static int Levels(System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> types, System.ReadOnlySpan<int> codePoints, int paragraphLevel, System.Span<sbyte> levels)
   public static int Mirror(int codePoint)
   public static int ParagraphLevel(System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> types, int fallback = 0)
+  public static int VisualOrder(System.ReadOnlySpan<sbyte> levels, System.Span<int> order)
   public static int[] VisualOrder(System.ReadOnlySpan<sbyte> levels)
   public static sbyte[] Levels(System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> types, System.ReadOnlySpan<int> codePoints, int paragraphLevel, out int resolvedParagraphLevel)
   public static string UnicodeVersion { get; }
+  public static void Reorder(System.ReadOnlySpan<byte> levels, System.ReadOnlySpan<Idrak.Imaging.Shaping.BidiClass> classes, int start, int end, bool rightToLeft, System.Span<int> order, System.Span<byte> lineLevels)
 
 public enum Idrak.Imaging.Shaping.BidiClass : byte
   AL = 2

@@ -302,9 +302,8 @@ public static class TextLayout
             inkEnd--;
         }
 
-        var (_, lineLevels) = Bidi.Reorder(paragraphLevels, classes, start, inkEnd, rtl);
         var levels = (byte[])paragraphLevels.Clone();
-        Array.Copy(lineLevels, 0, levels, start, inkEnd - start);
+        Bidi.Reorder(paragraphLevels, classes, start, inkEnd, rtl, Span<int>.Empty, levels.AsSpan(start, inkEnd - start));   // the line's levels after L1, in place
         var runs = Shape(p, levels, start, inkEnd, style, seed);
 
         // L2 over runs: from the highest level down to the lowest odd one, each sequence at or above it reversed.
