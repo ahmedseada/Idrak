@@ -9,7 +9,8 @@ using Idrak.Data.Pdf;
 
 // Plan 28, phase D9: forms. Fields read (every kind, inherited values, widgets, XFA data), filled (SetField: incremental
 // and rewrite), added (the builder's and the editor's AddField), flattened (Flatten), each widget's appearance made, read
-// back and drawn through D7's drawer. Checked on the D9 samples tools/documents/make_fixtures.py writes into the ignored
+// back and drawn through D7's drawer. Completed (2026-11-19): turned and bordered widgets, rich text, fields held inside
+// other objects, a /DA naming the face a text needs, XFA templates, and the reading's memory. Checked on the D9 samples tools/documents/make_fixtures.py writes into the ignored
 // test-output/documents/samples; every file written goes to test-output/documents/forms (NAME.pdf; NAME.json with the
 // pages' text for tools/documents/check_written.py; NAME.fields.json with each field's value, for a reference reader's
 // form reading).
@@ -22,6 +23,12 @@ internal abstract partial class Tests
         ("documents pdf: forms: fields filled and added in Latin, Arabic (right to left, joined) and Cyrillic text are laid out through the text setter in a face given (embedded as a subset): their values and their appearances' text read back in logical order, the drawing with the widgets the same as the drawing of the form flattened; a text no font shows refused naming the options", PdfFormsScripts),
         ("documents pdf: forms: the builder adds every kind of field (text: one line, several lines, comb, password, a length, aligned; check box; radio group; list of several choices; drop-down list; push button; signature; a field under a dotted parent; one field on two pages) with their appearances, and they read back as added; a widget on a page written already, a name taken and a page never added refused; the editor adds a field to a document that has none", PdfFormsBuild),
         ("documents pdf: forms: flattening (every field, or some by name) draws each widget's appearance into its page (made when the form has none) and leaves no field or widget: forms-filled flattened draws as its flattened twin within D7's tolerance, a form asking the reader for its appearances flattened shows its values as page text, the inherited form's field on two pages flattened on both, the XFA form flattened drops its XFA", PdfFormsFlatten),
+        ("documents pdf: forms: turned and bordered widgets (/MK /R, /BS): forms-styled filled (incremental and rewrite) reads back turned and bordered as its JSON says and draws within D9's tolerance of pdfium's own appearances for it, each turned box's text running its way (nearer pdfium's than pdfium's turned a half, a quarter turn's ink taller than wide); flattened it draws alike; the builder turns and borders fields as asked and refuses a turn of 45 degrees", PdfFormsStyled),
+        ("documents pdf: forms: rich text: forms-rich's /RV read as styled runs over /DS; SetRichText writes /RV, its plain /V and the rich text flag, and an appearance in each run's font, size and colour (incremental and rewrite); a plain value set on a rich text field is its one run; the builder adds a rich text field; runs refused as they should be", PdfFormsRich),
+        ("documents pdf: forms: fields held inside other objects (forms-held: object streams, a field written in its parent's /Kids and one in /Fields) filled in place (incremental: a cross-reference stream after a stream; and a rewrite): moved to objects of their own, their holders and widgets naming them; flattened too", PdfFormsHeld),
+        ("documents pdf: forms: a text the field's /DA font lacks, set in a face: /DA names that face's font, which /DR lists under a name it did not hold (forms-faces: /F1 taken, /F1_1 given), drawn as pdfium draws the producer's appearance; a text the font has leaves /DA as it was", PdfFormsFaces),
+        ("documents pdf: forms: XFA templates read (IDocument.FormTemplate): sections, fields with captions, kinds, choices, flags, bindings, values and the fields holding them as each XFA sample's JSON says; scripts listed as issues, never run; none for a form without one", PdfFormsTemplates),
+        ("documents pdf: forms: memory: reading forms-filled's form (12 fields, 14 widgets) on a document kept open allocates about what it returns, warm (no closures, no record copied a node, each page's frame read once)", PdfFormsMemory),
         ("documents pdf: forms: timings: reading every field of a form, filling one field (incremental), flattening a page: cold and warm apart, with the bytes allocated", PdfFormsTimings),
     ];
 
@@ -95,6 +102,7 @@ internal abstract partial class Tests
                 "doNotSpellCheck" => DocumentFieldFlags.DoNotSpellCheck,
                 "doNotScroll" => DocumentFieldFlags.DoNotScroll,
                 "comb" => DocumentFieldFlags.Comb,
+                "richText" => DocumentFieldFlags.RichText,
                 "radiosInUnison" => kind == "text" ? DocumentFieldFlags.RichText : DocumentFieldFlags.RadiosInUnison,
                 _ => DocumentFieldFlags.None,
             };
@@ -138,8 +146,58 @@ internal abstract partial class Tests
             bool button = kind is "checkbox" or "radio";
             Check(read.State == (button ? (string?)w["state"] : null) && read.OnState == (button ? (string?)w["onState"] : null),
                 $"{at}: widget {k} shows '{read.State}' (on '{read.OnState}'), expected '{w["state"]}' (on '{w["onState"]}')");
+            Check(read.Rotation == ((int?)w["rotation"] ?? 0), $"{at}: widget {k} turned {read.Rotation}, expected {w["rotation"] ?? 0}");
         }
+
+        var border = e["border"] as JsonObject;
+        var style = (string?)border?["style"] switch
+        {
+            "dashed" => DocumentFieldBorderStyle.Dashed,
+            "beveled" => DocumentFieldBorderStyle.Beveled,
+            "inset" => DocumentFieldBorderStyle.Inset,
+            "underline" => DocumentFieldBorderStyle.Underline,
+            _ => DocumentFieldBorderStyle.Solid,
+        };
+        float[] dashes = [.. (border?["dashes"] as JsonArray ?? []).Select(d => (float)d!)];
+        Check(field.BorderStyle == style && field.BorderWidth == (float?)border?["width"] && field.Dashes.SequenceEqual(dashes),
+            $"{at}: its border {field.BorderStyle} {field.BorderWidth} [{string.Join(" ", field.Dashes)}], expected {border?.ToJsonString() ?? "none"}");
+        var rich = e["richText"] as JsonArray ?? [];
+        Check(PdfFormsStyles(field.RichText) == PdfFormsStyles(rich.Select(PdfFormsRun).ToList()) && field.RichText.Count == rich.Count,
+            $"{at}: its rich text {PdfFormsDescribe(field.RichText)}, expected {PdfFormsDescribe([.. rich.Select(PdfFormsRun)])}");
     }
+
+    // A run of rich text as a sample's JSON gives it.
+    private static DocumentFieldRun PdfFormsRun(JsonNode? node)
+    {
+        var o = node!.AsObject();
+        var colour = o["colour"] as JsonArray;
+        return new DocumentFieldRun((string)o["text"]!)
+        {
+            Bold = (bool)o["bold"]!, Italic = (bool)o["italic"]!, Underline = (bool)o["underline"]!, StrikeOut = (bool)o["strikeOut"]!, Size = (float?)o["size"],
+            Colour = colour is null ? null : DocumentColour.Rgb((float)colour[0]!, (float)colour[1]!, (float)colour[2]!), Family = (string?)o["family"],
+        };
+    }
+
+    // Each character of rich text (line feeds aside) with its style, to compare runs however a text is cut into them.
+    private static string PdfFormsStyles(IReadOnlyList<DocumentFieldRun> runs)
+    {
+        var text = new StringBuilder();
+        foreach (var run in runs)
+        {
+            string colour = run.Colour is { } c ? string.Join(",", Enumerable.Range(0, c.Count).Select(i => c[i].ToString("F2", CultureInfo.InvariantCulture))) : "-";
+            string size = run.Size is { } z ? z.ToString("F2", CultureInfo.InvariantCulture) : "-";
+            foreach (char ch in run.Text.Where(ch => ch != '\n'))
+            {
+                text.Append(ch).Append('|').Append(run.Bold).Append(run.Italic).Append(run.Underline).Append(run.StrikeOut).Append('|').Append(size).Append('|').Append(colour)
+                    .Append('|').Append(run.Family).Append('\n');
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static string PdfFormsDescribe(IReadOnlyList<DocumentFieldRun> runs) =>
+        "[" + string.Join(", ", runs.Select(r => $"\"{r.Text.Replace("\n", "/", StringComparison.Ordinal)}\"{(r.Bold ? " bold" : "")}{(r.Italic ? " italic" : "")}{(r.Underline ? " underlined" : "")}{(r.StrikeOut ? " struck" : "")} {r.Size} {r.Colour} {r.Family}")) + "]";
 
     // The text an appearance shows, whitespace dropped (a comb's cells read as words apart; lines as the layout joins them).
     private static string PdfFormsSquash(string? text) => text is null ? "" : string.Concat(text.Where(c => !char.IsWhiteSpace(c)));
@@ -679,6 +737,423 @@ internal abstract partial class Tests
         }
 
         Check(failures.Count == 0, $"{failures.Count} differences:\n      {string.Join("\n      ", failures)}");
+    }
+
+    // A drawing saved beside a written form (NAME.idrak.p1.png), for a reference renderer's drawing of the same file.
+    private static void PdfFormsSaveDrawing(string name, ImageData image) =>
+        File.WriteAllBytes(Path.Combine(PdfFormsFolder(), name + ".idrak.p1.png"), ImageEncoders.Get("png").Encode(image));
+
+    // The share of a box's pixels (two pixels in from its edges) off by more than 32 levels between two drawings after a
+    // 3 x 3 mean, the second read turned a half within the box when `flip`.
+    private static double PdfFormsRegion(ImageData ours, ImageData reference, DocumentBox box, double dpi, bool flip)
+    {
+        int w = Math.Min(ours.Width, reference.Width), h = Math.Min(ours.Height, reference.Height);
+        float[] a = PdfBlur(ours, w, h), b = PdfBlur(reference, w, h);
+        int x0 = Math.Max(0, (int)Math.Ceiling(box.X * dpi / 72) + 2), y0 = Math.Max(0, (int)Math.Ceiling(box.Y * dpi / 72) + 2);
+        int x1 = Math.Min(w, (int)(box.Right * dpi / 72) - 2), y1 = Math.Min(h, (int)(box.Bottom * dpi / 72) - 2);
+        long off = 0, all = 0;
+        for (int y = y0; y < y1; y++)
+        {
+            for (int x = x0; x < x1; x++)
+            {
+                int rx = flip ? x0 + x1 - 1 - x : x, ry = flip ? y0 + y1 - 1 - y : y;
+                float worst = 0;
+                for (int c = 0; c < 3; c++)
+                {
+                    worst = MathF.Max(worst, MathF.Abs(a[3 * (y * w + x) + c] - b[3 * (ry * w + rx) + c]));
+                }
+
+                off += worst > 32 ? 1 : 0;
+                all++;
+            }
+        }
+
+        return (double)off / Math.Max(1, all);
+    }
+
+    // The bounds of the ink (pixels darker than half) inside a box, 4 pixels in from its edges (its border left out).
+    private static (int Width, int Height) PdfFormsInk(ImageData image, DocumentBox box, double dpi)
+    {
+        int x0 = (int)(box.X * dpi / 72) + 4, y0 = (int)(box.Y * dpi / 72) + 4, x1 = (int)(box.Right * dpi / 72) - 4, y1 = (int)(box.Bottom * dpi / 72) - 4;
+        int left = int.MaxValue, top = int.MaxValue, right = -1, bottom = -1;
+        for (int y = Math.Max(0, y0); y < Math.Min(image.Height, y1); y++)
+        {
+            for (int x = Math.Max(0, x0); x < Math.Min(image.Width, x1); x++)
+            {
+                if (image.Pixels[y * image.Width + x] < 0.5f)
+                {
+                    (left, top, right, bottom) = (Math.Min(left, x), Math.Min(top, y), Math.Max(right, x), Math.Max(bottom, y));
+                }
+            }
+        }
+
+        return right < 0 ? (0, 0) : (right - left + 1, bottom - top + 1);
+    }
+
+    private static void PdfFormsStyled(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("forms-styled");
+        var fields = sample.Expected["fields"]!.AsArray();
+        double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
+        var reference = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-styled.p1.png")));
+        byte[] source = File.ReadAllBytes(sample.Path);
+        var failures = new List<string>();
+        byte[]? filled = null;
+        foreach (var mode in new[] { DocumentSaveMode.Incremental, DocumentSaveMode.Rewrite })
+        {
+            string label = mode == DocumentSaveMode.Incremental ? "incremental" : "rewrite";
+            using var document = PdfEditOpen(source, "forms-styled");
+            byte[] bytes = PdfEditSave(document, e => PdfFormsFillFrom(e, fields), mode);
+            filled ??= bytes;
+            using var back = PdfEditOpen(bytes, $"forms-styled filled ({label})");
+            var read = back.Fields;
+            Check(read.Count == fields.Count, $"forms-styled filled ({label}): {read.Count} fields");
+            for (int i = 0; i < fields.Count; i++)
+            {
+                PdfFormsCompare($"forms-styled filled ({label})", read[i], fields[i]!.AsObject());
+            }
+
+            // Each appearance shows its value, read through the matrix that turns it.
+            var shown = back.ReadPage(0, DocumentParts.Annotations).Annotations.Select(a => PdfFormsSquash(a.Appearance?.Text)).ToList();
+            foreach (var f in read)
+            {
+                Check(shown.Contains(PdfFormsSquash(f.Value)), $"forms-styled filled ({label}): '{f.Name}' shown: {string.Join(" | ", shown)}");
+            }
+
+            var drawn = PdfFormsDraw(back, 0, dpi);
+            var (share, mean) = PdfDrawDifference(drawn, reference, 32);
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    forms-styled filled ({label}) drawn with its widgets: {share * 100:F2}% off pdfium's drawing of its own appearances by more than 32 levels (mean {mean:F2})"));
+            if (share > 0.08)
+            {
+                failures.Add(string.Create(CultureInfo.InvariantCulture, $"forms-styled filled ({label}): {share * 100:F2}% off pdfium's drawing, past 8%"));
+            }
+
+            foreach (var f in read.Where(f => f.Widgets[0].Rotation != 0))
+            {
+                var box = f.Widgets[0].Box;
+                double same = PdfFormsRegion(drawn, reference, box, dpi, flip: false), turned = PdfFormsRegion(drawn, reference, box, dpi, flip: true);
+                var (inkWidth, inkHeight) = PdfFormsInk(drawn, box, dpi);
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"      '{f.Name}' turned {f.Widgets[0].Rotation}: {same * 100:F1}% of its box off pdfium's, {turned * 100:F1}% off pdfium's turned a half; its ink {inkWidth} x {inkHeight} pixels"));
+                if (!(same < turned) || (f.Widgets[0].Rotation is 90 or 270 && !(inkHeight > 2 * inkWidth)))
+                {
+                    failures.Add($"forms-styled filled ({label}): '{f.Name}' not turned as pdfium turns it ({same:P1} against {turned:P1} turned; ink {inkWidth} x {inkHeight})");
+                }
+            }
+
+            PdfFormsSave($"forms-styled-filled-{label}", bytes);
+            PdfFormsSaveDrawing($"forms-styled-filled-{label}", drawn);
+        }
+
+        // Flattened, it draws as it did with its widgets.
+        using (var withWidgets = PdfEditOpen(filled!, "forms-styled filled"))
+        {
+            byte[] flat = PdfEditSave(withWidgets, e => e.Flatten(), DocumentSaveMode.Rewrite);
+            using var flattened = PdfEditOpen(flat, "forms-styled flattened");
+            var (share, _) = PdfDrawDifference(PdfFormsDraw(withWidgets, 0, dpi), PdfFormsDraw(flattened, 0, dpi, annotations: false), 32);
+            Check(flattened.Fields.Count == 0 && share <= 0.001, string.Create(CultureInfo.InvariantCulture, $"forms-styled flattened: {flattened.Fields.Count} fields, {share * 100:F3}% off its drawing with widgets"));
+            PdfFormsSave("forms-styled-flattened", flat, text: false);
+        }
+
+        // The builder turns and borders fields as asked.
+        byte[] built = PdfWrite(b =>
+        {
+            b.AddPage(300, 300);
+            b.AddField(new DocumentField("side", DocumentFieldKind.Text)
+            {
+                Value = "Along the side", FontSize = 11, Border = DocumentColour.Grey(0.3f), BorderStyle = DocumentFieldBorderStyle.Dashed, BorderWidth = 1.5f, Dashes = [4f, 2f],
+                Widgets = [new DocumentWidget(0, new DocumentBox(20, 40, 26, 200)) { Rotation = 90 }],
+            });
+            b.AddField(new DocumentField("raised", DocumentFieldKind.Text)
+            {
+                Value = "Raised", FontSize = 11, Border = DocumentColour.Grey(0.3f), Background = DocumentColour.Grey(0.85f), BorderStyle = DocumentFieldBorderStyle.Beveled,
+                Widgets = [new DocumentWidget(0, new DocumentBox(80, 40, 160, 26))],
+            });
+            b.AddField(new DocumentField("flipped", DocumentFieldKind.Text)
+            {
+                Value = "Upside down", FontSize = 11, Border = DocumentColour.Black, BorderStyle = DocumentFieldBorderStyle.Underline,
+                Widgets = [new DocumentWidget(0, new DocumentBox(80, 100, 160, 26)) { Rotation = 180 }],
+            });
+            ExpectRefusal<ArgumentException>(() => b.AddField(new DocumentField("askew", DocumentFieldKind.Text) { Widgets = [new DocumentWidget(0, new DocumentBox(10, 10, 50, 20)) { Rotation = 45 }] }),
+                "90", "a widget turned 45 degrees");
+        });
+        using var builtBack = PdfEditOpen(built, "styled fields built");
+        var side = builtBack.Fields.Single(f => f.Name == "side");
+        var raised = builtBack.Fields.Single(f => f.Name == "raised");
+        var flipped = builtBack.Fields.Single(f => f.Name == "flipped");
+        Check(side.Widgets[0].Rotation == 90 && side.BorderStyle == DocumentFieldBorderStyle.Dashed && side.BorderWidth == 1.5f && side.Dashes.SequenceEqual([4f, 2f]),
+            $"the built 'side': turned {side.Widgets[0].Rotation}, {side.BorderStyle} {side.BorderWidth} [{string.Join(" ", side.Dashes)}]");
+        Check(raised.Widgets[0].Rotation == 0 && raised.BorderStyle == DocumentFieldBorderStyle.Beveled && raised.BorderWidth == 1f,
+            $"the built 'raised': {raised.BorderStyle} {raised.BorderWidth}");
+        Check(flipped.Widgets[0].Rotation == 180 && flipped.BorderStyle == DocumentFieldBorderStyle.Underline, $"the built 'flipped': turned {flipped.Widgets[0].Rotation}, {flipped.BorderStyle}");
+        var builtShown = builtBack.ReadPage(0, DocumentParts.Annotations).Annotations.Select(a => a.Appearance?.Text).ToList();
+        Check(builtShown.SequenceEqual(["Along the side", "Raised", "Upside down"]), $"the built fields' appearances: {string.Join(" | ", builtShown)}");
+        var (width, height) = PdfFormsInk(PdfFormsDraw(builtBack, 0, 100), side.Widgets[0].Box, 100);
+        Check(height > 2 * width, $"the built 'side' runs up its box: its ink {width} x {height} pixels");
+        PdfFormsSave("forms-styled-built", built);
+        Check(failures.Count == 0, $"{failures.Count} differences:\n      {string.Join("\n      ", failures)}");
+    }
+
+    private static void PdfFormsRich(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("forms-rich");
+        byte[] source = File.ReadAllBytes(sample.Path);
+        using var document = PdfEditOpen(source, "forms-rich");
+        var message = document.Fields.Single(f => f.Name == "message");
+        Check(message.RichText.Count == 6 && string.Concat(message.RichText.Select(r => r.Text)) == message.Value && (message.Flags & DocumentFieldFlags.RichText) != 0,
+            $"forms-rich's message: {PdfFormsDescribe(message.RichText)} for '{message.Value}'");
+        DocumentFieldRun[] runs =
+        [
+            new("Bold start") { Bold = true }, new(" then italic red") { Italic = true, Colour = DocumentColour.Rgb(0.8f, 0f, 0f) },
+            new("\nTimes at 13 points") { Family = "Times", Size = 13 }, new(" underlined") { Underline = true }, new(" struck") { StrikeOut = true },
+        ];
+        string plain = string.Concat(runs.Select(r => r.Text));
+        foreach (var mode in new[] { DocumentSaveMode.Incremental, DocumentSaveMode.Rewrite })
+        {
+            string label = mode == DocumentSaveMode.Incremental ? "incremental" : "rewrite";
+            byte[] bytes = PdfEditSave(document, e =>
+            {
+                e.SetRichText("note", runs);
+                e.SetRichText("title", [new DocumentFieldRun("Plain made rich") { Bold = true }]);
+                e.SetField("message", "Replaced plainly");
+            }, mode);
+            using var back = PdfEditOpen(bytes, $"forms-rich filled ({label})");
+            var note = back.Fields.Single(f => f.Name == "note");
+            Check(note.Value == plain && (note.Flags & DocumentFieldFlags.RichText) != 0 && PdfFormsStyles(note.RichText) == PdfFormsStyles(runs),
+                $"forms-rich filled ({label}): note '{note.Value}' {note.Flags} {PdfFormsDescribe(note.RichText)}");
+            var title = back.Fields.Single(f => f.Name == "title");
+            Check(title.Value == "Plain made rich" && (title.Flags & DocumentFieldFlags.RichText) != 0 && title.RichText is [{ Bold: true, Text: "Plain made rich" }],
+                $"forms-rich filled ({label}): the plain field made rich: '{title.Value}' {title.Flags} {PdfFormsDescribe(title.RichText)}");
+            var replaced = back.Fields.Single(f => f.Name == "message");
+            Check(replaced.Value == "Replaced plainly" && string.Concat(replaced.RichText.Select(r => r.Text)) == "Replaced plainly" && replaced.RichText.All(r => !r.Bold && !r.Italic),
+                $"forms-rich filled ({label}): a plain value set on a rich text field is its one run: {PdfFormsDescribe(replaced.RichText)}");
+
+            // The appearance: each run in its own font, size and colour.
+            var page = back.ReadPage(0, DocumentParts.Annotations);
+            var appearance = page.Annotations.Single(a => PdfNear(a.Box, note.Widgets[0].Box, 0.01f)).Appearance!;
+            Check(PdfFormsSquash(appearance.Text) == PdfFormsSquash(plain), $"forms-rich filled ({label}): the note shows \"{appearance.Text}\"");
+            var shownRuns = appearance.Runs;
+            string Runs() => string.Join(", ", shownRuns.Select(r => $"{r.Text}: {r.Font} {r.FontSize} {r.Colour}"));
+            Check(shownRuns.Any(r => r.Text.Contains("Bold", StringComparison.Ordinal) && r.Font?.Contains("Bold", StringComparison.Ordinal) == true),
+                $"forms-rich filled ({label}): the bold run in a bold font: {Runs()}");
+            Check(shownRuns.Any(r => r.Text.Contains("italic", StringComparison.Ordinal) && r.Font?.Contains("Oblique", StringComparison.Ordinal) == true
+                                     && r.Colour.Space == DocumentColourSpace.Rgb && MathF.Abs(r.Colour[0] - 0.8f) < 0.01f && r.Colour[1] < 0.01f),
+                $"forms-rich filled ({label}): the italic run in an oblique font, red: {Runs()}");
+            Check(shownRuns.Any(r => r.Text.Contains("Times", StringComparison.Ordinal) && r.Font?.Contains("Times", StringComparison.Ordinal) == true && MathF.Abs(r.FontSize - 13) < 0.01f),
+                $"forms-rich filled ({label}): the Times run at 13 points: {Runs()}");
+            PdfFormsSave($"forms-rich-filled-{label}", bytes);
+            PdfFormsSaveDrawing($"forms-rich-filled-{label}", PdfFormsDraw(back, 0, 100));
+        }
+
+        // Runs refused as they should be.
+        using (var editor = DocumentWriters.Get("pdf").Edit(document, new MemoryStream(), PdfWriteDefaults))
+        {
+            ExpectRefusal<ArgumentException>(() => editor.SetRichText("note", [new DocumentFieldRun("x") { Size = 0 }]), "above 0", "a run of size 0");
+            ExpectRefusal<ArgumentException>(() => editor.SetRichText("nothing", [new DocumentFieldRun("x")]), "no form field", "a field the form lacks");
+        }
+
+        // The builder adds a rich text field.
+        byte[] built = PdfWrite(b =>
+        {
+            b.AddPage(300, 200);
+            b.AddField(new DocumentField("memo", DocumentFieldKind.Text) { Flags = DocumentFieldFlags.Multiline, FontSize = 10, RichText = runs, Widgets = [new DocumentWidget(0, new DocumentBox(20, 20, 260, 80))] });
+            ExpectRefusal<ArgumentException>(() => b.AddField(new DocumentField("tick", DocumentFieldKind.CheckBox) { RichText = [new DocumentFieldRun("x")], Widgets = [new DocumentWidget(0, new DocumentBox(20, 120, 16, 16))] }),
+                "text field", "rich text on a check box");
+        });
+        using var builtBack = PdfEditOpen(built, "a rich text field built");
+        var memo = builtBack.Fields.Single();
+        Check(memo.Value == plain && memo.Flags == (DocumentFieldFlags.Multiline | DocumentFieldFlags.RichText) && PdfFormsStyles(memo.RichText) == PdfFormsStyles(runs),
+            $"the built rich text field: '{memo.Value}' {memo.Flags} {PdfFormsDescribe(memo.RichText)}");
+        Check(PdfFormsSquash(builtBack.ReadPage(0, DocumentParts.Annotations).Annotations.Single().Appearance?.Text) == PdfFormsSquash(plain), "the built rich text field's appearance shows its text");
+        PdfFormsSave("forms-rich-built", built);
+    }
+
+    private static void PdfFormsHeld(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("forms-held");
+        byte[] source = File.ReadAllBytes(sample.Path);
+        (string Name, string Value)[] values = [("applicant.name", "Robin Ellis"), ("applicant.email", "robin.ellis@example.com"), ("remarks", "Arrives on Tuesday.\nCall ahead."), ("city", "Lisbon")];
+        using var document = PdfEditOpen(source, "forms-held");
+        Check(document.Form.Find("applicant.name")!.Number == 0 && document.Form.Find("remarks")!.Number == 0 && Encoding.Latin1.GetString(source).Contains("/ObjStm", StringComparison.Ordinal),
+            "forms-held: applicant.name and remarks held inside other objects, the others in object streams");
+        foreach (var mode in new[] { DocumentSaveMode.Incremental, DocumentSaveMode.Rewrite })
+        {
+            string label = mode == DocumentSaveMode.Incremental ? "incremental" : "rewrite";
+            byte[] bytes = PdfEditSave(document, e =>
+            {
+                foreach (var (name, value) in values)
+                {
+                    e.SetField(name, value);
+                }
+            }, mode);
+            if (mode == DocumentSaveMode.Incremental)
+            {
+                Check(bytes.AsSpan(0, source.Length).SequenceEqual(source) && Encoding.Latin1.GetString(bytes, source.Length, bytes.Length - source.Length).Contains("/XRef", StringComparison.Ordinal),
+                    "forms-held filled incrementally: its bytes the prefix, the update's cross-reference a stream as the source's");
+            }
+
+            using var back = PdfEditOpen(bytes, $"forms-held filled ({label})");
+            foreach (var (name, value) in values)
+            {
+                var field = back.Fields.Single(f => f.Name == name);
+                var held = back.Form.Find(name)!;
+                Check(field.Value == value && held.Number > 0, $"forms-held filled ({label}): '{name}' = '{field.Value}', object {held.Number}");
+                foreach (var widget in held.Widgets.Where(w => w.Number != held.Number))
+                {
+                    Check(widget.Dictionary["Parent"u8] is { IsReference: true } parent && parent.AsReference.Number == held.Number,
+                        $"forms-held filled ({label}): '{name}''s widget names it as its parent ({widget.Dictionary["Parent"u8]})");
+                }
+            }
+
+            var annotations = back.ReadPage(0, DocumentParts.Annotations).Annotations;
+            Check(annotations.Count == 4 && values.All(v => annotations.Any(a => PdfFormsSquash(a.Appearance?.Text) == PdfFormsSquash(v.Value))),
+                $"forms-held filled ({label}): its 4 widgets show the values: {string.Join(" | ", annotations.Select(a => a.Appearance?.Text))}");
+            PdfFormsSave($"forms-held-filled-{label}", bytes);
+        }
+
+        // The held fields flattened: out of their holders, drawn into the page.
+        byte[] flat = PdfEditSave(document, e =>
+        {
+            e.SetField("remarks", "Flattened remarks");
+            e.Flatten("remarks", "applicant.name");
+        }, DocumentSaveMode.Incremental);
+        using var flattened = PdfEditOpen(flat, "forms-held flattened");
+        Check(flattened.Fields.Select(f => f.Name).SequenceEqual(["applicant.email", "city"]) && flattened.ReadPage(0, DocumentParts.Annotations).Annotations.Count == 2,
+            $"forms-held, its held fields flattened: {string.Join(", ", flattened.Fields.Select(f => f.Name))}");
+        Check(flattened.ReadPage(0, DocumentParts.Text).Text.Contains("Flattened remarks", StringComparison.Ordinal), "the flattened held field's value is page text");
+        PdfFormsSave("forms-held-flattened", flat, text: false);
+    }
+
+    private static void PdfFormsFaces(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("forms-faces");
+        byte[] source = File.ReadAllBytes(sample.Path);
+        double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
+        var reference = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-faces.p1.png")));
+        var options = PdfWriteDefaults with { Forms = new DocumentFormOptions { Faces = [SubsetFace()] } };
+        const string Greeting = "Добрый день";
+        using var document = PdfEditOpen(source, "forms-faces");
+        Check(document.Fields.Single(f => f.Name == "greeting").Font == "Helv", "forms-faces: the greeting's /DA names Helvetica");
+        foreach (var mode in new[] { DocumentSaveMode.Incremental, DocumentSaveMode.Rewrite })
+        {
+            string label = mode == DocumentSaveMode.Incremental ? "incremental" : "rewrite";
+            byte[] bytes = PdfEditSave(document, e =>
+            {
+                e.SetField("greeting", Greeting);
+                e.SetField("note", "Plain Latin text");
+            }, mode, options);
+            using var back = PdfEditOpen(bytes, $"forms-faces filled ({label})");
+            var greeting = back.Fields.Single(f => f.Name == "greeting");
+            var note = back.Fields.Single(f => f.Name == "note");
+            Check(greeting.Value == Greeting && greeting.Font == "F1_1" && greeting.FontSize == 12 && note.Font == "Helv" && note.Value == "Plain Latin text",
+                $"forms-faces filled ({label}): the greeting's /DA names {greeting.Font} at {greeting.FontSize}, the note's {note.Font}");
+            var fonts = back.File.Dictionary(back.Form.Resources!["Font"u8])!;
+            var added = back.File.Dictionary(fonts["F1_1"u8]);
+            Check(added is not null && added["Subtype"u8].IsName("Type0"u8) && PdfFonts.Read(back.File, added).Name?.Contains("DejaVu", StringComparison.Ordinal) == true
+                  && fonts.Contains("F1"u8) && fonts.Contains("Helv"u8) && !ReferenceEquals(back.File.Dictionary(fonts["F1"u8]), added),
+                $"forms-faces filled ({label}): /DR lists the face's font as /F1_1 beside its own /F1 and /Helv");
+            var shown = back.ReadPage(0, DocumentParts.Annotations).Annotations.Select(a => a.Appearance?.Text).ToList();
+            Check(shown.Contains(Greeting) && shown.Contains("Plain Latin text"), $"forms-faces filled ({label}): shown {string.Join(" | ", shown)}");
+            // The note's box left out: its producer drew the box's background inside its /Tx section, which a value set
+            // replaces (12.7.4.3), so pdfium's drawing of the empty note shows a background the filled one does not.
+            var drawn = PdfFormsDraw(back, 0, dpi);
+            var skip = new bool[drawn.Width * drawn.Height];
+            var noteBox = note.Widgets[0].Box;
+            for (int y = Math.Max(0, (int)(noteBox.Y * dpi / 72) - 2); y < Math.Min(drawn.Height, (int)(noteBox.Bottom * dpi / 72) + 3); y++)
+            {
+                for (int x = Math.Max(0, (int)(noteBox.X * dpi / 72) - 2); x < Math.Min(drawn.Width, (int)(noteBox.Right * dpi / 72) + 3); x++)
+                {
+                    skip[y * drawn.Width + x] = true;
+                }
+            }
+
+            var (share, mean) = PdfDrawDifference(drawn, reference, 32, skip);
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    forms-faces filled ({label}) drawn: {share * 100:F2}% off pdfium's drawing of the producer's appearance of the same greeting by more than 32 levels (mean {mean:F2}), the note's box left out"));
+            Check(share <= 0.08, string.Create(CultureInfo.InvariantCulture, $"forms-faces filled ({label}): {share * 100:F2}% off pdfium's drawing, past 8%"));
+            PdfFormsSave($"forms-faces-filled-{label}", bytes);
+            PdfFormsSaveDrawing($"forms-faces-filled-{label}", drawn);
+        }
+    }
+
+    private static void PdfFormsTemplates(Device device)
+    {
+        CpuOnly(device);
+        int compared = 0, templates = 0;
+        foreach (var sample in PdfSamples().Where(s => s.Phases.Contains("D9") && s.Readable))
+        {
+            using var document = DocumentFormats.Open(sample.Path);
+            var expected = sample.Expected["form"]?["xfa"]?["template"] as JsonObject;
+            var template = document.FormTemplate;
+            if (expected is null)
+            {
+                Check(template is null, $"{sample.Name}: no template, read as none");
+                continue;
+            }
+
+            templates++;
+            Check(template is not null, $"{sample.Name}: its XFA template read");
+            var sections = expected["sections"]!.AsArray().Select(x => $"{(string?)x!["name"]}={(string?)x["path"]}<{(string?)x["parent"]}").ToList();
+            Check(template!.Sections.Select(x => $"{x.Name}={x.Path}<{x.Parent}").SequenceEqual(sections),
+                $"{sample.Name}: sections {string.Join(", ", template.Sections.Select(x => $"{x.Name}={x.Path}<{x.Parent}"))}, expected {string.Join(", ", sections)}");
+            var fields = expected["fields"]!.AsArray();
+            Check(template.Fields.Count == fields.Count, $"{sample.Name}: {template.Fields.Count} template fields ({string.Join(", ", template.Fields.Select(f => f.Path))}), expected {fields.Count}");
+            for (int i = 0; i < Math.Min(fields.Count, template.Fields.Count); i++)
+            {
+                var e = fields[i]!.AsObject();
+                var f = template.Fields[i];
+                string kind = (string)e["kind"]!;
+                var options = (e["options"] as JsonArray ?? []).Select(o => new DocumentFieldOption((string)o!["display"]!, (string)o["export"]!)).ToList();
+                Check(f.Name == (string)e["name"]! && f.Path == (string)e["path"]! && f.Kind == PdfFormsKind(kind) && f.Section == (string?)e["section"] && f.Caption == (string?)e["caption"]
+                      && f.Binding == (string?)e["binding"] && f.Value == (string?)e["value"] && f.Options.SequenceEqual(options) && f.Flags == PdfFormsFlags(e["flags"], kind)
+                      && f.Field == (string?)e["field"],
+                    $"{sample.Name}: template field {i}: {f.Name} {f.Path} {f.Kind} in {f.Section}, '{f.Caption}', bound to {f.Binding} = '{f.Value}', [{string.Join(", ", f.Options)}], {f.Flags}, held by {f.Field}; expected {e.ToJsonString()}");
+                if (f.Field is { } held)
+                {
+                    var twin = document.Fields.SingleOrDefault(x => x.Name == held);
+                    Check(twin is not null && twin.Value == f.Value, $"{sample.Name}: '{f.Path}' held by the field '{held}' with its value ('{twin?.Value}')");
+                }
+
+                compared++;
+            }
+
+            int scripts = (int)expected["scripts"]!;
+            Check(template.Issues.Count == scripts && template.Issues.All(x => x.Kind == DocumentIssue.NotSupported && x.Detail.Contains("not run", StringComparison.Ordinal)),
+                $"{sample.Name}: {template.Issues.Count} issues ({string.Join("; ", template.Issues.Select(x => x.Detail))}), expected its {scripts} scripts listed as not run");
+        }
+
+        Console.WriteLine($"    {templates} XFA templates, {compared} template fields read as their JSON says");
+        Check(templates >= 2 && compared >= 16, $"{templates} templates and {compared} fields compared; the D9 samples hold more");
+    }
+
+    private static void PdfFormsMemory(Device device)
+    {
+        CpuOnly(device);
+        var filled = PdfEditSample("forms-filled");
+        using var document = PdfEditOpen(File.ReadAllBytes(filled.Path), "forms-filled");
+        var form = PdfForms.Read(document);                                    // the objects read once: what is measured is the form's reading
+        for (int i = 0; i < 200; i++)
+        {
+            form = PdfForms.Read(document);
+        }
+
+        long least = long.MaxValue;
+        for (int r = 0; r < 15; r++)
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            form = PdfForms.Read(document);
+            least = Math.Min(least, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"    reading forms-filled's form ({form.Fields.Count} fields, {form.Fields.Sum(f => f.Widgets.Count)} widgets), the document kept open, warm: {least / 1024.0:F1} KiB (40.4 KiB before the forms were completed)"));
+        Check(form.Fields.Count == 12 && form.Fields.Sum(f => f.Widgets.Count) == 14, "forms-filled's form: 12 fields, 14 widgets");
+        Check(least <= 24 * 1024, string.Create(CultureInfo.InvariantCulture, $"reading forms-filled's form allocates {least / 1024.0:F1} KiB, past 24 KiB (about what it returns)"));
     }
 
     private static void PdfFormsTimings(Device device)

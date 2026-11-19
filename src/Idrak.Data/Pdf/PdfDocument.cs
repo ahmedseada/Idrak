@@ -22,6 +22,7 @@ internal sealed partial class PdfDocument : IDocument
     private IReadOnlyList<DocumentAttachment>? _attachments;
     private IReadOnlyList<DocumentSignature>? _signatures;
     private PdfForm? _form;
+    private object? _template;                                                 // the form's template, or NoTemplate, once read
     private int _xfa = -1;
     private PdfContentReader? _reader;                                         // the last page's reader, for the next page
     private volatile bool _disposed;
@@ -120,6 +121,43 @@ internal sealed partial class PdfDocument : IDocument
             return Interlocked.CompareExchange(ref _form, read, null) ?? read;
         }
     }
+
+    /// <summary>
+    /// The form's design as its XFA template gives it (<see cref="PdfFormTemplates"/>: sections, fields with their captions,
+    /// kinds, choices and bindings, linked to the form's data and to <see cref="Fields"/>), or null for a document without
+    /// one. Read on the first call; its scripts are listed as issues, never run.
+    /// </summary>
+    public DocumentFormTemplate? FormTemplate
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (Volatile.Read(ref _template) is { } known)
+            {
+                return known as DocumentFormTemplate;
+            }
+
+            string name = _file.Name;
+            DocumentFormTemplate? read;
+            try
+            {
+                read = PdfFormTemplates.Read(this, Form);
+            }
+            catch (InvalidDataException e) when (!e.Message.StartsWith(name, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"{name}: its form's template: {e.Message}", e);
+            }
+            catch (Exception e) when (Unexpected(e))
+            {
+                throw new InvalidDataException($"{name}: its form's template: damaged ({e.GetType().Name}: {e.Message}).", e);
+            }
+
+            return Interlocked.CompareExchange(ref _template, read ?? NoTemplate, null) as DocumentFormTemplate ?? read;
+        }
+    }
+
+    // What the template slot holds once a document is found to have none.
+    private static readonly object NoTemplate = new();
 
     /// <summary>Whether the document holds an XFA form (its catalog's AcroForm has /XFA), found once.</summary>
     internal bool HasXfa

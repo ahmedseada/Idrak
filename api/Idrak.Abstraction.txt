@@ -1203,13 +1203,17 @@ public sealed record Idrak.Abstraction.Data.DocumentField : System.IEquatable<Id
   public Idrak.Abstraction.Data.DocumentColour? Background { get; init; }
   public Idrak.Abstraction.Data.DocumentColour? Border { get; init; }
   public Idrak.Abstraction.Data.DocumentFieldAlignment Alignment { get; init; }
+  public Idrak.Abstraction.Data.DocumentFieldBorderStyle BorderStyle { get; init; }
   public Idrak.Abstraction.Data.DocumentFieldFlags Flags { get; init; }
   public Idrak.Abstraction.Data.DocumentFieldKind Kind { get; init; }
   public Idrak.Abstraction.Data.DocumentFieldMark Mark { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentFieldOption> Options { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentFieldRun> RichText { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentWidget> Widgets { get; init; }
+  public System.Collections.Generic.IReadOnlyList<float> Dashes { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Values { get; init; }
   public float FontSize { get; init; }
+  public float? BorderWidth { get; init; }
   public int? MaxLength { get; init; }
   public string Name { get; init; }
   public string? Caption { get; init; }
@@ -1222,6 +1226,13 @@ public enum Idrak.Abstraction.Data.DocumentFieldAlignment : byte
   Centre = 1
   Left = 0
   Right = 2
+
+public enum Idrak.Abstraction.Data.DocumentFieldBorderStyle : byte
+  Beveled = 2
+  Dashed = 1
+  Inset = 3
+  Solid = 0
+  Underline = 4
 
 [Flags] public enum Idrak.Abstraction.Data.DocumentFieldFlags : int
   Comb = 32
@@ -1262,6 +1273,17 @@ public readonly record struct Idrak.Abstraction.Data.DocumentFieldOption : Syste
   public string Export { get; init; }
   public string Text { get; init; }
 
+public sealed record Idrak.Abstraction.Data.DocumentFieldRun : System.IEquatable<Idrak.Abstraction.Data.DocumentFieldRun>
+  public DocumentFieldRun(string Text)
+  public Idrak.Abstraction.Data.DocumentColour? Colour { get; init; }
+  public bool Bold { get; init; }
+  public bool Italic { get; init; }
+  public bool StrikeOut { get; init; }
+  public bool Underline { get; init; }
+  public float? Size { get; init; }
+  public string Text { get; init; }
+  public string? Family { get; init; }
+
 public enum Idrak.Abstraction.Data.DocumentFill : byte
   EvenOdd = 2
   NonZero = 1
@@ -1282,6 +1304,18 @@ public sealed record Idrak.Abstraction.Data.DocumentFormOptions : System.IEquata
   public float Padding { get; init; }
   public string TextSetter { get; init; }
   public string? Fonts { get; init; }
+
+public sealed record Idrak.Abstraction.Data.DocumentFormSection : System.IEquatable<Idrak.Abstraction.Data.DocumentFormSection>
+  public DocumentFormSection(string Name, string Path)
+  public string Name { get; init; }
+  public string Path { get; init; }
+  public string? Parent { get; init; }
+
+public sealed record Idrak.Abstraction.Data.DocumentFormTemplate : System.IEquatable<Idrak.Abstraction.Data.DocumentFormTemplate>
+  public DocumentFormTemplate()
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentFormSection> Sections { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentIssue> Issues { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentTemplateField> Fields { get; init; }
 
 public static class Idrak.Abstraction.Data.DocumentFormats
   public const int HeaderBytes = 4096
@@ -1688,6 +1722,19 @@ public readonly record struct Idrak.Abstraction.Data.DocumentTag : System.IEquat
   public static Idrak.Abstraction.Data.DocumentTag Artifact { get; }
   public string Type { get; init; }
 
+public sealed record Idrak.Abstraction.Data.DocumentTemplateField : System.IEquatable<Idrak.Abstraction.Data.DocumentTemplateField>
+  public DocumentTemplateField(string Name, string Path, Idrak.Abstraction.Data.DocumentFieldKind Kind)
+  public Idrak.Abstraction.Data.DocumentFieldFlags Flags { get; init; }
+  public Idrak.Abstraction.Data.DocumentFieldKind Kind { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentFieldOption> Options { get; init; }
+  public string Name { get; init; }
+  public string Path { get; init; }
+  public string? Binding { get; init; }
+  public string? Caption { get; init; }
+  public string? Field { get; init; }
+  public string? Section { get; init; }
+  public string? Value { get; init; }
+
 public sealed record Idrak.Abstraction.Data.DocumentText : System.IEquatable<Idrak.Abstraction.Data.DocumentText>
   public DocumentText(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentLine> Lines, string Text)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentLine> Lines { get; init; }
@@ -1767,6 +1814,7 @@ public readonly record struct Idrak.Abstraction.Data.DocumentWidget : System.IEq
   public DocumentWidget(int Page, Idrak.Abstraction.Data.DocumentBox Box, string? State = null)
   public Idrak.Abstraction.Data.DocumentBox Box { get; init; }
   public int Page { get; init; }
+  public int Rotation { get; init; }
   public string? OnState { get; init; }
   public string? State { get; init; }
 
@@ -2164,6 +2212,7 @@ public interface Idrak.Abstraction.Data.IAugmentationKind : Idrak.Abstraction.IK
   public Idrak.Abstraction.Data.IAugmentation Create(Idrak.Abstraction.Data.AugmentationOptions options)
 
 public interface Idrak.Abstraction.Data.IDocument : System.IDisposable
+  public (default) Idrak.Abstraction.Data.DocumentFormTemplate? FormTemplate { get; }
   public (default) System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentDestination> Destinations { get; }
   public Idrak.Abstraction.Data.DocumentDrawing DrawPage(int index, Idrak.Abstraction.Data.DocumentDrawOptions options)
   public Idrak.Abstraction.Data.DocumentInfo Info { get; }
@@ -2192,6 +2241,7 @@ public interface Idrak.Abstraction.Data.IDocumentBuilder : System.IDisposable
 public interface Idrak.Abstraction.Data.IDocumentEditor : System.IDisposable
   public (default) Idrak.Abstraction.Data.DocumentRedactionResult Redact(int index, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> areas)
   public (default) void Flatten(scoped params System.ReadOnlySpan<string> names)
+  public (default) void SetRichText(string name, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentFieldRun> runs)
   public Idrak.Abstraction.Data.IDocument Source { get; }
   public Idrak.Abstraction.Data.IDocumentPageBuilder AddPage(float width, float height)
   public Idrak.Abstraction.Data.IDocumentPageBuilder Overlay(int index)

@@ -182,8 +182,17 @@ internal sealed record PdfFieldLook(DocumentFieldKind Kind, DocumentFieldFlags F
 
     public DocumentColour? Border { get; init; }
 
-    /// <summary>The border's width (drawn only with a border colour).</summary>
+    /// <summary>The border's width (drawn only with a border colour, but a beveled or inset box's shading).</summary>
     public float BorderWidth { get; init; } = 1f;
+
+    /// <summary>How the border is drawn.</summary>
+    public DocumentFieldBorderStyle BorderStyle { get; init; }
+
+    /// <summary>A dashed border's dashes and gaps (none: 3 on, 3 off).</summary>
+    public IReadOnlyList<float> Dashes { get; init; } = [];
+
+    /// <summary>The value as rich text (runs each in its own style), or null for plain text.</summary>
+    public IReadOnlyList<DocumentFieldRun>? Rich { get; init; }
 
     /// <summary>Whether the background and border are drawn (false: an existing appearance's own are kept around the text).</summary>
     public bool Framed { get; init; } = true;
@@ -237,16 +246,20 @@ internal sealed record PdfFieldLook(DocumentFieldKind Kind, DocumentFieldFlags F
 internal sealed record PdfAppearanceBase(byte[] Prefix, byte[] Suffix, PdfDictionary? Resources, PdfFile File)
 {
     /// <summary>
-    /// The base of <paramref name="stream"/> when its box is the widget's (<c>[0 0 width height]</c>, no matrix moving it)
-    /// and its content holds a <c>/Tx</c> marked section; else null (a new appearance replaces it whole).
+    /// The base of <paramref name="stream"/> when its box is the widget's as turned by <paramref name="rotation"/>
+    /// (<c>[0 0 width height]</c>; its matrix none, or one that only turns it so) and its content holds a <c>/Tx</c> marked
+    /// section; else null (a new appearance replaces it whole).
     /// </summary>
-    public static PdfAppearanceBase? Of(PdfFile file, PdfStream stream, float width, float height)
+    public static PdfAppearanceBase? Of(PdfFile file, PdfStream stream, float width, float height, int rotation = 0)
     {
         var box = PdfFunction.Numbers(file, stream.Dictionary["BBox"u8]);
         var matrix = PdfFunction.Numbers(file, stream.Dictionary["Matrix"u8]);
+        var turn = PdfAppearance.Turn(rotation, width, height);
+        bool turned = turn is { } t
+            ? matrix is { Length: 6 } m && m[0] == t.A && m[1] == t.B && m[2] == t.C && m[3] == t.D
+            : matrix is null || (matrix.Length == 6 && matrix[0] == 1 && matrix[1] == 0 && matrix[2] == 0 && matrix[3] == 1 && matrix[4] == 0 && matrix[5] == 0);
         if (box is not { Length: 4 } || Math.Abs(Math.Min(box[0], box[2])) > 0.01 || Math.Abs(Math.Min(box[1], box[3])) > 0.01
-            || Math.Abs(Math.Abs(box[2] - box[0]) - width) > 0.01 || Math.Abs(Math.Abs(box[3] - box[1]) - height) > 0.01
-            || (matrix is not null && (matrix.Length != 6 || matrix[0] != 1 || matrix[1] != 0 || matrix[2] != 0 || matrix[3] != 1 || matrix[4] != 0 || matrix[5] != 0)))
+            || Math.Abs(Math.Abs(box[2] - box[0]) - width) > 0.01 || Math.Abs(Math.Abs(box[3] - box[1]) - height) > 0.01 || !turned)
         {
             return null;
         }
@@ -299,12 +312,13 @@ internal sealed record PdfAppearanceBase(byte[] Prefix, byte[] Suffix, PdfDictio
 }
 
 /// <summary>
-/// A widget's appearance made by <see cref="PdfFieldAppearances"/>: a form XObject of its box's size, its content, and the
-/// resources it names (the embedded faces' fonts, a simple font, opacities); or, over an existing appearance's
-/// <see cref="PdfAppearanceBase"/>, the text section that replaces the existing one.
+/// A widget's appearance made by <see cref="PdfFieldAppearances"/>: a form XObject of its box's size (its width and height
+/// swapped when it is turned a quarter), its content, and the resources it names (the embedded faces' fonts, simple fonts,
+/// opacities); or, over an existing appearance's <see cref="PdfAppearanceBase"/>, the text section that replaces the
+/// existing one. A turned one maps its box back onto the widget's by its <c>/Matrix</c> (12.5.5), as <c>/MK /R</c> says.
 /// </summary>
 internal sealed class PdfAppearance(float width, float height, byte[] content, IReadOnlyList<PdfWriterFont> fonts, IReadOnlyList<(float Fill, float Stroke)> alphas,
-    PdfFieldFont? simple)
+    IReadOnlyList<PdfFieldFont> simple)
 {
     public float Width { get; } = width;
 
@@ -318,19 +332,34 @@ internal sealed class PdfAppearance(float width, float height, byte[] content, I
     /// <summary>The opacities it sets (<c>/GS1</c>, ...).</summary>
     public IReadOnlyList<(float Fill, float Stroke)> Alphas { get; } = alphas;
 
-    /// <summary>The simple font it names by <see cref="PdfFieldFont.Resource"/>, or null.</summary>
-    public PdfFieldFont? Simple { get; } = simple;
+    /// <summary>The simple fonts it names, each by its <see cref="PdfFieldFont.Resource"/> (none, one, or a rich text's several).</summary>
+    public IReadOnlyList<PdfFieldFont> Simple { get; } = simple;
 
     /// <summary>The existing appearance its content is the text section of, or null when it stands alone.</summary>
     public PdfAppearanceBase? Base { get; init; }
 
+    /// <summary>How far its content is turned counter-clockwise (0, 90, 180 or 270): its box is the widget's turned, its matrix turns it back.</summary>
+    public int Rotation { get; set; }
+
+    /// <summary>The same appearance over <paramref name="kept"/> (its text section in place of the existing one's).</summary>
+    public PdfAppearance Over(PdfAppearanceBase kept) => new(Width, Height, Content, Fonts, Alphas, Simple) { Base = kept, Rotation = Rotation };
+
+    /// <summary>The matrix that turns a box of <paramref name="width"/> x <paramref name="height"/> turned by <paramref name="rotation"/> back onto its widget (from the origin), or null for none.</summary>
+    public static (float A, float B, float C, float D, float E, float F)? Turn(int rotation, float width, float height) => rotation switch
+    {
+        90 => (0, 1, -1, 0, height, 0),
+        180 => (-1, 0, 0, -1, width, height),
+        270 => (0, -1, 1, 0, 0, width),
+        _ => null,
+    };
+
     /// <summary>
-    /// Writes it as object <paramref name="number"/> (a form XObject, its content deflated), the simple font's resource
+    /// Writes it as object <paramref name="number"/> (a form XObject, its content deflated), each simple font's resource
     /// value written by <paramref name="simpleFont"/> and a base's resources' values by <paramref name="value"/>; what its
     /// dictionary refers to is written first (a copier's references), and an encrypting file gets the dictionary written
     /// again with its strings encrypted.
     /// </summary>
-    public void Write(PdfFileWriter file, int number, Action<PdfSyntax>? simpleFont, Action<PdfSyntax, PdfValue>? value = null)
+    public void Write(PdfFileWriter file, int number, Action<PdfSyntax, PdfFieldFont> simpleFont, Action<PdfSyntax, PdfValue>? value = null)
     {
         var own = Base?.Resources ?? PdfDictionary.Empty;
         // A category of resources: the base's own entries (but those this one names), then this one's.
@@ -355,8 +384,14 @@ internal sealed class PdfAppearance(float width, float height, byte[] content, I
 
         void Entries(PdfSyntax s)
         {
-            s.Raw("/Type/XObject/Subtype/Form/BBox[0 0 "u8).Number(Width).Space().Number(Height).Raw("]/Resources<<"u8);
-            bool fonts = Fonts.Count > 0 || (Simple is not null && simpleFont is not null) || !own["Font"u8].IsNull;
+            s.Raw("/Type/XObject/Subtype/Form/BBox[0 0 "u8).Number(Width).Space().Number(Height).Raw("]"u8);
+            if (Turn(Rotation, Width, Height) is { } m)
+            {
+                s.Raw("/Matrix["u8).Number(m.A).Space().Number(m.B).Space().Number(m.C).Space().Number(m.D).Space().Number(m.E).Space().Number(m.F).Raw("]"u8);
+            }
+
+            s.Raw("/Resources<<"u8);
+            bool fonts = Fonts.Count > 0 || Simple.Count > 0 || !own["Font"u8].IsNull;
             if (fonts)
             {
                 Category(s, "Font"u8, t =>
@@ -366,12 +401,12 @@ internal sealed class PdfAppearance(float width, float height, byte[] content, I
                         t.Raw("/F"u8).Integer(font.Index).Space().Reference(font.Number);
                     }
 
-                    if (Simple is { Resource: { } name } && simpleFont is not null)
+                    foreach (var simple in Simple)
                     {
-                        t.Name(name).Space();                                  // a reference follows: "N G R"
-                        simpleFont(t);
+                        t.Name(simple.Resource!).Space();                      // a reference follows: "N G R"
+                        simpleFont(t, simple);
                     }
-                }, key => (Simple?.Resource is { } name && key.Is(name)) || Fonts.Any(f => key.Is(Encoding.ASCII.GetBytes("F" + f.Index.ToString(CultureInfo.InvariantCulture)))));
+                }, key => Simple.Any(f => key.Is(f.Resource)) || Fonts.Any(f => key.Is(Encoding.ASCII.GetBytes("F" + f.Index.ToString(CultureInfo.InvariantCulture)))));
             }
 
             if (Alphas.Count > 0 || !own["ExtGState"u8].IsNull)
@@ -463,6 +498,115 @@ internal static class PdfFieldAppearances
                 else
                 {
                     Line(placed, shown, look, font, width, height, inset, innerWidth, innerHeight, options);
+                }
+            }
+
+            return Finish(page, placed, look, font, width, height, Inset(look, 0f), text: true);
+        }
+        finally
+        {
+            page.Release();
+        }
+    }
+
+    /// <summary>
+    /// A rich text box's appearance, <paramref name="width"/> x <paramref name="height"/> points: the look's runs, each in the
+    /// font <paramref name="runFont"/> chooses for its text, its own size (the field's unless it sets one; a field's size
+    /// of 0 fits the plain text as a plain value fits) and colour, underlined or struck through; one line centred on the
+    /// tallest capitals, or several wrapped from the top at spaces (each paragraph on a line of its own), aligned.
+    /// </summary>
+    public static PdfAppearance Rich(PdfFieldLook look, PdfFieldFont font, Func<DocumentFieldRun, string, PdfFieldFont> runFont, float width, float height,
+        Func<IFontFace, PdfWriterFont> faces, DocumentFormOptions options)
+    {
+        var page = new PdfPageBuilder(faces, NoImages, 0, width, height);
+        try
+        {
+            float inset = Inset(look, options);
+            float innerWidth = Math.Max(0f, width - 2 * inset), innerHeight = Math.Max(0f, height - 2 * inset);
+            bool multiline = (look.Flags & DocumentFieldFlags.Multiline) != 0;
+            var pieces = new List<Piece>();
+            foreach (var run in look.Rich ?? [])
+            {
+                string text = multiline ? run.Text : OneLine(run.Text);
+                if (text.Length > 0)
+                {
+                    pieces.Add(new Piece(run, text, runFont(run, text)));
+                }
+            }
+
+            var placed = new List<Placed>();
+            if (pieces.Count > 0)
+            {
+                float size = look.FontSize;
+                List<List<Segment>> lines;
+                if (multiline)
+                {
+                    if (size > 0)
+                    {
+                        lines = RichLines(pieces, size, innerWidth, options);
+                    }
+                    else
+                    {
+                        size = Math.Max(options.MaxFontSize, options.MinFontSize);
+                        while (true)
+                        {
+                            lines = RichLines(pieces, size, innerWidth, options);
+                            if (RichHeight(lines, options) <= innerHeight || size - SizeStep < options.MinFontSize)
+                            {
+                                break;
+                            }
+
+                            size -= SizeStep;
+                        }
+                    }
+                }
+                else
+                {
+                    if (size <= 0)
+                    {
+                        string plain = OneLine(PdfRichText.Plain(look.Rich!));
+                        double extent = Math.Max(1e-3, font.Ascent - font.Descent);
+                        double tall = innerHeight / extent, wide = Measure(plain, font, 1f, options) is > 0 and var w ? innerWidth / w : double.MaxValue;
+                        size = (float)Math.Max(options.MinFontSize, Math.Min(tall, wide));
+                    }
+
+                    lines = RichLines(pieces, size, float.PositiveInfinity, options);
+                }
+
+                float baseline = 0;
+                for (int k = 0; k < lines.Count; k++)
+                {
+                    var line = lines[k];
+                    if (multiline)
+                    {
+                        baseline = k == 0 ? inset + (float)Max(line, s => s.Piece.Font.Ascent * s.Size) : baseline + (float)Max(line, s => s.Size) * options.LineSpacing;
+                    }
+                    else
+                    {
+                        baseline = height - (height - (float)Max(line, s => s.Piece.Font.CapHeight * s.Size)) / 2;
+                    }
+
+                    float lineWidth = 0;
+                    foreach (var segment in line)
+                    {
+                        lineWidth += segment.Set.Width;
+                    }
+
+                    float x = look.Alignment switch
+                    {
+                        DocumentFieldAlignment.Centre => inset + (innerWidth - lineWidth) / 2,
+                        DocumentFieldAlignment.Right => inset + innerWidth - lineWidth,
+                        _ => inset,
+                    };
+                    foreach (var segment in line)
+                    {
+                        var run = segment.Piece.Run;
+                        placed.Add(new Placed(segment.Set, segment.Size, x, baseline)
+                        {
+                            Font = segment.Piece.Font, Colour = run.Colour, Underline = run.Underline, StrikeOut = run.StrikeOut,
+                        });
+                        x += segment.Set.Width;
+                    }
                 }
             }
 
@@ -577,10 +721,12 @@ internal static class PdfFieldAppearances
     private static int NoImages(ImageData image, DocumentImageEncoding encoding) =>
         throw new InvalidOperationException("A form field's appearance holds no images.");
 
-    // The distance from the box's edge to its text: the border (when drawn) and the padding.
+    // The distance from the box's edge to its text: the border (when drawn: a beveled or inset box's shading always, twice
+    // the border's width) and the padding.
     private static float Inset(PdfFieldLook look, DocumentFormOptions options) => Inset(look, options.Padding);
 
-    private static float Inset(PdfFieldLook look, float padding) => (look.Border is not null ? look.BorderWidth : 0f) + padding;
+    private static float Inset(PdfFieldLook look, float padding) =>
+        (look.BorderStyle is DocumentFieldBorderStyle.Beveled or DocumentFieldBorderStyle.Inset ? 2 * look.BorderWidth : look.Border is not null ? look.BorderWidth : 0f) + padding;
 
     // The background and the border, inside the box, as content of the form's own space (none when an existing
     // appearance's are kept).
@@ -598,14 +744,69 @@ internal static class PdfFieldAppearances
             content.Raw("0 0 "u8).Number(width).Space().Number(height).Raw(" re f Q\n"u8);
         }
 
-        if (look.Border is { } border && look.BorderWidth > 0)
+        float w = look.BorderWidth;
+        if (look.BorderStyle is DocumentFieldBorderStyle.Beveled or DocumentFieldBorderStyle.Inset && w > 0)
         {
-            float half = look.BorderWidth / 2;
-            content.Raw("q "u8).Number(look.BorderWidth).Raw(" w "u8);
+            Bevel(content, look, width, height);
+            return;
+        }
+
+        if (look.Border is { } border && w > 0)
+        {
+            float half = w / 2;
+            content.Raw("q "u8).Number(w).Raw(" w "u8);
+            if (look.BorderStyle == DocumentFieldBorderStyle.Dashed)
+            {
+                content.Byte((byte)'[');
+                if (look.Dashes.Count == 0)
+                {
+                    content.Byte((byte)'3');
+                }
+
+                for (int i = 0; i < look.Dashes.Count; i++)
+                {
+                    (i > 0 ? content.Space() : content).Number(look.Dashes[i]);
+                }
+
+                content.Raw("] 0 d "u8);
+            }
+
             Colour(content, border, stroke: true);
-            content.Number(half).Space().Number(half).Space().Number(Math.Max(0f, width - look.BorderWidth)).Space().Number(Math.Max(0f, height - look.BorderWidth))
+            if (look.BorderStyle == DocumentFieldBorderStyle.Underline)
+            {
+                content.Raw("0 "u8).Number(half).Raw(" m "u8).Number(width).Space().Number(half).Raw(" l S Q\n"u8);   // the bottom edge alone
+                return;
+            }
+
+            content.Number(half).Space().Number(half).Space().Number(Math.Max(0f, width - w)).Space().Number(Math.Max(0f, height - w))
                 .Raw(" re S Q\n"u8);
         }
+    }
+
+    // A beveled (raised) or inset (sunken) box (ISO 32000-2, 12.5.4): the shading twice the border's width inside the box's
+    // edge, lighter along the top and left and darker along the bottom and right for a raised one (white and half grey),
+    // the other way for a sunken one (half grey and three-quarter grey); the border's colour around it when it has one.
+    private static void Bevel(PdfSyntax content, PdfFieldLook look, float width, float height)
+    {
+        float half = look.BorderWidth, full = 2 * look.BorderWidth;
+        bool raised = look.BorderStyle == DocumentFieldBorderStyle.Beveled;
+        content.Raw("q "u8);
+        Colour(content, DocumentColour.Grey(raised ? 1f : 0.5f));
+        content.Number(half).Space().Number(half).Raw(" m "u8).Number(half).Space().Number(height - half).Raw(" l "u8).Number(width - half).Space().Number(height - half)
+            .Raw(" l "u8).Number(width - full).Space().Number(height - full).Raw(" l "u8).Number(full).Space().Number(height - full).Raw(" l "u8).Number(full).Space()
+            .Number(full).Raw(" l f\n"u8);
+        Colour(content, DocumentColour.Grey(raised ? 0.5f : 0.75f));
+        content.Number(width - half).Space().Number(height - half).Raw(" m "u8).Number(width - half).Space().Number(half).Raw(" l "u8).Number(half).Space().Number(half)
+            .Raw(" l "u8).Number(full).Space().Number(full).Raw(" l "u8).Number(width - full).Space().Number(full).Raw(" l "u8).Number(width - full).Space()
+            .Number(height - full).Raw(" l f\n"u8);
+        if (look.Border is { } border)
+        {
+            Colour(content, border);
+            content.Raw("0 0 "u8).Number(width).Space().Number(height).Raw(" re "u8).Number(half).Space().Number(half).Space().Number(Math.Max(0f, width - 2 * half)).Space()
+                .Number(Math.Max(0f, height - 2 * half)).Raw(" re f*\n"u8);
+        }
+
+        content.Raw("Q\n"u8);
     }
 
     // A rectangle's contour, from its top-left corner (as DocumentPath.Rectangle).
@@ -788,16 +989,31 @@ internal static class PdfFieldAppearances
     }
 
     // The appearance's content: the page builder's (background, border, the faces' glyph runs under the inner clip), then
-    // a simple font's text, in the form's own space, inside /Tx BMC ... EMC for a text field.
+    // a simple font's text (a rich text's in each run's font and colour), in the form's own space, inside /Tx BMC ... EMC
+    // for a text field; a rich run's underline or strike-out last.
     private static PdfAppearance Finish(PdfPageBuilder page, List<Placed> placed, PdfFieldLook look, PdfFieldFont? font, float width, float height, float edge, bool text)
     {
         var clip = new DocumentBox(edge, edge, Math.Max(0f, width - 2 * edge), Math.Max(0f, height - 2 * edge));
-        if (font is { IsSimple: false } && placed.Count > 0)
+        bool anyFaces = false, anySimple = false, decorated = false;
+        foreach (var p in placed)
+        {
+            var own = p.Font ?? font;
+            anyFaces |= own is { IsSimple: false };
+            anySimple |= own is { IsSimple: true };
+            decorated |= p.Underline || p.StrikeOut;
+        }
+
+        if (anyFaces)
         {
             page.Save();
             page.Clip(DocumentPath.Rectangle(clip));
             foreach (var p in placed)
             {
+                if ((p.Font ?? font) is not { IsSimple: false })
+                {
+                    continue;
+                }
+
                 foreach (var run in p.Line.Runs ?? [])
                 {
                     var glyphs = run.Glyphs.ToArray();
@@ -806,7 +1022,7 @@ internal static class PdfFieldAppearances
                         glyphs[i] = glyphs[i] with { X = glyphs[i].X + p.X, Y = glyphs[i].Y + p.Baseline };
                     }
 
-                    page.Glyphs(run.Face, run.Size, glyphs, run.Text, DocumentTextMode.Fill, look.TextColour);
+                    page.Glyphs(run.Face, run.Size, glyphs, run.Text, DocumentTextMode.Fill, p.Colour ?? look.TextColour);
                 }
             }
 
@@ -825,23 +1041,61 @@ internal static class PdfFieldAppearances
             content.Raw(drawn.Span);
         }
 
-        if (font is { IsSimple: true } && placed.Count > 0)
+        var simple = new List<PdfFieldFont>(1);
+        if (anySimple)
         {
             content.Raw("q "u8).Number(clip.X).Space().Number(clip.Y).Space().Number(clip.Width).Space().Number(clip.Height).Raw(" re W n\nBT\n"u8);
-            Colour(content, look.TextColour);
+            var colour = look.TextColour;
+            Colour(content, colour);
             float size = -1;
+            PdfFieldFont? current = null;
             foreach (var p in placed)
             {
-                if (p.Size != size)
+                if ((p.Font ?? font) is not { IsSimple: true } own)
                 {
-                    content.Name(font.Resource!).Space().Number(p.Size, 3).Raw(" Tf\n"u8);
-                    size = p.Size;
+                    continue;
                 }
 
-                content.Raw("1 0 0 1 "u8).Number(p.X, 3).Space().Number(height - p.Baseline, 3).Raw(" Tm "u8).HexString(font.Encode(p.Line.Text)).Raw(" Tj\n"u8);
+                if ((p.Colour ?? look.TextColour) is var wanted && wanted != colour)
+                {
+                    Colour(content, wanted);
+                    colour = wanted;
+                }
+
+                if (p.Size != size || !ReferenceEquals(own, current))
+                {
+                    content.Name(own.Resource!).Space().Number(p.Size, 3).Raw(" Tf\n"u8);
+                    (size, current) = (p.Size, own);
+                    if (!simple.Contains(own))
+                    {
+                        simple.Add(own);
+                    }
+                }
+
+                content.Raw("1 0 0 1 "u8).Number(p.X, 3).Space().Number(height - p.Baseline, 3).Raw(" Tm "u8).HexString(own.Encode(p.Line.Text)).Raw(" Tj\n"u8);
             }
 
             content.Raw("ET\nQ\n"u8);
+        }
+
+        if (decorated)
+        {
+            // A rich run's lines: under the baseline, or through the middle of its lower case, a sixteenth of its size thick.
+            content.Raw("q "u8).Number(clip.X).Space().Number(clip.Y).Space().Number(clip.Width).Space().Number(clip.Height).Raw(" re W n\n"u8);
+            foreach (var p in placed)
+            {
+                float thick = Math.Max(0.5f, p.Size / 16);
+                foreach (var (on, below) in new[] { (p.Underline, p.Size * 0.12f), (p.StrikeOut, -p.Size * 0.28f) })
+                {
+                    if (on && p.Line.Width > 0)
+                    {
+                        Colour(content, p.Colour ?? look.TextColour);
+                        content.Number(p.X, 3).Space().Number(height - p.Baseline - below - thick / 2, 3).Space().Number(p.Line.Width, 3).Space().Number(thick, 3).Raw(" re f\n"u8);
+                    }
+                }
+            }
+
+            content.Raw("Q\n"u8);
         }
 
         if (text)
@@ -849,7 +1103,7 @@ internal static class PdfFieldAppearances
             content.Raw("EMC\n"u8);
         }
 
-        return new PdfAppearance(width, height, content.Span.ToArray(), [.. page.Fonts], [.. page.Alphas], font is { IsSimple: true } && placed.Count > 0 ? font : null);
+        return new PdfAppearance(width, height, content.Span.ToArray(), [.. page.Fonts], [.. page.Alphas], simple);
     }
 
     // A fill (or stroke) colour in its space (g, rg or k; G, RG or K).
@@ -929,9 +1183,128 @@ internal static class PdfFieldAppearances
         return (verbs, [.. points.SelectMany(p => new[] { p.X, p.Y })]);
     }
 
+    // Text on one line: line ends as spaces.
+    private static string OneLine(string text) => text.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\n', ' ').Replace('\r', ' ');
+
+    // A rich text's lines: its runs' words (each with the spaces after it) laid in turn, a line broken before a word that
+    // would pass `width` (a word wider than a line kept whole) and at each line feed; a run's words on a line set together.
+    private static List<List<Segment>> RichLines(List<Piece> pieces, float size, float width, DocumentFormOptions options)
+    {
+        var lines = new List<List<(Piece Piece, StringBuilder Text, float Size)>> { new() };
+        double used = 0;
+        foreach (var piece in pieces)
+        {
+            float own = piece.Run.Size ?? size;
+            string text = piece.Text;
+            int i = 0;
+            while (i < text.Length)
+            {
+                if (text[i] is '\n' or '\r')
+                {
+                    i += text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n' ? 2 : 1;
+                    lines.Add([]);
+                    used = 0;
+                    continue;
+                }
+
+                int j = i;
+                while (j < text.Length && text[j] is not (' ' or '\n' or '\r'))
+                {
+                    j++;
+                }
+
+                int word = j;
+                while (j < text.Length && text[j] == ' ')
+                {
+                    j++;
+                }
+
+                double shown = Measure(text[i..word], piece.Font, own, options), advance = word == j ? shown : Measure(text[i..j], piece.Font, own, options);
+                if (used + shown > width && lines[^1].Count > 0)
+                {
+                    lines.Add([]);
+                    used = 0;
+                }
+
+                var line = lines[^1];
+                if (line.Count > 0 && ReferenceEquals(line[^1].Piece, piece))
+                {
+                    line[^1].Text.Append(text, i, j - i);
+                }
+                else
+                {
+                    line.Add((piece, new StringBuilder(text, i, j - i, j - i), own));
+                }
+
+                used += advance;
+                i = j;
+            }
+        }
+
+        var set = new List<List<Segment>>(lines.Count);
+        foreach (var line in lines)
+        {
+            var segments = new List<Segment>(line.Count);
+            for (int k = 0; k < line.Count; k++)
+            {
+                string text = line[k].Text.ToString();
+                if (k == line.Count - 1)
+                {
+                    text = text.TrimEnd(' ');                                  // a line's last spaces neither shown nor aligned
+                }
+
+                segments.Add(new Segment(line[k].Piece, line[k].Size, Set(text, line[k].Piece.Font, line[k].Size, options)));
+            }
+
+            set.Add(segments);
+        }
+
+        return set;
+    }
+
+    // The height rich lines take: their first line's extent and the spacing to each next one.
+    private static double RichHeight(List<List<Segment>> lines, DocumentFormOptions options)
+    {
+        double height = lines.Count > 0 ? Max(lines[0], s => (s.Piece.Font.Ascent - s.Piece.Font.Descent) * s.Size) : 0;
+        for (int k = 1; k < lines.Count; k++)
+        {
+            height += Max(lines[k], s => s.Size) * options.LineSpacing;
+        }
+
+        return height;
+    }
+
+    // The most a line's segments give (0 for an empty line).
+    private static double Max(List<Segment> line, Func<Segment, double> of)
+    {
+        double most = 0;
+        foreach (var segment in line)
+        {
+            most = Math.Max(most, of(segment));
+        }
+
+        return most;
+    }
+
     // A line as set: its text, width and, for faces, its runs (null for a simple font's codes).
     private sealed record SetLine(string Text, float Width, IReadOnlyList<DocumentSetRun>? Runs);
 
-    // A line placed: its pen's start and baseline in the box (points from its top-left corner, y down).
-    private sealed record Placed(SetLine Line, float Size, float X, float Baseline);
+    // A line placed: its pen's start and baseline in the box (points from its top-left corner, y down); a rich run's own
+    // font, colour and decoration (null: the field's font and colour).
+    private sealed record Placed(SetLine Line, float Size, float X, float Baseline)
+    {
+        public PdfFieldFont? Font { get; init; }
+
+        public DocumentColour? Colour { get; init; }
+
+        public bool Underline { get; init; }
+
+        public bool StrikeOut { get; init; }
+    }
+
+    // A rich text's run with the text it shows (one line's: line ends as spaces) and the font chosen for it.
+    private sealed record Piece(DocumentFieldRun Run, string Text, PdfFieldFont Font);
+
+    // A part of a rich line: a run's words on it, at the run's size, set.
+    private sealed record Segment(Piece Piece, float Size, SetLine Set);
 }

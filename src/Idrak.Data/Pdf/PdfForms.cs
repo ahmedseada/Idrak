@@ -33,6 +33,9 @@ internal sealed class PdfFormWidget(PdfValue node, PdfDictionary dictionary)
     /// <summary>Whether it is not shown (its flags hide it).</summary>
     public bool Hidden { get; set; }
 
+    /// <summary>How far its content is turned counter-clockwise (<c>/MK /R</c>): 0, 90, 180 or 270.</summary>
+    public int Rotation { get; set; }
+
     /// <summary>Its width and height in user space.</summary>
     public (float Width, float Height) Size => ((float)Math.Abs(Rect.Right - Rect.Left), (float)Math.Abs(Rect.Top - Rect.Bottom));
 
@@ -120,12 +123,13 @@ internal sealed class PdfForm
 /// <summary>
 /// Reads a PDF document's form (ISO 32000-2, 12.7): the AcroForm's field tree from <c>/Fields</c> (kids walked without
 /// recursion, a node met twice passed over, nesting within <see cref="DocumentOptions.MaxDepth"/>), each terminal field
-/// with what it inherits (<c>/FT /Ff /V /DV /DA /Q /MaxLen /Opt</c>), its kind, value or values, choices, flags, default
-/// appearance (font, size, colour), tooltip and appearance characteristics (<c>/MK</c>), and its widgets (the field
-/// itself when it is its own, else its kids without a name): each one's page (by <c>/P</c>, else the page whose
-/// <c>/Annots</c> holds it), box as shown, appearance state and on state. An XFA form's <c>datasets</c> packet is read as
-/// data (XML, no DTD, nothing outside fetched): each leaf's value by its path; values no AcroForm field holds become
-/// text fields of their own. Its layout is not drawn. Pages' widget annotations come with their appearances read as
+/// with what it inherits (<c>/FT /Ff /V /DV /DA /Q /MaxLen /Opt /RV /DS</c>), its kind, value or values (a text field's
+/// rich text as runs, <see cref="PdfRichText"/>), choices, flags, default appearance (font, size, colour), tooltip,
+/// appearance characteristics (<c>/MK</c>) and border (<c>/BS</c>), and its widgets (the field itself when it is its own,
+/// else its kids without a name): each one's page (by <c>/P</c>, else the page whose <c>/Annots</c> holds it), box as
+/// shown, turn, appearance state and on state. An XFA form's <c>datasets</c> packet is read as data (XML, no DTD, nothing
+/// outside fetched): each leaf's value by its path; values no AcroForm field holds become text fields of their own; its
+/// template is read on its own (<see cref="PdfFormTemplates"/>). Its layout is not drawn. Pages' widget annotations come with their appearances read as
 /// content of the page, with every other annotation (<see cref="PdfAnnotations.Read"/>, through
 /// <see cref="AppearanceStream"/> and <see cref="Placement"/>).
 /// </summary>
@@ -135,6 +139,9 @@ internal static class PdfForms
     private const long ReadOnly = 1, Required = 1 << 1, NoExport = 1 << 2, Multiline = 1 << 12, Password = 1 << 13, NoToggleToOff = 1 << 14, Radio = 1 << 15,
         PushButton = 1 << 16, Combo = 1 << 17, Edit = 1 << 18, Sort = 1 << 19, MultiSelect = 1 << 21, DoNotSpellCheck = 1 << 22, DoNotScroll = 1 << 23,
         Comb = 1 << 24, RichText = 1 << 25, RadiosInUnison = 1 << 25;
+
+    /// <summary>A text field's flag (in <c>/Ff</c>) that marks its value as rich text.</summary>
+    public const long RichTextFlag = RichText;
 
     // An annotation's flags that hide it: Hidden and NoView.
     private const long HiddenFlags = 2 | 32;
@@ -152,13 +159,16 @@ internal static class PdfForms
         }
     }
 
-    /// <summary>The document's form; <see cref="PdfForm.None"/> when its catalog names none.</summary>
+    /// <summary>
+    /// The document's form; <see cref="PdfForm.None"/> when its catalog names none. The tree is walked once with no
+    /// closure, what a node passes on copied as a value, and each page's frame read once for every widget on it.
+    /// </summary>
     public static PdfForm Read(PdfDocument document)
     {
         var file = document.File;
         var catalog = file.Dictionary(file.Trailer["Root"u8]);
         var value = catalog?["AcroForm"u8] ?? PdfValue.Null;
-        var acro = Safe(() => file.Dictionary(value));
+        var acro = SafeDictionary(file, value);
         if (acro is null)
         {
             return PdfForm.None;
@@ -166,28 +176,17 @@ internal static class PdfForms
 
         var form = new PdfForm(value, acro)
         {
-            Resources = Safe(() => file.Dictionary(acro["DR"u8])),
+            Resources = SafeDictionary(file, acro["DR"u8]),
             NeedAppearances = file.Resolve(acro["NeedAppearances"u8]).AsBoolean,
         };
-        var formAppearance = file.Resolve(acro["DA"u8]).AsString?.Bytes;
-        var pages = PageNumbers(document);
-        Dictionary<int, int>? annotated = null;                               // widget object -> page, from the pages' /Annots (made when a /P fails)
-        int Page(PdfDictionary widget, int number)
-        {
-            if (widget["P"u8] is { IsReference: true } p && pages.TryGetValue(p.AsReference.Number, out int index))
-            {
-                return index;
-            }
-
-            return number > 0 && (annotated ??= Annotated(document)).TryGetValue(number, out int found) ? found : -1;
-        }
-
-        var fields = Safe(() => file.Resolve(acro["Fields"u8]).AsArray) ?? PdfArray.Empty;
+        var top = new Passed(new Inherited { Appearance = file.Resolve(acro["DA"u8]).AsString?.Bytes });
+        var pages = new PageFinder(document);
+        var fields = SafeArray(file, acro["Fields"u8]) ?? PdfArray.Empty;
         var visited = new HashSet<int>();
-        var stack = new Stack<(PdfValue Node, PdfValue Parent, string Prefix, Inherited Inherited, int Depth)>();
+        var stack = new Stack<Pending>(Math.Max(4, fields.Count));
         for (int i = fields.Count - 1; i >= 0; i--)
         {
-            stack.Push((fields[i], PdfValue.Null, "", new Inherited(formAppearance), 1));
+            stack.Push(new Pending(fields[i], PdfValue.Null, "", top, 1));
         }
 
         while (stack.Count > 0)
@@ -203,21 +202,22 @@ internal static class PdfForms
                 continue;                                                      // a node met again (a cycle, or listed twice): read once
             }
 
-            if (Safe(() => file.Dictionary(node)) is not { } dictionary)
+            if (SafeDictionary(file, node) is not { } dictionary)
             {
                 continue;
             }
 
             string? partial = Text(file, dictionary["T"u8]);
-            string name = partial is null ? prefix : prefix.Length == 0 ? partial : prefix + "." + partial;
-            var passed = inherited.With(file, dictionary);
-            var kids = Safe(() => file.Resolve(dictionary["Kids"u8]).AsArray);
+            string name = partial is null ? prefix : prefix.Length == 0 ? partial : string.Concat(prefix, ".", partial);
+            var passed = inherited.Value;
+            passed.Take(file, dictionary);
+            var kids = SafeArray(file, dictionary["Kids"u8]);
             bool holdsFields = false;
             if (kids is not null)
             {
                 foreach (var kid in kids.Items)
                 {
-                    if (Safe(() => file.Dictionary(kid)) is { } k && k.Contains("T"u8))
+                    if (SafeDictionary(file, kid) is { } k && k.Contains("T"u8))
                     {
                         holdsFields = true;
                         break;
@@ -228,11 +228,12 @@ internal static class PdfForms
             form.Nodes.Add(new PdfFormNode(node, parent, dictionary, name, !holdsFields));
             if (holdsFields)
             {
+                var shared = new Passed(passed);                               // one copy for all its kids
                 for (int i = kids!.Count - 1; i >= 0; i--)
                 {
-                    if (Safe(() => file.Dictionary(kids[i])) is { } k && k.Contains("T"u8))
+                    if (SafeDictionary(file, kids[i]) is { } k && k.Contains("T"u8))
                     {
-                        stack.Push((kids[i], node, name, passed, depth + 1));
+                        stack.Push(new Pending(kids[i], node, name, shared, depth + 1));
                     }
                 }
 
@@ -248,25 +249,28 @@ internal static class PdfForms
             field.Kind = Kind(passed.Type, passed.Flags);
             if (IsWidget(dictionary))
             {
-                field.Widgets.Add(Widget(file, node, dictionary, document, Page));
+                field.Widgets.Add(Widget(file, node, dictionary, pages));
             }
 
-            foreach (var kid in kids?.Items ?? [])
+            if (kids is not null)
             {
-                if (kid.IsReference && !visited.Add(kid.AsReference.Number))
+                foreach (var kid in kids.Items)
                 {
-                    continue;
-                }
+                    if (kid.IsReference && !visited.Add(kid.AsReference.Number))
+                    {
+                        continue;
+                    }
 
-                if (Safe(() => file.Dictionary(kid)) is { } widget && !widget.Contains("T"u8))
-                {
-                    field.Widgets.Add(Widget(file, kid, widget, document, Page));
+                    if (SafeDictionary(file, kid) is { } widget && !widget.Contains("T"u8))
+                    {
+                        field.Widgets.Add(Widget(file, kid, widget, pages));
+                    }
                 }
             }
 
             Options(file, passed.Options, field);
             form.Fields.Add(field);
-            field.Field = Contract(file, field, passed, form);
+            field.Field = Contract(file, field, in passed);
         }
 
         if (!file.Resolve(acro["XFA"u8]).IsNull)
@@ -274,20 +278,38 @@ internal static class PdfForms
             Xfa(file, acro["XFA"u8], form.XfaData);
         }
 
-        var all = form.Fields.Select(f => f.Field).ToList();
+        // The terminal fields', then the XFA data values no field holds (by its name without the [0]s).
+        List<(string Path, string Value)>? extras = null;
         if (form.XfaData.Count > 0)
         {
-            var held = form.Fields.Select(f => Unindexed(f.Name)).ToHashSet(StringComparer.Ordinal);
-            foreach (var (path, data) in form.XfaData)
+            var held = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var f in form.Fields)
             {
-                if (!held.Contains(path))
+                held.Add(Unindexed(f.Name));
+            }
+
+            foreach (var entry in form.XfaData)
+            {
+                if (!held.Contains(entry.Path))
                 {
-                    all.Add(new DocumentField(path, DocumentFieldKind.Text) { Value = data, Values = [data] });
+                    (extras ??= []).Add(entry);
                 }
             }
         }
 
-        form.Public = all.AsReadOnly();
+        var all = new DocumentField[form.Fields.Count + (extras?.Count ?? 0)];
+        for (int i = 0; i < form.Fields.Count; i++)
+        {
+            all[i] = form.Fields[i].Field;
+        }
+
+        for (int i = 0; extras is not null && i < extras.Count; i++)
+        {
+            var (path, data) = extras[i];
+            all[form.Fields.Count + i] = new DocumentField(path, DocumentFieldKind.Text) { Value = data, Values = [data] };
+        }
+
+        form.Public = all;
         return form;
     }
 
@@ -323,7 +345,7 @@ internal static class PdfForms
     /// <summary>A widget's appearance stream for <paramref name="state"/> (its <c>/AP /N</c>: the stream itself, or the state's in a dictionary of states; the only one when it has no state), or null.</summary>
     public static PdfStream? AppearanceStream(PdfFile file, PdfDictionary widget, string? state)
     {
-        var normal = Safe(() => file.Resolve(file.Dictionary(widget["AP"u8])?["N"u8] ?? PdfValue.Null));
+        var normal = SafeResolve(file, SafeDictionary(file, widget["AP"u8])?["N"u8] ?? PdfValue.Null);
         if (normal.AsStream is { } stream)
         {
             return stream;
@@ -336,10 +358,13 @@ internal static class PdfForms
 
         if (state is not null)
         {
-            return Safe(() => file.Resolve(states[Encoding.UTF8.GetBytes(state)]).AsStream);
+            int length = Encoding.UTF8.GetByteCount(state);
+            Span<byte> key = length <= 128 ? stackalloc byte[128] : new byte[length];
+            Encoding.UTF8.GetBytes(state, key);
+            return SafeResolve(file, states[key[..length]]).AsStream;
         }
 
-        return states.Count == 1 ? Safe(() => file.Resolve(states.ValueAt(0)).AsStream) : null;
+        return states.Count == 1 ? SafeResolve(file, states.ValueAt(0)).AsStream : null;
     }
 
     /// <summary>A widget's appearance state (<c>/AS</c>), or null.</summary>
@@ -351,25 +376,77 @@ internal static class PdfForms
     /// <summary>An annotation's <c>/Rect</c> (its corners in any order), or null when it is not one.</summary>
     public static (double Left, double Bottom, double Right, double Top)? Rect(PdfFile file, PdfDictionary annotation)
     {
-        if (PdfFunction.Numbers(file, annotation["Rect"u8]) is not { Length: 4 } n || !n.All(double.IsFinite))
+        if (file.Resolve(annotation["Rect"u8]).AsArray is not { Count: 4 } array
+            || !Finite(file, array[0], out double x0) || !Finite(file, array[1], out double y0) || !Finite(file, array[2], out double x1) || !Finite(file, array[3], out double y1))
         {
             return null;
         }
 
-        return (Math.Min(n[0], n[2]), Math.Min(n[1], n[3]), Math.Max(n[0], n[2]), Math.Max(n[1], n[3]));
+        return (Math.Min(x0, x1), Math.Min(y0, y1), Math.Max(x0, x1), Math.Max(y0, y1));
     }
 
     /// <summary>A rectangle of a page's user space as a box on the page as shown (its corners through the display map, their bounds).</summary>
     public static DocumentBox Box((double Left, double Bottom, double Right, double Top) rect, PdfMatrix display)
     {
         double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
-        foreach (var (x, y) in new[] { (rect.Left, rect.Bottom), (rect.Right, rect.Bottom), (rect.Right, rect.Top), (rect.Left, rect.Top) })
+        void Corner(double x, double y)
         {
             double px = display.A * x + display.C * y + display.E, py = display.B * x + display.D * y + display.F;
             (x0, y0, x1, y1) = (Math.Min(x0, px), Math.Min(y0, py), Math.Max(x1, px), Math.Max(y1, py));
         }
 
+        Corner(rect.Left, rect.Bottom);
+        Corner(rect.Right, rect.Bottom);
+        Corner(rect.Right, rect.Top);
+        Corner(rect.Left, rect.Top);
         return new DocumentBox((float)x0, (float)y0, (float)(x1 - x0), (float)(y1 - y0));
+    }
+
+    /// <summary>A widget's turn (<c>/MK /R</c>, counter-clockwise): 0, 90, 180 or 270 (any other value read as 0).</summary>
+    public static int Rotation(PdfFile file, PdfDictionary widget)
+    {
+        if (SafeDictionary(file, widget["MK"u8]) is not { } mk || !file.Resolve(mk["R"u8]).TryInteger(out long r) || r % 90 != 0)
+        {
+            return 0;
+        }
+
+        return (int)((r % 360 + 360) % 360);
+    }
+
+    /// <summary>A widget's border (<c>/BS</c>): its style, its width (null when it states none) and a dashed one's dashes (none when it states none).</summary>
+    public static (DocumentFieldBorderStyle Style, float? Width, float[] Dashes) Border(PdfFile file, PdfDictionary widget)
+    {
+        if (SafeDictionary(file, widget["BS"u8]) is not { } bs)
+        {
+            return (DocumentFieldBorderStyle.Solid, null, []);
+        }
+
+        var style = file.Resolve(bs["S"u8]).AsName is { } s
+            ? s.Is("D"u8) ? DocumentFieldBorderStyle.Dashed : s.Is("B"u8) ? DocumentFieldBorderStyle.Beveled : s.Is("I"u8) ? DocumentFieldBorderStyle.Inset
+            : s.Is("U"u8) ? DocumentFieldBorderStyle.Underline : DocumentFieldBorderStyle.Solid
+            : DocumentFieldBorderStyle.Solid;
+        float? width = file.Resolve(bs["W"u8]).TryNumber(out double w) && w >= 0 && w < 1000 ? (float)w : null;
+        float[] dashes = [];
+        if (SafeArray(file, bs["D"u8]) is { Count: > 0 and <= 16 } d)
+        {
+            var read = new float[d.Count];
+            bool any = false;
+            for (int i = 0; i < read.Length; i++)
+            {
+                if (!Finite(file, d[i], out double v) || v < 0 || v > 1000)
+                {
+                    read = null!;
+                    break;
+                }
+
+                read[i] = (float)v;
+                any |= v > 0;
+            }
+
+            dashes = read is not null && any ? read : [];
+        }
+
+        return (style, width, dashes);
     }
 
     /// <summary>A default appearance string's font resource, size and colour (<c>/Helv 11 Tf 0 g</c>): the last of each it sets.</summary>
@@ -459,98 +536,148 @@ internal static class PdfForms
 
     // ---- the field tree --------------------------------------------------------------------------------------------
 
-    // What a field takes from its ancestors.
-    private sealed record Inherited(byte[]? Appearance)
+    // A node waiting to be read: its object, its parent's, its parent's name and what its ancestors pass on.
+    private readonly record struct Pending(PdfValue Node, PdfValue Parent, string Prefix, Passed Inherited, int Depth);
+
+    // What a node holding fields passes on, kept once for all its kids.
+    private sealed class Passed(Inherited value)
     {
-        public string? Type { get; init; }
+        public Inherited Value { get; } = value;
+    }
 
-        public long Flags { get; init; }
-
-        public PdfValue Value { get; init; }
-
-        public PdfValue Default { get; init; }
-
-        public int Alignment { get; init; }
-
-        public int? MaxLength { get; init; }
-
-        public PdfValue Options { get; init; }
+    // What a field takes from its ancestors, copied as a value from node to node (no allocation): the field type's name as
+    // the document holds it, the flags, the value and default, the default appearance, the alignment, the length, the
+    // choices, and the rich text and its default style.
+    private struct Inherited
+    {
+        public byte[]? Appearance;
+        public PdfName? Type;
+        public long Flags;
+        public PdfValue Value, Default, Options, RichValue, RichStyle;
+        public int Alignment;
+        public int? MaxLength;
 
         /// <summary>Whether a field node sets the default appearance (else it is the form's, which only text and choice fields take).</summary>
-        public bool OwnAppearance { get; init; }
+        public bool OwnAppearance;
 
-        public Inherited With(PdfFile file, PdfDictionary node)
+        // What `node` sets of it, over what its ancestors passed.
+        public void Take(PdfFile file, PdfDictionary node)
         {
-            var next = this;
             if (file.Resolve(node["FT"u8]).AsName is { } type)
             {
-                next = next with { Type = type.ToString() };
+                Type = type;
             }
 
             if (file.Resolve(node["Ff"u8]).TryInteger(out long flags))
             {
-                next = next with { Flags = flags };
+                Flags = flags;
             }
 
             if (node.TryGet("V"u8, out var value) && !value.IsNull)
             {
-                next = next with { Value = value };
+                Value = value;
             }
 
             if (node.TryGet("DV"u8, out var defaultValue) && !defaultValue.IsNull)
             {
-                next = next with { Default = defaultValue };
+                Default = defaultValue;
             }
 
             if (file.Resolve(node["DA"u8]).AsString is { } appearance)
             {
-                next = next with { Appearance = appearance.Bytes, OwnAppearance = true };
+                (Appearance, OwnAppearance) = (appearance.Bytes, true);
             }
 
             if (file.Resolve(node["Q"u8]).TryInteger(out long q))
             {
-                next = next with { Alignment = (int)Math.Clamp(q, 0, 2) };
+                Alignment = (int)Math.Clamp(q, 0, 2);
             }
 
             if (file.Resolve(node["MaxLen"u8]).TryInteger(out long max) && max >= 0)
             {
-                next = next with { MaxLength = (int)Math.Min(max, int.MaxValue) };
+                MaxLength = (int)Math.Min(max, int.MaxValue);
             }
 
             if (node.TryGet("Opt"u8, out var options) && !options.IsNull)
             {
-                next = next with { Options = options };
+                Options = options;
             }
 
-            return next;
+            if (node.TryGet("RV"u8, out var rich) && !rich.IsNull)
+            {
+                RichValue = rich;
+            }
+
+            if (node.TryGet("DS"u8, out var style) && !style.IsNull)
+            {
+                RichStyle = style;
+            }
         }
     }
 
-    private static DocumentFieldKind Kind(string type, long flags) => type switch
+    // Each widget's page: by its /P (the pages' object numbers, mapped on the first need), else the page whose /Annots
+    // lists it (mapped on the first widget whose /P fails); and each page's frame read once for all its widgets.
+    private sealed class PageFinder(PdfDocument document)
     {
-        "Tx" => DocumentFieldKind.Text,
-        "Btn" => (flags & PushButton) != 0 ? DocumentFieldKind.PushButton : (flags & Radio) != 0 ? DocumentFieldKind.Radio : DocumentFieldKind.CheckBox,
-        "Ch" => (flags & Combo) != 0 ? DocumentFieldKind.Combo : DocumentFieldKind.List,
-        "Sig" => DocumentFieldKind.Signature,
-        _ => DocumentFieldKind.Text,
-    };
+        private Dictionary<int, int>? _numbers, _annotated;
+        private Dictionary<int, PdfMatrix>? _displays;
+        private int _lastPage = -1;
+        private PdfMatrix _lastDisplay;
+
+        public int Find(PdfDictionary widget, int number)
+        {
+            if (widget["P"u8] is { IsReference: true } p && (_numbers ??= PageNumbers(document)).TryGetValue(p.AsReference.Number, out int index))
+            {
+                return index;
+            }
+
+            return number > 0 && (_annotated ??= Annotated(document)).TryGetValue(number, out int found) ? found : -1;
+        }
+
+        public PdfMatrix Display(int page)
+        {
+            if (page == _lastPage)
+            {
+                return _lastDisplay;
+            }
+
+            if (_displays is null || !_displays.TryGetValue(page, out var display))
+            {
+                display = document.Frame(page).Display;
+                if (_lastPage >= 0)
+                {
+                    (_displays ??= [])[_lastPage] = _lastDisplay;              // a second page: the first one kept too
+                }
+            }
+
+            (_lastPage, _lastDisplay) = (page, display);
+            return display;
+        }
+    }
+
+    private static DocumentFieldKind Kind(PdfName type, long flags) =>
+        type.Is("Tx"u8) ? DocumentFieldKind.Text
+        : type.Is("Btn"u8) ? (flags & PushButton) != 0 ? DocumentFieldKind.PushButton : (flags & Radio) != 0 ? DocumentFieldKind.Radio : DocumentFieldKind.CheckBox
+        : type.Is("Ch"u8) ? (flags & Combo) != 0 ? DocumentFieldKind.Combo : DocumentFieldKind.List
+        : type.Is("Sig"u8) ? DocumentFieldKind.Signature
+        : DocumentFieldKind.Text;
 
     // Whether a field's dictionary is also its widget (a field of one widget written as one object).
     private static bool IsWidget(PdfDictionary dictionary) => dictionary["Subtype"u8].IsName("Widget"u8) || dictionary.Contains("Rect"u8);
 
-    private static PdfFormWidget Widget(PdfFile file, PdfValue node, PdfDictionary dictionary, PdfDocument document, Func<PdfDictionary, int, int> page)
+    private static PdfFormWidget Widget(PdfFile file, PdfValue node, PdfDictionary dictionary, PageFinder pages)
     {
         var widget = new PdfFormWidget(node, dictionary)
         {
-            State = State(file, dictionary), OnState = OnState(file, dictionary), Hidden = Hides(file, dictionary),
+            State = State(file, dictionary), OnState = OnState(file, dictionary), Hidden = Hides(file, dictionary), Rotation = Rotation(file, dictionary),
         };
-        widget.Page = page(dictionary, widget.Number);
+        widget.Page = pages.Find(dictionary, widget.Number);
         if (Rect(file, dictionary) is { } rect)
         {
             widget.Rect = rect;
             if (widget.Page >= 0)
             {
-                widget.Box = Box(rect, document.Frame(widget.Page).Display);
+                widget.Box = Box(rect, pages.Display(widget.Page));
             }
         }
 
@@ -560,12 +687,12 @@ internal static class PdfForms
     // The appearance state that shows a button on: a state of its normal (else down) appearances other than Off.
     private static string? OnState(PdfFile file, PdfDictionary widget)
     {
-        if (Safe(() => file.Dictionary(widget["AP"u8])) is not { } ap)
+        if (SafeDictionary(file, widget["AP"u8]) is not { } ap)
         {
             return null;
         }
 
-        return On(Safe(() => file.Resolve(ap["N"u8]))) ?? On(Safe(() => file.Resolve(ap["D"u8])));
+        return On(SafeResolve(file, ap["N"u8])) ?? On(SafeResolve(file, ap["D"u8]));
 
         // A dictionary of states (not a stream: a stream's dictionary holds no states): its first state other than Off.
         static string? On(PdfValue appearances)
@@ -590,7 +717,7 @@ internal static class PdfForms
     // A choice field's /Opt (each item text, or [export text]); a button's /Opt gives its states' export values.
     private static void Options(PdfFile file, PdfValue value, PdfFormField field)
     {
-        if (Safe(() => file.Resolve(value).AsArray) is not { } options)
+        if (SafeArray(file, value) is not { } options)
         {
             return;
         }
@@ -611,16 +738,18 @@ internal static class PdfForms
     }
 
     // The contract's view of a terminal field.
-    private static DocumentField Contract(PdfFile file, PdfFormField field, Inherited passed, PdfForm form)
+    private static DocumentField Contract(PdfFile file, PdfFormField field, in Inherited passed)
     {
         // The form's default appearance is for fields of variable text (text and choice fields); others take their own.
         bool variable = field.Kind is DocumentFieldKind.Text or DocumentFieldKind.List or DocumentFieldKind.Combo;
         var (font, size, colour) = passed.Appearance is { } da && (passed.OwnAppearance || variable) ? ParseAppearance(da) : (null, 0f, DocumentColour.Black);
-        var mk = field.Widgets.Count > 0 ? Safe(() => file.Dictionary(field.Widgets[0].Dictionary["MK"u8])) : null;
+        var widgets = field.Widgets;
+        var mk = widgets.Count > 0 ? SafeDictionary(file, widgets[0].Dictionary["MK"u8]) : null;
         string? caption = mk is null ? null : Text(file, mk["CA"u8]);
         string? value = null;
         IReadOnlyList<string> values = [];
         IReadOnlyList<DocumentFieldOption> options = field.Options;
+        bool button = field.Kind is DocumentFieldKind.CheckBox or DocumentFieldKind.Radio;
         switch (field.Kind)
         {
             case DocumentFieldKind.Text:
@@ -628,13 +757,30 @@ internal static class PdfForms
                 values = value is null ? [] : [value];
                 break;
             case DocumentFieldKind.CheckBox or DocumentFieldKind.Radio:
-                string? state = file.Resolve(passed.Value).AsName?.ToString() ?? field.Widgets.Select(w => w.State).FirstOrDefault(s => s is not null && s != "Off");
+                string? state = file.Resolve(passed.Value).AsName?.ToString();
+                for (int i = 0; state is null && i < widgets.Count; i++)
+                {
+                    state = widgets[i].State is { } s && s != "Off" ? s : null;
+                }
+
                 value = state is null or "Off" ? null : ButtonExport(state, field.Options);
                 values = value is null ? [] : [value];
                 if (field.Kind == DocumentFieldKind.Radio || field.Options.Count > 0)
                 {
-                    options = [.. field.Widgets.Select(w => w.OnState).Where(s => s is not null).Distinct(StringComparer.Ordinal)
-                        .Select(s => ButtonExport(s!, field.Options)).Select(e => new DocumentFieldOption(e, e))];
+                    // Each on state once (in widget order), as its export value.
+                    var on = new List<DocumentFieldOption>(widgets.Count);
+                    for (int i = 0; i < widgets.Count; i++)
+                    {
+                        if (widgets[i].OnState is not { } s || Seen(widgets, i, s))
+                        {
+                            continue;
+                        }
+
+                        string export = ButtonExport(s, field.Options);
+                        on.Add(new DocumentFieldOption(export, export));
+                    }
+
+                    options = on;
                 }
 
                 break;
@@ -646,23 +792,43 @@ internal static class PdfForms
                 break;
         }
 
-        var widgets = field.Widgets.Select(w => new DocumentWidget(w.Page, w.Box, field.Kind is DocumentFieldKind.CheckBox or DocumentFieldKind.Radio ? w.State : null)
+        var shown = new DocumentWidget[widgets.Count];
+        for (int i = 0; i < shown.Length; i++)
         {
-            OnState = field.Kind is DocumentFieldKind.CheckBox or DocumentFieldKind.Radio ? w.OnState : null,
-        }).ToList();
+            var w = widgets[i];
+            shown[i] = new DocumentWidget(w.Page, w.Box, button ? w.State : null) { OnState = button ? w.OnState : null, Rotation = w.Rotation };
+        }
+
+        var (borderStyle, borderWidth, dashes) = widgets.Count > 0 ? Border(file, widgets[0].Dictionary) : (DocumentFieldBorderStyle.Solid, null, []);
         return new DocumentField(field.Name, field.Kind)
         {
-            Value = value, Values = values, Options = options, Flags = Flags(field.Kind, passed.Flags), MaxLength = passed.MaxLength, Widgets = widgets,
+            Value = value, Values = values, Options = options, Flags = Flags(field.Kind, passed.Flags), MaxLength = passed.MaxLength, Widgets = shown,
             Tooltip = Text(file, field.Dictionary["TU"u8]), DefaultValue = DefaultValue(file, passed.Default), Alignment = (DocumentFieldAlignment)passed.Alignment,
             Font = font, FontSize = size, TextColour = colour, Background = mk is null ? null : Colour(file, mk["BG"u8]), Border = mk is null ? null : Colour(file, mk["BC"u8]),
             Caption = field.Kind == DocumentFieldKind.PushButton ? caption : null, Mark = Mark(field.Kind, caption),
+            BorderStyle = borderStyle, BorderWidth = borderWidth, Dashes = dashes,
+            RichText = field.Kind == DocumentFieldKind.Text && !passed.RichValue.IsNull ? PdfRichText.Read(file, passed.RichValue, passed.RichStyle) : [],
         };
+
+        // Whether an earlier widget has the same on state.
+        static bool Seen(List<PdfFormWidget> widgets, int index, string state)
+        {
+            for (int k = 0; k < index; k++)
+            {
+                if (string.Equals(widgets[k].OnState, state, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     // A text value: a string, or a stream's text (a rich text value kept as a stream).
     private static string? TextValue(PdfFile file, PdfValue value)
     {
-        var resolved = Safe(() => file.Resolve(value));
+        var resolved = SafeResolve(file, value);
         if (resolved.AsString is { } s)
         {
             return PdfText.Decode(s.Bytes);
@@ -680,7 +846,7 @@ internal static class PdfForms
     // A choice field's values: a string, or an array of strings.
     private static List<string> ChoiceValues(PdfFile file, PdfValue value)
     {
-        var resolved = Safe(() => file.Resolve(value));
+        var resolved = SafeResolve(file, value);
         var values = new List<string>();
         if (resolved.AsArray is { } array)
         {
@@ -702,7 +868,7 @@ internal static class PdfForms
 
     private static string? DefaultValue(PdfFile file, PdfValue value)
     {
-        var resolved = Safe(() => file.Resolve(value));
+        var resolved = SafeResolve(file, value);
         return resolved.AsName?.ToString() ?? Text(file, resolved) ?? (resolved.AsArray is { Count: > 0 } array ? Text(file, array[0]) : null);
     }
 
@@ -848,8 +1014,7 @@ internal static class PdfForms
         var found = new Dictionary<int, int>();
         for (int i = 0; i < document.PageCount; i++)
         {
-            var node = document.PageObject(i).Node;
-            if (Safe(() => file.Dictionary(node)) is not { } page || Safe(() => file.Resolve(page["Annots"u8]).AsArray) is not { } annots)
+            if (SafeDictionary(file, document.PageObject(i).Node) is not { } page || SafeArray(file, page["Annots"u8]) is not { } annots)
             {
                 continue;
             }
@@ -871,50 +1036,34 @@ internal static class PdfForms
 
     private static float Unit(double value) => (float)Math.Clamp(double.IsFinite(value) ? value : 0, 0, 1);
 
-    // A part of the form that cannot be read is passed over (a limit passed is not).
-    private static T? Safe<T>(Func<T?> read)
+    /// <summary>A value resolved; null when it cannot be read: a part of the form that cannot be read is passed over (a limit passed still throws).</summary>
+    public static PdfValue SafeResolve(PdfFile file, PdfValue value)
     {
         try
         {
-            return read();
+            return file.Resolve(value);
         }
         catch (InvalidDataException e) when (!PdfLimit.Is(e))
         {
-            return default;
+            return PdfValue.Null;
         }
     }
+
+    /// <summary>A value's dictionary; null when it is none or cannot be read (a limit passed still throws).</summary>
+    public static PdfDictionary? SafeDictionary(PdfFile file, PdfValue value) => SafeResolve(file, value).AsDictionary;
+
+    /// <summary>A value's array; null when it is none or cannot be read (a limit passed still throws).</summary>
+    public static PdfArray? SafeArray(PdfFile file, PdfValue value) => SafeResolve(file, value).AsArray;
+
+    // A finite number.
+    private static bool Finite(PdfFile file, PdfValue value, out double number) => file.Resolve(value).TryNumber(out number) && double.IsFinite(number);
 
     // ---- XFA ---------------------------------------------------------------------------------------------------------
 
     // The datasets packet's data values: /XFA an array of packet names and streams, or one stream of the whole XDP.
     private static void Xfa(PdfFile file, PdfValue value, List<(string Path, string Value)> data)
     {
-        byte[]? datasets = null;
-        var resolved = Safe(() => file.Resolve(value));
-        if (resolved.AsArray is { } packets)
-        {
-            for (int i = 0; i + 1 < packets.Count; i += 2)
-            {
-                if (Text(file, packets[i]) == "datasets" && Safe(() => file.Resolve(packets[i + 1]).AsStream) is { } stream)
-                {
-                    using var decoded = file.Decode(stream);
-                    datasets = decoded.Span.ToArray();
-                    break;
-                }
-            }
-        }
-        else if (resolved.AsStream is { } whole)
-        {
-            using var decoded = file.Decode(whole);
-            var span = decoded.Span;
-            int start = span.IndexOf("<xfa:datasets"u8), end = span.IndexOf("</xfa:datasets>"u8);
-            if (start >= 0 && end > start)
-            {
-                datasets = span[start..(end + "</xfa:datasets>"u8.Length)].ToArray();
-            }
-        }
-
-        if (datasets is null)
+        if (Packet(file, value, "datasets", "<xfa:datasets"u8, "</xfa:datasets>"u8) is not { } datasets)
         {
             return;
         }
@@ -927,6 +1076,57 @@ internal static class PdfForms
         {
             data.Clear();                                                      // damaged data: none read
         }
+    }
+
+    /// <summary>
+    /// An XFA packet's bytes: from <c>/XFA</c>'s array of packet names and streams the stream named <paramref name="name"/>,
+    /// or from one stream of the whole XDP the element from <paramref name="open"/> to <paramref name="close"/>; null when
+    /// there is none.
+    /// </summary>
+    public static byte[]? Packet(PdfFile file, PdfValue value, string name, ReadOnlySpan<byte> open, ReadOnlySpan<byte> close)
+    {
+        var resolved = SafeResolve(file, value);
+        if (resolved.AsArray is { } packets)
+        {
+            for (int i = 0; i + 1 < packets.Count; i++, i++)
+            {
+                if (Text(file, packets[i]) == name && SafeResolve(file, packets[i + 1]).AsStream is { } stream)
+                {
+                    using var decoded = file.Decode(stream);
+                    return decoded.Span.ToArray();
+                }
+            }
+        }
+        else if (resolved.AsStream is { } whole)
+        {
+            using var decoded = file.Decode(whole);
+            var span = decoded.Span;
+            int start = Opening(span, open), end = span.IndexOf(close);
+            if (start >= 0 && end > start)
+            {
+                return span[start..(end + close.Length)].ToArray();
+            }
+        }
+
+        return null;
+    }
+
+    // Where an element opens: its name followed by a space, a '>' or a '/' (not a longer name sharing its start).
+    private static int Opening(ReadOnlySpan<byte> xml, ReadOnlySpan<byte> open)
+    {
+        int from = 0;
+        while (from < xml.Length && xml[from..].IndexOf(open) is >= 0 and var at)
+        {
+            int next = from + at + open.Length;
+            if (next < xml.Length && xml[next] is (byte)' ' or (byte)'>' or (byte)'/' or (byte)'\t' or (byte)'\n' or (byte)'\r')
+            {
+                return from + at;
+            }
+
+            from = next;
+        }
+
+        return -1;
     }
 
     // The leaves under xfa:data, each by its elements' names joined by dots (a name that repeats among its siblings

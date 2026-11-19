@@ -166,10 +166,16 @@ using (var editor = DocumentWriters.Get("pdf").Edit(document, output, new Docume
 ```
 
 - **Read:** every field kind (text, check box, radio, list, combo, push button, signature) with its value, choices,
-  flags, widgets, inherited values; an XFA form's data read as fields.
+  flags, widgets (each one's turn), border style, inherited values, and a rich text value as styled runs
+  (`DocumentField.RichText`: bold, italic, size, colour, family, underline, strike-out); an XFA form's data read as
+  fields, and its template as the form's design (`IDocument.FormTemplate`: sections, fields with captions, kinds,
+  choices and bindings, each linked to the data's value and the field holding it).
 - **Filled and added** with appearances made, so a reader shows the values without making its own: text laid out in
   the field's font, or, when it lacks a character, in faces given (`DocumentFormOptions.Faces`, the fonts folder) through
-  the text setter, embedded; check and radio marks drawn as paths.
+  the text setter, embedded (the field's `/DA` then names that face's font, added to the form's resources); rich text
+  (`SetRichText`) in each run's font, size and colour; turned (`/MK /R`) and bordered (solid, dashed, beveled, inset,
+  underlined) as each widget says; check and radio marks drawn as paths. A field held inside another object (written
+  in its parent's `/Kids`, or in an object stream) is filled too: moved to an object of its own.
 - **Flattened** (`Flatten(names)`, none for every field): each field's appearance drawn into its page and the field
   removed.
 
@@ -317,7 +323,8 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
 - **Office formats** (Word, Excel, PowerPoint): to come as a plug-in in `Idrak.Data.Plugins`, on this contract.
 - **Nothing a file carries is run:** JavaScript, launch and other actions, calculations of a form's fields; no outside
   reference is fetched (revocation data only when the app turns `Online` on). 3D and multimedia content is not played.
-- **XFA forms:** their data is read as fields; their own layout is not read or drawn (the page says `not-supported`).
+- **XFA forms:** their data is read as fields and their template as the form's design; their own layout is not laid out
+  or drawn (the page says `not-supported`) and their scripts are never run (each listed in the template's issues).
 - **Encryption:** the public-key handler (`Adobe.PubSec`) and other handlers are refused naming the handler; a damaged
   encrypted file whose cross-reference must be rebuilt and whose catalog lies in an object stream does not open.
 - **Text:** predefined CMaps other than Identity (tables tied to one script) are not built in: such codes are read as two
@@ -327,9 +334,10 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
   JBIG2 are not handed to one; ICC profiles and calibrations are not applied.
 - **Drawing:** a non-isolated transparency group with another blend mode or opacity is drawn as an isolated one; a
   stroke under a matrix that is not uniform takes the root of its determinant as its scale; a Type 3 glyph's own colours
-  and images are not kept; a tiling cell's box is not a clip; free text annotations without an appearance, a widget's
-  rotation and dashed borders are not drawn.
-- **Forms:** rich text values are read as plain text; a field held inside another object cannot be filled.
+  and images are not kept; a tiling cell's box is not a clip; free text annotations without an appearance are not drawn.
+- **Forms:** a rich text's paragraph alignment is the field's, and a line of several styled runs is laid out with its
+  runs in order (each run shaped in its own direction: a right-to-left line of several styles is not reordered across
+  them); calculation order and actions are never run.
 - **Redaction:** a tiling pattern turned on the page is redacted wherever a copy of its cell lies under an area (an
   upright one only where no copy shows that part clear of the areas); a Type 3 glyph no longer drawn on a page stays in
   the page's copy of its font when a form there takes the page's resources as its own.

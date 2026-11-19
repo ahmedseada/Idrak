@@ -282,6 +282,13 @@ public interface IDocument : IDisposable
 
     /// <summary>The named destinations (each with its <see cref="DocumentDestination.Name"/>), in the order of their names; empty when there are none or the format names none.</summary>
     IReadOnlyList<DocumentDestination> Destinations => [];
+
+    /// <summary>
+    /// The form's design as its template gives it (sections, fields with their captions, kinds, choices and bindings to the
+    /// form's data), or null when the document has none or the format reads none. Read on the first call; its scripts are
+    /// never run.
+    /// </summary>
+    DocumentFormTemplate? FormTemplate => null;
 }
 
 /// <summary>
@@ -530,6 +537,8 @@ public static class DocumentFormats
 
         public IReadOnlyList<DocumentDestination> Destinations => inner.Destinations;
 
+        public DocumentFormTemplate? FormTemplate => inner.FormTemplate;
+
         public DocumentPage ReadPage(int index, DocumentParts parts) => inner.ReadPage(index, parts);
 
         public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => inner.DrawPage(index, options);
@@ -645,6 +654,10 @@ public static class DocumentFormats
 
         public IReadOnlyList<DocumentDestination> Destinations =>
             slot.Call(() => App.Destinations, () => Library.Destinations, (a, b) => Comparisons.Sequences(a.Select(x => $"{x.Name}={x.Page}").ToArray(), b.Select(x => $"{x.Name}={x.Page}").ToArray()));
+
+        public DocumentFormTemplate? FormTemplate =>
+            slot.Call(() => App.FormTemplate, () => Library.FormTemplate, (a, b) => Comparisons.Sequences(
+                (a?.Fields ?? []).Select(x => $"{x.Path}={x.Value}").ToArray(), (b?.Fields ?? []).Select(x => $"{x.Path}={x.Value}").ToArray()));
 
         public DocumentPage ReadPage(int index, DocumentParts parts) => slot.Call(() => App.ReadPage(index, parts), () => Library.ReadPage(index, parts), (a, b) => ComparePages(a, b));
 

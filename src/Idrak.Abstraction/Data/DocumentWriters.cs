@@ -333,6 +333,17 @@ public interface IDocumentEditor : IDisposable
     /// <exception cref="ArgumentException">No such field, or a value it does not take.</exception>
     void SetField(string name, params ReadOnlySpan<string> values);
 
+    /// <summary>
+    /// Sets text field <paramref name="name"/>'s value as rich text: <paramref name="runs"/>, each with its own style (bold,
+    /// italic, size, colour, font family, underline, strike-out; what a run does not set is the field's own). The field
+    /// keeps the runs and their plain text, and its appearance is made to show them styled
+    /// (<see cref="DocumentWriteOptions.Forms"/>). No runs clears it.
+    /// </summary>
+    /// <exception cref="ArgumentException">No such field, not a text field, or a value it does not take.</exception>
+    /// <exception cref="NotSupportedException">The editor does not write rich text (the message says so).</exception>
+    void SetRichText(string name, IReadOnlyList<DocumentFieldRun> runs) =>
+        throw new NotSupportedException($"This document editor ({GetType().Name}) does not write rich text.");
+
     /// <summary>Adds a form field (its widgets name their pages; each gets an appearance showing its value).</summary>
     void AddField(DocumentField field);
 

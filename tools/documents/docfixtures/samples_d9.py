@@ -2,7 +2,10 @@
 list box, multi-select list and combo box; push button; signature), filled and empty, with appearance streams and with
 /NeedAppearances only; values, flags and DA inherited across a field tree; an XFA form with its datasets; and the
 filled form flattened (each widget's appearance drawn into the page, the fields gone), whose look pdfium's drawing of
-the filled form gives.
+the filled form gives. The forms completed (2026-11-19): turned widgets and border styles (pdfium makes their
+appearances), a rich text value (/RV), fields held inside other objects (object streams, a field's dictionary written in
+its parent's /Kids or in /Fields), a field whose text its /DA font lacks, and an XFA form whose template gives sections,
+captions, kinds, choices, bindings and scripts.
 
 A field, as `fields` lists it: `name` (full, dotted), `partialName`, `kind` (text, checkbox, radio, list, combo,
 pushbutton, signature), `value` (text, the on state's name for a check box or radio group, null when off or empty),
@@ -10,7 +13,11 @@ pushbutton, signature), `value` (text, the on state's name for a check box or ra
 `flags` (the names of the flags set) and `flagsValue`, `maxLength`, `alignment` (left, centre, right), `font` and
 `fontSize` (from its DA), `tooltip`, `inherited` (the keys it takes from an ancestor), and `widgets`: `page`, `box`
 (the page as shown, top-left origin), `rect` (as written), `state` (/AS), `onState`, `hasAppearance`, `appearanceText`
-(the text its appearance shows)."""
+(the text its appearance shows), `rotation` (/MK /R, when set). Also, when set: `border` (`style`: solid, dashed, beveled,
+inset, underline; `width`; `dashes`) and `richText` (the runs /RV gives over /DS: `text`, `bold`, `italic`, `underline`,
+`strikeOut`, `size`, `colour` [r, g, b], `family`). An XFA sample's `form.xfa.template` gives `sections` (`name`, `path`,
+`parent`), `fields` (`name`, `path`, `kind`, `section`, `caption`, `binding`, `value`, `options`, `flags`, `field`: the
+field of the document's fields holding its value) and `scripts` (how many, none run)."""
 from .common import Sample, base_expected
 from .document import Doc
 from .fonts import Standard14
@@ -21,7 +28,8 @@ D9 = ["D9"]
 
 FLAGS = {"readOnly": 1, "required": 2, "noExport": 3, "multiline": 13, "password": 14, "noToggleToOff": 15,
          "radio": 16, "pushbutton": 17, "combo": 18, "edit": 19, "sort": 20, "fileSelect": 21, "multiSelect": 22,
-         "doNotSpellCheck": 23, "doNotScroll": 24, "comb": 25, "radiosInUnison": 26, "commitOnSelChange": 27}
+         "doNotSpellCheck": 23, "doNotScroll": 24, "comb": 25, "radiosInUnison": 26, "richText": 26,
+         "commitOnSelChange": 27}
 
 
 def flag_value(*names):
@@ -33,7 +41,7 @@ def flag_value(*names):
 
 def flag_names(value, kind):
     out = []
-    groups = {"text": ("multiline", "password", "fileSelect", "doNotSpellCheck", "doNotScroll", "comb"),
+    groups = {"text": ("multiline", "password", "fileSelect", "doNotSpellCheck", "doNotScroll", "comb", "richText"),
               "checkbox": ("noToggleToOff", "radio", "pushbutton", "radiosInUnison"),
               "radio": ("noToggleToOff", "radio", "pushbutton", "radiosInUnison"),
               "pushbutton": ("noToggleToOff", "radio", "pushbutton", "radiosInUnison"),
@@ -598,7 +606,30 @@ def xfa(seed):
     sample.expected["form"]["xfa"] = {"packets": ["preamble", "config", "template", "datasets", "postamble"],
                                       "data": data_values, "datasetsSha256": sha256(XFA_DATASETS),
                                       "issue": "XFA layout is not drawn: the AcroForm twins are"}
+    sample.expected["form"]["xfa"]["template"] = {
+        "sections": [{"name": "order", "path": "order", "parent": None},
+                     {"name": "Page1", "path": "order.Page1", "parent": "order"},
+                     {"name": "customer", "path": "order.customer", "parent": "order"},
+                     {"name": "item", "path": "order.item", "parent": "order"}],
+        "fields": [_tfield("fullName", "order.customer.fullName", "text", "order.customer", "Name",
+                           "order.customer.fullName", "Jordan Lee", field="order[0].customer[0].fullName[0]"),
+                   _tfield("email", "order.customer.email", "text", "order.customer", "Email", "order.customer.email",
+                           "jordan.lee@example.com", field="order[0].customer[0].email[0]"),
+                   _tfield("product", "order.item.product", "text", "order.item", None, "order.item.product",
+                           "Desk lamp", field="order[0].item[0].product[0]"),
+                   _tfield("quantity", "order.item.quantity", "text", "order.item", None, "order.item.quantity", "3",
+                           field="order[0].item[0].quantity[0]"),
+                   _tfield("giftWrap", "order.item.giftWrap", "checkbox", "order.item", None, "order.item.giftWrap",
+                           "1", options=[("1", "1"), ("0", "0")], field="order.item.giftWrap")],
+        "scripts": 0}
     return sample
+
+
+def _tfield(name, path, kind, section, caption, binding, value, options=(), flags=(), field=None):
+    """A template field as the expected JSON gives it."""
+    return {"name": name, "path": path, "kind": kind, "section": section, "caption": caption, "binding": binding,
+            "value": value, "options": [{"display": d, "export": e} for d, e in options], "flags": list(flags),
+            "field": field}
 
 
 def flattened(seed):
@@ -760,6 +791,385 @@ def check_flatten(path, exp, notes):
                        "note": "glyph edges only: pdfium anti-aliases text in widget appearances differently"}, {}
 
 
+# -- the forms completed (2026-11-19) -------------------------------------------------------------------------------
+
+def _text_dict(page, name, rect, value, size=11, flags=0, extra=None, ap=None):
+    d = {"FT": N("Tx"), "T": String(name.encode("ascii")), "Ff": flags, "DA": String(b"/Helv %s Tf 0 g" % _n(size)),
+         "Type": N("Annot"), "Subtype": N("Widget"), "Rect": list(rect), "F": 4, "P": page.ref}
+    if value is not None:
+        d["V"] = String(value.encode("latin-1")) if all(ord(c) < 256 for c in value) else U16(value)
+    if ap is not None:
+        d["AP"] = {"N": ap}
+    d.update(extra or {})
+    return d
+
+
+def _text_json(form, page, name, rect, value, size=11, flags=0, text=None, partial=None, appearance=None):
+    w = form.widget_json(page, rect, text=text)
+    if appearance is not None:
+        w["hasAppearance"] = appearance
+    return {"name": name, "partialName": partial or name, "kind": "text", "value": value, "values": None,
+            "defaultValue": None, "options": None, "selected": None, "flags": flag_names(flags, "text"),
+            "flagsValue": flags, "maxLength": None, "alignment": "left", "font": "Helv", "fontSize": size,
+            "tooltip": None, "inherited": [], "widgets": [w]}
+
+
+STYLED = [  # name, rect, /MK, /BS, value, the expected border
+    ("vertical", [40, 60, 70, 300], {"R": 90, "BC": [0, 0, 0.6], "BG": [0.94, 0.94, 1]}, None, "Turned a quarter",
+     None, 90),
+    ("upside", [100, 40, 300, 65], {"R": 180, "BC": [0, 0, 0.6]}, None, "Upside down", None, 180),
+    ("downward", [440, 60, 470, 300], {"R": 270, "BC": [0, 0, 0.6]}, None, "Turned three quarters", None, 270),
+    ("dashed", [100, 340, 300, 365], {"BC": [0.2, 0.2, 0.2]}, {"S": N("D"), "W": 1, "D": [3, 2]}, "Dashed border",
+     {"style": "dashed", "width": 1, "dashes": [3, 2]}, 0),
+    ("beveled", [100, 290, 300, 315], {"BC": [0.3, 0.3, 0.3], "BG": [0.85, 0.85, 0.85]}, {"S": N("B"), "W": 1},
+     "Beveled box", {"style": "beveled", "width": 1, "dashes": []}, 0),
+    ("inset", [100, 240, 300, 265], {"BC": [0.3, 0.3, 0.3], "BG": [0.92, 0.92, 0.92]}, {"S": N("I"), "W": 1},
+     "Inset box", {"style": "inset", "width": 1, "dashes": []}, 0),
+    ("underline", [100, 190, 300, 215], {"BC": [0, 0, 0]}, {"S": N("U"), "W": 1}, "Underlined",
+     {"style": "underline", "width": 1, "dashes": []}, 0),
+    ("solid", [100, 140, 300, 165], {"BC": [0.5, 0, 0]}, {"S": N("S"), "W": 2}, "Solid thick border",
+     {"style": "solid", "width": 2, "dashes": []}, 0),
+]
+
+
+def styled(seed):
+    """Text fields turned by /MK /R (90, 180, 270) and bordered by /BS (dashed, beveled, inset, underline, solid 2),
+    filled, with /NeedAppearances and no appearance streams: pdfium makes their appearances (turned and bordered as
+    their entries say), which the reference drawing shows."""
+    doc = Doc("forms-styled", "1.7", seed)
+    page = doc.page(500, 400)
+    form = Form(doc, appearances=False, need_appearances=True)
+    _title(doc, page, "Styled fields")
+    for name, rect, mk, bs, value, border, rotation in STYLED:
+        extra = {"MK": mk}
+        if bs is not None:
+            extra["BS"] = bs
+        ref = form.doc.pdf.add(_text_dict(page, name, rect, value, extra=extra))
+        page.annotations.append(ref)
+        exp = _text_json(form, page, name, rect, value, text=value)
+        if rotation:
+            exp["widgets"][0]["rotation"] = rotation
+        if border is not None:
+            exp["border"] = border
+        form.add(ref, exp)
+    form.finish()
+    doc.finish()
+    desc = ("Text fields turned a quarter, a half and three quarters (/MK /R) and bordered dashed ([3 2]), beveled, inset, "
+            "underlined and solid (2 points) by /BS, filled, under /NeedAppearances with no appearance streams: pdfium "
+            "makes the appearances its drawing shows.")
+    return _forms_sample(doc, form, "forms-styled", desc)
+
+
+RICH_RV = ('<?xml version="1.0"?><body xmlns="http://www.w3.org/1999/xhtml" '
+           'xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/" xfa:spec="2.0.2"><p><b>Dear reader,</b></p><p>The '
+           '<span style="font-style:italic;color:#cc0000">quarterly report</span> is <span style="font-size:14pt;'
+           "font-family:'Times New Roman'\">ready</span>.</p></body>")
+RICH_DS = "font: 11pt Helvetica; color: #000000"
+
+
+def _run(text, bold=False, italic=False, size=11.0, colour=(0.0, 0.0, 0.0), family="Helvetica"):
+    return {"text": text, "bold": bold, "italic": italic, "underline": False, "strikeOut": False, "size": size,
+            "colour": list(colour) if colour is not None else None, "family": family}
+
+
+def rich(seed):
+    """A rich text field (/RV XHTML over /DS, /V its plain text), an empty rich text field and a plain one."""
+    doc = Doc("forms-rich", "1.7", seed)
+    page = doc.page(420, 300)
+    form = Form(doc)
+    _title(doc, page, "Messages")
+    plain = "Dear reader,\nThe quarterly report is ready."
+    flags = flag_value("multiline", "richText")
+    rect = [40, 150, 380, 230]
+    ap = form.text_ap(340, 80, plain.split("\n"), 11)
+    ref = doc.pdf.add(_text_dict(page, "message", rect, plain, flags=flags, ap=ap,
+                                 extra={"RV": String(RICH_RV.encode("ascii")), "DS": String(RICH_DS.encode("ascii"))}))
+    page.annotations.append(ref)
+    exp = _text_json(form, page, "message", rect, plain, flags=flags, text=plain)
+    exp["richText"] = [_run("Dear reader,", bold=True), _run("\nThe "),
+                       _run("quarterly report", italic=True, colour=(0.8, 0.0, 0.0)), _run(" is "),
+                       _run("ready", size=14.0, family="Times New Roman"), _run(".")]
+    form.add(ref, exp)
+    for name, rect, size, flags in (("note", [40, 70, 380, 130], 10, flag_value("multiline", "richText")),
+                                    ("title", [40, 30, 380, 52], 11, 0)):
+        w, h = rect[2] - rect[0], rect[3] - rect[1]
+        ref = doc.pdf.add(_text_dict(page, name, rect, None, size=size, flags=flags,
+                                     ap=form.text_ap(w, h, [""], size)))
+        page.annotations.append(ref)
+        form.add(ref, _text_json(form, page, name, rect, None, size=size, flags=flags, text=""))
+    form.finish()
+    doc.finish()
+    desc = ("A rich text field (multi-line, the rich text flag): /RV is XHTML (a bold paragraph, then italic red, 14 pt "
+            "Times New Roman and plain runs) over /DS (11 pt Helvetica, black), /V its plain text; an empty rich text "
+            "field and an empty plain one to fill.")
+    sample = _forms_sample(doc, form, "forms-rich", desc)
+    sample.checks.append(check_plain_values)
+    return sample
+
+
+def held(seed):
+    """Fields held inside other objects: every object but the streams in object streams (a cross-reference stream);
+    applicant.name written as a dictionary in its parent's /Kids (its widget an object of its own, with no /Parent),
+    remarks written in the form's /Fields itself, applicant.email and city ordinary fields (field and widget one
+    object)."""
+    doc = Doc("forms-held", "1.7", seed)
+    page = doc.page(420, 300)
+    form = Form(doc)
+    _title(doc, page, "Application")
+    pdf = doc.pdf
+    applicant = pdf.alloc()
+    rect = [120, 220, 380, 240]
+    w1 = pdf.add({"Type": N("Annot"), "Subtype": N("Widget"), "Rect": rect, "F": 4, "P": page.ref,
+                  "AP": {"N": form.text_ap(260, 20, [""], 11)}})
+    page.annotations.append(w1)
+    name = {"T": String(b"name"), "FT": N("Tx"), "Parent": applicant, "DA": String(b"/Helv 11 Tf 0 g"), "Kids": [w1]}
+    rect2 = [120, 190, 380, 210]
+    email = pdf.add({"T": String(b"email"), "FT": N("Tx"), "Parent": applicant, "DA": String(b"/Helv 11 Tf 0 g"),
+                     "Type": N("Annot"), "Subtype": N("Widget"), "Rect": rect2, "F": 4, "P": page.ref,
+                     "AP": {"N": form.text_ap(260, 20, [""], 11)}})
+    page.annotations.append(email)
+    pdf.put(applicant, {"T": String(b"applicant"), "Kids": [name, email]})
+    rect3 = [120, 120, 380, 170]
+    w3 = pdf.add({"Type": N("Annot"), "Subtype": N("Widget"), "Rect": rect3, "F": 4, "P": page.ref,
+                  "AP": {"N": form.text_ap(260, 50, [""], 10)}})
+    page.annotations.append(w3)
+    remarks = {"T": String(b"remarks"), "FT": N("Tx"), "Ff": flag_value("multiline"), "DA": String(b"/Helv 10 Tf 0 g"),
+               "Kids": [w3]}
+    form.expected += [_text_json(form, page, "applicant.name", rect, None, text="", partial="name"),
+                      _text_json(form, page, "applicant.email", rect2, None, text="", partial="email"),
+                      _text_json(form, page, "remarks", rect3, None, size=10, flags=flag_value("multiline"), text="")]
+    form.fields += [applicant, remarks]
+    form.text(page, "city", [120, 80, 380, 100], None)
+    c = page.content
+    c.BT()
+    c.Tf(form.helv, 10)
+    prev = 0
+    for label, y in (("Name", 224), ("Email", 194), ("Remarks", 154), ("City", 84)):
+        c.Td(30 if prev == 0 else 0, y - prev)
+        prev = y
+        c.show(label)
+        page.line(label)
+    c.ET()
+    form.finish()
+    doc.finish()
+    data, w = doc.write("objstm")
+    desc = ("Fields held inside other objects: every object but the streams in object streams; applicant.name a "
+            "dictionary in its parent's /Kids (its widget an object of its own without /Parent), remarks a dictionary "
+            "in /Fields, applicant.email and city ordinary. All empty, with appearances. pdfium names a widget by its "
+            "/Parent, which no dictionary held inside another object can be: it reads those two widgets with no name "
+            "(`reference.fields`); a writer that moves them to objects of their own gives them one.")
+    exp = base_expected(doc, data, "forms-held", "form", D9, desc, w, objects=False)
+    exp["fields"] = form.expected
+    exp["form"] = {"needAppearances": False, "appearances": True, "xfa": None, "objectStreams": True,
+                   "held": ["applicant.name", "remarks"]}
+    return Sample("forms-held", "d9", "form", D9, desc, data, exp, render_forms=True, checks=[check_fields])
+
+
+def faces(seed):
+    """A field whose value its /DA font (Helvetica) cannot show: Cyrillic, its appearance made in an embedded DejaVu
+    subset; the form's /DR names that font /F1 (a name a writer adding a font must not take); and a plain field."""
+    from .common import DEJAVU
+    from .fonts import Type0
+
+    doc = Doc("forms-faces", "1.7", seed)
+    page = doc.page(420, 200)
+    form = Form(doc)
+    _title(doc, page, "Greetings")
+    dejavu = doc.font(Type0, DEJAVU)
+    form.dr["Font"]["F1"] = dejavu.ref
+    value = "Добрый день"
+    rect = [40, 110, 380, 134]
+    codes = b"".join(g.code for g in dejavu.glyphs(value))
+    content = (b"/Tx BMC\nq 1 1 338 22 re W n\nBT\n/F1 12 Tf 0 g\n2 7.5 Td <%s> Tj\nET\nQ\nEMC\n"
+               % codes.hex().upper().encode("ascii"))
+    ap = doc.pdf.add(Stream({"Type": N("XObject"), "Subtype": N("Form"), "BBox": [0, 0, 340, 24],
+                             "Resources": {"Font": {"F1": dejavu.ref}}, "Filter": N("FlateDecode")}, flate(content),
+                            content))
+    ref = doc.pdf.add(_text_dict(page, "greeting", rect, value, size=12, ap=ap))
+    page.annotations.append(ref)
+    form.add(ref, _text_json(form, page, "greeting", rect, value, size=12, text=value))
+    rect2 = [40, 60, 380, 84]
+    ref2 = doc.pdf.add(_text_dict(page, "note", rect2, None, size=12, ap=form.text_ap(340, 24, [""], 12)))
+    page.annotations.append(ref2)
+    form.add(ref2, _text_json(form, page, "note", rect2, None, size=12, text=""))
+    form.finish()
+    doc.finish()
+    desc = ("A field whose /DA names Helvetica holding a Cyrillic value, its appearance in an embedded DejaVu subset "
+            "(/F1 in the form's /DR too), and an empty plain field: a writer filling it in a face its /DA lacks names "
+            "a font of that face in /DA and /DR, under a name /DR does not hold.")
+    return _forms_sample(doc, form, "forms-faces", desc)
+
+
+XFA2_TEMPLATE = b"""<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+ <subform name="report" layout="tb" locale="en_US">
+  <pageSet><pageArea name="Sheet"><contentArea x="0.25in" y="0.25in" w="8in" h="10.5in"/>
+   <medium stock="default" short="8.5in" long="11in"/>
+   <field name="footer" w="3in" h="0.3in"><ui><textEdit/></ui><bind match="none"/><value><text>Page footer</text></value></field>
+  </pageArea></pageSet>
+  <subform name="author" layout="tb">
+   <field name="fullName" w="3in" h="0.3in"><ui><textEdit/></ui><caption><value><text>Full name</text></value></caption>
+    <validate nullTest="error"/></field>
+   <field name="mail" w="3in" h="0.3in"><ui><textEdit/></ui><caption><value><text>Email</text></value></caption>
+    <bind match="dataRef" ref="$record.contact.email"/>
+    <event activity="exit"><script contentType="application/x-javascript">this.rawValue = this.rawValue.trim();</script></event></field>
+  </subform>
+  <subform name="details" layout="tb">
+   <field name="summary" w="6in" h="1in"><ui><textEdit multiLine="1"/></ui><caption><value><text>Summary</text></value></caption></field>
+   <field name="pages" w="1in" h="0.3in"><ui><numericEdit/></ui><caption><value><text>Pages</text></value></caption>
+    <calculate><script>Sum(1, 2)</script></calculate></field>
+   <field name="format" w="2in" h="0.3in"><ui><choiceList/></ui><caption><value><text>Format</text></value></caption>
+    <items><text>Printed</text><text>Digital</text></items><items save="1"><text>print</text><text>digital</text></items></field>
+   <field name="topics" w="2in" h="1in"><ui><choiceList open="multiSelect"/></ui>
+    <items><text>Science</text><text>Technology</text></items></field>
+   <exclGroup name="priority"><caption><value><text>Priority</text></value></caption>
+    <field name="normal"><ui><checkButton shape="round"/></ui><caption><value><text>Normal</text></value></caption><items><text>normal</text></items></field>
+    <field name="urgent"><ui><checkButton shape="round"/></ui><caption><value><text>Urgent</text></value></caption><items><text>urgent</text></items></field>
+   </exclGroup>
+   <field name="reviewed"><ui><checkButton/></ui><items><integer>1</integer><integer>0</integer></items></field>
+   <field name="submit"><ui><button/></ui><caption><value><text>Submit</text></value></caption>
+    <event activity="click"><script contentType="application/x-javascript">xfa.host.messageBox("Sent");</script></event></field>
+  </subform>
+  <subform>
+   <field name="revision" access="readOnly"><ui><textEdit/></ui></field>
+  </subform>
+  <proto><field name="unused"><ui><textEdit/></ui></field></proto>
+  <variables><script name="helpers" contentType="application/x-javascript">function round(v) { return Math.round(v); }</script></variables>
+ </subform>
+</template>
+"""
+
+XFA2_DATASETS = b"""<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+ <xfa:data>
+  <report>
+   <author><fullName>Sam Rivera</fullName></author>
+   <contact><email>sam.rivera@example.com</email></contact>
+   <details><summary>A short technical report on network latency.</summary><pages>12</pages><format>digital</format><topics>Technology</topics><priority>urgent</priority><reviewed>1</reviewed></details>
+   <revision>3</revision>
+  </report>
+ </xfa:data>
+</xfa:datasets>
+"""
+
+
+def xfa_template(seed):
+    """An XFA form with no AcroForm fields (its data read as fields of their own) whose template holds a page area with
+    a field bound to nothing, captions, a required field, a field bound by reference, a multi-line field, a numeric
+    field, a drop-down list with saved values, a multi-select list, a radio group (exclGroup), a check box, a button,
+    an unnamed subform's read-only field, a prototype (no field) and four scripts (none run)."""
+    doc = Doc("forms-xfa-template", "1.7", seed)
+    page = doc.page(612, 792)
+    form = Form(doc)
+    _title(doc, page, "Report (an XFA form)")
+    packets = []
+    for label, body in (("preamble", b'<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">\n'), ("config", XFA_CONFIG),
+                        ("template", XFA2_TEMPLATE), ("datasets", XFA2_DATASETS), ("postamble", b"</xdp:xdp>\n")):
+        packets += [String(label.encode("ascii")), doc.pdf.add(Stream({"Filter": N("FlateDecode")}, flate(body), body))]
+    form.finish(xfa=packets)
+    doc.finish()
+    desc = ("An XFA form whose AcroForm holds no field: its datasets' values are read as fields of their own, and its "
+            "template (`xfa.template`) gives its sections, fields, captions, kinds, choices, bindings and four scripts, "
+            "none run.")
+    sample = _forms_sample(doc, form, "forms-xfa-template", desc)
+    data = {"report.author.fullName": "Sam Rivera", "report.contact.email": "sam.rivera@example.com",
+            "report.details.summary": "A short technical report on network latency.", "report.details.pages": "12",
+            "report.details.format": "digital", "report.details.topics": "Technology",
+            "report.details.priority": "urgent", "report.details.reviewed": "1", "report.revision": "3"}
+    sample.expected["form"]["xfa"] = {
+        "packets": ["preamble", "config", "template", "datasets", "postamble"], "data": data,
+        "datasetsSha256": sha256(XFA2_DATASETS), "issue": "XFA layout is not drawn",
+        "template": {
+            "sections": [{"name": "report", "path": "report", "parent": None},
+                         {"name": "Sheet", "path": "report.Sheet", "parent": "report"},
+                         {"name": "author", "path": "report.author", "parent": "report"},
+                         {"name": "details", "path": "report.details", "parent": "report"}],
+            "fields": [
+                _tfield("footer", "report.Sheet.footer", "text", "report.Sheet", None, None, "Page footer"),
+                _tfield("fullName", "report.author.fullName", "text", "report.author", "Full name",
+                        "report.author.fullName", "Sam Rivera", flags=["required"], field="report.author.fullName"),
+                _tfield("mail", "report.author.mail", "text", "report.author", "Email", "report.contact.email",
+                        "sam.rivera@example.com", field="report.contact.email"),
+                _tfield("summary", "report.details.summary", "text", "report.details", "Summary",
+                        "report.details.summary", "A short technical report on network latency.",
+                        flags=["multiline"], field="report.details.summary"),
+                _tfield("pages", "report.details.pages", "text", "report.details", "Pages", "report.details.pages",
+                        "12", field="report.details.pages"),
+                _tfield("format", "report.details.format", "combo", "report.details", "Format",
+                        "report.details.format", "digital", options=[("Printed", "print"), ("Digital", "digital")],
+                        field="report.details.format"),
+                _tfield("topics", "report.details.topics", "list", "report.details", None, "report.details.topics",
+                        "Technology", options=[("Science", "Science"), ("Technology", "Technology")],
+                        flags=["multiSelect"], field="report.details.topics"),
+                _tfield("priority", "report.details.priority", "radio", "report.details", "Priority",
+                        "report.details.priority", "urgent", options=[("Normal", "normal"), ("Urgent", "urgent")],
+                        field="report.details.priority"),
+                _tfield("reviewed", "report.details.reviewed", "checkbox", "report.details", None,
+                        "report.details.reviewed", "1", options=[("1", "1"), ("0", "0")],
+                        field="report.details.reviewed"),
+                _tfield("submit", "report.details.submit", "pushbutton", "report.details", "Submit",
+                        "report.details.submit", None),
+                _tfield("revision", "report.revision", "text", "report", None, "report.revision", "3",
+                        flags=["readOnly"], field="report.revision")],
+            "scripts": 4}}
+    return sample
+
+
+def pdfminer_fields(path):
+    """Each terminal field's full name and /V as pdfminer.six's object layer reads them (text decoded, names as
+    names); a field's /V not inherited."""
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfparser import PDFParser
+    from pdfminer.pdftypes import resolve1
+    from pdfminer.psparser import PSLiteral
+    from pdfminer.utils import decode_text
+
+    out = {}
+    with open(path, "rb") as f:
+        doc = PDFDocument(PDFParser(f))
+        acro = resolve1(doc.catalog.get("AcroForm"))
+
+        def text(v):
+            v = resolve1(v)
+            if isinstance(v, bytes):
+                return decode_text(v)
+            if isinstance(v, PSLiteral):
+                return v.name if isinstance(v.name, str) else v.name.decode("latin-1")
+            return None if v is None else str(v)
+
+        def walk(fields, prefix):
+            for item in resolve1(fields) or []:
+                d = resolve1(item)
+                part = text(d.get("T"))
+                name = prefix if part is None else (part if not prefix else prefix + "." + part)
+                kids = [resolve1(k) for k in resolve1(d.get("Kids")) or []]
+                if any("T" in k for k in kids):
+                    walk(d.get("Kids"), name)
+                else:
+                    out[name] = text(d.get("V"))
+
+        walk(acro.get("Fields") if acro else [], "")
+    return out
+
+
+def check_plain_values(path, exp, notes):
+    """pdfium's and pdfminer.six's reading of each text field's plain value (/V) against the expected (a rich text
+    field's plain text among them)."""
+    got = {g["name"]: g["value"] for g in pdfium_fields(path) if g["kind"] == "text"}
+    miner = pdfminer_fields(path)
+    problems = []
+    for f in exp["fields"]:
+        if f["kind"] != "text":
+            continue
+        want = f["value"] or ""
+        if got.get(f["name"]) != want:
+            problems.append({"field": f["name"], "pdfium": got.get(f["name"]), "expected": want})
+        if (miner.get(f["name"]) or "") != want:
+            problems.append({"field": f["name"], "pdfminer": miner.get(f["name"]), "expected": want})
+    if problems:
+        notes.append(f"{exp['name']}: pdfium or pdfminer.six reads {len(problems)} plain value(s) differently")
+    return "plainValues", {"pdfium": got, "pdfminer": miner, "problems": problems}, {}
+
+
 def build(seed):
-    return [filled(seed), empty(seed), need_appearances(seed), inherited(seed), xfa(seed), flattened(seed)]
+    return [filled(seed), empty(seed), need_appearances(seed), inherited(seed), xfa(seed), flattened(seed), styled(seed),
+            rich(seed), held(seed), faces(seed), xfa_template(seed)]
 

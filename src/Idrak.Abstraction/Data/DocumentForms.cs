@@ -115,6 +115,25 @@ public enum DocumentFieldMark : byte
     Star,
 }
 
+/// <summary>How a field's border is drawn.</summary>
+public enum DocumentFieldBorderStyle : byte
+{
+    /// <summary>A solid line around the box.</summary>
+    Solid,
+
+    /// <summary>A dashed line around the box (<see cref="DocumentField.Dashes"/>).</summary>
+    Dashed,
+
+    /// <summary>A raised box: lighter above and to the left, darker below and to the right, inside the border.</summary>
+    Beveled,
+
+    /// <summary>A sunken box: darker above and to the left, lighter below and to the right, inside the border.</summary>
+    Inset,
+
+    /// <summary>A line along the box's bottom edge only.</summary>
+    Underline,
+}
+
 /// <summary>A choice of a list or a drop-down list.</summary>
 /// <param name="Text">What is shown.</param>
 /// <param name="Export">The value the form sends (the shown text when the document gives none).</param>
@@ -131,11 +150,48 @@ public readonly record struct DocumentWidget(int Page, DocumentBox Box, string? 
     /// is turned on), or null for other fields. A writer adding a field names it here (a check box's "Yes" unless given).
     /// </summary>
     public string? OnState { get; init; }
+
+    /// <summary>
+    /// How far its content is turned counter-clockwise within its box, in degrees: 0, 90, 180 or 270 (text on a box turned
+    /// 90 reads from the bottom up). A writer adding a field turns its appearance so.
+    /// </summary>
+    public int Rotation { get; init; }
 }
 
 /// <summary>
-/// A form field: its full name (its parents' names and its own, joined by dots), kind, value and choices, how its text is
-/// shown, and where it is shown. Fields of a dynamic form's data are read as fields too; their layout is not drawn.
+/// A run of a field's rich text: its characters and how they are shown. What a run does not set (null, or false) is the
+/// field's own: its font, size and colour (<see cref="DocumentField.Font"/>, <see cref="DocumentField.FontSize"/>,
+/// <see cref="DocumentField.TextColour"/>). A line feed in a run's text starts a new paragraph.
+/// </summary>
+/// <param name="Text">Its characters.</param>
+public sealed record DocumentFieldRun(string Text)
+{
+    /// <summary>Whether it is bold.</summary>
+    public bool Bold { get; init; }
+
+    /// <summary>Whether it is italic.</summary>
+    public bool Italic { get; init; }
+
+    /// <summary>Whether it is underlined.</summary>
+    public bool Underline { get; init; }
+
+    /// <summary>Whether it is struck through.</summary>
+    public bool StrikeOut { get; init; }
+
+    /// <summary>Its size in points, or null for the field's.</summary>
+    public float? Size { get; init; }
+
+    /// <summary>Its colour, or null for the field's.</summary>
+    public DocumentColour? Colour { get; init; }
+
+    /// <summary>Its font family ("Helvetica", "Times", a face's family), or null for the field's font.</summary>
+    public string? Family { get; init; }
+}
+
+/// <summary>
+/// A form field: its full name (its parents' names and its own, joined by dots), kind, value (and rich text) and choices,
+/// how its text and box are shown, and where it is shown. Fields of a dynamic form's data are read as fields too; their
+/// layout is not drawn (<see cref="IDocument.FormTemplate"/> gives the form's design).
 /// </summary>
 /// <param name="Name">The full, dotted name.</param>
 /// <param name="Kind">What kind of field it is.</param>
@@ -192,6 +248,77 @@ public sealed record DocumentField(string Name, DocumentFieldKind Kind)
 
     /// <summary>The mark a check box or radio button shows when on (a check box's check mark, a radio button's circle, unless given).</summary>
     public DocumentFieldMark Mark { get; init; }
+
+    /// <summary>How its border is drawn (with <see cref="Border"/>'s colour; a beveled or inset box's shading without one).</summary>
+    public DocumentFieldBorderStyle BorderStyle { get; init; }
+
+    /// <summary>Its border's width in points, or null when the document states none (<see cref="DocumentFormOptions.BorderWidth"/>).</summary>
+    public float? BorderWidth { get; init; }
+
+    /// <summary>A dashed border's dashes and gaps in points, in turn (empty: 3 on, 3 off).</summary>
+    public IReadOnlyList<float> Dashes { get; init; } = [];
+
+    /// <summary>
+    /// Its value as rich text (a text box whose <see cref="DocumentFieldFlags.RichText"/> is set): runs of characters each with
+    /// its own style, their text <see cref="Value"/>'s; empty when it has none. A writer adding a field with runs writes them
+    /// and their plain text, and marks it rich text.
+    /// </summary>
+    public IReadOnlyList<DocumentFieldRun> RichText { get; init; } = [];
+}
+
+/// <summary>
+/// A form's design as its template gives it, apart from any page (an XFA form's template; any format that describes its
+/// form's fields and sections so): its sections, its fields with their captions, kinds, choices and bindings to the form's
+/// data, each linked to the data's value and to the <see cref="IDocument.Fields"/> field that holds it. Read as data: its
+/// layout is not laid out and its scripts are never run (each is listed in <see cref="Issues"/>).
+/// </summary>
+public sealed record DocumentFormTemplate
+{
+    /// <summary>Its sections (a group of fields: an XFA subform or page area), in document order, each before those inside it.</summary>
+    public IReadOnlyList<DocumentFormSection> Sections { get; init; } = [];
+
+    /// <summary>Its fields, in document order.</summary>
+    public IReadOnlyList<DocumentTemplateField> Fields { get; init; } = [];
+
+    /// <summary>What was not done: each script it holds, not run (<see cref="DocumentIssue.NotSupported"/>).</summary>
+    public IReadOnlyList<DocumentIssue> Issues { get; init; } = [];
+}
+
+/// <summary>A section of a form's template: a group of fields (a page of the form, or a part of one).</summary>
+/// <param name="Name">Its own name.</param>
+/// <param name="Path">Its full name: the names of the sections it is in and its own, joined by dots (a name repeated among its siblings indexed from its second, <c>[1]</c>).</param>
+public sealed record DocumentFormSection(string Name, string Path)
+{
+    /// <summary>The <see cref="Path"/> of the section it is in, or null at the top.</summary>
+    public string? Parent { get; init; }
+}
+
+/// <summary>A field of a form's template: what it is, where it is, the data it binds to and the value that gives it.</summary>
+/// <param name="Name">Its own name.</param>
+/// <param name="Path">Its full name: its sections' names and its own, joined by dots (a name repeated among its siblings indexed from its second, <c>[1]</c>).</param>
+/// <param name="Kind">What kind of field it is.</param>
+public sealed record DocumentTemplateField(string Name, string Path, DocumentFieldKind Kind)
+{
+    /// <summary>The <see cref="DocumentFormSection.Path"/> of the section holding it, or null when none does.</summary>
+    public string? Section { get; init; }
+
+    /// <summary>The caption shown with it, or null.</summary>
+    public string? Caption { get; init; }
+
+    /// <summary>The path of the form's data it binds to (names joined by dots, indexed as <see cref="Path"/>), or null when it binds to none.</summary>
+    public string? Binding { get; init; }
+
+    /// <summary>Its value: the bound data's, else the template's default; null when it has neither.</summary>
+    public string? Value { get; init; }
+
+    /// <summary>Its choices: a list's (shown text and value sent), a radio group's buttons', a check box's on and off values.</summary>
+    public IReadOnlyList<DocumentFieldOption> Options { get; init; } = [];
+
+    /// <summary>How it behaves (read only, required, several lines, a password, several choices, typed text taken).</summary>
+    public DocumentFieldFlags Flags { get; init; }
+
+    /// <summary>The <see cref="DocumentField.Name"/> of the document's field that holds its value, or null when none does.</summary>
+    public string? Field { get; init; }
 }
 
 /// <summary>

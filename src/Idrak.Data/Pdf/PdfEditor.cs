@@ -94,6 +94,12 @@ internal sealed partial class PdfEditor : IDocumentEditor
         Forms.SetField(name, values);
     }
 
+    public void SetRichText(string name, IReadOnlyList<DocumentFieldRun> runs)
+    {
+        ThrowIfDone();
+        Forms.SetRichText(name, runs);
+    }
+
     public void AddField(DocumentField field)
     {
         ArgumentNullException.ThrowIfNull(field);

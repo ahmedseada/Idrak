@@ -1959,12 +1959,13 @@ the reference reader, and draws (D7) with the values in place; a flattened form 
   document opened each time) cold 68 ms (179 KiB), warm 0.69-0.71 ms (131 KiB); filling one field, saved incrementally cold
   62-64 ms (1,226 KiB: the first appearance and font), warm 1.02-1.03 ms (192 KiB); flattening the page's 12 fields, saved
   incrementally, cold 16 ms (195 KiB), warm 0.95-0.97 ms (189 KiB).
-- **Left:** `/MK /R` (a widget's rotation) and `/BS` dash styles are not drawn; a rich-text value (`/RV`) is read as its
-  plain `/V`; a field held inside another object cannot be filled; a field's `/DA` is not changed when its text needs a face
-  (a viewer that makes its own appearance uses its font); calculation order (`/CO`) and actions are not run (never: no
-  JavaScript); the XFA template is not read (only its data); reading a form allocates about 130 KiB for 14 widgets (closures,
-  records, each widget's page frame read), a pass of its own if forms grow large; D6's and D11's outputs were not compared
-  byte for byte against the base commit (their same-bytes checks pass, and no new path runs without a form edit).
+- **Left:** ~~`/MK /R` (a widget's rotation) and `/BS` dash styles are not drawn~~; ~~a rich-text value (`/RV`) is read as
+  its plain `/V`~~; ~~a field held inside another object cannot be filled~~; ~~a field's `/DA` is not changed when its text
+  needs a face (a viewer that makes its own appearance uses its font)~~; calculation order (`/CO`) and actions are not run
+  (never: no JavaScript); ~~the XFA template is not read (only its data)~~; ~~reading a form allocates about 130 KiB for 14
+  widgets (closures, records, each widget's page frame read), a pass of its own if forms grow large~~; ~~D6's and D11's
+  outputs were not compared byte for byte against the base commit (their same-bytes checks pass, and no new path runs
+  without a form edit)~~ (done 2026-11-19: "Forms completed" below).
 - **The owner's run** (held with the others until asked):
   ```powershell
   cd D:\Projects\Idrak; git checkout documents; git pull origin documents
@@ -1979,6 +1980,126 @@ the reference reader, and draws (D7) with the values in place; a flattened form 
   ```
   The forms the tests write are in `test-output\documents\forms\` (for example `forms-empty-filled-incremental.pdf`, a
   form filled by Idrak, and `forms-three-scripts.pdf`, filled in three scripts) to open.
+- **Forms completed, 2026-11-19 (plan 28 completed, P4; onto `d8e5f44`)** (`PdfForms.cs`, `PdfFormsAppearance.cs`,
+  `PdfFormsEdit.cs`, new `PdfFormsRich.cs` and `PdfFormsTemplate.cs`; hooks in `PdfDocument.cs` (`FormTemplate`) and
+  `PdfEditor.cs` (`SetRichText`); the generator's `samples_d9.py`; `api/Idrak.Abstraction.txt` regenerated through the
+  runner, the inventory unchanged):
+  - **The contract:** `DocumentWidget.Rotation`; `DocumentField.BorderStyle` (`DocumentFieldBorderStyle`: solid, dashed,
+    beveled, inset, underline), `BorderWidth` (null when none is stated), `Dashes`, `RichText` (`DocumentFieldRun`: text,
+    bold, italic, underline, strike-out, size, colour, family; what a run leaves null is the field's);
+    `IDocumentEditor.SetRichText(name, runs)` and `IDocument.FormTemplate` (default members: an editor that does not write
+    rich text says so, a document without a template gives null; the registry's two document wrappers forward it);
+    `DocumentFormTemplate` (sections, fields, issues), `DocumentFormSection`, `DocumentTemplateField` (name, path, kind,
+    section, caption, binding, value, options, flags, the field holding its value): a design any format could give.
+  - **Turned and bordered:** a made appearance is turned as `/MK /R` says (0, 90, 180, 270): its box the widget's turned
+    and a `/Matrix` turning it back (pdfium's own matrices), so placing it (12.5.5) and flattening it need nothing more;
+    an existing appearance of the same turn keeps its frame (its `/Tx` section replaced). `/BS`'s styles drawn: dashed
+    (`/D`, 3 on 3 off unless given), beveled and inset (the shading twice the width inside the edge: white and half grey
+    raised, half and three-quarter grey sunken, as pdfium makes them; the border colour around), underlined (the bottom
+    edge), solid (as before); each widget's own `/BS` when it states one. The builder writes `/MK /R` and `/BS` (only what
+    is given: a field without them writes the bytes it did) and refuses a turn of 45 degrees.
+  - **Rich text:** `/RV` (a string or a stream: XHTML read with no DTD and nothing fetched; `body`, `p`, `span`, `b`, `i`,
+    `br`; the CSS subset 12.7.4.3 allows: `font`, `font-family`, `font-size` in pt, px, em or %, `font-style`,
+    `font-weight`, `color` as #rgb, #rrggbb, rgb() or one of the sixteen keywords, `text-decoration`) over `/DS`, read as
+    runs; a value that is not well-formed gives none (the plain `/V` stays the value). `SetRichText` writes `/RV` (one `p` a
+    paragraph, a `span` a styled run), `/V` its plain text and the rich text flag; its appearance lays each run in its own
+    font: the field's when the run asks nothing, else the standard font of its family in its style (Helvetica, Times,
+    Courier and the CSS generic families) when that has every character, else faces of that family and style, else any
+    face showing it; one line centred on the tallest capitals, or wrapped from the top at spaces; underline and strike-out
+    drawn. `SetField` on a rich text field writes its value as one run. The builder writes runs (`/RV`, `/V`, the flag).
+  - **Held fields:** a field or widget whose dictionary is written inside another object (its parent's `/Kids`, the
+    form's `/Fields`) is moved to an object of its own when it changes, in both save modes: its holder written again naming
+    it (its parent's `/Kids`, a moved parent too; `/Fields` in the form's object, or the catalog's entry when the form is
+    held there), the objects under it naming it as their parent, a moved widget added to its page's `/Annots`. Flattening
+    takes a held field out of its holder. A field in an object stream was fillable already (a reference); the update is a
+    cross-reference stream after a stream, as before. A field added under a held parent moves the parent.
+  - **A face the `/DA` lacks:** when a text or choice field's value is set in a face (its `/DA` font has no code for a
+    character), its `/DA` names that face's font (its size, colour and every other operator kept) and the form's `/DR`
+    lists it, under `F<index>`, or `F<index>_<n>` when the source's `/DR` holds that name (`forms-faces`: `/F1` taken,
+    `/F1_1` given). Only the form's own object is written again (its `/XFA` kept); a form held in the catalog writes the
+    catalog's entry, its `/XFA` kept unless the tree changed.
+  - **XFA templates:** `IDocument.FormTemplate` reads the template packet once (XML, no DTD, nothing fetched): named
+    subforms and page areas as sections (an unnamed subform passes through), each `field` and each `exclGroup` (a radio
+    group of its buttons) with its caption, kind by its `ui` (text, numeric and date edits as text, a password, a check
+    button, a choice list as a list (`open` always or multiSelect) or a drop-down list, a button, a signature), choices
+    from `items` (shown, and saved by a second list with `save="1"`), flags (`access`, `validate nullTest="error"`,
+    `multiLine`, `multiSelect`, `textEntry`), and binding: normal (by name under the sections' data, a repeated name
+    indexed), `dataRef` (`$`, `$.`, `$record.`, `$data.`), `global`, `none`, a page's fields none by name; its value the
+    bound data's, else the template's default; its `Field` the document's field holding it (its AcroForm twin, or the data
+    read as a field of its own). Prototypes, drawings and layout are passed over. Each script (in an `event`, `calculate`,
+    `validate` or `variables`) is an issue (`not-supported`: "is not run"): no layout and no script, ever.
+  - **Memory:** reading a form walks the tree with no closure (the safe reads are static methods), what a node passes on is
+    a value shared once per parent (no record copied a node), the field type kept as the document's name (no string made),
+    each page's frame read once for all its widgets (the page numbers mapped on the first `/P`), no LINQ, the contract's
+    lists as arrays. forms-filled (12 fields, 14 widgets), `PdfForms.Read` on a document kept open, warm (the same
+    reflection probe before and after, `GC.GetAllocatedBytesForCurrentThread`): **41,392 bytes before, 15,752 after**
+    (0.115 to 0.092 ms); opened and read each time 133,832 to 107,824 bytes (the rest is the file's opening, 15.6 KiB, and
+    its objects parsed). Held by the test "documents pdf: forms: memory" (at most 24 KiB).
+  - **Decisions the plan did not settle, taken here:** (1) Rotation and border are drawn into the made appearance (the
+    drawer is untouched): the appearance carries them, as a viewer's own would. (2) `/BS`'s beveled and inset colours are
+    pdfium's (the standard names none). (3) A rich text's paragraph alignment is the field's; a run's style is kept per
+    character, so runs read back may be cut differently from those written (a paragraph's line feed in a run of its own).
+    (4) `SetField` on a rich text field writes `/RV` as the plain value's one run (no stale styled `/RV` left beside a new
+    `/V`). (5) A moved widget is added to its page's `/Annots` (a held dictionary could not be listed there). (6) The `/DA`
+    names the first face the text is set in. (7) `/NeedAppearances` is kept as the source had it (the appearances are
+    made all the same). (8) The template is the form's design apart from `Fields`: `Fields` reads as before (an XFA data
+    value with no twin stays a text field), the template gives its true kind and choices.
+  - **Samples** (D9 now 11; the six earlier PDFs and drawings byte-identical, `forms-xfa.json` gains its `template`):
+    `forms-styled` (text fields turned 90, 180, 270 and bordered dashed [3 2], beveled, inset, underlined and solid 2,
+    filled, under `/NeedAppearances` with no appearance: pdfium makes them, turned and bordered), `forms-rich` (a rich text
+    value over `/DS`; an empty rich text field and a plain one; `reference.plainValues`: pdfium and pdfminer.six read
+    every plain value), `forms-held` (object streams; a field in its parent's `/Kids`, its widget without `/Parent`; one
+    in `/Fields`: pdfium names a widget by its `/Parent`, so it reads those two with no name), `forms-faces` (a Cyrillic
+    value its `/DA` Helvetica lacks, its appearance in an embedded DejaVu subset, `/DR` holding `/F1`), `forms-xfa-template`
+    (no AcroForm field; a page area's field bound to nothing, captions, a required field, a `dataRef` binding, several
+    lines, a number, a drop-down list with saved values, a multi-select list, an `exclGroup`, a check box, a button, an
+    unnamed subform's read-only field, a prototype, four scripts).
+  - **Tests:** group `documents pdf: forms` (12): the reading test now checks every widget's turn, every field's border
+    and rich text (per character) against the JSON (11 samples, 62 fields, 69 widgets); new: turned and bordered
+    (forms-styled filled both ways 3.02% off pdfium's drawing of its own appearances; each turned box nearer pdfium's than
+    pdfium's turned a half: 7.8% against 15.6% at 90, 12.8% against 19.6% at 180, 10.3% against 21.8% at 270, a quarter
+    turn's ink 15 x 114 and 15 x 147 pixels; flattened 0.1% at most off it drawn with widgets; the builder's), rich text,
+    held fields, a face the `/DA` lacks (0.65% off pdfium's drawing of the producer's appearance, the note's box left out:
+    its producer drew its background inside `/Tx`), XFA templates (2 templates, 16 fields), memory. **Runs:** one build
+    (2 errors: CS9244, a tuple assignment holding a span in `PdfFormsRich.cs`: plain assignments; rebuilt), then
+    `documents pdf: forms|documents pdf: edit|documents pdf: write|documents pdf: annotations|documents pdf: text|documents
+    drawers|documents contracts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every
+    environment variable read in src|the environment table names real commands|hidden boxing|test runner|cli: data
+    redact` with the update flags: 126 tests, 125 passed, 1 failed (forms-faces drawn 10.63% off pdfium's: the note's
+    background, drawn inside its `/Tx` section by the producer and replaced by the value set, counted; the test now leaves
+    that box out); rebuilt once; `documents pdf: forms|public API|abstraction inventory` without the flags: **18 passed,
+    0 failed**.
+  - **Rule 71:** every output of the forms, edit, write and annotations groups hashed at `9ef852c` and again here: 263 of
+    264 byte-identical (every D6, D11, D10 and redaction output among them, which closes D9's last "Left" item); the one
+    changed is `forms-three-scripts.pdf`, whose Arabic and Cyrillic values are set in a face its `/DA` lacks: its two
+    fields' `/DA` now name `/F1` and the form's object lists it in `/DR`, nothing else.
+  - **The reference tools** (on the 25 forms the tests write): `check_written.py --expected auto`: all 25 pass (qpdf finds
+    no damage, problem or warning and decodes every stream; pdfminer.six and pdfium open each with no warning; the text as
+    expected). pdfium's form reading (the generator's `pdfium_fields`) and pdfminer.six's (`pdfminer_fields`) against each
+    `NAME.fields.json`: 0 differences in all 25 (the held fields named by pdfium once moved; the rich text fields' plain
+    values). pdfium's drawing through its form environment against Idrak's drawing of the same written file: forms-faces
+    0.45%, forms-rich 1.19%, forms-styled 1.80% with Idrak's appearances (a copy without `/NeedAppearances`; 3.00% with
+    pdfium's own). pdfium asked to remake the greeting from its `/DA` (its appearance taken off, `/NeedAppearances` set)
+    shows the text whichever font the `/DA` names: it substitutes a system font, so it cannot tell the two apart.
+  - **Timings** (this container, 4 cores, other agents building; the owner's devices give the real ones): reading every
+    field of forms-filled, opened each time, warm 0.575 ms (105.3 KiB; D9: 0.69-0.71 ms, 131 KiB); filling one field,
+    saved incrementally, warm 1.008 ms (167.7 KiB; D9: 192 KiB); flattening the page, warm 0.840 ms (163.5 KiB; D9: 189 KiB).
+  - **Left:** a right-to-left line of several styled runs keeps its runs in logical order (each run shaped in its own
+    direction); calculation order and actions are never run; XFA layout is never drawn.
+  - **The owner's run** (held with the others until asked):
+    ```powershell
+    cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+    dotnet build -c Release tests\Idrak.Tests
+    python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+    $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: forms|documents pdf: edit|documents pdf: write|documents pdf: annotations|documents pdf: text|documents drawers|documents contracts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner|cli: data redact"
+    dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-forms.txt
+    $env:IDRAK_FILTER = "documents pdf: forms: memory|documents pdf: forms: timings|documents pdf: forms: turned"
+    dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\forms-timing.txt
+    Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+    python -I tools\documents\check_written.py test-output\documents\forms -o test-output\documents\forms-check.json --expected auto
+    ```
+    To open: `test-output\documents\forms\forms-styled-filled-incremental.pdf` (turned and bordered fields filled),
+    `forms-rich-filled-incremental.pdf` (rich text), `forms-held-filled-incremental.pdf` and `forms-faces-filled-incremental.pdf`.
 
 ## Phase D10: annotations and navigation
 
