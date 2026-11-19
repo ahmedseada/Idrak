@@ -1,0 +1,113 @@
+trace: sampling the stacks of 'idrak bench meta-llama/Llama-3.2-3B-Instruct -w q4_k -d cuda --prompt-tokens 512 --tokens 1 -n 10' into D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-name.nettrace
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+meta-llama/Llama-3.2-3B-Instruct on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)): 3212.7M parameters, weights q4_k, KV cache bfloat16
+  prompt 512 tokens, 1 generated, 10 run(s) after a warm-up
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              9948   tokens/s  512 tokens
+generation          11587  tokens/s  1 tokens
+prompt GFLOP/s      63920  GFLOP/s   2 x parameters per token
+generation GFLOP/s  74450  GFLOP/s   2 x parameters per token
+weights memory      13071  MiB       on the device after loading
+memory in use       13071  MiB       after the runs
+memory peak         13282  MiB       the most in use on the device since the start
+KV cache            56.1   MiB       a generation's caches at their largest, window 514, grown 0 times
+trace: bench exited with 0
+stacks: 27 threads over 30.27 s (0.01 to 30.28 s); 375,426 samples and 11,842 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.1 ms)
+where the threads' time went (799.5 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       9.3%   74.71    the CPU in .NET code
+outside .NET code       0.7%   5.39     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.3%   2.10     spin-waits: a core burned while waiting
+stopped by the runtime  0.01%  0.11     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 89.7%  717.16   blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 2.7 threads on average of 24 processors; garbage collections: 27, every thread stopped 0.11 s in all (the longest 53.4 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 82.21 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -----------------------------------------------------
+18,961  23.1%  0.00%         32,713    39.8%  GgufElementTypes.EncodeQ4_K
+18,389  22.4%  0.01%         25,566    31.1%  StoredPackedFormat.Create
+13,317  16.2%  0.4%          13,738    16.7%  GgufElementTypes.PutCode
+8,987   10.9%  0.2%          42,099    51.2%  StoredPackedFormat.StoreColumns (lambda)
+3,487   4.2%   0.00%         3,487     4.2%   HostParallel.Transpose (lambda)
+3,340   4.1%   99.9%         3,344     4.1%   CudaBackend.Upload
+3,274   4.0%   0.01%         3,274     4.0%   SafeTensorsReader.ReadTransposed (lambda)
+1,731   2.1%   0.00%         1,780     2.2%   LowLevelLifoSemaphore.WaitForSignal
+1,707   2.1%   0.00%         1,707     2.1%   [a call returning: its method unknown]
+1,500   1.8%   0.00%         1,500     1.8%   GgufFile.DequantizeBlock
+935     1.1%   0.00%         935       1.1%   BFloat16Weight.FromValues (lambda)
+688     0.8%   100.0%        690       0.8%   CudaBackend.DownloadRange
+623     0.8%   1.7%          636       0.8%   HalfFloats.WidenBFloat16
+567     0.7%   98.4%         1,446     1.8%   SafeTensorsReader.ReadTransposed
+493     0.6%   0.00%         2,232     2.7%   LowLevelLifoSemaphore.Wait
+445     0.5%   0.00%         512       0.6%   PortableThreadPool.WorkerThread.MaybeAddWorkingWorker
+421     0.5%   0.00%         421       0.5%   CodePlane.Place
+361     0.4%   0.00%         505       0.6%   Parallel.CheckTimeoutReached
+308     0.4%   2.2%          308       0.4%   GC.AllocateUninitializedArray.AllocateNewArrayWorker
+246     0.3%   99.8%         246       0.3%   Interop.Kernel32.ReadFile
+232     0.3%   0.00%         232       0.3%   StoredPackedFormat.Columns
+197     0.2%   98.9%         442       0.5%   SafeTensorsReader.ReadTimed
+144     0.2%   0.00%         144       0.2%   Environment.get_TickCount64
+126     0.2%   0.00%         52,967    64.4%  TaskReplicator.Replica.Execute
+88.2    0.1%   100.0%        88.2      0.1%   CudaDriver.cuDevicePrimaryCtxRetain
+  [a call returning: its method unknown], 2.1%: the runtime stops threads at a call's return for each sampling round, so the method that ran is gone from the stack; its callers' total time holds it (many short calls in a loop make it large).
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  -----------------------------------------
+42,099    51.2%  8,987   StoredPackedFormat.StoreColumns (lambda)
+32,713    39.8%  18,961  GgufElementTypes.EncodeQ4_K
+29,225    35.5%  1.0     Program.<Main>$
+29,224    35.5%  0.4     CommandLine.Run
+29,223    35.5%  2.0     CommandLine.RunOn
+29,197    35.5%  3.0     CommandLine.Dispatch
+29,122    35.4%  3.2     BenchCommand.Run
+28,903    35.2%  2.8     BenchCommand.BenchModel
+28,033    34.1%  4.4     ModelChoices.Load
+27,947    34.0%  7.3     PretrainedModel.Load
+27,597    33.6%  2.3     DecoderBuilder.Build
+27,446    33.4%  0.5     DecoderBuilder.Build.Projection
+27,445    33.4%  0.5     DecoderBuilder.Build.Pack
+25,566    31.1%  18,389  StoredPackedFormat.Create
+24,921    30.3%  0.6     DecoderBuilder.Build.MakeBlock
+24,920    30.3%  1.7     DecoderBuilder.Build.MakeBlockOn
+19,885    24.2%  0.4     DecoderBuilder.Build.Dense
+13,738    16.7%  13,317  GgufElementTypes.PutCode
+8,861     10.8%  0.5     PackedWeightFormats.Pack
+6,551     8.0%   31.4    ElementType.Encode
+3,487     4.2%   3,487   HostParallel.Transpose (lambda)
+3,344     4.1%   3,340   CudaBackend.Upload
+3,274     4.0%   3,274   SafeTensorsReader.ReadTransposed (lambda)
+1,878     2.3%   0.2     DecoderBuilder.Build.Values
+1,500     1.8%   1,500   GgufFile.DequantizeBlock
+allocations (28,824 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB      Share  Type                                                                  Allocated in                              Called from
+-------  -----  --------------------------------------------------------------------  ----------------------------------------  -----------------------------
+7,586.4  26.3%  System.Single[]                                                       StoredPackedFormat.Create                 DecoderBuilder.Build.Pack
+7,584.0  26.3%  System.Single[]                                                       SafeTensorsReader.ReadTransposed          DecoderBuilder.Build.Values
+4,672.3  16.2%  System.Single[]                                                       StoredPackedFormat.Create                 PackedWeightFormats.Pack
+3,168.0  11.0%  System.Single[]                                                       SafeTensorsReader.ReadTransposed          CheckpointWeights.Read
+1,503.5  5.2%   System.Single[]                                                       SafeTensorsReader.Read                    CheckpointWeights.Read
+1,503.0  5.2%   System.Single[]                                                       HostParallel.Transpose                    DecoderBuilder.Transpose
+1,066.5  3.7%   System.Byte[]                                                         StoredPackedFormat.Create                 DecoderBuilder.Build.Pack
+751.5    2.6%   System.UInt16[]                                                       BFloat16Weight.FromValues                 DecoderBuilder.Build
+656.9    2.3%   System.Byte[]                                                         StoredPackedFormat.Create                 PackedWeightFormats.Pack
+64.0     0.2%   System.Single[]                                                       RopeTables.Acquire                        CausalSelfAttention..ctor
+37.5     0.1%   System.Single[]                                                       StoredPackedFormat.StoreColumns (lambda)  -
+24.8     0.09%  System.Byte[]                                                         TokenizerJsonReader.ReadFile              TokenizerJsonReader.Read
+17.3     0.06%  System.String                                                         TokenizerJsonReader.ReadFile              TokenizerJsonReader.Read
+15.7     0.05%  System.String                                                         BpeTokenizer.Split                        TokenizerJsonReader.ReadFile
+12.3     0.04%  System.String                                                         CudaBackend.LoadImage                     CudaBackend.LoadModule
+8.0      0.03%  System.Char[]                                                         PtxKernels.get_TensorCoreSource           PtxKernels..cctor (lambda)
+8.0      0.03%  System.Byte[]                                                         SafeTensorsReader.Read                    CheckpointWeights.Read
+7.4      0.03%  Entry[System.Int64,System.ValueTuple`2[System.Int32,System.Int32]][]  BpeTokenizer..ctor                        BpeTokenizer.FromDefinition
+7.4      0.03%  System.String                                                         PtxKernels.Module                         PtxKernels..cctor (lambda)
+7.3      0.03%  System.String                                                         PtxKernels.get_TensorCoreSource           PtxKernels..cctor (lambda)
+6.4      0.02%  System.Byte[]                                                         CudaBackend.LoadImage                     CudaBackend.LoadModule
+5.4      0.02%  System.Single[]                                                       TokenSampler..ctor                        TokenSampler.Create
+5.2      0.02%  System.Byte[]                                                         SafeTensorsReader.ReadHeader              SafeTensorsReader.Open
+5.1      0.02%  System.String                                                         PtxKernels.Build                          PtxKernels.SourceFor (lambda)
+4.7      0.02%  System.Char[]                                                         PtxKernels.TensorCoreGemm                 PtxKernels..cctor (lambda)
+files: the trace D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-name.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-name.speedscope.json (https://www.speedscope.app)
+exit 0

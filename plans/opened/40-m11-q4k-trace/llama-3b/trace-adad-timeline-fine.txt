@@ -1,0 +1,151 @@
+stacks: 26 threads over 1.13 s (6.50 to 7.63 s); 14,144 samples and 4,853 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.2 ms)
+where the threads' time went (29.3 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       1.5%   0.44     the CPU in .NET code
+outside .NET code       2.2%   0.64     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.02%  0.01     spin-waits: a core burned while waiting
+stopped by the runtime  0.2%   0.05     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 96.1%  28.14    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.0 threads on average of 24 processors; garbage collections: 6, every thread stopped 0.05 s in all (the longest 19.9 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 1.08 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -------------------------------------------------------
+605     55.9%  100.0%        605       55.9%  CudaBackend.DownloadRange
+27.9    2.6%   0.00%         31.9      2.9%   Dictionary`2[__Canon,Int32].FindValue
+23.5    2.2%   0.00%         23.5      2.2%   Dictionary`2[Int64,ValueTuple`2[Int32,Int32]].TryInsert
+19.2    1.8%   0.00%         19.9      1.8%   String.CreateStringFromEncoding
+16.6    1.5%   0.00%         16.6      1.5%   String.Substring
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total   Own ms  Method
+--------  ------  ------  --------------------
+1,082     100.0%  0.0     Program.<Main>$
+1,082     100.0%  0.0     CommandLine.Run
+1,082     100.0%  0.1     CommandLine.RunOn
+1,082     100.0%  0.1     CommandLine.Dispatch
+1,081     100.0%  0.9     BenchCommand.Run
+allocations (161 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB   Share  Type                                                                  Allocated in                     Called from
+----  -----  --------------------------------------------------------------------  -------------------------------  ----------------------------
+17.6  10.9%  System.String                                                         BpeTokenizer.Split               TokenizerJsonReader.ReadFile
+15.4  9.6%   System.String                                                         TokenizerJsonReader.ReadFile     TokenizerJsonReader.Read
+10.3  6.4%   System.String                                                         CudaBackend.LoadImage            CudaBackend.LoadModule
+8.0   5.0%   System.Char[]                                                         PtxKernels.get_TensorCoreSource  PtxKernels..cctor (lambda)
+7.4   4.6%   Entry[System.Int64,System.ValueTuple`2[System.Int32,System.Int32]][]  BpeTokenizer..ctor               BpeTokenizer.FromDefinition
+timeline (113 slices of 10 ms; threads busy and stopped on average):
+From s  Busy  Stopped  Running most                                                                  Bar
+------  ----  -------  ----------------------------------------------------------------------------  ---
+6.50    1.0   0.0      IndexOfAnyAsciiSearcher.IndexOfAnyCore                                        #
+6.51    1.0   0.0      JsonDocument.MetadataDb.FindOpenElement                                       #
+6.52    1.0   0.0      TokenizerJsonReader.ReadFile                                                  #
+6.53    0.9   0.0      String.CreateStringFromEncoding                                               #
+6.54    1.0   0.0      String.Substring                                                              #
+6.55    0.1   0.9      String.Substring
+6.56    1.0   0.0      String.Substring                                                              #
+6.57    0.7   1.1      String.Substring                                                              #
+6.58    0.2   0.0      String.CreateStringFromEncoding
+6.59    1.0   0.0      BpeTokenizer.FromDefinition                                                   #
+6.60    1.1   0.0      Dictionary`2.AlternateLookup`1[__Canon,Int32,ReadOnlySpan`1[Char]].FindValue  #
+6.61    1.0   0.0      Dictionary`2[__Canon,Int32].FindValue                                         #
+6.62    1.0   0.0      Dictionary`2[Int64,ValueTuple`2[Int32,Int32]].TryInsert                       #
+6.63    1.0   0.0      Dictionary`2[__Canon,Int32].FindValue                                         #
+6.64    1.0   0.0      Dictionary`2[__Canon,Int32].FindValue                                         #
+6.65    1.0   0.0      Dictionary`2[Int64,ValueTuple`2[Int32,Int32]].TryInsert                       #
+6.66    1.0   0.0      Dictionary`2[__Canon,Int32].FindValue                                         #
+6.67    0.9   0.0      Dictionary`2.AlternateLookup`1[__Canon,Int32,ReadOnlySpan`1[Char]].FindValue  #
+6.68    1.0   0.0      BpeTokenizer.BuildTokenBytes                                                  #
+6.69    1.0   0.0      Dictionary`2[Char,Byte].FindValue                                             #
+6.70    1.0   0.0      Dictionary`2[Char,Byte].FindValue                                             #
+6.71    1.0   0.0      JinjaChatTemplate.Load                                                        #
+6.72    1.0   0.0      JinjaTemplate.Interpreter.Compute                                             #
+6.73    1.0   0.0      JinjaChatTemplate.TurnMarkers                                                 #
+6.74    1.0   0.0      dynamicClass.Regex2_Scan                                                      #
+6.75    1.0   0.0      TextGenerator.Generate                                                        #
+6.76    1.0   0.0      TextGenerator.Stream (async)                                                  #
+6.77    1.0   0.0      DecodingContext.BeginStep                                                     #
+6.78    1.0   0.0      CudaBackend.MeasureNative                                                     #
+6.79    1.0   0.0      PtxKernels.NativeMma                                                          #
+6.80    1.0   0.0      CudaBackend.get_TuningIdentity                                                #
+6.81    1.0   0.0      PtxKernels.TensorCoreGemm                                                     #
+6.82    0.6   1.0      GC.AllocateUninitializedArray.AllocateNewArrayWorker                          #
+6.83    0.0   1.0      -
+6.84    0.4   0.0      StringBuilder.ExpandByABlock
+6.85    1.0   0.0      PtxKernels..cctor (lambda)                                                    #
+6.86    1.1   0.0      CudaDriver.cuModuleLoadDataEx                                                 #
+6.87    0.9   0.0      CudaDriver.cuModuleLoadDataEx                                                 #
+6.88    1.1   0.0      Encoding.GetBytes                                                             #
+6.89    0.9   0.0      Encoding.GetBytes                                                             #
+6.90    1.1   0.0      PtxKernels.TypedModule                                                        #
+6.91    0.9   0.0      CausalSelfAttention.Project                                                   #
+6.92    1.0   0.1      String.Concat                                                                 #
+6.93    1.0   0.0      CudaBackend.DownloadRange                                                     #
+6.94    1.0   0.0      CudaBackend.DownloadRange                                                     #
+6.95    1.0   0.0      CudaBackend.DownloadRange                                                     #
+6.96    1.2   0.0      CudaBackend.DownloadRange                                                     #
+6.97    1.0   0.0      CudaBackend.DownloadRange                                                     #
+6.98    1.0   0.0      CudaBackend.DownloadRange                                                     #
+6.99    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.00    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.01    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.02    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.03    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.04    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.05    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.06    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.07    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.08    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.09    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.10    1.1   0.0      CudaBackend.LaunchStaged                                                      #
+7.11    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.12    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.13    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.14    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.15    1.0   0.0      CudaBackend.NativeSplits                                                      #
+7.16    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.17    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.18    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.19    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.20    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.21    1.1   0.0      CudaBackend.DownloadRange                                                     #
+7.22    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.23    1.1   0.0      CudaBackend.DownloadRange                                                     #
+7.24    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.25    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.26    1.1   0.0      CudaBackend.DownloadRange                                                     #
+7.27    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.28    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.29    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.30    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.31    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.32    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.33    1.1   0.0      CudaBackend.DownloadRange                                                     #
+7.34    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.35    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.36    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.37    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.38    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.39    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.40    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.41    1.0   0.0      Monitor.Enter_Slowpath                                                        #
+7.42    1.2   0.0      CudaBackend.DownloadRange                                                     #
+7.43    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.44    0.8   0.0      CudaBackend.DownloadRange                                                     #
+7.45    1.2   0.0      CudaBackend.DownloadRange                                                     #
+7.46    0.8   0.0      CudaBackend.DownloadRange                                                     #
+7.47    1.2   0.0      CudaBackend.DownloadRange                                                     #
+7.48    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.49    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.50    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.51    0.8   0.0      CudaBackend.DownloadRange                                                     #
+7.52    1.1   0.0      CudaBackend.DownloadRange                                                     #
+7.53    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.54    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.55    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.56    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.57    0.6   0.5      CudaBackend.DownloadRange                                                     #
+7.58    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.59    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.60    1.0   0.0      CudaBackend.DownloadRange                                                     #
+7.61    0.9   0.0      CudaBackend.DownloadRange                                                     #
+7.62    0.8   0.0      BenchCommand.BenchModel                                                       #
+files: the trace D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-adad.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-adad.speedscope.json (https://www.speedscope.app)

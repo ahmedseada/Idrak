@@ -1,0 +1,71 @@
+stacks: 27 threads over 0.55 s (13.21 to 13.76 s); 7,506 samples and 407 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.1 ms)
+where the threads' time went (14.8 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       0.3%   0.04     the CPU in .NET code
+outside .NET code       3.4%   0.50     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.02%  0.00     spin-waits: a core burned while waiting
+stopped by the runtime  0.00%  0.00     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 96.3%  14.29    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.0 threads on average of 24 processors; garbage collections: 0, every thread stopped 0.00 s in all (the longest 0.0 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 0.55 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  --------------------------
+502     91.3%  100.0%        502       91.3%  CudaBackend.DownloadRange
+7.4     1.3%   0.00%         11.1      2.0%   CudaBackend.TryAllocate
+4.9     0.9%   0.00%         11.6      2.1%   Tensor.Empty
+3.8     0.7%   0.00%         3.8       0.7%   TokenSampler..ctor
+3.3     0.6%   0.00%         5.1       0.9%   Tensor.Reshape
+3.2     0.6%   0.00%         3.2       0.6%   Monitor.Enter_Slowpath
+2.1     0.4%   0.00%         2.1       0.4%   CudaBackend.LaunchStaged
+1.9     0.4%   0.00%         1.9       0.4%   RuntimeHelpers.GetSubArray
+methods by their total time (with what they call; every method):
+Total ms  Total   Own ms  Method
+--------  ------  ------  ----------------------------
+550       100.0%  0.0     Program.<Main>$
+550       100.0%  0.0     CommandLine.Run
+550       100.0%  0.0     CommandLine.RunOn
+550       100.0%  0.0     CommandLine.Dispatch
+550       100.0%  0.0     BenchCommand.Run
+550       100.0%  0.5     BenchCommand.BenchModel
+546       99.4%   0.1     TextGenerator.Generate
+546       99.3%   0.7     TextGenerator.Stream (async)
+allocations (10 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB  Share  Type                                         Allocated in                         Called from
+---  -----  -------------------------------------------  -----------------------------------  -----------------------------------
+5.8  60.6%  System.Single[]                              TokenSampler..ctor                   TokenSampler.Create
+0.9  9.6%   Idrak.Gpu.Cuda.CudaStorage                   CudaBackend.TryAllocate              CudaBackend.Allocate
+0.4  4.3%   Idrak.Abstraction.Tensor                     Tensor.Reshape                       Tensor.MatMul
+0.3  3.2%   System.UInt64[]                              CudaBackend.AttentionBFloat16Kernel  Backend.AttentionBFloat16Registered
+0.3  3.2%   Idrak.Abstraction.Tensor                     Tensor.Empty                         Tensor.MatMulCore
+0.3  3.2%   Idrak.Abstraction.Tensor[]                   TensorScope.Track                    Tensor.Reshape
+0.2  2.1%   System.Int32[]                               Tensor.MatMul                        ExpandedWeight.MatMul
+0.2  2.1%   System.Action`2[System.Int32,System.UInt64]  CudaBackend.TensorCoreRows           CudaBackend.BatchedMatMulKernel
+focus "Tensor.MatMul": 20.4 ms, 3.7% of the counted time, through 1 matching methods
+  matching methods:
+ms    Share   Method
+----  ------  -------------
+20.4  100.0%  Tensor.MatMul
+  called from:
+ms    Share   Method
+----  ------  ---------------------
+20.4  100.0%  ExpandedWeight.MatMul
+  calls (its callees, with what they call):
+ms    Share  Method
+----  -----  --------------------------
+12.6  61.6%  Tensor.MatMulCore
+5.1   25.1%  Tensor.Reshape
+1.9   9.5%   RuntimeHelpers.GetSubArray
+0.8   3.8%   (its own code)
+  time inside it by the method running (own time):
+ms   Share  Method
+---  -----  -----------------------------
+3.7  18.0%  CudaBackend.TryAllocate
+3.3  16.0%  Tensor.Reshape
+3.2  15.5%  Tensor.Empty
+2.9  14.0%  Monitor.Enter_Slowpath
+1.9  9.5%   RuntimeHelpers.GetSubArray
+1.9  9.1%   List`1[__Canon].AddWithResize
+1.4  7.0%   CudaBackend.TensorCoreRows
+0.8  3.8%   Tensor.MatMul
+files: the trace D:\Projects\idrak\test-output\adad\m11-q4k-trace\qwen3-1.7b\trace-name.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m11-q4k-trace\qwen3-1.7b\trace-name.speedscope.json (https://www.speedscope.app)

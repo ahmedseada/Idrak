@@ -1,0 +1,74 @@
+stacks: 26 threads over 0.74 s (29.54 to 30.28 s); 9,698 samples and 350 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.1 ms)
+where the threads' time went (19.2 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       0.2%   0.05     the CPU in .NET code
+outside .NET code       3.6%   0.69     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.00%  0.00     spin-waits: a core burned while waiting
+stopped by the runtime  0.00%  0.00     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 96.2%  18.44    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.0 threads on average of 24 processors; garbage collections: 0, every thread stopped 0.00 s in all (the longest 0.0 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 0.74 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -------------------------------
+688     93.2%  100.0%        690       93.5%  CudaBackend.DownloadRange
+7.9     1.1%   0.00%         7.9       1.1%   CudaBackend.LaunchStaged
+4.1     0.5%   0.00%         7.3       1.0%   Tensor.Reshape
+4.0     0.5%   0.00%         4.0       0.5%   TokenSampler..ctor
+3.7     0.5%   0.00%         23.8      3.2%   CausalSelfAttention.HeadsCached
+3.3     0.5%   0.00%         3.3       0.5%   List`1[__Canon].AddWithResize
+2.1     0.3%   0.00%         7.7       1.0%   CudaBackend.TensorCoreRows
+2.0     0.3%   100.0%        2.0       0.3%   NativeLibrary.LoadLibraryByName
+methods by their total time (with what they call; every method):
+Total ms  Total   Own ms  Method
+--------  ------  ------  ----------------------------
+738       100.0%  0.0     Program.<Main>$
+738       100.0%  0.0     CommandLine.Run
+738       100.0%  0.1     CommandLine.RunOn
+738       100.0%  0.2     CommandLine.Dispatch
+737       99.9%   1.0     BenchCommand.Run
+733       99.4%   0.8     BenchCommand.BenchModel
+729       98.8%   0.2     TextGenerator.Generate
+728       98.7%   0.7     TextGenerator.Stream (async)
+allocations (8 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB  Share  Type                        Allocated in                     Called from
+---  -----  --------------------------  -------------------------------  -------------------------------
+4.9  57.9%  System.Single[]             TokenSampler..ctor               TokenSampler.Create
+0.4  4.8%   Idrak.Abstraction.Tensor    Tensor.Reshape                   Tensor.MatMul
+0.4  4.8%   Idrak.Gpu.Cuda.CudaStorage  CudaBackend.TryAllocate          CudaBackend.Allocate
+0.4  4.8%   Idrak.Abstraction.Tensor[]  TensorScope.Track                Tensor..ctor
+0.4  4.8%   <>c__DisplayClass265_0      CudaBackend.TensorCoreRows       CudaBackend.BatchedMatMulKernel
+0.3  3.6%   Idrak.Abstraction.Tensor    Tensor.Empty                     Tensor.MatMulCore
+0.3  3.6%   <>c__DisplayClass265_0      CudaBackend.BatchedMatMulKernel  Backend.BatchedMatMulRegistered
+0.2  2.4%   <>c__DisplayClass6_0        Tensor.MatMulCore                Linear.Project
+focus "Tensor.MatMul": 23.5 ms, 3.2% of the counted time, through 2 matching methods
+  matching methods:
+ms    Share  Method
+----  -----  -----------------
+19.3  82.2%  Tensor.MatMul
+4.2   17.8%  Tensor.MatMulCore
+  called from:
+ms    Share  Method
+----  -----  ---------------------
+19.3  82.2%  ExpandedWeight.MatMul
+4.2   17.8%  Linear.Project
+  calls (its callees, with what they call):
+ms    Share  Method
+----  -----  -------------------------------
+12.3  52.4%  Tensor.MatMulCore
+6.3   26.8%  Tensor.Reshape
+3.2   13.5%  Backend.BatchedMatMulRegistered
+1.0   4.3%   (its own code)
+0.7   3.0%   RuntimeHelpers.GetSubArray
+  time inside it by the method running (own time):
+ms   Share  Method
+---  -----  -------------------------------
+6.9  29.4%  CudaBackend.LaunchStaged
+3.6  15.2%  Tensor.Reshape
+2.8  12.0%  List`1[__Canon].AddWithResize
+2.1  9.1%   CudaBackend.TensorCoreRows
+1.9  8.3%   CudaBackend.TryAllocate
+1.5  6.4%   Tensor.Empty
+1.3  5.7%   ReadOnlySpan`1[Int32].ToArray
+1.2  5.0%   CudaBackend.BatchedMatMulKernel
+files: the trace D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-name.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m11-q4k-trace\llama-3b\trace-name.speedscope.json (https://www.speedscope.app)

@@ -1526,6 +1526,145 @@ decode keys were not forced, so generation is unchanged.
   TFLOP/s, x quantization 2.7–3.5 ms a pass) (`speed.txt`, the profiles).
 - **Not measured**: any kernel for B other than lane 3's, perplexity on other texts, windows or types, and the CPU.
 
+### q4_k traced before B (M11)
+
+Plan 40's M11. q4_k shows the per-call widening most clearly; the prompt profiles give only the GPU's kernel split. M11
+adds what they cannot show: the host's work and waits in the prompt, the kernel sequence, the widening's memory speed, and
+the device memory. Models: Qwen3-1.7B and Llama 3.2 3B Instruct, q4_k under adad and under name, on CUDA. Measuring only:
+no code changed. Files: `test-output\adad\m11-q4k-trace\`, copied (no `.nettrace`, `.speedscope.json` or lock files) to
+[40-m11-q4k-trace/](40-m11-q4k-trace/) (`qwen3-1.7b/`, `llama-3b/`, `m11.sh`, `derived.sh`, `derived.txt`,
+`kernels-gemv.txt`).
+
+- **Code and CLI**: the M6 build (`idrak 0.4.1-dev.2611191810`, informational version
+  `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`), checked before the first run. No source changed
+  since `de1f8a96` (`git diff --stat de1f8a96 bd4ece61 -- src`: nothing). Worktree at `bd4ece61`.
+- **Tuning folders**:
+  - Copies of the warm q4_k folders, one per route: Qwen3-1.7B from M6 (`m6-proof-1.7b/tuning-cuda-q4_k`), Llama 3B from
+    M9 (`m9-llama3.2/3b/tuning-cuda-q4_k`). Each was filled by its adad and name runs.
+  - No run stored or changed a line (`{model}/tuning-added.txt`: every one of the 6 runs a model "(none)").
+- **Runs** (`m11.sh MODEL …`, one model run a call, the route set on every run):
+  - `idrak trace --stacks -o … --top 25 -- bench MODEL -w q4_k -d cuda --prompt-tokens 512 --tokens 1 -n 10`: a warm-up and
+    10 timed prompt passes, one token each, so the prompt dominates.
+  - Reads of each trace: `--timeline` (coarse, then 10 ms slices: `trace-{route}-timeline*.txt`), the prompt window
+    `--from S --to E --by-thread --all-frames` (`trace-{route}-prompt-window.txt`), and `--focus` on the dispatcher's
+    methods (`trace-{route}-focus-*.txt`).
+  - `idrak profile MODEL -w q4_k -d cuda --pass prompt --prompt-tokens 512 --top 40` (`profile-{route}-prompt.txt`).
+  - A warm bench at the record's CUDA sizes (`bench-{route}.txt`).
+  - `idrak bench --kernels gemv -d cuda` once (`kernels-gemv.txt`).
+  - Derived figures: `derived.sh` → `derived.txt`.
+- **The prompt window** (the timelines):
+  - The bench's generator starts, then the warm-up pass enqueues and builds its kernels on first use. From the end of that
+    build the main thread waits for the device in `CudaBackend.DownloadRange` until the run ends. The 10 timed passes'
+    launches all fall in that window, about 1,960 product calls (10 × 28 layers × 7).
+  - Windows: Qwen3-1.7B adad 4.34–4.65 s, name 13.21–13.76 s; Llama 3B adad 6.93–7.63 s, name 29.54–30.28 s.
+
+**The host in the prompt window** (`trace-{route}-prompt-window.txt`, `trace-adad-focus-*.txt`,
+`trace-name-focus-matmul.txt`, `derived.txt`; sampled every 2 ms)
+
+| Model, route | busy threads | main thread in `DownloadRange` (waiting for the device) | host's prompt work (`TextGenerator.Stream.Prefill`) | collections | managed allocations |
+|---|---|---|---|---|---|
+| Qwen3-1.7B adad | 1.0 | 225 of 309 ms (73%) | 73.0 ms | 1 (0.4 ms) | 26 MiB |
+| Qwen3-1.7B name | 1.0 | 502 of 550 ms (91%) | 36.6 ms | 0 | 10 MiB |
+| Llama 3B adad | 1.0 | 605 of 693 ms (87%) | 70.3 ms | 1 (4.9 ms) | 23 MiB |
+| Llama 3B name | 1.0 | 688 of 738 ms (93%) | 29.6 ms | 0 | 8 MiB |
+
+- **Host time a product call** (the sampled ms over the 1,960 calls):
+  - adad's dispatcher (`CudaBackend.StoredSuper`): 26.6 µs a call (Qwen3-1.7B) and 29.3 µs (Llama 3B). Of that:
+    - building the candidate list's lane-2 entry (`NativeDirectLane` → `NativeDirect`, which formats a string on every
+      call: `StringBuilder` work and `PtxKernels.SuperCode`): 12.0 and 13.1 µs;
+    - the lane itself (`RunSuperLane` → `SuperNative`): 11.1 and 11.5 µs. Within it: renting the widened buffer
+      (`TryAllocate`), the k-split list (`NativeSplits`: LINQ `Where`, `List` growth), the launches (`LaunchStaged`) and
+      `RuntimeFieldInfoStub.FromPtr`;
+    - `TensorRowsSource` 1.8 and 1.9 µs; `TryTuned` (the stored choice's lookup) 0.8 and 2.1 µs.
+  - adad's group decision (`SharedInput` → `TensorRowsGroup`, its string concatenation included) adds 4.9 ms over the
+    window (Qwen3-1.7B: 39.1 ms total, of which 34.2 ms are the products' `StoredSuper`).
+  - name (`Tensor.MatMul` over float32 rows): 10.4 and 12.0 µs a call.
+- **Synchronisation**: the only wait on the main thread is `DownloadRange` (each pass's logits). The host's enqueue (adad
+  about 7 ms a pass against passes of 29 ms and 53 ms) finishes before the device does, so the host's time is hidden
+  behind the device's in every window. The other threads are idle (thread pools).
+- **The widened weight's buffer is rented per call from the device pool**:
+  - `SuperNative` calls `Allocate(n × kp / 2)` and releases it after the product (`CudaBackend.Super.cs`).
+  - `Allocate` takes a free block of that size from the size-keyed pool (`_pool`, `CudaBackend.cs`) and calls
+    `cuMemAlloc` only when none is free. So the block is reused across calls of the same size; a call pays only the
+    rental (`TryAllocate`; a `CudaStorage` wrapper allocated each time, 1.9 MiB of the window's allocations).
+  - The k-split partials come from a cached buffer (`_splitPartials.Get`, `CudaBackend.Typed.cs`).
+- **The managed allocations**: per call, the type code rebuilt as a string (`PtxKernels.SuperCode` via
+  `NativeSource.get_Code`: Int32 boxes, char arrays, strings), `NativeSplits`' arrays, LINQ iterators and delegates, and
+  the `CudaStorage` wrappers.
+
+**The prompt profiles' kernels** (`profile-{route}-prompt.txt`, `derived.txt`)
+
+- **Launch order**: the profiler keeps only each kernel's calls and time, not the launch order. The order below is the
+  code's (`SuperNative`, `RunNativeShape`); the counts a layer are the profiles'. For one product:
+  1. x packed into bfloat16, once for a group sharing x: `native_pack_x_bf16`;
+  2. the weight's q4_k rows widened into bfloat16 rows: `super_widen_k256x144_*`;
+  3. the product: `native_mma_bf16_*`, into partials when k is split;
+  4. the partials summed: `typed_sum_parts`.
+- **Qwen3-1.7B, a layer**: 7 `super_widen`, 7 `native_mma` (every product the native kind, no group), 4
+  `native_pack_x` (by the code: q/k/v sharing one, o, gate/up sharing one, down), 2 `typed_sum_parts`.
+- **Llama 3B, a layer**:
+  - 7 `super_widen`;
+  - 6 `native_mma` (4 of `r64_s6_n128`, 2 of `r64_s4_n256`) and 1 `gemm_tc_nt_bf16w widened` (down: the tensor rows over
+    its widened rows, `StoredSuper` 4);
+  - 3 `native_pack_x`, 4 `typed_sum_parts`.
+- **Name, a layer**: 7 `gemm_tc_nn` over the float32 rows, no conversion kernels.
+
+| Profile | pass (each layer drained) | sum of the kernels | launches | pass − kernels |
+|---|---|---|---|---|
+| Qwen3-1.7B adad | 29.20 ms | 30.29 ms | 709 | −1.09 ms |
+| Qwen3-1.7B name | 29.31 ms | 29.52 ms | 345 | −0.21 ms |
+| Llama 3B adad | 53.07 ms | 54.73 ms | 737 | −1.66 ms |
+| Llama 3B name | 51.74 ms | 51.94 ms | 345 | −0.20 ms |
+
+In every profile the kernels' timed sum is larger than the pass. Each launch's timing adds its own time, so the excess
+grows with the launches. So no idle gap between kernels shows at this tool's resolution. The layers table gives each
+layer's drained time (Qwen3-1.7B adad 0.968–1.054 ms, name 0.938–0.991; Llama 3B adad 1.808–1.924, name 1.722–1.792),
+not its gaps.
+
+**The widening's memory speed** (`derived.txt`)
+
+| Model | values widened a pass | q4_k rows read | bfloat16 rows written (k needs no padding) | `super_widen` | rate |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | 1,409,286,144 | 756 MiB | 2,688 MiB | 4.407 ms | 819 GB/s |
+| Llama 3B | 2,818,572,288 | 1,512 MiB | 5,376 MiB | 8.782 ms | 822 GB/s |
+
+- The card's measured read rates, from Idrak's tools:
+  - the bf16 head's one-row product in the decode profiles reads the head's rows once: 593.5 MiB in 0.755–0.756 ms,
+    823–824 GB/s (M6); 751.5 MiB in 0.953–0.959 ms, 822–827 GB/s (M9);
+  - the kernel bench's largest bf16 gemv (62.5 MiB, warm repeats): 736.8 GB/s.
+- No Idrak tool measures a device-to-device copy (`bench --kernels` offers matmul, gemv and attention).
+- So the widening moves its bytes at the same rate as the device's measured single reads. Its writes are 3.6× its reads.
+
+**Device memory** (`bench-{route}.txt`, `trace-{route}.txt`, `derived.txt`; MiB)
+
+| Model, route | weights | in use after the runs | peak | peak − weights |
+|---|---|---|---|---|
+| Qwen3-1.7B adad | 1,537 | 1,541 | 1,718 (trace run 1,704) | 181 (167) |
+| Qwen3-1.7B name | 7,177 | 7,177 | 7,348 (7,334) | 171 (157) |
+| Llama 3B adad | 2,540 | 2,552 | 2,790 (2,776) | 250 (236) |
+| Llama 3B name | 13,071 | 13,071 | 13,296 (13,282) | 225 (211) |
+
+- The widened buffer at the largest product (n × k × 2 bytes): 24 MiB (Qwen3-1.7B: gate, up, down) and 48 MiB (Llama 3B).
+- adad's peak above its weights is 10 MiB (Qwen3-1.7B) and 25 MiB (Llama 3B) more than name's, less than one widened
+  buffer. The bench's figures do not split the peak by buffer, so whether the widened buffer sits on top of the rest is
+  not settled.
+- After the runs adad holds 4 and 12 MiB more than its weights; name holds none.
+
+**Findings** (measuring only; none fixed):
+
+- **M11-1. The host does not limit the prompt.** In every window one thread is busy, and the main thread spends 73–93% of
+  it waiting for the device. adad's host work is 2.0 and 2.4 times name's (73.0 against 36.6 ms over 10 passes; 70.3
+  against 29.6), all of it hidden behind the device.
+- **M11-2. adad's dispatcher costs 26.6–29.3 µs a product call, against name's 10.4–12.0.** About 45% of adad's is the
+  candidate list's lane-2 check (`NativeDirectLane`), which formats a string on every call. Managed allocations are 23–26
+  MiB over 10 passes, against 8–10 under name.
+- **M11-3. The widened buffer is rented per call from the device pool** (no driver allocation after the first call of a
+  size); the split partials come from a cached buffer.
+- **M11-4. No idle gap between kernels shows**: the kernels' timed sum exceeds the pass in all four profiles.
+- **M11-5. The widening runs at the device's measured memory rate**: 819–822 GB/s against single reads of 822–827 GB/s.
+  It writes 2,688 and 5,376 MiB of bfloat16 rows a pass.
+- **M11-6. Device memory**: adad's peak above its weights is 10–25 MiB above name's, its weights 19% to 21% of name's.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

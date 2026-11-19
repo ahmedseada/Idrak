@@ -1,0 +1,14 @@
+kernels on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)): gemv; the median of 10 timed calls each; products of typed weights by the name route (IDRAK_ROUTES)
+  warm-up: until 3 rounds of at least 100ms agree within 5% and nothing is compiled, at most 2s or 100000 calls; Cold: the first call
+
+Measurement                    Value  Unit  Cold    Detail
+-----------------------------  -----  ----  ------  ---------------------------------------------------------------------------
+gemv int8 1x1024 -> 3072       12.9   µs    135794  243.9 GB/s of weights, 0 B allocated a call, 3.01 MiB of weights, int8
+gemv int4 1x1024 -> 3072       11.9   µs    107196  165.2 GB/s of weights, 0 B allocated a call, 1.88 MiB of weights, 4-bit
+gemv bfloat16 1x1024 -> 3072   10.3   µs    183885  610.8 GB/s of weights, 0 B allocated a call, 6.00 MiB of weights, bfloat16
+gemv int8 1x3072 -> 1024       11.2   µs    158857  281.2 GB/s of weights, 0 B allocated a call, 3.00 MiB of weights, int8
+gemv int4 1x3072 -> 1024       11.7   µs    144213  168.8 GB/s of weights, 0 B allocated a call, 1.88 MiB of weights, 4-bit
+gemv bfloat16 1x3072 -> 1024   13.2   µs    158214  476.6 GB/s of weights, 0 B allocated a call, 6.00 MiB of weights, bfloat16
+gemv int8 1x1024 -> 32000      25.4   µs    122965  1297.7 GB/s of weights, 0 B allocated a call, 31.37 MiB of weights, int8
+gemv int4 1x1024 -> 32000      23.6   µs    121910  866.0 GB/s of weights, 0 B allocated a call, 19.53 MiB of weights, 4-bit
+gemv bfloat16 1x1024 -> 32000  89.0   µs    111149  736.8 GB/s of weights, 0 B allocated a call, 62.50 MiB of weights, bfloat16
