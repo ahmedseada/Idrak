@@ -1,0 +1,60 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+meta-llama/Llama-3.2-1B-Instruct on cpu (CPU (24 threads, 8-wide SIMD)), weights q4_0, KV cache float32: one prompt pass of 128 tokens
+pass 794.86 ms (one pass, each after a collection) with each layer drained (793.65 ms in the layers), 237.8 MiB allocated, 0 collections, 20.4 of 24 cores busy on average
+products in Float32, as the network runs them; the layers past the last cached one over the last position only, as generation runs a prompt
+cpu: 1.26 GB in use
+
+Layers of the network:
+Layer      Type          ms      Share  MiB allocated  GCs
+---------  ------------  ------  -----  -------------  ---
+embed      Embedding     0.106   0.0 %  1.00           0
+layers.0   DecoderBlock  45.135  5.7 %  23.59          0
+layers.1   DecoderBlock  45.331  5.7 %  0.71           0
+layers.2   DecoderBlock  45.217  5.7 %  15.04          0
+layers.3   DecoderBlock  44.532  5.6 %  15.00          0
+layers.4   DecoderBlock  45.114  5.7 %  14.99          0
+layers.5   DecoderBlock  45.468  5.7 %  14.99          0
+layers.6   DecoderBlock  45.685  5.8 %  14.99          0
+layers.7   DecoderBlock  45.137  5.7 %  15.04          0
+layers.8   DecoderBlock  45.469  5.7 %  14.97          0
+layers.9   DecoderBlock  48.634  6.1 %  15.02          0
+layers.10  DecoderBlock  47.591  6.0 %  15.00          0
+layers.11  DecoderBlock  47.206  5.9 %  14.99          0
+layers.12  DecoderBlock  48.217  6.1 %  14.98          0
+layers.13  DecoderBlock  48.491  6.1 %  15.05          0
+layers.14  DecoderBlock  49.987  6.3 %  15.01          0
+layers.15  DecoderBlock  48.180  6.1 %  15.00          0
+norm       RMSNorm       0.014   0.0 %  0.02           0
+head       Linear        48.136  6.1 %  2.37           0
+
+Inner layers (by type and depth): 1424.09 ms in 147 calls
+Name                   Calls  ms       Share
+---------------------  -----  -------  ------
+FeedForward (depth 0)  16     622.242  43.7 %
+Linear (depth 1)       48     608.805  42.8 %
+Linear (depth 0)       65     192.504  13.5 %
+Embedding (depth 0)    1      0.269    0.0 %
+RMSNorm (depth 0)      17     0.266    0.0 %
+
+Operations (by name and shape): 831.16 ms in 262 calls
+Name                           Calls  ms       Share
+-----------------------------  -----  -------  ------
+matmul_stored [1x128x2048]     48     436.345  52.5 %
+matmul_stored [1x128x8192]     32     295.686  35.6 %
+matmul_stored [1x1x128256]     1      46.635   5.6 %
+matmul_stored [1x128x512]      32     21.611   2.6 %
+gated_activation [1x128x8192]  16     13.110   1.6 %
+add_rms_norm [1x128x2048]      32     7.734    0.9 %
+attention_tiled [1x128x2048]   16     7.531    0.9 %
+rope [1x128x32x64]             16     1.028    0.1 %
+rope [1x128x8x64]              16     0.947    0.1 %
+rms_norm_affine [1x128x2048]   1      0.202    0.0 %
+narrow [128]                   1      0.137    0.0 %
+embedding_bf16 [1x128x2048]    1      0.102    0.0 %
+permute [1x8x4x128x64]         16     0.051    0.0 %
+permute [1x8x128x64]           32     0.016    0.0 %
+rms_norm_affine [1x1x2048]     1      0.013    0.0 %
+narrow [1x1x2048]              1      0.006    0.0 %
+
+Kernel times: cpu does not time kernels; the operations above are its finest timing.
+exit 0

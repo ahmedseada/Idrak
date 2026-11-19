@@ -1,0 +1,46 @@
+idrak-tuning 5
+device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+driver: CUDA 13030; 32.0.16.1088
+library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+PackedSplits 100 512 1024 3072 0 0 0 = 4
+PackedSplits 100 512 3072 3072 0 0 0 = 2
+PackedSplits 100 512 3072 8192 0 0 0 = 2
+PackedSplits 100 512 8192 3072 0 0 0 = 1
+PackedSplits 600 512 1024 3072 0 0 0 = 2
+PackedSplits 600 512 3072 3072 0 0 0 = 2
+PackedSplits 600 512 3072 8192 0 0 0 = 2
+PackedTile 300 512 1024 3072 0 0 0 = 128
+PackedTile 300 512 3072 3072 0 0 0 = 128
+PackedTile 300 512 3072 8192 0 0 0 = 128
+PackedTile 300 512 8192 3072 0 0 0 = 128
+PackedTile 1300 512 3072 3072 1024 1024 0 = 128
+PackedTile 1300 512 3072 8192 8192 0 0 = 128
+PackedMultiSplits 100 512 3072 3072 1024 1024 0 = 3
+TensorSplits 0 512 1024 3072 1024 0 0 = 4
+TensorSplits 0 512 3072 3072 3072 0 0 = 2
+TensorSplits 0 512 3072 8192 3072 0 0 = 8
+TensorSplits 0 512 8192 3072 8192 0 0 = 3
+DecodeSplits 2 24 640 128 0 0 0 = 4
+DecodeMinChunk 2 24 640 128 4 0 0 = 16
+ProductRoute 2000 1 3072 3072 2 0 0 = 0
+ProductRoute 2000 1 3072 8192 2 0 0 = 0
+ProductRoute 2000 1 128256 3072 2 0 0 = 0
+ProductRoute 2000 512 1024 3072 6 0 0 = 2
+ProductRoute 2000 512 3072 3072 6 0 0 = 2
+ProductRoute 2000 512 3072 8192 6 0 0 = 2
+ProductRoute 2000 512 8192 3072 6 0 0 = 2
+ProductRoute 4000 1 8192 3072 0 0 0 = 0
+ProductRoute 5000 1 3072 3072 0 0 0 = 0
+ProductRoute 9000 2048 2048 2048 9 0 0 = 5
+ProductRoute 9100 512 1024 3072 9 0 0 = 130
+ProductRoute 9100 512 3072 3072 9 0 0 = 130
+ProductRoute 9100 512 3072 8192 9 0 0 = 130
+ProductRoute 9100 512 8192 3072 9 0 0 = 81
+ProductRoute 9300 512 1024 3072 4 0 0 = 4
+ProductRoute 9300 512 3072 3072 4 0 0 = 4
+ProductRoute 9300 512 3072 8192 4 0 0 = 4
+ProductRoute 9300 512 8192 3072 4 0 0 = 1
+ProductRoute 9700 512 3072 3072 1024 1024 0 = 1
+ProductRoute 9700 512 3072 8192 8192 0 0 = 0
+RowThreads 0 128 40 0 0 0 0 = 64
+RowThreads 0 128 20480 0 0 0 0 = 64

@@ -1,0 +1,21 @@
+# M9 CUDA prompt profiles' kernels by lane (ms), from lanes.sh (M7's); 1b/ then 3b/ (3B q4_k adad: the repeat, the first an outlier)
+1b cuda-bf16-adad     pass  17.17  native 11.416  widen 0.000  packx 0.555  parts 0.000  rows  0.000  groups  1.773  products 13.744  head 0.661  other 2.594
+1b cuda-bf16-name     pass  18.77  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 0.660  other 17.370
+1b cuda-int8-adad     pass  18.18  native  0.979  widen 0.205  packx 0.137  parts 0.000  rows 11.578  groups  1.721  products 14.620  head 0.326  other 2.443
+1b cuda-int8-name     pass  17.83  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 0.338  other 16.483
+1b cuda-q4_0-adad     pass  19.49  native 11.319  widen 2.520  packx 0.470  parts 0.000  rows  0.000  groups  1.918  products 16.227  head 0.290  other 2.473
+1b cuda-q4_0-name     pass  20.10  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.300  other 18.590
+1b cuda-q4_k-adad     pass  20.19  native 12.910  widen 3.337  packx 0.597  parts 0.303  rows  0.000  groups  0.000  products 17.147  head 0.393  other 2.447
+1b cuda-q4_k-name     pass  20.14  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.302  other 18.495
+1b cuda-iq2_xxs-adad  pass  19.74  native 13.263  widen 3.210  packx 0.790  parts 0.343  rows  0.000  groups  0.000  products 17.606  head 0.448  other 2.524
+1b cuda-iq2_xxs-name  pass  20.08  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.302  other 18.522
+3b cuda-bf16-adad     pass  45.22  native 36.800  widen 0.000  packx 1.302  parts 2.125  rows  0.000  groups  0.000  products 40.227  head 0.985  other 5.165
+3b cuda-bf16-name     pass  48.48  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 0.984  other 47.127
+3b cuda-int8-adad     pass  47.03  native 19.770  widen 0.000  packx 0.316  parts 0.000  rows 14.498  groups  6.559  products 41.143  head 0.486  other 5.288
+3b cuda-int8-name     pass  45.98  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 0.501  other 45.200
+3b cuda-q4_0-adad     pass  50.63  native 21.191  widen 4.745  packx 0.522  parts 0.427  rows 11.564  groups  7.107  products 45.556  head 0.422  other 5.155
+3b cuda-q4_0-name     pass  51.64  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.941  other 50.041
+3b cuda-q4_k-adad-prompt-rerun pass  52.76  native 27.811  widen 8.658  packx 1.084  parts 1.506  rows  9.913  groups  0.000  products 48.972  head 0.575  other 5.229
+3b cuda-q4_k-name     pass  51.98  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.935  other 49.983
+3b cuda-iq2_xxs-adad  pass  52.27  native 27.723  widen 7.958  packx 0.856  parts 1.364  rows  9.875  groups  0.000  products 47.776  head 0.665  other 5.165
+3b cuda-iq2_xxs-name  pass  52.98  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  0.000  groups  0.000  products  0.000  head 1.932  other 51.075

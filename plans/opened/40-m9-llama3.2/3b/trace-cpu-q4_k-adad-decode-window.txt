@@ -1,0 +1,72 @@
+stacks: 27 threads over 2.50 s (11.40 to 13.90 s); 31,212 samples and 725 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.5 ms)
+where the threads' time went (67.5 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       20.7%  13.96    the CPU in .NET code
+outside .NET code       0.00%  0.00     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                2.3%   1.55     spin-waits: a core burned while waiting
+stopped by the runtime  0.01%  0.01     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 77.0%  51.94    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 6.2 threads on average of 24 processors; garbage collections: 4, every thread stopped 0.00 s in all (the longest 0.8 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 15.52 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -----------------------------------------------------
+5,142   33.1%  0.00%         5,142     33.1%  [a call returning: its method unknown]
+2,523   16.3%  0.00%         2,523     16.3%  SuperBlock.DecodeEights
+2,229   14.4%  0.00%         3,171     20.4%  LowLevelLifoSemaphore.Wait
+1,246   8.0%   0.00%         4,199     27.1%  SuperBlock.Decode
+1,191   7.7%   0.00%         1,237     8.0%   CpuMatMul.FewRowsTransposedB (lambda)
+942     6.1%   0.00%         942       6.1%   LowLevelLifoSemaphore.WaitForSignal
+359     2.3%   0.00%         11,245    72.5%  TaskReplicator.Replica.Execute
+359     2.3%   0.00%         359       2.3%   SuperBlock.Assemble
+228     1.5%   0.00%         4,410     28.4%  CpuBackend.RowLane
+202     1.3%   0.00%         376       2.4%   Task.InternalWaitCore
+193     1.2%   0.00%         1,837     11.8%  TaskReplicator.Run
+185     1.2%   0.00%         185       1.2%   PortableThreadPool.WorkerThread.MaybeAddWorkingWorker
+  [a call returning: its method unknown], 33.1%: the runtime stops threads at a call's return for each sampling round, so the method that ran is gone from the stack; its callers' total time holds it (many short calls in a loop make it large).
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  ----------------------------------------------
+4,410     28.4%  0.0     CpuBackend.RunStoredLane (lambda) [SuperWiden]
+4,410     28.4%  228     CpuBackend.RowLane
+4,199     27.1%  1,246   SuperBlock.Decode
+2,523     16.3%  2,523   SuperBlock.DecodeEights
+1,972     12.7%  0.0     Program.<Main>$
+1,972     12.7%  0.0     CommandLine.Run
+1,972     12.7%  0.0     CommandLine.RunOn
+1,972     12.7%  0.0     CommandLine.Dispatch
+1,972     12.7%  0.0     BenchCommand.Run
+1,972     12.7%  0.0     BenchCommand.BenchModel
+1,972     12.7%  0.0     TextGenerator.Generate
+1,972     12.7%  0.0     TextGenerator.Stream (async)
+allocations (72 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB   Share  Type                                                                                                   Allocated in                                 Called from
+----  -----  -----------------------------------------------------------------------------------------------------  -------------------------------------------  --------------------
+11.9  16.5%  Replica`1[System.Threading.Tasks.RangeWorker]                                                          TaskReplicator.Replica.Execute               -
+9.4   13.0%  ContingentProperties                                                                                   TaskReplicator.Replica.Execute               -
+7.7   10.7%  System.Threading.Tasks.IndexRange[]                                                                    CpuBackend.PanelLane                         Faster.Time.Once
+5.9   8.2%   System.Runtime.CompilerServices.StrongBox`1[System.Int64]                                              Parallel.ForWorker (lambda) [__Canon,Int32]  -
+5.7   7.9%   System.Threading.Tasks.Task                                                                            TaskReplicator.Replica.Execute               -
+5.3   7.4%   Slot[System.Threading.Tasks.TaskReplicator+Replica][]                                                  CpuMatMul.FewRowsTransposedB                 CpuMatMul.Multiply
+3.5   4.8%   Slot[System.Threading.Tasks.TaskReplicator+Replica][]                                                  CpuMatMul.FewRowsTransposedB                 CpuBackend.PanelLane
+3.4   4.7%   Slot[System.Threading.Tasks.TaskReplicator+Replica][]                                                  CpuBackend.PanelLane                         Faster.Time.Once
+2.7   3.8%   System.Collections.Concurrent.ConcurrentQueueSegment`1[System.Threading.Tasks.TaskReplicator+Replica]  CpuBackend.PanelLane                         Faster.Time.Once
+2.4   3.4%   System.Threading.Tasks.Task                                                                            CpuBackend.PanelLane                         Faster.Time.Once
+2.3   3.3%   ContingentProperties                                                                                   CpuBackend.PanelLane                         Faster.Time.Once
+1.0   1.4%   Replica`1[System.Threading.Tasks.RangeWorker]                                                          CpuBackend.PanelLane                         Faster.Time.Once
+threads (the busiest first):
+Thread  Busy ms  Running  Outside  Spinning  Stopped  Waiting  Busiest in
+------  -------  -------  -------  --------  -------  -------  --------------------------------------
+28668   1,972    70.2%    0.1%     8.6%      0.2%     20.9%    [a call returning: its method unknown]
+13268   811      29.5%    0.00%    3.0%      0.00%    67.5%    [a call returning: its method unknown]
+21248   755      28.0%    0.00%    2.3%      0.00%    69.8%    [a call returning: its method unknown]
+11388   724      26.5%    0.00%    2.5%      0.00%    71.0%    [a call returning: its method unknown]
+26408   691      24.6%    0.00%    3.0%      0.00%    72.4%    [a call returning: its method unknown]
+15288   684      24.2%    0.00%    3.2%      0.00%    72.6%    [a call returning: its method unknown]
+27124   671      23.6%    0.00%    3.3%      0.00%    73.1%    [a call returning: its method unknown]
+22812   664      24.8%    0.00%    1.8%      0.00%    73.4%    [a call returning: its method unknown]
+12532   656      23.8%    0.00%    2.4%      0.00%    73.7%    [a call returning: its method unknown]
+4184    654      22.9%    0.00%    3.3%      0.09%    73.7%    [a call returning: its method unknown]
+8636    648      23.7%    0.00%    2.3%      0.00%    74.1%    [a call returning: its method unknown]
+10436   641      22.6%    0.00%    3.1%      0.00%    74.3%    [a call returning: its method unknown]
+files: the trace D:\Projects\idrak\test-output\adad\m9-llama3.2\3b\trace-cpu-q4_k-adad.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m9-llama3.2\3b\trace-cpu-q4_k-adad.speedscope.json (https://www.speedscope.app)

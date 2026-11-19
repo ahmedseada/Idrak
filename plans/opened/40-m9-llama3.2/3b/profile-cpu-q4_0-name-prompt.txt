@@ -1,0 +1,72 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+meta-llama/Llama-3.2-3B-Instruct on cpu (CPU (24 threads, 8-wide SIMD)), weights q4_0, KV cache float32: one prompt pass of 128 tokens
+pass 1872.29 ms (one pass, each after a collection) with each layer drained (1870.87 ms in the layers), 503.1 MiB allocated, 1 collections, 17.9 of 24 cores busy on average
+products in Float32, as the network runs them; the layers past the last cached one over the last position only, as generation runs a prompt
+cpu: 2.69 GB in use
+
+Layers of the network:
+Layer      Type          ms      Share  MiB allocated  GCs
+---------  ------------  ------  -----  -------------  ---
+embed      Embedding     0.141   0.0 %  1.50           0
+layers.0   DecoderBlock  64.098  3.4 %  33.34          0
+layers.1   DecoderBlock  64.429  3.4 %  17.36          0
+layers.2   DecoderBlock  65.332  3.5 %  17.91          0
+layers.3   DecoderBlock  65.106  3.5 %  17.12          0
+layers.4   DecoderBlock  62.547  3.3 %  17.13          0
+layers.5   DecoderBlock  65.565  3.5 %  17.14          0
+layers.6   DecoderBlock  66.428  3.6 %  17.17          0
+layers.7   DecoderBlock  62.500  3.3 %  18.12          0
+layers.8   DecoderBlock  63.850  3.4 %  17.40          0
+layers.9   DecoderBlock  63.827  3.4 %  17.16          0
+layers.10  DecoderBlock  65.570  3.5 %  17.14          0
+layers.11  DecoderBlock  62.151  3.3 %  17.16          0
+layers.12  DecoderBlock  64.027  3.4 %  17.16          0
+layers.13  DecoderBlock  63.209  3.4 %  17.12          0
+layers.14  DecoderBlock  63.401  3.4 %  17.15          0
+layers.15  DecoderBlock  65.038  3.5 %  17.14          1
+layers.16  DecoderBlock  67.331  3.6 %  17.14          0
+layers.17  DecoderBlock  63.720  3.4 %  17.14          0
+layers.18  DecoderBlock  61.988  3.3 %  17.17          0
+layers.19  DecoderBlock  65.497  3.5 %  17.14          0
+layers.20  DecoderBlock  63.137  3.4 %  17.12          0
+layers.21  DecoderBlock  63.764  3.4 %  17.17          0
+layers.22  DecoderBlock  62.103  3.3 %  17.14          0
+layers.23  DecoderBlock  65.077  3.5 %  17.17          0
+layers.24  DecoderBlock  67.249  3.6 %  17.14          0
+layers.25  DecoderBlock  66.562  3.6 %  17.13          0
+layers.26  DecoderBlock  65.083  3.5 %  17.16          0
+layers.27  DecoderBlock  66.374  3.5 %  17.14          0
+norm       RMSNorm       0.018   0.0 %  0.03           0
+head       Linear        65.751  3.5 %  3.12           0
+
+Inner layers (by type and depth): 2943.23 ms in 255 calls
+Name                   Calls  ms        Share
+---------------------  -----  --------  ------
+FeedForward (depth 0)  28     1154.115  39.2 %
+Linear (depth 1)       84     1138.779  38.7 %
+Linear (depth 0)       113    649.760   22.1 %
+Embedding (depth 0)    1      0.311     0.0 %
+RMSNorm (depth 0)      29     0.269     0.0 %
+
+Operations (by name and shape): 1839.57 ms in 454 calls
+Name                           Calls  ms       Share
+-----------------------------  -----  -------  ------
+matmul_stored [1x128x8192]     56     698.739  38.0 %
+matmul_stored [1x128x3072]     84     682.529  37.1 %
+matmul_stored [1x128x1024]     56     342.318  18.6 %
+matmul_stored [1x1x128256]     1      63.718   3.5 %
+attention_tiled [1x128x3072]   28     16.136   0.9 %
+add_rms_norm [1x128x3072]      56     15.358   0.8 %
+gated_activation [1x128x8192]  28     15.002   0.8 %
+rope [1x128x24x128]            28     2.755    0.1 %
+rope [1x128x8x128]             28     2.424    0.1 %
+rms_norm_affine [1x128x3072]   1      0.200    0.0 %
+embedding_bf16 [1x128x3072]    1      0.131    0.0 %
+narrow [128]                   1      0.113    0.0 %
+permute [1x8x3x128x128]        28     0.098    0.0 %
+permute [1x8x128x128]          56     0.026    0.0 %
+rms_norm_affine [1x1x3072]     1      0.019    0.0 %
+narrow [1x1x3072]              1      0.005    0.0 %
+
+Kernel times: cpu does not time kernels; the operations above are its finest timing.
+exit 0

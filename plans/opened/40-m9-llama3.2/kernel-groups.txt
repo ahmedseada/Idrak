@@ -1,0 +1,21 @@
+# M9 CUDA prompt profiles' kernels by group (ms), from kernel-groups.sh (M6's): products = every product of the layers with its widening, x packing and sums; 1b/ then 3b/ (3B q4_k adad: the repeat)
+1b profile-cuda-bf16-adad-prompt.txt              pass  17.17  mma 11.416  group  1.773  widen 0.000  packx 0.555  parts 0.000  head 0.661  other 2.594  products 13.744  kernels 16.999
+1b profile-cuda-bf16-name-prompt.txt              pass  18.77  mma  5.445  group  9.384  widen 0.000  packx 0.000  parts 0.000  head 0.660  other 2.541  products 14.829  kernels 18.030
+1b profile-cuda-int8-adad-prompt.txt              pass  18.18  mma 12.557  group  1.721  widen 0.205  packx 0.137  parts 0.000  head 0.326  other 2.443  products 14.620  kernels 17.389
+1b profile-cuda-int8-name-prompt.txt              pass  17.83  mma  5.091  group  8.978  widen 0.000  packx 0.000  parts 0.000  head 0.338  other 2.414  products 14.069  kernels 16.821
+1b profile-cuda-q4_0-adad-prompt.txt              pass  19.49  mma 11.319  group  1.918  widen 2.520  packx 0.470  parts 0.000  head 0.290  other 2.473  products 16.227  kernels 18.990
+1b profile-cuda-q4_0-name-prompt.txt              pass  20.10  mma 16.005  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.300  other 2.585  products 16.005  kernels 19.890
+1b profile-cuda-q4_k-adad-prompt.txt              pass  20.19  mma 12.910  group  0.000  widen 3.337  packx 0.597  parts 0.303  head 0.393  other 2.447  products 17.147  kernels 19.987
+1b profile-cuda-q4_k-name-prompt.txt              pass  20.14  mma 15.877  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.302  other 2.618  products 15.877  kernels 19.797
+1b profile-cuda-iq2_xxs-adad-prompt.txt           pass  19.74  mma 13.263  group  0.000  widen 3.210  packx 0.790  parts 0.343  head 0.448  other 2.524  products 17.606  kernels 20.578
+1b profile-cuda-iq2_xxs-name-prompt.txt           pass  20.08  mma 16.067  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.302  other 2.455  products 16.067  kernels 19.824
+3b profile-cuda-bf16-adad-prompt.txt              pass  45.22  mma 36.800  group  0.000  widen 0.000  packx 1.302  parts 2.125  head 0.985  other 5.165  products 40.227  kernels 46.377
+3b profile-cuda-bf16-name-prompt.txt              pass  48.48  mma 14.964  group 26.904  widen 0.000  packx 0.000  parts 0.000  head 0.984  other 5.259  products 41.868  kernels 48.111
+3b profile-cuda-int8-adad-prompt.txt              pass  47.03  mma 34.268  group  6.559  widen 0.000  packx 0.316  parts 0.000  head 0.486  other 5.288  products 41.143  kernels 46.917
+3b profile-cuda-int8-name-prompt.txt              pass  45.98  mma 14.457  group 25.488  widen 0.000  packx 0.000  parts 0.000  head 0.501  other 5.255  products 39.945  kernels 45.701
+3b profile-cuda-q4_0-adad-prompt.txt              pass  50.63  mma 32.755  group  7.107  widen 4.745  packx 0.522  parts 0.427  head 0.422  other 5.155  products 45.556  kernels 51.133
+3b profile-cuda-q4_0-name-prompt.txt              pass  51.64  mma 44.719  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.941  other 5.322  products 44.719  kernels 51.982
+3b profile-cuda-q4_k-adad-prompt-rerun.txt        pass  52.76  mma 37.724  group  0.000  widen 8.658  packx 1.084  parts 1.506  head 0.575  other 5.229  products 48.972  kernels 54.776
+3b profile-cuda-q4_k-name-prompt.txt              pass  51.98  mma 44.643  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.935  other 5.340  products 44.643  kernels 51.918
+3b profile-cuda-iq2_xxs-adad-prompt.txt           pass  52.27  mma 37.598  group  0.000  widen 7.958  packx 0.856  parts 1.364  head 0.665  other 5.165  products 47.776  kernels 53.606
+3b profile-cuda-iq2_xxs-name-prompt.txt           pass  52.98  mma 45.665  group  0.000  widen 0.000  packx 0.000  parts 0.000  head 1.932  other 5.410  products 45.665  kernels 53.007

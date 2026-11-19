@@ -1223,6 +1223,194 @@ conversion, x packing and the sums)
   nothing, spends 7.6% of its products on x packing and the sums. So the measured choices, which keep the group launches
   and int8's lanes over the stored rows, are the faster ones in the full pass on Qwen3-1.7B.
 
+### Another family: Llama 3.2 1B and 3B (M9)
+
+Plan 40's M9, on the owner's word ("i need a different family model with 2 sizes to bench with othere than qwen", "to
+confirm result"). M6's protocol on `meta-llama/Llama-3.2-1B-Instruct` and `meta-llama/Llama-3.2-3B-Instruct`, `adad`
+against `name` in the same runs. Measuring only: no code changed. Files: `test-output\adad\m9-llama3.2\`, copied
+(without the `.nettrace` and `.speedscope.json` files) to [40-m9-llama3.2/](40-m9-llama3.2/).
+
+- **Code and CLI**: the M6 build (`idrak 0.4.1-dev.2611191810`, informational version
+  `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`), checked before the first run. No source changed
+  since `de1f8a96` (`git diff --stat de1f8a96 5783b047 -- src`: nothing). Worktree at `5783b047`. No other run beside
+  these (the same idle service of another project ran throughout).
+- **The models** (`idrak pull`, `{1b|3b}/pull.txt`: 1B revision `9213176726f5`, 2.31 GB; 3B `0cb88a4f764b`, 5.99 GB). Both
+  are `LlamaForCausalLM` in bfloat16, with tied embeddings and a vocabulary of 128,256 (`{1b|3b}/config.txt`, from each
+  `config.json`):
+
+| Model | hidden | layers | heads × size | KV heads | FFN | q | k, v | o | gate, up | down | head |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| Llama 3.2 1B | 2,048 | 16 | 32 × 64 | 8 | 8,192 | 2048→2048 | 2048→512 | 2048→2048 | 2048→8192 | 8192→2048 | 2048→128256 |
+| Llama 3.2 3B | 3,072 | 28 | 24 × 128 | 8 | 8,192 | 3072→3072 | 3072→1024 | 3072→3072 | 3072→8192 | 8192→3072 | 3072→128256 |
+
+  The 1B's hidden size equals Qwen3-1.7B's (2,048), with a wider FFN (8,192 against 6,144), narrower k and v (512) and
+  half the layers. The 3B's products are the largest measured so far. The bench accepted the family (no "not
+  registered"); the 1B's head size of 64 runs `flash_tc_fwd_bf16_d64`.
+- **Commands** (`m9.sh SIZE …`, one model run a call, the route set on every run, M6's commands with the model changed):
+  - CUDA: the ten types each in a fresh `tuning-cuda-{type}`, runs adad fill, name fill, adad warm, name warm.
+  - CPU: bf16, int8, q8_0, q4_0, q4_k each with a fresh `tuning-cpu-{type}.tsv`, runs adad, name, adad, name.
+  - Profiles on the filled folders and files, both routes:
+    - CUDA prompt: bf16, int8, q4_0, q4_k, iq2_xxs;
+    - CUDA decode: bf16, int8, q4_0, q4_k;
+    - CPU prompt: bf16, q4_0.
+  - One trace (`trace --stacks`) of the one ratio out of line with Qwen3's pattern (CPU q4_k at 3B, below).
+  - The greedy continuation of M7's `prompt.txt` (475 tokens under the Llama tokenizer too) on CUDA bf16, adad and name.
+  - Derived tables: `ratios.sh` → `ratios.txt`, M6's `spread.sh` → `spread.txt`, M6's `kernel-groups.sh` →
+    `kernel-groups.txt`, M7's `lanes.sh` → `lanes.txt`, `product-rates.sh` (M6's with the layer count and shapes as
+    arguments) → `product-rates.txt`, `cpu-lanes.txt` (the CPU logs' lane lines).
+- **Every run loaded and ran** (all 120 bench runs exit 0, `{1b|3b}/results.txt`; every profile and continuation exit 0).
+  Under `name` the 3B's float32-held types fit on the card (weights 13,071 MiB, peak 13,298 MiB). No profile or trace
+  stored a product's lane (`{1b|3b}/tuning-added.txt`: the decode profiles stored their warm-up's 128-row and window
+  entries, the continuations their exact-size entries).
+- **Fill against warm** (`spread.txt`): prompts within 0.7% (adad) and 0.9% (name); adad's fill runs peak 267–406 MiB
+  above its warm runs.
+
+**CUDA, 512-token prompt and 128 generated tokens, tok/s, warm runs** (`ratios.txt`; the ratio is adad/name, beside
+Qwen3-0.6B's re-bench and Qwen3-1.7B's M6)
+
+| Type | 1B adad prompt | 1B name prompt | 3B adad prompt | 3B name prompt | prompt ratio Q0.6B / Q1.7B / L1B / L3B | 1B gen adad / name | 3B gen adad / name | gen ratio Q0.6B / Q1.7B / L1B / L3B |
+|---|---|---|---|---|---|---|---|---|
+| bf16 | 30,953 | 28,033 | 11,519 | 10,638 | 1.092 / 1.105 / 1.104 / 1.083 | 275 / 242 | 112 / 98.4 | 1.089 / 1.082 / 1.136 / 1.138 |
+| f16 | 30,925 | 25,998 | 11,425 | 9,974 | 1.324 / 1.184 / 1.190 / 1.145 | 277 / 150 | 111 / 58.7 | 1.690 / 1.849 / 1.847 / 1.891 |
+| int8 | 29,084 | 30,343 | 10,999 | 11,200 | 1.041 / 0.984 / 0.959 / 0.982 | 469 / 293 | 193 / 118 | 1.405 / 1.549 / 1.601 / 1.636 |
+| q8_0 | 26,281 | 26,194 | 9,764 | 9,855 | 1.223 / 1.044 / 1.003 / 0.991 | 416 / 150 | 174 / 58.7 | 2.055 / 2.762 / 2.773 / 2.964 |
+| q4_0 | 27,457 | 26,011 | 10,169 | 9,952 | 1.218 / 1.065 / 1.056 / 1.022 | 480 / 150 | 209 / 58.8 | 2.258 / 3.162 / 3.200 / 3.554 |
+| iq4_nl | 27,349 | 26,065 | 10,094 | 9,900 | 1.251 / 1.074 / 1.049 / 1.020 | 426 / 149 | 176 / 58.7 | 2.119 / 2.867 / 2.859 / 2.998 |
+| q4_k | 26,607 | 26,262 | 9,787 | 9,922 | 1.187 / 1.015 / 1.013 / 0.986 | 369 / 150 | 153 / 58.7 | 1.921 / 2.481 / 2.460 / 2.606 |
+| q6_k | 26,169 | 26,251 | 9,674 | 9,938 | 1.142 / 1.028 / 0.997 / 0.973 | 385 / 149 | 160 / 58.8 | 1.980 / 2.594 / 2.584 / 2.721 |
+| iq2_xxs | 27,036 | 26,116 | 9,953 | 9,834 | 1.130 / 1.067 / 1.035 / 1.012 | 337 / 150 | 139 / 58.7 | 1.865 / 2.286 / 2.247 / 2.368 |
+| iq3_xxs | 26,397 | 25,991 | 9,778 | 9,809 | 1.094 / 1.022 / 1.016 / 0.997 | 305 / 150 | 126 / 58.8 | 1.837 / 2.057 / 2.033 / 2.143 |
+
+Weights (MiB, `{1b|3b}/results.txt`): adad 1B bf16 2,389, f16 2,890, int8 1,714, q8_0 1,785, q4_0/iq4_nl/q4_k 1,196,
+q6_k 1,500, iq2_xxs 837, iq3_xxs 984; 3B 6,192, 6,944, 3,883, 4,071, 2,540, 3,329, 1,606, 1,989. Under name, bf16 and
+int8 hold the same weights, and f16 and the GGUF types are held as float32: 5,247 MiB (1B) and 13,071 MiB (3B).
+
+**CPU, 128-token prompt and 32 generated tokens, tok/s** (the mean of two runs; `ratios.txt`, the runs in
+`{1b|3b}/results.txt`)
+
+| Type | 1B prompt adad / name | 3B prompt adad / name | prompt ratio Q0.6B / Q1.7B / L1B / L3B | 1B gen adad / name | 3B gen adad / name | gen ratio Q0.6B / Q1.7B / L1B / L3B |
+|---|---|---|---|---|---|---|
+| bf16 | 334 / 134 | 121 / 49.4 | 1.575 / 2.119 / 2.493 / 2.449 | 28.3 / 22.1 | 11.4 / 8.59 | 1.419 / 1.312 / 1.281 / 1.327 |
+| int8 | 391 / 137 | 130 / 48.0 | 1.457 / 1.943 / 2.850 / 2.695 | 46.9 / 38.0 | 19.2 / 15.3 | 1.563 / 1.244 / 1.233 / 1.259 |
+| q8_0 | 346 / 152 | 123 / 68.0 | 3.507 / 2.414 / 2.281 / 1.807 | 40.6 / 5.62 | 16.7 / 1.77 | 6.534 / 7.997 / 7.222 / 9.380 |
+| q4_0 | 399 / 154 | 130 / 69.2 | 3.287 / 2.159 / 2.591 / 1.879 | 32.8 / 5.55 | 12.8 / 1.75 | 4.576 / 6.314 / 5.896 / 7.314 |
+| q4_k | 314 / 156 | 102 / 65.0 | 3.335 / 2.061 / 2.013 / 1.569 | 21.9 / 5.85 | 6.71 / 1.79 | 3.535 / 4.391 / 3.744 / 3.735 |
+
+**Which lanes each type chose** (CUDA: each type's tuning file and its adad warm log; read as in the re-bench's section).
+Prompt (m = 512), each product's own choice, then the groups (`9700`):
+
+| Type | 1B q, o | 1B k, v | 1B gate, up | 1B down | 1B groups q/k/v, gate/up | 3B q, o | 3B k, v | 3B gate, up | 3B down | 3B groups q/k/v, gate/up |
+|---|---|---|---|---|---|---|---|---|---|---|
+| bf16 | 2 | 6 | 2 | 2 | 1, 0 | 2 | 2 | 2 | 2 | 0, 0 |
+| f16 | 2 | 6 | 2 | 2 | 1, 0 | 2 | 2 | 2 | 6 | 0, 0 |
+| int8 | 2 | 6 | 6 | 6 | 1, 0 | 6 | 2 | 5 | 6 | 1, 0 |
+| q8_0 | 2 | 6 | 2 | 2 | 1, 0 | 2 | 2 | 2 | 2 | 1, 0 |
+| q4_0 | 2 | 6 | 2 | 2 | 1, 0 | 2 | 2 | 2 | 6 | 1, 0 |
+| iq4_nl | 2 | 6 | 2 | 2 | 1, 0 | 2 | 2 | 2 | 2 | 1, 0 |
+| q4_k | 1 | 1 | 1 | 1 | 0, 0 | 1 | 1 | 1 | 4 | 0, 0 |
+| q6_k | 1 | 1 | 1 | 4 | 0, 0 | 1 | 1 | 1 | 4 | 0, 0 |
+| iq2_xxs | 1 | 1 | 1 | 1 | 0, 0 | 1 | 1 | 1 | 4 | 0, 0 |
+| iq3_xxs | 1 | 1 | 1 | 1 | 0, 0 | 1 | 1 | 1 | 4 | 0, 0 |
+
+- **Against Qwen3-1.7B** (M6; the same hidden size as the 1B):
+  - The 1B chose as Qwen3-1.7B did for most types: the native kind for the large products (all but int8's, and q6_k's
+    down: the tensor rows over widened rows), the q/k/v group on for bf16, f16, q8_0, q4_0 and iq4_nl and off for the
+    super-block and grid types, the gate/up group off. Its k and v (2048→512) chose the tensor rows, but where the q/k/v
+    group is on they run in it either way.
+  - int8 at 1B: down by the tensor rows (Qwen3-1.7B: raw int8, lane 5); gate/up by the tensor rows on their own (the
+    group off; Qwen3-1.7B: the group on).
+  - iq2_xxs at 1B: no q/k/v group (Qwen3-1.7B: on).
+- **At 3B** (the largest products measured): the native kind still wins most products, but:
+  - the down product (8192→3072, the longest k) moved to the tensor rows for f16, int8 and q4_0, and to the tensor rows
+    over rows widened for the call (`StoredSuper` 4) for the super-block and grid types;
+  - int8's gate/up chose raw int8 (lane 5), its q/o the tensor rows;
+  - bf16's and f16's q/k/v group is off.
+- **Decode** (m = 1): the few-row lane for every product and head but bf16's head (named: "bf16 1x3072->128256 …:
+  named"). The fused gated pass (`4000`) is 0 in all twenty folders. Residual + norm (`5000`) is 1 but for iq4_nl (both
+  sizes) and iq3_xxs (3B), which chose 0; on Qwen3-1.7B every type chose 1.
+- **CPU** (`cpu-lanes.txt`): as on Qwen3, every decode shape takes the row lane or the block route (bf16's head the named
+  kernel). The prompt shapes take tiles, "today's path" or the block route, and the choice differs between the two runs
+  of a type for int8, q8_0, q4_0 and q4_k (M1's subject).
+
+**The prompt profiles** (CUDA, ms; `kernel-groups.txt`: "products" every product of the layers with its widening, x
+packing and sums; 3B q4_k's adad profile is its repeat, below)
+
+| Profile | 1B adad pass / products / widening, x packing, sums / head | 1B name pass / products / head | 3B adad pass / products / widening, x packing, sums / head | 3B name pass / products / head |
+|---|---|---|---|---|
+| bf16 | 17.17 / 13.74 / 0.56 / 0.66 | 18.77 / 14.83 / 0.66 | 45.22 / 40.23 / 3.43 / 0.99 | 48.48 / 41.87 / 0.98 |
+| int8 | 18.18 / 14.62 / 0.34 / 0.33 | 17.83 / 14.07 / 0.34 | 47.03 / 41.14 / 0.32 / 0.49 | 45.98 / 39.95 / 0.50 |
+| q4_0 | 19.49 / 16.23 / 2.99 / 0.29 | 20.10 / 16.01 / 1.30 | 50.63 / 45.56 / 5.69 / 0.42 | 51.64 / 44.72 / 1.94 |
+| q4_k | 20.19 / 17.15 / 4.24 / 0.39 | 20.14 / 15.88 / 1.30 | 52.76 / 48.97 / 11.25 / 0.58 | 51.98 / 44.64 / 1.94 |
+| iq2_xxs | 19.74 / 17.61 / 4.34 / 0.45 | 20.08 / 16.07 / 1.30 | 52.27 / 47.78 / 10.18 / 0.67 | 52.98 / 45.67 / 1.93 |
+
+The native kind runs its products at 70–81 TFLOP/s on both models; name's float32 products at 30.9–68.4 TFLOP/s (1B,
+the 512-wide k/v lowest) and 49.6–67.5 (3B) (`product-rates.txt`).
+
+**Decode steps** (CUDA, the median of 5; `{1b|3b}/profile-cuda-{type}-{route}-decode.txt`), ms adad / name: 1B bf16
+4.06 / 4.51, int8 2.57 / 3.86, q4_0 2.52 / 7.21, q4_k 3.13 / 7.19; 3B bf16 9.46 / 10.64, int8 5.74 / 8.94, q4_0
+5.40 / 17.83, q4_k 7.10 / 17.90. name's float32-held types spend 85–90% of a step's kernels in `gemv_nn_f32`.
+
+**CPU prompt profiles** (`{1b|3b}/profile-cpu-{bf16,q4_0}-{adad,name}-prompt.txt`), pass ms and MiB allocated, adad /
+name:
+
+- bf16: 1B 387 ms, 226 MiB / 906 ms, 2,912 MiB; 3B 1,049 ms, 465 MiB / 2,652 ms, 8,444 MiB (name widens each weight on
+  every call, M0-6).
+- q4_0: 1B 412 / 795 ms; 3B 1,261 / 1,872 ms (name's k/v `matmul_stored [1x128x1024]` 342 ms, M0-7).
+
+**Findings** (measuring only; none fixed):
+
+- **M9-1. Qwen3's CUDA pattern holds on Llama, ordered by size.**
+  - Llama 1B lands next to Qwen3-1.7B (the same hidden size) on every ratio (`ratios.txt`): prompt within 0.041 of it
+    (the furthest q8_0 1.003 against 1.044, iq2_xxs 1.035 against 1.067, q6_k 0.997 against 1.028, int8 0.959 against
+    0.984), generation within 0.06.
+  - At 3B the stored types' prompt lead is gone (0.973–1.022; q8_0, q4_k, q6_k and iq3_xxs slightly below name), as the
+    trend from Qwen3-0.6B through Qwen3-1.7B and Llama 1B runs.
+  - bf16 (1.083) and f16 (1.145) keep a prompt lead; int8 stays just below name (0.959, 0.982), as on Qwen3-1.7B.
+  - The generation lead grows with size: q4_0 2.26 → 3.16 → 3.20 → 3.55; every stored type 2.14–3.55 at 3B; int8 1.64;
+    f16 1.89; bf16 1.14.
+- **M9-2. The cause is M6-1's, seen again in the profiles** (`kernel-groups.txt`, `product-rates.txt`):
+  - For a stored type, adad's products with the per-call widening cost as much as name's float32 products or more: 1B
+    q4_0 16.23 against 16.01 ms; 3B q4_0 45.56 against 44.72, q4_k 48.97 against 44.64, iq2_xxs 47.78 against 45.67.
+  - What is left of adad's lead is the head: 0.29–0.67 ms against name's float32 head, 1.30 ms (1B) and 1.94 ms (3B).
+  - At 3B the widening, x packing and sums are 10.2–11.3 ms of the super-block and grid types' passes (19–21%).
+  - bf16, which widens nothing, keeps its lead in the products: 13.74 against 14.83 ms (1B), 40.23 against 41.87 (3B).
+- **M9-3. Memory holds**: adad holds every type as stored (1B 837–2,890 MiB, 3B 1,606–6,944), name the float32 copies
+  (5,247 and 13,071 MiB).
+- **M9-4. The CPU**:
+  - adad leads every type on both models: prompt 1.57–2.85, generation 1.23–9.38.
+  - The prompt lead for bf16 and int8 is larger on Llama (2.45–2.85, against 1.46–2.12 on Qwen3). For the stored types it
+    shrinks with size, as on Qwen3 (3B: 1.57–1.88).
+  - The generation lead grows with size for q8_0 and q4_0 (7.22 → 9.38, 5.90 → 7.31).
+- **M9-5. One ratio out of line: CPU q4_k's generation at 3B is flat** (3.74 at 1B and 3B, where q8_0 and q4_0 grow).
+  - Its two adad runs give 7.43 and 5.98 tok/s with the same lanes (the block route on every decode shape,
+    `cpu-q4_k-adad-run{1,2}.txt`).
+  - The trace's own run gave 10.0 tok/s over its 8 tokens (`trace-cpu-q4_k-adad.txt`), again with the block route
+    everywhere.
+  - The same block-route product (1x3072->8192) was measured at 1.289, 1.155 and 0.635 ms in the three processes.
+  - So the CPU's q4_k decode at 3B moves by up to 1.7× between processes, and the flat ratio sits inside that move. The
+    trace's decode window (`trace-cpu-q4_k-adad-decode-window.txt`, 6.2 threads busy on average) holds mostly the first
+    decode step's lane measurements, not the timed steps; what makes a process fast or slow is not settled (no thread
+    placement or clock was read).
+- **M9-6. One profile was an outlier**: 3B q4_k adad's first prompt profile, 64.02 ms with the same kernels as its repeat
+  (52.76 ms, in line with the bench's 52.3 ms); the repeat is used (`profile-cuda-q4_k-adad-prompt{,-rerun}.txt`).
+- **M9-7. The same text**: on both models the 48 greedy tokens of bf16 under adad and under name are byte-equal
+  (`{1b|3b}/complete-bf16-{adad,name}.txt`).
+
+**Conclusion**:
+
+- **Qwen3's results hold on Llama 3.2 at both sizes**:
+  - the generation lead, growing with size;
+  - the memory (stored rows against float32 copies);
+  - the CPU's lead on every type;
+  - the prompt pattern: bf16 and f16 ahead, int8 just behind, the stored types' lead shrinking with size.
+- **At 3B, a larger shape than any measured before, the stored types' prompt is even with name (0.973–1.022)**.
+  M6-1's mechanism shows directly in the profiles: the per-call widening costs what name's float32 copy saves, and only
+  the head is left.
+- **What does not carry over exactly**: some lane choices (int8's down and gate/up, the 3B's down product on the tensor
+  rows, bf16's q/k/v group off at 3B, iq4_nl's and iq3_xxs's residual + norm). These are choices measured per shape, as
+  designed, not failures.
+- **The one out-of-line ratio** (M9-5) is the CPU's run-to-run variance at 3B. It was not explained.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

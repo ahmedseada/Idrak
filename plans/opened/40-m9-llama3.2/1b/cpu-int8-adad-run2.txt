@@ -1,0 +1,23 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+meta-llama/Llama-3.2-1B-Instruct on cpu (CPU (24 threads, 8-wide SIMD)): 1235.8M parameters, weights int8, KV cache float32
+  prompt 128 tokens, 32 generated, 2 run(s) after a warm-up
+  measured lane: cpu: int8 128x2048->2048: today's path (widened once, float32 product) (row 13.87 ms, panel 18.208 ms, today's 1.256 ms, block 2.306 ms, tiles 1.339 ms)
+  measured lane: cpu: int8 128x2048->512: today's path (widened once, float32 product) (row 0.828 ms, panel 1.205 ms, today's 0.434 ms, block 0.725 ms, tiles 0.436 ms)
+  measured lane: cpu: int8 128x2048->8192: block route (x as q8_0, s8 dot) (row 8.032 ms, panel 12.279 ms, today's 4.874 ms, block 4.296 ms, tiles 4.744 ms)
+  measured lane: cpu: int8 128x8192->2048: block route (x as q8_0, s8 dot) (row 9.339 ms, panel 13.301 ms, today's 6.281 ms, block 4.642 ms, tiles 8.633 ms)
+  measured lane: cpu: int8 1x2048->128256: row lane (row 3.225 ms, panel 36.288 ms, block 3.282 ms)
+  measured lane: cpu: int8 1x2048->2048: row lane (row 0.055 ms, panel 0.545 ms, block 0.064 ms)
+  measured lane: cpu: int8 1x2048->512: row lane (row 0.017 ms, panel 0.138 ms, block 0.02 ms)
+  measured lane: cpu: int8 1x2048->8192: row lane (row 0.189 ms, panel 2.236 ms, block 0.198 ms)
+  measured lane: cpu: int8 1x8192->2048: block route (x as q8_0, s8 dot) (row 0.217 ms, panel 1.499 ms, block 0.202 ms)
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              392    tokens/s  128 tokens
+generation          46.6   tokens/s  32 tokens
+prompt GFLOP/s      970    GFLOP/s   2 x parameters per token
+generation GFLOP/s  115    GFLOP/s   2 x parameters per token
+weights memory      1714   MiB       on the device after loading
+memory in use       1714   MiB       after the runs
+memory peak         1748   MiB       the most in use on the device since the start
+KV cache            10.0   MiB       a generation's caches at their largest, window 161, grown 0 times

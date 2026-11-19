@@ -1,0 +1,222 @@
+== profile-cuda-bf16-adad-prompt (00:19:37): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-bf16-name-prompt (00:19:41): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-int8-adad-prompt (00:19:47): lines added or changed in tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-int8-name-prompt (00:19:52): lines added or changed in tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_0-adad-prompt (00:19:59): lines added or changed in tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_0-name-prompt (00:20:12): lines added or changed in tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_k-adad-prompt (00:20:19): lines added or changed in tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_k-name-prompt (00:20:33): lines added or changed in tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq2_xxs-adad-prompt (00:20:41): lines added or changed in tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq2_xxs-name-prompt (00:21:01): lines added or changed in tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-bf16-adad-decode (00:21:08): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 40 128 512 2048 0 0 0 = 8
+> PackedSplits 40 128 2048 2048 0 0 0 = 4
+> PackedSplits 40 128 2048 8192 0 0 0 = 8
+> PackedSplits 40 128 8192 2048 0 0 0 = 1
+> PackedSplits 540 128 512 2048 0 0 0 = 8
+> PackedSplits 540 128 2048 2048 0 0 0 = 4
+> PackedSplits 540 128 2048 8192 0 0 0 = 8
+> PackedSplits 540 128 8192 2048 0 0 0 = 1
+> PackedTile 240 128 512 2048 0 0 0 = 64
+> PackedTile 240 128 2048 2048 0 0 0 = 64
+> PackedTile 240 128 2048 8192 0 0 0 = 128
+> PackedTile 240 128 8192 2048 0 0 0 = 128
+> PackedTile 1240 128 2048 2048 512 512 0 = 64
+> PackedTile 1240 128 2048 8192 8192 0 0 = 128
+> PackedMultiSplits 40 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 40 128 2048 8192 8192 0 0 = 1
+> PackedMultiSplits 540 128 2048 2048 512 512 0 = 4
+> PackedMultiSplits 540 128 2048 8192 8192 0 0 = 1
+> DecodeSplits 2 32 160 64 0 0 0 = 2
+> DecodeMinChunk 2 32 160 64 2 0 0 = 1
+> ProductRoute 2000 128 512 2048 5 0 0 = 6
+> ProductRoute 2000 128 2048 2048 5 0 0 = 6
+> ProductRoute 2000 128 2048 8192 5 0 0 = 2
+> ProductRoute 2000 128 8192 2048 5 0 0 = 2
+> ProductRoute 9100 128 512 2048 9 0 0 = 8
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 8192 9 0 0 = 132
+> ProductRoute 9100 128 8192 2048 9 0 0 = 129
+> ProductRoute 9300 128 512 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 8192 4 0 0 = 8
+> ProductRoute 9300 128 8192 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 512 512 0 = 1
+> ProductRoute 9700 128 2048 8192 8192 0 0 = 1
+> RowThreads 0 64 6144 0 0 0 0 = 32
+== profile-cuda-bf16-name-decode (00:21:13): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 4 128 2048 2048 0 0 0 = 4
+> PackedSplits 4 128 2048 8192 0 0 0 = 8
+> PackedMultiSplits 4 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 4 128 2048 8192 8192 0 0 = 1
+== profile-cuda-int8-adad-decode (00:21:22): lines added or changed in tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 41 128 512 2048 0 0 0 = 8
+> PackedSplits 41 128 2048 2048 0 0 0 = 4
+> PackedSplits 41 128 2048 8192 0 0 0 = 8
+> PackedSplits 41 128 8192 2048 0 0 0 = 1
+> PackedSplits 541 128 512 2048 0 0 0 = 8
+> PackedSplits 541 128 2048 2048 0 0 0 = 4
+> PackedSplits 541 128 2048 8192 0 0 0 = 8
+> PackedSplits 541 128 8192 2048 0 0 0 = 1
+> PackedTile 241 128 512 2048 0 0 0 = 64
+> PackedTile 241 128 2048 2048 0 0 0 = 64
+> PackedTile 241 128 2048 8192 0 0 0 = 128
+> PackedTile 241 128 8192 2048 0 0 0 = 64
+> PackedTile 1241 128 2048 2048 512 512 0 = 64
+> PackedTile 1241 128 2048 8192 8192 0 0 = 128
+> PackedMultiSplits 41 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 41 128 2048 8192 8192 0 0 = 1
+> PackedMultiSplits 541 128 2048 2048 512 512 0 = 4
+> PackedMultiSplits 541 128 2048 8192 8192 0 0 = 1
+> DecodeSplits 2 32 160 64 0 0 0 = 2
+> DecodeMinChunk 2 32 160 64 2 0 0 = 1
+> ProductRoute 2000 128 512 2048 7 0 0 = 6
+> ProductRoute 2000 128 2048 2048 7 0 0 = 6
+> ProductRoute 2000 128 2048 8192 7 0 0 = 6
+> ProductRoute 2000 128 8192 2048 7 0 0 = 6
+> ProductRoute 9100 128 512 2048 9 0 0 = 120
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 8192 9 0 0 = 132
+> ProductRoute 9100 128 8192 2048 9 0 0 = 129
+> ProductRoute 9300 128 512 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 8192 4 0 0 = 8
+> ProductRoute 9300 128 8192 2048 4 0 0 = 2
+> ProductRoute 9400 128 512 2048 4 0 0 = 8
+> ProductRoute 9400 128 2048 2048 4 0 0 = 8
+> ProductRoute 9400 128 2048 8192 4 0 0 = 8
+> ProductRoute 9400 128 8192 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 512 512 0 = 1
+> ProductRoute 9700 128 2048 8192 8192 0 0 = 1
+> RowThreads 0 64 6144 0 0 0 0 = 32
+== profile-cuda-int8-name-decode (00:21:27): lines added or changed in tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 0 128 2048 2048 0 0 0 = 4
+> PackedSplits 0 128 2048 8192 0 0 0 = 8
+> PackedMultiSplits 0 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 0 128 2048 8192 8192 0 0 = 1
+== profile-cuda-q4_0-adad-decode (00:21:35): lines added or changed in tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 100 128 512 2048 0 0 0 = 8
+> PackedSplits 100 128 2048 2048 0 0 0 = 4
+> PackedSplits 100 128 2048 8192 0 0 0 = 8
+> PackedSplits 100 128 8192 2048 0 0 0 = 2
+> PackedSplits 600 128 512 2048 0 0 0 = 8
+> PackedSplits 600 128 2048 2048 0 0 0 = 4
+> PackedSplits 600 128 2048 8192 0 0 0 = 8
+> PackedSplits 600 128 8192 2048 0 0 0 = 1
+> PackedTile 300 128 512 2048 0 0 0 = 64
+> PackedTile 300 128 2048 2048 0 0 0 = 64
+> PackedTile 300 128 2048 8192 0 0 0 = 128
+> PackedTile 300 128 8192 2048 0 0 0 = 128
+> PackedTile 1300 128 2048 2048 512 512 0 = 64
+> PackedTile 1300 128 2048 8192 8192 0 0 = 128
+> PackedMultiSplits 100 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 100 128 2048 8192 8192 0 0 = 1
+> PackedMultiSplits 600 128 2048 2048 512 512 0 = 4
+> PackedMultiSplits 600 128 2048 8192 8192 0 0 = 1
+> DecodeSplits 2 32 160 64 0 0 0 = 2
+> DecodeMinChunk 2 32 160 64 2 0 0 = 16
+> ProductRoute 2000 128 512 2048 6 0 0 = 6
+> ProductRoute 2000 128 2048 2048 6 0 0 = 6
+> ProductRoute 2000 128 2048 8192 6 0 0 = 6
+> ProductRoute 2000 128 8192 2048 6 0 0 = 6
+> ProductRoute 9100 128 512 2048 9 0 0 = 120
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 8192 9 0 0 = 132
+> ProductRoute 9100 128 8192 2048 9 0 0 = 129
+> ProductRoute 9300 128 512 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 8192 4 0 0 = 8
+> ProductRoute 9300 128 8192 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 512 512 0 = 1
+> ProductRoute 9700 128 2048 8192 8192 0 0 = 1
+> RowThreads 0 64 6144 0 0 0 0 = 32
+== profile-cuda-q4_0-name-decode (00:21:48): lines added or changed in tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 512 2048 512 0 0 = 8
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 8192 2048 0 0 = 8
+> TensorSplits 0 128 8192 2048 8192 0 0 = 2
+== profile-cuda-q4_k-adad-decode (00:21:58): lines added or changed in tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 300 128 512 2048 0 0 0 = 8
+> PackedSplits 300 128 2048 2048 0 0 0 = 8
+> PackedSplits 300 128 2048 8192 0 0 0 = 8
+> PackedSplits 300 128 8192 2048 0 0 0 = 2
+> PackedSplits 800 128 512 2048 0 0 0 = 8
+> PackedSplits 800 128 2048 2048 0 0 0 = 4
+> PackedSplits 800 128 2048 8192 0 0 0 = 8
+> PackedSplits 800 128 8192 2048 0 0 0 = 2
+> PackedSplits 1300 128 512 2048 0 0 0 = 8
+> PackedSplits 1300 128 2048 2048 0 0 0 = 4
+> PackedSplits 1300 128 2048 8192 0 0 0 = 8
+> PackedSplits 1300 128 8192 2048 0 0 0 = 1
+> PackedSplits 1800 128 512 2048 0 0 0 = 8
+> PackedSplits 1800 128 2048 2048 0 0 0 = 4
+> PackedSplits 1800 128 2048 8192 0 0 0 = 8
+> PackedSplits 1800 128 8192 2048 0 0 0 = 1
+> PackedTile 500 128 512 2048 0 0 0 = 64
+> PackedTile 500 128 2048 2048 0 0 0 = 128
+> PackedTile 500 128 2048 8192 0 0 0 = 128
+> PackedTile 500 128 8192 2048 0 0 0 = 128
+> PackedTile 1500 128 512 2048 0 0 0 = 64
+> PackedTile 1500 128 2048 2048 0 0 0 = 64
+> PackedTile 1500 128 2048 2048 512 512 0 = 128
+> PackedTile 1500 128 2048 8192 0 0 0 = 128
+> PackedTile 1500 128 2048 8192 8192 0 0 = 128
+> PackedTile 1500 128 8192 2048 0 0 0 = 64
+> PackedMultiSplits 300 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 300 128 2048 8192 8192 0 0 = 1
+> PackedMultiSplits 800 128 2048 2048 512 512 0 = 8
+> PackedMultiSplits 800 128 2048 8192 8192 0 0 = 1
+> TensorSplits 2 128 512 2048 512 0 0 = 8
+> TensorSplits 2 128 2048 2048 2048 0 0 = 4
+> TensorSplits 2 128 2048 8192 2048 0 0 = 8
+> TensorSplits 2 128 8192 2048 8192 0 0 = 2
+> DecodeSplits 2 32 160 64 0 0 0 = 2
+> DecodeMinChunk 2 32 160 64 2 0 0 = 1
+> ProductRoute 3000 128 512 2048 5 0 0 = 4
+> ProductRoute 3000 128 2048 2048 5 0 0 = 4
+> ProductRoute 3000 128 2048 8192 5 0 0 = 3
+> ProductRoute 3000 128 8192 2048 5 0 0 = 1
+> ProductRoute 9100 128 512 2048 9 0 0 = 136
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 8192 9 0 0 = 132
+> ProductRoute 9100 128 8192 2048 9 0 0 = 129
+> ProductRoute 9300 128 512 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 8192 4 0 0 = 8
+> ProductRoute 9300 128 8192 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 512 512 0 = 1
+> ProductRoute 9700 128 2048 8192 8192 0 0 = 1
+> RowThreads 0 64 6144 0 0 0 0 = 32
+== profile-cuda-q4_k-name-decode (00:22:12): lines added or changed in tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 512 2048 512 0 0 = 8
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 8192 2048 0 0 = 8
+> TensorSplits 0 128 8192 2048 8192 0 0 = 2
+== profile-cpu-bf16-adad-prompt (00:22:21): lines added or changed in 1b/tuning-cpu-bf16.tsv
+  (none)
+== profile-cpu-bf16-name-prompt (00:22:30): lines added or changed in 1b/tuning-cpu-bf16.tsv
+  (none)
+== profile-cpu-q4_0-adad-prompt (00:22:41): lines added or changed in 1b/tuning-cpu-q4_0.tsv
+  (none)
+== profile-cpu-q4_0-name-prompt (00:22:50): lines added or changed in 1b/tuning-cpu-q4_0.tsv
+  (none)
+== complete-bf16-adad (00:22:55): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedTile 1240 475 2048 2048 512 512 0 = 64
+> PackedMultiSplits 40 475 2048 2048 512 512 0 = 2
+> PackedMultiSplits 540 475 2048 2048 512 512 0 = 1
+> DecodeSplits 2 32 512 64 0 0 0 = 8
+> DecodeMinChunk 2 32 512 64 8 0 0 = 8
+== complete-bf16-name (00:23:01): lines added or changed in tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 4 475 2048 2048 0 0 0 = 1
+> PackedSplits 4 475 2048 8192 0 0 0 = 2
+> PackedMultiSplits 4 475 2048 2048 512 512 0 = 2
