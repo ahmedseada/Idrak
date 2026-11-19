@@ -1273,8 +1273,7 @@ fonts|synthetic pages`.
   (`post` version 1, and version 2's indices below 258) are not read when a font's glyph is found by name; a CFF
   Expert encoding reads as the standard one; a tiling cell's `/BBox` is not a clip; a pixel at an edge is the AGG
   rule's approximation; annotations are not drawn (D10); no command of the CLI draws a page yet (D13's bench). The
-  band size (128 Ki pixels), the shading lookup's 1,024 steps, the largest tile (1 Mi pixels) and the substitutes'
-  stretch, slant and stroke are constants, not options: say if any should become one.
+  drawer's numbers became settings: see "Drawer settings, 2026-11-19" at the end of this phase.
 - **Decisions the plan did not settle, taken here:** (1) The fill rule is a default member of `IOutlineRasterizer`
   with its own enum, so every rasterizer keeps working and the glyph path is not touched. (2) Vector paint (patterns,
   shadings, groups, soft masks, blend modes) is new public data on the page, not a drawer's private reading of the PDF,
@@ -1300,6 +1299,53 @@ fonts|synthetic pages`.
   The last run draws every D3, D4 and D7 sample page into `test-output\documents\drawn\` (for example
   `vector-transparency.p1.png`, beside pdfium's `test-output\documents\samples\d7\vector-transparency.p1.png`) and
   writes each page's score.
+- **Drawer settings, 2026-11-19:** the drawer's numbers are `DocumentDrawOptions` settings (a second part of the
+  record, `src/Idrak.Abstraction/Data/DocumentDrawSettings.cs`), each defaulting to the value the drawer always had and
+  refused out of range by an `ArgumentOutOfRangeException` naming the setting and its range:
+  - `BandPixels` (`IDRAK_DOCUMENT_BAND_PIXELS`): about how many pixels a band holds, 131,072 (128 Ki), 1 to 67,108,864;
+    `MinBandRows` 8 and `MaxBandRows` 1,024 bound its rows (1 to 65,536 each; drawing refuses a minimum above the
+    maximum, and a band past what one array holds).
+  - `ShadingSteps` (`IDRAK_DOCUMENT_SHADING_STEPS`): the axial and radial shadings' table, 1,024 steps, 2 to 1,048,576.
+  - `MaxTilePixels` (`IDRAK_DOCUMENT_MAX_TILE_PIXELS`): the largest tile, 1,048,576 pixels (1 Mi), 1 to 67,108,864.
+  - A face found for a font that is not embedded: `MinSubstituteStretch` 0.75 (more than 0, at most 1) and
+    `MaxSubstituteStretch` 4/3 (1 to 100), `SubstituteSlant` 0.21 (0 to 1; 0: not slanted), `SubstituteStroke` 0.03 of
+    the size (0 to 0.25; 0: not emboldened). No variables: they are an app's choice of look, made in code.
+  - `FillFlatness` (`IDRAK_DOCUMENT_FILL_FLATNESS`): 1/32 of a pixel, 0.001 to 16, for fills, glyphs and clips;
+    `StrokeFlatness` (`IDRAK_DOCUMENT_STROKE_FLATNESS`): 0.1 pixel, 0.001 to 16, for a stroke's flattened curves and its
+    round joins, caps and dots.
+
+  The five variables are read through `DocumentSettings` and listed in the CLI's environment table (and so in its help).
+  The scene reads the numbers once a draw into its builder's fields (nothing per pixel or per glyph, no new allocation);
+  `BandRows(width, pixels, minRows, maxRows)`, `ShadingPaint.Of(..., steps)`, `TilePaint(..., maxTilePixels)` and
+  `DocumentStroker.Stroke(..., flatness, ...)` take them as arguments. The fill flatness reaches the rasterizer through a
+  new default member of the contract, `IOutlineRasterizer.Fill(..., rule, flatness)`: a rasterizer that does not
+  implement it fills by its own measure, `OutlineRasterizers`' guard forwards it to an app's, and `CoverageRasterizer`
+  implements it (its other fills keep 1/32). The band budget stays 131,072 rather than "auto": the runtime reports no
+  cache size in a portable way (rule 70), and the band governs the memory a core holds and the spread over the cores.
+  - **The defaults draw the same, proven:** every sample PDF (d1 to d12, up to six pages each) drawn at 150 dpi RGB with
+    the fonts folder, 72 dpi grey, 300 dpi with annotations and 100 dpi without fonts, each drawing's 8-bit planes and
+    issues hashed (SHA-256) at the start (d18fd2f) and after: 668 drawings (the 12 hostile and password samples refused
+    alike), every hash the same.
+  - **The bands changed the drawing** (measured on the drawer as it was, the settings changing no byte): the rule fill
+    works each band's rows in the band's own frame, so one-row bands differ from the default bands at 930 of 80.9 M
+    values (the 47 D3, D4 and D7 pages at 150 dpi) and one band for the whole page at 156, by one level each.
+  - **Tests:** `documents drawers: the drawer's settings` (`tests/Idrak.Tests.Library/DocumentDrawSettingsTests.cs`): the
+    defaults and the band rows the drawer always took (every width to 40,000), each variable read, a bad value refused
+    naming its variable and value, each setting out of range refused naming itself, crossed row bounds refused; on the
+    samples at their reference's dpi, the coarse value changes the drawing (`vector-shadings` 2 steps: 23,308 values,
+    6.44% off pdfium; `vector-patterns` a 1-pixel tile: 223,157, 29.24%, and 400 pixels: 23,716, 7.57%; `vector-paths`
+    fills within 4 pixels: 5,092, 0.90%; `vector-strokes` strokes within 4 pixels: 4,728, 1.31%; `standard14` not
+    slanted 30,342, not stroked 25,602, not stretched 59,598) and the fine one stays within the page's tolerance and
+    probes (256 steps: the same bytes; fills within 1/128: 0.48%; strokes within 0.02: 0.90%); the rasterizer's default
+    flatness is its fill as it was for every rule, 4 pixels covers a circle less, a flatness not above 0 is refused; an
+    app's rasterizer over a library one gets the flatness through the guard, one without the overload fills by its own.
+    **Run:** the filter `documents drawers|documents pdf: vector|documents pdf: forms|documents pdf: write|documents
+    contracts|outside plug-in|override loop:|kind table:|conformance kit:|fonts:|outline tracers:|pages:|shapes:|glyph
+    poses:|public API|abstraction inventory|every environment variable read in src|the environment table names real
+    commands|hidden boxing|test runner` with the API and inventory flags: 150 tests, 149 passed, 1 failed (the test's own
+    expectation that 256 shading steps change the drawing: they draw the same bytes, so a fine value is now held to the
+    tolerance only); then that test, the API and the inventory without the flags: 7 passed. The API dumps gained the
+    settings, their variables and the rasterizer's overload; the inventory did not change.
 
 ## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 

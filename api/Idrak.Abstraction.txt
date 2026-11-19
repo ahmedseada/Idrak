@@ -1161,10 +1161,26 @@ public sealed record Idrak.Abstraction.Data.DocumentDrawOptions : System.IEquata
   public Idrak.Abstraction.Data.DocumentDrawColour Colour { get; init; }
   public Idrak.Abstraction.Data.DocumentParts Parts { get; init; }
   public bool Hidden { get; init; }
+  public const string BandPixelsVariable = "IDRAK_DOCUMENT_BAND_PIXELS"
   public const string DpiVariable = "IDRAK_DOCUMENT_DPI"
+  public const string FillFlatnessVariable = "IDRAK_DOCUMENT_FILL_FLATNESS"
   public const string FontsVariable = "IDRAK_DOCUMENT_FONTS"
+  public const string MaxTilePixelsVariable = "IDRAK_DOCUMENT_MAX_TILE_PIXELS"
+  public const string ShadingStepsVariable = "IDRAK_DOCUMENT_SHADING_STEPS"
+  public const string StrokeFlatnessVariable = "IDRAK_DOCUMENT_STROKE_FLATNESS"
   public float Dpi { get; init; }
+  public float FillFlatness { get; init; }
+  public float MaxSubstituteStretch { get; init; }
+  public float MinSubstituteStretch { get; init; }
   public float PixelsPerPoint { get; init; }
+  public float StrokeFlatness { get; init; }
+  public float SubstituteSlant { get; init; }
+  public float SubstituteStroke { get; init; }
+  public int BandPixels { get; init; }
+  public int MaxBandRows { get; init; }
+  public int MaxTilePixels { get; init; }
+  public int MinBandRows { get; init; }
+  public int ShadingSteps { get; init; }
   public string Drawer { get; init; }
   public string Pen { get; init; }
   public string Rasterizer { get; init; }
@@ -2279,6 +2295,7 @@ public interface Idrak.Abstraction.Data.IImageTransform : Idrak.Abstraction.ICon
 
 public interface Idrak.Abstraction.Data.IOutlineRasterizer
   public (default) void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height, Idrak.Abstraction.Data.OutlineFill rule)
+  public (default) void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height, Idrak.Abstraction.Data.OutlineFill rule, float flatness)
   public string Name { get; }
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
 

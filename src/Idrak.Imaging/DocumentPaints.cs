@@ -5,14 +5,14 @@ namespace Idrak.Imaging;
 
 /// <summary>
 /// A shading's colours on the surface (ISO 32000-2, 8.7.4.5): an axial or radial one through a table of its colour along t
-/// (1,024 steps, read between them), extended past its ends when asked; a function-based one asked at each pixel's centre
-/// within its rectangle; a mesh's triangles filled at each pixel centre they hold, their corners' colours blended.
-/// Outside its extent: nothing, or its background when it is a path's paint.
+/// (<see cref="DocumentDrawOptions.ShadingSteps"/> steps, 1,024 unless set, read between them), extended past its ends when
+/// asked; a function-based one asked at each pixel's centre within its rectangle; a mesh's triangles filled at each pixel
+/// centre they hold, their corners' colours blended. Outside its extent: nothing, or its background when it is a path's paint.
 /// </summary>
 internal sealed class ShadingPaint
 {
-    private const int Steps = 1024;
-
+    private readonly int _steps;                 // the table's steps (at least 2)
+    private readonly double _last;               // the last step, steps - 1, by which t finds its place in the table
     private readonly DocumentShading _shading;
     private readonly Affine _toShading;          // surface pixels to the shading's space
     private readonly float _alpha;
@@ -21,8 +21,9 @@ internal sealed class ShadingPaint
     private readonly float[]? _triangles;        // a mesh: x, y (pixels), r, g, b a corner
     private readonly float _x0, _y0, _x1, _y1, _r0, _r1;
 
-    private ShadingPaint(DocumentShading shading, Affine toPixels, float alpha, bool background)
+    private ShadingPaint(DocumentShading shading, Affine toPixels, float alpha, bool background, int steps)
     {
+        (_steps, _last) = (steps, steps - 1);
         _shading = shading;
         _alpha = alpha;
         _toShading = toPixels.Invertible ? toPixels.Inverse() : new Affine(0, 0, 0, 0, float.NaN, float.NaN);
@@ -32,11 +33,11 @@ internal sealed class ShadingPaint
         {
             case DocumentShadingKind.Axial when c.Length >= 4:
                 (_x0, _y0, _x1, _y1) = (c[0], c[1], c[2], c[3]);
-                _table = Table(shading);
+                _table = Table(shading, steps);
                 break;
             case DocumentShadingKind.Radial when c.Length >= 6:
                 (_x0, _y0, _r0, _x1, _y1, _r1) = (c[0], c[1], c[2], c[3], c[4], c[5]);
-                _table = Table(shading);
+                _table = Table(shading, steps);
                 break;
             case DocumentShadingKind.Function when c.Length >= 4:
                 (_x0, _x1, _y0, _y1) = (c[0], c[1], c[2], c[3]);
@@ -47,10 +48,14 @@ internal sealed class ShadingPaint
         }
     }
 
-    /// <summary><paramref name="shading"/> on a surface placed by <paramref name="map"/> (page points to pixels), at <paramref name="alpha"/>; its background used when <paramref name="background"/>.</summary>
-    public static ShadingPaint Of(DocumentShading shading, Affine map, float alpha, bool background)
+    /// <summary>
+    /// <paramref name="shading"/> on a surface placed by <paramref name="map"/> (page points to pixels), at
+    /// <paramref name="alpha"/>; its background used when <paramref name="background"/>; an axial or radial one through a
+    /// table of <paramref name="steps"/> steps (at least 2).
+    /// </summary>
+    public static ShadingPaint Of(DocumentShading shading, Affine map, float alpha, bool background, int steps)
     {
-        var paint = new ShadingPaint(shading, Affine.Of(shading.Matrix).Then(map), alpha, background);
+        var paint = new ShadingPaint(shading, Affine.Of(shading.Matrix).Then(map), alpha, background, steps);
         if (paint._triangles is { } t)
         {
             // A mesh's corners are on the page: into the surface's pixels.
@@ -241,8 +246,8 @@ internal sealed class ShadingPaint
     private void Lookup(double s, float[] colour, int k)
     {
         var table = _table!;
-        double at = s * (Steps - 1);
-        int i = Math.Clamp((int)at, 0, Steps - 2);
+        double at = s * _last;
+        int i = Math.Clamp((int)at, 0, _steps - 2);
         float f = (float)(at - i);
         int a = 3 * i, b = a + 3;
         colour[k] = table[a] + (table[b] - table[a]) * f;
@@ -264,13 +269,13 @@ internal sealed class ShadingPaint
     }
 
     // An axial or radial shading's colour at each of the table's steps of t, from its domain's start to its end.
-    private static float[] Table(DocumentShading shading)
+    private static float[] Table(DocumentShading shading, int steps)
     {
-        var table = new float[3 * Steps];
+        var table = new float[3 * steps];
         var f = shading.Colour!;
-        for (int i = 0; i < Steps; i++)
+        for (int i = 0; i < steps; i++)
         {
-            float t = shading.DomainStart + (shading.DomainEnd - shading.DomainStart) * i / (Steps - 1);
+            float t = shading.DomainStart + (shading.DomainEnd - shading.DomainStart) * i / (steps - 1);
             var c = f(t, 0f);
             (table[3 * i], table[3 * i + 1], table[3 * i + 2]) = (c.Red, c.Green, c.Blue);
         }
@@ -322,16 +327,16 @@ internal sealed class ShadingPaint
 }
 
 /// <summary>
-/// A tiling's colours. An upright tiling (its matrix neither turned nor slanted) is snapped to whole pixels as readers draw
-/// tilings, so its cells meet with no seam: its cell drawn once into a tile of the cell's size on the surface rounded up,
-/// the tiles repeated every that many pixels from where the pattern's origin falls, rounded. Any other tiling is drawn
-/// into a tile at the surface's resolution (the cells around it too when the cell reaches past its steps), each surface
-/// pixel's centre taken back into the pattern's space, wrapped by the steps and read from the tile.
+/// A tiling's colours. An upright tiling (its matrix neither turned nor slanted) whose cell covers no more than the largest
+/// tile's pixels (<see cref="DocumentDrawOptions.MaxTilePixels"/>) is snapped to whole pixels as readers draw tilings, so
+/// its cells meet with no seam: its cell drawn once into a tile of the cell's size on the surface rounded up, the tiles
+/// repeated every that many pixels from where the pattern's origin falls, rounded. Any other tiling is drawn into a tile
+/// at the surface's resolution, made smaller to hold no more than the largest tile's pixels (the cells around it too when
+/// the cell reaches past its steps), each surface pixel's centre taken back into the pattern's space, wrapped by the steps
+/// and read from the tile.
 /// </summary>
 internal sealed class TilePaint
 {
-    private const int MaxTilePixels = 1 << 20;
-
     private readonly DocumentPattern _pattern;
     private readonly Affine _toPattern;
     private readonly float _alpha;
@@ -339,14 +344,15 @@ internal sealed class TilePaint
     private readonly int _startX, _startY;      // an upright tiling: where one tile starts on the surface
     private readonly Lazy<(float[] Pixels, int Width, int Height, float Scale)?> _tile;
 
-    public TilePaint(DocumentPattern pattern, Affine map, float alpha, DrawContext context)
+    /// <summary><paramref name="pattern"/> on a surface placed by <paramref name="map"/>, at <paramref name="alpha"/>; its tile holds at most <paramref name="maxTilePixels"/> pixels.</summary>
+    public TilePaint(DocumentPattern pattern, Affine map, float alpha, DrawContext context, int maxTilePixels)
     {
         _pattern = pattern;
         _alpha = alpha;
         var toPixels = Affine.Of(pattern.Matrix).Then(map);
         _toPattern = toPixels.Invertible ? toPixels.Inverse() : new Affine(0, 0, 0, 0, double.NaN, double.NaN);
         double xs = Math.Abs(pattern.XStep), ys = Math.Abs(pattern.YStep);
-        _upright = Math.Abs(toPixels.B) < 1e-9 && Math.Abs(toPixels.C) < 1e-9 && toPixels.Invertible && Math.Abs(toPixels.A * xs) * Math.Abs(toPixels.D * ys) <= MaxTilePixels;
+        _upright = Math.Abs(toPixels.B) < 1e-9 && Math.Abs(toPixels.C) < 1e-9 && toPixels.Invertible && Math.Abs(toPixels.A * xs) * Math.Abs(toPixels.D * ys) <= maxTilePixels;
         if (_upright)
         {
             // The cell (one step by the other from the bounds' corner) on the surface, its size rounded up.
@@ -362,7 +368,7 @@ internal sealed class TilePaint
         }
 
         double scale = toPixels.Scale;
-        _tile = new Lazy<(float[], int, int, float)?>(() => Draw(pattern, scale, context), LazyThreadSafetyMode.ExecutionAndPublication);
+        _tile = new Lazy<(float[], int, int, float)?>(() => Draw(pattern, scale, context, maxTilePixels), LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public void Colours(SceneWork work, int x0, int x1, int y0, int y1)
@@ -427,8 +433,9 @@ internal sealed class TilePaint
         return (surface, width, height, 1f);
     }
 
-    // The cell drawn into a tile of one step by the other at the surface's resolution (smaller for a huge tile).
-    private static (float[] Pixels, int Width, int Height, float Scale)? Draw(DocumentPattern pattern, double scale, DrawContext context)
+    // The cell drawn into a tile of one step by the other at the surface's resolution (smaller for a tile past
+    // `maxTilePixels`).
+    private static (float[] Pixels, int Width, int Height, float Scale)? Draw(DocumentPattern pattern, double scale, DrawContext context, int maxTilePixels)
     {
         float xs = MathF.Abs(pattern.XStep), ys = MathF.Abs(pattern.YStep);
         double s = scale;
@@ -438,9 +445,9 @@ internal sealed class TilePaint
         }
 
         double pixels = xs * s * ys * s;
-        if (pixels > MaxTilePixels)
+        if (pixels > maxTilePixels)
         {
-            s *= Math.Sqrt(MaxTilePixels / pixels);
+            s *= Math.Sqrt(maxTilePixels / pixels);
         }
 
         int width = Math.Max(1, (int)Math.Ceiling(xs * s)), height = Math.Max(1, (int)Math.Ceiling(ys * s));

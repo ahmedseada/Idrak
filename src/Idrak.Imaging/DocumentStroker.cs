@@ -122,13 +122,11 @@ internal sealed class PixelOutline
 /// a bevel; or round; or a bevel), its open ends capped (butt, round or square); a closed piece's sides as two loops, the
 /// inner one wound back; the inner side of a turn passing through the turn's point, so every turn stays inside the stroke
 /// under the nonzero rule. A dash pattern cuts the polyline into open pieces first (an "on" of 0 a dot when its caps give
-/// one). Curves arrive flattened.
+/// one). Curves arrive flattened; a round join's, cap's or dot's polygon strays at most the stroke's flatness inside the
+/// true circle (<see cref="DocumentDrawOptions.StrokeFlatness"/>, in pixels).
 /// </summary>
 internal static class DocumentStroker
 {
-    // The most a round join's or cap's polygon strays inside the true circle, in pixels.
-    private const float Flatness = 0.1f;
-
     /// <summary>Cuts <paramref name="points"/> (x, y pairs; closed when <paramref name="closed"/>) by the dash pattern (pixels), calling <paramref name="piece"/> with each piece (open), or once with the whole when it has no dash.</summary>
     public static void Dash(ReadOnlySpan<float> points, bool closed, ReadOnlySpan<float> dash, float phase, PieceHandler piece)
     {
@@ -256,10 +254,11 @@ internal static class DocumentStroker
     /// <summary>
     /// Adds the stroke through <paramref name="points"/> (each at its own width) to <paramref name="outline"/>; a piece of
     /// no length is a dot by its caps (a disc for round, a square along (<paramref name="directionX"/>,
-    /// <paramref name="directionY"/>) for square, nothing for butt).
+    /// <paramref name="directionY"/>) for square, nothing for butt). Round joins, caps and dots are polygons within
+    /// <paramref name="flatness"/> pixels of the true circle.
     /// </summary>
     public static void Stroke(PixelOutline outline, ReadOnlySpan<PenPoint> points, bool closed, DocumentLineCap cap, DocumentLineJoin join, float miterLimit,
-        float directionX = 1f, float directionY = 0f)
+        float flatness, float directionX = 1f, float directionY = 0f)
     {
         if (points.IsEmpty)
         {
@@ -287,18 +286,18 @@ internal static class DocumentStroker
             var p2 = kept.AsSpan(0, n);
             if (n == 1)
             {
-                Dot(outline, p2[0], cap, directionX, directionY);
+                Dot(outline, p2[0], cap, directionX, directionY, flatness);
                 return;
             }
 
             if (closed && n >= 3)
             {
-                Side(outline, p2, forward: true, join, miterLimit);
-                Side(outline, p2, forward: false, join, miterLimit);
+                Side(outline, p2, forward: true, join, miterLimit, flatness);
+                Side(outline, p2, forward: false, join, miterLimit, flatness);
                 return;
             }
 
-            Open(outline, p2, cap, join, miterLimit);
+            Open(outline, p2, cap, join, miterLimit, flatness);
         }
         finally
         {
@@ -307,7 +306,7 @@ internal static class DocumentStroker
     }
 
     // A dot: a disc (round caps) or a square (square caps) of the stroke's width; butt caps draw nothing.
-    private static void Dot(PixelOutline outline, PenPoint p, DocumentLineCap cap, float dx, float dy)
+    private static void Dot(PixelOutline outline, PenPoint p, DocumentLineCap cap, float dx, float dy, float flatness)
     {
         float r = p.Width / 2;
         if (!(r > 0))
@@ -317,7 +316,7 @@ internal static class DocumentStroker
 
         if (cap == DocumentLineCap.Round)
         {
-            Disc(outline, p.X, p.Y, r);
+            Disc(outline, p.X, p.Y, r, flatness);
         }
         else if (cap == DocumentLineCap.Square)
         {
@@ -330,35 +329,35 @@ internal static class DocumentStroker
     }
 
     // An open polyline: one contour, its left side forward, the end cap, its right side back, the start cap.
-    private static void Open(PixelOutline outline, ReadOnlySpan<PenPoint> p, DocumentLineCap cap, DocumentLineJoin join, float miterLimit)
+    private static void Open(PixelOutline outline, ReadOnlySpan<PenPoint> p, DocumentLineCap cap, DocumentLineJoin join, float miterLimit, float flatness)
     {
         int n = p.Length;
         var (dx, dy) = Direction(p[0], p[1]);
         float r0 = p[0].Width / 2;
         outline.Move(p[0].X - dy * r0, p[0].Y + dx * r0);
-        Walk(outline, p, forward: true, closed: false, join, miterLimit);
+        Walk(outline, p, forward: true, closed: false, join, miterLimit, flatness);
         var (ex, ey) = Direction(p[n - 2], p[n - 1]);
-        Cap(outline, p[n - 1], ex, ey, cap);
-        Walk(outline, p, forward: false, closed: false, join, miterLimit);
-        Cap(outline, p[0], -dx, -dy, cap);
+        Cap(outline, p[n - 1], ex, ey, cap, flatness);
+        Walk(outline, p, forward: false, closed: false, join, miterLimit, flatness);
+        Cap(outline, p[0], -dx, -dy, cap, flatness);
         outline.Close();
     }
 
     // One side of a closed polyline as a loop from its first point: the left side forward, or the right side back (the
     // other way round, so the loops wind against each other and the inside of the inner one stays empty).
-    private static void Side(PixelOutline outline, ReadOnlySpan<PenPoint> p, bool forward, DocumentLineJoin join, float miterLimit)
+    private static void Side(PixelOutline outline, ReadOnlySpan<PenPoint> p, bool forward, DocumentLineJoin join, float miterLimit, float flatness)
     {
         int n = p.Length;
         var (dx, dy) = Direction(p[0], p[forward ? 1 : n - 1]);
         float r = p[0].Width / 2;
         outline.Move(p[0].X - dy * r, p[0].Y + dx * r);
-        Walk(outline, p, forward, closed: true, join, miterLimit);
+        Walk(outline, p, forward, closed: true, join, miterLimit, flatness);
         outline.Close();
     }
 
     // Along one side: each segment's offset end, then the join at the point after it (for a closed loop, every point,
     // back to the first).
-    private static void Walk(PixelOutline outline, ReadOnlySpan<PenPoint> p, bool forward, bool closed, DocumentLineJoin join, float miterLimit)
+    private static void Walk(PixelOutline outline, ReadOnlySpan<PenPoint> p, bool forward, bool closed, DocumentLineJoin join, float miterLimit, float flatness)
     {
         int n = p.Length;
         int segments = closed ? n : n - 1;
@@ -378,13 +377,13 @@ internal static class DocumentStroker
 
             int c = forward ? (b + 1) % n : (b - 1 + n) % n;
             var (fx, fy) = Direction(p[b], p[c]);
-            Join(outline, p[b], dx, dy, fx, fy, rb, join, miterLimit);
+            Join(outline, p[b], dx, dy, fx, fy, rb, join, miterLimit, flatness);
         }
     }
 
     // The join at `v` from the incoming direction (dx, dy) to the outgoing one (fx, fy), on the left side: outside the turn
     // a miter, a round or a bevel; inside it through the turn's point.
-    private static void Join(PixelOutline outline, PenPoint v, float dx, float dy, float fx, float fy, float r, DocumentLineJoin join, float miterLimit)
+    private static void Join(PixelOutline outline, PenPoint v, float dx, float dy, float fx, float fy, float r, DocumentLineJoin join, float miterLimit, float flatness)
     {
         float ax = v.X - dy * r, ay = v.Y + dx * r;                         // the incoming side's end
         float bx = v.X - fy * r, by = v.Y + fx * r;                         // the outgoing side's start
@@ -407,7 +406,7 @@ internal static class DocumentStroker
         switch (join)
         {
             case DocumentLineJoin.Round:
-                Arc(outline, v.X, v.Y, r, ax, ay, bx, by, clockwiseShort: true);
+                Arc(outline, v.X, v.Y, r, ax, ay, bx, by, true, flatness);
                 break;
             case DocumentLineJoin.Miter:
             {
@@ -433,14 +432,14 @@ internal static class DocumentStroker
     }
 
     // A cap at `p` facing (dx, dy): from the left side's end to the right side's start.
-    private static void Cap(PixelOutline outline, PenPoint p, float dx, float dy, DocumentLineCap cap)
+    private static void Cap(PixelOutline outline, PenPoint p, float dx, float dy, DocumentLineCap cap, float flatness)
     {
         float r = p.Width / 2;
         float lx = p.X - dy * r, ly = p.Y + dx * r, rx = p.X + dy * r, ry = p.Y - dx * r;
         switch (cap)
         {
             case DocumentLineCap.Round:
-                Arc(outline, p.X, p.Y, r, lx, ly, rx, ry, clockwiseShort: true, through: (p.X + dx * r, p.Y + dy * r));
+                Arc(outline, p.X, p.Y, r, lx, ly, rx, ry, true, flatness, through: (p.X + dx * r, p.Y + dy * r));
                 break;
             case DocumentLineCap.Square:
                 outline.Line(lx + dx * r, ly + dy * r);
@@ -453,8 +452,9 @@ internal static class DocumentStroker
         }
     }
 
-    // An arc of radius r about (cx, cy) from a to b: the way through `through` when given, else the short way.
-    private static void Arc(PixelOutline outline, float cx, float cy, float r, float ax, float ay, float bx, float by, bool clockwiseShort, (float X, float Y)? through = null)
+    // An arc of radius r about (cx, cy) from a to b: the way through `through` when given, else the short way; its polygon
+    // within `flatness` pixels inside the circle.
+    private static void Arc(PixelOutline outline, float cx, float cy, float r, float ax, float ay, float bx, float by, bool clockwiseShort, float flatness, (float X, float Y)? through = null)
     {
         double a0 = Math.Atan2(ay - cy, ax - cx), a1 = Math.Atan2(by - cy, bx - cx);
         double sweep = a1 - a0;
@@ -471,7 +471,7 @@ internal static class DocumentStroker
             sweep = Normalize(sweep);
         }
 
-        int steps = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / (2 * Math.Acos(Math.Max(-1, 1 - Flatness / Math.Max(r, Flatness))))), 1, 256);
+        int steps = Math.Clamp((int)Math.Ceiling(Math.Abs(sweep) / (2 * Math.Acos(Math.Max(-1, 1 - flatness / Math.Max(r, flatness))))), 1, 256);
         for (int i = 1; i <= steps; i++)
         {
             double a = a0 + sweep * i / steps;
@@ -503,10 +503,10 @@ internal static class DocumentStroker
         return l > 0 ? (dx / l, dy / l) : (1f, 0f);
     }
 
-    // A disc of radius r at (x, y), within the flatness of the true circle.
-    public static void Disc(PixelOutline outline, float x, float y, float r)
+    // A disc of radius r at (x, y), within `flatness` pixels of the true circle.
+    public static void Disc(PixelOutline outline, float x, float y, float r, float flatness)
     {
-        int n = Math.Clamp((int)MathF.Ceiling(MathF.PI / MathF.Acos(MathF.Max(-1f, 1f - Flatness / MathF.Max(r, Flatness)))), 8, 512);
+        int n = Math.Clamp((int)MathF.Ceiling(MathF.PI / MathF.Acos(MathF.Max(-1f, 1f - flatness / MathF.Max(r, flatness)))), 8, 512);
         outline.Move(x + r, y);
         for (int k = 1; k < n; k++)
         {

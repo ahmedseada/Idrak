@@ -8,7 +8,7 @@ namespace Idrak.Imaging;
 /// <summary>
 /// "coverage": fills an outline with each pixel's exact covered area (signed area accumulated along every edge, then one
 /// running sum per row: the nonzero rule for contours that do not overlap the other way, which glyph outlines do not).
-/// Curves are flattened to lines within 1/32 of a pixel (as FreeType). No hinting: an outline is drawn as designed, at any size and
+/// Curves are flattened to lines within 1/32 of a pixel (as FreeType), or the flatness a fill asks for. No hinting: an outline is drawn as designed, at any size and
 /// any fractional position. The <see cref="OutlineFill.NonZero"/> and <see cref="OutlineFill.EvenOdd"/> rules (a
 /// document's paths) work only the target's rows and columns, edges past its left side counted as standing on it: each
 /// row's running sum of winding is folded by the rule (its size held to one for nonzero, its parity for even-odd), the
@@ -16,14 +16,19 @@ namespace Idrak.Imaging;
 /// </summary>
 public sealed class CoverageRasterizer : IOutlineRasterizer
 {
-    // The most a flattened curve strays from the true one, in pixels (FreeType splits to about this).
+    // The most a flattened curve strays from the true one, in pixels, unless a fill asks for another (FreeType splits to
+    // about this; DocumentDrawOptions.FillFlatness has the same default).
     private const float Tolerance = 1f / 32;
 
     /// <inheritdoc/>
     public string Name => OutlineRasterizers.Coverage;
 
     /// <inheritdoc/>
-    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height)
+    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
+        FillGlyph(outline, scale, x, y, coverage, width, height, Tolerance);
+
+    // The glyph rule, curves flattened within `tolerance` pixels.
+    private static void FillGlyph(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, float tolerance)
     {
         ArgumentNullException.ThrowIfNull(outline);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
@@ -59,7 +64,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         {
             var accumulation = area.AsSpan(0, size);
             accumulation.Clear();
-            Trace(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight);
+            Trace(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight, tolerance);
             Composite(accumulation, boxWidth, boxHeight, left, top, coverage, width, height);
         }
         finally
@@ -69,11 +74,20 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
     }
 
     /// <inheritdoc/>
-    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule)
+    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
+        Fill(outline, scale, x, y, coverage, width, height, rule, Tolerance);
+
+    /// <inheritdoc/>
+    public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness)
     {
+        if (!(flatness > 0f) || !float.IsFinite(flatness))
+        {
+            throw new ArgumentOutOfRangeException(nameof(flatness), flatness, "A curve's flatness is more than 0 pixels and finite.");
+        }
+
         if (rule == OutlineFill.Glyph)
         {
-            Fill(outline, scale, x, y, coverage, width, height);
+            FillGlyph(outline, scale, x, y, coverage, width, height, flatness);
             return;
         }
 
@@ -112,7 +126,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         {
             var accumulation = area.AsSpan(0, size);
             accumulation.Clear();
-            TraceClipped(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight, visible);
+            TraceClipped(outline, scale, x - left, y - top, accumulation, boxWidth, boxHeight, visible, flatness);
             CompositeRule(accumulation, boxWidth, boxHeight, visible, left, top, coverage, width, rule == OutlineFill.EvenOdd);
         }
         finally
@@ -123,7 +137,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
 
     // Every edge of the outline, flattened as Trace flattens it, into a box `visible` columns wide (plus the carry's two):
     // an edge's stretch left of the box stands on its left side, a stretch right of it on its right side.
-    private static void TraceClipped(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h, int visible)
+    private static void TraceClipped(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h, int visible, float tolerance)
     {
         var verbs = outline.Verbs.Span;
         var p = outline.Points.Span;
@@ -156,7 +170,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                 {
                     float qx = ox + p[at] * scale, qy = oy - p[at + 1] * scale, nx = ox + p[at + 2] * scale, ny = oy - p[at + 3] * scale;
                     float dd = MathF.Sqrt(Square(cx - 2 * qx + nx) + Square(cy - 2 * qy + ny));
-                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(dd / (8 * Tolerance))), 1, MaxSteps);
+                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(dd / (8 * tolerance))), 1, MaxSteps);
                     float px = cx, py = cy;
                     for (int i = 1; i <= n; i++)
                     {
@@ -177,7 +191,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                     float nx = ox + p[at + 4] * scale, ny = oy - p[at + 5] * scale;
                     float dd = MathF.Max(MathF.Sqrt(Square(cx - 2 * c1x + c2x) + Square(cy - 2 * c1y + c2y)),
                         MathF.Sqrt(Square(c1x - 2 * c2x + nx) + Square(c1y - 2 * c2y + ny)));
-                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(3 * dd / (4 * Tolerance))), 1, MaxSteps);
+                    int n = Math.Clamp((int)MathF.Ceiling(MathF.Sqrt(3 * dd / (4 * tolerance))), 1, MaxSteps);
                     float px = cx, py = cy;
                     for (int i = 1; i <= n; i++)
                     {
@@ -316,8 +330,8 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
         }
     }
 
-    // Every edge of the outline, flattened, into the accumulation buffer (origin at (ox, oy) in the box).
-    private static void Trace(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h)
+    // Every edge of the outline, flattened within `tolerance` pixels, into the accumulation buffer (origin at (ox, oy) in the box).
+    private static void Trace(GlyphOutline outline, float scale, float ox, float oy, Span<float> a, int w, int h, float tolerance)
     {
         var verbs = outline.Verbs.Span;
         var p = outline.Points.Span;
@@ -351,7 +365,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                     float qx = ox + p[at] * scale, qy = oy - p[at + 1] * scale, nx = ox + p[at + 2] * scale, ny = oy - p[at + 3] * scale;
                     // Uniform steps: a parabola's chords stray at most |p0 - 2 p1 + p2| / (8 n²).
                     float dd = MathF.Sqrt(Square(cx - 2 * qx + nx) + Square(cy - 2 * qy + ny));
-                    int n = Math.Max(1, (int)MathF.Ceiling(MathF.Sqrt(dd / (8 * Tolerance))));
+                    int n = Math.Max(1, (int)MathF.Ceiling(MathF.Sqrt(dd / (8 * tolerance))));
                     float px = cx, py = cy;
                     for (int i = 1; i <= n; i++)
                     {
@@ -373,7 +387,7 @@ public sealed class CoverageRasterizer : IOutlineRasterizer
                     // Uniform steps: a cubic's chords stray at most 3/4 max|second difference| / n².
                     float dd = MathF.Max(MathF.Sqrt(Square(cx - 2 * c1x + c2x) + Square(cy - 2 * c1y + c2y)),
                         MathF.Sqrt(Square(c1x - 2 * c2x + nx) + Square(c1y - 2 * c2y + ny)));
-                    int n = Math.Max(1, (int)MathF.Ceiling(MathF.Sqrt(3 * dd / (4 * Tolerance))));
+                    int n = Math.Max(1, (int)MathF.Ceiling(MathF.Sqrt(3 * dd / (4 * tolerance))));
                     float px = cx, py = cy;
                     for (int i = 1; i <= n; i++)
                     {

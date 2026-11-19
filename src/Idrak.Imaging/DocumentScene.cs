@@ -13,17 +13,16 @@ namespace Idrak.Imaging;
 /// </summary>
 internal sealed class DocumentScene
 {
-    private const float Flatness = 0.1f;   // pixels a flattened curve may stray (strokes)
-
     private readonly List<SceneItem> _items;
     private readonly SceneClip?[] _clips;
     private readonly IReadOnlyList<DocumentGroup> _groups;
     private readonly SceneMask[] _masks;
     private readonly int _width;
     private readonly DrawContext _context;
+    private readonly float _flatness;   // pixels a fill's flattened curve may stray (DocumentDrawOptions.FillFlatness)
 
     private DocumentScene(List<SceneItem> items, SceneClip?[] clips, IReadOnlyList<DocumentGroup> groups, SceneMask[] masks, int width, DrawContext context) =>
-        (_items, _clips, _groups, _masks, _width, _context) = (items, clips, groups, masks, width, context);
+        (_items, _clips, _groups, _masks, _width, _context, _flatness) = (items, clips, groups, masks, width, context, context.Options.FillFlatness);
 
     /// <summary>
     /// <paramref name="page"/>'s parts (those of <paramref name="parts"/>; hidden text only when <paramref name="hidden"/>)
@@ -96,7 +95,7 @@ internal sealed class DocumentScene
         int w = _width, size = w * rows;
         float[] coverage = ArrayPool<float>.Shared.Rent(size);
         float[] colour = ArrayPool<float>.Shared.Rent(4 * size);
-        var work = new SceneWork(w, top, rows, coverage, colour, _context.Rasterizer);
+        var work = new SceneWork(w, top, rows, coverage, colour, _context.Rasterizer, _flatness);
         var clipMasks = new Dictionary<int, float[]?>();
         var softMasks = new Dictionary<int, float[]>();
         var open = new List<Layer>();
@@ -281,7 +280,7 @@ internal sealed class DocumentScene
             span.Clear();
             if (!clip.Outline.IsEmpty)
             {
-                work.Rasterizer.Fill(clip.Outline, 1f, 0f, -work.Top, span, work.Width, work.Rows, clip.Rule);
+                work.Rasterizer.Fill(clip.Outline, 1f, 0f, -work.Top, span, work.Width, work.Rows, clip.Rule, work.Flatness);
             }
 
             if (parent is not null)
@@ -435,6 +434,16 @@ internal sealed class DocumentScene
         private readonly Dictionary<string, int> _missing = new(StringComparer.Ordinal);
         private readonly float _scale = (float)map.Scale;
 
+        // The options' numbers, read once a scene: a stroke's flatness (pixels), a shading's steps, the largest tile, and a
+        // face found for a font that is not embedded: its stretch bounds, slant and stroke (DocumentDrawOptions).
+        private readonly float _strokeFlatness = context.Options.StrokeFlatness;
+        private readonly int _shadingSteps = context.Options.ShadingSteps;
+        private readonly int _maxTilePixels = context.Options.MaxTilePixels;
+        private readonly float _minStretch = context.Options.MinSubstituteStretch;
+        private readonly float _maxStretch = context.Options.MaxSubstituteStretch;
+        private readonly float _slant = context.Options.SubstituteSlant;
+        private readonly float _embolden = context.Options.SubstituteStroke;
+
         public void ReportMissing()
         {
             foreach (var (font, count) in _missing)
@@ -478,7 +487,7 @@ internal sealed class DocumentScene
 
         public void Shading(DocumentShading shading, List<SceneItem> items)
         {
-            var paint = ShadingPaint.Of(shading, map, shading.Alpha, background: false);
+            var paint = ShadingPaint.Of(shading, map, shading.Alpha, background: false, _shadingSteps);
             var item = new SceneItem(new ShadingItem(paint).Render);
             var (left, top, right, bottom) = paint.Bounds(width, height);
             items.Add(Set(item, left, top, right, bottom, shading.Order, shading.Clip, shading.Group, shading.SoftMask, shading.Blend));
@@ -525,7 +534,7 @@ internal sealed class DocumentScene
             {
                 var glyphs = outline.Build();
                 var stroked = new PixelOutline();
-                float w = stroke ? (run.StrokeWidth > 0 ? run.StrokeWidth * _scale : 1f) : EmboldenShare * run.FontSize * _scale;
+                float w = stroke ? (run.StrokeWidth > 0 ? run.StrokeWidth * _scale : 1f) : _embolden * run.FontSize * _scale;
                 // The glyphs' outline is held with y turned up: turned back before it is stroked.
                 var points = glyphs.Points.ToArray();
                 for (int i = 1; i < points.Length; i += 2)
@@ -570,12 +579,12 @@ internal sealed class DocumentScene
         {
             if (pattern?.Shading is { } shading)
             {
-                return new ScenePaint(ShadingPaint.Of(shading, map, colour.Alpha, background: true).Colours);
+                return new ScenePaint(ShadingPaint.Of(shading, map, colour.Alpha, background: true, _shadingSteps).Colours);
             }
 
             if (pattern?.Cell is not null)
             {
-                return new ScenePaint(new TilePaint(pattern, map, colour.Alpha, context).Colours);
+                return new ScenePaint(new TilePaint(pattern, map, colour.Alpha, context, _maxTilePixels).Colours);
             }
 
             return new ScenePaint(colour);
@@ -663,7 +672,7 @@ internal sealed class DocumentScene
                     }
 
                     pen.Stroke(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(path), pieceClosed, settings, seed, stroke);
-                    DocumentStroker.Stroke(outline, stroke.Points, stroke.Closed, cap, join, miterLimit, dx, dy);
+                    DocumentStroker.Stroke(outline, stroke.Points, stroke.Closed, cap, join, miterLimit, _strokeFlatness, dx, dy);
                 });
             }
 
@@ -692,7 +701,7 @@ internal sealed class DocumentScene
                         var (qx, qy) = At(points, k, pixels);
                         var (ex, ey) = At(points, k + 2, pixels);
                         double dd = Math.Sqrt((cx - 2 * qx + ex) * (cx - 2 * qx + ex) + (cy - 2 * qy + ey) * (cy - 2 * qy + ey));
-                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(dd / (8 * Flatness))), 1, 4096);
+                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(dd / (8 * _strokeFlatness))), 1, 4096);
                         for (int i = 1; i <= n; i++)
                         {
                             double t = (double)i / n, u = 1 - t;
@@ -712,7 +721,7 @@ internal sealed class DocumentScene
                         var (ex, ey) = At(points, k + 4, pixels);
                         double dd = Math.Max(Math.Sqrt((cx - 2 * ax + bx) * (cx - 2 * ax + bx) + (cy - 2 * ay + by) * (cy - 2 * ay + by)),
                             Math.Sqrt((ax - 2 * bx + ex) * (ax - 2 * bx + ex) + (ay - 2 * by + ey) * (ay - 2 * by + ey)));
-                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(3 * dd / (4 * Flatness))), 1, 4096);
+                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(3 * dd / (4 * _strokeFlatness))), 1, 4096);
                         for (int i = 1; i <= n; i++)
                         {
                             double t = (double)i / n, u = 1 - t;
@@ -743,8 +752,9 @@ internal sealed class DocumentScene
 
         // A run's glyphs as one outline in surface pixels (a new one, or added to `into`), or null when its font is not there
         // (counted: the run is left out). A face found for a font the document does not embed draws each glyph stretched to
-        // the advance the document gives it (within a third either way), slanted when the font's name says it is italic or
-        // oblique and the face is not, and says when the name says bold and the face is not (`embolden`).
+        // the advance the document gives it (within the options' stretch bounds), slanted by the options' slant when the
+        // font's name says it is italic or oblique and the face is not, and says when the name says bold and the face is not
+        // and the options stroke such faces (`embolden`).
         private PixelOutline? RunOutline(DocumentTextRun run, PixelOutline? into, out bool embolden)
         {
             var face = run.Face;
@@ -768,12 +778,12 @@ internal sealed class DocumentScene
             {
                 string font = run.Font ?? "";
                 bool slanted = face.Style.Contains("Italic", StringComparison.OrdinalIgnoreCase) || face.Style.Contains("Oblique", StringComparison.OrdinalIgnoreCase);
-                if (!slanted && (font.Contains("Italic", StringComparison.OrdinalIgnoreCase) || font.Contains("Oblique", StringComparison.OrdinalIgnoreCase)))
+                if (_slant > 0f && !slanted && (font.Contains("Italic", StringComparison.OrdinalIgnoreCase) || font.Contains("Oblique", StringComparison.OrdinalIgnoreCase)))
                 {
-                    m = m with { C = m.C + SlantShare * m.A, D = m.D + SlantShare * m.B };
+                    m = m with { C = m.C + _slant * m.A, D = m.D + _slant * m.B };
                 }
 
-                embolden = font.Contains("Bold", StringComparison.OrdinalIgnoreCase) && !face.Style.Contains("Bold", StringComparison.OrdinalIgnoreCase);
+                embolden = _embolden > 0f && font.Contains("Bold", StringComparison.OrdinalIgnoreCase) && !face.Style.Contains("Bold", StringComparison.OrdinalIgnoreCase);
             }
 
             var outline = into ?? new PixelOutline();
@@ -814,7 +824,7 @@ internal sealed class DocumentScene
                 var placed = m;
                 if (mapped is not null && (uint)id < (uint)face.GlyphCount && face.Advance(id) > 0 && g.Advance > 0 && across > 0)
                 {
-                    float stretch = Math.Clamp(g.Advance / (face.Advance(id) / (float)upem * across), 0.75f, 4f / 3f);
+                    float stretch = Math.Clamp(g.Advance / (face.Advance(id) / (float)upem * across), _minStretch, _maxStretch);
                     placed = m with { A = m.A * stretch, B = m.B * stretch };
                 }
 
@@ -823,10 +833,6 @@ internal sealed class DocumentScene
 
             return outline;
         }
-
-        // A slant of about 12 degrees, and a stroke of 3 % of the size, for a face found for an italic or a bold font that
-        // is not itself.
-        private const float SlantShare = 0.21f, EmboldenShare = 0.03f;
 
         private void AddGlyph(PixelOutline outline, IFontFace face, int glyph, float ox, float oy, DocumentMatrix m, int upem)
         {
@@ -926,8 +932,8 @@ internal sealed record SceneClip(GlyphOutline Outline, OutlineFill Rule, int Par
 /// <summary>A soft mask and its content made ready when a band first needs it.</summary>
 internal sealed record SceneMask(DocumentSoftMask Mask, Lazy<DocumentScene> Scene);
 
-/// <summary>The buffers one band is drawn with: coverage (a value a pixel) and colour (straight red, green, blue, alpha), the band's rows of the surface.</summary>
-internal sealed class SceneWork(int width, int top, int rows, float[] coverage, float[] colour, IOutlineRasterizer rasterizer)
+/// <summary>The buffers one band is drawn with: coverage (a value a pixel) and colour (straight red, green, blue, alpha), the band's rows of the surface; the rasterizer and the flatness it fills curves within.</summary>
+internal sealed class SceneWork(int width, int top, int rows, float[] coverage, float[] colour, IOutlineRasterizer rasterizer, float flatness)
 {
     public int Width { get; } = width;
 
@@ -940,6 +946,9 @@ internal sealed class SceneWork(int width, int top, int rows, float[] coverage, 
     public float[] Colour { get; } = colour;
 
     public IOutlineRasterizer Rasterizer { get; } = rasterizer;
+
+    /// <summary>How far, in pixels, a fill's flattened curve may stray (<see cref="DocumentDrawOptions.FillFlatness"/>).</summary>
+    public float Flatness { get; } = flatness;
 
     public Span<float> CoverageSpan => Coverage.AsSpan(0, Width * Rows);
 }
@@ -982,7 +991,7 @@ internal sealed class OutlineItem(GlyphOutline outline, OutlineFill rule, SceneP
 {
     public bool Render(SceneWork work, int x0, int x1, int y0, int y1, out (float R, float G, float B, float A) solid)
     {
-        work.Rasterizer.Fill(outline, 1f, 0f, -work.Top, work.CoverageSpan, work.Width, work.Rows, rule);
+        work.Rasterizer.Fill(outline, 1f, 0f, -work.Top, work.CoverageSpan, work.Width, work.Rows, rule, work.Flatness);
         if (paint.Solid(out solid))
         {
             return true;
@@ -1052,7 +1061,7 @@ internal sealed class ImageItem
             return true;   // nothing drawn: no coverage was written
         }
 
-        work.Rasterizer.Fill(_quad, 1f, 0f, -work.Top, work.CoverageSpan, work.Width, work.Rows, OutlineFill.NonZero);
+        work.Rasterizer.Fill(_quad, 1f, 0f, -work.Top, work.CoverageSpan, work.Width, work.Rows, OutlineFill.NonZero, work.Flatness);
         var h = _toImage;
         var pixels = source.Pixels;
         var mask = source.Mask;

@@ -15,6 +15,7 @@ public sealed class Idrak.Imaging.CoverageRasterizer : Idrak.Abstraction.Data.IO
   public string Name { get; }
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height)
   public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height, Idrak.Abstraction.Data.OutlineFill rule)
+  public void Fill(Idrak.Abstraction.Data.GlyphOutline outline, float scale, float x, float y, System.Span<float> coverage, int width, int height, Idrak.Abstraction.Data.OutlineFill rule, float flatness)
 
 public sealed record Idrak.Imaging.DocumentShapeStyle : System.IEquatable<Idrak.Imaging.DocumentShapeStyle>
   public DocumentShapeStyle()

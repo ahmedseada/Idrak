@@ -50,7 +50,7 @@ internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
         }
 
         var background = options.Background;
-        int rows = BandRows(width);
+        int rows = BandRows(width, options.BandPixels, options.MinBandRows, options.MaxBandRows);
         int bands = (height + rows - 1) / rows;
         HostParallel.For(bands, 1, (first, last) =>
         {
@@ -110,8 +110,20 @@ internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
         return scenes;
     }
 
-    // A band holds about 128 Ki pixels (every buffer a band needs a few MiB at most), and at least 8 rows.
-    internal static int BandRows(int width) => Math.Clamp((1 << 17) / Math.Max(1, width), 8, 1024);
+    // A band holds about `pixels` pixels (DocumentDrawOptions.BandPixels, 128 Ki unless set: every buffer a band needs a
+    // few MiB at most), from `minRows` to `maxRows` rows (8 to 1,024 unless set); refused when the bounds cross or a band's
+    // colours would pass what one array holds.
+    internal static int BandRows(int width, int pixels, int minRows, int maxRows)
+    {
+        if (minRows > maxRows)
+        {
+            throw new ArgumentOutOfRangeException(nameof(minRows), minRows, $"DocumentDrawOptions.MinBandRows ({minRows}) is more than MaxBandRows ({maxRows}): a band cannot hold both.");
+        }
+
+        int rows = Math.Clamp(pixels / Math.Max(1, width), minRows, maxRows);
+        return 4L * Math.Max(1, width) * rows <= Array.MaxLength ? rows
+            : throw new ArgumentOutOfRangeException(nameof(pixels), rows, $"A band of {rows} rows of {width} pixels is more than one array holds: lower DocumentDrawOptions.MinBandRows or BandPixels.");
+    }
 
     internal static void Fill(Span<float> rgba, float r, float g, float b, float a)
     {

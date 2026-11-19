@@ -374,6 +374,24 @@ public interface IOutlineRasterizer
 
         Fill(outline, scale, x, y, coverage, width, height);
     }
+
+    /// <summary>
+    /// <see cref="Fill(GlyphOutline, float, float, float, Span{float}, int, int, OutlineFill)"/> with each curve flattened
+    /// into lines that stray at most <paramref name="flatness"/> pixels from it (a page drawer's
+    /// <see cref="DocumentDrawOptions.FillFlatness"/>). A rasterizer that does not implement this overload flattens by its
+    /// own measure.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="flatness"/> is not more than 0 and finite.</exception>
+    /// <exception cref="NotSupportedException">The rasterizer has no such rule (the message names it).</exception>
+    void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness)
+    {
+        if (!(flatness > 0f) || !float.IsFinite(flatness))
+        {
+            throw new ArgumentOutOfRangeException(nameof(flatness), flatness, "A curve's flatness is more than 0 pixels and finite.");
+        }
+
+        Fill(outline, scale, x, y, coverage, width, height, rule);
+    }
 }
 
 /// <summary>
@@ -428,19 +446,26 @@ public static class OutlineRasterizers
         public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
             Fill(outline, scale, x, y, coverage, width, height, OutlineFill.Glyph);
 
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule)
+        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
+            Guarded(outline, scale, x, y, coverage, width, height, rule, null);
+
+        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness) =>
+            Guarded(outline, scale, x, y, coverage, width, height, rule, flatness);
+
+        // The fill by the rule, with the flatness when one was asked for (each rasterizer called the way it was).
+        private void Guarded(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float? flatness)
         {
             if (slot.Policy == SlotPolicy.Shadow)
             {
                 var run = slot.Shadow();
                 float[]? before = run is null ? null : coverage.ToArray();
-                library.Fill(outline, scale, x, y, coverage, width, height, rule);
+                Call(library, outline, scale, x, y, coverage, width, height, rule, flatness);
                 if (run is not null)
                 {
                     run.Answered();
                     try
                     {
-                        app.Fill(outline, scale, x, y, before, width, height, rule);
+                        Call(app, outline, scale, x, y, before, width, height, rule, flatness);
                         run.Done(Comparisons.Difference(coverage.ToArray(), before!, 1e-3f));
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
@@ -455,12 +480,24 @@ public static class OutlineRasterizers
             float[]? copy = slot.Policy == SlotPolicy.FallBack ? coverage.ToArray() : null;   // only a fallback needs the coverage before
             try
             {
-                app.Fill(outline, scale, x, y, coverage, width, height, rule);
+                Call(app, outline, scale, x, y, coverage, width, height, rule, flatness);
             }
             catch (Exception e) when (slot.Failed(e))                       // true only under FallBack, which made the copy
             {
                 copy?.CopyTo(coverage);
-                library.Fill(outline, scale, x, y, coverage, width, height, rule);
+                Call(library, outline, scale, x, y, coverage, width, height, rule, flatness);
+            }
+        }
+
+        private static void Call(IOutlineRasterizer rasterizer, GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float? flatness)
+        {
+            if (flatness is { } f)
+            {
+                rasterizer.Fill(outline, scale, x, y, coverage, width, height, rule, f);
+            }
+            else
+            {
+                rasterizer.Fill(outline, scale, x, y, coverage, width, height, rule);
             }
         }
     }

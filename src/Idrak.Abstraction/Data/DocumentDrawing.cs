@@ -18,9 +18,10 @@ public enum DocumentDrawColour : byte
 /// <summary>
 /// How a page is drawn to pixels: the resolution, the colour, the parts drawn and the pieces the drawer draws with (all by
 /// name, so each can be replaced). <see cref="DpiVariable"/> sets the resolution and <see cref="FontsVariable"/> the folder of
-/// fonts for text whose font a document does not embed.
+/// fonts for text whose font a document does not embed. The drawer's numbers are settings too (its bands, a shading's
+/// steps, the largest tile, how a face found for a font is fitted, how closely curves are flattened), each with its default.
 /// </summary>
-public sealed record DocumentDrawOptions
+public sealed partial record DocumentDrawOptions
 {
     /// <summary>The variable that sets the resolution in dots per inch (<see cref="Dpi"/>; 150 unless set): "IDRAK_DOCUMENT_DPI".</summary>
     public const string DpiVariable = "IDRAK_DOCUMENT_DPI";
