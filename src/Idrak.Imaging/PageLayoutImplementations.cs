@@ -421,9 +421,11 @@ internal sealed class LetterLayout : IPageLayout
 
         int height = (int)Math.Ceiling(Math.Max(style.Height, y + footerHeight + margin * 0.6f));
         using var canvas = new PageCanvas(width, height);
+        var record = style.Vectors ? new PageRecord() : null;
         var blocks = new List<PageBlock>();
         foreach (var (kind, text, block, x, top, blue) in placed)
         {
+            record?.Text(block, x, top, blue, glyphs, glyphs.Line);
             glyphs.Draw(block, x, top, blue ? canvas.Blue : canvas.Ink, width, height);
             blocks.Add(new PageBlock(kind, text, x, top, block.Width, block.Height));
         }
@@ -443,14 +445,16 @@ internal sealed class LetterLayout : IPageLayout
                 TextSize = header.Size, LineHeight = header.Size * 1.2f, StrokeWidth = Math.Max(1f, emblemRadius * 0.05f),
             };
             var (drawn, _) = ShapesLayout.Plan(profile.Sample(Mix(e, 2)), box, Mix(e, 3));
-            var ink = ShapeDrawing.Draw(canvas, canvas.Ink, drawn, ornaments.EmblemPen, ornaments.EmblemPenSettings, Mix(e, 4), box.StrokeWidth, null,
-                new ShapeLettering(Lettering(header.Size), name, rtl));
+            var lettering = new ShapeLettering(Lettering(header.Size), name, rtl);
+            record?.Shapes(drawn, box.StrokeWidth, lettering, blue: false);
+            var ink = ShapeDrawing.Draw(canvas, canvas.Ink, drawn, ornaments.EmblemPen, ornaments.EmblemPenSettings, Mix(e, 4), box.StrokeWidth, null, lettering);
             blocks.Add(Ornament("emblem", box, ink, width, height));
             emblemName = Named(profile);
         }
 
         if (rule)
         {
+            record?.Rule(margin, ruleY, inner, ruleThickness);
             canvas.Rectangle(canvas.Ink, margin, ruleY, inner, ruleThickness);
             blocks.Add(new PageBlock("rule", "", margin, ruleY, inner, ruleThickness));
         }
@@ -464,8 +468,10 @@ internal sealed class LetterLayout : IPageLayout
                 X = signedX, Y = signatureTop, Width = signedWidth, Height = signedHeight, RightToLeft = rtl, TextSize = bodySize, LineHeight = bodySize * 1.2f, StrokeWidth = signedStroke,
             };
             var (drawn, _) = ShapesLayout.Plan(profile.Sample(Mix(signing, 2)), box, Mix(signing, 3));
+            var lettering = new ShapeLettering(Lettering(bodySize), name, rtl);
+            record?.Shapes(drawn, signedStroke, lettering, blueSignature);
             var ink = ShapeDrawing.Draw(canvas, blueSignature ? canvas.Blue : canvas.Ink, drawn, ornaments.SignaturePen, ornaments.SignaturePenSettings, Mix(signing, 4), signedStroke,
-                null, new ShapeLettering(Lettering(bodySize), name, rtl));
+                null, lettering);
             blocks.Add(Ornament("scribble", box, ink, width, height));
             signatureName = $"{Named(profile)} with {ornaments.SignaturePen.Name}";
         }
@@ -492,10 +498,12 @@ internal sealed class LetterLayout : IPageLayout
             // laid on the page with a stamp's uneven ink.
             float reach = stampRadius * 1.415f + 3 * stroke + ornaments.StampPen.Stray(ornaments.StampPenSettings, 3 * stroke) + 2;
             int left = (int)MathF.Floor(cx - reach), top = (int)MathF.Floor(cy - reach), extent = (int)MathF.Ceiling(2 * reach) + 1;
+            var lettering = new ShapeLettering(Lettering(bodySize), name, rtl);
+            record?.Shapes(ShapeDrawing.Turned(drawn, cx, cy, turn, 0, 0), stroke, lettering, blue: style.Color && !black);
             using (var own = new PageCanvas(extent, extent))
             {
                 var ink = ShapeDrawing.Draw(own, own.Ink, ShapeDrawing.Turned(drawn, cx, cy, turn, -left, -top), ornaments.StampPen, ornaments.StampPenSettings, Mix(st, 4), stroke, null,
-                    new ShapeLettering(Lettering(bodySize), name, rtl));
+                    lettering);
                 ShapeDrawing.LayUneven(layer, width, height, own.Ink, left, top, extent, extent,
                     new UnevenInk(Mix(st, 5), uneven, extent, extent, stampRadius * 0.35f, Math.Max(1.5f, stampRadius * 0.06f)));
                 blocks.Add(Ornament("stamp", box, (ink.X0 + left, ink.Y0 + top, ink.X1 + left, ink.Y1 + top), width, height));
@@ -507,15 +515,21 @@ internal sealed class LetterLayout : IPageLayout
         if (footerBlock is not null)
         {
             float footerTop = height - margin * 0.6f - footerBlock.Height;
+            record?.Rule(margin, footerTop - bodySize * 0.5f, inner, 1.5f);
             canvas.Rectangle(canvas.Ink, margin, footerTop - bodySize * 0.5f, inner, 1.5f);
+            record?.Text(footerBlock, margin, footerTop, false, glyphs, glyphs.Line);
             glyphs.Draw(footerBlock, margin, footerTop, canvas.Ink, width, height);
             blocks.Add(new PageBlock("footer", string.Join("\n", content.Footer), margin, footerTop, inner, footerBlock.Height));
         }
 
-        var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
+        // The page's colours drawn in the order Compose takes them (its arguments, left to right).
+        var paper = Paper(c, style.Color);
+        float darkness = c.Between(style.Ink);
+        var blueInk = BlueInk(c);
+        var image = canvas.Compose(paper, darkness, blueInk, style.Color);
         string description = string.Create(CultureInfo.InvariantCulture,
             $"letter: body {Describe(body)}, header {Describe(header)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{(emblem ? $", emblem {emblemName}" : "")}{(rule ? ", rule" : "")}{(stamp ? $", stamp {stampName}" : "")}{(blueSignature ? ", blue signature" : "")}{(signed ? $", signed {signatureName}" : "")}{Paired(body)}{Posed(glyphs)}");
-        return new RenderedPage(image, content.ReadingOrder(), blocks, description);
+        return new RenderedPage(image, content.ReadingOrder(), blocks, description) { Vectors = record?.Finish(width, height, paper, darkness, blueInk, style.Color) };
     }
 
     // A profile's name in a description ("written" for one written as text).
@@ -649,15 +663,24 @@ internal sealed class PlainLayout : IPageLayout
 
         int height = (int)Math.Ceiling(Math.Max(style.Height, y + margin * 0.6f));
         using var canvas = new PageCanvas(width, height);
+        var record = style.Vectors ? new PageRecord() : null;
         var blocks = new List<PageBlock>();
         foreach (var (kind, text, block, top) in placed)
         {
+            record?.Text(block, margin, top, false, glyphs, glyphs.Line);
             glyphs.Draw(block, margin, top, canvas.Ink, width, height);
             blocks.Add(new PageBlock(kind, text, margin, top, inner, block.Height));
         }
 
-        var image = canvas.Compose(Paper(c, style.Color), c.Between(style.Ink), BlueInk(c), style.Color);
+        // The page's colours drawn in the order Compose takes them (its arguments, left to right).
+        var paper = Paper(c, style.Color);
+        float darkness = c.Between(style.Ink);
+        var blueInk = BlueInk(c);
+        var image = canvas.Compose(paper, darkness, blueInk, style.Color);
         return new RenderedPage(image, content.ReadingOrder(), blocks,
-            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{Paired(body)}{Posed(glyphs)}"));
+            string.Create(CultureInfo.InvariantCulture, $"plain: {Describe(body)}, spacing {spacing:F2}, margin {margin:F0}px, {(justify ? "justified" : "start")}{Paired(body)}{Posed(glyphs)}"))
+        {
+            Vectors = record?.Finish(width, height, paper, darkness, blueInk, style.Color),
+        };
     }
 }

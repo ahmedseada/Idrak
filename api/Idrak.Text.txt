@@ -1527,6 +1527,8 @@ public sealed record Idrak.Text.SyntheticPage : System.IEquatable<Idrak.Text.Syn
 
 public sealed record Idrak.Text.SyntheticPageOptions : System.IEquatable<Idrak.Text.SyntheticPageOptions>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SyntheticPageOptions()
+  public Idrak.Abstraction.Data.DocumentWriteOptions WriteOptions { get; init; }
+  public Idrak.Text.SyntheticPageOutput Output { get; init; }
   public Idrak.Text.SyntheticPageParts Parts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Layouts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Scans { get; init; }
@@ -1535,7 +1537,9 @@ public sealed record Idrak.Text.SyntheticPageOptions : System.IEquatable<Idrak.T
   public System.DateTime DateTo { get; init; }
   public bool Zip { get; init; }
   public double Grey { get; init; }
+  public float Dpi { get; init; }
   public int Limit { get; init; }
+  public int PagesPerDocument { get; init; }
   public int Quality { get; init; }
   public int Seed { get; init; }
   public int Variants { get; init; }
@@ -1543,9 +1547,15 @@ public sealed record Idrak.Text.SyntheticPageOptions : System.IEquatable<Idrak.T
   public required Idrak.Abstraction.Data.PageStyle Style { get; init; }
   public string ImageFormat { get; init; }
   public string Prompt { get; init; }
+  public string Writer { get; init; }
   public string? AnswerKey { get; init; }
   public string? Format { get; init; }
   public string? FullTextKey { get; init; }
+
+public enum Idrak.Text.SyntheticPageOutput : int
+  Images = 0
+  ScannedDocuments = 1
+  VectorDocuments = 2
 
 public sealed record Idrak.Text.SyntheticPageParts : System.IEquatable<Idrak.Text.SyntheticPageParts>
   public SyntheticPageParts()

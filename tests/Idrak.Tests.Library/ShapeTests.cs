@@ -18,6 +18,7 @@ internal abstract partial class Tests
         ("shapes: the same seed draws the same bytes; a grid draws each line once; profiles by name and as text (ranges, chances, in=last), pipelines as text and JSON; unknown shapes, options and bad values are refused; an app's pen replaces the library's of its name only", ShapeProfilesAndPipelines),
         ("shapes: letter and plain draw the same bytes with no options and with the shapes layout's options; the pens' keys move only a letter's pen-drawn signature", ShapeOptionsLeaveLetters),
         ("shapes: every emblem, stamp and signature profile the library registers draws inside its box (paths, areas and texts) on many seeds, each of its steps passing the shape suite; a text says one of its words the page's fonts draw (those in the page's direction first), the page's own text or its initials when it has none, nothing when none can be drawn", OrnamentProfiles),
+        ("shapes: a plan's texts written as vector content (DocumentShapes with a lettering): every emblem and stamp profile's texts, upright and turned, read back with the library's reader as what each says, glyph by glyph in reading order; the written page drawn back by the library's drawer is close to the plan drawn on a page with the ideal pen (paths, areas and the texts turned onto their paths)", ShapeTextsWritten),
         ("shapes: a letter draws each emblem and stamp profile asked for, named in its description, its ink only inside its block, the text unchanged; the signature is drawn by the pen asked over the name, blue or black, only inside its block; the same seed the same page; their settings leave a page without them byte for byte as it was, and bad ones are refused naming them", LetterOrnamentPages),
     ];
 
@@ -409,6 +410,65 @@ internal abstract partial class Tests
         Throws<ArgumentException>(() => new ShapeText([0, 0, 1], 10), "an odd path");
         Throws<ArgumentException>(() => new ShapeText(line, 0), "a size of 0");
         Throws<ArgumentException>(() => new ShapeText(line, 10, [" "]), "an empty word");
+    }
+
+    internal static void ShapeTextsWritten(Device device)
+    {
+        CpuOnly(device);
+        var face = SubsetFace();
+        var lettering = new ShapeLettering(new TextStyle(face, 20), "Northwind Trading Company", RightToLeft: false);
+        var pen = Pens.Get(Pens.Ideal);
+        var settings = pen.Read(PageOptions.None);
+        const int width = 280, height = 260;
+        var style = new DocumentShapeStyle { Scale = 0.75f, StrokeWidth = 4 };
+        var problems = new List<string>();
+        int said = 0;
+        double worst = 0;
+        foreach (string name in (string[])[.. Ornaments.Emblems.Split('|'), .. Ornaments.Stamps.Split('|')])
+        {
+            var profile = ShapeProfiles.Get(name);
+            for (int seed = 0; seed < 3; seed++)
+            {
+                var box = new ShapeContext { X = 40, Y = 30, Width = 200, Height = 200, StrokeWidth = 4, Seed = seed };
+                var (drawn, _) = ShapesLayout.Plan(profile.Sample(seed), box, seed);
+                var plans = seed == 2 ? ShapeDrawing.Turned(drawn, 140, 130, 0.2f, 0, 0) : drawn;    // turned, as a stamp is
+                var expected = plans.SelectMany(d => d.Plan.Texts).Select(t => ShapeDrawing.Say(t, lettering)).OfType<string>().ToList();
+                said += expected.Count;
+                using var output = new MemoryStream();
+                using (var builder = DocumentWriters.Create(output, "pdf"))
+                {
+                    var page = builder.AddPage(width * 0.75f, height * 0.75f);
+                    foreach (var (_, plan) in plans)
+                    {
+                        DocumentShapes.Write(page, plan, style, lettering.Style, lettering.PageText, lettering.RightToLeft);
+                    }
+
+                    builder.Finish();
+                }
+
+                using var document = DocumentFormats.Open(output.ToArray(), name + ".pdf", new DocumentOptions { Layout = DocumentTextLayouts.Content });
+                var read = document.ReadPage(0, DocumentParts.All);
+                string text = string.Concat(read.Runs.Select(r => r.Text));
+                if (text != string.Concat(expected))
+                {
+                    problems.Add($"{name} seed {seed}: read '{text}', the plan says '{string.Concat(expected)}'");
+                }
+
+                // The same plans drawn on a page with the ideal pen, against the written page drawn back.
+                using var canvas = new PageCanvas(width, height);
+                ShapeDrawing.Draw(canvas, canvas.Ink, plans, pen, settings, 0, 4, null, lettering);
+                var image = canvas.Compose((1, 1, 1), 1, (0, 0, 1), true);
+                var back = DocumentPageDrawers.DrawPage(document, 0, new DocumentDrawOptions { Dpi = 96 }).Image;
+                var (share, _) = PdfDrawDifference(image, back, 32);
+                worst = Math.Max(worst, share);
+                if (back.Width != width || back.Height != height || share > 0.01)
+                {
+                    problems.Add($"{name} seed {seed}: drawn back {back.Width} x {back.Height}, {share:P2} of the pixels off by more than 32 levels");
+                }
+            }
+        }
+
+        Check(problems.Count == 0 && said > 20, $"plan texts written ({said} texts, the worst page {worst:P2} off):\n  " + string.Join("\n  ", problems));
     }
 
     internal static void LetterOrnamentPages(Device device)

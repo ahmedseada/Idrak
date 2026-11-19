@@ -234,6 +234,29 @@ public sealed record SyntheticPageOptions
     /// <summary>Records read at most (0 for all), for a trial.</summary>
     public int Limit { get; init; }
 
+    /// <summary>What the pages are written as: an image each (<see cref="SyntheticPageOutput.Images"/>, the default, as <see cref="ImageFormat"/> says) or documents.</summary>
+    public SyntheticPageOutput Output { get; init; }
+
+    /// <summary>The document writer documents are written with (<see cref="DocumentWriters"/>; "pdf").</summary>
+    public string Writer { get; init; } = "pdf";
+
+    /// <summary>The pages a document holds, in the records' order (1: a document a page); the last one holds what is left.</summary>
+    public int PagesPerDocument { get; init; } = 1;
+
+    /// <summary>
+    /// The drawn pages' pixels an inch in a document: a page of W x H pixels is W x H x 72 / Dpi points (1 to 9600; 0, the
+    /// default: <see cref="DocumentDrawOptions.DpiVariable"/>'s, else 150: the default page, 1240 pixels wide, is A4's width).
+    /// </summary>
+    public float Dpi { get; init; }
+
+    /// <summary>The resolution documents are written at: <see cref="Dpi"/>, or the variable's (150 unless it is set).</summary>
+    internal float DocumentDpi => Dpi > 0 ? Dpi : new DocumentDrawOptions().Dpi;
+
+    /// <summary>How documents are written: their image pages' encoding and JPEG quality, how their fonts are embedded (the writer's variables' unless given).</summary>
+    public DocumentWriteOptions WriteOptions { get; init; } = new();
+
+    internal bool Documents => Output != SyntheticPageOutput.Images;
+
     internal void Check()
     {
         ArgumentNullException.ThrowIfNull(Style);
@@ -287,9 +310,25 @@ public sealed record SyntheticPageOptions
             throw new ArgumentOutOfRangeException(nameof(Quality), Quality, "The JPEG quality is 1 to 100.");
         }
 
-        if (!ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase))
+        if (!Documents && !ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase))
         {
             _ = ImageEncoders.Get(ImageFormat);
+        }
+
+        if (Output is not (SyntheticPageOutput.Images or SyntheticPageOutput.ScannedDocuments or SyntheticPageOutput.VectorDocuments))
+        {
+            throw new ArgumentOutOfRangeException(nameof(Output), Output, "Pages are written as images, scanned documents or vector documents.");
+        }
+
+        if (Documents)
+        {
+            ArgumentNullException.ThrowIfNull(WriteOptions);
+            _ = DocumentWriters.Get(Writer);
+            ArgumentOutOfRangeException.ThrowIfLessThan(PagesPerDocument, 1, nameof(PagesPerDocument));
+            if (!(Dpi == 0 || Dpi is >= 1f and <= 9600f))
+            {
+                throw new ArgumentOutOfRangeException(nameof(Dpi), Dpi, "A document page's resolution is 1 to 9600 pixels an inch (0: the variable's, else 150).");
+            }
         }
 
         if (DateFrom > DateTo)
@@ -312,6 +351,30 @@ public sealed record SyntheticPage(ImageData Image, string Text, string Answer, 
 {
     /// <summary>The shape profile drawn for it ("none", "grid", ..., or a profile's text), given to its layout as the <c>shapes</c> option.</summary>
     public string Shapes { get; init; } = "none";
+
+    // The page as drawn, as vectors (documents only), and the box of it the image shows (the cut's, or the whole page).
+    internal IPageVectors? Vectors { get; init; }
+
+    internal (int X, int Y, int Width, int Height) Drawn { get; init; }
+}
+
+/// <summary>What synthetic pages are written as (<see cref="SyntheticPageOptions.Output"/>).</summary>
+public enum SyntheticPageOutput
+{
+    /// <summary>An image a page (<see cref="SyntheticPageOptions.ImageFormat"/>), its look and all.</summary>
+    Images,
+
+    /// <summary>
+    /// Documents of image pages, as a scanner makes them: each page's image, its look and all, with its text as a hidden
+    /// layer on the lines as drawn, so a reader finds and selects it where it shows.
+    /// </summary>
+    ScannedDocuments,
+
+    /// <summary>
+    /// Documents of vector pages, as software makes them: each page as drawn before any look, its text as glyphs in its fonts
+    /// (embedded) with the text they stand for, its shapes and rules as paths. No look is put on them.
+    /// </summary>
+    VectorDocuments,
 }
 
 /// <summary>How far making synthetic pages has come.</summary>
@@ -607,7 +670,12 @@ public static class SyntheticPages
     /// Makes <see cref="SyntheticPageOptions.Variants"/> pages from each record of <paramref name="input"/> and writes
     /// them: the records to <paramref name="output"/> (.jsonl, in the input's shape), the images to the folder of its
     /// name beside it (or its .zip, <see cref="SyntheticPageOptions.Zip"/>), as the records name them
-    /// (<c>{name}/{record}-{variant}.jpg</c>), and how each page was made to <c>{name}.manifest.jsonl</c>.
+    /// (<c>{name}/{record}-{variant}.jpg</c>), and how each page was made to <c>{name}.manifest.jsonl</c>. Documents
+    /// (<see cref="SyntheticPageOptions.Output"/>) go to the same place, <see cref="SyntheticPageOptions.PagesPerDocument"/>
+    /// pages a file named after its first page (<c>{name}/{record}-{variant}.pdf</c>): a page alone written whole where it
+    /// is made (as an image is encoded there), several written in order by one writer while the next pages are made (one
+    /// page's buffers in the writer at a time); each record names its document as its image and the page's index in it,
+    /// from 0, in <c>"pages"</c>, and its manifest line both (<c>"image"</c>, <c>"page_index"</c>).
     /// </summary>
     /// <exception cref="InvalidDataException">Every record was left out; the message says why the first was.</exception>
     public static SyntheticPagesResult Write(string input, string output, SyntheticPageOptions options, IProgress<SyntheticPagesProgress>? progress = null,
@@ -625,9 +693,10 @@ public static class SyntheticPages
         Directory.CreateDirectory(folder);
         string images = options.Zip ? Path.Combine(folder, stem + ".zip") : Path.Combine(folder, stem);
         string manifest = Path.Combine(folder, stem + ".manifest.jsonl");
-        bool jpeg = options.ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
-        var encoder = jpeg ? null : ImageEncoders.Get(options.ImageFormat);
-        string extension = jpeg ? ".jpg" : encoder!.Extensions.First();
+        bool documents = options.Documents;
+        bool jpeg = !documents && options.ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
+        var encoder = jpeg || documents ? null : ImageEncoders.Get(options.ImageFormat);
+        string extension = jpeg ? ".jpg" : documents ? SyntheticDocuments.ExtensionOf(DocumentWriters.Get(options.Writer)) : encoder!.Extensions.First();
         int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
 
         var watch = Stopwatch.StartNew();
@@ -643,51 +712,111 @@ public static class SyntheticPages
             Directory.CreateDirectory(images);
         }
 
+        // Documents of several pages are written in order by one writer; a page alone is its own document, written whole
+        // where it is made, as an image is encoded there.
+        using var documentFiles = documents && options.PagesPerDocument > 1 ? new SyntheticDocuments(options, folder, zip) : null;
+
         var source = format.Read(input, options.Prompt, options.AnswerKey);
         if (options.Limit > 0)
         {
             source = source.Take(options.Limit);
         }
 
-        // Records in chunks; each chunk's pages made at once, then written in order.
-        foreach (var chunk in source.Select((r, i) => (Record: r, Index: i)).Chunk(Math.Max(1, workers * 2 / options.Variants + 1)))
+        // Records in chunks; each chunk's pages made at once, then written in order (documents: while the next is made).
+        Task? writing = null;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            records += chunk.Length;
-            var jobs = chunk.SelectMany(c => Enumerable.Range(0, options.Variants).Select(v => (c.Record, c.Index, Variant: v))).ToArray();
-            var made = new (byte[] Bytes, string Record, string Manifest)?[jobs.Length];
-            var failed = new string?[jobs.Length];
-            try
+            foreach (var chunk in source.Select((r, i) => (Record: r, Index: i)).Chunk(Math.Max(1, workers * 2 / options.Variants + 1)))
             {
-                Parallel.For(0, jobs.Length, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, j =>
+                cancellationToken.ThrowIfCancellationRequested();
+                records += chunk.Length;
+                var jobs = chunk.SelectMany(c => Enumerable.Range(0, options.Variants).Select(v => (c.Record, c.Index, Variant: v))).ToArray();
+                var made = new (byte[]? Bytes, SyntheticPage? Page, string Record, string Manifest)?[jobs.Length];
+                var failed = new string?[jobs.Length];
+                try
                 {
-                    var (record, index, variant) = jobs[j];
-                    try
+                    Parallel.For(0, jobs.Length, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, j =>
                     {
-                        var page = Draw(SyntheticAnswer.Parse(record.Answer, options.FullTextKey, record.Where), options, index, variant, record.Where);
-                        byte[] bytes = jpeg ? JpegEncoder.Encode(page.Image, options.Quality, optimize: true) : encoder!.Encode(page.Image);
-                        string name = $"{stem}/{index:D6}-{variant:D2}{extension}";
-                        string line = Json(record.Write(page.Answer, name));
-                        string about = Json(new JsonObject
+                        var (record, index, variant) = jobs[j];
+                        try
                         {
-                            ["image"] = name, ["record"] = index, ["variant"] = variant, ["where"] = record.Where, ["seed"] = page.Seed,
-                            ["layout"] = page.Layout, ["profile"] = page.Profile, ["shapes"] = page.Shapes, ["scan"] = page.Scan, ["page"] = page.Description,
-                            ["width"] = page.Image.Width, ["height"] = page.Image.Height, ["channels"] = page.Image.Channels,
-                        });
-                        made[j] = (bytes, line, about);
-                    }
-                    catch (InvalidDataException e)
-                    {
-                        failed[j] = e.Message;
-                    }
-                });
-            }
-            catch (AggregateException e) when (e.InnerExceptions.Count > 0)
-            {
-                // The first page's own error, not the loop's wrapper.
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerExceptions[0]).Throw();
+                            var page = Draw(SyntheticAnswer.Parse(record.Answer, options.FullTextKey, record.Where), options, index, variant, record.Where);
+                            if (documentFiles is not null)
+                            {
+                                // Written in order below, where its document and its place in it are known; held as 8-bit planes till then.
+                                made[j] = (null, page with { Image = EightBit(page.Image) }, "", "");
+                                return;
+                            }
+
+                            string name = $"{stem}/{index:D6}-{variant:D2}{extension}";
+                            if (documents)
+                            {
+                                // A page alone: its whole document, written here as an image is encoded here.
+                                var written = record.Write(page.Answer, name);
+                                written["pages"] = new JsonArray(0);
+                                made[j] = (SyntheticDocuments.One(page, options), null, Json(written), Json(About(page, name, 0, index, variant, record.Where)));
+                                return;
+                            }
+
+                            byte[] bytes = jpeg ? JpegEncoder.Encode(page.Image, options.Quality, optimize: true) : encoder!.Encode(page.Image);
+                            string line = Json(record.Write(page.Answer, name));
+                            string about = Json(About(page, name, null, index, variant, record.Where));
+                            made[j] = (bytes, null, line, about);
+                        }
+                        catch (InvalidDataException e)
+                        {
+                            failed[j] = e.Message;
+                        }
+                    });
+                }
+                catch (AggregateException e) when (e.InnerExceptions.Count > 0)
+                {
+                    // The first page's own error, not the loop's wrapper.
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerExceptions[0]).Throw();
+                }
+
+                if (documentFiles is null)
+                {
+                    WriteInOrder(jobs, made, failed);
+                    continue;
+                }
+
+                // A document's pages are written one after another by its writer: this chunk's while the next is made, the
+                // chunk before finished first (so at most two chunks' pages are held).
+                writing?.GetAwaiter().GetResult();
+                writing = Task.Run(() => WriteInOrder(jobs, made, failed), CancellationToken.None);
             }
 
+            writing?.GetAwaiter().GetResult();
+            writing = null;
+        }
+        finally
+        {
+            // A page that failed to be made leaves the chunk before being written: it ends before the files close.
+            if (writing is not null)
+            {
+                try
+                {
+                    writing.Wait(CancellationToken.None);
+                }
+                catch (AggregateException)
+                {
+                    // The failure being thrown is the one reported.
+                }
+            }
+        }
+
+        if (pages == 0 && skipped > 0)
+        {
+            throw new InvalidDataException($"No page could be made from {input}: every record was left out ({skipped}); the first: {firstSkip}");
+        }
+
+        return new SyntheticPagesResult(records, pages, skips, data, images, manifest, watch.Elapsed);
+
+        // A chunk's pages written in order: each image (or document page) with its record and manifest line; a record whose
+        // page could not be made left out once, with why.
+        void WriteInOrder((ISyntheticRecord Record, int Index, int Variant)[] jobs, (byte[]? Bytes, SyntheticPage? Page, string Record, string Manifest)?[] made, string?[] failed)
+        {
             for (int j = 0; j < jobs.Length; j++)
             {
                 if (made[j] is not { } page)
@@ -707,14 +836,27 @@ public static class SyntheticPages
                 }
 
                 string name = $"{stem}/{jobs[j].Index:D6}-{jobs[j].Variant:D2}{extension}";
+                if (documentFiles is not null)
+                {
+                    var one = page.Page!;
+                    made[j] = null;                                            // the page goes once it is written
+                    var (document, at) = documentFiles.Add(one, name);
+                    var written = jobs[j].Record.Write(one.Answer, document);
+                    written["pages"] = new JsonArray(at);
+                    dataWriter.WriteLine(Json(written));
+                    manifestWriter.WriteLine(Json(About(one, document, at, jobs[j].Index, jobs[j].Variant, jobs[j].Record.Where)));
+                    pages++;
+                    continue;
+                }
+
                 if (zip is not null)
                 {
                     using var entry = zip.CreateEntry(name, CompressionLevel.NoCompression).Open();
-                    entry.Write(page.Bytes);
+                    entry.Write(page.Bytes!);
                 }
                 else
                 {
-                    File.WriteAllBytes(Path.Combine(folder, name), page.Bytes);
+                    File.WriteAllBytes(Path.Combine(folder, name), page.Bytes!);
                 }
 
                 dataWriter.WriteLine(page.Record);
@@ -726,16 +868,65 @@ public static class SyntheticPages
             manifestWriter.Flush();
             progress?.Report(new SyntheticPagesProgress(pages, total, skipped, watch.Elapsed, skips.Count > 0 ? skips[^1] : null));
         }
-
-        if (pages == 0 && skipped > 0)
-        {
-            throw new InvalidDataException($"No page could be made from {input}: every record was left out ({skipped}); the first: {firstSkip}");
-        }
-
-        return new SyntheticPagesResult(records, pages, skips, data, images, manifest, watch.Elapsed);
     }
 
     private static readonly JsonWriterOptions LineOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    // How a page was made, as its manifest line says: its image (or document, and the page's index in it, from 0), its
+    // record, seed, layout, look, shapes, the layout's choices and its size.
+    private static JsonObject About(SyntheticPage page, string image, int? index, int record, int variant, string where)
+    {
+        var about = new JsonObject { ["image"] = image };
+        if (index is { } at)
+        {
+            about["page_index"] = at;
+        }
+
+        about["record"] = record;
+        about["variant"] = variant;
+        about["where"] = where;
+        about["seed"] = page.Seed;
+        about["layout"] = page.Layout;
+        about["profile"] = page.Profile;
+        about["shapes"] = page.Shapes;
+        about["scan"] = page.Scan;
+        about["page"] = page.Description;
+        about["width"] = page.Image.Width;
+        about["height"] = page.Image.Height;
+        about["channels"] = page.Image.Channels;
+        return about;
+    }
+
+    // An image as 8-bit planes (each value rounded to its level, as the image encoders and document writers round it), so
+    // a page waiting to be written holds a byte a value; one that holds planes already is kept as it is.
+    internal static ImageData EightBit(ImageData image)
+    {
+        if (image.TryGetPlanes(out _, out _))
+        {
+            return image;
+        }
+
+        int size = image.Height * image.Width;
+        var pixels = image.Pixels;
+        var planes = new byte[image.Channels][];
+        for (int c = 0; c < planes.Length; c++)
+        {
+            var plane = planes[c] = new byte[size];
+            var values = pixels.AsSpan(c * size, size);
+            for (int i = 0; i < size; i++)
+            {
+                plane[i] = (byte)Math.Clamp((int)MathF.Round(values[i] * 255f), 0, 255);
+            }
+        }
+
+        var levels = new float[256];
+        for (int k = 0; k < 256; k++)
+        {
+            levels[k] = k / 255f;
+        }
+
+        return new ImageData(planes, image.Height, image.Width, levels);
+    }
 
     internal static string Json(JsonNode node, bool indented = false, int indentSize = 2, char indentCharacter = ' ', string newLine = "\n")
     {
@@ -818,22 +1009,38 @@ public static class SyntheticPages
         // The shapes from a seed of their own, so the page's other draws stay as they were.
         string shapes = options.Shapes[new Random(PageSeed(seed, ShapesDraw, 0)).Next(options.Shapes.Count)];
         var pageOptions = new Dictionary<string, string>(style.Options, StringComparer.OrdinalIgnoreCase) { ["shapes"] = shapes };
-        var pageStyle = style with { Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey, Options = pageOptions };
+        var pageStyle = style with
+        {
+            Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey, Options = pageOptions, Vectors = style.Vectors || options.Documents,
+        };
         var rendered = PageLayouts.Get(layoutName).Render(content, pageStyle, layoutSeed);
+        if (options.Documents && rendered.Vectors is null)
+        {
+            throw new NotSupportedException($"The page layout '{layoutName}' keeps no vectors of its pages (RenderedPage.Vectors when PageStyle.Vectors asks): "
+                                            + $"documents need a layout that does, as the library's {string.Join(", ", PageLayouts.Names.Where(n => PageLayouts.Origin(n) == Overrides.Library).Order(StringComparer.Ordinal))} do.");
+        }
+
         var drawn = rendered.Image;
+        var shown = (X: 0, Y: 0, drawn.Width, drawn.Height);
         string description = rendered.Description;
         // Cut to the drawn parts (PageStyle.Crop), before the scan so its look lands on the cut page. Drawn last and only
         // when asked, so every other choice, and a page that is not cut, stays as it was.
         if (style.Crop > 0f && random.NextDouble() < style.Crop && Bounds(rendered, style.CropPadding, random) is { } box)
         {
             drawn = Cut(drawn, box);
+            shown = box;
             description += string.Create(CultureInfo.InvariantCulture, $", cut to {box.Width} x {box.Height}");
         }
 
-        var steps = Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty;
+        // A vector document's page is the page as drawn: no look is put on it.
+        bool look = options.Output != SyntheticPageOutput.VectorDocuments;
+        var steps = look ? Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty : ImageTransformPipeline.Empty;
         var image = steps.IsEmpty ? drawn : steps.Apply(drawn);
         string label = options.Style.Label == PageLabel.Source ? Unvaried(rendered.Text, body, source) : rendered.Text;
-        return new SyntheticPage(image, label, answer.With(label), seed, layoutName, steps.ToString(), description, scanName) { Shapes = shapes };
+        return new SyntheticPage(image, label, answer.With(label), seed, layoutName, steps.ToString(), description, look ? scanName : "none")
+        {
+            Shapes = shapes, Vectors = options.Documents ? rendered.Vectors : null, Drawn = shown,
+        };
     }
 
     // The drawn text with each body line habits changed back to its source (the drawn text keeps paragraphs whole, in order).

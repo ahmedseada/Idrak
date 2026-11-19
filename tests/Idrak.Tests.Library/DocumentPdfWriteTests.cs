@@ -22,6 +22,7 @@ internal abstract partial class Tests
         ("documents pdf: write: image pages: grey, RGB and 8-bit planes stored exact (Flate, the PNG predictor where it pays, none on noise), JPEG equal to the codec's own round trip at the options' quality, Auto choosing every D6 sample's expectedAuto from measures equal to the sample's, the options' encoding over Auto, each image in its box", PdfWriteImages),
         ("documents pdf: write: vector pages: every verb (re, c, v and y, a quadratic), both fill rules, fill and stroke, caps, joins, miter limits, dashes with a phase, grey, RGB and CMYK with opacity, nested clips under Save and Restore read back exactly; a Restore without a Save, a path without a move and an empty dash refused", PdfWriteVector),
         ("documents pdf: write: text: each face embedded once as a Type0, Identity-H subset (ids kept, /W from the advances, a ToUnicode map), runs read back with their text, glyph ids, places and boxes; /ActualText where glyphs do not read as their text (a lam-alef ligature right to left, a character drawn by two glyphs); hidden and stroked runs; a CFF face, a mapped legacy face and whole embedding", PdfWriteText),
+        ("documents pdf: write: turned glyphs (IDocumentPageBuilder.Glyphs with matrices): a word round a ring, each glyph through its own matrix, reads back glyph by glyph in order with its text, id, place and matrix; a turned and slanted run through one matrix; one upright matrix writes the bytes of the run without matrices; a glyph whose map gives other text is written in a span of its own with its characters; a writer without the member refuses turned glyphs and writes upright ones; a wrong count, a flat or an unfinite matrix refused", PdfWriteTurnedGlyphs),
         ("documents pdf: write: a searchable scan (the page's image and its OCR text hidden over it) reads back both; the page-of-shapes helper writes a synthetic page (areas, dashed and dotted strokes, laid-out lines) whose paths and text read back", PdfWriteScanAndShapes),
         ("documents pdf: write: the same input writes the same bytes (on several threads too); a builder disposed without Finish leaves a file the reader repairs with its pages; attached files and the information read back; the parts later phases fill refused naming their phase (and D10's misuse); a page used after the next one started refused", PdfWriteDeterministicAndLimits),
         ("documents pdf: write: a 500-page image PDF written with one page of buffers (JPEG scans and Flate line art), timed cold and warm, the managed memory sampled per page and its growth bounded", PdfWriteManyPages),
@@ -75,8 +76,11 @@ internal abstract partial class Tests
         return destination.ToArray();
     }
 
-    private static PdfWrittenDocument PdfReadWritten(byte[] bytes, string name = "written") =>
-        (PdfWrittenDocument)new PdfWrittenReader().Open(new MemoryStream(bytes, writable: false), name, new DocumentOptions());
+    private static PdfWrittenDocument PdfReadWritten(byte[] bytes, string name = "written", DocumentOptions? options = null) =>
+        (PdfWrittenDocument)new PdfWrittenReader().Open(new MemoryStream(bytes, writable: false), name, options ?? new DocumentOptions());
+
+    // The runs in content order (no layout): a page whose text is checked as written.
+    private static readonly DocumentOptions PdfContentOrder = new() { Layout = DocumentTextLayouts.Content };
 
     // A line shaped by its script's shaper, from (x, baseline) at size points: the glyphs left to right.
     private static DocumentGlyph[] PdfShaped(IFontFace face, string text, string script, bool rightToLeft, float x, float baseline, float size)
@@ -764,6 +768,138 @@ internal abstract partial class Tests
         }
 
         PdfSaveWritten("shapes", shapes, [(450, 255, text)]);
+    }
+
+    private static void PdfWriteTurnedGlyphs(Device device)
+    {
+        CpuOnly(device);
+        var face = SubsetFace();
+        const string word = "RECEIVED";
+        const float size = 20, radius = 60, cx = 150, cy = 150;
+
+        // Round the top of a ring, left to right: each glyph at its point, its baseline along the ring, upright outwards.
+        var upright = PdfShaped(face, word, "Latn", false, 0, 0, size);
+        var ring = new DocumentGlyph[upright.Length];
+        var matrices = new DocumentMatrix[upright.Length];
+        float along = -upright.Sum(g => g.Advance) / 2;
+        for (int i = 0; i < upright.Length; i++)
+        {
+            double angle = 1.5 * Math.PI + along / radius;                    // 270 degrees: the top, y down
+            float tx = (float)-Math.Sin(angle), ty = (float)Math.Cos(angle);
+            ring[i] = new DocumentGlyph(upright[i].Glyph, cx + radius * (float)Math.Cos(angle), cy + radius * (float)Math.Sin(angle), upright[i].Advance);
+            matrices[i] = new DocumentMatrix(size * tx, size * ty, size * ty, -size * tx, 0, 0);
+            along += upright[i].Advance;
+        }
+
+        // A straight run turned 30 degrees and slanted, through one matrix.
+        float cos = MathF.Cos(MathF.PI / 6), sin = MathF.Sin(MathF.PI / 6);
+        var turned = PdfShaped(face, "Draft copy", "Latn", false, 0, 0, 14);
+        var line = turned.Select(g => new DocumentGlyph(g.Glyph, 40 + g.X * cos, 260 - g.X * sin, g.Advance)).ToArray();
+        var slanted = new DocumentMatrix(14 * cos, -14 * sin, 14 * (0.2f * cos - sin), -14 * (0.2f * sin + cos), 0, 0);
+        byte[] bytes = PdfWrite(b =>
+        {
+            var page = b.AddPage(300, 300);
+            page.Glyphs(face, ring, matrices, word, DocumentTextMode.Fill, DocumentColour.Rgb(0.1f, 0.2f, 0.6f));
+            page.Glyphs(face, line, [slanted], "Draft copy", DocumentTextMode.Fill, DocumentColour.Black);
+        });
+        using (var document = PdfReadWritten(bytes, options: PdfContentOrder))
+        {
+            var page = document.ReadPage(0, DocumentParts.All);
+            var runs = page.Runs.ToList();
+            Check(runs.Count == word.Length + line.Length, $"a run a glyph: {runs.Count} runs ({string.Join("|", runs.Select(r => r.Text))})");
+            Check(string.Concat(runs.Take(word.Length).Select(r => r.Text)) == word && string.Concat(runs.Skip(word.Length).Select(r => r.Text)) == "Draft copy",
+                $"the text in order: {string.Concat(runs.Select(r => r.Text))}");
+            var placed = ring.Concat(line).ToArray();
+            for (int i = 0; i < runs.Count; i++)
+            {
+                var read = runs[i].Glyphs.Span;
+                var m = runs[i].GlyphMatrix!.Value;
+                var expected = i < word.Length ? matrices[i] : slanted;
+                Check(read.Length == 1 && read[0].Glyph == placed[i].Glyph && MathF.Abs(read[0].X - placed[i].X) < 1e-3f && MathF.Abs(read[0].Y - placed[i].Y) < 1e-3f,
+                    $"glyph {i}: {(read.Length == 1 ? $"{read[0].Glyph} at ({read[0].X}, {read[0].Y})" : $"{read.Length} glyphs")}, written {placed[i].Glyph} at ({placed[i].X}, {placed[i].Y})");
+                Check(MathF.Abs(m.A - expected.A) < 1e-3f && MathF.Abs(m.B - expected.B) < 1e-3f && MathF.Abs(m.C - expected.C) < 1e-3f && MathF.Abs(m.D - expected.D) < 1e-3f,
+                    $"glyph {i}'s matrix: {m}, written {expected}");
+            }
+
+            Check(runs.Take(word.Length).All(r => r.Colour == DocumentColour.Rgb(0.1f, 0.2f, 0.6f)), "the ring's colour");
+        }
+
+        // One upright matrix: the bytes of the run written without matrices.
+        var plain = PdfShaped(face, "Thank you for your letter.", "Latn", false, 20, 50, 12);
+        byte[] sized = PdfWrite(b => b.AddPage(300, 100).Glyphs(face, 12, plain, "Thank you for your letter.", DocumentTextMode.Fill, DocumentColour.Black));
+        byte[] mapped = PdfWrite(b => b.AddPage(300, 100).Glyphs(face, plain, [new DocumentMatrix(12, 0, 0, -12, 0, 0)], "Thank you for your letter.", DocumentTextMode.Fill, DocumentColour.Black));
+        Check(sized.AsSpan().SequenceEqual(mapped), "one upright matrix writes the run as its size does");
+
+        // A glyph whose map gives other text: its characters in a span of its own (the reader takes them over the map's).
+        var a = PdfShaped(face, "A", "Latn", false, 20, 40, 12);
+        byte[] spans = PdfWrite(b =>
+        {
+            var page = b.AddPage(200, 200);
+            page.Glyphs(face, 12, a, "A", DocumentTextMode.Fill, DocumentColour.Black);
+            page.Glyphs(face, [a[0] with { X = 100, Y = 100 }], [new DocumentMatrix(0, 12, 12, 0, 0, 0)], "Z", DocumentTextMode.Fill, DocumentColour.Black);
+        });
+        using (var document = PdfReadWritten(spans, options: PdfContentOrder))
+        {
+            var runs = document.ReadPage(0, DocumentParts.All).Runs;
+            Check(runs.Count == 2 && runs[0].Text == "A" && runs[1].Text == "Z", $"the turned glyph's own text: {string.Join("|", runs.Select(r => r.Text))}");
+            Check(PdfContentText(document, 0).Contains("/ActualText", StringComparison.Ordinal), "written in a span with its characters");
+        }
+
+        // A writer whose pages lack the member: upright matrices written as their size, a turned one refused.
+        var upright12 = new PdfUprightPage();
+        ((IDocumentPageBuilder)upright12).Glyphs(face, plain, [new DocumentMatrix(12, 0, 0, -12, 0, 0)], "Thank you for your letter.", DocumentTextMode.Fill, DocumentColour.Black);
+        Check(upright12.Sizes.SequenceEqual([12f]), $"an upright run passed on at its size: {string.Join(", ", upright12.Sizes)}");
+        Throws<NotSupportedException>(() => ((IDocumentPageBuilder)upright12).Glyphs(face, ring, matrices, word, DocumentTextMode.Fill, DocumentColour.Black), "a turned run on a writer without the member");
+        Throws<ArgumentException>(() => ((IDocumentPageBuilder)upright12).Glyphs(face, ring, matrices.AsSpan(0, 2), word, DocumentTextMode.Fill, DocumentColour.Black), "two matrices for eight glyphs (default member)");
+        PdfWrite(b =>
+        {
+            var page = b.AddPage(100, 100);
+            Throws<ArgumentException>(() => page.Glyphs(face, ring, matrices.AsSpan(0, 2), word, DocumentTextMode.Fill, DocumentColour.Black), "two matrices for eight glyphs");
+            Throws<ArgumentException>(() => page.Glyphs(face, ring, [new DocumentMatrix(0, 0, 0, 0, 0, 0)], word, DocumentTextMode.Fill, DocumentColour.Black), "a flat matrix");
+            Throws<ArgumentException>(() => page.Glyphs(face, ring, [new DocumentMatrix(float.NaN, 0, 0, -12, 0, 0)], word, DocumentTextMode.Fill, DocumentColour.Black), "a matrix not finite");
+        });
+    }
+
+    // A page builder with only the members every writer has: what it was given, upright runs' sizes.
+    private sealed class PdfUprightPage : IDocumentPageBuilder
+    {
+        public List<float> Sizes { get; } = [];
+
+        public int Index => 0;
+
+        public float Width => 100;
+
+        public float Height => 100;
+
+        public void Image(ImageData image, DocumentBox box, DocumentImageEncoding encoding)
+        {
+        }
+
+        public void Path(DocumentPath path)
+        {
+        }
+
+        public void Glyphs(IFontFace face, float size, ReadOnlySpan<DocumentGlyph> glyphs, string text, DocumentTextMode mode, DocumentColour colour) => Sizes.Add(size);
+
+        public void Save()
+        {
+        }
+
+        public void Restore()
+        {
+        }
+
+        public void Clip(DocumentPath path)
+        {
+        }
+
+        public void AddAnnotation(DocumentAnnotation annotation)
+        {
+        }
+
+        public void AddLink(DocumentLink link)
+        {
+        }
     }
 
     private static void PdfWriteDeterministicAndLimits(Device device)

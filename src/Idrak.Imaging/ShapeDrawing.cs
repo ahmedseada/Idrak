@@ -107,6 +107,61 @@ internal static class ShapeDrawing
     /// </summary>
     public static (float X0, float Y0, float X1, float Y1)? Text(PageCanvas canvas, Span<float> layer, ShapeText text, ShapeLettering lettering)
     {
+        if (Place(text, lettering, blanks: false) is not { } placed)
+        {
+            return null;
+        }
+
+        // Every glyph's outline turned onto the path at its middle, all in one outline (joined glyphs fill once).
+        var glyphs = placed.Glyphs;
+        var verbs = new List<OutlineVerb>(glyphs.Count * 16);
+        var points = new List<float>(glyphs.Count * 64);
+        float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+        foreach (var on in glyphs)
+        {
+            var g = on.Glyph;
+            var glyph = on.Outline;
+            float middle = on.Middle, lift = on.Lift, k = on.K, px = on.Px, py = on.Py, tx = on.Tx, ty = on.Ty;
+            var source = glyph.Points.Span;
+            for (int i = 0; i < source.Length; i += 2)
+            {
+                // Along the path u, up from it v: at P + u t + v n, n = (ty, -tx) the path's left.
+                float u = (g.X + source[i] * g.Scale - middle) * k, v = (source[i + 1] * g.Scale + lift) * k;
+                float x = px + u * tx + v * ty, y = py + u * ty - v * tx;
+                points.Add(x);
+                points.Add(-y);                                    // y up, as outlines are: the canvas flips it back
+                (x0, y0, x1, y1) = (Math.Min(x0, x), Math.Min(y0, y), Math.Max(x1, x), Math.Max(y1, y));
+            }
+
+            verbs.AddRange(glyph.Verbs.Span);
+        }
+
+        if (verbs.Count == 0)
+        {
+            return null;
+        }
+
+        canvas.Fill(layer, new GlyphOutline([.. verbs], [.. points]), text.Tone);
+        return (x0, y0, x1, y1);
+    }
+
+    /// <summary>
+    /// A glyph of a shape's text as set along its path: the glyph and its outline, its middle and its lift above the
+    /// line's baseline (pixels of the line as laid out), the text's scale <see cref="K"/> (1 or less: smaller to fit), and
+    /// the point of the path its middle stands on with the path's direction there (<see cref="Tx"/>, <see cref="Ty"/>).
+    /// A point (gx, gy) of the glyph's outline (font units, y up) lands at P + u t + v n, with u = (X + gx scale - middle) k,
+    /// v = (gy scale + lift) k and n = (ty, -tx) the path's left.
+    /// </summary>
+    internal readonly record struct PathGlyph(PlacedGlyph Glyph, GlyphOutline Outline, float Middle, float Lift, float K, float Px, float Py, float Tx, float Ty);
+
+    /// <summary>
+    /// What <paramref name="text"/> says, its line as laid out, and its glyphs as set along its path (see
+    /// <see cref="Text"/>): each glyph with ink at its middle, in the line's drawing order, and with
+    /// <paramref name="blanks"/> each glyph without ink too (a space) at the middle of its advance; null when nothing is
+    /// drawn (no word the fonts draw, a path of no length, no ink).
+    /// </summary>
+    internal static (string Said, TextLine Line, List<PathGlyph> Glyphs)? Place(ShapeText text, ShapeLettering lettering, bool blanks)
+    {
         var p = text.Path.Span;
         int n = p.Length / 2;
         if (n < 2 || Say(text, lettering) is not { } said)
@@ -163,43 +218,31 @@ internal static class ShapeDrawing
             k = below > 0 ? Math.Min(k, text.Size / below) : k;
             float start = (length - (right - left) * k) / 2;
             var cumulative = along.AsSpan(0, n);
-
-            // Every glyph's outline turned onto the path at its middle, all in one outline (joined glyphs fill once).
-            var verbs = new List<OutlineVerb>(line.Glyphs.Count * 16);
-            var points = new List<float>(line.Glyphs.Count * 64);
-            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            var placed = new List<PathGlyph>(line.Glyphs.Count);
             foreach (var g in line.Glyphs)
             {
                 var glyph = g.Font.Outline(g.Glyph);
-                if (glyph.IsEmpty)
+                float middle;
+                if (!glyph.IsEmpty)
+                {
+                    var (minX, _, maxX, _) = glyph.Bounds();
+                    middle = g.X + (minX + maxX) / 2 * g.Scale;
+                }
+                else if (blanks)
+                {
+                    middle = g.X + g.Font.Advance(g.Glyph) / 2f * g.Scale;
+                }
+                else
                 {
                     continue;
                 }
 
-                var (minX, _, maxX, _) = glyph.Bounds();
-                float middle = g.X + (minX + maxX) / 2 * g.Scale, lift = line.Baseline - g.Y;
+                float lift = line.Baseline - g.Y;
                 var (px, py, tx, ty) = At(p, cumulative, start + (middle - left) * k);
-                var source = glyph.Points.Span;
-                for (int i = 0; i < source.Length; i += 2)
-                {
-                    // Along the path u, up from it v: at P + u t + v n, n = (ty, -tx) the path's left.
-                    float u = (g.X + source[i] * g.Scale - middle) * k, v = (source[i + 1] * g.Scale + lift) * k;
-                    float x = px + u * tx + v * ty, y = py + u * ty - v * tx;
-                    points.Add(x);
-                    points.Add(-y);                                // y up, as outlines are: the canvas flips it back
-                    (x0, y0, x1, y1) = (Math.Min(x0, x), Math.Min(y0, y), Math.Max(x1, x), Math.Max(y1, y));
-                }
-
-                verbs.AddRange(glyph.Verbs.Span);
+                placed.Add(new PathGlyph(g, glyph, middle, lift, k, px, py, tx, ty));
             }
 
-            if (verbs.Count == 0)
-            {
-                return null;
-            }
-
-            canvas.Fill(layer, new GlyphOutline([.. verbs], [.. points]), text.Tone);
-            return (x0, y0, x1, y1);
+            return (said, line, placed);
         }
         finally
         {

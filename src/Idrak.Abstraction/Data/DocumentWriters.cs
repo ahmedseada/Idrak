@@ -136,6 +136,49 @@ public sealed record DocumentWriteOptions
     }
 }
 
+// The checks of a run's glyph matrices (IDocumentPageBuilder.Glyphs with matrices).
+internal static class DocumentGlyphMatrices
+{
+    /// <summary>Checks that there is one matrix for all the glyphs or one a glyph, each finite and turning no glyph flat.</summary>
+    /// <exception cref="ArgumentException">The message says which.</exception>
+    public static void Check(int glyphs, ReadOnlySpan<DocumentMatrix> matrices)
+    {
+        if (matrices.Length != 1 && matrices.Length != glyphs)
+        {
+            throw new ArgumentException($"A run's glyphs take one matrix for all of them or one each: {matrices.Length} for {glyphs} glyphs.", nameof(matrices));
+        }
+
+        foreach (var m in matrices)
+        {
+            double area = (double)m.A * m.D - (double)m.B * m.C;
+            if (!float.IsFinite(m.A) || !float.IsFinite(m.B) || !float.IsFinite(m.C) || !float.IsFinite(m.D) || area == 0 || !double.IsFinite(area))
+            {
+                throw new ArgumentException($"A glyph's matrix ({m.A}, {m.B}, {m.C}, {m.D}) is finite and does not turn the glyph flat.", nameof(matrices));
+            }
+        }
+    }
+
+    /// <summary>The run's size when every matrix is upright at one size above 0, (size, 0, 0, -size); else null.</summary>
+    public static float? UprightSize(ReadOnlySpan<DocumentMatrix> matrices)
+    {
+        if (matrices.IsEmpty)
+        {
+            return null;
+        }
+
+        float size = matrices[0].A;
+        foreach (var m in matrices)
+        {
+            if (!(m.B == 0f && m.C == 0f && m.A == size && m.D == -size))
+            {
+                return null;
+            }
+        }
+
+        return size > 0f ? size : null;
+    }
+}
+
 /// <summary>
 /// One page being written: images, paths and text in the order given (each later one over the earlier), the graphics state
 /// saved and restored around clips, and the page's annotations and links. The page is written to the destination when the
@@ -168,6 +211,34 @@ public interface IDocumentPageBuilder
     /// <paramref name="colour"/>. The caller shapes the text (<see cref="TextShapers"/>); the writer embeds the font.
     /// </summary>
     void Glyphs(IFontFace face, float size, ReadOnlySpan<DocumentGlyph> glyphs, string text, DocumentTextMode mode, DocumentColour colour);
+
+    /// <summary>
+    /// Writes a run of glyphs of <paramref name="face"/> as <see cref="Glyphs(IFontFace, float, ReadOnlySpan{DocumentGlyph}, string, DocumentTextMode, DocumentColour)"/>
+    /// does, each drawn through its matrix instead of upright: <paramref name="matrices"/> holds one for every glyph, or
+    /// one for all, each mapping the glyph's outline at one unit an em (font units over the face's units per em, y up)
+    /// onto the page (points, y down) from the glyph's origin, its own shift not used, as
+    /// <see cref="DocumentTextRun.GlyphMatrix"/> reads it back: text along a turned line or round a ring, slanted or
+    /// stretched glyphs. (size, 0, 0, -size) is upright at size points: what the call without matrices writes. The glyphs
+    /// are written in the order given (a reader takes them in that order).
+    /// </summary>
+    /// <exception cref="ArgumentException">Neither one matrix nor one a glyph, or a matrix that is not finite or turns a glyph flat.</exception>
+    /// <exception cref="NotSupportedException">The writer writes upright glyphs only and a matrix is not upright at the run's one size (the message says so).</exception>
+    void Glyphs(IFontFace face, ReadOnlySpan<DocumentGlyph> glyphs, ReadOnlySpan<DocumentMatrix> matrices, string text, DocumentTextMode mode, DocumentColour colour)
+    {
+        ArgumentNullException.ThrowIfNull(face);
+        DocumentGlyphMatrices.Check(glyphs.Length, matrices);
+        if (glyphs.IsEmpty)
+        {
+            return;                                                            // nothing to show
+        }
+
+        if (DocumentGlyphMatrices.UprightSize(matrices) is not { } size)
+        {
+            throw new NotSupportedException($"This document writer's pages ({GetType().Name}) write glyphs upright only, at one size a run; a turned, slanted or stretched glyph is not written.");
+        }
+
+        Glyphs(face, size, glyphs, text, mode, colour);
+    }
 
     /// <summary>Saves the graphics state (the clip), to be restored by <see cref="Restore"/>.</summary>
     void Save();
@@ -773,6 +844,14 @@ public static class DocumentWriters
             DocumentGlyph[] copy = glyphs.ToArray();                          // a span cannot be held by the calls below
             owner.Library(() => library.Glyphs(face, size, copy, text, mode, colour));
             Other(page => page.Glyphs(face, size, copy, text, mode, colour));
+        }
+
+        public void Glyphs(IFontFace face, ReadOnlySpan<DocumentGlyph> glyphs, ReadOnlySpan<DocumentMatrix> matrices, string text, DocumentTextMode mode, DocumentColour colour)
+        {
+            DocumentGlyph[] copy = glyphs.ToArray();                          // spans cannot be held by the calls below
+            DocumentMatrix[] maps = matrices.ToArray();
+            owner.Library(() => library.Glyphs(face, copy, maps, text, mode, colour));
+            Other(page => page.Glyphs(face, copy, maps, text, mode, colour));
         }
 
         public void Save()

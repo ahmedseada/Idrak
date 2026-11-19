@@ -143,6 +143,47 @@ public sealed record PageStyle
 
     /// <summary>What a page's label says when habits change its text: what is drawn (the default) or the source's spelling.</summary>
     public PageLabel Label { get; init; }
+
+    /// <summary>
+    /// Whether a layout also keeps the page as what it was drawn from (<see cref="RenderedPage.Vectors"/>: its text and
+    /// shapes as vectors, for a document writer: a vector page, or a hidden text layer over the page's image); false, the
+    /// default: the image alone, every page drawn as before. A layout that keeps nothing gives none.
+    /// </summary>
+    public bool Vectors { get; init; }
+}
+
+/// <summary>
+/// A drawn page kept as what it was drawn from (a layout gives it when <see cref="PageStyle.Vectors"/> asks): its paper,
+/// rules, shapes and text, before any scan look, in the page's pixels (from its top-left corner, y down), written through
+/// any document writer's page (<see cref="IDocumentPageBuilder"/>): whole, as vector content (text as glyphs in their fonts
+/// with the text they stand for, shapes as paths), or its own text alone over an image of the page (a hidden layer that a
+/// reader finds and selects where the text shows).
+/// </summary>
+public interface IPageVectors
+{
+    /// <summary>The page's width in pixels (its image's, before any cut).</summary>
+    int Width { get; }
+
+    /// <summary>The page's height in pixels.</summary>
+    int Height { get; }
+
+    /// <summary>
+    /// Writes the page as drawn: its paper, then what was drawn in its ink (rules, filled areas, shapes as ideal strokes,
+    /// the page's text and its ornaments' texts, each glyph where and as turned as it was drawn), then what was drawn in its
+    /// second ink (blue signatures and stamps), with pixel (<paramref name="x"/>, <paramref name="y"/>) at the page
+    /// builder's top-left corner and <paramref name="scale"/> points a pixel. A pen's wobble and pressure and a stamp's
+    /// uneven ink are written as the ideal stroke and the full ink they vary.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="scale"/> is not finite and above 0.</exception>
+    void Write(IDocumentPageBuilder page, float scale, float x, float y);
+
+    /// <summary>
+    /// Writes the page's own text alone (the text its label reads, none of its ornaments'), each run on the glyphs it was
+    /// drawn with, in reading order, painted as <paramref name="mode"/> says (<see cref="DocumentTextMode.Hidden"/>: a text
+    /// layer over an image of the page); placed as <see cref="Write"/> places the page.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="scale"/> is not finite and above 0.</exception>
+    void WriteText(IDocumentPageBuilder page, float scale, float x, float y, DocumentTextMode mode);
 }
 
 /// <summary>What a drawn page's label says when the text was varied for drawing (handwriting habits).</summary>
@@ -169,7 +210,11 @@ public readonly record struct PageBlock(string Kind, string Text, float X, float
 /// <param name="Text">The drawn text in reading order, one part a line (paragraphs whole, not broken as drawn).</param>
 /// <param name="Blocks">The drawn parts in reading order.</param>
 /// <param name="Description">What was chosen (font, sizes, alignment), for a data set's manifest.</param>
-public sealed record RenderedPage(ImageData Image, string Text, IReadOnlyList<PageBlock> Blocks, string Description);
+public sealed record RenderedPage(ImageData Image, string Text, IReadOnlyList<PageBlock> Blocks, string Description)
+{
+    /// <summary>The page as what it was drawn from, when its style asked (<see cref="PageStyle.Vectors"/>) and the layout keeps it; else null.</summary>
+    public IPageVectors? Vectors { get; init; }
+}
 
 /// <summary>Draws a page's content in one arrangement (a letter, a plain page); register one with <see cref="PageLayouts.Register"/>.</summary>
 public interface IPageLayout

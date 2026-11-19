@@ -108,6 +108,13 @@ lays a form field's value out with it, so a field fills right in every script; a
 **Pages of shapes written.** `DocumentShapes.Write(page, plan, style)` writes a `ShapePlan`'s areas and strokes, and
 `DocumentShapes.Write(page, block, text, x, y, style)` a `TextBlock`'s lines (as `TextLayout` laid them out), through any `IDocumentPageBuilder`:
 a synthetic page or a glyph sheet as vector paths and real, searchable text, not only as an image.
+`DocumentShapes.Write(page, plan, style, lettering, pageText)` also writes the plan's texts (an emblem's name round its
+ring, a stamp's word) as the page draws them: glyph by glyph turned onto the path where each stands
+(`IDocumentPageBuilder.Glyphs` with a matrix a glyph), each with the characters it stands for. `DocumentShapeStyle.Left`
+and `Top` put a page cut from a larger drawing at its corner. A page a built-in layout drew keeps what it was drawn from
+when `PageStyle.Vectors` asks (`RenderedPage.Vectors`, an `IPageVectors`): its paper, rules, shapes, text blocks (posed
+glyphs through their matrices) and ornaments, written whole (`Write`) or its own text alone as a hidden layer over the
+page's image (`WriteText`); `idrak data synth --format pdf` and `pdf-vector` write them.
 
 ## Contracts
 

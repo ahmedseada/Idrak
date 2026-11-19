@@ -110,54 +110,14 @@ internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
             throw new ArgumentOutOfRangeException(nameof(size), size, "A run's size is a finite number of points above 0.");
         }
 
-        if (mode is not (DocumentTextMode.Fill or DocumentTextMode.Stroke or DocumentTextMode.FillStroke or DocumentTextMode.Hidden))
-        {
-            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a text mode.");
-        }
-
-        ThrowIfWritten();
-        if (glyphs.IsEmpty)
+        if (!CheckRun(face, glyphs, mode))
         {
             return;                                                            // nothing to show
         }
 
-        int limit = Math.Min(face.GlyphCount, 65536);
-        foreach (var g in glyphs)
-        {
-            if ((uint)g.Glyph >= (uint)limit)
-            {
-                throw new ArgumentOutOfRangeException(nameof(glyphs), g.Glyph, $"Glyph {g.Glyph} is not one of the face's {face.GlyphCount} (a document shows ids up to 65535).");
-            }
-
-            if (!float.IsFinite(g.X) || !float.IsFinite(g.Y))
-            {
-                throw new ArgumentException($"Glyph {g.Glyph} is placed at ({g.X}, {g.Y}): places are finite.", nameof(glyphs));
-            }
-        }
-
         var font = _font(face);
         var content = Content();
-        if (!_fonts.Contains(font))
-        {
-            _fonts.Add(font);
-        }
-
-        bool plain = font.Map(glyphs, text);
-        bool filled = mode is DocumentTextMode.Fill or DocumentTextMode.FillStroke, stroked = mode is DocumentTextMode.Stroke or DocumentTextMode.FillStroke;
-        if (mode != DocumentTextMode.Hidden)
-        {
-            Alpha(content, filled ? colour.Alpha : _state.FillAlpha, stroked ? colour.Alpha : _state.StrokeAlpha);
-            if (filled)
-            {
-                FillColour(content, colour);
-            }
-
-            if (stroked)
-            {
-                StrokeColour(content, colour);
-            }
-        }
-
+        bool plain = Start(content, font, glyphs, text, mode, colour);
         if (!plain)
         {
             // The text the glyphs stand for, as written (a reader takes it over the glyphs' own).
@@ -165,18 +125,7 @@ internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
         }
 
         content.Raw("BT\n"u8);
-        if (!ReferenceEquals(_state.Font, font) || _state.Size != size)
-        {
-            content.Raw("/"u8).Raw(_names).Raw("F"u8).Integer(font.Index).Space().Number(size).Raw(" Tf\n"u8);
-            (_state.Font, _state.Size) = (font, size);
-        }
-
-        int render = mode switch { DocumentTextMode.Stroke => 1, DocumentTextMode.FillStroke => 2, DocumentTextMode.Hidden => 3, _ => 0 };
-        if (_state.Render != render)
-        {
-            content.Integer(render).Raw(" Tr\n"u8);
-            _state.Render = render;
-        }
+        ShowState(content, font, size, mode);
 
         // Each baseline's glyphs in one TJ: the pen moved to each glyph's place by the offsets a reader adds to the widths.
         double written = PdfSyntax.Written(size);
@@ -219,6 +168,168 @@ internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
         if (!plain)
         {
             content.Raw("EMC\n"u8);
+        }
+    }
+
+    // Each glyph through its own text matrix (the matrix over its size, the size its scale along the baseline), in the
+    // order given; a glyph whose characters its font's map does not give back is shown inside a span of its own with them
+    // (/ActualText), so a reader makes it a run of its own drawn through its own matrix.
+    public void Glyphs(IFontFace face, ReadOnlySpan<DocumentGlyph> glyphs, ReadOnlySpan<DocumentMatrix> matrices, string text, DocumentTextMode mode, DocumentColour colour)
+    {
+        ArgumentNullException.ThrowIfNull(face);
+        ArgumentNullException.ThrowIfNull(text);
+        if (matrices.Length != 1 && matrices.Length != glyphs.Length)
+        {
+            throw new ArgumentException($"A run's glyphs take one matrix for all of them or one each: {matrices.Length} for {glyphs.Length} glyphs.", nameof(matrices));
+        }
+
+        bool upright = true;
+        float uprightSize = matrices.IsEmpty ? 0f : matrices[0].A;
+        foreach (var m in matrices)
+        {
+            double area = (double)m.A * m.D - (double)m.B * m.C;
+            if (!float.IsFinite(m.A) || !float.IsFinite(m.B) || !float.IsFinite(m.C) || !float.IsFinite(m.D) || area == 0 || !double.IsFinite(area))
+            {
+                throw new ArgumentException($"A glyph's matrix ({m.A}, {m.B}, {m.C}, {m.D}) is finite and does not turn the glyph flat.", nameof(matrices));
+            }
+
+            upright &= m.B == 0f && m.C == 0f && m.A == uprightSize && m.D == -uprightSize;
+        }
+
+        if (upright && uprightSize > 0f)
+        {
+            Glyphs(face, uprightSize, glyphs, text, mode, colour);           // upright at one size: the run as it always was
+            return;
+        }
+
+        if (!CheckRun(face, glyphs, mode))
+        {
+            return;
+        }
+
+        var font = _font(face);
+        var content = Content();
+        bool plain = Start(content, font, glyphs, text, mode, colour);
+        string?[]? shares = plain ? null : font.Shares(glyphs, text);
+        bool open = false;
+        for (int i = 0; i < glyphs.Length; i++)
+        {
+            var g = glyphs[i];
+            var m = matrices[matrices.Length == 1 ? 0 : i];
+            string? own = shares is null || font.Reads(g.Glyph, shares[i]) ? null : shares[i] ?? "";
+            if (own is not null)
+            {
+                if (open)
+                {
+                    content.Raw("ET\n"u8);
+                    open = false;
+                }
+
+                content.Raw("/Span<</ActualText "u8).Text(own).Raw(">>BDC\n"u8);
+            }
+
+            if (!open)
+            {
+                content.Raw("BT\n"u8);
+                open = true;
+            }
+
+            // The size: the glyph's scale along its baseline (across it when the baseline has none).
+            float size = MathF.Sqrt(m.A * m.A + m.B * m.B);
+            if (!(size > 0f) || !float.IsFinite(size))
+            {
+                size = MathF.Sqrt(m.C * m.C + m.D * m.D);
+            }
+
+            ShowState(content, font, size, mode);
+            content.Number(m.A / size).Space().Number(m.B / size).Space().Number(m.C / size).Space().Number(m.D / size).Space().Number(g.X).Space().Number(g.Y)
+                .Raw(" Tm\n<"u8).HexPair(g.Glyph).Raw(">Tj\n"u8);
+            if (own is not null)
+            {
+                content.Raw("ET\nEMC\n"u8);
+                open = false;
+            }
+        }
+
+        if (open)
+        {
+            content.Raw("ET\n"u8);
+        }
+    }
+
+    // Checks a run's glyphs (ids the face has and a document shows, finite places) and its mode; false when there are none.
+    private bool CheckRun(IFontFace face, ReadOnlySpan<DocumentGlyph> glyphs, DocumentTextMode mode)
+    {
+        if (mode is not (DocumentTextMode.Fill or DocumentTextMode.Stroke or DocumentTextMode.FillStroke or DocumentTextMode.Hidden))
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode), mode, "Not a text mode.");
+        }
+
+        ThrowIfWritten();
+        if (glyphs.IsEmpty)
+        {
+            return false;
+        }
+
+        int limit = Math.Min(face.GlyphCount, 65536);
+        foreach (var g in glyphs)
+        {
+            if ((uint)g.Glyph >= (uint)limit)
+            {
+                throw new ArgumentOutOfRangeException(nameof(glyphs), g.Glyph, $"Glyph {g.Glyph} is not one of the face's {face.GlyphCount} (a document shows ids up to 65535).");
+            }
+
+            if (!float.IsFinite(g.X) || !float.IsFinite(g.Y))
+            {
+                throw new ArgumentException($"Glyph {g.Glyph} is placed at ({g.X}, {g.Y}): places are finite.", nameof(glyphs));
+            }
+        }
+
+        return true;
+    }
+
+    // A run's start: its font listed with the page's, its glyphs mapped to its text (whether they read back as it), and
+    // its colours set unless it is hidden.
+    private bool Start(PdfSyntax content, PdfWriterFont font, ReadOnlySpan<DocumentGlyph> glyphs, string text, DocumentTextMode mode, DocumentColour colour)
+    {
+        if (!_fonts.Contains(font))
+        {
+            _fonts.Add(font);
+        }
+
+        bool plain = font.Map(glyphs, text);
+        bool filled = mode is DocumentTextMode.Fill or DocumentTextMode.FillStroke, stroked = mode is DocumentTextMode.Stroke or DocumentTextMode.FillStroke;
+        if (mode != DocumentTextMode.Hidden)
+        {
+            Alpha(content, filled ? colour.Alpha : _state.FillAlpha, stroked ? colour.Alpha : _state.StrokeAlpha);
+            if (filled)
+            {
+                FillColour(content, colour);
+            }
+
+            if (stroked)
+            {
+                StrokeColour(content, colour);
+            }
+        }
+
+        return plain;
+    }
+
+    // The font, size and render mode inside a text object, each written only when it changes.
+    private void ShowState(PdfSyntax content, PdfWriterFont font, float size, DocumentTextMode mode)
+    {
+        if (!ReferenceEquals(_state.Font, font) || _state.Size != size)
+        {
+            content.Raw("/"u8).Raw(_names).Raw("F"u8).Integer(font.Index).Space().Number(size).Raw(" Tf\n"u8);
+            (_state.Font, _state.Size) = (font, size);
+        }
+
+        int render = mode switch { DocumentTextMode.Stroke => 1, DocumentTextMode.FillStroke => 2, DocumentTextMode.Hidden => 3, _ => 0 };
+        if (_state.Render != render)
+        {
+            content.Integer(render).Raw(" Tr\n"u8);
+            _state.Render = render;
         }
     }
 

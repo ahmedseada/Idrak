@@ -185,6 +185,9 @@ internal sealed class GlyphPainter
     /// <summary>The pose's name.</summary>
     public string Name => _pose.Name;
 
+    /// <summary>The page's next line number: the lines drawn so far (each block's lines take the next numbers).</summary>
+    public int Line => _line;
+
     /// <summary>The pose a page's options choose (<c>pose</c>, "none" by default) with its own keys, read once.</summary>
     /// <exception cref="ArgumentException">A bad pose setting.</exception>
     /// <exception cref="NotSupportedException">A pose that is not registered.</exception>

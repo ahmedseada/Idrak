@@ -161,7 +161,10 @@ internal sealed class ShapesLayout : IPageLayout
         using var canvas = new PageCanvas(width, height);
         var layer = blue ? canvas.Blue : canvas.Ink;
         var blocks = new List<PageBlock>(drawn.Count + usable.Count);
-        ShapeDrawing.Draw(canvas, layer, drawn, pen, penSettings, penSeed, strokeWidth, blocks, new ShapeLettering(body, null, rtl));
+        var record = style.Vectors ? new PageRecord() : null;
+        var lettering = new ShapeLettering(body, null, rtl);
+        record?.Shapes(drawn, strokeWidth, lettering, blue);
+        ShapeDrawing.Draw(canvas, layer, drawn, pen, penSettings, penSeed, strokeWidth, blocks, lettering);
 
         // Each region's text, fitted inside it, placed as a hand would (aimed at its alignment, a little off).
         var place = new Random(placeSeed);
@@ -187,6 +190,7 @@ internal sealed class ShapesLayout : IPageLayout
             float x = at switch { "start" => rtl ? freeX : 0, "end" => rtl ? 0 : freeX, _ => freeX / 2 };
             x = Math.Clamp(x + (float)(offX - 0.5) * Math.Min(freeX, size) * 0.3f, 0, freeX);
             float y = Math.Clamp(freeY / 2 + (float)(offY - 0.5) * freeY * 0.4f, 0, freeY);
+            record?.Text(block, region.X + x - inkLeft, region.Y + y - inkTop, blue, glyphs, glyphs.Line, (region.Group, region.Index, 0));
             glyphs.Draw(block, region.X + x - inkLeft, region.Y + y - inkTop, layer, width, height);
             texts.Add((region, text));
         }
@@ -212,7 +216,7 @@ internal sealed class ShapesLayout : IPageLayout
         string described = profile.Name == "custom" ? "written" : profile.Name;
         string description = string.Create(CultureInfo.InvariantCulture,
             $"shapes: {described} [{pipeline}], pen {pen.Name}, bind {binding.Name}, {Describe(body)}, spacing {spacing:F2}, stroke {strokeWidth:F1}px, margin {margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {texts.Count} with text{(blue ? ", blue pen" : "")}{Paired(body)}{Posed(glyphs)}");
-        return new RenderedPage(image, string.Join("\n", label), blocks, description);
+        return new RenderedPage(image, string.Join("\n", label), blocks, description) { Vectors = record?.Finish(width, height, paper, darkness, blueInk, style.Color) };
     }
 
     private static string? Option(IReadOnlyDictionary<string, string> options, string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
@@ -569,7 +573,10 @@ internal sealed class ShapesLayout : IPageLayout
         using var canvas = new PageCanvas(width, height);
         var layer = p.Blue ? canvas.Blue : canvas.Ink;
         var blocks = new List<PageBlock>(drawn.Count + usable.Count);
-        ShapeDrawing.Draw(canvas, layer, drawn, p.Pen, p.PenSettings, p.PenSeed, p.StrokeWidth, blocks, new ShapeLettering(p.Body, null, p.Rtl));
+        var record = p.Style.Vectors ? new PageRecord() : null;
+        var lettering = new ShapeLettering(p.Body, null, p.Rtl);
+        record?.Shapes(drawn, p.StrokeWidth, lettering, p.Blue);
+        ShapeDrawing.Draw(canvas, layer, drawn, p.Pen, p.PenSettings, p.PenSeed, p.StrokeWidth, blocks, lettering);
 
         // Each region's text: one line fitted as a hand would place it, or paragraphs wrapped inside its edge.
         var place = new Random(p.PlaceSeed);
@@ -587,8 +594,10 @@ internal sealed class ShapesLayout : IPageLayout
                     continue;                                       // nothing fits at the least size: the region stays empty
                 }
 
-                foreach (var (block, x, y) in placed)
+                for (int k = 0; k < placed.Count; k++)
                 {
+                    var (block, x, y) = placed[k];
+                    record?.Text(block, x, y, p.Blue, p.Glyphs, p.Glyphs.Line, (region.Group, region.Index, k));
                     p.Glyphs.Draw(block, x, y, layer, width, height);
                 }
 
@@ -614,6 +623,7 @@ internal sealed class ShapesLayout : IPageLayout
             float ox = at switch { "start" => p.Rtl ? freeX : 0, "end" => p.Rtl ? 0 : freeX, _ => freeX / 2 };
             ox = Math.Clamp(ox + (float)(offX - 0.5) * Math.Min(freeX, p.Size) * 0.3f, 0, freeX);
             float oy = Math.Clamp(freeY / 2 + (float)(offY - 0.5) * freeY * 0.4f, 0, freeY);
+            record?.Text(one, region.X + ox - inkLeft, region.Y + oy - inkTop, p.Blue, p.Glyphs, p.Glyphs.Line, (region.Group, region.Index, 0));
             p.Glyphs.Draw(one, region.X + ox - inkLeft, region.Y + oy - inkTop, layer, width, height);
             label.Add((region.Group, region.Index, unit, false));
         }
@@ -645,7 +655,7 @@ internal sealed class ShapesLayout : IPageLayout
         string described = p.Profile.Name == "custom" ? "written" : p.Profile.Name;
         string description = string.Create(CultureInfo.InvariantCulture,
             $"shapes: {described} [{p.Pipeline}], pen {p.Pen.Name}, bind {p.Binding.Name}, {Describe(p.Body)}, spacing {p.Spacing:F2}, stroke {p.StrokeWidth:F1}px, margin {p.Margin:F0}px, {drawn.Count} shapes, {usable.Count} regions, {label.Count} with text, composed{(p.Sections ? ", sections" : "")}{(p.Blue ? ", blue pen" : "")}{Paired(p.Body)}{Posed(p.Glyphs)}");
-        return new RenderedPage(image, string.Join("\n", lines), blocks, description);
+        return new RenderedPage(image, string.Join("\n", lines), blocks, description) { Vectors = record?.Finish(width, height, p.Paper, p.Darkness, p.BlueInk, p.Style.Color) };
     }
 
     // The lines each step that takes text gets, in order: a section each (sections=blank), or lines=N, lines=rest (what

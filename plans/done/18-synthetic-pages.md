@@ -101,3 +101,6 @@ and descriptions).
   signature's pen, colour and block; the settings leave a page without ornaments as it was; refusals), "pages:" and
   "synthetic data:" (the settings read, listed again, refused). `DocumentShapes` (PDF) writes a plan's paths and areas;
   its texts are not written there yet.
+- PDFs since 2026-11-19 (plan 28's follow-up, [28-documents.md](../opened/28-documents.md) "`data synth` writes PDFs"):
+  `idrak data synth --format pdf` (each page's image with its text hidden over it) and `pdf-vector` (each page as drawn,
+  its texts and shapes as vectors, the plans' texts included).

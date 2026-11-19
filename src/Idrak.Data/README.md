@@ -104,7 +104,11 @@ builder.Finish();
   of few levels exact (Flate, with the PNG predictor where it helps); `Flate` or `Jpeg` fixes it. A scan with its OCR
   text written in `DocumentTextMode.Hidden` is a searchable PDF.
 - **Pages the library draws:** `DocumentShapes` (Idrak.Imaging) writes a page of shapes and laid-out text as vector
-  paths and real text.
+  paths and real text, a shape's text along its path glyph by glyph.
+- **Turned glyphs:** `IDocumentPageBuilder.Glyphs(face, glyphs, matrices, text, mode, colour)` draws each glyph through
+  its own matrix (text round a ring, a turned or slanted line); the pdf writer gives each turned glyph its own text
+  matrix (and its own `/ActualText` when its characters are not what its font's map gives), so it reads back as a run
+  of its own, drawn as written. A writer that writes upright glyphs only refuses turned ones (the default member).
 - **Also:** attached files (`Attach`), form fields (`AddField`), annotations and links on a page (`AddAnnotation`,
   `AddLink`), bookmarks, page labels, pages copied from other documents (`CopyPage`: merge and split), encryption
   (`Encrypt`, AES-256) and a signature at `Finish` (`Sign`).

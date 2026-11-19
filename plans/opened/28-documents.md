@@ -2658,16 +2658,123 @@ Plan 38 (handwriting fonts from images) takes everything PDF from here and start
 
 ## Planned follow-ups, built only when the owner says
 
-- **`data synth` writes PDFs** (owner, 2026-11-18: "add it to plan but don't implement it unless I tell you"): today
-  `idrak data synth` writes each page as an image (JPEG by default, any registered `ImageEncoders` format) with its
-  label in the `.jsonl`. With D6's writer it could also write PDFs: `--format pdf`, the drawn page (scan look and all)
-  as an image page with the label's text as a hidden, searchable layer placed on the drawn runs (a scan-like PDF);
-  `--format pdf-vector`, the page written before any scan look as real text and shapes (`DocumentShapes`, the page's
-  fonts embedded as subsets: a PDF as software makes it); the records point at the PDF and its page. Through
-  `DocumentWriters` only (any registered writer), the options carried to the command and its variables. **Built last,
-  without waiting for the owner** (owner, 2026-11-18: "keep it in the plan but it's the last to implement … if the plan
-  completed then start the pdf output directly don't wait for me"): it starts on its own the moment every other plan 28
-  phase and every queued fix is merged and the slots are free, and on nothing earlier.
+- **`data synth` writes PDFs** (**built 2026-11-19**, as-built note below; owner, 2026-11-18: "add it to plan but don't
+  implement it unless I tell you"): today `idrak data synth` writes each page as an image (JPEG by default, any
+  registered `ImageEncoders` format) with its label in the `.jsonl`. With D6's writer it could also write PDFs:
+  `--format pdf`, the drawn page (scan look and all) as an image page with the label's text as a hidden, searchable
+  layer placed on the drawn runs (a scan-like PDF); `--format pdf-vector`, the page written before any scan look as real
+  text and shapes (`DocumentShapes`, the page's fonts embedded as subsets: a PDF as software makes it); the records
+  point at the PDF and its page. Through `DocumentWriters` only (any registered writer), the options carried to the
+  command and its variables. **Built last, without waiting for the owner** (owner, 2026-11-18: "keep it in the plan but
+  it's the last to implement … if the plan completed then start the pdf output directly don't wait for me"): it starts
+  on its own the moment every other plan 28 phase and every queued fix is merged and the slots are free, and on nothing
+  earlier.
+
+  **As built (2026-11-19):**
+  - **Turned glyphs, a contract change** (`src/Idrak.Abstraction/Data/DocumentWriters.cs`):
+    `IDocumentPageBuilder.Glyphs(face, glyphs, matrices, text, mode, colour)`, a default member: one matrix for all the
+    glyphs or one each, each mapping the glyph's em onto the page as `DocumentTextRun.GlyphMatrix` reads it back;
+    upright matrices at one size go to the call with a size (the same bytes), any other is a `NotSupportedException`
+    from a writer without it; a wrong count, a flat or an unfinite matrix an `ArgumentException`; the shadow builder
+    forwards it. The pdf writer (`PdfWriterPage.cs`) gives each turned glyph its own text matrix (the matrix over its
+    size, the size its scale along the baseline) and, when the run's glyphs do not read back as its text, each glyph its
+    own `/ActualText` span with its share of the text (from the run's alignment, `PdfWriterFont.Shares`), so the reader
+    makes each glyph a run of its own drawn through its own matrix (a span across turned glyphs would read as one run
+    drawn through the first's).
+  - **`ShapePlan.Texts` written** (the gap D6 left): `DocumentShapes.Write(page, plan, style, lettering, pageText,
+    rightToLeft)` writes the areas and paths, then each text as the page draws it: `ShapeDrawing.Place`, now shared by
+    the drawing and the writer (the same numbers: the image unchanged), says the text, lays it out, fits it and turns
+    each glyph onto the path at its middle; the writer gives each glyph (spaces too, at the middle of their advance) its
+    origin and its em turned onto the path, in reading order (by cluster), a call a stretch of one face, the characters
+    of their clusters as text. `DocumentShapeStyle.Left` and `Top` put a page cut from a larger drawing at its corner;
+    `TextBlock.Text` keeps the text a block was laid out from. Posed glyphs (`pose=`) are written through their poses'
+    matrices (moved, height scaled, slanted, turned) in their ink's share.
+  - **The page as drawn** (`PageStyle.Vectors`, `RenderedPage.Vectors`, `IPageVectors` in `Pages.cs`; `PageRecord` in
+    `src/Idrak.Imaging/PageVectors.cs`): letter, plain and shapes record what they draw when asked, nothing copied: each
+    text block with its glyph painter and first line number (its reading order: drawn order, or the shapes layout's
+    group, index, part), each shape plan with its stroke width and lettering (the stamp's plans turned, at the page's
+    place), each rule, each in its layer, and at the end the colours `Compose` used (the paper, the ink as the paper
+    darkened, the second ink; grey on a grey page). `Write` writes the paper (a filled rectangle unless white), the
+    ink's parts in drawing order, then the second ink's (the page lays it over the ink); `WriteText` the page's own text
+    alone in reading order (none of the ornaments'). A pen's wobble and pressure and a stamp's uneven ink are written as
+    the ideal stroke and the full ink. Asked for nothing, the layouts draw as before: the colours are drawn into locals
+    in the order `Compose` took them, every record call is skipped.
+  - **`data synth`** (`SyntheticPages`, `src/Idrak.Text/SyntheticDocuments.cs`, `DataSynthCommand.cs`):
+    `SyntheticPageOptions.Output` (`Images`, `ScannedDocuments`, `VectorDocuments`), `Writer` ("pdf", any
+    `DocumentWriters` name, its first extension naming the files), `PagesPerDocument` (1: the plan named no other),
+    `Dpi` (0: the drawer's `IDRAK_DOCUMENT_DPI`, else 150, since one resolution maps pixels and points both ways; the
+    default page, 1240 pixels, is A4's width) and `WriteOptions` (the writer's variables unless given). A scan-like page
+    is its image (the look and all; Auto, the writer's default, keeps most text pages exact: their paper is flat) with
+    the label's runs hidden on the glyphs they were drawn with (a cut page's by the cut's corner, a look that changes
+    the size scaled with it); a vector page is the page before any look (no look is drawn for it: its manifest says
+    `none`). A page alone is its own document, written whole where it is made, beside the others, as an image is encoded
+    there; several pages a file are written in order by one writer (a file named after its first page, finished when it
+    holds its pages) while the next chunk is made, the pages waiting as 8-bit planes. Each record names its document as
+    its image and the page's index in it, from 0, in `"pages"` (beside `"images"`); its manifest line `"image"` and
+    `"page_index"` (`"page"` is the layout's description). Options: `--format pdf|pdf-vector` (claimed over the common
+    `--format`), `--writer`, `--pdf-pages`, `--pdf-images auto|flate|jpeg`, `--pdf-fonts subset|whole`, `--dpi`,
+    `--quality` (in a PDF, over `IDRAK_DOCUMENT_JPEG_QUALITY`); each refused out of range naming itself, an unregistered
+    writer naming the registered ones, the document options without `--format pdf*` and `--pdf-images` on vector pages
+    refused; a layout that keeps no vectors fails naming the library's that do. `IDRAK_DOCUMENT_IMAGE_ENCODING`,
+    `_JPEG_QUALITY`, `_EMBED_FONTS` and `_DPI` list `data synth` in the environment table (and so in its help); the CLI,
+    Imaging, Data and Text READMEs say it.
+  - **Results proven:** the image output byte for byte: three fixed-seed runs (jpeg with every layout, emblems and
+    stamps; png grey and colour, cut pages; a zip of shapes pages) with the build of 7b65d25 and with this one: the 21
+    files the same SHA-256, the zip's 6 entries the same bytes (only the entries' times differ, as between any two
+    runs); a test runs jpeg and png with the vectors kept and without (the same images, records, manifests). The same
+    seed writes the same PDF bytes twice, on one worker or many and into a zip; a page alone and the same page through
+    the ordered writer give the same bytes.
+  - **Tests** (`tests/Idrak.Tests/SyntheticPdfTests.cs`, group `synthetic data pdf:`, 6; and one each in `documents pdf:
+    write` and `shapes:`): scan-like pages on letter, plain and shapes and two seeds (the page's size, the image exact
+    or the JPEG round trip, the hidden glyphs read back in order where written, each run inside its drawn box within a
+    pixel, cut pages, the text where the ink is, every record's file and page opened); vector pages (every glyph read
+    back in order with its text, the label's runs the label, the stamps' words written, subset fonts, the page drawn
+    back within 2% of the page before its look: 0.00 to 0.01% measured); several pages a file, the same bytes, a zip;
+    memory over 300 pages; image output unchanged; the CLI's options and refusals; turned glyphs written and read back;
+    every emblem and stamp profile's texts read back as the plan says them and drawn back within 1% of the page drawing.
+    **Runs:** the filter below with the API and inventory flags: 147 tests, 145 passed, 2 failed: the shared-contracts
+    list (the writing contracts now used by Idrak.Text too: their four lines removed) and the scan test's own comparison
+    (a drawn page's table of a byte's value is k / 255, the reader's k x (1 / 255): compared as 8-bit levels); then
+    those, the inventory and the API without the flags: 9 passed. Then two speed changes (a chunk written while the next
+    is made; a page alone written where it is made), each built once and run with `synthetic data|public API`: 17
+    passed, twice.
+  - **The reference tools** (`tools/documents/check_written.py --expected auto`, the expected text each page's label, on
+    15 files in `test-output/synth-pdf/`: six scan-like, six vector, a vector file of six pages, two scan-like files of
+    three, from generic letters in DejaVu Sans): qpdf finds no damage and decodes every stream, pdfminer.six and pdfium
+    open every file with no warning; 11 match the label exactly in both. Of the 24 pages, pdfium gives the label exactly
+    on all 12 scan-like pages and pdfminer.six on 11 (one header in its own order); on vector pages both give the label
+    in order with the ornaments' words beside it (a ring's name, a monogram's initials, a stamp's word), or exactly
+    where a page has none; pdfminer.six breaks a ring's name into pieces (its layout of turned glyphs), pdfium reads it
+    whole. No word of a label is missing in either.
+  - **Timings and memory** (this container, 4 cores; the owner's devices give the real ones): the writer alone, 620 x
+    877 pages into one 300-page document, after a full collection every page: scan-like 66 KiB a page, cold 32-36 ms a
+    page (the first 9), warm 16-18 ms and 113 KiB allocated a page, the managed memory flat (0.3 MiB over 300 pages);
+    vector 2.7 KiB a page, cold 0.5-1.0 ms, warm 0.44-0.77 ms and 115 KiB a page, flat. Whole runs at A4 150 dpi, 90
+    pages, under a 900 MiB heap limit (each run's peak resident about 940 MiB, the same for jpeg: the chunks' drawing):
+    jpeg images 5.7 s, scan-like PDFs a page a file 9.6 s (12.5 s before a page alone was written where it was made), 90
+    pages in one file 10.7 s, `--pdf-images jpeg` 6.4 s; vector PDFs 0.9-1.0 s (no look, no image). Without the limit a
+    90-page file's peak was 1.9 GiB against 1.4 GiB a page a file: garbage the GC had not taken, not memory kept.
+  - **Left for later:** a right-to-left ring text in a reference reader (pdfium gives turned runs in the glyphs' order);
+    an app's layout keeps no vectors unless it fills `RenderedPage.Vectors`; a stamp's uneven ink and a pen's wobble in
+    vector pages; the JPEG pages could take `--quality` alone without Auto's measure (`--pdf-images jpeg` does).
+  - **The owner's run** (held with the others until asked):
+    ```powershell
+    cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+    dotnet build -c Release tests\Idrak.Tests
+    $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "synthetic data|pages:|composed pages:|shapes:|glyph poses:|scans:|fonts:|documents pdf: write|documents pdf: text|documents drawers|documents contracts|kind table:|conformance kit:|cli polish:|cli arabic:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner"
+    dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-synth-pdf.txt
+    $env:IDRAK_FILTER = "synthetic data pdf: memory"
+    dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\synth-pdf-memory.txt
+    Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+    New-Item -ItemType Directory -Force test-output\synth-pdf\fonts
+    Copy-Item tests\Idrak.Tests\data\fonts\dejavu-sans-subset.ttf test-output\synth-pdf\fonts\
+    dotnet run -c Release --no-build --project src\Idrak.Cli -- data text -n 6 -l en --seed 1 -o test-output\synth-pdf\letters.txt
+    dotnet run -c Release --no-build --project src\Idrak.Cli -- data synth test-output\synth-pdf\letters.txt -o test-output\synth-pdf\scan\pages.jsonl --fonts test-output\synth-pdf\fonts --format pdf --layout letter --layout plain --scan office --scan none --page "emblem=1,stamp=1" --seed 7
+    dotnet run -c Release --no-build --project src\Idrak.Cli -- data synth test-output\synth-pdf\letters.txt -o test-output\synth-pdf\vector\pages.jsonl --fonts test-output\synth-pdf\fonts --format pdf-vector --pdf-pages 6 --layout letter --layout shapes --page "emblem=1,stamp=1" --seed 7
+    ```
+    The two runs write `test-output\synth-pdf\scan\pages\*.pdf` (a scan-like PDF a page: select the text on the page
+    image) and `test-output\synth-pdf\vector\pages\*.pdf` (three files of six vector pages: the emblems' and stamps'
+    words are text too), each with `pages.jsonl` naming the file and page of every record.
 
 ## Not in this plan
 

@@ -108,6 +108,9 @@ public sealed class TextBlock
 
     /// <summary>The style it was set in.</summary>
     public required TextStyle Style { get; init; }
+
+    /// <summary>The text it was laid out from (each line of it a paragraph; its lines' starts index into it); "" for a block made otherwise.</summary>
+    public string Text { get; init; } = "";
 }
 
 /// <summary>
@@ -166,7 +169,7 @@ public static class TextLayout
         }
 
         float height = lines.Count == 0 ? 0 : baseline - lineHeight - metrics.Descender * scale;
-        return new TextBlock { Lines = lines, Width = float.IsFinite(maxWidth) ? maxWidth : lines.Count == 0 ? 0 : lines.Max(l => l.Width), Height = height, Style = style };
+        return new TextBlock { Lines = lines, Width = float.IsFinite(maxWidth) ? maxWidth : lines.Count == 0 ? 0 : lines.Max(l => l.Width), Height = height, Style = style, Text = text };
     }
 
     /// <summary>The width of <paramref name="text"/> set on one line (pixels).</summary>

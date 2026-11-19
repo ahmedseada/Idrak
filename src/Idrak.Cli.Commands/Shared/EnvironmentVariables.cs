@@ -84,6 +84,10 @@ internal static class EnvironmentVariables
     // redact reads and writes documents (phase D10), idrak bench documents measures all of it (phase D13).
     private static readonly string[] DocumentCommands = ["data redact", "bench documents"];
 
+    // Plan 28's follow-up: idrak data synth writes its pages as PDFs (--format pdf, pdf-vector) through DocumentWriteOptions,
+    // and gives them their size from the resolution DocumentDrawOptions reads; its options win.
+    private static readonly string[] DocumentWriteCommands = [.. DocumentCommands, "data synth"];
+
     // Plan 28, phase D13: the documents bench's own settings (BenchDocumentsCommand), each under its option.
     private static readonly string[] DocumentBenchCommands = ["bench documents"];
 
@@ -521,11 +525,11 @@ internal static class EnvironmentVariables
         new("IDRAK_DOCUMENT_READING_ORDER", Documents, "bidi", "The reading order that puts a document line's text in logical order: a ReadingOrders name (bidi, runs; DocumentOptions.ReadingOrder)", DocumentCommands),
         new("IDRAK_DOCUMENT_MAX_STREAM_BYTES", Documents, "a quarter of the memory free when a document is opened", "The most bytes one decoded part of a document file may take (bytes, or with k, m or g); a file that passes it fails naming the limit (DocumentOptions.MaxStreamBytes)", DocumentCommands),
         new("IDRAK_DOCUMENT_CACHE_BYTES", Documents, "an eighth of the memory free when a document is opened", "The most bytes a document keeps decoded for reuse (fonts and other shared parts; bytes, or with k, m or g; 0: nothing kept; DocumentOptions.CacheBytes)", DocumentCommands),
-        new("IDRAK_DOCUMENT_IMAGE_ENCODING", Documents, "auto", "How a document writer stores page images: auto (JPEG for photographs and scans, exact for line art and few levels, measured per image), flate (exact) or jpeg (DocumentWriteOptions.ImageEncoding)", DocumentCommands),
-        new("IDRAK_DOCUMENT_JPEG_QUALITY", Documents, "90", "The quality of the JPEG images a document writer stores, 1 to 100 (DocumentWriteOptions.JpegQuality)", DocumentCommands),
-        new("IDRAK_DOCUMENT_EMBED_FONTS", Documents, "subset", "How a document writer embeds fonts: subset (only the glyphs used) or whole (DocumentWriteOptions.EmbedFonts)", DocumentCommands),
+        new("IDRAK_DOCUMENT_IMAGE_ENCODING", Documents, "auto", "How a document writer stores page images: auto (JPEG for photographs and scans, exact for line art and few levels, measured per image), flate (exact) or jpeg (DocumentWriteOptions.ImageEncoding; data synth --pdf-images wins)", DocumentWriteCommands),
+        new("IDRAK_DOCUMENT_JPEG_QUALITY", Documents, "90", "The quality of the JPEG images a document writer stores, 1 to 100 (DocumentWriteOptions.JpegQuality; data synth --quality wins)", DocumentWriteCommands),
+        new("IDRAK_DOCUMENT_EMBED_FONTS", Documents, "subset", "How a document writer embeds fonts: subset (only the glyphs used) or whole (DocumentWriteOptions.EmbedFonts; data synth --pdf-fonts wins)", DocumentWriteCommands),
         new("IDRAK_DOCUMENT_SAVE_MODE", Documents, "incremental", "How an edited document is saved: incremental (the source's bytes kept, changes appended, earlier signatures stay valid) or rewrite (one clean file; DocumentWriteOptions.SaveMode)", DocumentCommands),
-        new("IDRAK_DOCUMENT_DPI", Documents, "150", "The resolution a document page is drawn at, in dots per inch (DocumentDrawOptions.Dpi)", DocumentCommands),
+        new("IDRAK_DOCUMENT_DPI", Documents, "150", "The resolution a document page is drawn at, in dots per inch (DocumentDrawOptions.Dpi); data synth's pages are drawn at it, so a page's pixels at it give its size in a PDF (--dpi wins)", DocumentWriteCommands),
         new("IDRAK_DOCUMENT_BAND_PIXELS", Documents, "131072 (128 Ki)", "About how many pixels a band of a document page being drawn holds, 1 to 67108864: the page is drawn a band of rows at a time, the bands spread over the cores, each band in work about 40 bytes a pixel (DocumentDrawOptions.BandPixels, its rows within MinBandRows and MaxBandRows)", DocumentCommands),
         new("IDRAK_DOCUMENT_SHADING_STEPS", Documents, "1024", "The steps of the table a document page's axial and radial shadings are drawn through, read between them, 2 to 1048576: fewer are quicker to make and coarser (DocumentDrawOptions.ShadingSteps)", DocumentCommands),
         new("IDRAK_DOCUMENT_MAX_TILE_PIXELS", Documents, "1048576 (1 Mi)", "The most pixels the tile a document page's tiling pattern is drawn into may hold, 1 to 67108864: an upright tiling whose cell is larger, and any turned one, is drawn into a smaller tile and read back from it (DocumentDrawOptions.MaxTilePixels)", DocumentCommands),

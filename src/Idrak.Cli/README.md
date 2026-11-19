@@ -498,7 +498,7 @@ subcommands work on local files.
 | `idrak data redact` | Remove text, drawings and image pixels under areas of a PDF for real, saved as a clean rewrite |
 | `idrak data audio` | Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl |
 | `idrak data mel` | Log-mel features of sound files as .npy (a model's input features), with the options used |
-| `idrak data synth` (`idrak synth`) | Tuning pages drawn from text: each record's answer set as scanned-looking pages |
+| `idrak data synth` (`idrak synth`) | Tuning pages drawn from text: each record's answer set as scanned-looking pages (images, or PDFs with `--format pdf` or `pdf-vector`) |
 
 ```bash
 idrak data show "hf:owner/qa-set?config=main"
@@ -511,7 +511,19 @@ idrak data audio rec/ -o clips --rate 16000 --mono --split silence --min-seconds
 idrak data mel talk.wav -o mels --preprocessor ./whisper-small                        # NAME.npy and features.json
 idrak data redact report.pdf --text "Project Falcon" -o report-shared.pdf             # every place the words stand, removed
 idrak data redact newsletter.pdf --boxes areas.json -o newsletter-public.pdf           # [{"page": 1, "box": [x, y, w, h]}]
+idrak data synth letters.txt -o scans/pages.jsonl --fonts fonts --format pdf --scan office  # page images, text hidden over them
+idrak data synth letters.txt -o vectors/pages.jsonl --fonts fonts --format pdf-vector --pdf-pages 10
 ```
+
+`idrak data synth --format pdf` writes each page as a scan-like PDF page: its image, look and all, with its text as a
+hidden layer on the lines as drawn, so a PDF reader finds and selects it where it shows. `--format pdf-vector` writes
+the page as software makes it, before any look: its text as glyphs in its fonts (embedded as subsets) with the text they
+stand for, its shapes, rules, emblems and stamps as paths and their words as real text. A page of W x H pixels is
+W x H x 72 / `--dpi` points (`IDRAK_DOCUMENT_DPI`, 150). `--pdf-pages N` puts N pages in a file, named after its first
+page; each record names its file as its image and the page's index in it, from 0, in `"pages"`. `--writer` picks any
+registered document writer, `--pdf-images` and `--pdf-fonts` the image encoding and font embedding
+(`IDRAK_DOCUMENT_IMAGE_ENCODING`, `IDRAK_DOCUMENT_EMBED_FONTS`) and `--quality` the JPEG quality
+(`IDRAK_DOCUMENT_JPEG_QUALITY`).
 
 #### Data sources and recipes
 

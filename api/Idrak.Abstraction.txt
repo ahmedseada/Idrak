@@ -2204,6 +2204,7 @@ public interface Idrak.Abstraction.Data.IDocumentFormat
   public string Name { get; }
 
 public interface Idrak.Abstraction.Data.IDocumentPageBuilder
+  public (default) void Glyphs(Idrak.Abstraction.Data.IFontFace face, System.ReadOnlySpan<Idrak.Abstraction.Data.DocumentGlyph> glyphs, System.ReadOnlySpan<Idrak.Abstraction.Data.DocumentMatrix> matrices, string text, Idrak.Abstraction.Data.DocumentTextMode mode, Idrak.Abstraction.Data.DocumentColour colour)
   public float Height { get; }
   public float Width { get; }
   public int Index { get; }
@@ -2312,6 +2313,12 @@ public interface Idrak.Abstraction.Data.IPageLayout
   public Idrak.Abstraction.Data.RenderedPage Render(Idrak.Abstraction.Data.PageContent content, Idrak.Abstraction.Data.PageStyle style, int seed)
   public string Name { get; }
   public string Summary { get; }
+
+public interface Idrak.Abstraction.Data.IPageVectors
+  public int Height { get; }
+  public int Width { get; }
+  public void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, float scale, float x, float y)
+  public void WriteText(Idrak.Abstraction.Data.IDocumentPageBuilder page, float scale, float x, float y, Idrak.Abstraction.Data.DocumentTextMode mode)
 
 public interface Idrak.Abstraction.Data.IPen : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Data.PenSettings Read(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
@@ -2670,6 +2677,7 @@ public sealed record Idrak.Abstraction.Data.PageStyle : System.IEquatable<Idrak.
   public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> Fallbacks { get; init; }
   public bool Color { get; init; }
+  public bool Vectors { get; init; }
   public double? HabitChance { get; init; }
   public float BlueSignature { get; init; }
   public float Crop { get; init; }
@@ -2743,6 +2751,7 @@ public static class Idrak.Abstraction.Data.ReadingOrders
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Data.RenderedPage : System.IEquatable<Idrak.Abstraction.Data.RenderedPage>
+  public Idrak.Abstraction.Data.IPageVectors? Vectors { get; init; }
   public Idrak.Abstraction.Data.ImageData Image { get; init; }
   public RenderedPage(Idrak.Abstraction.Data.ImageData Image, string Text, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageBlock> Blocks, string Description)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.PageBlock> Blocks { get; init; }

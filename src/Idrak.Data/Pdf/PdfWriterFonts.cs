@@ -107,6 +107,15 @@ internal sealed class PdfWriterFont
         return at == text.Length;
     }
 
+    /// <summary>
+    /// The characters each of a run's glyphs stands for in <paramref name="text"/> (null for none), as the run's alignment
+    /// gives them (<see cref="Map"/> gives each glyph not yet mapped its share).
+    /// </summary>
+    public string?[] Shares(ReadOnlySpan<DocumentGlyph> glyphs, string text) => Align(glyphs, text);
+
+    /// <summary>Whether a reader reads <paramref name="glyph"/> through the map as <paramref name="characters"/> (a glyph not mapped reads as nothing it can be given).</summary>
+    public bool Reads(int glyph, string? characters) => _text.TryGetValue(glyph, out string? mapped) && string.Equals(mapped, characters, StringComparison.Ordinal);
+
     // The characters each glyph stands for (null for none).
     private string?[] Align(ReadOnlySpan<DocumentGlyph> glyphs, string text)
     {

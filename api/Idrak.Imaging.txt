@@ -24,12 +24,15 @@ public sealed record Idrak.Imaging.DocumentShapeStyle : System.IEquatable<Idrak.
   public Idrak.Abstraction.Data.DocumentColour Tone(float tone)
   public Idrak.Abstraction.Data.DocumentLineCap Cap { get; init; }
   public Idrak.Abstraction.Data.DocumentLineJoin Join { get; init; }
+  public float Left { get; init; }
   public float Scale { get; init; }
   public float StrokeWidth { get; init; }
+  public float Top { get; init; }
 
 public static class Idrak.Imaging.DocumentShapes
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentPath> Paths(Idrak.Abstraction.Data.ShapePlan plan, Idrak.Imaging.DocumentShapeStyle style)
   public static void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, Idrak.Abstraction.Data.ShapePlan plan, Idrak.Imaging.DocumentShapeStyle style)
+  public static void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, Idrak.Abstraction.Data.ShapePlan plan, Idrak.Imaging.DocumentShapeStyle style, Idrak.Imaging.TextStyle lettering, string? pageText = null, bool rightToLeft = false)
   public static void Write(Idrak.Abstraction.Data.IDocumentPageBuilder page, Idrak.Imaging.TextBlock block, string text, float x, float y, Idrak.Imaging.DocumentShapeStyle style, Idrak.Abstraction.Data.DocumentTextMode mode = (Idrak.Abstraction.Data.DocumentTextMode)0)
 
 public sealed class Idrak.Imaging.GaussianNoise : Idrak.Abstraction.Data.ISampleTransform
@@ -266,6 +269,7 @@ public sealed class Idrak.Imaging.TextBlock
   public required System.Collections.Generic.IReadOnlyList<Idrak.Imaging.TextLine> Lines { get; init; }
   public required float Height { get; init; }
   public required float Width { get; init; }
+  public string Text { get; init; }
 
 public static class Idrak.Imaging.TextLayout
   public static Idrak.Imaging.TextBlock Layout(string text, Idrak.Imaging.TextStyle style, float maxWidth = Infinityf, Idrak.Imaging.TextAlignment alignment = (Idrak.Imaging.TextAlignment)0, bool? rightToLeft = null)
