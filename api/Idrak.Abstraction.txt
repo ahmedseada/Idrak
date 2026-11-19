@@ -1372,6 +1372,7 @@ public readonly record struct Idrak.Abstraction.Data.DocumentIssue : System.IEqu
   public const string NotDrawn = "not-drawn"
   public const string NotSupported = "not-supported"
   public const string UnmappedGlyphs = "unmapped-glyphs"
+  public const string WrongPassword = "wrong-password"
   public int Count { get; init; }
   public string Detail { get; init; }
   public string Kind { get; init; }
@@ -1591,6 +1592,7 @@ public sealed record Idrak.Abstraction.Data.DocumentSecurity : System.IEquatable
   public DocumentSecurity()
   public Idrak.Abstraction.Data.DocumentPermissions Permissions { get; init; }
   public bool MetadataEncrypted { get; init; }
+  public bool OwnerAccess { get; init; }
   public int KeyBits { get; init; }
   public int Revision { get; init; }
   public string EmbeddedFiles { get; init; }

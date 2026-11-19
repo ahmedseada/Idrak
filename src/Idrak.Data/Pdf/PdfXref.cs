@@ -70,6 +70,9 @@ internal static class PdfXrefReader
 {
     private const int Tail = 4096;
 
+    // The mark (in an exception's Data) of an error no repair gets around (Final).
+    private const string NotRepairable = "Idrak.Data.Pdf.NotRepairable";
+
     /// <summary>The cross-reference of <paramref name="file"/>, rebuilt by scanning when it cannot be read.</summary>
     /// <exception cref="InvalidDataException">A limit was passed, or the sections' <c>/Prev</c> entries form a cycle (a <see cref="PdfLimit"/> error).</exception>
     public static PdfXref Load(PdfFile file)
@@ -107,7 +110,15 @@ internal static class PdfXrefReader
 
     /// <summary>Whether <paramref name="e"/> is damage a repair may get around (not a limit, a cycle or a refusal).</summary>
     public static bool Repairable(Exception e) =>
-        (e is InvalidDataException && !PdfLimit.Is(e)) || e is IndexOutOfRangeException or ArgumentException or OverflowException or FormatException or EndOfStreamException;
+        (e is InvalidDataException && !PdfLimit.Is(e) && !e.Data.Contains(NotRepairable))
+        || e is IndexOutOfRangeException or ArgumentException or OverflowException or FormatException or EndOfStreamException;
+
+    /// <summary>
+    /// Marks <paramref name="e"/> as an error no repair gets around (a password refused, or an encryption dictionary that
+    /// cannot be read, while a repair unlocked the file at open): the open ends with it, once, instead of a second repair
+    /// or the error of an object read after it.
+    /// </summary>
+    public static void Final(InvalidDataException e) => e.Data[NotRepairable] = true;
 
     // The last "startxref" in the file's tail and the offset after it.
     private static long? FindStartXref(PdfFile file)
@@ -444,11 +455,18 @@ internal static class PdfXrefReader
     }
 
     /// <summary>
-    /// The cross-reference rebuilt by scanning the whole file, in order, for <c>n g obj</c> (a later definition of a
-    /// number winning, as an update's does) and <c>trailer</c>; objects held in object streams are listed from those
-    /// streams' headers, and the catalog is found by its type when no trailer names it.
+    /// The cross-reference rebuilt by scanning the whole file, in two passes. The first scans it in order for
+    /// <c>n g obj</c> (a later definition of a number winning, as an update's does) and <c>trailer</c>, and makes the
+    /// trailer of what it finds (classic trailers and cross-reference streams' dictionaries, the newest winning). When that
+    /// trailer names <c>/Encrypt</c> and the file is being opened, the file key is found then, through the objects that
+    /// stand on their own (<see cref="PdfFile.UnlockForRepair"/>). The second lists the objects held in object streams
+    /// from those streams' headers (decrypted with the key), and the catalog is found by its type when no trailer names it.
     /// </summary>
-    /// <exception cref="InvalidDataException">No document catalog is found, or more objects than the limit (a <see cref="PdfLimit"/> error).</exception>
+    /// <exception cref="InvalidDataException">
+    /// No document catalog is found, more objects than the limit (a <see cref="PdfLimit"/> error), or the file is
+    /// encrypted and its password does not open it (naming <see cref="DocumentOptions.Password"/>).
+    /// </exception>
+    /// <exception cref="NotSupportedException">The file is encrypted by a security handler that is not read (named).</exception>
     public static PdfXref Repair(PdfFile file)
     {
         const int Chunk = 1 << 20, Before = 32;
@@ -547,6 +565,12 @@ internal static class PdfXrefReader
             }
         }
 
+        trailers.Sort((a, b) => b.Offset.CompareTo(a.Offset));
+        var trailer = trailers.Count == 0 ? PdfDictionary.Empty : MergeTrailers([.. trailers.Select(t => t.Trailer)]);
+
+        // An encrypted file opened through a repair: its key before its object streams, whose objects are encrypted with them.
+        file.UnlockForRepair(new PdfXref(entries, entries.Length, trailer, [], 0, repaired: true));
+
         // Objects in object streams, the newest stream first, where no object of that number stands on its own.
         objectStreams.Sort((a, b) => b.Offset.CompareTo(a.Offset));
         foreach (var (offset, stream) in objectStreams)
@@ -585,9 +609,6 @@ internal static class PdfXrefReader
                 }
             }
         }
-
-        trailers.Sort((a, b) => b.Offset.CompareTo(a.Offset));
-        var trailer = trailers.Count == 0 ? PdfDictionary.Empty : MergeTrailers([.. trailers.Select(t => t.Trailer)]);
 
         if (!RootIsCatalog(file, trailer, entries))
         {

@@ -534,7 +534,7 @@ public sealed record DocumentEncryption
 /// How a document that was read is encrypted (<see cref="DocumentInfo.Security"/>), as its security handler states it:
 /// only what stays the same when the file is saved again with its own encryption (the handler, its revision, the key's
 /// length, the ciphers, the permissions, whether the metadata is encrypted), never a key, a salt, an initialization vector
-/// or the file's identifier, which the standard makes random.
+/// or the file's identifier, which the standard makes random; and whether its owner password opened it.
 /// </summary>
 public sealed record DocumentSecurity
 {
@@ -561,4 +561,11 @@ public sealed record DocumentSecurity
 
     /// <summary>Whether the document's metadata is encrypted with the rest (false: left plain for search tools).</summary>
     public bool MetadataEncrypted { get; init; } = true;
+
+    /// <summary>
+    /// Whether the owner password opened the document (<see cref="DocumentOptions.Password"/>), which alone may change or
+    /// remove its encryption (<see cref="IDocumentEditor.Encrypt"/>); false when the user password (or the empty one)
+    /// opened it. A property of how it was opened, not of the file.
+    /// </summary>
+    public bool OwnerAccess { get; init; }
 }

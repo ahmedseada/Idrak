@@ -70,7 +70,7 @@ public sealed record DocumentInfo
     /// <summary>The file's format version as it states it ("1.7"), or null.</summary>
     public string? Version { get; init; }
 
-    /// <summary>Whether the file is encrypted (opened with <see cref="DocumentOptions.Password"/> or the empty password).</summary>
+    /// <summary>Whether the file is encrypted (opened with <see cref="DocumentOptions.Password"/> or the empty password; <see cref="Security"/> says how, and by which).</summary>
     public bool Encrypted { get; init; }
 
     /// <summary>
@@ -125,8 +125,11 @@ public sealed record DocumentOptions
     private readonly int _maxDepth = DocumentSettings.Int(MaxDepthVariable, 1, MostNesting) ?? DefaultMaxDepth;
 
     /// <summary>
-    /// The password to open an encrypted file with (as either of its passwords), tried after the empty one; null tries the
-    /// empty one only. When neither opens the file, opening it is an <see cref="InvalidDataException"/> naming this option.
+    /// The password to open an encrypted file with: tried as its owner password, then as its user password (so the owner
+    /// password opens as the owner, also where the user password is empty, and <see cref="DocumentSecurity.OwnerAccess"/>
+    /// says so). When it is neither, the empty user password is tried: the file then opens as its user, and every page
+    /// read says so (<see cref="DocumentIssue.WrongPassword"/>). Null (or empty) tries the empty password only. When
+    /// nothing opens the file, opening it is an <see cref="InvalidDataException"/> naming this option.
     /// </summary>
     public string? Password { get; init; }
 

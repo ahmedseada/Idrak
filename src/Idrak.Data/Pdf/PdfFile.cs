@@ -25,6 +25,8 @@ internal sealed class PdfFile : IDisposable
     private readonly Lock _repairGate = new();
     private volatile PdfXref _xref;
     private PdfSecurity? _security;
+    private string? _password;                                                 // until the security is settled: a repair at open may need the key
+    private bool _settled;
     private bool _repairTried;
     private volatile bool _disposed;
 
@@ -35,6 +37,7 @@ internal sealed class PdfFile : IDisposable
         MaxStreamBytes = options.MaxStreamBytes;   // each limit read once: the measured ones look at the free memory
         MaxObjects = options.MaxObjects;
         MaxDepth = options.MaxDepth;
+        _password = options.Password;
         _cache = new PdfCache(options.CacheBytes);
         _xref = new PdfXref([], 0, PdfDictionary.Empty, [], 0, repaired: false);   // nothing listed while the cross-reference is read
     }
@@ -78,14 +81,80 @@ internal sealed class PdfFile : IDisposable
         _cache.Clear();
     }
 
+    /// <summary>
+    /// Says the file's security is settled (<see cref="PdfSecurity.Attach"/> found its key, or that it is not encrypted):
+    /// from now on a repair never unlocks it, and the password it was opened with is no longer kept.
+    /// </summary>
+    public void Settle()
+    {
+        _settled = true;
+        _password = null;
+    }
+
+    /// <summary>
+    /// Unlocks the file while a repair rebuilds its cross-reference at open, before the file's security is settled: the
+    /// encryption dictionary and the trailer's <c>/ID</c> are read through <paramref name="partial"/> (the objects that
+    /// stand on their own, which the standard requires of the encryption dictionary, and the trailer the scan found, a
+    /// cross-reference stream's dictionary among them, which is never encrypted), so the file key is found before the
+    /// repair lists the object streams, whose objects come encrypted with them. Does nothing when the security is settled
+    /// (an open document is never unlocked by a later repair), the file is unlocked already, or the trailer names no
+    /// <c>/Encrypt</c>. Opening is single-threaded until the security is settled, so the partial index is the file's own
+    /// until the repair returns its whole one.
+    /// </summary>
+    /// <exception cref="InvalidDataException">
+    /// Neither the password the file was opened with nor the empty one opens it, or its encryption dictionary is damaged:
+    /// marked so that no repair is tried around it (<see cref="PdfXrefReader.Repairable"/>), and the open ends with it.
+    /// </exception>
+    /// <exception cref="NotSupportedException">Another security handler, or a variant of the standard one that is not read.</exception>
+    public void UnlockForRepair(PdfXref partial)
+    {
+        if (_settled || _security is not null || partial.Trailer["Encrypt"u8].IsNull)
+        {
+            return;
+        }
+
+        // The repair reads the file afresh: the object whose read started it (the encryption dictionary itself, when it
+        // was not where the cross-reference said) is not a cycle when the key is looked for.
+        var previous = _xref;
+        var reading = t_reading;
+        t_reading = null;
+        _xref = partial;
+        try
+        {
+            PdfSecurity.Attach(this, _password);
+        }
+        catch (Exception e)
+        {
+            _xref = previous;
+            if (e is InvalidDataException failed)
+            {
+                PdfXrefReader.Final(failed);
+            }
+
+            throw;
+        }
+        finally
+        {
+            t_reading = reading;
+        }
+    }
+
     /// <summary>The file <paramref name="stream"/> holds: its header and cross-reference read, nothing else.</summary>
     /// <exception cref="InvalidDataException">Not a PDF file, damaged beyond repair, or a limit passed (named).</exception>
     public static PdfFile Open(Stream stream, string name, DocumentOptions options)
     {
         var file = new PdfFile(name, PdfSource.For(stream), options);
-        file.ReadHeader();
-        file._xref = PdfXrefReader.Load(file);
-        return file;
+        try
+        {
+            file.ReadHeader();
+            file._xref = PdfXrefReader.Load(file);
+            return file;
+        }
+        catch
+        {
+            file.Dispose();   // a repair may have found the file key already: it is cleared
+            throw;
+        }
     }
 
     private void ReadHeader()
@@ -637,6 +706,7 @@ internal sealed class PdfFile : IDisposable
             }
             catch (Exception e) when (PdfXrefReader.Repairable(e))
             {
+                _xref = seen;   // a repair that unlocked the file at open read through its partial index
                 return false;   // no better index found: the object's own error stands
             }
 

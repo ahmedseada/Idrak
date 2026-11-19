@@ -19,10 +19,11 @@ namespace Idrak.Data.Pdf;
 /// <c>/ActualText</c>), fonts to text by ToUnicode, encodings and glyph names, or the embedded program's own cmap (read
 /// through <see cref="FontFormats"/>), glyph widths placing each run's box on the page as shown, and the lines and text
 /// made by <see cref="DocumentOptions.Layout"/>; a glyph with no text is U+FFFD and counted in the page's issues. An
-/// encrypted file is read through the standard security handler (revisions 2-6: RC4, AES-128, AES-256) with the empty
-/// password or <see cref="DocumentOptions.Password"/>; another handler is a <see cref="NotSupportedException"/> naming
-/// it. Images, vector paths, forms, annotations and signatures come with the later phases of the documents plan. Safe
-/// to read from several threads.
+/// encrypted file is read through the standard security handler (revisions 2-6: RC4, AES-128, AES-256) with
+/// <see cref="DocumentOptions.Password"/> (as the owner's, then the user's password) or the empty password, a damaged one
+/// repaired with its key found before its object streams are listed; another handler is a
+/// <see cref="NotSupportedException"/> naming it. Images, vector paths, forms, annotations and signatures come with the
+/// later phases of the documents plan. Safe to read from several threads.
 /// </summary>
 public sealed class PdfFormat : IDocumentFormat
 {

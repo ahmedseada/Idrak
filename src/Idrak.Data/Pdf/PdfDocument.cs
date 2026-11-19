@@ -175,10 +175,14 @@ internal sealed partial class PdfDocument : IDocument
 
     public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => DocumentPageDrawers.DrawPage(this, index, options);
 
-    /// <summary>Opens the document <paramref name="stream"/> holds (an encrypted one with the empty password or <see cref="DocumentOptions.Password"/>).</summary>
+    /// <summary>
+    /// Opens the document <paramref name="stream"/> holds (an encrypted one with <see cref="DocumentOptions.Password"/>, as
+    /// its owner's then its user's password, or the empty password; a damaged one repaired, its key found before its
+    /// object streams are listed).
+    /// </summary>
     /// <exception cref="InvalidDataException">
-    /// Not a PDF file, damaged beyond repair, a cycle, or a limit passed (each named); or encrypted, and neither the empty
-    /// password nor <see cref="DocumentOptions.Password"/> opens it (the message names the option).
+    /// Not a PDF file, damaged beyond repair, a cycle, or a limit passed (each named); or encrypted, and neither
+    /// <see cref="DocumentOptions.Password"/> nor the empty password opens it (the message names the option).
     /// </exception>
     /// <exception cref="NotSupportedException">The file is encrypted by a security handler that is not read (a public-key one: named).</exception>
     public static PdfDocument Open(Stream stream, string name, DocumentOptions options)
@@ -301,6 +305,11 @@ internal sealed partial class PdfDocument : IDocument
         if (parts != DocumentParts.None && HasXfa)
         {
             issues.Add(DocumentIssue.NotSupported, $"page {index + 1}: an XFA form's layout is not drawn: its data is read as fields (IDocument.Fields), and its AcroForm widgets are the form shown");
+        }
+
+        if (parts != DocumentParts.None && _file.Security is { PasswordRefused: true })
+        {
+            issues.Add(DocumentIssue.WrongPassword, $"page {index + 1}: the password given in DocumentOptions.Password is neither the user nor the owner password: the empty user password opened the file, as its user");
         }
 
         return new DocumentPage(index, (float)width, (float)height)

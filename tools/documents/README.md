@@ -1,7 +1,7 @@
 # tools/documents: the PDF and font samples of plan 28
 
 `make_fixtures.py` writes plan 28's samples (phase D5, decision 13) and what a reader, a drawer, an editor or a
-signature check must get from each: 193 samples for phases D1-D4 and D6-D12 (the file, encryption, text, images and
+signature check must get from each: 201 samples for phases D1-D4 and D6-D12 (the file, encryption, text, images and
 embedded files; writing, vector content and drawing, fonts, forms, annotations and navigation, editing, signatures),
 10 of them hostile; with `--large`, the D13 set (thousands of pages, many small files, a huge image page, deep forms)
 in a folder of its own. Nothing it writes is committed: everything goes into the folder given by `-o` (default
@@ -195,7 +195,7 @@ What the specifications leave random, and how it is fixed here (D12, `docfixture
 | Folder | Samples |
 |---|---|
 | `d1/` | `xref-table`, `xref-stream` (PNG Up predictor), `object-streams` (`/Extends`), `hybrid` (`/XRefStm`), `incremental` (two updates through `/Prev`: a stream replaced, a page added, the title changed, an object freed), `incremental-stream` (an update as a cross-reference stream replacing an object held in an object stream), `header-junk` (590 bytes before `%PDF-`, offsets from the header) and `header-junk-absolute` (offsets from the file's start), `broken-xref` (every offset 11 bytes short: repair), `missing-xref` (no table, no startxref: repair), `wrong-length` (`/Length` short, long, indirect), `filters` (one page a filter: Flate with and without the zlib header, ASCIIHex with an odd last digit, ASCII85 with `z`, LZW with and without early change, RunLength, three chains, none), `predictors` (PNG 10-15 at 1, 8 and 16 bits, TIFF 2 at 4, 8 and 16 bits, LZW with Paeth), `info` and `info-partial` (PDFDocEncoding, UTF-16BE, UTF-8, escapes, octal, a line continuation, hex strings, `D:` dates whole, partial and odd), `page-tree` (inherited MediaBox, Resources and Rotate; a wrong `/Count`), and nine hostile files (below) |
-| `d2/` | `plain` (the unencrypted twin), then for each of `r2-rc4-40`, `r3-rc4-128`, `r4-rc4-128`, `r4-aes-128`, `r4-aes-128-metadata-plain` (`/EncryptMetadata false`), `r4-aes-128-identity-strings` (`/StrF /Identity`), `r4-aes-128-xref-stream`, `r5-aes-256`, `r6-aes-256`, `r6-aes-256-object-streams` an `-empty` (empty user password) and a `-user` (`user-pass-1`) file, owner password `owner-pass-1`; `r6-aes-256-unicode` (`Grüße-2024`); `unsupported-handler` (`/Adobe.PubSec`) |
+| `d2/` | `plain` (the unencrypted twin), then for each of `r2-rc4-40`, `r3-rc4-128`, `r4-rc4-128`, `r4-aes-128`, `r4-aes-128-metadata-plain` (`/EncryptMetadata false`), `r4-aes-128-identity-strings` (`/StrF /Identity`), `r4-aes-128-xref-stream`, `r5-aes-256`, `r6-aes-256`, `r6-aes-256-object-streams` an `-empty` (empty user password) and a `-user` (`user-pass-1`) file, owner password `owner-pass-1`; `r6-aes-256-unicode` (`Grüße-2024`); `r4-aes-128-print-copy-empty` and `r6-aes-256-print-copy-empty` (an empty user password, a user may print and copy only: the owner password opens them as the owner); `r4-aes-128-object-streams-cut` (empty user password) and `r6-aes-256-object-streams-shifted` (`user-pass-1`): the catalog in an object stream, the cross-reference to rebuild by scanning (cut in its cross-reference stream; every offset 11 bytes short), the file key needed before the object streams are listed; `unsupported-handler` (`/Adobe.PubSec`) |
 | `d3/` | `standard14` (not embedded, AFM widths), `encodings` (MacRoman, Standard, WinAnsi, `/Differences` with `uni2192`, `f_f`, `a.sc`, `Euro`, `uni00410042`, `u1F4C8` and the unmappable `g17`), `truetype-simple` (with and without ToUnicode), `type0-identity`, `type0-no-tounicode`, `type0-no-cmap`, `cidtogidmap-stream`, `type3`, `text-state` (TJ, Tc, Tw, Tz, TL, T*, `'`, `"`, Ts), `render-modes` (0-7), `actual-text`, `rtl` (Amiri), `mixed-direction` (DejaVu), `vertical` (Identity-V), `rotated-pages` (0, 90, 180, 270, text turned by Tm and cm), `cropbox`, `text-matrix` (sizes from Tm and the CTM, a form XObject), `hostile-form-recursion` |
 | `d4/` | `colour-spaces` (Gray, RGB, CMYK, Indexed over RGB, grey and CMYK, ICCBased N 3 and 1, CalGray, CalRGB, Lab), `bit-depths` (1, 2, 4, 8, 16 bits, rows ending mid-byte), `decode-arrays`, `masks` (stencils, soft masks, an explicit mask, a colour key), `dct` (grey, 4:2:0, progressive 4:4:4, Adobe CMYK), `inline-images` (abbreviations, a named colour space, data holding ` EIQ`), `image-placement` (turned, slanted, flipped, mirrored, on a turned page), `scan-ocr` (an A4 grey JPEG with a hidden OCR text layer, D3 and D4), `attachments` (an EmbeddedFiles name tree with Kids and Limits, a file-attachment annotation) |
 
@@ -299,7 +299,10 @@ the JPEG codec's own decode of the stream's bytes (Pillow, libjpeg-turbo, which 
 `streamsChecked`, `streamMismatches`: empty when every listed stream decodes to its hash); `pdfminer` (`opened`,
 `error`, `pages`); `pdfium` (`opened`, `error`, `pageCount`, `rendered`, `pageErrors`, `boxes`: per page the runs
 matched to pdfium's characters and the largest difference of the left and right edges, `largestDifferenceX`, and of
-the top and bottom edges, `largestDifferenceY`, in points). Hostile files and `unsupported-handler`: `outcomes`, each
+the top and bottom edges, `largestDifferenceY`, in points); D2's damaged files, which none of the three can rebuild,
+also `undamaged`: qpdf and pdfminer.six on their bytes before the damage (`opened`, `pages`, `encrypted`, `problems`,
+`streamMismatches`, `textMatches`); D2's print-copy files `passwords` (qpdf opening them with the empty, the owner and
+a wrong password: which matched, and what a user may do). Hostile files and `unsupported-handler`: `outcomes`, each
 tool's `result` (`opened`, `error` with its message, `crashed` with the return code, `timeout`) in a child process
 with 30 seconds and, on Linux, 2 GiB of address space.
 

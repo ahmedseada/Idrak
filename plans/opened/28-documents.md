@@ -570,9 +570,87 @@ unencrypted twins; a wrong password fails with the message.
   check, 1.14 ms for an owner check (the 48 bytes of `/U` in each round), about 9.5 KB allocated a call (the base
   library's one-shot AES context, one a round); revision 5's hash 0.6 µs. A revision 6 file costs two hashes opened by
   the empty password, three by the user's, four by the owner's: the standard's own cost, paid once at open.
-- **Left:** a damaged encrypted file whose cross-reference must be rebuilt by scanning and whose catalog lies in an object
-  stream does not open (the scan lists object streams before the key is known; it fails as damaged). Writing encrypted
-  files is D11's.
+- **Left:** ~~a damaged encrypted file whose cross-reference must be rebuilt by scanning and whose catalog lies in an
+  object stream does not open (the scan lists object streams before the key is known; it fails as damaged)~~ (done
+  2026-11-19: "Encryption edges" below). Writing encrypted files is D11's.
+- **Encryption edges, 2026-11-19 (plan 28 completed, P5)** (`PdfXref.cs`, `PdfFile.cs`, `PdfSecurity.cs`,
+  `PdfDocument.cs`; in the contract `DocumentSecurity.OwnerAccess` and `DocumentIssue.WrongPassword`,
+  `api/Idrak.Abstraction.txt` regenerated through the runner, the inventory unchanged):
+  - **A damaged file whose catalog lies in an object stream** (the "Left" item above). Cause: the repair listed the
+    object streams' objects before the file key was known (`Attach` ran after the cross-reference), so an encrypted
+    object stream decoded as damage, its objects were left out, and the open failed with "no document catalog". Fix: the
+    repair runs in two passes. The first scans for `n g obj` and `trailer` and makes the trailer of what it found
+    (classic trailers and cross-reference streams' dictionaries, which are never encrypted). When that trailer names
+    `/Encrypt` and the file is still being opened (its security not settled), `PdfFile.UnlockForRepair` finds the key
+    with the password it is opened with, through the objects that stand on their own (the standard keeps the encryption
+    dictionary out of object streams). The second pass lists the object streams, now decrypted, then finds the catalog.
+    So a file whose only `/Encrypt` reference is found by the scan opens too. A repair started by reading the
+    encryption dictionary itself (not where the cross-reference says) reads the file afresh, so that read is not taken
+    for a cycle, and `Attach` keeps the key the repair found. A password refused during the repair ends the open with
+    the password's own message ("opens only with a password", "neither the user nor the owner password"), marked
+    (`PdfXrefReader.Final`) so that neither a second repair nor "no document catalog" follows. `PdfFile.Open` disposes
+    a file whose open fails, so a key the repair found is cleared. A document already open is never unlocked by a later
+    repair.
+  - **The owner password ignored** (3a's finding in D13, struck there). Cause: the empty user password was tried first,
+    so a file whose user password is empty always opened as its user. Fix: a given password is tried as the owner's,
+    then as the user's (Algorithm 2.A's order, ISO 32000-2 7.6.4.4; for revisions 2-4 Algorithm 7, then 6), each as
+    the revision prepares it, then as UTF-8 typed. The empty password is tried only when none is given (as the user's,
+    then the owner's: unchanged), or when the given one is neither. In that case the file opens as its user and every
+    page read says so (`wrong-password`, naming `DocumentOptions.Password`, as the XFA issue is given). Opened by the
+    owner password, `DocumentInfo.Security.OwnerAccess` and the editor's rights say owner, so a rewrite changes the
+    permissions or removes the encryption (D11's decision 2). Revision 6's cost per open (the standard's own hashes):
+    by the owner password 2 owner-hashes (were 2 user-hashes and 2 owner-hashes); by the user password one owner-hash
+    and 2 user-hashes (were 3 user-hashes); none given, unchanged; a wrong one where the user password is empty, 4 (were
+    2). SASLprep was checked: B.1 mapped to nothing, C.1.2 to a space, NFKC through the library's own normalization,
+    done since D2. The prohibited characters and the bidirectional rule are not refused: a reader only tries the
+    password, and the UTF-8 as typed is tried too.
+  - **Samples** (`d2/`, four more, 201 in all): `r4-aes-128-object-streams-cut` (AES-128, an empty user password, cut
+    in its cross-reference stream: no startxref) and `r6-aes-256-object-streams-shifted` (AES-256, `user-pass-1`, an
+    11-byte comment after the header: every offset short), both with the catalog in an object stream and `/Encrypt`
+    and `/ID` only in the cross-reference stream's dictionary. `r4-aes-128-print-copy-empty` and
+    `r6-aes-256-print-copy-empty` have an empty user password, the owner password `owner-pass-1`, and let a user print
+    and copy only. qpdf, pdfminer.six and pdfium open neither damaged file (qpdf: "unable to find trailer dictionary",
+    "unable to find /Root dictionary", the latter the limit fixed here; pdfium: "Data format error"). Their bytes
+    before the damage are checked in memory instead (`reference.undamaged`): qpdf opens them with the password,
+    encrypted, every stream as the JSON says, no problem, and pdfminer.six extracts the JSON's text. qpdf confirms the
+    print-copy files (`reference.passwords`): the empty password matches the user, the owner password the owner, a
+    wrong one is refused (qpdf does not fall back to the empty one), and a user may print and copy, nothing else. The
+    earlier samples' 1,042 files came out byte for byte the same (the manifest's hashes, compared after the first and
+    the last of three full runs).
+  - **Tests:** `documents pdf: encryption` (4 tests). The samples test checks the repaired flag as the JSON says and
+    owner access by the owner password also where the user password is empty. The refusals test checks that a wrong
+    password opens such a file as its user, with exactly one `wrong-password` issue on each page. A new edges test:
+    - the two damaged files and two hand-damaged ones (the R6 object-stream samples with "junk" before the encryption
+      dictionary and startxref moved past it) open repaired, the catalog compressed, by the user and the owner password
+      as each, reading the twin's text; without a password or with a wrong one they are refused with the password's
+      message (or, with an empty user password, opened as the user with the issue);
+    - the 13 files with an empty user password (all of D2's, the print-copy ones and the cut one) open as the user
+      without a password, whose `Encrypt(null)` is refused, and as the owner by the owner password, with no issue;
+    - the owner's rewrite removes the encryption (reading the same) and sets new permissions (print only, the user
+      password still empty: the user may print, the new owner password opens as the owner);
+    - a password that is both is the owner's.
+  - **Rule 71** (the old build at 37699be and the new, on the same frozen copy of the earlier samples). Every encrypted
+    sample (D2's and D11's) was opened with no password, its JSON's, its user's, its owner's and a wrong one. Each open
+    was hashed by the bench's read-back (`DocumentBenchReadBack.Hash`), with a rewrite, an update, a signature, a
+    decryption and a new encryption of it read back with the same options and also without a password: 1,018 lines
+    before, every one the same after except:
+    - the ten files with an empty user password opened by a wrong password: their reads and their edits' read-backs
+      gain the page issue. The same edits read back without a password are the same as before;
+    - the same ten opened by the owner password: the decryption and the new encryption were refused before and are
+      written now (20 new outputs).
+    `OwnerAccess` is not in the bench's read-back: the bench opens without a password, and how a file was opened is not
+    an output. `idrak bench documents --hash` (`open`, `text-lines`, `images`, `edit-incremental`, `edit-rewrite`,
+    `fill`, `sign`, `check`) over the same copy: all 8 cases the same output as before (read back: 10 encrypted each),
+    allocations the same. Timed again with 5 warm runs, old and new alternated (load 6 from another agent's build):
+    `open` 17.3/17.3 ms before and 15.3/16.0 after, `edit-incremental` 18.8/19.6 and 19.4/20.0, `edit-rewrite`
+    92.6/74.6 and 82.3/74.7, noise. The new samples add 4 files to the bench's samples set (164): the three the empty
+    password opens are read back too ("read back: 13 encrypted", the same output every run), the shifted one is refused
+    without its password.
+  - **Run:** one build, no error or warning. The filter `documents pdf: encryption|documents pdf: file|documents pdf:
+    edit|documents pdf: write|documents pdf: signatures|documents pdf: text|documents bench:|documents contracts|public
+    API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden
+    boxing|test runner`, with the update flags: 75 passed, 0 failed. `public API|abstraction inventory` again without
+    them: 6 passed, 0 failed.
 - **The owner's run** (held with the others until asked):
   ```powershell
   cd D:\Projects\Idrak; git checkout documents; git pull origin documents
@@ -2931,9 +3009,10 @@ speed and memory first), its results unchanged.
     saved, under the same limits (a stream 2.00 GiB, a cache 1.25 GiB, 10,502,019 objects, nesting 64). Against the
     results the run above saved (bytes hashed): 67 of 70 the same, the three hashed another way with every other file
     the same as saved (an unencrypted output hashes as it did: rule 71); their allocations within 0.5% of those.
-  - **Found, left as it is (the owner decides):** a file whose user password is empty opens as its user even when
+  - **Found, left as it is (the owner decides):** ~~a file whose user password is empty opens as its user even when
     `DocumentOptions.Password` gives its owner password (D2: the empty password is tried first), so its encryption
-    cannot be changed or removed (D11's decision 2 needs the owner password).
+    cannot be changed or removed (D11's decision 2 needs the owner password)~~ (done 2026-11-19: the given password is
+    tried as the owner's first; D2's "Encryption edges").
   - **Tests:** group `documents bench:` (1 new, 5 in all): `edit-incremental`, `edit-rewrite` and `sign` on the samples
     over three runs give the same output every run, each naming at least 6 AES files read back; one edit of an AES-256
     sample saved twice reads back the same (other bytes), another title reads back otherwise and is named as differing

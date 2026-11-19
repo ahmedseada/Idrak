@@ -633,7 +633,7 @@ public sealed record DocumentText(IReadOnlyList<DocumentLine> Lines, string Text
 /// Something on a page that could not be read or drawn as it is, counted, so an app knows what to do with the page (send
 /// it to OCR, supply a font).
 /// </summary>
-/// <param name="Kind">What happened: <see cref="UnmappedGlyphs"/>, <see cref="ImageEncoding"/>, <see cref="DamagedStream"/>, <see cref="MissingFont"/>, <see cref="NotDrawn"/>, <see cref="NotSupported"/> or a format's own.</param>
+/// <param name="Kind">What happened: <see cref="UnmappedGlyphs"/>, <see cref="ImageEncoding"/>, <see cref="DamagedStream"/>, <see cref="MissingFont"/>, <see cref="NotDrawn"/>, <see cref="NotSupported"/>, <see cref="WrongPassword"/> or a format's own.</param>
 /// <param name="Detail">What and where, for a person.</param>
 /// <param name="Count">How many times.</param>
 public readonly record struct DocumentIssue(string Kind, string Detail, int Count = 1)
@@ -655,6 +655,12 @@ public readonly record struct DocumentIssue(string Kind, string Detail, int Coun
 
     /// <summary>A feature of the document the format does not read (named in the detail).</summary>
     public const string NotSupported = "not-supported";
+
+    /// <summary>
+    /// The password given (<see cref="DocumentOptions.Password"/>) is not one of the document's: it opened without it, as
+    /// its user (whose password is empty), so its encryption cannot be changed or removed. Every page read says so.
+    /// </summary>
+    public const string WrongPassword = "wrong-password";
 }
 
 /// <summary>

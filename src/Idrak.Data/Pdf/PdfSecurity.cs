@@ -14,12 +14,14 @@ namespace Idrak.Data.Pdf;
 /// The standard security handler (ISO 32000-2, 7.6.4), reading side: revisions 2-4 (RC4 of 40 to 128 bits, and AES-128
 /// through crypt filters: <c>/CF</c>, <c>/StmF</c>, <c>/StrF</c>, <c>/EFF</c>, <c>/Identity</c>, <c>/EncryptMetadata</c>)
 /// and revisions 5-6 (AES-256; revision 6's hash with SHA-256, -384 and -512, passwords prepared by SASLprep). Opening
-/// tries the empty user password first, then <see cref="DocumentOptions.Password"/> as the user and as the owner
-/// password; the file key is found once, kept while the document is open and cleared when it is disposed. Strings are
-/// decrypted when their object is read at its offset (those inside object streams come decrypted with the stream; the
-/// encryption dictionary's, a cross-reference stream's and a signature's contents are not encrypted), streams before
-/// their filters (not a cross-reference stream, nor metadata under <c>/EncryptMetadata false</c>, nor what a crypt filter
-/// of the stream's own or <c>/Identity</c> leaves plain). Safe from several threads.
+/// tries <see cref="DocumentOptions.Password"/> as the owner password, then as the user password (Algorithm 2.A's order,
+/// ISO 32000-2 7.6.4.4), and the empty user password only when none is given (then the empty owner password) or when the
+/// given one is neither (the file then opens as its user, and every page read says so); the file key is found once, kept
+/// while the document is open and cleared when it is disposed. Strings are decrypted when their object is read at its
+/// offset (those inside object streams come decrypted with the stream; the encryption dictionary's, a cross-reference
+/// stream's and a signature's contents are not encrypted), streams before their filters (not a cross-reference stream,
+/// nor metadata under <c>/EncryptMetadata false</c>, nor what a crypt filter of the stream's own or <c>/Identity</c>
+/// leaves plain). Safe from several threads.
 /// </summary>
 internal sealed partial class PdfSecurity : IDisposable
 {
@@ -149,6 +151,12 @@ internal sealed partial class PdfSecurity : IDisposable
     /// <summary>Whether the document was opened by its owner password (else by its user password).</summary>
     public bool Owner { get; private set; }
 
+    /// <summary>
+    /// Whether <see cref="DocumentOptions.Password"/> was given but is neither of the file's passwords, so the empty user
+    /// password opened it instead, as its user (every page read says so: <see cref="DocumentIssue.WrongPassword"/>).
+    /// </summary>
+    public bool PasswordRefused { get; private set; }
+
     /// <summary>How strings are decrypted (<c>/StrF</c>).</summary>
     public PdfCryptMethod Strings => _strings;
 
@@ -160,8 +168,9 @@ internal sealed partial class PdfSecurity : IDisposable
 
     /// <summary>
     /// The encryption as <see cref="DocumentInfo.Security"/> gives it: the handler, its revision, the key's length, the
-    /// strings', streams' and attached files' ciphers, the permissions and whether metadata is encrypted; nothing random
-    /// (the key, <c>/O</c>, <c>/U</c>, <c>/OE</c>, <c>/UE</c>, <c>/Perms</c>, the file's identifier).
+    /// strings', streams' and attached files' ciphers, the permissions, whether metadata is encrypted and whether the owner
+    /// password opened it; nothing random (the key, <c>/O</c>, <c>/U</c>, <c>/OE</c>, <c>/UE</c>, <c>/Perms</c>, the file's
+    /// identifier).
     /// </summary>
     public DocumentSecurity Describe() => new()
     {
@@ -173,58 +182,78 @@ internal sealed partial class PdfSecurity : IDisposable
         EmbeddedFiles = CipherName(_embedded),
         Permissions = Permissions,
         MetadataEncrypted = _encryptMetadata,
+        OwnerAccess = Owner,
     };
 
     /// <summary>
     /// Unlocks <paramref name="file"/> when its trailer names an encryption dictionary: the standard handler's file key
-    /// found from the empty password or <paramref name="password"/>, and every string and stream read from then on
-    /// decrypted. Nothing is done for a file that is not encrypted.
+    /// found from <paramref name="password"/> (as the owner's, then the user's password) or the empty one, and every
+    /// string and stream read from then on decrypted; then the file's security is settled (<see cref="PdfFile.Settle"/>).
+    /// Nothing is done for a file that is not encrypted, or one a repair at open unlocked already (it needed the key to
+    /// list the object streams: <see cref="PdfFile.UnlockForRepair"/>).
     /// </summary>
     /// <exception cref="NotSupportedException">Another security handler (a public-key one), or a variant of the standard one that is not read (each named).</exception>
     /// <exception cref="InvalidDataException">
-    /// Neither the empty password nor <paramref name="password"/> opens the file (the message names
+    /// Neither <paramref name="password"/> nor the empty password opens the file (the message names
     /// <see cref="DocumentOptions.Password"/>), or its encryption dictionary is damaged.
     /// </exception>
     public static void Attach(PdfFile file, string? password)
     {
-        var encrypt = file.Trailer["Encrypt"u8];
-        if (encrypt.IsNull)
-        {
-            return;
-        }
-
-        PdfDictionary? dictionary;
         try
         {
-            dictionary = file.Dictionary(encrypt);
-        }
-        catch (InvalidDataException e) when (!PdfLimit.Is(e))
-        {
-            throw new InvalidDataException($"{file.Name}: the file is encrypted, but its encryption dictionary cannot be read ({e.Message}).", e);
-        }
+            if (file.Security is not null)
+            {
+                return;
+            }
 
-        if (dictionary is null)
-        {
-            throw new InvalidDataException($"{file.Name}: the file is encrypted, but its /Encrypt ({encrypt}) is not an encryption dictionary.");
-        }
+            var encrypt = file.Trailer["Encrypt"u8];
+            if (encrypt.IsNull)
+            {
+                return;
+            }
 
-        string handler = file.Resolve(dictionary["Filter"u8]).AsName?.ToString() ?? "(none named)";
-        if (handler != "Standard")
-        {
-            throw new NotSupportedException(
-                $"{file.Name}: the file is encrypted with the security handler {handler}, which is not read (only the standard, password-based handler is).");
-        }
+            PdfDictionary? dictionary;
+            try
+            {
+                dictionary = file.Dictionary(encrypt);
+            }
+            catch (InvalidDataException e) when (PdfXrefReader.Repairable(e))
+            {
+                throw new InvalidDataException($"{file.Name}: the file is encrypted, but its encryption dictionary cannot be read ({e.Message}).", e);
+            }
 
-        var security = new PdfSecurity(file, dictionary, encrypt.IsReference ? encrypt.AsReference.Number : -1);
-        try
-        {
-            security.Authenticate(password);
-            file.Unlock(security);
-            security = null;
+            if (file.Security is not null)
+            {
+                return;   // reading the dictionary repaired the file, and the repair unlocked it
+            }
+
+            if (dictionary is null)
+            {
+                throw new InvalidDataException($"{file.Name}: the file is encrypted, but its /Encrypt ({encrypt}) is not an encryption dictionary.");
+            }
+
+            string handler = file.Resolve(dictionary["Filter"u8]).AsName?.ToString() ?? "(none named)";
+            if (handler != "Standard")
+            {
+                throw new NotSupportedException(
+                    $"{file.Name}: the file is encrypted with the security handler {handler}, which is not read (only the standard, password-based handler is).");
+            }
+
+            var security = new PdfSecurity(file, dictionary, encrypt.IsReference ? encrypt.AsReference.Number : -1);
+            try
+            {
+                security.Authenticate(password);
+                file.Unlock(security);
+                security = null;
+            }
+            finally
+            {
+                security?.Dispose();
+            }
         }
         finally
         {
-            security?.Dispose();
+            file.Settle();
         }
     }
 
@@ -315,20 +344,26 @@ internal sealed partial class PdfSecurity : IDisposable
         Drain();
     }
 
-    // The file key from the empty password, then from `password` (as the user's, then the owner's); an error naming the
-    // option when none opens the file.
+    // The file key from `password` (as the owner's, then the user's: Algorithm 2.A's order, so a given owner password
+    // opens as the owner also where the user password is empty), else from the empty password: as the user's, then the
+    // owner's when none is given; as the user's alone when the given one is neither (opened as the user, and said so). An
+    // error naming the option when none opens the file.
     private void Authenticate(string? password)
     {
         byte[] key = new byte[_keyLength];
         using var aes = Revision >= 5 ? Aes.Create() : null;
-        bool found = Check([], owner: false, key, aes);
-        if (!found && string.IsNullOrEmpty(password))
+        bool found;
+        if (string.IsNullOrEmpty(password))
         {
-            found = Check([], owner: true, key, aes);   // an empty owner password
+            found = Check([], owner: false, key, aes) || Check([], owner: true, key, aes);   // the empty user password, then an empty owner password
         }
-        else if (!found)
+        else
         {
-            found = CheckGiven(password!, key, aes);
+            found = CheckGiven(password, key, aes);
+            if (!found && Check([], owner: false, key, aes))
+            {
+                found = PasswordRefused = true;   // neither password: the empty user password opens it, as its user
+            }
         }
 
         if (!found)
@@ -344,7 +379,7 @@ internal sealed partial class PdfSecurity : IDisposable
     }
 
     // The password given, as this revision takes it (PDFDocEncoding; SASLprep and UTF-8 from revision 5), then as some
-    // writers took it (UTF-8 unprepared) when that differs: each as the user's, then the owner's password.
+    // writers took it (UTF-8 unprepared) when that differs: each as the owner's, then the user's password.
     private bool CheckGiven(string password, Span<byte> key, Aes? aes)
     {
         var text = password.AsSpan(0, Math.Min(password.Length, MostPasswordChars));
@@ -373,12 +408,12 @@ internal sealed partial class PdfSecurity : IDisposable
             }
 
             int b = PdfCrypt.Utf8Password(text, second, most);
-            if (a >= 0 && (Check(first[..a], owner: false, key, aes) || Check(first[..a], owner: true, key, aes)))
+            if (a >= 0 && (Check(first[..a], owner: true, key, aes) || Check(first[..a], owner: false, key, aes)))
             {
                 return true;
             }
 
-            return (a < 0 || !first[..a].SequenceEqual(second[..b])) && (Check(second[..b], owner: false, key, aes) || Check(second[..b], owner: true, key, aes));
+            return (a < 0 || !first[..a].SequenceEqual(second[..b])) && (Check(second[..b], owner: true, key, aes) || Check(second[..b], owner: false, key, aes));
         }
         finally
         {

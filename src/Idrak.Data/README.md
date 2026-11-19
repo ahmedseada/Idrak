@@ -32,9 +32,12 @@ foreach (var issue in page.Issues)
 - **The file:** PDF 1.0 to 2.0; classic and stream cross-references, object streams, hybrid files, incremental updates;
   a broken cross-reference rebuilt by scanning the file (`Info.Repaired`); every standard filter and predictor.
 - **Encryption:** the standard security handler, revisions 2 to 6 (RC4 40 to 128 bits, AES-128, AES-256), opened with
-  the empty password or `DocumentOptions.Password` (the user's or the owner's); a wrong or missing one is an
-  `InvalidDataException` naming the option. `Info.Security` says how a file is encrypted (the handler, its revision, the
-  key's length, the ciphers, the permissions; never a key, salt or IV).
+  `DocumentOptions.Password`, tried as the owner's then the user's password, or the empty password; a wrong or missing
+  one is an `InvalidDataException` naming the option, but where the user password is empty a wrong one opens the file
+  as its user and every page read says so (`wrong-password`). `Info.Security` says how a file is encrypted (the
+  handler, its revision, the key's length, the ciphers, the permissions; never a key, salt or IV) and whether the owner
+  password opened it (`OwnerAccess`: only then may its encryption be changed or removed). A damaged encrypted file is
+  repaired too, its key found before its object streams are listed.
 - **Text:** runs with their box, size, font, colour and whether they are hidden (a scan's text layer), from simple,
   composite, Type 3 and the standard 14 fonts, through `ToUnicode`, the encodings, the Adobe Glyph List and the embedded
   font's own `cmap`; `/ActualText` wins over its glyphs. A page's runs become lines and text through a layout of
