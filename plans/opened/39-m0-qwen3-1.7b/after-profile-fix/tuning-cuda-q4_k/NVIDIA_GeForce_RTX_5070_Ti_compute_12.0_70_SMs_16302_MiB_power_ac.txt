@@ -1,0 +1,17 @@
+idrak-tuning 5
+device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+driver: CUDA 13030; 32.0.16.1088
+library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+TensorSplits 0 128 2048 2048 2048 0 0 = 4
+TensorSplits 0 128 2048 6144 2048 0 0 = 8
+TensorSplits 0 128 6144 2048 6144 0 0 = 4
+TensorSplits 0 512 2048 2048 2048 0 0 = 2
+TensorSplits 0 512 2048 6144 2048 0 0 = 6
+TensorSplits 0 512 6144 2048 6144 0 0 = 1
+DecodeSplits 2 16 160 128 0 0 0 = 2
+DecodeSplits 2 16 640 128 0 0 0 = 8
+DecodeMinChunk 2 16 160 128 2 0 0 = 1
+DecodeMinChunk 2 16 640 128 8 0 0 = 1
+RowThreads 0 128 32 0 0 0 0 = 64
+RowThreads 0 128 4096 0 0 0 0 = 64
+RowThreads 0 128 16384 0 0 0 0 = 64

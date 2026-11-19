@@ -23,6 +23,8 @@
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Tests.Library" />
     <InternalsVisibleTo Include="Idrak.Text" />
+    <!-- idrak profile times each layer of the network's own cached pass (Sequential.ForwardCached with a hook before each layer). -->
+    <InternalsVisibleTo Include="Idrak.Cli.Commands" />
   </ItemGroup>
 
 </Project>

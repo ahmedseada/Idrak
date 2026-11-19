@@ -574,7 +574,10 @@ log, every trace report, the CUDA tuning folders and CPU tuning files.
     read"): the first (`profile-{device}-{type}-{prompt|decode}-first.txt`) stored the shapes the bench never ran, inside
     its timed pass (finding M0-3); the second (`profile-{device}-{type}-{prompt|decode}.txt`) is the one read. The
     tuning lines each run added (the script diffed the tuning file around every run and printed the diff) are collected
-    in `tuning-added.txt`.
+    in `tuning-added.txt`. **The layer tables and pass totals of these profiles are not trustworthy** (on CUDA float32
+    products and the head over every row; on both devices every layer's intermediate results held to the pass's end):
+    read their operations and kernels tables only, and for layer times the profiles made after the fix
+    (`after-profile-fix/`, "After the profile fix" below).
   - Traces: `idrak trace --stacks -o trace-{device}-{type}.nettrace --top 20 -- bench Qwen/Qwen3-1.7B -w {type} -d cuda
     --prompt-tokens 512 --tokens 128 -n 1` (CUDA bf16, int8, q4_0, q4_k, iq2_xxs) and `... -d cpu --prompt-tokens 128
     --tokens 8 -n 1` (CPU bf16, int8, q4_0) → `trace-{device}-{type}.txt`; further reads of the same traces with
@@ -625,12 +628,13 @@ files and the fix piece proposed for it):
   shapes), `PackedTile 0 512 ...` for int8 (`tuning-added.txt`, `profile-cuda-{type}-prompt-first.txt`); and by the head:
   17.7–18.4 ms in every type's layer table against 3.85–4.00 ms for its kernel (`profile-cuda-{type}-prompt.txt`).
   Proposed piece: the profile's per-layer pass in the network's precision scope (a tool fix; no library result changes).
+  **Fixed in piece 2** ("After the profile fix" below).
 - **M0-2. `idrak profile --pass prompt` runs the head over every prompt row**, which generation never does
   (`TextGenerator` sets `DecodingContext.LastPositionOnly`; the profile's contexts do not). CUDA bf16:
   `gemm_tc_nn_bf16w 512x151936x2048` 3.965 ms, 13.2% of the pass's kernel time (`profile-cuda-bf16-prompt.txt`); CPU
   bf16: `matmul_bf16 [1x128x151936]` 126.5 ms (11.2%) and 1,261 MiB of the pass's 5,650 MiB
   (`profile-cpu-bf16-prompt.txt`). Proposed piece: with M0-1, the profile's prompt pass with `LastPositionOnly`, so it
-  times what the bench runs.
+  times what the bench runs. **Fixed in piece 2.**
 - **M0-3. A profile's first run on a bench-filled folder measures inside its timed pass, and one decoding step catches
   one-off pauses.** First prompt profiles: head 829–907 ms and `layers.0` 160–207 ms (`profile-cuda-*-prompt-first.txt`;
   second runs 17.7–18.4 and 4.5–4.8 ms; the lines the first runs stored: `tuning-added.txt`). The read bf16 decode
@@ -639,7 +643,8 @@ files and the fix piece proposed for it):
   (1.5–1.8 s), none in generation (`trace-cuda-bf16-timeline.txt`). An iq3_xxs decode step read `gemv_nn_f32` 18.4 ms
   against 10.3–10.5 ms in every other float32-held type (`profile-cuda-iq3_xxs-decode-outlier.txt`); re-run: 10.43 ms
   (`profile-cuda-iq3_xxs-decode.txt`). Proposed piece: with M0-1 and M0-2, the decode profile timed over several steps
-  (median) after a collection; until then profiles run twice.
+  (median) after a collection; until then profiles run twice. **Fixed in piece 2**: a first profile on a bench-filled
+  folder now agrees with the second; no extra untimed pass was needed.
 - **M0-4. Loading a GGUF type for a device without its product (`cuda` under `name`) expands it on about two threads
   and copies the matrix in float32 several times.** q4_0: 11.3 s of a 13.4 s run in `ModelChoices.Load`, 16,086 MiB
   allocated (`SafeTensorsReader.ReadTransposed` 3,792 + 1,584, `StoredPackedFormat.Create` 3,794 + 2,772,
@@ -693,6 +698,72 @@ files and the fix piece proposed for it):
   `profile-cuda-bf16-decode.txt`). So int8 generates 215 tok/s against bf16's 183 while reading half the bytes. Proposed
   piece (the plain `cuda` device, decision 1: the owner's decision): trace the int8 few-row kernels; the proof's few-row
   lane is the `adad` answer (int8 614 against 437 on Qwen3-0.6B).
+
+#### After the profile fix (plan 39 phase 1, piece 2: M0-1, M0-2, M0-3)
+
+`idrak profile` now times the network's own cached pass (`Sequential.ForwardCached`, through its hook before each layer;
+`Idrak` makes its internals visible to `Idrak.Cli.Commands` for it): the network's precision, each layer's intermediate
+results freed as generation frees them, its decoding contexts with `LastPositionOnly` (a prompt's head over the last
+row), each timed pass after a full collection, and a decode profile the median of `--steps` steps (default 5, printed).
+Measured with CLI `0.4.1-dev.2611191709` (built from `45a32809` with the change), `IDRAK_ROUTES=name`, the M0 profile
+commands, each type's folder filled by a bench of this build, a first and a second profile each. Files:
+`test-output\adad\p2-profile\`, copied to [39-m0-qwen3-1.7b/after-profile-fix/](39-m0-qwen3-1.7b/after-profile-fix/)
+(`p2.sh`, `before-after.txt`, `results.txt`, `tuning-added.txt`, `profile-{device}-{type}-{prompt|decode}-{first|read}.txt`,
+the bench logs, the tuning files, `test-*.txt`).
+
+CUDA, from `before-after.txt` (ms; the layer table's sum against the kernel table's sum; the head's layer time against
+its own kernel):
+
+| Profile | M0 first / read pass | after first / read pass | M0 read: layers / kernels | after read: layers / kernels | M0 read head: layer / kernel | after read head: layer / kernel |
+|---|---|---|---|---|---|---|
+| bf16 prompt | 1,181 / 164 | 27.2 / 27.1 | 147.4 / 30.0 | 26.0 / 27.0 | 17.7 / 3.97 | 0.79 / 0.78 |
+| int8 prompt | 1,220 / 147 | 25.4 / 25.4 | 145.5 / 28.3 | 24.3 / 24.9 | 18.4 / 3.85 | 0.42 / 0.40 |
+| q4_0 prompt | 1,118 / 146 | 29.3 / 29.3 | 145.1 / 32.1 | 28.2 / 29.7 | 18.0 / 4.00 | 1.54 / 1.59 |
+| q4_k prompt | 1,122 / 148 | 29.3 / 29.5 | 146.2 / 32.1 | 28.3 / 29.3 | 18.3 / 4.00 | 1.55 / 1.54 |
+| iq2_xxs prompt | 1,121 / 153 | 30.5 / 30.2 | 152.1 / 32.1 | 29.1 / 30.3 | 18.2 / 3.99 | 1.54 / 1.54 |
+| bf16 decode | 6.88 / 22.10 | 6.44 / 6.34 | 21.5 / 6.85 | 6.28 / 7.29 | 0.76 / 0.75 | 0.76 / 0.76 |
+| int8 decode | 6.55 / 6.37 | 5.51 / 5.39 | 5.84 / 6.08 | 5.29 / 6.15 | 0.41 / 0.38 | 0.39 / 0.39 |
+| q4_0 decode | 11.46 / 11.55 | 10.36 / 10.38 | 10.9 / 12.4 | 10.3 / 12.2 | 1.52 / – | 1.53 / – |
+| q4_k decode | 11.41 / 12.13 | 10.40 / 10.43 | 11.5 / 12.3 | 10.3 / 12.5 | 1.52 / – | 1.53 / – |
+| iq2_xxs decode | 11.44 / 11.59 | 10.40 / 10.35 | 10.9 / 12.5 | 10.3 / 12.3 | 1.53 / – | 1.53 / – |
+
+(–: the float32-held types' decode head is one of the 197 `gemv_nn_f32` calls.) The bench's own prompt pass, for
+comparison: 512 / 19,339 tok/s = 26.5 ms for bf16 (`bench-check/cuda-bf16-warm.txt`).
+
+- **The layer tables now sum to about the kernel tables** (prompt 24.3–29.1 ms against 24.9–30.3 ms; decode within the
+  kernel table's own timing overhead) and the head's layer time is its kernel's (and a prompt's head is one row:
+  `bf16_gemv_r1_f32`, `int8_gemv_r1_f32`, `gemv_nn_f32 1`).
+- **First and second runs agree**: prompts within 1%, decode within 2.2% (M0: a first prompt pass 7–8× the second; a bf16
+  decode step 6.88 then 22.10 ms).
+- **No float32-path entry is stored by a profile**: the first prompt profiles added no tuning line; the first decode
+  profiles added only the decode profile's own 128-token warm-up and window-160 shapes (`PackedSplits 4|0 128 ...`,
+  `TensorSplits 0 128 ...`, `DecodeSplits 2 16 160 ...`, `RowThreads 0 128 4096`), measured in its untimed warm-up; no
+  `FloatTile 0` or `PackedTile 0` line (`after-profile-fix/tuning-added.txt`). So no extra untimed pass was added.
+- **CPU** (`before-after.txt`): bf16's prompt pass 1,064 / 1,061 ms with 4,362 MiB allocated (M0 1,251 / 1,294 ms,
+  5,650 MiB): its head now one row, 8.9–10.6 ms and 0.6 MiB (M0 119–128 ms, 1,261 MiB); q4_0 1,171 / 1,262 ms, 314–326 MiB
+  (M0 1,287 / 1,308 ms, 677–679 MiB).
+- **Nothing else moved**: the bf16 bench, warm, 19,339 tok/s prompt, 183 generation, weights 3,302 MiB, peak 3,465 MiB
+  against M0's 19,330 / 183 / 3,302 / 3,465 (`bench-check/cuda-bf16-warm.txt`); each type's fill with this build within
+  2.2% of M0's fill on prompts (`results.txt`).
+- Tests: "cli measure: profile ..." (extended: the median of `--steps`, the precision the layers ran in, a bfloat16 run's
+  layers in bfloat16 on CUDA, a prompt's head over the last row only, `--steps 0` refused), "cli measure: every command
+  has help ...", "cluster: cli profile --cluster ..." on `cpu` (3 passed) and `cuda` (2 passed, the help test checked on
+  the CPU only); "public API|inventory" on `cpu` (6 passed) (`test-*.txt`).
+
+New findings from this piece:
+
+- **M0-10. The CUDA tuning file names the commit it was measured by**, so a build of another commit measures every
+  choice again: the first bench on a copy of M0's bf16 folder rewrote it (its `library:` line `4802653c` →
+  `45a32809`; `after-profile-fix/tuning-added.txt`), and M0's folders cannot be read by any later build. A "warm" run is
+  warm only on a folder the same commit's build filled. (The CPU tuning file names no commit: M0's were read as filled.)
+  Every later piece fills its folders with its own build.
+- **M0-11. Holding every layer's intermediates doubled the CUDA layer times**: the interim build (the profile's own
+  per-layer loop in the network's precision, one scope for the pass) gave bf16 layers of 1.6–2.0 ms (but the first,
+  0.93 ms) and a 47.1 ms layer sum against 27 ms of kernels (`after-profile-fix/interim-2611191703/`); the network's
+  own pass, which frees each layer's intermediates, gives 0.89–0.94 ms. Fixed by timing the network's pass.
+- **M0-12. The CPU's one-row product over stored rows is slow**: q4_0's head, one row of 151,936 outputs, takes 49.8–50.6
+  ms (`matmul_stored [1x1x151936]`, `after-profile-fix/profile-cpu-q4_0-prompt-*.txt`) against bf16's 8.9–10.6 ms: the
+  stored decode path of M0-8, seen on one product.
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

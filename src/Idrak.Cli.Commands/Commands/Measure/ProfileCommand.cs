@@ -30,12 +30,14 @@ internal sealed class ProfileCommand : Command
 
     public override string Usage =>
         "MODEL [options]\n\n" +
-        "Reads a prompt into the key/value cache, then times one more decoding step (or, with --pass prompt, one whole\n" +
-        "prompt pass of --prompt-tokens into a fresh cache): each layer of the network (the device drained before and\n" +
-        "after it; with the memory it allocated and the garbage collections it caused; over the whole pass, how many\n" +
-        "cores were busy: the process's CPU time over the wall time), the operations and inner layers it ran (telemetry, timed with\n" +
-        "the device drained around each), and the kernels on devices that time them. Timings with draining are slower\n" +
-        "than normal decoding; compare their shares, and use 'idrak bench' for speed.\n\n" +
+        "Reads a prompt into the key/value cache, then times a decoding step (each layer's median over --steps steps), or,\n" +
+        "with --pass prompt, one whole prompt pass of --prompt-tokens into a fresh cache, each after a garbage collection:\n" +
+        "each layer of the network (the device drained before and after it; with the memory it allocated and the garbage\n" +
+        "collections it caused; over the whole pass, how many cores were busy: the process's CPU time over the wall time),\n" +
+        "the operations and inner layers it ran (telemetry, timed with the device drained around each), and the kernels on\n" +
+        "devices that time them. Every pass runs as generation runs the network: in its precision, and a prompt's layers\n" +
+        "past the last cached one over the last position only. Timings with draining are slower than normal decoding;\n" +
+        "compare their shares, and use 'idrak bench' for speed.\n\n" +
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format\n" +
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
@@ -47,7 +49,7 @@ internal sealed class ProfileCommand : Command
         "      --cluster FILE    run the model as a pipeline over a simulated cluster of the topology (a stage a rank, or\n" +
         "                        --stages N): a token's hops between the stages as rows, their bytes, wall and simulated time\n" +
         "      --stages N        with --cluster: the pipeline's stages (one per rank)\n" +
-        "      --steps N         with --cluster: the decoding steps timed (default 4)\n\n" +
+        "      --steps N         the decoding steps timed: a step profile's median (default 5), or with --cluster (default 4)\n\n" +
         "Examples:\n" +
         "  idrak profile org/model -d vulkan:0 -w int8\n" +
         "  idrak profile mymodel --prompt-tokens 1000 -j\n" +
@@ -85,9 +87,16 @@ internal sealed class ProfileCommand : Command
             return Pipeline(context, choice, topologyFile, promptTokens);
         }
 
+        int stepCount = context.IntOption("--steps", 5);
+        if (stepCount <= 0)
+        {
+            throw new UsageException("--steps needs a number above 0.");
+        }
+
         using var model = ModelChoices.Load(context, choice);
         var device = context.Device;
-        promptTokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - 5));
+        int timedPasses = promptPass ? 1 : stepCount;
+        promptTokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - timedPasses - 4));
         var network = model.Network;
         var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
@@ -97,8 +106,14 @@ internal sealed class ProfileCommand : Command
         using var noGrad = Autograd.NoGrad();
         Tensor Prompt() => Tensor.From([.. Enumerable.Range(0, promptTokens).Select(_ => Token())], [1, promptTokens], device);
 
-        // The pass timed: one decoding step after the prompt, or (--pass prompt) the prompt itself into a fresh cache.
-        var decoding = new DecodingContext(device, 1, promptTokens + 5, cache);
+        // Every pass below is the network's own cached pass (Sequential.ForwardCached), as generation runs it: in the network's
+        // precision, each layer's intermediate results freed once the next layer has its input, and with only the last
+        // position past the last cached layer (TextGenerator's LastPositionOnly: the head reads one row of a prompt, not
+        // every row). The pass timed: one decoding step after the prompt (the median of --steps of them), or (--pass prompt)
+        // the prompt itself into a fresh cache. The cache holds the prompt, the first step, the timed steps and the two
+        // recorded after.
+        int capacity = promptTokens + timedPasses + 4;
+        var decoding = new DecodingContext(device, 1, capacity, cache) { LastPositionOnly = true };
         try
         {
             using (var scope = new TensorScope())
@@ -114,7 +129,7 @@ internal sealed class ProfileCommand : Command
                 if (promptPass)
                 {
                     decoding.Dispose();
-                    decoding = new DecodingContext(device, 1, promptTokens + 5, cache);
+                    decoding = new DecodingContext(device, 1, capacity, cache) { LastPositionOnly = true };
                 }
 
                 return decoding;
@@ -122,39 +137,64 @@ internal sealed class ProfileCommand : Command
 
             Tensor PassInput() => promptPass ? Prompt() : Tensor.From([Token()], [1, 1], device);
 
-            // 1. Each top-level layer of one pass, the device drained around it: its time, the bytes it allocated and the
-            // collections it caused; over the whole pass, how many cores were busy (the process's CPU time over the wall
-            // time: the system counts CPU time in ticks too coarse for one layer).
-            var layers = new List<(string Name, string Type, double Ms, double AllocatedMiB, int Collections)>();
+            // 1. Each top-level layer of the timed pass, the device drained at each layer's start and at the pass's end (a
+            // hook the network's pass calls before each layer): its time, the bytes it allocated and the collections it
+            // caused; over the pass, how many cores were busy (the process's CPU time over the wall time: the system counts
+            // CPU time in ticks too coarse for one layer). Each pass after a full collection, so the garbage of the load and
+            // the warm-up is not collected inside it; a step profile reports each layer's median over its steps (and the
+            // collections of all of them), so one pause does not stand for the step.
+            static int Collections() => GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2);
+            var passLayers = new List<(double Ms, double AllocatedMiB, int Collections)[]>();
+            var passMs = new double[timedPasses];
             var process = Process.GetCurrentProcess();
-            process.Refresh();
-            var passCpu = process.TotalProcessorTime;
-            var stepWatch = Stopwatch.StartNew();
-            using (var scope = new TensorScope())
+            double cpuMs = 0, wallMs = 0;
+            string products = "";
+            for (int run = 0; run < timedPasses; run++)
             {
-                var context1 = PassContext();
-                var x = PassInput();
-                using var step = context1.OpenStep(x.Shape[^1]);
-                for (int i = 0; i < network.Count; i++)
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                var timedLayers = new (double Ms, double AllocatedMiB, int Collections)[network.Count];
+                int current = -1, collections = 0;
+                long allocated = 0;
+                var watch = new Stopwatch();
+                void LayerEnds()
                 {
-                    var module = network[i];
                     device.Synchronize();
-                    long allocated = GC.GetTotalAllocatedBytes();
-                    int collections = GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2);
-                    var watch = Stopwatch.StartNew();
-                    x = module is ICachedModule cached ? cached.ForwardCached(x, context1) : module.Forward(x);
-                    device.Synchronize();
-                    double ms = watch.Elapsed.TotalMilliseconds;
-                    layers.Add((module.DisplayName, module.GetType().Name, ms, (GC.GetTotalAllocatedBytes() - allocated) / 1048576.0,
-                        GC.CollectionCount(0) + GC.CollectionCount(1) + GC.CollectionCount(2) - collections));
+                    if (current >= 0)
+                    {
+                        timedLayers[current] = (watch.Elapsed.TotalMilliseconds, (GC.GetTotalAllocatedBytes() - allocated) / 1048576.0, Collections() - collections);
+                    }
                 }
 
-                step.Complete();
+                process.Refresh();
+                var passCpu = process.TotalProcessorTime;
+                var stepWatch = Stopwatch.StartNew();
+                using (var scope = new TensorScope())
+                {
+                    network.ForwardCached(PassInput(), PassContext(), network.Count, (i, x) =>
+                    {
+                        LayerEnds();
+                        products = MixedPrecision.Current.ToString();             // what the network's pass multiplies in
+                        (current, allocated, collections) = (i, GC.GetTotalAllocatedBytes(), Collections());
+                        watch.Restart();
+                        return x;
+                    });
+                    LayerEnds();
+                }
+
+                passMs[run] = stepWatch.Elapsed.TotalMilliseconds;
+                process.Refresh();
+                cpuMs += (process.TotalProcessorTime - passCpu).TotalMilliseconds;
+                wallMs += passMs[run];
+                passLayers.Add(timedLayers);
             }
 
-            double stepMs = stepWatch.Elapsed.TotalMilliseconds;
-            process.Refresh();
-            double cores = stepMs > 0 ? (process.TotalProcessorTime - passCpu).TotalMilliseconds / stepMs : 0;
+            var layers = Enumerable.Range(0, network.Count).Select(i => (Name: network[i].DisplayName, Type: network[i].GetType().Name,
+                Ms: Median(passLayers.Select(p => p[i].Ms)), AllocatedMiB: Median(passLayers.Select(p => p[i].AllocatedMiB)),
+                Collections: passLayers.Sum(p => p[i].Collections))).ToList();
+            double stepMs = Median(passMs);
+            double cores = wallMs > 0 ? cpuMs / wallMs : 0;
 
         // 2. Operations and inner layers of another step, from telemetry; 3. kernels where the device times them.
         var recorder = new Recorder();
@@ -188,8 +228,11 @@ internal sealed class ProfileCommand : Command
         double layerTotal = layers.Sum(l => l.Ms);
         string pass = promptPass ? $"one prompt pass of {promptTokens} tokens" : $"one decoding step after {promptTokens} tokens";
         context.Write($"{choice.Model} on {device} ({device.Name}), weights {choice.Weights ?? "as stored"}, KV cache {kv}: {pass}");
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{(promptPass ? "pass" : "step")} {stepMs:F2} ms with each layer drained ({layerTotal:F2} ms in the layers), "
-            + $"{layers.Sum(l => l.AllocatedMiB):F1} MiB allocated, {layers.Sum(l => l.Collections)} collections, {cores:F1} of {Environment.ProcessorCount} cores busy on average"));
+        string timedText = promptPass ? "one pass" : $"the median of {timedPasses} steps";
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{(promptPass ? "pass" : "step")} {stepMs:F2} ms ({timedText}, each after a collection) with each layer drained "
+            + $"({layerTotal:F2} ms in the layers{(promptPass ? "" : ", each layer's median")}), {layers.Sum(l => l.AllocatedMiB):F1} MiB allocated{(promptPass ? "" : " a step")}, "
+            + $"{layers.Sum(l => l.Collections)} collections{(promptPass ? "" : $" in the {timedPasses} steps")}, {cores:F1} of {Environment.ProcessorCount} cores busy on average"));
+        context.Write($"products in {products}, as the network runs them{(promptPass ? "; the layers past the last cached one over the last position only, as generation runs a prompt" : "")}");
         var memory = ComputeResources.GetMemoryUsage(device);
         context.Write(string.Create(CultureInfo.InvariantCulture,
             $"{device}: {memory.InUse / 1e9:F2} GB in use{(memory.Offloaded > 0 ? $", {memory.Offloaded / 1e9:F2} GB of tensors in system memory (offloaded)" : "")}\n"));
@@ -223,6 +266,9 @@ internal sealed class ProfileCommand : Command
             ["kv"] = kv,
             ["prompt_tokens"] = promptTokens,
             ["pass"] = promptPass ? "prompt" : "step",
+            ["steps"] = timedPasses,
+            ["precision"] = products,
+            ["last_position_only"] = true,
             ["step_ms"] = stepMs,
             ["cores_busy"] = cores,
             ["layers"] = new JsonArray([.. layers.Select(l => (JsonNode)new JsonObject
@@ -404,6 +450,13 @@ internal sealed class ProfileCommand : Command
         [.. table.OrderByDescending(p => p.Value.Ms).Select(p => (JsonNode)new JsonObject { ["name"] = p.Key, ["calls"] = p.Value.Count, ["ms"] = p.Value.Ms })];
 
     private static string Share(double part, double total) => total > 0 ? (part / total).ToString("P1", CultureInfo.InvariantCulture) : "";
+
+    // The median of the values (the mean of the middle two for an even count; 0 for none).
+    private static double Median(IEnumerable<double> values)
+    {
+        var sorted = values.Order().ToArray();
+        return sorted.Length == 0 ? 0 : sorted.Length % 2 == 1 ? sorted[sorted.Length / 2] : (sorted[sorted.Length / 2 - 1] + sorted[sorted.Length / 2]) / 2;
+    }
 
     // Sums the time of each operation (by name and shape) and each inner layer (by type and depth), as the Chat sample's profile does.
     private sealed class Recorder : ITelemetryHook

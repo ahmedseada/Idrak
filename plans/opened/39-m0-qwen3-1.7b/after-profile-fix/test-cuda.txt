@@ -1,0 +1,3 @@
+Idrak tests: Microsoft Windows 10.0.26200 (X64), .NET 10.0.12
+== cuda:0: NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)
+2 passed, 0 failed, 1 skipped

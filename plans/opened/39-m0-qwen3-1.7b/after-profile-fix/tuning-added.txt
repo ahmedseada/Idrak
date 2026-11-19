@@ -1,0 +1,188 @@
+== bench check cuda bf16 warm, in fact a fill: the library line changed (20:05:21): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/bench-check/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+< library: 0.4.1+4802653c40f71a7ad9280ff77a362f9b686c26be; kernels 29d753baeebe4de8
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+< PackedSplits 4 128 2048 2048 0 0 0 = 4
+< PackedSplits 4 128 2048 6144 0 0 0 = 8
+< PackedTile 2 512 1024 2048 0 0 0 = 64
+< PackedTile 2 512 2048 2048 0 0 0 = 64
+< PackedTile 2 512 2048 6144 0 0 0 = 64
+< PackedTile 2 512 6144 2048 0 0 0 = 64
+< PackedTile 2 512 151936 2048 0 0 0 = 64
+< PackedMultiSplits 4 128 2048 2048 1024 1024 0 = 4
+< PackedMultiSplits 4 128 2048 6144 6144 0 0 = 2
+< DecodeSplits 2 16 160 128 0 0 0 = 2
+< DecodeMinChunk 2 16 160 128 2 0 0 = 8
+< DecodeMinChunk 2 16 640 128 8 0 0 = 16
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+< RowThreads 0 128 4096 0 0 0 0 = 64
+== bench check cuda bf16 warm (20:05:47): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/bench-check/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda bf16 fill (20:05:59): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> GemvSplits 8 1 151936 2048 0 0 0 = 1
+> GemvSplits 11 1 2048 2048 0 0 0 = 4
+> GemvSplits 11 1 2048 6144 0 0 0 = 4
+> GemvMultiSplits 4 1 2048 2048 1024 1024 0 = 4
+> GemvMultiSplits 5 1 2048 6144 6144 0 0 = 4
+> PackedSplits 4 512 2048 2048 0 0 0 = 1
+> PackedSplits 4 512 2048 6144 0 0 0 = 4
+> PackedMultiSplits 4 512 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda bf16 prompt first (20:06:01): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda bf16 prompt read (20:06:03): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== the runs above used the interim CLI 0.4.1-dev.2611191703 (its own per-layer loop); those below use 0.4.1-dev.2611191709 (the network's own pass with a hook)
+== bench check cuda bf16 warm (20:10:20): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/bench-check/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda bf16 fill (20:10:35): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> GemvSplits 8 1 151936 2048 0 0 0 = 1
+> GemvSplits 11 1 2048 2048 0 0 0 = 4
+> GemvSplits 11 1 2048 6144 0 0 0 = 4
+> GemvMultiSplits 4 1 2048 2048 1024 1024 0 = 2
+> GemvMultiSplits 5 1 2048 6144 6144 0 0 = 8
+> PackedSplits 4 512 2048 2048 0 0 0 = 1
+> PackedSplits 4 512 2048 6144 0 0 0 = 4
+> PackedMultiSplits 4 512 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda bf16 prompt first (20:10:38): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda bf16 prompt read (20:10:48): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda bf16 decode first (20:10:50): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 4 128 2048 2048 0 0 0 = 4
+> PackedSplits 4 128 2048 6144 0 0 0 = 8
+> PackedMultiSplits 4 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 4 128 2048 6144 6144 0 0 = 2
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile cuda bf16 decode read (20:11:00): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda int8 fill (20:11:13): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> GemvSplits 0 1 151936 2048 0 0 0 = 1
+> GemvSplits 3 1 2048 2048 0 0 0 = 4
+> GemvSplits 3 1 2048 6144 0 0 0 = 8
+> GemvMultiSplits 0 1 2048 2048 1024 1024 0 = 4
+> GemvMultiSplits 1 1 2048 6144 6144 0 0 = 2
+> PackedSplits 0 512 2048 2048 0 0 0 = 1
+> PackedSplits 0 512 2048 6144 0 0 0 = 2
+> PackedMultiSplits 0 512 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda int8 prompt first (20:11:15): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda int8 prompt read (20:11:18): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda int8 decode first (20:11:20): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 0 128 2048 2048 0 0 0 = 8
+> PackedSplits 0 128 2048 6144 0 0 0 = 8
+> PackedMultiSplits 0 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 0 128 2048 6144 6144 0 0 = 2
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 32
+== profile cuda int8 decode read (20:11:22): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda q4_0 fill (20:11:50): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> TensorSplits 0 512 2048 2048 2048 0 0 = 2
+> TensorSplits 0 512 2048 6144 2048 0 0 = 6
+> TensorSplits 0 512 6144 2048 6144 0 0 = 1
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 8
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda q4_0 prompt first (20:12:03): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda q4_0 prompt read (20:12:16): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda q4_0 decode first (20:12:29): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 6144 2048 0 0 = 8
+> TensorSplits 0 128 6144 2048 6144 0 0 = 2
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 32
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile cuda q4_0 decode read (20:12:42): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda q4_k fill (20:13:09): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> TensorSplits 0 512 2048 2048 2048 0 0 = 2
+> TensorSplits 0 512 2048 6144 2048 0 0 = 6
+> TensorSplits 0 512 6144 2048 6144 0 0 = 1
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda q4_k prompt first (20:13:24): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda q4_k prompt read (20:13:37): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda q4_k decode first (20:13:51): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 6144 2048 0 0 = 8
+> TensorSplits 0 128 6144 2048 6144 0 0 = 4
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile cuda q4_k decode read (20:14:05): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== bench cuda iq2_xxs fill (20:14:37): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+45a32809ab81992bd21c5bc8144d636fef809404; kernels 29d753baeebe4de8
+> TensorSplits 0 512 2048 2048 2048 0 0 = 2
+> TensorSplits 0 512 2048 6144 2048 0 0 = 6
+> TensorSplits 0 512 6144 2048 6144 0 0 = 2
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== profile cuda iq2_xxs prompt first (20:14:58): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda iq2_xxs prompt read (20:15:19): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cuda iq2_xxs decode first (20:15:40): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 6144 2048 0 0 = 8
+> TensorSplits 0 128 6144 2048 6144 0 0 = 2
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile cuda iq2_xxs decode read (20:16:01): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile cpu bf16 prompt first (20:16:15): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cpu-bf16.tsv
+  (none)
+== profile cpu bf16 prompt read (20:16:22): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cpu-bf16.tsv
+  (none)
+== profile cpu q4_0 prompt first (20:16:31): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cpu-q4_0.tsv
+  (none)
+== profile cpu q4_0 prompt read (20:16:40): lines added or changed in D:/Projects/idrak/test-output/adad/p2-profile/tuning-cpu-q4_0.tsv
+  (none)

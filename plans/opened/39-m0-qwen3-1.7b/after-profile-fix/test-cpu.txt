@@ -1,0 +1,3 @@
+Idrak tests: Microsoft Windows 10.0.26200 (X64), .NET 10.0.12
+== cpu: CPU (24 threads, 8-wide SIMD)
+3 passed, 0 failed

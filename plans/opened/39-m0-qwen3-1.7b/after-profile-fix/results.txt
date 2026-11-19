@@ -1,0 +1,15 @@
+Benches with the profile-fixed build (CLI 0.4.1-dev.2611191709 unless named -2611191703), Qwen3-1.7B, IDRAK_ROUTES=name, --prompt-tokens 512 --tokens 128 -n 3; M0's for comparison.
+check bf16 (M0 copy, measured anew) 1703 prompt    19306  generation   183  weights  3302 MiB  peak  3474 MiB
+check bf16 warm 1703                 prompt    19289  generation   183  weights  3302 MiB  peak  3465 MiB
+check bf16 warm                      prompt    19339  generation   183  weights  3302 MiB  peak  3465 MiB
+M0 bf16 warm                         prompt    19330  generation   183  weights  3302 MiB  peak  3465 MiB
+fill bf16                            prompt    19272  generation   177  weights  3302 MiB  peak  3474 MiB
+M0 fill bf16                         prompt    19393  generation   183  weights  3302 MiB  peak  3474 MiB
+fill int8                            prompt    20634  generation   216  weights  2257 MiB  peak  2430 MiB
+M0 fill int8                         prompt    20855  generation   215  weights  2257 MiB  peak  2430 MiB
+fill q4_0                            prompt    17800  generation   106  weights  7177 MiB  peak  7348 MiB
+M0 fill q4_0                         prompt    17860  generation   106  weights  7177 MiB  peak  7348 MiB
+fill q4_k                            prompt    17842  generation   106  weights  7177 MiB  peak  7348 MiB
+M0 fill q4_k                         prompt    17656  generation   106  weights  7177 MiB  peak  7348 MiB
+fill iq2_xxs                         prompt    17435  generation   106  weights  7177 MiB  peak  7348 MiB
+M0 fill iq2_xxs                      prompt    17833  generation   106  weights  7177 MiB  peak  7348 MiB

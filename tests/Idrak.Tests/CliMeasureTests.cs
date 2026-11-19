@@ -298,8 +298,35 @@ internal abstract partial class DesktopTests : Tests
             var layers = json["layers"]!.AsArray();
             Check(layers.Count == 5 && layers.Select(l => (string)l!["name"]!).SequenceEqual(["embed", "layers.0", "layers.1", "norm", "head"]), json["layers"]!.ToJsonString());
             Check(json["operations"]!.AsArray().Count > 0 && json["inner_layers"]!.AsArray().Count > 0 && (double)json["step_ms"]! > 0, json.ToJsonString());
-            var (code, text, _) = MeasureIdrak(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--top", "3", "-d", device.ToString());
-            Check(code == 0 && text.Contains("Layers of the network") && text.Contains("Operations"), text);
+
+            // A step profile is the median of --steps steps (5 by default); every pass runs in the network's precision, which
+            // the per-layer pass reports: float32 here (the group selects float32), bfloat16 on CUDA when the run computes in it.
+            Check((int)json["steps"]! == 5 && (bool)json["last_position_only"]! && (string?)json["precision"] == "Float32",
+                $"steps, precision (float32) and last position: {json.ToJsonString()}");
+            if (device.Type == DeviceType.Cuda)
+            {
+                string? asked = Environment.GetEnvironmentVariable(global::Idrak.Abstraction.ElementTypes.EnvironmentVariable);
+                Environment.SetEnvironmentVariable(global::Idrak.Abstraction.ElementTypes.EnvironmentVariable, "bf16");
+                try
+                {
+                    var bf16 = IdrakJson(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--steps", "1", "-d", device.ToString());
+                    Check((string?)bf16["precision"] == "BFloat16" && (int)bf16["steps"]! == 1, $"a bfloat16 run's layers multiply in bfloat16: {bf16.ToJsonString()}");
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(global::Idrak.Abstraction.ElementTypes.EnvironmentVariable, asked);
+                }
+            }
+            var (code, text, _) = MeasureIdrak(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--top", "3", "--steps", "3", "-d", device.ToString());
+            Check(code == 0 && text.Contains("Layers of the network") && text.Contains("Operations") && text.Contains("the median of 3 steps, each after a collection"), text);
+            Check(MeasureIdrak(cache, "profile", MeasureModel, "--steps", "0").Code == 2, "--steps 0 is a usage error");
+
+            // A prompt pass runs as generation does: the head reads the prompt's last position only (the tiny model's 268
+            // scores for one row, never for each of the 8), in one timed pass.
+            var prompt = IdrakJson(cache, "profile", MeasureModel, "--pass", "prompt", "--prompt-tokens", "8", "-d", device.ToString());
+            var operations = prompt["operations"]!.AsArray().Select(o => (string)o!["name"]!).ToList();
+            Check((int)prompt["steps"]! == 1 && operations.Any(o => o.EndsWith("1x268]", StringComparison.Ordinal)) && !operations.Any(o => o.EndsWith("8x268]", StringComparison.Ordinal)),
+                $"the prompt pass's head over the last position: {string.Join(", ", operations)}");
         }
         finally
         {
