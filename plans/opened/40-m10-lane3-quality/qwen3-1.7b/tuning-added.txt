@@ -1,0 +1,218 @@
+== ppl-q4_0-native-fill (02:11:21): lines added or changed in tuning-q4_0-native
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> PackedSplits 100 512 1024 2048 0 0 0 = 4
+> PackedSplits 100 512 2048 2048 0 0 0 = 2
+> PackedSplits 100 512 2048 6144 0 0 0 = 8
+> PackedSplits 100 512 6144 2048 0 0 0 = 1
+> PackedSplits 600 512 1024 2048 0 0 0 = 2
+> PackedSplits 600 512 2048 2048 0 0 0 = 1
+> PackedSplits 600 512 2048 6144 0 0 0 = 2
+> PackedTile 300 512 1024 2048 0 0 0 = 128
+> PackedTile 300 512 2048 2048 0 0 0 = 128
+> PackedTile 300 512 2048 6144 0 0 0 = 128
+> PackedTile 300 512 6144 2048 0 0 0 = 128
+> PackedTile 1300 512 2048 2048 1024 1024 0 = 128
+> PackedTile 1300 512 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 100 512 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 600 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 2000 512 1024 2048 6 0 0 = 2
+> ProductRoute 2000 512 2048 2048 6 0 0 = 2
+> ProductRoute 2000 512 2048 6144 6 0 0 = 2
+> ProductRoute 2000 512 6144 2048 6 0 0 = 2
+> ProductRoute 2000 512 151936 2048 2 0 0 = 3
+> ProductRoute 9000 2048 2048 2048 9 0 0 = 4
+> ProductRoute 9100 512 1024 2048 9 0 0 = 130
+> ProductRoute 9100 512 2048 2048 9 0 0 = 129
+> ProductRoute 9100 512 2048 6144 9 0 0 = 129
+> ProductRoute 9100 512 6144 2048 9 0 0 = 129
+> ProductRoute 9300 512 1024 2048 4 0 0 = 4
+> ProductRoute 9300 512 2048 2048 4 0 0 = 2
+> ProductRoute 9300 512 2048 6144 4 0 0 = 2
+> ProductRoute 9300 512 6144 2048 4 0 0 = 2
+> ProductRoute 9700 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 512 2048 6144 6144 0 0 = 0
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-q4_0-native-warm (02:11:39): lines added or changed in tuning-q4_0-native
+  (none)
+== ppl-q4_0-lane3-run1 (02:11:51): lines added or changed in tuning-q4_0-lane3
+  (none)
+== ppl-q4_0-lane3-run2 (02:12:24): lines added or changed in tuning-q4_0-lane3
+  (none)
+== ppl-q4_0-name-run1 (02:12:41): lines added or changed in tuning-q4_0-name
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> TensorSplits 0 512 2048 2048 2048 0 0 = 2
+> TensorSplits 0 512 2048 6144 2048 0 0 = 6
+> TensorSplits 0 512 6144 2048 6144 0 0 = 1
+> FloatTile 0 512 151936 2048 1 0 0 = 64
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-q4_0-name-run2 (02:12:58): lines added or changed in tuning-q4_0-name
+  (none)
+== ppl-int8-native-fill (02:13:09): lines added or changed in tuning-int8-native
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> PackedSplits 41 512 1024 2048 0 0 0 = 4
+> PackedSplits 41 512 2048 2048 0 0 0 = 1
+> PackedSplits 41 512 2048 6144 0 0 0 = 2
+> PackedSplits 41 512 6144 2048 0 0 0 = 1
+> PackedSplits 541 512 1024 2048 0 0 0 = 2
+> PackedSplits 541 512 2048 2048 0 0 0 = 1
+> PackedSplits 541 512 2048 6144 0 0 0 = 2
+> PackedTile 241 512 1024 2048 0 0 0 = 128
+> PackedTile 241 512 2048 2048 0 0 0 = 64
+> PackedTile 241 512 2048 6144 0 0 0 = 128
+> PackedTile 241 512 6144 2048 0 0 0 = 128
+> PackedTile 1241 512 2048 2048 1024 1024 0 = 128
+> PackedTile 1241 512 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 41 512 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 541 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 2000 512 1024 2048 7 0 0 = 6
+> ProductRoute 2000 512 2048 2048 7 0 0 = 2
+> ProductRoute 2000 512 2048 6144 7 0 0 = 6
+> ProductRoute 2000 512 6144 2048 7 0 0 = 6
+> ProductRoute 2000 512 151936 2048 2 0 0 = 3
+> ProductRoute 9000 2048 2048 2048 9 0 0 = 4
+> ProductRoute 9100 512 1024 2048 9 0 0 = 130
+> ProductRoute 9100 512 2048 2048 9 0 0 = 129
+> ProductRoute 9100 512 2048 6144 9 0 0 = 129
+> ProductRoute 9100 512 6144 2048 9 0 0 = 129
+> ProductRoute 9300 512 1024 2048 4 0 0 = 4
+> ProductRoute 9300 512 2048 2048 4 0 0 = 2
+> ProductRoute 9300 512 2048 6144 4 0 0 = 4
+> ProductRoute 9300 512 6144 2048 4 0 0 = 2
+> ProductRoute 9400 512 1024 2048 4 0 0 = 4
+> ProductRoute 9400 512 2048 2048 4 0 0 = 2
+> ProductRoute 9400 512 2048 6144 4 0 0 = 2
+> ProductRoute 9400 512 6144 2048 4 0 0 = 2
+> ProductRoute 9700 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 512 2048 6144 6144 0 0 = 1
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-int8-native-warm (02:13:19): lines added or changed in tuning-int8-native
+  (none)
+== ppl-int8-lane3-run1 (02:13:28): lines added or changed in tuning-int8-lane3
+  (none)
+== ppl-int8-lane3-run2 (02:13:36): lines added or changed in tuning-int8-lane3
+  (none)
+== ppl-int8-name-run1 (02:13:42): lines added or changed in tuning-int8-name
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> PackedSplits 0 512 2048 2048 0 0 0 = 1
+> PackedSplits 0 512 2048 6144 0 0 0 = 2
+> PackedTile 0 511 151936 2048 0 0 0 = 64
+> PackedMultiSplits 0 512 2048 2048 1024 1024 0 = 1
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-int8-name-run2 (02:13:48): lines added or changed in tuning-int8-name
+  (none)
+== ppl-bf16-adad-fill (02:13:59): lines added or changed in tuning-bf16-adad
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> PackedSplits 40 512 1024 2048 0 0 0 = 4
+> PackedSplits 40 512 2048 2048 0 0 0 = 1
+> PackedSplits 40 512 2048 6144 0 0 0 = 4
+> PackedSplits 40 512 6144 2048 0 0 0 = 1
+> PackedSplits 540 512 1024 2048 0 0 0 = 2
+> PackedSplits 540 512 2048 2048 0 0 0 = 1
+> PackedSplits 540 512 2048 6144 0 0 0 = 2
+> PackedTile 2 511 151936 2048 0 0 0 = 64
+> PackedTile 240 512 1024 2048 0 0 0 = 64
+> PackedTile 240 512 2048 2048 0 0 0 = 128
+> PackedTile 240 512 2048 6144 0 0 0 = 128
+> PackedTile 240 512 6144 2048 0 0 0 = 128
+> PackedTile 1240 512 2048 2048 1024 1024 0 = 128
+> PackedTile 1240 512 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 40 512 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 540 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 4 512 151936 2048 0 0 0 = 1
+> ProductRoute 2000 512 1024 2048 5 0 0 = 6
+> ProductRoute 2000 512 2048 2048 5 0 0 = 2
+> ProductRoute 2000 512 2048 6144 5 0 0 = 2
+> ProductRoute 2000 512 6144 2048 5 0 0 = 2
+> ProductRoute 9000 2048 2048 2048 9 0 0 = 5
+> ProductRoute 9100 512 1024 2048 9 0 0 = 130
+> ProductRoute 9100 512 2048 2048 9 0 0 = 129
+> ProductRoute 9100 512 2048 6144 9 0 0 = 129
+> ProductRoute 9100 512 6144 2048 9 0 0 = 129
+> ProductRoute 9300 512 1024 2048 4 0 0 = 4
+> ProductRoute 9300 512 2048 2048 4 0 0 = 2
+> ProductRoute 9300 512 2048 6144 4 0 0 = 2
+> ProductRoute 9300 512 6144 2048 4 0 0 = 2
+> ProductRoute 9700 512 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 512 2048 6144 6144 0 0 = 0
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-bf16-adad-warm (02:14:08): lines added or changed in tuning-bf16-adad
+  (none)
+== ppl-bf16-name-run1 (02:14:12): lines added or changed in tuning-bf16-name
+> idrak-tuning 5
+> device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; power ac
+> driver: CUDA 13030; 32.0.16.1088
+> library: 0.4.1+de1f8a96e66d9b2d98860553311a470cf69243ed; kernels 29d753baeebe4de8
+> PackedSplits 4 512 2048 2048 0 0 0 = 1
+> PackedSplits 4 512 2048 6144 0 0 0 = 4
+> PackedTile 2 511 151936 2048 0 0 0 = 64
+> PackedMultiSplits 4 512 2048 2048 1024 1024 0 = 1
+> RowThreads 0 128 16384 0 0 0 0 = 64
+== ppl-bf16-name-run2 (02:14:21): lines added or changed in tuning-bf16-name
+  (none)
+== bench-q4_0-ctl-fill (02:14:36): lines added or changed in tuning-q4_0-ctl
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> ProductRoute 2000 1 2048 2048 2 0 0 = 0
+> ProductRoute 2000 1 2048 6144 2 0 0 = 0
+> ProductRoute 2000 1 151936 2048 2 0 0 = 0
+> ProductRoute 4000 1 6144 2048 0 0 0 = 0
+> ProductRoute 5000 1 2048 2048 0 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+== bench-q4_0-ctl-warm (02:14:43): lines added or changed in tuning-q4_0-ctl
+  (none)
+== profile-q4_0-ctl-prompt (02:14:50): lines added or changed in tuning-q4_0-ctl
+  (none)
+== bench-q4_0-lane3-fill (02:14:58): lines added or changed in tuning-q4_0-lane3
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> ProductRoute 2000 1 2048 2048 2 0 0 = 0
+> ProductRoute 2000 1 2048 6144 2 0 0 = 0
+> ProductRoute 2000 1 151936 2048 2 0 0 = 0
+> ProductRoute 4000 1 6144 2048 0 0 0 = 0
+> ProductRoute 5000 1 2048 2048 0 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+== bench-q4_0-lane3-warm (02:15:06): lines added or changed in tuning-q4_0-lane3
+  (none)
+== profile-q4_0-lane3-prompt (02:15:12): lines added or changed in tuning-q4_0-lane3
+  (none)
+== bench-int8-ctl-fill (02:15:25): lines added or changed in tuning-int8-ctl
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 16
+> ProductRoute 2000 1 2048 2048 2 0 0 = 0
+> ProductRoute 2000 1 2048 6144 2 0 0 = 0
+> ProductRoute 2000 1 151936 2048 2 0 0 = 0
+> ProductRoute 4000 1 6144 2048 0 0 0 = 0
+> ProductRoute 5000 1 2048 2048 1 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+== bench-int8-ctl-warm (02:15:33): lines added or changed in tuning-int8-ctl
+  (none)
+== profile-int8-ctl-prompt (02:15:40): lines added or changed in tuning-int8-ctl
+  (none)
+== bench-int8-lane3-fill (02:15:48): lines added or changed in tuning-int8-lane3
+> DecodeSplits 2 16 640 128 0 0 0 = 8
+> DecodeMinChunk 2 16 640 128 8 0 0 = 1
+> ProductRoute 2000 1 2048 2048 2 0 0 = 0
+> ProductRoute 2000 1 2048 6144 2 0 0 = 0
+> ProductRoute 2000 1 151936 2048 2 0 0 = 0
+> ProductRoute 4000 1 6144 2048 0 0 0 = 0
+> ProductRoute 5000 1 2048 2048 1 0 0 = 1
+> RowThreads 0 128 32 0 0 0 0 = 64
+== bench-int8-lane3-warm (02:15:56): lines added or changed in tuning-int8-lane3
+  (none)
+== profile-int8-lane3-prompt (02:16:03): lines added or changed in tuning-int8-lane3
+  (none)

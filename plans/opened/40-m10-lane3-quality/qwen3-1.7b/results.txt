@@ -1,0 +1,24 @@
+ppl   q4_0-native    q4_0     adad  fill  perplexity 27.690  mean-nll 3.3211  scored 6643  windows 13  seconds 3.4  exit 0
+ppl   q4_0-native    q4_0     adad  warm  perplexity 27.690  mean-nll 3.3211  scored 6643  windows 13  seconds 0.6  exit 0
+ppl   q4_0-lane3     q4_0     adad  run1  perplexity 27.737  mean-nll 3.3228  scored 6643  windows 13  seconds 1.1  exit 0
+ppl   q4_0-lane3     q4_0     adad  run2  perplexity 27.737  mean-nll 3.3228  scored 6643  windows 13  seconds 1.1  exit 0
+ppl   q4_0-name      q4_0     name  run1  perplexity 27.683  mean-nll 3.3208  scored 6643  windows 13  seconds 1.9  exit 0
+ppl   q4_0-name      q4_0     name  run2  perplexity 27.683  mean-nll 3.3208  scored 6643  windows 13  seconds 0.9  exit 0
+ppl   int8-native    int8     adad  fill  perplexity 23.969  mean-nll 3.1768  scored 6643  windows 13  seconds 3.6  exit 0
+ppl   int8-native    int8     adad  warm  perplexity 23.969  mean-nll 3.1768  scored 6643  windows 13  seconds 0.6  exit 0
+ppl   int8-lane3     int8     adad  run1  perplexity 23.943  mean-nll 3.1757  scored 6643  windows 13  seconds 1.1  exit 0
+ppl   int8-lane3     int8     adad  run2  perplexity 23.943  mean-nll 3.1757  scored 6643  windows 13  seconds 1.1  exit 0
+ppl   int8-name      int8     name  run1  perplexity 23.961  mean-nll 3.1764  scored 6643  windows 13  seconds 1.8  exit 0
+ppl   int8-name      int8     name  run2  perplexity 23.961  mean-nll 3.1764  scored 6643  windows 13  seconds 0.7  exit 0
+ppl   bf16-adad      bf16     adad  fill  perplexity 24.142  mean-nll 3.1839  scored 6643  windows 13  seconds 4.3  exit 0
+ppl   bf16-adad      bf16     adad  warm  perplexity 24.142  mean-nll 3.1839  scored 6643  windows 13  seconds 0.7  exit 0
+ppl   bf16-name      bf16     name  run1  perplexity 24.148  mean-nll 3.1842  scored 6643  windows 13  seconds 1.7  exit 0
+ppl   bf16-name      bf16     name  run2  perplexity 24.148  mean-nll 3.1842  scored 6643  windows 13  seconds 0.7  exit 0
+bench q4_0-ctl       fill  prompt    18886  generation     334  weights   1537 MiB  peak   1714 MiB  exit 0
+bench q4_0-ctl       warm  prompt    19079  generation     334  weights   1537 MiB  peak   1714 MiB  exit 0
+bench q4_0-lane3     fill  prompt     7702  generation     334  weights   1537 MiB  peak   1692 MiB  exit 0
+bench q4_0-lane3     warm  prompt     7734  generation     334  weights   1537 MiB  peak   1692 MiB  exit 0
+bench int8-ctl       fill  prompt    20527  generation     333  weights   2257 MiB  peak   2412 MiB  exit 0
+bench int8-ctl       warm  prompt    20536  generation     333  weights   2257 MiB  peak   2412 MiB  exit 0
+bench int8-lane3     fill  prompt     8187  generation     333  weights   2257 MiB  peak   2412 MiB  exit 0
+bench int8-lane3     warm  prompt     8162  generation     333  weights   2257 MiB  peak   2412 MiB  exit 0

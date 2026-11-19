@@ -1,0 +1,88 @@
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+meta-llama/Llama-3.2-3B-Instruct on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)), weights int8, KV cache bfloat16: one prompt pass of 512 tokens
+pass 47.12 ms (one pass, each after a collection) with each layer drained (46.03 ms in the layers), 0.5 MiB allocated, 0 collections, 1.0 of 24 cores busy on average
+products in BFloat16, as the network runs them; the layers past the last cached one over the last position only, as generation runs a prompt
+cuda:0: 4.13 GB in use
+
+Layers of the network:
+Layer      Type          ms     Share  MiB allocated  GCs
+---------  ------------  -----  -----  -------------  ---
+embed      Embedding     0.057  0.1 %  0.00           0
+layers.0   DecoderBlock  1.691  3.7 %  0.02           0
+layers.1   DecoderBlock  1.635  3.6 %  0.02           0
+layers.2   DecoderBlock  1.629  3.5 %  0.02           0
+layers.3   DecoderBlock  1.621  3.5 %  0.02           0
+layers.4   DecoderBlock  1.618  3.5 %  0.02           0
+layers.5   DecoderBlock  1.618  3.5 %  0.02           0
+layers.6   DecoderBlock  1.618  3.5 %  0.02           0
+layers.7   DecoderBlock  1.615  3.5 %  0.02           0
+layers.8   DecoderBlock  1.619  3.5 %  0.02           0
+layers.9   DecoderBlock  1.633  3.5 %  0.02           0
+layers.10  DecoderBlock  1.626  3.5 %  0.02           0
+layers.11  DecoderBlock  1.620  3.5 %  0.02           0
+layers.12  DecoderBlock  1.613  3.5 %  0.02           0
+layers.13  DecoderBlock  1.628  3.5 %  0.02           0
+layers.14  DecoderBlock  1.615  3.5 %  0.02           0
+layers.15  DecoderBlock  1.617  3.5 %  0.02           0
+layers.16  DecoderBlock  1.611  3.5 %  0.02           0
+layers.17  DecoderBlock  1.615  3.5 %  0.02           0
+layers.18  DecoderBlock  1.636  3.6 %  0.02           0
+layers.19  DecoderBlock  1.612  3.5 %  0.02           0
+layers.20  DecoderBlock  1.614  3.5 %  0.02           0
+layers.21  DecoderBlock  1.609  3.5 %  0.02           0
+layers.22  DecoderBlock  1.609  3.5 %  0.02           0
+layers.23  DecoderBlock  1.622  3.5 %  0.02           0
+layers.24  DecoderBlock  1.618  3.5 %  0.02           0
+layers.25  DecoderBlock  1.621  3.5 %  0.02           0
+layers.26  DecoderBlock  1.649  3.6 %  0.02           0
+layers.27  DecoderBlock  1.634  3.5 %  0.02           0
+norm       RMSNorm       0.013  0.0 %  0.00           0
+head       Linear        0.496  1.1 %  0.00           0
+
+Inner layers (by type and depth): 47.70 ms in 115 calls
+Name                   Calls  ms      Share
+---------------------  -----  ------  ------
+FeedForward (depth 0)  28     32.012  67.1 %
+Linear (depth 1)       28     10.420  21.8 %
+Linear (depth 0)       29     4.986   10.5 %
+Embedding (depth 0)    1      0.217   0.5 %
+RMSNorm (depth 0)      29     0.067   0.1 %
+
+Operations (by name and shape): 82.30 ms in 342 calls
+Name                             Calls  ms      Share
+-------------------------------  -----  ------  ------
+matmul_stored_many [1x512x8192]  56     40.395  49.1 %
+matmul_stored [1x512x3072]       56     14.866  18.1 %
+matmul_stored_many [1x512x1024]  56     14.000  17.0 %
+matmul_stored_many [1x512x3072]  28     6.777   8.2 %
+add_rms_norm [1x512x3072]        56     1.934   2.3 %
+attention_bf16 [1x512x3072]      28     1.411   1.7 %
+gated_activation [1x512x8192]    28     1.312   1.6 %
+norm_rope_heads [8x1536x128]     28     0.808   1.0 %
+matmul_stored [1x1x128256]       1      0.493   0.6 %
+narrow [512]                     1      0.194   0.2 %
+embedding_bf16 [1x512x3072]      1      0.045   0.1 %
+rms_norm_affine [1x512x3072]     1      0.039   0.0 %
+rms_norm_affine [1x1x3072]       1      0.015   0.0 %
+narrow [1x1x3072]                1      0.011   0.0 %
+
+Kernels (317 launches):
+Kernel                                          Calls  ms      Share
+----------------------------------------------  -----  ------  ------
+native_mma_bf16_r64_s4_n256_x_ri8               56     19.835  42.1 %
+gemm_tc_nt_int8w 512x3072x8192                  28     10.230  21.7 %
+gemm_tc_nt_int8w multi 512x3072+1024+1024x3072  28     6.577   14.0 %
+gemm_tc_nt_int8w 512x3072x3072                  28     4.324   9.2 %
+add_rms_norm_affine_f32                         56     1.804   3.8 %
+flash_tc_fwd_bf16_d128                          28     1.399   3.0 %
+gated_act_f32                                   28     1.258   2.7 %
+norm_rope_heads_f32                             28     0.692   1.5 %
+typed_gemv_s8_n4_r1                             1      0.487   1.0 %
+native_pack_x_bf16_p16                          28     0.317   0.7 %
+convert_f32_i32                                 1      0.037   0.1 %
+rms_norm_affine_f32                             2      0.034   0.1 %
+copy2d_f32                                      2      0.027   0.1 %
+gather_bf16_f32                                 1      0.019   0.0 %
+add_scalar_f32                                  1      0.014   0.0 %
+affine_f32                                      1      0.008   0.0 %
+exit 0

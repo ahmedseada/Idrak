@@ -1411,6 +1411,121 @@ name:
   designed, not failures.
 - **The one out-of-line ratio** (M9-5) is the CPU's run-to-run variance at 3B. It was not explained.
 
+### B's quality: lane 3 forced on the prompt (M10)
+
+Plan 40's M10. Candidate B for the stored types' prompt product keeps each weight's codes exact as int8, rounds x to int8
+per block of 32 values, and scales the int32 sums into float32. The existing lane 3 (`StoredMeasured` 3, Adad's block
+route: `blocks_quantize_q8_0` then `matmul_blocks_*`, `PtxKernels.Blocks.cs`) does that rounding. Today's native lane
+instead rounds x and the widened weight to bfloat16. So lane 3's perplexity against the native lane's is B's quality cost.
+Lane 3's speed is a side measurement only: its kernel is the simple one (64 × 64 tiles). Measuring only: no code changed.
+The choices were forced by editing tuning folders, as in M7.
+
+Models, on the owner's word: Qwen3-1.7B and Llama 3.2 3B Instruct; Llama 3.2 1B was dropped, and no 1B run was made.
+Files: `test-output\adad\m10-lane3-quality\`, copied (no `.nettrace`, `.speedscope.json` or lock files) to
+[40-m10-lane3-quality/](40-m10-lane3-quality/) (`qwen3-1.7b/`, `llama-3b/`, the text and the scripts).
+
+- **Code and CLI**: the M6 build (`idrak 0.4.1-dev.2611191810`, informational version
+  `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`), checked before the first run. No source changed
+  since `de1f8a96` (`git diff --stat de1f8a96 e6dc787b -- src`: nothing). Worktree at `e6dc787b`.
+- **The perplexity path** (`PerplexityCommand.cs`, read before any run):
+  - The text is tokenized and read in windows. Each window runs `network.ForwardFirst` (inside the network's precision
+    scope, `Sequential.Run`: bfloat16 products, as generation runs them) over all its rows, with no key/value cache.
+  - The head then runs on every scored row in one chunk (`Losses.TokenLogProbabilities`, 1,024 rows a chunk). It runs
+    outside that scope.
+  - `IDRAK_ROUTES` (`ProductRoutes.Current`) and `IDRAK_TUNING_CACHE` (`TuningCache`) are read by the library for the
+    whole process, so `perplexity` honours them as the bench does.
+  - An operations trace of one lane-3 run per model (`{model}/ops-q4_0-lane3.jsonl`, `idrak trace --levels operations`)
+    shows every product at 512 rows. Per layer and window: q `matmul_stored_many [1,512,hidden]`; k/v and gate/up
+    `matmul_stored_many`; o and down `matmul_stored [1,512,hidden]`; and the head `matmul_stored [511,vocabulary]`, 13 calls.
+- **The text and settings, the same for every run** (`text-info.txt`):
+  - `text.txt` is the repository's `docs/optimization.md` at `e6dc787b`: technology English with a few C# examples,
+    27,225 bytes, sha256 `72873d2f…3f27f86`.
+  - It is 7,341 Qwen3 tokens and 6,988 Llama tokens.
+  - Every run: `-d cuda --window 512 --max-tokens 6656`. That is 13 windows of exactly 512 tokens and 6,643 scored
+    tokens on both models, so every window's layers run at m = 512 (the bench's 512-row keys).
+- **Runs** (`m10.sh MODEL …`, one model run a call, the route set on every run):
+  - For q4_0 and int8: perplexity under adad on a fresh folder (fill, then warm) — the native lane (the measured choice);
+    a copy with lane 3 forced (two runs); and under name on its own fresh folder (two runs).
+  - bf16 under adad (fill, warm) and under name (two runs): the unquantized reference.
+  - The side speed measurement per type:
+    - a copy of the native folder (`TYPE-ctl`) and the lane-3 folder, each a bench fill (the perplexity folders hold no
+      decode keys) then a warm bench at the record's CUDA sizes;
+    - then the adad prompt profile of each.
+  - Command: `IDRAK_ROUTES={adad|name} IDRAK_TUNING_CACHE=… idrak perplexity MODEL text.txt -w TYPE -d cuda --window 512
+    --max-tokens 6656`.
+- **The edit** (`m10.sh MODEL force TYPE`, written as `{model}/force-{type}.diff`):
+  - Every prompt-shaped `StoredMeasured` entry (`ProductRoute 2000 512 N K C 0 0`) but the head's set to 3, each key's
+    candidate count kept.
+  - Every 512-row group (`9700 512 …`) set to 0. Left on, a group would run q/k/v (and int8's gate/up on Qwen3) as one
+    tensor-row launch instead of each product's lane 3.
+  - Lane 3 is among every forced key's candidates: no forced entry was measured again (`tuning-added.txt`: no run removed
+    or changed a line).
+- **What the fills chose** (the native lane):
+  - Qwen3-1.7B: q4_0 as in M6 (every product the native kind; the q/k/v group on). int8: q/o the native kind; k/v,
+    gate/up and down the tensor rows; both groups on (M6's bench had down on lane 5).
+  - Llama 3B: as in M9 (q4_0's down the tensor rows; int8's gate/up raw int8, q/o and down the tensor rows, the q/k/v
+    group on).
+  - In every q4_0 and int8 adad folder the 511-row head (outside the precision scope its key has two candidates, `… 2 0 0`)
+    chose lane 3. So the head takes B's rounding in both the native and the lane-3 runs, and the comparison isolates the
+    layers' products. bf16's head has its own entry (`4 512 …`).
+- **Lane 3 ran**:
+  - The lane-3 bench logs name "block route (x as q8_0, s8 tensor cores)" for all four 512-row shapes.
+  - The lane-3 prompt profiles run `blocks_quantize_q8_0` and `matmul_blocks_*` 196 times each (7 products × 28 layers),
+    and no `native_mma_*`, `native_pack_w_*` or `gemm_tc_nt_*` (`{model}/profile-{type}-lane3-prompt.txt`).
+- **Every run of a kind repeated exactly**: the two runs of each kind give the same perplexity and mean negative
+  log-likelihood to the printed digits (3 and 4 decimals) (`perplexity.txt`).
+
+**Qwen3-1.7B, perplexity** (`perplexity.txt`, `qwen3-1.7b/results.txt`; bf16: adad 24.142, name 24.148)
+
+| Type | native lane | lane 3 | name | lane 3 − native | lane 3 − name | native − name | native, lane 3, name against bf16 (adad) |
+|---|---|---|---|---|---|---|---|
+| q4_0 | 27.690 | 27.737 | 27.683 | +0.047 (+0.17%) | +0.054 (+0.20%) | +0.007 (+0.03%) | +14.70%, +14.89%, +14.67% |
+| int8 | 23.969 | 23.943 | 23.961 | −0.026 (−0.11%) | −0.018 (−0.08%) | +0.008 (+0.03%) | −0.72%, −0.82%, −0.75% |
+
+**Llama 3.2 3B, perplexity** (`perplexity.txt`, `llama-3b/results.txt`; bf16: adad 26.871, name 26.874)
+
+| Type | native lane | lane 3 | name | lane 3 − native | lane 3 − name | native − name | native, lane 3, name against bf16 (adad) |
+|---|---|---|---|---|---|---|---|
+| q4_0 | 28.763 | 28.776 | 28.772 | +0.013 (+0.05%) | +0.004 (+0.01%) | −0.009 (−0.03%) | +7.04%, +7.09%, +7.07% |
+| int8 | 26.796 | 26.831 | 26.791 | +0.035 (+0.13%) | +0.040 (+0.15%) | +0.005 (+0.02%) | −0.28%, −0.15%, −0.30% |
+
+**Across the two models**:
+
+- Lane 3 against the native lane: q4_0 +0.17% (Qwen3-1.7B) and +0.05% (Llama 3B); int8 −0.11% and +0.13%.
+- Lane 3 against name: −0.08% to +0.20%. The native lane against name: −0.03% to +0.03%.
+- Against the bf16 reference, the weight types themselves: q4_0 +14.7% (Qwen3-1.7B) and +7.0% (Llama 3B); int8 −0.7%
+  and −0.3% (int8 is below bf16 on this text on both models).
+- bf16 adad against bf16 name: −0.02% and −0.01%.
+
+**The side speed measurement** (`speed.txt`; warm benches at the record's CUDA sizes, tok/s; the prompt profiles' kernels,
+ms; the block products' rate: the layers' 512-row products' work, 1,443 GFLOP (Qwen3-1.7B) and 2,886 GFLOP (Llama 3B),
+over `matmul_blocks_*`'s ms)
+
+| Model, type | prompt, native control / lane 3 | lane 3 / control | pass ms, control / lane 3 | lane 3: quantize x / block products | block products' rate | generation, control / lane 3 |
+|---|---|---|---|---|---|---|
+| Qwen3-1.7B q4_0 | 19,079 / 7,734 | 0.405 | 27.87 / 67.03 | 2.69 / 61.07 | 23.6 TFLOP/s | 334 / 334 |
+| Qwen3-1.7B int8 | 20,536 / 8,162 | 0.397 | 25.79 / 62.94 | 2.86 / 56.89 | 25.4 TFLOP/s | 333 / 333 |
+| Llama 3B q4_0 | 10,089 / 4,826 | 0.478 | 51.16 / 106.47 | 3.38 / 98.82 | 29.2 TFLOP/s | 209 / 209 |
+| Llama 3B int8 | 11,022 / 5,097 | 0.462 | 47.12 / 101.67 | 3.53 / 92.90 | 31.1 TFLOP/s | 195 / 195 |
+
+The controls' products (ms; `speed.txt`): Qwen3-1.7B q4_0 the native kind 15.71 + conversion 3.01 + x packing 0.83 +
+the q/k/v group 4.08; int8 the tensor rows 18.86 + the native kind 1.73 + 0.70 of packing; Llama 3B q4_0 21.42 + 4.95 +
+0.62 + sums 0.44 + tensor rows 18.72; int8 the native kind (raw int8) 19.84 + x packing 0.32 + tensor rows 21.13. The
+decode keys were not forced, so generation is unchanged.
+
+**Findings** (measuring only; none fixed):
+
+- **M10-1. Lane 3's rounding moves perplexity by −0.11% to +0.17% against the native lane, on both models and both
+  types**, and by −0.08% to +0.20% against name (`perplexity.txt`). Repeated runs agree to the printed digits.
+- **M10-2. The weight type moves it more**: q4_0 is +7.0–14.9% above bf16 on these models and text, under every lane;
+  int8 is 0.15–0.85% below bf16.
+- **M10-3. The perplexity path's head is already on lane 3** in every q4_0 and int8 adad run: it runs outside the
+  network's precision scope, where its key has two candidates and the fill chose 3. Generation's head is not measured
+  here.
+- **M10-4. Lane 3's current kernel runs the prompt at 0.40–0.48 of the native control** (block products 23.6–31.1
+  TFLOP/s, x quantization 2.7–3.5 ms a pass) (`speed.txt`, the profiles).
+- **Not measured**: any kernel for B other than lane 3's, perplexity on other texts, windows or types, and the CPU.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from
