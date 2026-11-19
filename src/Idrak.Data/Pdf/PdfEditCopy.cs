@@ -306,6 +306,21 @@ internal sealed class PdfEditCopier : IDisposable
     private int Copy(Source source, int number, int preset, int depth)
     {
         source.Numbers[number] = preset;
+        if (source.Replaced.TryGetValue(number, out var body))
+        {
+            // An object an edit writes anew (a form field filled, a widget's appearance changed): numbered first, so what
+            // it refers to that comes back to it finds its number.
+            int replaced = preset != Pending ? preset : _file.Allocate();
+            source.Numbers[number] = replaced;
+            WriteObject(replaced, body);
+            return replaced;
+        }
+
+        if (source.Dropped.Contains(number))
+        {
+            return Settle(source, number, Null);                              // an object an edit removes (a flattened field): null where still named
+        }
+
         PdfValue value;
         try
         {
@@ -684,6 +699,12 @@ internal sealed class PdfEditCopier : IDisposable
 
         /// <summary>The page objects written (a builder's).</summary>
         public HashSet<int> PagesWritten { get; } = [];
+
+        /// <summary>Objects an edit writes anew instead of copying them (by number): each one's body, references made the result's through the copier.</summary>
+        public Dictionary<int, Action<PdfSyntax>> Replaced { get; } = [];
+
+        /// <summary>Objects an edit removes (by number): null where something still names them.</summary>
+        public HashSet<int> Dropped { get; } = [];
     }
 
     // A SHA-256, as a key.

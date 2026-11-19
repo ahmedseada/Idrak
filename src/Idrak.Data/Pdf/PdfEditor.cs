@@ -20,6 +20,9 @@ internal sealed class PdfEditPage(PdfDocument? document, int index)
 
     /// <summary>Content drawn over it (a page of a document), or its own (a page the editor adds).</summary>
     public PdfPageBuilder? Content { get; set; }
+
+    /// <summary>Its annotations changed by form edits (widgets of flattened fields left out, those of added fields added), or null.</summary>
+    public PdfAnnotsEdit? Annots { get; set; }
 }
 
 /// <summary>
@@ -37,9 +40,10 @@ internal sealed class PdfEditPage(PdfDocument? document, int index)
 /// the source and the encryption is removed.</item>
 /// </list>
 /// The documents pages are inserted from stay open until <see cref="Save"/>, and an image given to a page is read then.
-/// <see cref="Sign"/> (D12) adds each signature as an update of its own after the others (<see cref="PdfSigning"/>): over
-/// the source as it is when nothing else changed, else over the edited file, written first to a temporary file. Forms,
-/// annotations and bookmarks come with phases D9 and D10. Not safe from several threads.
+/// Form fields are filled, added and flattened through <see cref="PdfFormEditor"/> (D9). <see cref="Sign"/> (D12) adds
+/// each signature as an update of its own after the others (<see cref="PdfSigning"/>): over the source as it is when
+/// nothing else changed, else over the edited file, written first to a temporary file. Annotations and bookmarks come
+/// with phase D10. Not safe from several threads.
 /// </summary>
 internal sealed class PdfEditor : IDocumentEditor
 {
@@ -54,6 +58,7 @@ internal sealed class PdfEditor : IDocumentEditor
     private readonly List<(ImageData? Image, DocumentImageEncoding Encoding, int Number)> _images = [];
     private DocumentInfo? _info;
     private DocumentEncryption? _encryption;
+    private PdfFormEditor? _forms;
     private bool _encryptSet, _saved, _disposed;
 
     public PdfEditor(IDocument given, PdfDocument source, Stream destination, DocumentWriteOptions options)
@@ -76,9 +81,30 @@ internal sealed class PdfEditor : IDocumentEditor
         _info = info;
     }
 
-    public void SetField(string name, params ReadOnlySpan<string> values) => throw NotYet("form fields", "D9");
+    /// <summary>The editor's pages, in order (the form editor finds a widget's pages and their annotations here).</summary>
+    internal List<PdfEditPage> Pages => _pages;
 
-    public void AddField(DocumentField field) => throw NotYet("form fields", "D9");
+    public void SetField(string name, params ReadOnlySpan<string> values)
+    {
+        ThrowIfDone();
+        Forms.SetField(name, values);
+    }
+
+    public void AddField(DocumentField field)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+        ThrowIfDone();
+        Forms.AddField(field, _pages.Count);
+    }
+
+    public void Flatten(params ReadOnlySpan<string> names)
+    {
+        ThrowIfDone();
+        Forms.Flatten(names);
+    }
+
+    // The source's form as the edits change it, read on the first form call.
+    private PdfFormEditor Forms => _forms ??= new PdfFormEditor(this, _source, _options);
 
     public void AddAnnotation(DocumentAnnotation annotation) => throw NotYet("annotations", "D10");
 
@@ -376,6 +402,8 @@ internal sealed class PdfEditor : IDocumentEditor
             font.Number = writer.Allocate();
         }
 
+        _forms?.Prepare(writer, copier, own, rewrite: false);
+
         // Each page's number: a page of the source keeps its own (written again only when it changes), the others are new.
         // With the source's pages as they were, none comes twice: no set of those met is kept.
         var numbers = new int[_pages.Count];
@@ -413,13 +441,13 @@ internal sealed class PdfEditor : IDocumentEditor
             var page = _pages[i];
             if (page.Document is null)
             {
-                PdfEditPages.WriteNew(copier, writer, numbers[i], root, page.Content!, page.Rotation ?? 0, parentCrops, parentRotates, Image);
+                PdfEditPages.WriteNew(copier, writer, numbers[i], root, page.Content!, page.Rotation ?? 0, parentCrops, parentRotates, Image, page.Annots);
                 continue;
             }
 
             var node = page.Document.PageObject(page.Index).Node;
             bool ownPage = page.Document == _source && node.IsReference && numbers[i] == node.AsReference.Number;
-            if (ownPage && !changed && page.Rotation is null && page.Content is null)
+            if (ownPage && !changed && page.Rotation is null && page.Content is null && page.Annots is null)
             {
                 continue;                                                      // as it was, under the parent it had: nothing of it read
             }
@@ -431,7 +459,7 @@ internal sealed class PdfEditor : IDocumentEditor
             {
                 var (parent, parentGeneration) = Parent(file, node);
                 bool moved = changed && (parent != root || parentGeneration != rootGeneration);
-                if (rotation == turned && page.Content is null && !moved)
+                if (rotation == turned && page.Content is null && !moved && page.Annots is null)
                 {
                     continue;                                                  // as it was
                 }
@@ -440,21 +468,41 @@ internal sealed class PdfEditor : IDocumentEditor
                 var how = moved || parent == 0
                     ? new PdfPageWrite(numbers[i], root, rotation, Materialize: moved, ParentCrops: moved && parentCrops, ParentRotates: moved && parentRotates, rootGeneration)
                     : new PdfPageWrite(numbers[i], parent, rotation, Materialize: false, ParentCrops: false, ParentRotates: false, parentGeneration);
-                PdfEditPages.Write(copier, writer, source, page.Index, how, page.Content, Image, Save);
+                PdfEditPages.Write(copier, writer, source, page.Index, how, page.Content, Image, Save, page.Annots);
                 continue;
             }
 
             PdfEditPages.Write(copier, writer, source, page.Index, new PdfPageWrite(numbers[i], root, rotation, true, parentCrops, parentRotates, rootGeneration),
-                page.Content, Image, Save);
+                page.Content, Image, Save, page.Annots);
         }
 
+        _forms?.Write(writer, copier, own, rewrite: false, w => w.EditPage is { } at && _pages.IndexOf(at) is >= 0 and var k ? (numbers[k], generations[k]) : (0, 0));
+        Action<PdfSyntax>? acroForm = _forms is { CatalogChanged: true } forms ? s => forms.WriteAcroForm(s, copier, own) : null;
         if (changed)
         {
             copier.WriteObject(root, s => PageTree(s, copier, own, rootNode, numbers, generations));
-            if (catalogAgain)
+        }
+
+        if (catalogAgain || acroForm is not null)
+        {
+            if (!catalogValue.IsReference)
             {
-                copier.WriteObject(catalogValue.AsReference.Number, s => Catalog(s, copier, own, catalog, root, 0, aes256: false, keepVersion: true));
+                throw new InvalidDataException($"{file.Name}: a catalog that is not an object of its own cannot be updated: save the document as a rewrite.");
             }
+
+            int catalogRoot = pagesValue.IsReference && !catalogAgain ? pagesValue.AsReference.Number : root;
+            int catalogRootGeneration = pagesValue.IsReference && !catalogAgain ? pagesValue.AsReference.Generation : 0;
+            if (catalogRoot == 0)
+            {
+                throw new InvalidDataException($"{file.Name}: a page tree held in the catalog cannot be updated with the form: save the document as a rewrite.");
+            }
+
+            if (!catalogAgain)
+            {
+                writer.Reuse(catalogValue.AsReference.Number, catalogValue.AsReference.Generation);
+            }
+
+            copier.WriteObject(catalogValue.AsReference.Number, s => Catalog(s, copier, own, catalog, catalogRoot, catalogRootGeneration, aes256: false, keepVersion: true, acroForm));
         }
 
         foreach (var font in _fontOrder)
@@ -580,9 +628,11 @@ internal sealed class PdfEditor : IDocumentEditor
                 font.Number = writer.Allocate();
             }
 
+            _forms?.Prepare(writer, copier, source, rewrite: true);
+            Action<PdfSyntax>? acroForm = _forms is { CatalogChanged: true } forms ? s => forms.WriteAcroForm(s, copier, source) : null;
             var catalog = DictionaryOf(file, file.Trailer["Root"u8]);
             bool extension = created is not null && version != "2.0";
-            copier.WriteObject(catalogNumber, s => Catalog(s, copier, source, catalog, root, 0, extension, keepVersion: false));
+            copier.WriteObject(catalogNumber, s => Catalog(s, copier, source, catalog, root, 0, extension, keepVersion: false, acroForm));
             copier.WriteObject(root, s =>
             {
                 s.Raw("<</Type/Pages/Count "u8).Integer(numbers.Length).Raw("/Kids["u8);
@@ -607,14 +657,16 @@ internal sealed class PdfEditor : IDocumentEditor
                 var page = _pages[i];
                 if (page.Document is null)
                 {
-                    PdfEditPages.WriteNew(copier, writer, numbers[i], root, page.Content!, page.Rotation ?? 0, false, false, Image);
+                    PdfEditPages.WriteNew(copier, writer, numbers[i], root, page.Content!, page.Rotation ?? 0, false, false, Image, page.Annots);
                     continue;
                 }
 
                 int rotation = page.Rotation ?? page.Document.Frame(page.Index).Rotation;
                 PdfEditPages.Write(copier, writer, copier.For(page.Document), page.Index, new PdfPageWrite(numbers[i], root, rotation, true, false, false),
-                    page.Content, Image, Save);
+                    page.Content, Image, Save, page.Annots);
             }
+
+            _forms?.Write(writer, copier, source, rewrite: true, w => w.EditPage is { } at && _pages.IndexOf(at) is >= 0 and var k ? (numbers[k], 0) : (0, 0));
 
             foreach (var font in _fontOrder)
             {
@@ -691,15 +743,18 @@ internal sealed class PdfEditor : IDocumentEditor
     }
 
     // The catalog written again: its page tree the result's; its other entries copied (its /Version only when the header
-    // stays, in an update); Adobe's extension level 8 when AES-256 is written before PDF 2.0.
-    private static void Catalog(PdfSyntax s, PdfEditCopier copier, PdfEditCopier.Source source, PdfDictionary catalog, int root, int rootGeneration, bool aes256, bool keepVersion)
+    // stays, in an update; its form as `acroForm` writes it when the form's tree changed); Adobe's extension level 8 when
+    // AES-256 is written before PDF 2.0.
+    private static void Catalog(PdfSyntax s, PdfEditCopier copier, PdfEditCopier.Source source, PdfDictionary catalog, int root, int rootGeneration, bool aes256, bool keepVersion,
+        Action<PdfSyntax>? acroForm = null)
     {
         s.Raw("<</Type/Catalog/Pages "u8).Integer(root).Space().Integer(rootGeneration).Raw(" R"u8);
         bool extended = false;
+        acroForm?.Invoke(s);                                                   // the form as edited (none left: no entry)
         for (int i = 0; i < catalog.Count; i++)
         {
             var key = catalog.KeyAt(i);
-            if (key.Is("Type"u8) || key.Is("Pages"u8) || (!keepVersion && key.Is("Version"u8)))
+            if (key.Is("Type"u8) || key.Is("Pages"u8) || (!keepVersion && key.Is("Version"u8)) || (acroForm is not null && key.Is("AcroForm"u8)))
             {
                 continue;
             }

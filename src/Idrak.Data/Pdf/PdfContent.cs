@@ -182,6 +182,22 @@ internal sealed partial class PdfContentReader : IDisposable
         }
     }
 
+    /// <summary>
+    /// Interprets <paramref name="form"/>, a form XObject drawn on its own (an annotation's appearance), with
+    /// <paramref name="placement"/> mapping its space onto the page as shown (its own <c>/Matrix</c> applied within, its
+    /// <c>/BBox</c> a clip); its parts are read as a page's are.
+    /// </summary>
+    public void ReadForm(PdfStream form, PdfMatrix placement)
+    {
+        _state = new State { Ctm = placement, Scale = 1 };
+        StartVector(placement);
+        DrawForm(form, "the appearance"u8, null, 0);
+        if (_span is not null)
+        {
+            EndSpan();                                                         // a span the content never closes ends with it
+        }
+    }
+
     // One content stream decoded; a damaged one is counted (and read as far as it decodes), one that cannot be is skipped.
     private PdfDecoded? Decode(PdfValue part)
     {
@@ -885,6 +901,13 @@ internal sealed partial class PdfContentReader : IDisposable
             return;
         }
 
+        DrawForm(stream!, name, resources, depth);
+    }
+
+    // A form XObject's content run under the current state: its /Matrix, its /BBox as a clip, its group, its resources
+    // (else the caller's), within MaxDepth.
+    private void DrawForm(PdfStream stream, ReadOnlySpan<byte> name, PdfDictionary? resources, int depth)
+    {
         if (depth + 1 > _file.MaxDepth)
         {
             throw PdfLimit.Error(string.Create(CultureInfo.InvariantCulture,
@@ -900,7 +923,7 @@ internal sealed partial class PdfContentReader : IDisposable
         PdfDecoded decoded;
         try
         {
-            decoded = _file.Decode(stream!);
+            decoded = _file.Decode(stream);
         }
         catch (InvalidDataException e) when (!PdfLimit.Is(e))
         {
@@ -912,10 +935,10 @@ internal sealed partial class PdfContentReader : IDisposable
         {
             if (decoded.Damaged)
             {
-                _issues.Add(DocumentIssue.DamagedStream, $"page {_page}: object {stream!.Number} is damaged part of the way");
+                _issues.Add(DocumentIssue.DamagedStream, $"page {_page}: object {stream.Number} is damaged part of the way");
             }
 
-            var formResources = _file.Dictionary(stream!.Dictionary["Resources"u8]) ?? resources;
+            var formResources = _file.Dictionary(stream.Dictionary["Resources"u8]) ?? resources;
             var matrix = Matrix(stream.Dictionary["Matrix"u8]);
             var (state, saved, skipped, tm, tlm) = (_state, _stack.Count, _skippedSaves, _tm, _tlm);
             _stack.Add(_state);

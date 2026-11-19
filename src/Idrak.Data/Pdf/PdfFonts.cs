@@ -84,6 +84,9 @@ internal sealed class PdfFont
     /// <summary>The embedded program as a face to draw with, or null.</summary>
     public IFontFace? Face => _program.Value?.Face;
 
+    /// <summary>Whether it is a composite font (codes through a CMap), not a simple font of one byte a code.</summary>
+    public bool Composite => _encoding is not null;
+
     /// <summary>The code at <paramref name="at"/> of <paramref name="text"/> and its length in bytes.</summary>
     public int NextCode(ReadOnlySpan<byte> text, int at, out uint code)
     {

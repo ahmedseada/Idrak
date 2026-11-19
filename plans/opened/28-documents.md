@@ -25,7 +25,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Built (2026-11-18) |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Built (2026-11-18) |
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
-| D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Planned |
+| D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Built (2026-11-19) |
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Built (2026-11-18) |
 | D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Built (2026-11-19) |
@@ -1565,6 +1565,139 @@ format; no OpenType CFF writer and no WOFF2 (decision 20).
 the reference reader, and draws (D7) with the values in place; a flattened form keeps its look and has no fields.
 
 **Tests (CPU here):** one build; `documents pdf: forms|documents pdf: write|documents drawers`.
+
+**As built (2026-11-19):**
+- **Reading** (`src/Idrak.Data/Pdf/PdfForms.cs`, internal): `IDocument.Fields` reads the catalog's AcroForm once (kept by the
+  document, safe from several threads): the tree from `/Fields` walked without recursion (a node met twice passed over,
+  nesting within `MaxDepth`, named in its error), each node inheriting `/FT /Ff /V /DV /DA /Q /MaxLen /Opt`; a node whose
+  kids have a `/T` holds fields, any other is a field whose widgets are itself and its kids without one. Each field: kind,
+  value and values (a check box's or radio group's on state; a list's export values, several for a multi-select one), the
+  choices (export and text; a radio group's its buttons' on states, through `/Opt` when the states are indices), the flags
+  as the contract names them by kind, `MaxLen`, alignment, the default appearance's font, size and colour (the form's own
+  only for text and choice fields), the tooltip, the default value, `/MK`'s background, border, a push button's caption
+  and a button's mark; each widget's page (`/P`, else the page whose `/Annots` lists it), its box as shown, its `/AS` and
+  on state. An XFA form's `datasets` packet (from the `/XFA` array or the whole XDP) is read as XML with no DTD and nothing
+  fetched: each leaf's value by its path (a repeated name indexed from its second); the values no AcroForm twin holds (its
+  name without the `[0]`s) become text fields of their own, with no widget, and every page read says `not-supported`: the
+  XFA layout is not drawn.
+- **Widgets as annotations** (D10 adds the other kinds): `ReadPage` with `DocumentParts.Annotations` gives each widget of the
+  page's `/Annots` with its box and, unless its flags hide it, its appearance (the `/AP /N` stream of its state) read as
+  content of the page through D3's reader (`PdfContentReader.ReadForm`: the stream's box through its matrix onto the
+  widget's rectangle, 12.5.5); `PdfDocument.Page`'s content reading moved into `Content`, shared by pages and appearances.
+  **The drawer** (`DocumentDrawer.cs`) draws each annotation's appearance over the page when the options' parts ask for
+  annotations (the contract said so; nothing drew them).
+- **Appearances** (`PdfFormsAppearance.cs`): a text box (one line centred on its capitals, several lines wrapped from the
+  top, comb cells, a password's asterisks, aligned), a list (its choices from `/TI`, the chosen rows highlighted), a
+  drop-down list's choice, a push button's caption, a check box's or radio button's mark drawn as a path (check, circle,
+  cross, diamond, square, star: no font needed) on and off, a signature field's box; the background and border from `/MK`
+  as plain content, the text inside `/Tx BMC ... EMC`. A size of 0 fits the text: one line to its box's height and width,
+  several from `MaxFontSize` down by half points until they fit. Text goes in the field's own simple font when it has a code
+  for every character (written with its codes and widths; the standard fonts from their AFM tables); else it is set in
+  faces through the new **text setter** contract and embedded through D6's font path (a composite subset with its
+  ToUnicode and `/ActualText`), so every script fills right with no script named: the faces of
+  `DocumentFormOptions.Faces`, then the fonts folder's (`DocumentFormOptions.Fonts`, the drawing's `IDRAK_DOCUMENT_FONTS`),
+  and the field's embedded program, those named as its font first, the first that shows every character leading. No face
+  showing the text: an `InvalidOperationException` naming the options. A value set over a widget's own appearance keeps
+  what that appearance draws outside its `/Tx` section (12.7.4.3: its box and border; its resources merged).
+- **Filling** (`PdfFormsEdit.cs`, `PdfFormEditor`; `IDocumentEditor.SetField`): the value checked (a text's length in
+  characters; a button's on states, `Off` or ""; a choice's export value or text, several only for a multi-select list,
+  any text in an editable drop-down; push buttons and signature fields refused), `/V` (and a list's `/I`) set, each widget's
+  appearance made (a check box or radio button only its `/AS` switched when it has an appearance for the state, else both
+  made). **Adding** (`AddField`, the builder's and the editor's; `PdfNewField`): a terminal field from the contract's
+  `DocumentField` (`/FT /T /Ff /V /DV /TU /MaxLen /Q /DA /Opt /I`), its one widget in its own object or several as kids
+  (`/Rect /P /F /AP /AS /MK`; a button's on state the widget's, else the choice of its index, else "Yes"), parents made for
+  a dotted name's start; the form's resources list the fonts the default appearances name (a standard font object, or the
+  embedded face's font). The builder writes a field's appearances when it is added and each widget with its page (which
+  lists it in `/Annots`): a widget on a page written already, a name taken, a field under a field with a value and a page
+  never added are refused. **Flattening** (`IDocumentEditor.Flatten`, new; names, a parent's taking its children, or none
+  for every field): each visible widget's appearance as it shows now (a value set's, else its state's, made when the form
+  has none) drawn over its page as a form XObject (`/Fw1`, ... after D11's prefix) placed by 12.5.5, the widgets left out
+  of their pages' `/Annots`, the fields and the parents left empty out of the tree.
+- **Saving:** an incremental update writes the changed fields and widgets again under their numbers and the new objects
+  after; a rewrite writes them where its copier reaches them (`PdfEditCopier.Source.Replaced` and `Dropped`, new). The
+  catalog's form entry is written again when the tree changes (fields flattened or added): the source's entries kept but
+  `/XFA` (the AcroForm is what is shown), none when no field is left.
+- **Hooks in the existing files (small, local):** `PdfDocument.cs` (`Fields`, `Form`, `HasXfa`, `Options`, `PageNumber`,
+  the annotations and the XFA issue in `Page`, `Content`), `PdfContent.cs` (`ReadForm`; `Draw`'s form part moved into
+  `DrawForm` unchanged), `PdfFonts.cs` (`Composite`), `PdfEditor.cs` (`SetField`, `AddField`, `Flatten`, `Pages`, the form
+  editor's two calls in each save mode, the catalog's form entry), `PdfEditPages.cs` (`PdfAnnotsEdit`; a page's `/Annots`
+  edited; form XObjects in an overlay's resources; `Fw` among the prefix's names), `PdfEditCopy.cs` (replaced and dropped
+  objects), `PdfWriterPage.cs` (`Form`, `Annotations`, `ToUserSpace`), `PdfWriter.cs` (`AddField`, widgets with their
+  pages, the form at `Finish`), Idrak.Imaging's `DocumentDrawer.cs` and `LibraryRegistrations.cs` (one line).
+- **Contract changes (public API; `api/Idrak.Abstraction.txt` and the inventory regenerated through the runner):**
+  `DocumentField` gains `DefaultValue`, `Alignment`, `Font`, `FontSize`, `TextColour`, `Background`, `Border`, `Caption`,
+  `Mark`; `DocumentWidget.OnState`; `DocumentFieldAlignment`, `DocumentFieldMark`; `DocumentFormOptions` (`Fonts`,
+  `Faces`, `MinFontSize` 4, `MaxFontSize` 12, `Padding` 2, `LineSpacing` 1.15, `BorderWidth` 1, `Highlight`, `TextSetter`)
+  and `DocumentWriteOptions.Forms`; `IDocumentEditor.Flatten` (a default member: an editor that does not flatten says so);
+  the text setter contract `IDocumentTextSetter`, `DocumentTextSetters` (a `KindTable`, guarded: fall back, or the lines
+  compared in shadow), `DocumentTextSetting`, `DocumentSetLine`, `DocumentSetRun`, its library setter "shaped" in
+  Idrak.Imaging over `TextLayout`. No new environment variable (the fonts folder is the drawing's).
+- **Decisions the plan did not settle, taken here:** (1) Laying a field's text out needs a script per run, and the script
+  data lives in Idrak.Imaging, which Idrak.Data does not reference: a new contract (the text setter) carries it, as the
+  page drawer carries drawing; an app can replace it. (2) A field's own simple font is used when it has every character
+  (no embedding, as every filler does); else faces given, embedded; a field's `/DA` is left as it is when its text needs a
+  face. (3) Widget annotations are read and drawn in D9 (forms need them drawn); D10 adds the other kinds to the same
+  reading. (4) The form's default appearance is a field's only for text and choice fields (a signature field has none).
+  (5) Check and radio marks are paths, not ZapfDingbats glyphs, so they draw with no font; `/MK /CA` still names the
+  character for viewers that make their own. (6) A field held inside another object (not an object of its own) is refused
+  for filling. (7) Flattening an XFA form's fields drops the `/XFA` packets with the tree. (8) The builder adds a widget only
+  to the page in hand or one to come: a written page is not written again.
+- **Tests:** group `documents pdf: forms` (6, `tests/Idrak.Tests.Library/DocumentPdfFormsTests.cs`): every D9 sample's
+  fields as its JSON says (6 samples, 45 fields, 52 widgets; inherited values, flags and appearances; the XFA data beside
+  its twins and the page issue), each widget's appearance read as an annotation with the text its JSON says, and the fields
+  read alike from 8 threads; forms-empty filled with forms-filled's values (incremental, its prefix kept; and a rewrite)
+  reading back as forms-filled's JSON says, the same bytes twice, values a field does not take refused; Latin, Arabic and
+  Cyrillic filled and added in a face given (values and appearances read back in logical order, embedded subsets), a text
+  no font shows refused; the builder's every kind (15 fields, one on two pages, under a dotted parent) read back as added,
+  a value set over a builder's appearance keeping its background once, the refusals, the editor adding a form to merge-a
+  (both modes), a tree past `MaxDepth` refused naming it; flattening (all and by name, a form asking for its appearances, a
+  field on two pages, the XFA form); the timings. D6's and D11's refusals of D9 replaced. **Runs:** the brief's filter with
+  `documents pdf: images|documents pdf: encryption|document layouts|outside plug-in|override loop:|every environment
+  variable read in src|the environment table names real commands|hidden boxing` and the update flags: 118 tests, 113
+  passed, 5 failed, all in the new group: a signature field given the form's `/DA` (decision 4); a multi-line value's line
+  feed counted as a character the font must encode; a simple font's resource written `/Helv3 0 R` (no space before the
+  reference: the reader found no `/Helv`, so every appearance in a document's own font read back empty, found with a scratch
+  file through pikepdf). Rebuilt (a line-end literal my edit broke needed one more build); then `documents pdf: forms|public
+  API|abstraction inventory`: 11 passed, 1 failed: forms-empty filled drew 9.81% off pdfium's drawing of forms-filled. The
+  sample's producer draws each text box's background inside its `/Tx` section with no `/MK`, so any new appearance (pdfium's
+  too) shows the box without it: pdfium's own two drawings differ by 10.36%. The test now compares with pdfium's drawing of
+  forms-need-appearances (the same values, appearances pdfium makes): 3.37%; and the `/Tx` splice was added. Rebuilt once:
+  12 passed; then the whole filter without the flags: **118 passed, 0 failed**. Drawing scores: forms-filled with its widgets
+  0.84% off pdfium's; the three-script form drawn with its widgets against it flattened 0.000%; forms-filled flattened
+  against its twin drawn alike 0.000%, against pdfium's twin 0.65%.
+- **The checker's verdicts** (`tools/documents/check_written.py test-output/documents/forms --expected auto`, 13 files:
+  forms filled both ways, in three scripts, built, merge-a with a form both ways, flattened forms): all 13 pass: qpdf finds no
+  damage, problem or warning and decodes every stream; pdfminer.six and pdfium open each with no warning; the 7 with an
+  expected JSON extract exactly its text in both. **pdfium's form reading** (the generator's `pdfium_fields` on the same
+  files, each against the `NAME.fields.json` the tests write): every field Idrak filled, added or kept read with the same
+  kind, value, checked state and choices (18 widgets of the built form, 14 of each filled one), none in the flattened files.
+  As D6 found, pdfium gives a right-to-left run in its glyphs' order and pdfminer.six ignores `/ActualText`: on the flattened
+  three-script page they show the Arabic value in visual order, Idrak's reader in logical order.
+- **Timings** (this container, 4 cores, other agents building beside it; a process running the timings alone, so cold is
+  the first call; the owner's devices give the real ones): reading every field of forms-filled (12 fields, 14 widgets, the
+  document opened each time) cold 68 ms (179 KiB), warm 0.69-0.71 ms (131 KiB); filling one field, saved incrementally cold
+  62-64 ms (1,226 KiB: the first appearance and font), warm 1.02-1.03 ms (192 KiB); flattening the page's 12 fields, saved
+  incrementally, cold 16 ms (195 KiB), warm 0.95-0.97 ms (189 KiB).
+- **Left:** `/MK /R` (a widget's rotation) and `/BS` dash styles are not drawn; a rich-text value (`/RV`) is read as its
+  plain `/V`; a field held inside another object cannot be filled; a field's `/DA` is not changed when its text needs a face
+  (a viewer that makes its own appearance uses its font); calculation order (`/CO`) and actions are not run (never: no
+  JavaScript); the XFA template is not read (only its data); reading a form allocates about 130 KiB for 14 widgets (closures,
+  records, each widget's page frame read), a pass of its own if forms grow large; D6's and D11's outputs were not compared
+  byte for byte against the base commit (their same-bytes checks pass, and no new path runs without a form edit).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: forms|documents pdf: edit|documents pdf: write|documents pdf: vector|documents drawers|documents pdf: text|documents pdf: file|documents pdf: images|documents pdf: encryption|documents contracts|document layouts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d9.txt
+  $env:IDRAK_FILTER = "documents pdf: forms: timings"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d9-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  python -I tools\documents\check_written.py test-output\documents\forms -o test-output\documents\forms-check.json --expected auto
+  ```
+  The forms the tests write are in `test-output\documents\forms\` (for example `forms-empty-filled-incremental.pdf`, a
+  form filled by Idrak, and `forms-three-scripts.pdf`, filled in three scripts) to open.
 
 ## Phase D10: annotations and navigation
 

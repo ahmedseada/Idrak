@@ -8,8 +8,8 @@ namespace Idrak.Data.Pdf;
 /// <summary>
 /// An open PDF document: its information, its pages (each page's size and rotation, its text: runs with their boxes, the
 /// lines and text the layout makes of them; its images, placed, their pixels decoded when asked; its vector paths, clips,
-/// shadings, patterns, transparency groups and soft masks; drawn to pixels through <see cref="DocumentPageDrawers"/>) and
-/// the files it carries. Opening reads the cross-reference and the page tree only; a page's objects are read
+/// shadings, patterns, transparency groups and soft masks; its form's widgets with their appearances; drawn to pixels
+/// through <see cref="DocumentPageDrawers"/>), the files it carries and its form's fields. Opening reads the cross-reference and the page tree only; a page's objects are read
 /// when it is, and the fonts its pages share are kept for the others. Safe to read from several threads.
 /// </summary>
 internal sealed class PdfDocument : IDocument
@@ -21,6 +21,8 @@ internal sealed class PdfDocument : IDocument
     private DocumentInfo? _info;
     private IReadOnlyList<DocumentAttachment>? _attachments;
     private IReadOnlyList<DocumentSignature>? _signatures;
+    private PdfForm? _form;
+    private int _xfa = -1;
     private volatile bool _disposed;
 
     private PdfDocument(PdfFile file, PageNode[] pages, string version, DocumentOptions options) => (_file, _pages, _version, _options) = (file, pages, version, options);
@@ -75,7 +77,70 @@ internal sealed class PdfDocument : IDocument
         }
     }
 
-    public IReadOnlyList<DocumentField> Fields => throw NotYet("form fields", "D9");
+    /// <summary>
+    /// The form's fields: the AcroForm's terminal fields in tree order (values, flags and appearance taken from their
+    /// ancestors where they inherit them), each with its widgets' pages, boxes and states; then an XFA form's data values
+    /// no AcroForm field holds, as text fields named by their path. Read on the first call.
+    /// </summary>
+    public IReadOnlyList<DocumentField> Fields
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return Form.Public;
+        }
+    }
+
+    /// <summary>The form as the editor changes it (its fields' objects, widgets and resources), read on the first call; empty for a document without one.</summary>
+    internal PdfForm Form
+    {
+        get
+        {
+            if (Volatile.Read(ref _form) is { } known)
+            {
+                return known;
+            }
+
+            string name = _file.Name;
+            PdfForm read;
+            try
+            {
+                read = PdfForms.Read(this);
+            }
+            catch (InvalidDataException e) when (!e.Message.StartsWith(name, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"{name}: its form: {e.Message}", e);
+            }
+            catch (Exception e) when (Unexpected(e))
+            {
+                throw new InvalidDataException($"{name}: its form: damaged ({e.GetType().Name}: {e.Message}).", e);
+            }
+
+            return Interlocked.CompareExchange(ref _form, read, null) ?? read;
+        }
+    }
+
+    /// <summary>Whether the document holds an XFA form (its catalog's AcroForm has /XFA), found once.</summary>
+    internal bool HasXfa
+    {
+        get
+        {
+            int known = Volatile.Read(ref _xfa);
+            if (known < 0)
+            {
+                known = PdfForms.HasXfa(_file) ? 1 : 0;
+                Volatile.Write(ref _xfa, known);
+            }
+
+            return known == 1;
+        }
+    }
+
+    /// <summary>The options it was opened with.</summary>
+    internal DocumentOptions Options => _options;
+
+    /// <summary>Page <paramref name="index"/>'s object number (0 for a page held inside another object): what a widget's /P names.</summary>
+    internal int PageNumber(int index) => _pages[index].Node.IsReference ? _pages[index].Node.AsReference.Number : 0;
 
     public IReadOnlyList<DocumentOutline> Outline => throw NotYet("bookmarks", "D10");
 
@@ -205,14 +270,8 @@ internal sealed class PdfDocument : IDocument
         }
 
         var issues = new PdfIssues();
-        IReadOnlyList<DocumentTextRun> runs = [];
-        IReadOnlyList<DocumentLine> lines = [];
-        IReadOnlyList<DocumentImage> images = [];
-        IReadOnlyList<DocumentPath> paths = [], clips = [];
-        IReadOnlyList<DocumentShading> shadings = [];
-        IReadOnlyList<DocumentGroup> groups = [];
-        IReadOnlyList<DocumentSoftMask> softMasks = [];
-        string text = "";
+        var content = ContentParts.None;
+        var display = Display(crop, rotation, unit);
         if ((parts & (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | DocumentParts.Glyphs)) != 0)
         {
             PdfDictionary? resources = null;
@@ -225,47 +284,80 @@ internal sealed class PdfDocument : IDocument
                 issues.Add(DocumentIssue.DamagedStream, $"page {index + 1}: its resources: {e.Message}");
             }
 
-            using var reader = new PdfContentReader(_file, index + 1, issues, _options.IncludeHidden);
-            if ((parts & DocumentParts.Images) != 0)
-            {
-                reader.ReadImages();
-            }
+            content = Content(index, (float)width, (float)height, parts, issues, reader => reader.Read(page["Contents"u8], resources, display));
+        }
 
-            // Colours, clips and transparency come with what is drawn (paths, glyphs or images); text alone stays as cheap as before.
-            if ((parts & (DocumentParts.Paths | DocumentParts.Glyphs | DocumentParts.Images)) != 0)
-            {
-                reader.ReadVector();
-            }
+        // A form's widgets (D9: the annotations a form shows), each with its appearance read as content of the page; an XFA
+        // form's layout is not drawn, which every page read says.
+        IReadOnlyList<DocumentAnnotation> annotations = [];
+        if ((parts & DocumentParts.Annotations) != 0)
+        {
+            annotations = PdfForms.Widgets(this, page, index, (float)width, (float)height, display, parts, issues);
+        }
 
-            reader.Read(page["Contents"u8], resources, Display(crop, rotation, unit));
-            images = reader.Images;
-            (clips, groups, softMasks) = (reader.Clips, reader.Groups, reader.SoftMasks);
-            if ((parts & DocumentParts.Paths) != 0)
-            {
-                (paths, shadings) = (reader.Paths, reader.Shadings);
-            }
-            if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
-            {
-                var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
-                if (unmapped > 0)
-                {
-                    issues.Add(DocumentIssue.UnmappedGlyphs, $"page {index + 1}: glyphs of {fonts} have no code point (no ToUnicode, glyph name or cmap gives one): their text is U+FFFD", unmapped);
-                }
-
-                runs = read;
-                if ((parts & DocumentParts.Text) != 0)
-                {
-                    var arranged = reader.Arrange(read, (float)width, (float)height, _options);
-                    (lines, text) = (arranged.Lines, arranged.Text);
-                }
-            }
+        if (parts != DocumentParts.None && HasXfa)
+        {
+            issues.Add(DocumentIssue.NotSupported, $"page {index + 1}: an XFA form's layout is not drawn: its data is read as fields (IDocument.Fields), and its AcroForm widgets are the form shown");
         }
 
         return new DocumentPage(index, (float)width, (float)height)
         {
-            Rotation = rotation, Runs = runs, Lines = lines, Text = text, Images = images, Paths = paths, Clips = clips, Shadings = shadings, Groups = groups, SoftMasks = softMasks,
-            Issues = issues.ToList(),
+            Rotation = rotation, Runs = content.Runs, Lines = content.Lines, Text = content.Text, Images = content.Images, Paths = content.Paths, Clips = content.Clips,
+            Shadings = content.Shadings, Groups = content.Groups, SoftMasks = content.SoftMasks, Annotations = annotations, Issues = issues.ToList(),
         };
+    }
+
+    /// <summary>
+    /// The parts <paramref name="parts"/> asks of content <paramref name="interpret"/> runs through a reader (a page's
+    /// content, or a form XObject drawn on its own: an annotation's appearance) on page <paramref name="index"/> of
+    /// <paramref name="width"/> x <paramref name="height"/> points, what could not be read counted in <paramref name="issues"/>.
+    /// </summary>
+    internal ContentParts Content(int index, float width, float height, DocumentParts parts, PdfIssues issues, Action<PdfContentReader> interpret)
+    {
+        using var reader = new PdfContentReader(_file, index + 1, issues, _options.IncludeHidden);
+        if ((parts & DocumentParts.Images) != 0)
+        {
+            reader.ReadImages();
+        }
+
+        // Colours, clips and transparency come with what is drawn (paths, glyphs or images); text alone stays as cheap as before.
+        if ((parts & (DocumentParts.Paths | DocumentParts.Glyphs | DocumentParts.Images)) != 0)
+        {
+            reader.ReadVector();
+        }
+
+        interpret(reader);
+        var content = ContentParts.None with { Images = reader.Images, Clips = reader.Clips, Groups = reader.Groups, SoftMasks = reader.SoftMasks };
+        if ((parts & DocumentParts.Paths) != 0)
+        {
+            content = content with { Paths = reader.Paths, Shadings = reader.Shadings };
+        }
+
+        if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
+        {
+            var read = reader.TextRuns((parts & DocumentParts.Glyphs) != 0, out int unmapped, out string? fonts);
+            if (unmapped > 0)
+            {
+                issues.Add(DocumentIssue.UnmappedGlyphs, $"page {index + 1}: glyphs of {fonts} have no code point (no ToUnicode, glyph name or cmap gives one): their text is U+FFFD", unmapped);
+            }
+
+            content = content with { Runs = read };
+            if ((parts & DocumentParts.Text) != 0)
+            {
+                var arranged = reader.Arrange(read, width, height, _options);
+                content = content with { Lines = arranged.Lines, Text = arranged.Text };
+            }
+        }
+
+        return content;
+    }
+
+    /// <summary>What a content's reading gives a page (each part empty unless asked).</summary>
+    internal readonly record struct ContentParts(IReadOnlyList<DocumentTextRun> Runs, IReadOnlyList<DocumentLine> Lines, string Text, IReadOnlyList<DocumentImage> Images,
+        IReadOnlyList<DocumentPath> Paths, IReadOnlyList<DocumentPath> Clips, IReadOnlyList<DocumentShading> Shadings, IReadOnlyList<DocumentGroup> Groups,
+        IReadOnlyList<DocumentSoftMask> SoftMasks)
+    {
+        public static ContentParts None => new([], [], "", [], [], [], [], [], []);
     }
 
     // The map from the page's user space onto the page as shown: the crop box's lower left to the origin, y turned down,

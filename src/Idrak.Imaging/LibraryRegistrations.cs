@@ -11,7 +11,7 @@ namespace Idrak.Imaging;
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: the image codecs (png, jpeg, bmp,
 /// netpbm) and encoders (png, jpeg, netpbm), Pillow's image transforms byte for byte, the flip and shift augmentations (Idrak.Vision adds the others) and
 /// the "images" sample source, the "opentype", "cff" and "type1" font formats and the font mapper, the "truetype" font writer, the library's font maps (legacy layouts, as data), the "coverage"
-/// outline rasterizer and page drawer, the reading orders (bidi, runs), the page layouts (letter, plain, shapes), the shapes, shape profiles, pens and text
+/// outline rasterizer and page drawer, the "shaped" document text setter, the reading orders (bidi, runs), the page layouts (letter, plain, shapes), the shapes, shape profiles, pens and text
 /// bindings the "shapes" layout draws with, and the glyph poses every layout writes its text with. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
@@ -46,6 +46,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
         [typeof(FontMaps)] = RegisterFontMaps,                                   // the legacy layouts the library ships, as data
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(DocumentPageDrawers)] = () => DocumentPageDrawers.Register(new CoverageDocumentDrawer()),   // "coverage": any document's pages to pixels
+        [typeof(DocumentTextSetters)] = () => DocumentTextSetters.Register(new ShapedTextSetter()),        // "shaped": a form field's text set in any script
         [typeof(OutlineTracers)] = () => OutlineTracers.Register(new ContourTracer()),     // contour (plan 38, F1)
         [typeof(FontMakers)] = () => FontMakers.Register(new TracedFontMaker()),           // traced (plan 38, F3)
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts

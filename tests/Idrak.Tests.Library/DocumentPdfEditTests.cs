@@ -26,7 +26,7 @@ internal abstract partial class Tests
         ("documents pdf: edit: a rewrite of every readable sample (only what the root reaches, renumbered, object streams, streams deflated again where it pays, duplicates once) is no larger than its source and reads the same: information, pages, sizes, rotations, text, runs and images (their data) and issues; twice the same bytes", PdfEditRewrite),
         ("documents pdf: edit: encryption: AES-256 (revision 6) written by the builder (object streams, a classic table, none packed) and by a rewrite opens with the user and the owner password and not without, /O /U /OE /UE /P and /Perms as the specification makes them, no string or stream plain; encrypted-aes256 updated incrementally keeps its encryption and permissions; its encryption removed by a rewrite opened with the owner password, refused with the user's; every D2 sample rewritten and updated with its own encryption reads the same", PdfEditEncryption),
         ("documents pdf: edit: each D12 signed sample updated incrementally (the information, a stamp) keeps every byte its signatures' byte ranges cover, its signature dictionaries read the same, and the stamp reads", PdfEditSigned),
-        ("documents pdf: edit: the parts later phases edit refused naming their phase (fields D9, annotations and bookmarks D10); misuse refused (signing without options) (pages out of range or named twice, a rotation not a multiple of 90, a second Save, encryption changed by an update or by the user password, a builder encrypted after its first page, a document another reader opened); a document opened by its path edited through the registry's wrapper", PdfEditRefusals),
+        ("documents pdf: edit: the parts later phases edit refused naming their phase (annotations and bookmarks D10), a field the document lacks refused naming it; misuse refused (signing without options, pages out of range or named twice, a rotation not a multiple of 90, a second Save, encryption changed by an update or by the user password, a builder encrypted after its first page, a document another reader opened); a document opened by its path edited through the registry's wrapper", PdfEditRefusals),
         ("documents pdf: edit: timings and memory: an incremental one-field change on a large file (bytes written, cold and warm), a rewrite of it, and two files merged page by page (cold and warm, allocated bytes, the process's peak)", PdfEditTimings),
     ];
 
@@ -818,8 +818,9 @@ internal abstract partial class Tests
         using (var editor = DocumentWriters.Get("pdf").Edit(source, new MemoryStream(), PdfWriteDefaults))
         {
             Check(ReferenceEquals(editor.Source, source) && editor.PageCount == 2, "the editor's source and pages");
-            ExpectRefusal<NotSupportedException>(() => editor.SetField("status", "Approved"), "D9", "fields filled");
-            ExpectRefusal<NotSupportedException>(() => editor.AddField(null!), "D9", "fields added");
+            ExpectRefusal<ArgumentException>(() => editor.SetField("status", "Approved"), "no form field 'status'", "a field the document does not have");
+            ExpectRefusal<ArgumentNullException>(() => editor.AddField(null!), "", "no field to add");
+            ExpectRefusal<ArgumentException>(() => editor.Flatten("status"), "no form field 'status'", "a field to flatten the document does not have");
             ExpectRefusal<NotSupportedException>(() => editor.AddAnnotation(null!), "D10", "annotations added");
             ExpectRefusal<NotSupportedException>(() => editor.RemoveAnnotation(null!), "D10", "annotations removed");
             ExpectRefusal<NotSupportedException>(() => editor.AddOutline(null!), "D10", "bookmarks");

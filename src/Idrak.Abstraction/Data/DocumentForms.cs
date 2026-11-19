@@ -80,6 +80,41 @@ public enum DocumentFieldFlags
     NoToggleToOff = 8192,
 }
 
+/// <summary>Where a field's text sits across its box.</summary>
+public enum DocumentFieldAlignment : byte
+{
+    /// <summary>Against the left edge.</summary>
+    Left,
+
+    /// <summary>Centred.</summary>
+    Centre,
+
+    /// <summary>Against the right edge.</summary>
+    Right,
+}
+
+/// <summary>The mark a check box or radio button shows when it is on.</summary>
+public enum DocumentFieldMark : byte
+{
+    /// <summary>A check mark.</summary>
+    Check,
+
+    /// <summary>A filled circle.</summary>
+    Circle,
+
+    /// <summary>A cross.</summary>
+    Cross,
+
+    /// <summary>A diamond.</summary>
+    Diamond,
+
+    /// <summary>A filled square.</summary>
+    Square,
+
+    /// <summary>A five-pointed star.</summary>
+    Star,
+}
+
 /// <summary>A choice of a list or a drop-down list.</summary>
 /// <param name="Text">What is shown.</param>
 /// <param name="Export">The value the form sends (the shown text when the document gives none).</param>
@@ -89,11 +124,18 @@ public readonly record struct DocumentFieldOption(string Text, string Export);
 /// <param name="Page">The page's index.</param>
 /// <param name="Box">The box on the page.</param>
 /// <param name="State">The appearance state shown ("Off", or the on state's name), or null.</param>
-public readonly record struct DocumentWidget(int Page, DocumentBox Box, string? State = null);
+public readonly record struct DocumentWidget(int Page, DocumentBox Box, string? State = null)
+{
+    /// <summary>
+    /// The state that shows a check box or radio button on (its on state's name: the value the field takes when this one
+    /// is turned on), or null for other fields. A writer adding a field names it here (a check box's "Yes" unless given).
+    /// </summary>
+    public string? OnState { get; init; }
+}
 
 /// <summary>
-/// A form field: its full name (its parents' names and its own, joined by dots), kind, value and choices, and where it is
-/// shown. Fields of a dynamic form's data are read as fields too; their layout is not drawn.
+/// A form field: its full name (its parents' names and its own, joined by dots), kind, value and choices, how its text is
+/// shown, and where it is shown. Fields of a dynamic form's data are read as fields too; their layout is not drawn.
 /// </summary>
 /// <param name="Name">The full, dotted name.</param>
 /// <param name="Kind">What kind of field it is.</param>
@@ -119,6 +161,117 @@ public sealed record DocumentField(string Name, DocumentFieldKind Kind)
 
     /// <summary>The text shown when pointing at it, or null.</summary>
     public string? Tooltip { get; init; }
+
+    /// <summary>The value it takes when the form is reset, or null.</summary>
+    public string? DefaultValue { get; init; }
+
+    /// <summary>Where its text sits across its box (a text box, a list, a drop-down list).</summary>
+    public DocumentFieldAlignment Alignment { get; init; }
+
+    /// <summary>
+    /// The font its text is shown in, by the name the document gives it (its default appearance's: a font resource such as
+    /// "Helv", or a font's name), or null. A writer adding a field takes a standard font's name ("Helvetica") or a face's
+    /// family from <see cref="DocumentFormOptions"/>; null lets it choose one that shows the text.
+    /// </summary>
+    public string? Font { get; init; }
+
+    /// <summary>The size its text is shown at, in points; 0 sizes it to fit its box (<see cref="DocumentFormOptions"/>).</summary>
+    public float FontSize { get; init; }
+
+    /// <summary>The colour of its text and of a check box's or radio button's mark (black).</summary>
+    public DocumentColour TextColour { get; init; }
+
+    /// <summary>The colour its box is filled with, or null for none.</summary>
+    public DocumentColour? Background { get; init; }
+
+    /// <summary>The colour of its box's border, or null for none.</summary>
+    public DocumentColour? Border { get; init; }
+
+    /// <summary>The caption a push button shows, or null.</summary>
+    public string? Caption { get; init; }
+
+    /// <summary>The mark a check box or radio button shows when on (a check box's check mark, a radio button's circle, unless given).</summary>
+    public DocumentFieldMark Mark { get; init; }
+}
+
+/// <summary>
+/// How a writer makes the look of form fields (each widget's appearance, shown without a reader making its own): the fonts
+/// a field's text is laid out in when its own font cannot show it, the sizes text fitted to its box may take, and the
+/// spacing. A field's text is set through <see cref="DocumentTextSetters"/> (the shapers and the reading order: every
+/// script), in the field's own font when that shows every character, else in a face given here that does.
+/// </summary>
+public sealed record DocumentFormOptions
+{
+    private readonly float _minFontSize = 4f, _maxFontSize = 12f, _padding = 2f, _lineSpacing = 1.15f, _borderWidth = 1f;
+    private readonly IReadOnlyList<IFontFace> _faces = [];
+    private readonly string _textSetter = DocumentTextSetters.Shaped;
+
+    /// <summary>
+    /// A folder of fonts a field's text may be laid out in when its own font does not show it, matched by name and then by
+    /// the characters they cover (<see cref="DocumentDrawOptions.FontsVariable"/>, the folder drawing takes; null: only
+    /// <see cref="Faces"/>).
+    /// </summary>
+    public string? Fonts { get; init; } = DocumentSettings.Text(DocumentDrawOptions.FontsVariable);
+
+    /// <summary>Faces a field's text may be laid out in, asked before <see cref="Fonts"/>' (none unless given).</summary>
+    public IReadOnlyList<IFontFace> Faces
+    {
+        get => _faces;
+        init => _faces = value ?? throw new ArgumentNullException(nameof(Faces));
+    }
+
+    /// <summary>The smallest size text fitted to its box (a field of size 0) takes, in points (4).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not positive and finite.</exception>
+    public float MinFontSize
+    {
+        get => _minFontSize;
+        init => _minFontSize = value > 0f && float.IsFinite(value) ? value : throw new ArgumentOutOfRangeException(nameof(MinFontSize), value, "A size is a finite number of points above 0.");
+    }
+
+    /// <summary>
+    /// The size fitted text of several lines (and a list's choices) starts from and shrinks below until it fits, in points
+    /// (12); a single line is sized to fit its box's height and width.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not positive and finite.</exception>
+    public float MaxFontSize
+    {
+        get => _maxFontSize;
+        init => _maxFontSize = value > 0f && float.IsFinite(value) ? value : throw new ArgumentOutOfRangeException(nameof(MaxFontSize), value, "A size is a finite number of points above 0.");
+    }
+
+    /// <summary>The space between a box's edge and its text, in points (2).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative or not finite.</exception>
+    public float Padding
+    {
+        get => _padding;
+        init => _padding = value >= 0f && float.IsFinite(value) ? value : throw new ArgumentOutOfRangeException(nameof(Padding), value, "Padding is a finite number of points, 0 or more.");
+    }
+
+    /// <summary>The distance between the baselines of a field's lines, as a multiple of its text's size (1.15).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not positive and finite.</exception>
+    public float LineSpacing
+    {
+        get => _lineSpacing;
+        init => _lineSpacing = value > 0f && float.IsFinite(value) ? value : throw new ArgumentOutOfRangeException(nameof(LineSpacing), value, "Line spacing is a finite multiple above 0.");
+    }
+
+    /// <summary>The width of a border a field's appearance draws when its widget states none, in points (1).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative or not finite.</exception>
+    public float BorderWidth
+    {
+        get => _borderWidth;
+        init => _borderWidth = value >= 0f && float.IsFinite(value) ? value : throw new ArgumentOutOfRangeException(nameof(BorderWidth), value, "A border's width is a finite number of points, 0 or more.");
+    }
+
+    /// <summary>The colour behind a list's chosen rows (a light blue).</summary>
+    public DocumentColour Highlight { get; init; } = DocumentColour.Rgb(0.6f, 0.75f, 0.95f);
+
+    /// <summary>The text setter a field's text is laid out by: a <see cref="DocumentTextSetters"/> name (<see cref="DocumentTextSetters.Shaped"/>).</summary>
+    public string TextSetter
+    {
+        get => _textSetter;
+        init => _textSetter = string.IsNullOrWhiteSpace(value) ? throw new ArgumentException("A text setter is named.", nameof(TextSetter)) : value;
+    }
 }
 
 /// <summary>The kinds of <see cref="DocumentAnnotation"/> the library names (a document's other kinds keep their own names).</summary>

@@ -20,11 +20,12 @@ namespace Idrak.Data.Pdf;
 /// the page in hand, the page tree, the catalog and a trailer naming it, and no cross-reference: the reader rebuilds it
 /// and says the file was repaired (fonts, written at the end, are missing). Pages are copied from other PDF documents
 /// (merging and splitting, <see cref="IDocumentBuilder.CopyPage"/>: what each uses copied once, duplicates written once)
-/// and a document is saved encrypted (<see cref="IDocumentBuilder.Encrypt"/>: AES-256, revision 6); a PDF document is
-/// edited through <see cref="Edit"/> (<see cref="PdfEditor"/>) and signed (<see cref="IDocumentBuilder.Sign"/>, D12: the
-/// finished file signed as incremental updates, <see cref="PdfSigning"/>). Forms, annotations, links, bookmarks and page
-/// labels come with the later phases of the documents plan (D9, D10), each a <see cref="NotSupportedException"/> naming
-/// its phase until it lands.
+/// and a document is saved encrypted (<see cref="IDocumentBuilder.Encrypt"/>: AES-256, revision 6); form fields are added
+/// with their appearances (<see cref="IDocumentBuilder.AddField"/>, <see cref="PdfFormBuilder"/>); a PDF document is edited
+/// through <see cref="Edit"/> (<see cref="PdfEditor"/>) and signed (<see cref="IDocumentBuilder.Sign"/>, D12: the
+/// finished file signed as incremental updates, <see cref="PdfSigning"/>). Annotations, links, bookmarks and page labels
+/// come with the later phase of the documents plan (D10), each a <see cref="NotSupportedException"/> naming its phase
+/// until it lands.
 /// </summary>
 internal sealed class PdfWriter : IDocumentWriter
 {
@@ -90,6 +91,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     private PdfPageBuilder? _page;
     private (PdfDocument Document, int Index)? _copied;                       // the page in hand is a copy of this one
     private PdfEditCopier? _copier;
+    private PdfFormBuilder? _form;
     private PdfSecurity? _security;
     private int _saveStream;
     private DocumentInfo _info = DocumentInfo.Empty;
@@ -197,7 +199,18 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     private static byte[] StringBytes(string text) =>
         text.All(c => c is >= ' ' and <= '~') ? Encoding.ASCII.GetBytes(text) : [0xFE, 0xFF, .. Encoding.BigEndianUnicode.GetBytes(text)];
 
-    public void AddField(DocumentField field) => throw NotYet("form fields", "D9");
+    /// <summary>
+    /// Adds a form field: its objects numbered and its widgets' appearances written now (each made to show its value), each
+    /// widget written with its page (the page being built or one added later), the field and the form at the end.
+    /// </summary>
+    /// <exception cref="ArgumentException">A widget on a page written already, a name another field has, or a field that cannot be written as given.</exception>
+    public void AddField(DocumentField field)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+        ThrowIfDone();
+        _started = true;                                                       // its appearances are written now: encryption comes before
+        (_form ??= new PdfFormBuilder(_file, _options, Font)).Add(field, _pages.Count, PageCount, index => index == _pages.Count ? _page : null);
+    }
 
     public void AddOutline(DocumentOutline outline) => throw NotYet("bookmarks", "D10");
 
@@ -247,17 +260,23 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
     public void Finish()
     {
         ThrowIfDone();
+        if (_form?.Unplaced(PageCount) is { Count: > 0 } unplaced)
+        {
+            throw new InvalidOperationException($"Form fields name pages the document does not have ({PageCount} pages): {string.Join(", ", unplaced)}; add those pages, then finish.");
+        }
+
         _closing = true;
         try
         {
             FinishPage();
+            _form?.Finish();
             foreach (var font in _fontOrder)
             {
                 font.Write(_file, _options.EmbedFonts);
             }
 
             _copier?.Finish();
-            WriteStructure(packed: true);
+            WriteStructure(packed: true, form: true);
             int info = WriteInfo();
             WriteEncryption();
             _file.Finish(CatalogNumber, info, Identifier(), _classic);
@@ -363,23 +382,27 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         if (_page is { } page)
         {
             _page = null;
+            int index = _pages.Count;
+            var widgets = _form?.Annotations(index, page);
             if (_copied is { } copy)
             {
                 _copied = null;
-                _pages.Add(WriteCopy(page, copy.Document, copy.Index));
+                _pages.Add(WriteCopy(page, copy.Document, copy.Index, widgets));
             }
             else
             {
+                page.Annotations = widgets;
                 _pages.Add(page.Write(_file, PagesNumber));
             }
 
+            _form?.PageWritten(index, _pages[index]);                         // its widgets, which name it
             _file.Flush();                                                     // the page goes to the destination as it finishes
         }
     }
 
     // A copied page: what it uses copied (once a source document), what it inherits written on it, the content drawn over
     // it after its own; its object's number (one a page copied earlier referred to it by, else a new one).
-    private int WriteCopy(PdfPageBuilder content, PdfDocument document, int index)
+    private int WriteCopy(PdfPageBuilder content, PdfDocument document, int index, List<int>? widgets)
     {
         try
         {
@@ -388,7 +411,18 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             var node = document.PageObject(index).Node;
             int number = node.IsReference ? copier.PageNumber(source, node.AsReference.Number) : _file.Allocate();
             var how = new PdfPageWrite(number, PagesNumber, document.Frame(index).Rotation, Materialize: true, ParentCrops: false, ParentRotates: false);
-            PdfEditPages.Write(copier, _file, source, index, how, content, image => image, () => _saveStream != 0 ? _saveStream : _saveStream = PdfEditPages.WriteSave(_file));
+            PdfAnnotsEdit? annots = null;
+            if (widgets is { Count: > 0 })
+            {
+                annots = new PdfAnnotsEdit();
+                foreach (int widget in widgets)
+                {
+                    annots.Added.Add(() => widget);
+                }
+            }
+
+            PdfEditPages.Write(copier, _file, source, index, how, content, image => image, () => _saveStream != 0 ? _saveStream : _saveStream = PdfEditPages.WriteSave(_file),
+                annots);
             return number;
         }
         finally
@@ -410,9 +444,9 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         _file.EndObject();
     }
 
-    // The page tree (one node over every page) and the catalog, with the attached files' names; in object streams when
-    // `packed` (and the file packs objects), else each standing on its own.
-    private void WriteStructure(bool packed)
+    // The page tree (one node over every page) and the catalog, with the attached files' names and (when `form`) the form;
+    // in object streams when `packed` (and the file packs objects), else each standing on its own.
+    private void WriteStructure(bool packed, bool form = false)
     {
         PdfSyntax Begin(int number) => packed ? _file.BeginSmall(number) : _file.BeginObject(number);
         void End()
@@ -460,6 +494,11 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             }
 
             s.Raw("]>>>>"u8);
+        }
+
+        if (form && _form is { Any: true } fields)
+        {
+            fields.WriteAcroForm(s);
         }
 
         s.Raw(">>"u8);

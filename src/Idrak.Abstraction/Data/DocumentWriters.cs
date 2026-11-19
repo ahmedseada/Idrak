@@ -64,6 +64,7 @@ public sealed record DocumentWriteOptions
 
     private readonly int _compression = 6, _jpegQuality = DocumentSettings.Int(JpegQualityVariable, 1, 100) ?? 90, _lineArtLevels = 32;
     private readonly float _smoothSteps = 0.25f;
+    private readonly DocumentFormOptions _forms = new();
 
     /// <summary>How hard streams are compressed without loss: 0 (stored) to 9 (smallest), 6 unless set.</summary>
     /// <exception cref="ArgumentOutOfRangeException">Not from 0 to 9.</exception>
@@ -126,6 +127,13 @@ public sealed record DocumentWriteOptions
 
     /// <summary>How an edit is saved when the app does not say (<see cref="DocumentSaveMode.Incremental"/> unless <see cref="SaveModeVariable"/> sets it).</summary>
     public DocumentSaveMode SaveMode { get; init; } = DocumentSettings.Choice<DocumentSaveMode>(SaveModeVariable) ?? DocumentSaveMode.Incremental;
+
+    /// <summary>How form fields filled, added or flattened are made to look: their fonts, fitted sizes and spacing.</summary>
+    public DocumentFormOptions Forms
+    {
+        get => _forms;
+        init => _forms = value ?? throw new ArgumentNullException(nameof(Forms));
+    }
 }
 
 /// <summary>
@@ -203,8 +211,12 @@ public interface IDocumentBuilder : IDisposable
     /// <summary>Attaches a file: <paramref name="content"/> read to its end now (the stream stays the caller's).</summary>
     void Attach(string name, string mediaType, Stream content);
 
-    /// <summary>Adds a form field (its widgets name their pages).</summary>
-    /// <exception cref="NotSupportedException">The writer does not write forms yet.</exception>
+    /// <summary>
+    /// Adds a form field: its widgets name their pages (the page being built or one added later: a page written already
+    /// cannot take a widget) and each gets an appearance showing its value (<see cref="DocumentWriteOptions.Forms"/>).
+    /// </summary>
+    /// <exception cref="ArgumentException">The field cannot be written as given (the message says why).</exception>
+    /// <exception cref="NotSupportedException">The writer does not write forms.</exception>
     void AddField(DocumentField field);
 
     /// <summary>Adds a bookmark at the top level (with its children).</summary>
@@ -243,12 +255,25 @@ public interface IDocumentEditor : IDisposable
     /// <summary>Replaces what the document says about itself.</summary>
     void SetInfo(DocumentInfo info);
 
-    /// <summary>Sets field <paramref name="name"/>'s value (several for a list that takes them); its appearance is made to show it.</summary>
+    /// <summary>
+    /// Sets field <paramref name="name"/>'s value (several for a list that takes them; none clears it); its appearance is
+    /// made to show it (<see cref="DocumentWriteOptions.Forms"/>), so a reader shows the value without making its own.
+    /// </summary>
     /// <exception cref="ArgumentException">No such field, or a value it does not take.</exception>
     void SetField(string name, params ReadOnlySpan<string> values);
 
-    /// <summary>Adds a form field.</summary>
+    /// <summary>Adds a form field (its widgets name their pages; each gets an appearance showing its value).</summary>
     void AddField(DocumentField field);
+
+    /// <summary>
+    /// Flattens form fields: each one's appearance (as shown now, made when it has none) drawn into its page's content, and
+    /// the field and its widgets removed; <paramref name="names"/> names the fields (a parent's name takes its children),
+    /// none flattens every field. What the form showed stays on its pages as plain content.
+    /// </summary>
+    /// <exception cref="ArgumentException">No such field.</exception>
+    /// <exception cref="NotSupportedException">The editor does not flatten forms (the message says so).</exception>
+    void Flatten(params ReadOnlySpan<string> names) =>
+        throw new NotSupportedException($"This document editor ({GetType().Name}) does not flatten form fields.");
 
     /// <summary>Adds an annotation (to its page).</summary>
     void AddAnnotation(DocumentAnnotation annotation);

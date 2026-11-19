@@ -835,7 +835,7 @@ internal abstract partial class Tests
         using (var builder = DocumentWriters.Create(new MemoryStream(), "pdf", PdfWriteDefaults))
         {
             var page = builder.AddPage(100, 100);
-            ExpectRefusal<NotSupportedException>(() => builder.AddField(null!), "D9", "form fields");
+            ExpectRefusal<ArgumentNullException>(() => builder.AddField(null!), "", "no field to add");
             ExpectRefusal<NotSupportedException>(() => builder.AddOutline(null!), "D10", "bookmarks");
             ExpectRefusal<NotSupportedException>(() => builder.SetPageLabels([]), "D10", "page labels");
             ExpectRefusal<ArgumentNullException>(() => builder.Sign("Signature1", null!), "options", "signing without options");

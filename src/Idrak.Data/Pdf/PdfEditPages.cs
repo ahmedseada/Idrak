@@ -13,6 +13,16 @@ namespace Idrak.Data.Pdf;
 /// <param name="ParentGeneration">Its parent's generation.</param>
 internal readonly record struct PdfPageWrite(int Number, int Parent, int Rotation, bool Materialize, bool ParentCrops, bool ParentRotates, int ParentGeneration = 0);
 
+/// <summary>A page's annotations changed by a form edit: widgets removed (the source's objects, by number) and added (new objects, numbered when written).</summary>
+internal sealed class PdfAnnotsEdit
+{
+    /// <summary>The source's annotation objects left out of the page's <c>/Annots</c>.</summary>
+    public HashSet<int> Removed { get; } = [];
+
+    /// <summary>New annotations added to it (each one's number, given when the document is written).</summary>
+    public List<Func<int>> Added { get; } = [];
+}
+
 /// <summary>
 /// Pages written again by an editor or a builder copying them: the page's own entries (its references made the result's
 /// through a <see cref="PdfEditCopier"/>), what it inherits stated when it moves under another parent, its rotation, and
@@ -53,8 +63,8 @@ internal static class PdfEditPages
 
     /// <summary>
     /// What the names of content drawn over page <paramref name="index"/> start with: "" when none of the page's own
-    /// images, fonts and graphics states is named as new content names them (<c>/Im1</c>, <c>/F1</c>, <c>/GS1</c>), else
-    /// the first of "Ov1", "Ov2", ... that none of them starts with.
+    /// images, forms, fonts and graphics states is named as new content names them (<c>/Im1</c>, <c>/Fw1</c>, <c>/F1</c>,
+    /// <c>/GS1</c>), else the first of "Ov1", "Ov2", ... that none of them starts with.
     /// </summary>
     public static string Prefix(PdfDocument document, int index)
     {
@@ -65,7 +75,7 @@ internal static class PdfEditPages
         {
             if (file.Dictionary(Resources(document, index)) is { } resources)
             {
-                foreach (var (category, own) in new[] { ("XObject", "Im"), ("Font", "F"), ("ExtGState", "GS") })
+                foreach (var (category, own) in new[] { ("XObject", "Im"), ("XObject", "Fw"), ("Font", "F"), ("ExtGState", "GS") })
                 {
                     if (file.Dictionary(resources[System.Text.Encoding.ASCII.GetBytes(category)]) is not { } dictionary)
                     {
@@ -116,7 +126,7 @@ internal static class PdfEditPages
     /// <paramref name="image"/>; <paramref name="save"/> numbers the stream that opens the page's own content).
     /// </summary>
     public static void Write(PdfEditCopier copier, PdfFileWriter file, PdfEditCopier.Source source, int index, PdfPageWrite how, PdfPageBuilder? content,
-        Func<int, int> image, Func<int> save)
+        Func<int, int> image, Func<int> save, PdfAnnotsEdit? annots = null)
     {
         var pdf = source.File;
         var (node, media, crop, rotate, resources) = source.Document.PageObject(index);
@@ -158,7 +168,7 @@ internal static class PdfEditPages
             }
         }
 
-        bool adds = content is not null && (content.ImageNumbers.Count > 0 || content.Fonts.Count > 0 || content.Alphas.Count > 0);
+        bool adds = content is not null && (content.ImageNumbers.Count > 0 || content.Fonts.Count > 0 || content.Alphas.Count > 0 || content.Forms.Count > 0);
         copier.WriteObject(how.Number, s =>
         {
             s.Raw("<</Type/Page"u8);
@@ -249,18 +259,63 @@ internal static class PdfEditPages
                 copier.Entry(s, source, "Contents"u8, contents);
             }
 
+            bool annotated = false;
             for (int i = 0; i < page.Count; i++)
             {
                 var key = page.KeyAt(i);
-                if (!(key.Is("Type"u8) || key.Is("Parent"u8) || key.Is("MediaBox"u8) || key.Is("CropBox"u8) || key.Is("Rotate"u8) || key.Is("Resources"u8)
+                if (annots is not null && key.Is("Annots"u8))
+                {
+                    annotated = true;
+                    Annotations(s, copier, source, page.ValueAt(i), annots);
+                }
+                else if (!(key.Is("Type"u8) || key.Is("Parent"u8) || key.Is("MediaBox"u8) || key.Is("CropBox"u8) || key.Is("Rotate"u8) || key.Is("Resources"u8)
                       || key.Is("Contents"u8)))
                 {
                     copier.Entry(s, source, key.Bytes, page.ValueAt(i));
                 }
             }
 
+            if (annots is not null && !annotated)
+            {
+                Annotations(s, copier, source, PdfValue.Null, annots);
+            }
+
             s.Raw(">>"u8);
         });
+    }
+
+    // A page's /Annots with a form edit's widgets left out and added (none left: no entry).
+    private static void Annotations(PdfSyntax s, PdfEditCopier copier, PdfEditCopier.Source source, PdfValue value, PdfAnnotsEdit annots)
+    {
+        PdfArray? array = null;
+        try
+        {
+            array = source.File.Resolve(value).AsArray;
+        }
+        catch (InvalidDataException e) when (!PdfLimit.Is(e))
+        {
+            // Annotations that cannot be read: the added ones alone.
+        }
+
+        var kept = (array?.Items ?? []).Where(a => !(a.IsReference && annots.Removed.Contains(a.AsReference.Number))).ToList();
+        if (kept.Count == 0 && annots.Added.Count == 0)
+        {
+            return;
+        }
+
+        s.Raw("/Annots["u8);
+        foreach (var item in kept)
+        {
+            copier.Value(s, source, item);
+            s.Space();
+        }
+
+        foreach (var added in annots.Added)
+        {
+            s.Reference(added()).Space();
+        }
+
+        s.Byte((byte)']');
     }
 
     /// <summary>
@@ -268,7 +323,7 @@ internal static class PdfEditPages
     /// resources it names (images numbered by <paramref name="image"/>).
     /// </summary>
     public static void WriteNew(PdfEditCopier copier, PdfFileWriter file, int number, int parent, PdfPageBuilder content, int rotation, bool parentCrops,
-        bool parentRotates, Func<int, int> image)
+        bool parentRotates, Func<int, int> image, PdfAnnotsEdit? annots = null)
     {
         var drawn = content.Close();
         int stream = 0;
@@ -302,6 +357,17 @@ internal static class PdfEditPages
                 s.Raw("/Contents "u8).Reference(stream);
             }
 
+            if (annots is { Added.Count: > 0 })
+            {
+                s.Raw("/Annots["u8);
+                foreach (var added in annots.Added)
+                {
+                    s.Reference(added()).Space();
+                }
+
+                s.Byte((byte)']');
+            }
+
             s.Raw(">>"u8);
         });
     }
@@ -321,7 +387,7 @@ internal static class PdfEditPages
 
         s.Raw("/Resources<<"u8);
         var left = new List<string>(3);
-        if (content.ImageNumbers.Count > 0)
+        if (content.ImageNumbers.Count > 0 || content.Forms.Count > 0)
         {
             left.Add("XObject");
         }
@@ -363,34 +429,35 @@ internal static class PdfEditPages
                 copier.Entry(s, source, own!.KeyAt(k).Bytes, own.ValueAt(k));
             }
 
-            AddedEntries(s, content, category, image);
+            AddedEntries(s, content, category, image, copier, source);
             s.Raw(">>"u8);
         }
 
         foreach (string category in left)
         {
-            Added(s, content, category, image);
+            Added(s, content, category, image, copier, source);
         }
 
         s.Raw(">>"u8);
     }
 
     // A category of the new content's resources, whole ("/Font<<...>>"), when it names any.
-    private static void Added(PdfSyntax s, PdfPageBuilder content, string category, Func<int, int> image)
+    private static void Added(PdfSyntax s, PdfPageBuilder content, string category, Func<int, int> image, PdfEditCopier? copier = null, PdfEditCopier.Source? source = null)
     {
-        int count = category switch { "XObject" => content.ImageNumbers.Count, "Font" => content.Fonts.Count, _ => content.Alphas.Count };
+        int count = category switch { "XObject" => content.ImageNumbers.Count + content.Forms.Count, "Font" => content.Fonts.Count, _ => content.Alphas.Count };
         if (count == 0)
         {
             return;
         }
 
         s.Name(category).Raw("<<"u8);
-        AddedEntries(s, content, category, image);
+        AddedEntries(s, content, category, image, copier, source);
         s.Raw(">>"u8);
     }
 
-    // The new content's entries of a category, named as its content names them.
-    private static void AddedEntries(PdfSyntax s, PdfPageBuilder content, string category, Func<int, int> image)
+    // The new content's entries of a category, named as its content names them (a form of the page's document through
+    // the copier, a new one by its number).
+    private static void AddedEntries(PdfSyntax s, PdfPageBuilder content, string category, Func<int, int> image, PdfEditCopier? copier, PdfEditCopier.Source? source)
     {
         switch (category)
         {
@@ -398,6 +465,24 @@ internal static class PdfEditPages
                 for (int i = 0; i < content.ImageNumbers.Count; i++)
                 {
                     s.Raw("/"u8).Raw(content.Names).Raw("Im"u8).Integer(i + 1).Space().Reference(image(content.ImageNumbers[i]));
+                }
+
+                for (int i = 0; i < content.Forms.Count; i++)
+                {
+                    var (form, made) = content.Forms[i];
+                    s.Raw("/"u8).Raw(content.Names).Raw("Fw"u8).Integer(i + 1).Space();
+                    if (made is not null)
+                    {
+                        s.Reference(made());
+                    }
+                    else if (copier is not null && source is not null)
+                    {
+                        copier.Value(s, source, form);
+                    }
+                    else
+                    {
+                        s.Raw("null"u8);
+                    }
                 }
 
                 break;

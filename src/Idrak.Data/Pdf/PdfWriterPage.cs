@@ -26,6 +26,7 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
     private readonly List<int> _images = [];
     private readonly List<PdfWriterFont> _fonts = [];
     private readonly List<(float Fill, float Stroke)> _alphas = [];
+    private readonly List<(PdfValue Source, Func<int>? New)> _forms = [];
     private readonly PdfMatrix? _frame;
     private readonly byte[] _names;
     private PdfSyntax? _content;
@@ -272,6 +273,39 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
     internal ReadOnlySpan<byte> Names => _names;
 
     /// <summary>
+    /// The form XObjects its resources name (<c>/Fw1</c>, <c>/Fw2</c>, ... after the prefix), in order: a source document's
+    /// object, or a new one's number given when the document is written.
+    /// </summary>
+    internal IReadOnlyList<(PdfValue Source, Func<int>? New)> Forms => _forms;
+
+    /// <summary>The widget annotations the page object lists in its <c>/Annots</c> (a builder's form fields on it), or null.</summary>
+    internal List<int>? Annotations { get; set; }
+
+    /// <summary>The map from page points (top-left origin, y down) to the page's user space: its frame, or a new page's user space turned over.</summary>
+    internal PdfMatrix ToUserSpace => _frame ?? new PdfMatrix(1, 0, 0, -1, 0, Height);
+
+    /// <summary>
+    /// Draws a form XObject (a flattened field's appearance), placed in the page's user space by <paramref name="placement"/>:
+    /// <paramref name="source"/>, an object of the document the page is of, or (when null) the new object
+    /// <paramref name="number"/> gives the number of when the page is written.
+    /// </summary>
+    internal void Form(PdfValue source, Func<int>? number, PdfMatrix placement)
+    {
+        var content = Content();
+        int index = source.IsReference ? _forms.FindIndex(f => f.New is null && f.Source.IsReference && f.Source.AsReference == source.AsReference) : -1;
+        if (index < 0)
+        {
+            _forms.Add((source, number));
+            index = _forms.Count - 1;
+        }
+
+        // The form's space to user space, then (the content being in the page's frame) back to page points.
+        var m = placement.Then(PdfEditPages.Inverse(ToUserSpace));
+        content.Raw("q "u8).Number(m.A, 6).Space().Number(m.B, 6).Space().Number(m.C, 6).Space().Number(m.D, 6).Space().Number(m.E, 6).Space().Number(m.F, 6)
+            .Raw(" cm /"u8).Raw(_names).Raw("Fw"u8).Integer(index + 1).Raw(" Do Q\n"u8);
+    }
+
+    /// <summary>
     /// Ends the content (closing what it left open: each Save never restored, then the frame) and gives it, or null when
     /// nothing was drawn; the buffer stays the page's until <see cref="Release"/>. Nothing more can be drawn after.
     /// </summary>
@@ -350,6 +384,22 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
             if (contents > 0)
             {
                 s.Raw("/Contents "u8).Reference(contents);
+            }
+
+            if (Annotations is { Count: > 0 } annotations)
+            {
+                s.Raw("/Annots["u8);
+                for (int i = 0; i < annotations.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        s.Space();
+                    }
+
+                    s.Reference(annotations[i]);
+                }
+
+                s.Byte((byte)']');
             }
 
             s.Raw(">>"u8);
