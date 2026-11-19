@@ -1,0 +1,75 @@
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+Qwen/Qwen3-1.7B on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)), weights q8_0, KV cache bfloat16: one decoding step after 128 tokens
+step 11.48 ms with each layer drained (10.86 ms in the layers), 0.3 MiB allocated, 0 collections, 1.4 of 24 cores busy on average
+cuda:0: 7.54 GB in use
+
+Layers of the network:
+Layer      Type          ms     Share   MiB allocated  GCs
+---------  ------------  -----  ------  -------------  ---
+embed      Embedding     0.057  0.5 %   0.01           0
+layers.0   DecoderBlock  0.384  3.5 %   0.01           0
+layers.1   DecoderBlock  0.352  3.2 %   0.01           0
+layers.2   DecoderBlock  0.329  3.0 %   0.02           0
+layers.3   DecoderBlock  0.320  2.9 %   0.01           0
+layers.4   DecoderBlock  0.322  3.0 %   0.01           0
+layers.5   DecoderBlock  0.321  3.0 %   0.01           0
+layers.6   DecoderBlock  0.324  3.0 %   0.01           0
+layers.7   DecoderBlock  0.318  2.9 %   0.01           0
+layers.8   DecoderBlock  0.313  2.9 %   0.02           0
+layers.9   DecoderBlock  0.316  2.9 %   0.01           0
+layers.10  DecoderBlock  0.317  2.9 %   0.01           0
+layers.11  DecoderBlock  0.320  2.9 %   0.01           0
+layers.12  DecoderBlock  0.319  2.9 %   0.01           0
+layers.13  DecoderBlock  0.316  2.9 %   0.01           0
+layers.14  DecoderBlock  0.318  2.9 %   0.01           0
+layers.15  DecoderBlock  0.550  5.1 %   0.01           0
+layers.16  DecoderBlock  0.318  2.9 %   0.02           0
+layers.17  DecoderBlock  0.320  2.9 %   0.01           0
+layers.18  DecoderBlock  0.319  2.9 %   0.01           0
+layers.19  DecoderBlock  0.320  2.9 %   0.01           0
+layers.20  DecoderBlock  0.321  3.0 %   0.01           0
+layers.21  DecoderBlock  0.321  3.0 %   0.01           0
+layers.22  DecoderBlock  0.325  3.0 %   0.01           0
+layers.23  DecoderBlock  0.322  3.0 %   0.01           0
+layers.24  DecoderBlock  0.315  2.9 %   0.01           0
+layers.25  DecoderBlock  0.318  2.9 %   0.01           0
+layers.26  DecoderBlock  0.317  2.9 %   0.01           0
+layers.27  DecoderBlock  0.318  2.9 %   0.00           0
+norm       RMSNorm       0.000  0.0 %   0.01           0
+head       Linear        1.526  14.1 %  0.00           0
+
+Inner layers (by type and depth): 19.18 ms in 255 calls
+Name                   Calls  ms     Share
+---------------------  -----  -----  ------
+FeedForward (depth 0)  28     6.397  33.3 %
+Linear (depth 1)       84     6.071  31.6 %
+Linear (depth 0)       113    4.895  25.5 %
+Embedding (depth 0)    1      1.768  9.2 %
+RMSNorm (depth 0)      29     0.053  0.3 %
+
+Operations (by name and shape): 12.88 ms in 339 calls
+Name                         Calls  ms     Share
+---------------------------  -----  -----  ------
+matmul [1x6144]              56     4.073  31.6 %
+matmul [1x2048]              84     3.736  29.0 %
+matmul [1x151936]            1      1.522  11.8 %
+matmul [1x1024]              56     1.245  9.7 %
+add_rms_norm [1x1x2048]      56     0.843  6.5 %
+attention_bf16 [8x2x128]     28     0.620  4.8 %
+norm_rope_heads [8x2x128]    28     0.366  2.8 %
+gated_activation [1x1x6144]  28     0.258  2.0 %
+embedding_bf16 [1x1x2048]    1      0.183  1.4 %
+rms_norm_affine [1x1x2048]   1      0.032  0.3 %
+
+Kernels (341 launches):
+Kernel                   Calls  ms      Share
+-----------------------  -----  ------  ------
+gemv_nn_f32              197    10.172  84.2 %
+add_rms_norm_affine_f32  56     0.892   7.4 %
+attention_decode_bf16    28     0.561   4.6 %
+norm_rope_heads_f32      28     0.225   1.9 %
+gated_act_f32            28     0.186   1.5 %
+gather_bf16_f32          1      0.015   0.1 %
+rms_norm_affine_f32      1      0.012   0.1 %
+convert_f32_i32          1      0.011   0.1 %
+affine_f32               1      0.007   0.1 %

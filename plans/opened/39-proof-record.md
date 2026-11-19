@@ -546,6 +546,154 @@ Summary of the evidence:
   **Never chosen**: the panel lane.
 - The earlier rounds' lane lists were made with keys shared across types and are superseded by this one.
 
+### Qwen3-1.7B baseline (M0, plan 39 decision 10)
+
+Today's Idrak (`IDRAK_ROUTES=name`, set on every command) on `Qwen/Qwen3-1.7B` (revision `70d244cc86cc`, pulled once
+before the first run: `pull.txt`; 1,720.6M parameters, hidden 2,048, 28 layers, a tied head), on the same machine as the
+re-bench, the reference the Adad devices are measured against once the plan is finished. Measuring only: no
+code was changed. Files: `test-output\adad\m0-qwen3-1.7b\`, copied (without the `.nettrace` and `.speedscope.json`
+files) to [39-m0-qwen3-1.7b/](39-m0-qwen3-1.7b/): the script `m0.sh`, `results.txt`, every bench log, every profile
+log, every trace report, the CUDA tuning folders and CPU tuning files.
+
+- **Code and CLI**: commit `4802653c`, the CLI built from it and installed as the record's "The CLI reinstall" says:
+  `idrak 0.4.1-dev.2611191613` (package `0.4.1-dev.2611191614`; the assemblies' informational version
+  `0.4.1-dev.2611191613+4802653c40f71a7ad9280ff77a362f9b686c26be`; the CUDA tuning files' `library:` line
+  `0.4.1+4802653c...; kernels 29d753baeebe4de8`). Between `cf77ceeb` and `4802653c` only document code, help text and
+  member visibility changed (`git diff --stat cf77ceeb 4802653c`: nothing under `src/Idrak.Gpu`, no model or device code),
+  so this is the same `name` code as the re-bench's `name` columns.
+- **Commands** (`m0.sh`, one model run a call; `IDRAK_ROUTES=name` exported; paths absolute):
+  - CUDA, types in the order bf16, f16, int8, q8_0, q4_0, iq4_nl, q4_k, q6_k, iq2_xxs, iq3_xxs, each in a fresh folder
+    `tuning-cuda-{type}`, a fill run then a warm run: `IDRAK_TUNING_CACHE=.../tuning-cuda-{type} idrak bench
+    Qwen/Qwen3-1.7B -w {type} -d cuda --prompt-tokens 512 --tokens 128 -n 3` → `cuda-{type}-{fill|warm}.txt`.
+  - CPU, bf16, int8, q8_0, q4_0, q4_k, each with a fresh `tuning-cpu-{type}.tsv`, two runs:
+    `IDRAK_CPU_TUNING_FILE=.../tuning-cpu-{type}.tsv idrak bench Qwen/Qwen3-1.7B -w {type} -d cpu --prompt-tokens 128
+    --tokens 32 -n 2` → `cpu-{type}-run{1|2}.txt`.
+  - Profiles, on the type's filled folder or file: CUDA `idrak profile Qwen/Qwen3-1.7B -w {type} -d cuda --pass prompt
+    --prompt-tokens 512 --top 30` and `... -d cuda --top 25` (one decoding step); CPU `... -d cpu --pass prompt
+    --prompt-tokens 128 --top 20`. Each ran twice, as the record's profiles did ("run twice on a folder and the second
+    read"): the first (`profile-{device}-{type}-{prompt|decode}-first.txt`) stored the shapes the bench never ran, inside
+    its timed pass (finding M0-3); the second (`profile-{device}-{type}-{prompt|decode}.txt`) is the one read. The
+    tuning lines each run added (the script diffed the tuning file around every run and printed the diff) are collected
+    in `tuning-added.txt`.
+  - Traces: `idrak trace --stacks -o trace-{device}-{type}.nettrace --top 20 -- bench Qwen/Qwen3-1.7B -w {type} -d cuda
+    --prompt-tokens 512 --tokens 128 -n 1` (CUDA bf16, int8, q4_0, q4_k, iq2_xxs) and `... -d cpu --prompt-tokens 128
+    --tokens 8 -n 1` (CPU bf16, int8, q4_0) → `trace-{device}-{type}.txt`; further reads of the same traces with
+    `idrak trace --read ... --focus` or `--timeline` → `trace-{device}-{type}-{focus-...|timeline}.txt`.
+- **Every type loaded and ran on both devices** (every run's exit code 0, `results.txt`). No warm run, second CPU run,
+  profile read or trace wrote a tuning file (`tuning-added.txt`: each file's last write is its first decode profile on
+  CUDA, its run 1 on the CPU).
+
+**CUDA, Qwen3-1.7B, 512-token prompt and 128 generated tokens, tok/s, warm runs** (weights: "weights memory", MiB; peak:
+"memory peak", MiB). The fill runs are within 0.9% of the warm runs on prompts and equal on generation (`results.txt`).
+
+| Type | prompt | generation | weights | peak | prompt kernels (profile) | decode kernels (profile) |
+|---|---|---|---|---|---|---|
+| bf16 | 19,330 | 183 | 3,302 | 3,465 | `gemm_tc_nn_bf16w` (`_multi` for q/k/v and gate/up) | `bf16_gemv_*` |
+| f16 | 17,812 | 106 | 7,177 | 7,348 | `gemm_tc_nn` over float32 rows | `gemv_nn_f32` |
+| int8 | 20,809 | 215 | 2,257 | 2,412 | `gemm_tc_nn_int8w` (`_multi`) | `int8_gemv_*` |
+| q8_0 | 17,402 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| q4_0 | 17,902 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| iq4_nl | 17,451 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| q4_k | 17,752 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| q6_k | 17,316 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| iq2_xxs | 17,688 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+| iq3_xxs | 17,448 | 106 | 7,177 | 7,348 | `gemm_tc_nn` | `gemv_nn_f32` |
+
+Under `name` on CUDA every type without a kernel of its own (f16 and the GGUF types) is held as float32: 7,177 MiB of
+weights against bf16's 3,302 and int8's 2,257; their decode is `gemv_nn_f32` over the float32 rows (about 84% of a step's
+kernel time, `profile-cuda-{type}-decode.txt`), and their prompt products run as separate launches (343 a pass, where
+bf16 and int8 group q/k/v and gate/up in 259).
+
+**CPU, Qwen3-1.7B, 128-token prompt and 32 generated tokens, tok/s, both runs** (weights and peak, MiB, equal in both runs)
+
+| Type | prompt (run 1 / 2) | generation (run 1 / 2) | weights | peak | product (profile) |
+|---|---|---|---|---|---|
+| bf16 | 118 / 115 | 15.0 / 15.0 | 3,302 | 3,405 | `matmul_bf16` |
+| int8 | 123 / 115 | 26.1 / 25.3 | 2,257 | 2,361 | `matmul_int8` |
+| q8_0 | 104 / 98.4 | 3.33 / 3.36 | 2,357 | 2,414 | `matmul_stored` |
+| q4_0 | 98.4 / 107 | 3.34 / 3.34 | 1,537 | 1,594 | `matmul_stored` |
+| q4_k | 105 / 106 | 3.35 / 3.39 | 1,537 | 1,594 | `matmul_stored` |
+
+**Findings** (what the bench, profiles and traces show slow, wrong or wasteful; none was fixed in M0; each names its
+files and the fix piece proposed for it):
+
+- **M0-1. The profile's layer table times float32 products on CUDA.** `ProfileCommand`'s per-layer pass calls each
+  module's `ForwardCached` itself, outside `Sequential.ForwardCached`'s `MixedPrecision.Prefer(Precision)`, so
+  `MixedPrecision.Current` is the process default (float32) there; the operations and kernels tables run inside
+  `network.ForwardCached` and are right. Shown by the first prompt profiles storing float32-tile choices the bench never
+  stores: `FloatTile 0 512 {2048|6144} ...` for f16 and the GGUF types (the bench stored `TensorSplits` for the same
+  shapes), `PackedTile 0 512 ...` for int8 (`tuning-added.txt`, `profile-cuda-{type}-prompt-first.txt`); and by the head:
+  17.7–18.4 ms in every type's layer table against 3.85–4.00 ms for its kernel (`profile-cuda-{type}-prompt.txt`).
+  Proposed piece: the profile's per-layer pass in the network's precision scope (a tool fix; no library result changes).
+- **M0-2. `idrak profile --pass prompt` runs the head over every prompt row**, which generation never does
+  (`TextGenerator` sets `DecodingContext.LastPositionOnly`; the profile's contexts do not). CUDA bf16:
+  `gemm_tc_nn_bf16w 512x151936x2048` 3.965 ms, 13.2% of the pass's kernel time (`profile-cuda-bf16-prompt.txt`); CPU
+  bf16: `matmul_bf16 [1x128x151936]` 126.5 ms (11.2%) and 1,261 MiB of the pass's 5,650 MiB
+  (`profile-cpu-bf16-prompt.txt`). Proposed piece: with M0-1, the profile's prompt pass with `LastPositionOnly`, so it
+  times what the bench runs.
+- **M0-3. A profile's first run on a bench-filled folder measures inside its timed pass, and one decoding step catches
+  one-off pauses.** First prompt profiles: head 829–907 ms and `layers.0` 160–207 ms (`profile-cuda-*-prompt-first.txt`;
+  second runs 17.7–18.4 and 4.5–4.8 ms; the lines the first runs stored: `tuning-added.txt`). The read bf16 decode
+  step took 22.10 ms against 6.88 ms in its first run: one layer held 15.4 ms and 2 collections
+  (`profile-cuda-bf16-decode.txt`); in the bench the collections fall in loading
+  (1.5–1.8 s), none in generation (`trace-cuda-bf16-timeline.txt`). An iq3_xxs decode step read `gemv_nn_f32` 18.4 ms
+  against 10.3–10.5 ms in every other float32-held type (`profile-cuda-iq3_xxs-decode-outlier.txt`); re-run: 10.43 ms
+  (`profile-cuda-iq3_xxs-decode.txt`). Proposed piece: with M0-1 and M0-2, the decode profile timed over several steps
+  (median) after a collection; until then profiles run twice.
+- **M0-4. Loading a GGUF type for a device without its product (`cuda` under `name`) expands it on about two threads
+  and copies the matrix in float32 several times.** q4_0: 11.3 s of a 13.4 s run in `ModelChoices.Load`, 16,086 MiB
+  allocated (`SafeTensorsReader.ReadTransposed` 3,792 + 1,584, `StoredPackedFormat.Create` 3,794 + 2,772,
+  `SafeTensorsReader.Read` 1,187, `HostParallel.Transpose` 1,187), `StoredPackedFormat.Create` 9.7 s with 7.4 s of its own
+  code, from 2.0 to 11.9 s at about 2 of 24 threads (`trace-cuda-q4_0.txt`, `-focus-create.txt`, `-timeline.txt`); q4_k
+  the same (16,088 MiB, `Create` 10.9 s, `trace-cuda-q4_k.txt`); bf16 for comparison: `ModelChoices.Load` 1.3 s, 243 MiB
+  (`trace-cuda-bf16.txt`). Cause: `StoredPackedFormat.Create`'s expansion (`StoredPacking.cs` lines 58-71) decodes each
+  output's row on one thread and writes it down a column of the float32 matrix (`expanded[r * n + j]`, n apart). Proposed
+  piece: the expansion in parallel and written along the matrix's rows, and the float32 transposed copies removed (the
+  same decoded values at the same places: bit for bit).
+- **M0-5. The grid encoder rebuilds the grid's levels on every row** (`GgufElementTypes.EncodeGrid`:
+  `g.Grid.Distinct().Order().ToArray()`, while the nearest-entry table beside it is kept per description). iq2_xxs: 90.3 s
+  of CPU in `EncodeGrid` (67% of the run's busy time), 72.9 s of it in `Enumerable.ToArray` over hash sets, about
+  31,500 MiB of hash-set entries, int arrays and enumerators allocated in it, 1,780 collections and the pool trimming
+  they start (`SharedArrayPool.Trim` 18.1 s, `GetMemoryPressure` 15.5 s); the load takes the first 20 s of a 22.2 s run
+  (`trace-cuda-iq2_xxs.txt`, `-focus-encodegrid.txt`, `-timeline.txt`). The other encoders are slow too: `EncodeQ4_K`
+  21.1 s of CPU (`PutCode` 9.0 s, `trace-cuda-q4_k.txt`), `EncodeQ4_0` 6.5 s (`trace-cuda-q4_0.txt`). The encoders stay
+  in core (decision 2), so every route and device pays this. Proposed piece: the levels kept with the nearest table (the
+  same bytes), then the q4_k and q4_0 encoders traced.
+- **M0-6. The CPU's named bf16 and int8 products widen the whole weight to float32 on every prompt call, and the tiled
+  product copies it again.** `BFloat16Direct` (`CpuBackend.Quantized.cs`, more rows than the few-row limit) and int8's
+  `Tensor.Dequantized` path: 5,650 MiB allocated per 128-token pass, 156.8 MiB a layer (`profile-cpu-bf16-prompt.txt`,
+  `profile-cpu-int8-prompt.txt`; the stored types' pass: 678 MiB, `profile-cpu-q4_0-prompt.txt`); a short bench run
+  allocates 12,217 MiB (bf16: 5,709 in the product, 4,064 of activations through `Tensor.Empty`, 1,992 in
+  `BFloat16Direct`, `trace-cpu-bf16.txt`) and 11,159 MiB (int8: 6,318 through `Tensor.Empty`, 4,400 in
+  `Tensor.Dequantized`, `trace-cpu-int8.txt`). `CpuMatMul.Tiled.RunTile` then copies B's panels for every row tile:
+  copies are 8.75 s of its 23.8 s (`trace-cpu-int8-focus-runtile.txt`; bf16 8.8 s, `trace-cpu-bf16-focus-memmove.txt`).
+  Proposed piece (a change to the plain `cpu` device, which decision 1 keeps as `name`: the owner's decision): widen into
+  the product's panels per tile, as the proof's tiles lane does, and pack each column panel once for all row tiles.
+- **M0-7. On the CPU the products with 2,048 outputs run at about half the rate of those with 6,144.** bf16:
+  `matmul_bf16 [1x128x2048]` (q, o, down) 542.9 ms for 150 GFLOP, 277 GFLOP/s, against `[1x128x6144]` (gate, up)
+  347.8 ms for 180 GFLOP, 519 GFLOP/s (`profile-cpu-bf16-prompt.txt`; int8 590.2 against 376.4 ms); the stored types' k/v
+  (`matmul_stored [1x128x1024]`) 221.9–227.6 ms against bf16's 73.4 ms (`profile-cpu-q4_0-prompt.txt`,
+  `profile-cpu-q8_0-prompt.txt`, `profile-cpu-q4_k-prompt.txt`). Not yet traced apart (q and down share the shape's
+  label). Proposed piece: `idrak bench --kernels` and a trace at these shapes to find the cause (the tile grid for n =
+  2,048 is the first suspect).
+- **M0-8. The CPU's decode over stored types runs at 3.3 tok/s.** q8_0, q4_0, q4_k: 3.33–3.39 tok/s against int8's
+  25–26 and bf16's 15.0 (`results.txt`). Each step widens every tile's stored rows to float32
+  (`GgufFile.DequantizeBuiltInParallel`, a `Parallel.For` inside the tiles' `Parallel.For`), writes them down the columns of a
+  [k, columns] panel and multiplies one row through `CpuMatMul.Multiply` (`CpuBackend.Stored.cs`,
+  `StoredTileProduct`): `StoredMatMulKernel` 103.9 s of the run's 136.0 s busy time: 44.3 s its own code (the tile's
+  body inlined: the panel writes and the result copy), 26.4 s `CpuMatMul.Multiply`, 15.3 s the nested widening, 7.9 s
+  returning buffers to the shared array pool (nearly all of it `Thread.GetCurrentProcessorNumber`,
+  `-focus-processornumber.txt`) and 4.9 s `Task.SpinWait` (`trace-cpu-q4_0.txt`, `-focus-storedmatmul.txt`,
+  `-timeline.txt`). Proposed piece (the plain `cpu` device again: the owner's decision): a few-row path over the stored
+  rows read in place, with no panel and no nested parallel loop (the proof's row lane and block route do this for `adad`).
+- **M0-9. CUDA's int8 decode kernels read at about half the bandwidth of bf16's.** `int8_gemv_multi_act_f32` 2.453 ms
+  for 705 MB (287 GB/s) against `bf16_gemv_multi_act_f32` 2.613 ms for 1,409 MB (539 GB/s); `int8_gemv_addnorm_f32`
+  1.545 ms for 470 MB (304 GB/s) against bf16's 1.802 ms for 940 MB (521 GB/s); the head's single kernels both reach
+  about 810–830 GB/s (`int8_gemv_r1_f32` 0.384 ms, `bf16_gemv_r1_f32` 0.753 ms) (`profile-cuda-int8-decode.txt`,
+  `profile-cuda-bf16-decode.txt`). So int8 generates 215 tok/s against bf16's 183 while reading half the bytes. Proposed
+  piece (the plain `cuda` device, decision 1: the owner's decision): trace the int8 few-row kernels; the proof's few-row
+  lane is the `adad` answer (int8 614 against 437 on Qwen3-0.6B).
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

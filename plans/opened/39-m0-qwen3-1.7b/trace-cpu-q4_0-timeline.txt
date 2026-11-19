@@ -1,0 +1,57 @@
+stacks: 42 threads over 8.87 s (0.01 to 8.87 s); 129,975 samples and 13,385 other events with stacks; a sampling round every 2.1 ms (the slowest tenth 3.3 ms)
+where the threads' time went (317.5 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       39.0%  123.76   the CPU in .NET code
+outside .NET code       0.4%   1.18     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                3.5%   11.03    spin-waits: a core burned while waiting
+stopped by the runtime  0.02%  0.06     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 57.2%  181.50   blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 15.3 threads on average of 24 processors; garbage collections: 26, every thread stopped 0.04 s in all (the longest 9.2 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 135.96 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  --------------------------------------
+44,269  32.6%  0.00%         103,851   76.4%  CpuBackend.StoredMatMulKernel (lambda)
+24,289  17.9%  0.01%         27,429    20.2%  CpuMatMul.Tiled.RunTile
+17,314  12.7%  0.00%         17,314    12.7%  [a call returning: its method unknown]
+8,260   6.1%   0.00%         8,483     6.2%   Thread.GetCurrentProcessorNumber
+5,670   4.2%   0.00%         7,934     5.8%   LowLevelLifoSemaphore.Wait
+  [a call returning: its method unknown], 12.7%: the runtime stops threads at a call's return for each sampling round, so the method that ran is gone from the stack; its callers' total time holds it (many short calls in a loop make it large).
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  --------------------------------------
+103,851   76.4%  44,269  CpuBackend.StoredMatMulKernel (lambda)
+27,429    20.2%  24,289  CpuMatMul.Tiled.RunTile
+26,812    19.7%  148     CpuMatMul.Multiply
+17,390    12.8%  181     GgufFile.DequantizeBuiltInParallel
+9,782     7.2%   1,590   CpuBackend.StoredTileProduct
+allocations (2,967 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB    Share  Type             Allocated in                  Called from
+-----  -----  ---------------  ----------------------------  --------------------------------------
+923.2  31.1%  System.Single[]  CpuBackend.Allocate           Tensor.Empty
+790.2  26.6%  System.Single[]  CpuBackend.Allocate           Backend.Allocate
+268.9  9.1%   System.Single[]  StoredWeight.MatMul           Linear.Project
+167.9  5.7%   System.Single[]  CpuBackend.StoredTileProduct  CpuBackend.StoredMatMulKernel (lambda)
+132.8  4.5%   System.Single[]  StoredWeight.FromFill         PackedWeightFormats.PackRows
+timeline (18 slices of 493 ms; threads busy and stopped on average):
+From s  Busy  Stopped  Running most                                                         Bar
+------  ----  -------  -------------------------------------------------------------------  -----------------------
+0.01    3.9   0.0      GC.GetGCMemoryInfo                                                   ####
+0.50    9.0   0.0      SharedArrayPool`1.InitializeTlsBucketsAndTrimming (lambda) [Single]  #########
+0.99    3.3   0.0      Parallel.CheckTimeoutReached                                         ###
+1.49    3.0   0.0      [a call returning: its method unknown]                               ###
+1.98    3.3   0.0      [a call returning: its method unknown]                               ###
+2.47    6.1   0.0      [a call returning: its method unknown]                               ######
+2.96    18.5  0.0      CpuMatMul.Tiled.RunTile                                              ##################
+3.46    17.5  0.0      CpuMatMul.Tiled.RunTile                                              ##################
+3.95    18.8  0.0      CpuMatMul.Tiled.RunTile                                              ###################
+4.44    22.0  0.0      CpuBackend.StoredMatMulKernel (lambda)                               ######################
+4.93    22.5  0.0      CpuBackend.StoredMatMulKernel (lambda)                               #######################
+5.43    18.0  0.0      CpuMatMul.Tiled.RunTile                                              ##################
+5.92    18.9  0.0      CpuMatMul.Tiled.RunTile                                              ###################
+6.41    22.1  0.0      CpuBackend.StoredMatMulKernel (lambda)                               ######################
+6.90    22.1  0.0      CpuBackend.StoredMatMulKernel (lambda)                               ######################
+7.40    23.4  0.0      CpuBackend.StoredMatMulKernel (lambda)                               #######################
+7.89    22.0  0.0      CpuBackend.StoredMatMulKernel (lambda)                               ######################
+8.38    21.7  0.0      CpuBackend.StoredMatMulKernel (lambda)                               ######################
+files: the trace D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cpu-q4_0.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cpu-q4_0.speedscope.json (https://www.speedscope.app)

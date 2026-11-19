@@ -1,0 +1,82 @@
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+Qwen/Qwen3-1.7B on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)), weights q6_k, KV cache bfloat16: one prompt pass of 512 tokens
+pass 147.30 ms with each layer drained (145.97 ms in the layers), 0.3 MiB allocated, 0 collections, 0.8 of 24 cores busy on average
+cuda:0: 7.58 GB in use
+
+Layers of the network:
+Layer      Type          ms      Share   MiB allocated  GCs
+---------  ------------  ------  ------  -------------  ---
+embed      Embedding     0.039   0.0 %   0.01           0
+layers.0   DecoderBlock  4.567   3.1 %   0.01           0
+layers.1   DecoderBlock  4.524   3.1 %   0.01           0
+layers.2   DecoderBlock  4.529   3.1 %   0.01           0
+layers.3   DecoderBlock  4.562   3.1 %   0.01           0
+layers.4   DecoderBlock  4.553   3.1 %   0.02           0
+layers.5   DecoderBlock  4.572   3.1 %   0.02           0
+layers.6   DecoderBlock  4.633   3.2 %   0.01           0
+layers.7   DecoderBlock  4.609   3.2 %   0.01           0
+layers.8   DecoderBlock  4.517   3.1 %   0.02           0
+layers.9   DecoderBlock  4.619   3.2 %   0.01           0
+layers.10  DecoderBlock  4.616   3.2 %   0.01           0
+layers.11  DecoderBlock  4.547   3.1 %   0.01           0
+layers.12  DecoderBlock  4.569   3.1 %   0.01           0
+layers.13  DecoderBlock  4.599   3.2 %   0.01           0
+layers.14  DecoderBlock  4.548   3.1 %   0.01           0
+layers.15  DecoderBlock  4.537   3.1 %   0.01           0
+layers.16  DecoderBlock  4.601   3.2 %   0.02           0
+layers.17  DecoderBlock  4.525   3.1 %   0.01           0
+layers.18  DecoderBlock  4.530   3.1 %   0.01           0
+layers.19  DecoderBlock  4.482   3.1 %   0.01           0
+layers.20  DecoderBlock  4.505   3.1 %   0.01           0
+layers.21  DecoderBlock  4.511   3.1 %   0.01           0
+layers.22  DecoderBlock  4.512   3.1 %   0.01           0
+layers.23  DecoderBlock  4.541   3.1 %   0.01           0
+layers.24  DecoderBlock  4.559   3.1 %   0.01           0
+layers.25  DecoderBlock  4.525   3.1 %   0.01           0
+layers.26  DecoderBlock  4.612   3.2 %   0.01           0
+layers.27  DecoderBlock  4.595   3.1 %   0.02           0
+norm       RMSNorm       0.003   0.0 %   0.00           0
+head       Linear        18.324  12.6 %  0.00           0
+
+Inner layers (by type and depth): 48.75 ms in 255 calls
+Name                   Calls  ms      Share
+---------------------  -----  ------  ------
+FeedForward (depth 0)  28     18.860  38.7 %
+Linear (depth 1)       84     17.735  36.4 %
+Linear (depth 0)       113    11.893  24.4 %
+Embedding (depth 0)    1      0.212   0.4 %
+RMSNorm (depth 0)      29     0.048   0.1 %
+
+Operations (by name and shape): 33.97 ms in 340 calls
+Name                           Calls  ms      Share
+-----------------------------  -----  ------  ------
+matmul [512x6144]              56     11.736  34.6 %
+matmul [512x2048]              84     10.533  31.0 %
+matmul [512x151936]            1      4.000   11.8 %
+matmul [512x1024]              56     2.954   8.7 %
+add_rms_norm [1x512x2048]      56     1.462   4.3 %
+attention_bf16 [1x512x2048]    28     1.215   3.6 %
+gated_activation [1x512x6144]  28     1.051   3.1 %
+norm_rope_heads [8x1024x128]   28     0.715   2.1 %
+narrow [512]                   1      0.226   0.7 %
+embedding_bf16 [1x512x2048]    1      0.041   0.1 %
+rms_norm_affine [1x512x2048]   1      0.034   0.1 %
+
+Kernels (343 launches):
+Kernel                      Calls  ms      Share
+--------------------------  -----  ------  ------
+gemm_tc_nn 512x6144x2048    56     11.584  35.2 %
+gemm_tc_nn 512x2048x6144    28     5.846   17.8 %
+gemm_tc_nn 512x2048x2048    56     4.340   13.2 %
+gemm_tc_nn 512x151936x2048  1      4.003   12.2 %
+gemm_tc_nn 512x1024x2048    56     2.793   8.5 %
+add_rms_norm_affine_f32     56     1.311   4.0 %
+flash_tc_fwd_bf16_d128      28     1.156   3.5 %
+gated_act_f32               28     1.014   3.1 %
+norm_rope_heads_f32         28     0.716   2.2 %
+copy2d_f32                  1      0.069   0.2 %
+rms_norm_affine_f32         1      0.019   0.1 %
+gather_bf16_f32             1      0.016   0.0 %
+add_scalar_f32              1      0.014   0.0 %
+affine_f32                  1      0.009   0.0 %
+convert_f32_i32             1      0.008   0.0 %

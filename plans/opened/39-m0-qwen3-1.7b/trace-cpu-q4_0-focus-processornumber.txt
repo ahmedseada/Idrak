@@ -1,0 +1,74 @@
+stacks: 42 threads over 8.87 s (0.01 to 8.87 s); 129,975 samples and 13,385 other events with stacks; a sampling round every 2.1 ms (the slowest tenth 3.3 ms)
+where the threads' time went (317.5 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       39.0%  123.76   the CPU in .NET code
+outside .NET code       0.4%   1.18     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                3.5%   11.03    spin-waits: a core burned while waiting
+stopped by the runtime  0.02%  0.06     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 57.2%  181.50   blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 15.3 threads on average of 24 processors; garbage collections: 26, every thread stopped 0.04 s in all (the longest 9.2 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 135.96 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -------------------------------------------------------------------
+44,269  32.6%  0.00%         103,851   76.4%  CpuBackend.StoredMatMulKernel (lambda)
+24,289  17.9%  0.01%         27,429    20.2%  CpuMatMul.Tiled.RunTile
+17,314  12.7%  0.00%         17,314    12.7%  [a call returning: its method unknown]
+8,260   6.1%   0.00%         8,483     6.2%   Thread.GetCurrentProcessorNumber
+5,670   4.2%   0.00%         7,934     5.8%   LowLevelLifoSemaphore.Wait
+4,986   3.7%   0.00%         5,042     3.7%   Task.SpinWait
+4,208   3.1%   0.00%         4,541     3.3%   CpuMatMul.RunBlock
+2,483   1.8%   0.00%         2,483     1.8%   SpanHelpers.Memmove
+2,436   1.8%   0.00%         2,436     1.8%   SharedArrayPool`1.InitializeTlsBucketsAndTrimming (lambda) [Single]
+2,086   1.5%   0.00%         2,234     1.6%   LowLevelLifoSemaphore.WaitForSignal
+  [a call returning: its method unknown], 12.7%: the runtime stops threads at a call's return for each sampling round, so the method that ran is gone from the stack; its callers' total time holds it (many short calls in a loop make it large).
+methods by their total time (with what they call; every method):
+Total ms  Total  Own ms  Method
+--------  -----  ------  -------------------------------------------------
+124,600   91.6%  0.0     Thread.StartCallback
+124,357   91.5%  2,039   PortableThreadPool.WorkerThread.WorkerThreadStart
+118,480   87.1%  0.0     Task.ExecuteWithThreadLocal
+118,332   87.0%  1,163   TaskReplicator.Replica.Execute
+117,531   86.4%  323     Parallel.ForWorker (lambda) [__Canon,Int32]
+114,127   83.9%  123     ThreadPoolWorkQueue.Dispatch
+113,522   83.5%  0.0     ExecutionContext.RunFromThreadPoolDispatchLoop
+103,851   76.4%  44,269  CpuBackend.StoredMatMulKernel (lambda)
+27,429    20.2%  24,289  CpuMatMul.Tiled.RunTile
+26,812    19.7%  148     CpuMatMul.Multiply
+allocations (2,967 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB    Share  Type                                                   Allocated in                        Called from
+-----  -----  -----------------------------------------------------  ----------------------------------  --------------------------------------
+923.2  31.1%  System.Single[]                                        CpuBackend.Allocate                 Tensor.Empty
+790.2  26.6%  System.Single[]                                        CpuBackend.Allocate                 Backend.Allocate
+268.9  9.1%   System.Single[]                                        StoredWeight.MatMul                 Linear.Project
+167.9  5.7%   System.Single[]                                        CpuBackend.StoredTileProduct        CpuBackend.StoredMatMulKernel (lambda)
+132.8  4.5%   System.Single[]                                        StoredWeight.FromFill               PackedWeightFormats.PackRows
+78.0   2.6%   System.Single[]                                        CpuBackend.Allocate                 Tensor.GatedActivation
+72.0   2.4%   System.Single[]                                        CpuMatMul.Tiled.RunTile             CpuMatMul.Tiled
+57.6   1.9%   Slot[System.Threading.Tasks.TaskReplicator+Replica][]  GgufFile.DequantizeBuiltInParallel  CpuBackend.StoredMatMulKernel (lambda)
+28.1   0.9%   System.Single[]                                        CpuBackend.Allocate                 Tensor.AddRmsNormAffine
+26.9   0.9%   System.Byte[]                                          TokenizerJsonReader.ReadFile        TokenizerJsonReader.Read
+focus "GetCurrentProcessorNumber": 8,483 ms, 6.2% of the counted time, through 1 matching methods
+  matching methods:
+ms     Share   Method
+-----  ------  --------------------------------
+8,483  100.0%  Thread.GetCurrentProcessorNumber
+  called from:
+ms     Share  Method
+-----  -----  --------------------------------------
+7,949  93.7%  SharedArrayPool`1[Single].Return
+353    4.2%   CpuMatMul.Tiled.RunTile
+91.9   1.1%   SharedArrayPool`1[Single].Rent
+71.2   0.8%   CpuBackend.StoredTileProduct
+17.8   0.2%   CpuBackend.StoredMatMulKernel (lambda)
+  calls (its callees, with what they call):
+ms     Share  Method
+-----  -----  --------------------------------------------
+8,260  97.4%  (its own code)
+223    2.6%   Interop.Kernel32.GetCurrentProcessorNumberEx
+  time inside it by the method running (own time):
+ms     Share  Method
+-----  -----  --------------------------------------------
+8,260  97.4%  Thread.GetCurrentProcessorNumber
+223    2.6%   Interop.Kernel32.GetCurrentProcessorNumberEx
+files: the trace D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cpu-q4_0.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cpu-q4_0.speedscope.json (https://www.speedscope.app)

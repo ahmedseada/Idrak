@@ -1,0 +1,14 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+Qwen/Qwen3-1.7B on cpu (CPU (24 threads, 8-wide SIMD)): 1720.6M parameters, weights int8, KV cache float32
+  prompt 128 tokens, 32 generated, 2 run(s) after a warm-up
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              115    tokens/s  128 tokens
+generation          25.3   tokens/s  32 tokens
+prompt GFLOP/s      396    GFLOP/s   2 x parameters per token
+generation GFLOP/s  87.1   GFLOP/s   2 x parameters per token
+weights memory      2257   MiB       on the device after loading
+memory in use       2257   MiB       after the runs
+memory peak         2361   MiB       the most in use on the device since the start
+KV cache            35.0   MiB       a generation's caches at their largest, window 161, grown 0 times

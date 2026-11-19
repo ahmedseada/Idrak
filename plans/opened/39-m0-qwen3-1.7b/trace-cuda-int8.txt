@@ -1,0 +1,96 @@
+trace: sampling the stacks of 'idrak bench Qwen/Qwen3-1.7B -w int8 -d cuda --prompt-tokens 512 --tokens 128 -n 1' into D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cuda-int8.nettrace
+element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
+Qwen/Qwen3-1.7B on cuda:0 (NVIDIA GeForce RTX 5070 Ti (16302 MiB, 70 SMs, compute 12.0, CUDA 13.3 driver)): 1720.6M parameters, weights int8, KV cache bfloat16
+  prompt 512 tokens, 128 generated, 1 run(s) after a warm-up
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              20873  tokens/s  512 tokens
+generation          216    tokens/s  128 tokens
+prompt GFLOP/s      71828  GFLOP/s   2 x parameters per token
+generation GFLOP/s  742    GFLOP/s   2 x parameters per token
+weights memory      2257   MiB       on the device after loading
+memory in use       2258   MiB       after the runs
+memory peak         2412   MiB       the most in use on the device since the start
+KV cache            70.0   MiB       a generation's caches at their largest, window 641, grown 0 times
+trace: bench exited with 0
+stacks: 26 threads over 2.53 s (0.01 to 2.53 s); 23,443 samples and 10,906 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.0 ms)
+where the threads' time went (47.3 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       2.5%   1.20     the CPU in .NET code
+outside .NET code       3.4%   1.60     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.00%  0.00     spin-waits: a core burned while waiting
+stopped by the runtime  0.05%  0.03     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 94.0%  44.46    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.1 threads on average of 24 processors; garbage collections: 10, every thread stopped 0.03 s in all (the longest 16.0 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 2.81 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  -----------------------------------------------------------------
+624     22.3%  100.0%        624       22.3%  CudaBackend.DownloadRange
+462     16.5%  99.6%         590       21.0%  CudaBackend.Upload
+216     7.7%   0.00%         216       7.7%   Environment.get_TickCount64
+123     4.4%   99.8%         123       4.4%   Buffer.MemmoveInternal
+106     3.8%   96.4%         106       3.8%   Interop.Kernel32.UnmapViewOfFile
+87.2    3.1%   100.0%        87.2      3.1%   CudaDriver.cuDevicePrimaryCtxRetain
+75.8    2.7%   98.0%         75.8      2.7%   Interop.Kernel32.ReadFile
+39.9    1.4%   0.00%         39.9      1.4%   Task.FinishSlow
+39.3    1.4%   0.00%         167       6.0%   JsonDocument.Parse
+32.6    1.2%   4.2%          122       4.4%   InitHelpers.InitClassSlow
+30.2    1.1%   0.00%         31.3      1.1%   String.CreateStringFromEncoding
+28.9    1.0%   0.00%         76.1      2.7%   IndexOfAnyAsciiSearcher.IndexOfAny
+24.4    0.9%   0.00%         24.4      0.9%   Thread..ctor
+24.1    0.9%   0.00%         47.2      1.7%   IndexOfAnyAsciiSearcher.IndexOfAnyCore
+23.7    0.8%   100.0%        24.7      0.9%   CudaBackend.UploadRange
+22.2    0.8%   0.00%         26.1      0.9%   JsonDocument.MetadataDb.FindOpenElement
+22.1    0.8%   0.00%         22.1      0.8%   IndexOfAnyAsciiSearcher.IndexOfAnyResultMapper`1[Byte].FirstIndex
+17.2    0.6%   0.00%         17.2      0.6%   Dictionary`2[Char,Byte].FindValue
+17.2    0.6%   100.0%        17.2      0.6%   CudaDriver.cuModuleLoadDataEx
+16.4    0.6%   93.6%         16.4      0.6%   CudaDriver.cuMemAlloc
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  -----------------------------------------
+2,484     88.5%  1.1     Program.<Main>$
+2,482     88.5%  0.4     CommandLine.Run
+2,482     88.5%  2.0     CommandLine.RunOn
+2,455     87.5%  3.0     CommandLine.Dispatch
+2,380     84.8%  3.7     BenchCommand.Run
+2,166     77.2%  2.8     BenchCommand.BenchModel
+1,366     48.7%  4.5     ModelChoices.Load
+1,279     45.6%  7.7     PretrainedModel.Load
+924       32.9%  2.4     DecoderBuilder.Build
+773       27.6%  2.1     TextGenerator.Generate
+771       27.5%  5.2     TextGenerator.Stream (async)
+759       27.0%  0.8     DecoderBuilder.Build.Projection
+740       26.4%  0.4     PackedWeightCache.TryRead
+656       23.4%  0.6     DecoderBuilder.Build.MakeBlock
+656       23.4%  2.9     DecoderBuilder.Build.MakeBlockOn
+626       22.3%  0.3     TokenSampler.Read
+626       22.3%  1.4     Tensor.CopyTo
+624       22.3%  624     CudaBackend.DownloadRange
+611       21.8%  0.3     Tensor.Persistent
+605       21.6%  0.1     PackedWeightLayouts.Int8Layout.FromStored
+allocations (223 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB   Share  Type                                                                  Allocated in                     Called from
+----  -----  --------------------------------------------------------------------  -------------------------------  ------------------------------
+26.9  12.1%  System.Byte[]                                                         TokenizerJsonReader.ReadFile     TokenizerJsonReader.Read
+20.0  9.0%   System.Single[]                                                       RopeTables.Acquire               CausalSelfAttention..ctor
+16.0  7.2%   System.UInt16[]                                                       BFloat16Weight.FromStoredRows    CheckpointWeights.ReadBFloat16
+14.7  6.6%   System.String                                                         TokenizerJsonReader.ReadFile     TokenizerJsonReader.Read
+12.3  5.5%   System.String                                                         CudaBackend.LoadImage            CudaBackend.LoadModule
+8.0   3.6%   System.Char[]                                                         PtxKernels.get_TensorCoreSource  PtxKernels..cctor (lambda)
+7.4   3.3%   System.String                                                         PtxKernels.Module                PtxKernels..cctor (lambda)
+7.3   3.3%   System.String                                                         PtxKernels.get_TensorCoreSource  PtxKernels..cctor (lambda)
+6.4   2.9%   System.Byte[]                                                         CudaBackend.LoadImage            CudaBackend.LoadModule
+5.1   2.3%   System.String                                                         PtxKernels.Build                 PtxKernels.SourceFor (lambda)
+5.1   2.3%   System.Byte[]                                                         SafeTensorsReader.ReadHeader     SafeTensorsReader.Open
+4.4   2.0%   System.Char[]                                                         PtxKernels.TensorCoreGemm        PtxKernels..cctor (lambda)
+3.6   1.6%   Entry[System.String,System.Int32][]                                   TokenizerJsonReader.ReadFile     TokenizerJsonReader.Read
+3.6   1.6%   Entry[System.Int64,System.ValueTuple`2[System.Int32,System.Int32]][]  BpeTokenizer..ctor               BpeTokenizer.FromDefinition
+3.5   1.6%   <>c__DisplayClass65_0                                                 JinjaChatTemplate.TurnMarkers    JinjaChatTemplate.Load
+2.8   1.3%   System.String                                                         SafeTensorsReader.ReadHeader     SafeTensorsReader.Open
+2.6   1.2%   System.String                                                         PtxKernels.Int8Gemv              PtxKernels.BuildQuantized
+2.5   1.1%   System.Byte[]                                                         TuningCache.LibraryBuild         CudaBackend.get_TuningIdentity
+2.3   1.0%   System.ValueTuple`2[System.String,System.String][]                    TokenizerJsonReader.ReadFile     TokenizerJsonReader.Read
+2.1   0.9%   System.Char[]                                                         PtxKernels.EmitTensorEpilogue    PtxKernels.TensorCoreGemm
+files: the trace D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cuda-int8.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m0-qwen3-1.7b\trace-cuda-int8.speedscope.json (https://www.speedscope.app)
