@@ -126,7 +126,8 @@ internal sealed class PdfForm
 /// <c>/Annots</c> holds it), box as shown, appearance state and on state. An XFA form's <c>datasets</c> packet is read as
 /// data (XML, no DTD, nothing outside fetched): each leaf's value by its path; values no AcroForm field holds become
 /// text fields of their own. Its layout is not drawn. Pages' widget annotations come with their appearances read as
-/// content of the page (<see cref="Widgets"/>).
+/// content of the page, with every other annotation (<see cref="PdfAnnotations.Read"/>, through
+/// <see cref="AppearanceStream"/> and <see cref="Placement"/>).
 /// </summary>
 internal static class PdfForms
 {
@@ -288,63 +289,6 @@ internal static class PdfForms
 
         form.Public = all.AsReadOnly();
         return form;
-    }
-
-    /// <summary>
-    /// Page <paramref name="index"/>'s widget annotations (those of <paramref name="page"/>'s <c>/Annots</c>), each with its
-    /// box and, unless its flags hide it, its appearance (the <c>/AP /N</c> stream of its state) read as content of the page
-    /// with <paramref name="parts"/>, placed as the format places it (the stream's box through its matrix onto the widget's
-    /// rectangle, then the page's display map).
-    /// </summary>
-    public static IReadOnlyList<DocumentAnnotation> Widgets(PdfDocument document, PdfDictionary page, int index, float width, float height, PdfMatrix display,
-        DocumentParts parts, PdfIssues issues)
-    {
-        var file = document.File;
-        PdfArray? annots;
-        try
-        {
-            annots = file.Resolve(page["Annots"u8]).AsArray;
-        }
-        catch (InvalidDataException e) when (!PdfLimit.Is(e))
-        {
-            issues.Add(DocumentIssue.DamagedStream, $"page {index + 1}: its annotations: {e.Message}");
-            return [];
-        }
-
-        if (annots is null)
-        {
-            return [];
-        }
-
-        var read = new List<DocumentAnnotation>();
-        var contentParts = (parts & ~DocumentParts.Annotations) | DocumentParts.Text | DocumentParts.Paths | DocumentParts.Images;
-        foreach (var item in annots.Items)
-        {
-            if (Safe(() => file.Dictionary(item)) is not { } annotation || !file.Resolve(annotation["Subtype"u8]).IsName("Widget"u8) || Rect(file, annotation) is not { } rect)
-            {
-                continue;
-            }
-
-            var box = Box(rect, display);
-            DocumentPage? appearance = null;
-            if (!Hides(file, annotation) && AppearanceStream(file, annotation, State(file, annotation)) is { } stream && Placement(file, stream, rect) is { } placement)
-            {
-                var own = new PdfIssues();
-                var content = document.Content(index, width, height, contentParts, own, reader => reader.ReadForm(stream, placement.Then(display)));
-                appearance = new DocumentPage(index, width, height)
-                {
-                    Runs = content.Runs, Lines = content.Lines, Text = content.Text, Images = content.Images, Paths = content.Paths, Clips = content.Clips,
-                    Shadings = content.Shadings, Groups = content.Groups, SoftMasks = content.SoftMasks, Issues = own.ToList(),
-                };
-            }
-
-            read.Add(new DocumentAnnotation(DocumentAnnotationKinds.Widget, index, box)
-            {
-                Id = Text(file, annotation["NM"u8]), Contents = Text(file, annotation["Contents"u8]), Appearance = appearance,
-            });
-        }
-
-        return read;
     }
 
     /// <summary>

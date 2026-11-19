@@ -26,7 +26,7 @@ internal abstract partial class Tests
         ("documents pdf: edit: a rewrite of every readable sample (only what the root reaches, renumbered, object streams, streams deflated again where it pays, duplicates once) is no larger than its source and reads the same: information, pages, sizes, rotations, text, runs and images (their data) and issues; twice the same bytes", PdfEditRewrite),
         ("documents pdf: edit: encryption: AES-256 (revision 6) written by the builder (object streams, a classic table, none packed) and by a rewrite opens with the user and the owner password and not without, /O /U /OE /UE /P and /Perms as the specification makes them, no string or stream plain; encrypted-aes256 updated incrementally keeps its encryption and permissions; its encryption removed by a rewrite opened with the owner password, refused with the user's; every D2 sample rewritten and updated with its own encryption reads the same", PdfEditEncryption),
         ("documents pdf: edit: each D12 signed sample updated incrementally (the information, a stamp) keeps every byte its signatures' byte ranges cover, its signature dictionaries read the same, and the stamp reads", PdfEditSigned),
-        ("documents pdf: edit: the parts later phases edit refused naming their phase (annotations and bookmarks D10), a field the document lacks refused naming it; misuse refused (signing without options, pages out of range or named twice, a rotation not a multiple of 90, a second Save, encryption changed by an update or by the user password, a builder encrypted after its first page, a document another reader opened); a document opened by its path edited through the registry's wrapper", PdfEditRefusals),
+        ("documents pdf: edit: a field the document lacks refused naming it; annotations and bookmarks misused refused (an annotation the page does not hold, a page out of range, a bookmark that is null); misuse refused (signing without options, pages out of range or named twice, a rotation not a multiple of 90, a second Save, encryption changed by an update or by the user password, a builder encrypted after its first page, a document another reader opened); a document opened by its path edited through the registry's wrapper", PdfEditRefusals),
         ("documents pdf: edit: timings and memory: an incremental one-field change on a large file (bytes written, cold and warm), a rewrite of it, and two files merged page by page (cold and warm, allocated bytes, the process's peak)", PdfEditTimings),
     ];
 
@@ -821,9 +821,10 @@ internal abstract partial class Tests
             ExpectRefusal<ArgumentException>(() => editor.SetField("status", "Approved"), "no form field 'status'", "a field the document does not have");
             ExpectRefusal<ArgumentNullException>(() => editor.AddField(null!), "", "no field to add");
             ExpectRefusal<ArgumentException>(() => editor.Flatten("status"), "no form field 'status'", "a field to flatten the document does not have");
-            ExpectRefusal<NotSupportedException>(() => editor.AddAnnotation(null!), "D10", "annotations added");
-            ExpectRefusal<NotSupportedException>(() => editor.RemoveAnnotation(null!), "D10", "annotations removed");
-            ExpectRefusal<NotSupportedException>(() => editor.AddOutline(null!), "D10", "bookmarks");
+            ExpectRefusal<ArgumentException>(() => editor.RemoveAnnotation(new DocumentAnnotation(DocumentAnnotationKinds.Note, 0, default) { Id = "no-such-note" }), "no-such-note",
+                "an annotation the page does not hold removed (D10 removes them)");
+            ExpectRefusal<ArgumentOutOfRangeException>(() => editor.AddAnnotation(new DocumentAnnotation(DocumentAnnotationKinds.Note, 7, default)), "2 pages", "an annotation on a page out of range");
+            ExpectRefusal<ArgumentNullException>(() => editor.AddOutline(null!), "outline", "a bookmark that is null");
             ExpectRefusal<ArgumentNullException>(() => editor.Sign("Signature1", null!), "options", "signing without options");
             ExpectRefusal<ArgumentOutOfRangeException>(() => editor.RotatePage(0, 45), "multiple of 90", "a rotation of 45");
             ExpectRefusal<ArgumentOutOfRangeException>(() => editor.RemovePages(5), "2 pages", "a page out of range");

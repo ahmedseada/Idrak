@@ -495,6 +495,7 @@ subcommands work on local files.
 | `idrak data mix` | Assemble a training set from several sources with weights (a dataset recipe) |
 | `idrak data text` | Random text in a language (pages, lines or words) to draw training pages from |
 | `idrak data fonts` | Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz |
+| `idrak data redact` | Remove text, drawings and image pixels under areas of a PDF for real, saved as a clean rewrite |
 | `idrak data audio` | Convert, resample and split sound files into a folder of WAV files with a manifest.jsonl |
 | `idrak data mel` | Log-mel features of sound files as .npy (a model's input features), with the options used |
 | `idrak data synth` (`idrak synth`) | Tuning pages drawn from text: each record's answer set as scanned-looking pages |
@@ -508,6 +509,8 @@ idrak data convert alpaca.json chats.jsonl --as chat
 idrak data split chats.jsonl -t label --seed 2
 idrak data audio rec/ -o clips --rate 16000 --mono --split silence --min-seconds 3   # manifest.jsonl beside the pieces
 idrak data mel talk.wav -o mels --preprocessor ./whisper-small                        # NAME.npy and features.json
+idrak data redact report.pdf --text "Project Falcon" -o report-shared.pdf             # every place the words stand, removed
+idrak data redact newsletter.pdf --boxes areas.json -o newsletter-public.pdf           # [{"page": 1, "box": [x, y, w, h]}]
 ```
 
 #### Data sources and recipes

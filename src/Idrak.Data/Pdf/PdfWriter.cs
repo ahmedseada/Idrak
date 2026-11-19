@@ -72,7 +72,7 @@ internal sealed class PdfWriter : IDocumentWriter
 }
 
 /// <summary>A PDF document being written (see <see cref="PdfWriter"/>). Not safe from several threads.</summary>
-internal sealed class PdfDocumentBuilder : IDocumentBuilder
+internal sealed partial class PdfDocumentBuilder : IDocumentBuilder
 {
     private const int CatalogNumber = 1, PagesNumber = 2;
 
@@ -136,7 +136,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
 
         FinishPage();
         _started = true;
-        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height);
+        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height) { AnnotationsWritten = Annotated };
         return _page;
     }
 
@@ -158,7 +158,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         FinishPage();
         _started = true;
         var (display, width, height, _) = document.Frame(index);
-        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height, PdfEditPages.Inverse(display), PdfEditPages.Prefix(document, index));
+        _page = new PdfPageBuilder(Font, WriteImage, _pages.Count, width, height, PdfEditPages.Inverse(display), PdfEditPages.Prefix(document, index)) { AnnotationsWritten = Annotated };
         _copied = (document, index);
         return _page;
     }
@@ -211,10 +211,6 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         _started = true;                                                       // its appearances are written now: encryption comes before
         (_form ??= new PdfFormBuilder(_file, _options, Font)).Add(field, _pages.Count, PageCount, index => index == _pages.Count ? _page : null);
     }
-
-    public void AddOutline(DocumentOutline outline) => throw NotYet("bookmarks", "D10");
-
-    public void SetPageLabels(IReadOnlyList<DocumentPageLabel> labels) => throw NotYet("page labels", "D10");
 
     /// <summary>
     /// Encrypts the document as it is written: AES-256 (revision 6) with the user and owner passwords and permissions of
@@ -270,6 +266,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
         {
             FinishPage();
             _form?.Finish();
+            WriteNavigation();                                                 // the pages' annotations and the bookmarks, every page numbered now
             foreach (var font in _fontOrder)
             {
                 font.Write(_file, _options.EmbedFonts);
@@ -387,12 +384,15 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             if (_copied is { } copy)
             {
                 _copied = null;
+                var toUser = PdfEditPages.Inverse(copy.Document.Frame(copy.Index).Display);
                 _pages.Add(WriteCopy(page, copy.Document, copy.Index, widgets));
+                Target(_pages[^1], toUser);
             }
             else
             {
                 page.Annotations = widgets;
                 _pages.Add(page.Write(_file, PagesNumber));
+                Target(_pages[^1], new PdfMatrix(1, 0, 0, -1, 0, page.Height));
             }
 
             _form?.PageWritten(index, _pages[index]);                         // its widgets, which name it
@@ -422,7 +422,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             }
 
             PdfEditPages.Write(copier, _file, source, index, how, content, image => image, () => _saveStream != 0 ? _saveStream : _saveStream = PdfEditPages.WriteSave(_file),
-                annots);
+                annots, content.Drafts.Count > 0 ? new PdfPageEdits { Content = content, Pages = PageTarget, Self = new PdfPageTarget(number, 0, PdfEditPages.Inverse(document.Frame(index).Display)) } : null);
             return number;
         }
         finally
@@ -501,6 +501,7 @@ internal sealed class PdfDocumentBuilder : IDocumentBuilder
             fields.WriteAcroForm(s);
         }
 
+        CatalogNavigation(s);
         s.Raw(">>"u8);
         End();
     }

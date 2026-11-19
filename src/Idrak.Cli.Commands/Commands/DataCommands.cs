@@ -21,6 +21,7 @@ internal static class DataCommands
         new DataMixCommand(),
         new DataTextCommand(),
         new DataFontsCommand(),
+        new DataRedactCommand(),
         new DataSynthCommand(),
         new DataTokenizerCommand(),
         new DataTokensCommand(),

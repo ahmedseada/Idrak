@@ -12,7 +12,7 @@ namespace Idrak.Data.Pdf;
 /// through <see cref="DocumentPageDrawers"/>), the files it carries and its form's fields. Opening reads the cross-reference and the page tree only; a page's objects are read
 /// when it is, and the fonts its pages share are kept for the others. Safe to read from several threads.
 /// </summary>
-internal sealed class PdfDocument : IDocument
+internal sealed partial class PdfDocument : IDocument
 {
     private readonly PdfFile _file;
     private readonly PageNode[] _pages;
@@ -139,8 +139,6 @@ internal sealed class PdfDocument : IDocument
     /// <summary>Page <paramref name="index"/>'s object number (0 for a page held inside another object): what a widget's /P names.</summary>
     internal int PageNumber(int index) => _pages[index].Node.IsReference ? _pages[index].Node.AsReference.Number : 0;
 
-    public IReadOnlyList<DocumentOutline> Outline => throw NotYet("bookmarks", "D10");
-
     /// <summary>
     /// The signatures (D12): every signature field's signature, in the order they were made, each with its byte range read
     /// against the file, what changed after it, and its check (<see cref="PdfSignatureCheck"/>); found on the first call.
@@ -173,8 +171,6 @@ internal sealed class PdfDocument : IDocument
             return Interlocked.CompareExchange(ref _signatures, found, null) ?? found;
         }
     }
-
-    public string? PageLabel(int index) => throw NotYet("page labels", "D10");
 
     public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => DocumentPageDrawers.DrawPage(this, index, options);
 
@@ -281,15 +277,23 @@ internal sealed class PdfDocument : IDocument
                 issues.Add(DocumentIssue.DamagedStream, $"page {index + 1}: its resources: {e.Message}");
             }
 
-            content = Content(index, (float)width, (float)height, parts, issues, reader => reader.Read(page["Contents"u8], resources, display));
+            content = Content(index, (float)width, (float)height, parts, issues, reader =>
+            {
+                if ((parts & (DocumentParts.Text | DocumentParts.Glyphs)) != 0)
+                {
+                    reader.Marks = Marks(node);                                // a tagged file: each run's place in its structure (D10)
+                }
+
+                reader.Read(page["Contents"u8], resources, display);
+            });
         }
 
-        // A form's widgets (D9: the annotations a form shows), each with its appearance read as content of the page; an XFA
-        // form's layout is not drawn, which every page read says.
+        // The page's annotations (D10: every kind, a form's widgets among them, each with its appearance read as content of
+        // the page); an XFA form's layout is not drawn, which every page read says.
         IReadOnlyList<DocumentAnnotation> annotations = [];
         if ((parts & DocumentParts.Annotations) != 0)
         {
-            annotations = PdfForms.Widgets(this, page, index, (float)width, (float)height, display, parts, issues);
+            annotations = PdfAnnotations.Read(this, index, page, display, (float)width, (float)height, parts, issues);
         }
 
         if (parts != DocumentParts.None && HasXfa)
@@ -408,9 +412,6 @@ internal sealed class PdfDocument : IDocument
 
         return (int)((degrees % 360 + 360) % 360);
     }
-
-    private static NotSupportedException NotYet(string what, string phase) =>
-        new($"PDF {what} are not read yet: they come with phase {phase} of the documents plan.");
 
     private static PdfDictionary Catalog(PdfFile file)
     {

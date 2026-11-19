@@ -17,8 +17,9 @@ namespace Idrak.Imaging;
 /// images placed by their matrix (the homography of <see cref="PerspectiveWarp"/>: a magnified image's pixels as blocks, a
 /// shrunk one's averaged), stencils in their colour, masks and opacity; shadings (axial, radial, function-based, meshes of
 /// triangles) and tilings; clips (paths, and text); soft masks, transparency groups (isolated, knockout) and the sixteen
-/// blend modes; then, when <see cref="DocumentParts.Annotations"/> is asked, each annotation's appearance over the page's
-/// content, in the page's order. The page is drawn band by band (rows in order), the bands spread over the cores: a large
+/// blend modes; then, when <see cref="DocumentParts.Annotations"/> is asked, each annotation's appearance (or, with none, its
+/// look from its properties, <see cref="DocumentAnnotationLooks"/>) over the page's content, in the page's order. The page
+/// is drawn band by band (rows in order), the bands spread over the cores: a large
 /// page at a high resolution holds one band of coverage and colour a core, besides its pixels. Safe from several threads.
 /// </summary>
 internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
@@ -38,20 +39,9 @@ internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
         var map = new Affine(options.PixelsPerPoint, 0, 0, options.PixelsPerPoint, 0, 0);
         var scene = DocumentScene.Build(page, map, width, height, context, options.Parts, options.Hidden);
 
-        // Annotations, when asked: each one's appearance (whole: it is the annotation's look) over the page's content, in
-        // the page's order.
-        var annotations = new List<DocumentScene>();
-        if ((options.Parts & DocumentParts.Annotations) != 0)
-        {
-            foreach (var annotation in page.Annotations)
-            {
-                if (annotation.Appearance is { } appearance)
-                {
-                    annotations.Add(DocumentScene.Build(appearance, map, width, height, context, DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths, options.Hidden));
-                }
-            }
-        }
-
+        // Annotations, when asked: each one's appearance (whole: it is the annotation's look), or its look from its
+        // properties, over the page's content, in the page's order.
+        var annotations = (options.Parts & DocumentParts.Annotations) != 0 ? Annotations(page, map, width, height, context, options.Hidden) : [];
         bool grey = options.Colour == DocumentDrawColour.Grey;
         var planes = new byte[grey ? 1 : 3][];
         for (int c = 0; c < planes.Length; c++)
@@ -88,6 +78,36 @@ internal sealed class CoverageDocumentDrawer : IDocumentPageDrawer
         });
 
         return new DocumentDrawing(new ImageData(planes, height, width, Levels), context.Issues());
+    }
+
+    // The page's annotations as scenes drawn over its content, in the page's order: each by its appearance, or, with none,
+    // by its look from its properties (DocumentAnnotationLooks); hidden ones, those not shown on screen and popups are not
+    // drawn, and one drawn from its text alone (free text with no appearance) is counted as not drawn.
+    private static List<DocumentScene> Annotations(DocumentPage page, Affine map, int width, int height, DrawContext context, bool hidden)
+    {
+        var scenes = new List<DocumentScene>();
+        foreach (var annotation in page.Annotations)
+        {
+            if ((annotation.Flags & (DocumentAnnotationFlags.Hidden | DocumentAnnotationFlags.NoView)) != 0 || annotation.Kind == DocumentAnnotationKinds.Popup)
+            {
+                continue;
+            }
+
+            var look = annotation.Appearance ?? DocumentAnnotationLooks.Look(annotation, page.Width, page.Height);
+            if (look is null)
+            {
+                if (annotation.Kind != DocumentAnnotationKinds.Widget)
+                {
+                    context.Issue(DocumentIssue.NotDrawn, $"page {page.Index + 1}: a {annotation.Kind} annotation with no appearance (its look comes from its text alone)");
+                }
+
+                continue;
+            }
+
+            scenes.Add(DocumentScene.Build(look, map, width, height, context, DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths, hidden));
+        }
+
+        return scenes;
     }
 
     // A band holds about 128 Ki pixels (every buffer a band needs a few MiB at most), and at least 8 rows.

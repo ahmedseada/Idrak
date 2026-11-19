@@ -310,6 +310,19 @@ public interface IDocumentEditor : IDisposable
 
     /// <summary>Writes the changed document to the destination.</summary>
     void Save(DocumentSaveMode mode);
+
+    /// <summary>
+    /// Removes for real what lies under <paramref name="areas"/> on page <paramref name="index"/> (the document as it
+    /// stands): the glyphs whose boxes overlap an area leave the text, a path inside one leaves the page and one crossing it
+    /// keeps only its parts outside, an image's pixels whose centres fall inside one take the area's fill (or black), the
+    /// annotations over one are removed; then each area is filled. A page redacted again takes the new areas with its
+    /// earlier ones. Saved as a rewrite only (<see cref="DocumentSaveMode.Rewrite"/>), so nothing removed survives in an
+    /// earlier revision.
+    /// </summary>
+    /// <returns>What was removed from the page (all its areas so far).</returns>
+    /// <exception cref="NotSupportedException">The editor does not redact (the message says why).</exception>
+    DocumentRedactionResult Redact(int index, IReadOnlyList<DocumentRedaction> areas) =>
+        throw new NotSupportedException($"This document editor ({GetType().Name}) does not redact pages.");
 }
 
 /// <summary>

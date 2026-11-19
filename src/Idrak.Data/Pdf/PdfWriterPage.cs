@@ -11,7 +11,7 @@ namespace Idrak.Data.Pdf;
 /// the page's own frame instead (its display map turned back), and names its resources after a prefix that the page's
 /// own do not start with.
 /// </summary>
-internal sealed class PdfPageBuilder : IDocumentPageBuilder
+internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
 {
     // Text runs closer than this to one baseline share one showing operator.
     private const float SameBaseline = 1e-4f;
@@ -256,10 +256,6 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
         content.Raw(path.Fill == DocumentFill.EvenOdd ? "W* n\n"u8 : "W n\n"u8);
     }
 
-    public void AddAnnotation(DocumentAnnotation annotation) => throw PdfDocumentBuilder.NotYet("annotations", "D10");
-
-    public void AddLink(DocumentLink link) => throw PdfDocumentBuilder.NotYet("links", "D10");
-
     /// <summary>The numbers of the images its resources name (<c>/Im1</c>, <c>/Im2</c>, ... after the prefix), in order.</summary>
     internal IReadOnlyList<int> ImageNumbers => _images;
 
@@ -386,24 +382,14 @@ internal sealed class PdfPageBuilder : IDocumentPageBuilder
                 s.Raw("/Contents "u8).Reference(contents);
             }
 
-            if (Annotations is { Count: > 0 } annotations)
-            {
-                s.Raw("/Annots["u8);
-                for (int i = 0; i < annotations.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        s.Space();
-                    }
-
-                    s.Reference(annotations[i]);
-                }
-
-                s.Byte((byte)']');
-            }
-
+            var annotations = AnnotationEntry(s, file, Annotations);          // the form's widgets, then the annotations added (D10)
             s.Raw(">>"u8);
             file.EndSmall();
+            if (annotations is not null)
+            {
+                AnnotationsWritten?.Invoke(number, annotations);               // written at the document's end, every page numbered then
+            }
+
             return number;
         }
         finally

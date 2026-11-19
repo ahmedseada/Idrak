@@ -319,6 +319,8 @@ internal static partial class Messages
         ["A random (or, with -t, stratified) sample of rows"] = "عينة عشوائية من الصفوف (أو عينة طبقية بالخيار -t)",
         ["Assemble a training set from several sources with weights (a dataset recipe)"] = "تجميع مجموعة تدريب من عدة مصادر بأوزان (وصفة مجموعة بيانات)",
         ["Check fonts for drawing pages: characters, layout features, and shaping against HarfBuzz"] = "فحص الخطوط لرسم الصفحات: المحارف وميزات التخطيط والتشكيل مقارنة مع HarfBuzz",
+        ["Remove text, drawings and image pixels under areas of a PDF for real, saved as a clean rewrite"] =
+            "حذف النص والرسوم وبكسلات الصور تحت مناطق من ملف PDF حذفا فعليا، وحفظه ملفا نظيفا معادة كتابته",
         ["Random text in a language (pages, lines or words) to draw training pages from"] = "نص عشوائي بلغة ما (صفحات أو أسطر أو كلمات) لرسم صفحات تدريب منه",
         ["Learn a tokenizer from text files, for a model made from scratch"] = "تعلم مقسم رموز من ملفات نصية لنموذج يبنى من الصفر",
         ["Encode text files into a token file for pretraining (each document's ids, then a separator)"] = "ترميز ملفات نصية إلى ملف رموز للتدريب المسبق (رموز كل مستند ثم فاصل)",

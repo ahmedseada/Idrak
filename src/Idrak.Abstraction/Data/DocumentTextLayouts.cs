@@ -39,8 +39,9 @@ public interface IDocumentTextLayout : IKind
 /// The document text layouts, by name (ignoring case). The library's, in Idrak.Abstraction: <see cref="Lines"/> (runs
 /// grouped into lines by baseline and size, each line's direction from its first strong character by Unicode's rule
 /// through the reading order, runs ordered by their places in that direction, words split where a gap passes a share of the
-/// font size, then the reading order for logical order) and <see cref="Content"/> (the runs in content order, joined, no
-/// layout). A layout of one's own (a page's tagged structure, columns) registers with <see cref="Register"/>; one under a
+/// font size, then the reading order for logical order), <see cref="Content"/> (the runs in content order, joined, no
+/// layout) and <see cref="Tagged"/> (the order a tagged document's author gave). A layout of one's own (columns, a table's
+/// cells) registers with <see cref="Register"/>; one under a
 /// library name takes its place, which stays behind it (see <see cref="SetPolicy"/>).
 /// </summary>
 public static class DocumentTextLayouts
@@ -51,6 +52,13 @@ public static class DocumentTextLayouts
     /// <summary>"content": the runs in content order, joined, no layout.</summary>
     public const string Content = "content";
 
+    /// <summary>
+    /// "tagged": the runs in the order the document's author tagged them (<see cref="DocumentTextRun.Tag"/>): each
+    /// structure element's runs laid out by <see cref="Lines"/>, the elements in the structure's order, untagged runs
+    /// after them, artifacts left out; a page with no tagged run is laid out by <see cref="Lines"/>.
+    /// </summary>
+    public const string Tagged = "tagged";
+
     private static readonly KindTable<IDocumentTextLayout> Table = new(nameof(DocumentTextLayouts), "Document text layout",
         $"add it with DocumentTextLayouts.Register (DocumentOptions.Layout and {DocumentOptions.LayoutVariable} name the layout)",
         (slot, app, library) => new GuardedLayout(slot, app, library), StringComparer.OrdinalIgnoreCase);
@@ -59,6 +67,7 @@ public static class DocumentTextLayouts
     {
         Table.RegisterDefault(new LinesLayout());
         Table.RegisterDefault(new ContentLayout());
+        Table.RegisterDefault(new TaggedLayout());
         LibraryDefaults.Ensure(typeof(DocumentTextLayouts));
     }
 

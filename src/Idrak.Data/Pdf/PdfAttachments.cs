@@ -45,7 +45,7 @@ internal static class PdfAttachments
 
     // A name tree walked in order without recursion: each leaf's /Names pairs given to `leaf`; a node met again (a
     // cycle) is passed over, and nesting past MaxDepth fails as the other limits do.
-    private static void Tree(PdfFile file, PdfValue root, Action<byte[]?, PdfValue> leaf)
+    internal static void Tree(PdfFile file, PdfValue root, Action<byte[]?, PdfValue> leaf)
     {
         var visited = new HashSet<int>();
         var stack = new Stack<(PdfValue Node, int Depth)>();
@@ -86,6 +86,14 @@ internal static class PdfAttachments
                 }
             }
         }
+    }
+
+    /// <summary>The file a file attachment annotation carries (its <c>/FS</c>), or null when it embeds none.</summary>
+    internal static DocumentAttachment? Of(PdfFile file, PdfValue specification, PdfDictionary annotation)
+    {
+        var found = new List<DocumentAttachment>(1);
+        Add(file, null, specification, annotation, found, []);
+        return found.Count > 0 ? found[0] : null;
     }
 
     // One file specification's embedded file, unless it has none or it is listed already.

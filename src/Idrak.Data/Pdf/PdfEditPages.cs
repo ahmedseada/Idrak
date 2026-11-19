@@ -126,7 +126,7 @@ internal static class PdfEditPages
     /// <paramref name="image"/>; <paramref name="save"/> numbers the stream that opens the page's own content).
     /// </summary>
     public static void Write(PdfEditCopier copier, PdfFileWriter file, PdfEditCopier.Source source, int index, PdfPageWrite how, PdfPageBuilder? content,
-        Func<int, int> image, Func<int> save, PdfAnnotsEdit? annots = null)
+        Func<int, int> image, Func<int> save, PdfAnnotsEdit? annots = null, PdfPageEdits? edits = null)
     {
         var pdf = source.File;
         var (node, media, crop, rotate, resources) = source.Document.PageObject(index);
@@ -138,6 +138,11 @@ internal static class PdfEditPages
         catch (InvalidDataException e) when (!PdfLimit.Is(e))
         {
             page = PdfDictionary.Empty;                                       // a damaged page: written as an empty one of its size
+        }
+
+        if (edits is { Any: true })
+        {
+            page = edits.Apply(page, resources, copier, source, file);        // annotations added or removed, content redacted (PdfAnnotationsEdit)
         }
 
         bool ownMedia = page.TryGet("MediaBox"u8, out var value);
@@ -323,8 +328,9 @@ internal static class PdfEditPages
     /// resources it names (images numbered by <paramref name="image"/>).
     /// </summary>
     public static void WriteNew(PdfEditCopier copier, PdfFileWriter file, int number, int parent, PdfPageBuilder content, int rotation, bool parentCrops,
-        bool parentRotates, Func<int, int> image, PdfAnnotsEdit? annots = null)
+        bool parentRotates, Func<int, int> image, PdfAnnotsEdit? annots = null, PdfPageEdits? edits = null)
     {
+        var annotations = edits is { Any: true } ? edits.WriteNew(file) : null;
         var drawn = content.Close();
         int stream = 0;
         if (drawn is not null)
@@ -357,12 +363,17 @@ internal static class PdfEditPages
                 s.Raw("/Contents "u8).Reference(stream);
             }
 
-            if (annots is { Added.Count: > 0 })
+            if (annots is { Added.Count: > 0 } || annotations is { Count: > 0 })
             {
                 s.Raw("/Annots["u8);
-                foreach (var added in annots.Added)
+                foreach (var added in annots?.Added ?? [])
                 {
                     s.Reference(added()).Space();
+                }
+
+                foreach (int annotation in annotations ?? [])
+                {
+                    s.Reference(annotation).Space();
                 }
 
                 s.Byte((byte)']');

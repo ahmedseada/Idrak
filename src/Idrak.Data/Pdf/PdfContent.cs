@@ -185,12 +185,19 @@ internal sealed partial class PdfContentReader : IDisposable
     /// <summary>
     /// Interprets <paramref name="form"/>, a form XObject drawn on its own (an annotation's appearance), with
     /// <paramref name="placement"/> mapping its space onto the page as shown (its own <c>/Matrix</c> applied within, its
-    /// <c>/BBox</c> a clip); its parts are read as a page's are.
+    /// <c>/BBox</c> a clip); its parts are read as a page's are, drawn in a group of <paramref name="opacity"/> when it is
+    /// below 1 (an annotation's <c>/CA</c>).
     /// </summary>
-    public void ReadForm(PdfStream form, PdfMatrix placement)
+    public void ReadForm(PdfStream form, PdfMatrix placement, float opacity = 1f)
     {
         _state = new State { Ctm = placement, Scale = 1 };
         StartVector(placement);
+        if (_vector && opacity < 1f)
+        {
+            _groups.Add(new DocumentGroup { Isolated = true, Alpha = Math.Clamp(opacity, 0f, 1f) });
+            _state.Group = _groups.Count - 1;
+        }
+
         DrawForm(form, "the appearance"u8, null, 0);
         if (_span is not null)
         {
@@ -256,7 +263,11 @@ internal sealed partial class PdfContentReader : IDisposable
                     continue;
                 }
 
-                if (word.SequenceEqual("BI"u8))
+                if (_rewrite is not null && depth == 0)
+                {
+                    Rewrite(ref lexer, word, data, resources, start);          // a redaction: the operator copied or changed
+                }
+                else if (word.SequenceEqual("BI"u8))
                 {
                     InlineImage(ref lexer, data, resources);
                 }
@@ -457,6 +468,7 @@ internal sealed partial class PdfContentReader : IDisposable
                 break;
             case OpMarked:
                 _marked++;
+                Tagging(data, properties: false, resources);
                 break;
             case OpMarkedProperties:
                 _marked++;
@@ -465,6 +477,7 @@ internal sealed partial class PdfContentReader : IDisposable
                     BeginSpan(data, _operands[_operandCount - 1], resources);
                 }
 
+                Tagging(data, properties: true, resources);
                 break;
             case OpEndMarked:
                 if (_span is { } span && span.Depth == _marked)
@@ -472,6 +485,7 @@ internal sealed partial class PdfContentReader : IDisposable
                     EndSpan();
                 }
 
+                Untag();
                 _marked = Math.Max(0, _marked - 1);
                 break;
             case OpStroke or OpCloseStroke or OpFill or OpFillOld or OpFillEvenOdd or OpFillStroke or OpFillStrokeEvenOdd or OpCloseFillStroke or OpCloseFillStrokeEvenOdd
@@ -814,6 +828,7 @@ internal sealed partial class PdfContentReader : IDisposable
         }
 
         _runs.Add(new ReadRun(first, count, order, style, actualText));
+        _tags.Add(_tag);
     }
 
     // ---- marked content ------------------------------------------------------------------------------------------
@@ -1174,6 +1189,7 @@ internal sealed partial class PdfContentReader : IDisposable
                 Face = glyphs ? run.Style.Font.Face : null,
                 Colour = paint.Fill, StrokeColour = paint.Stroke, StrokeWidth = paint.StrokeWidth, Clip = paint.Clip, Blend = paint.Blend, Group = paint.Group, SoftMask = paint.SoftMask,
                 GlyphMatrix = glyphs ? new DocumentMatrix((float)segment.A, (float)segment.B, (float)segment.C, (float)segment.D, 0f, 0f) : null,
+                Tag = _tags[r],
             };
         }
 
@@ -1354,6 +1370,7 @@ internal sealed partial class PdfContentReader : IDisposable
         pieces.Add(new DocumentTextRun(text, box, _runs[run].Style.Size)
         {
             Order = _runs[run].Order,
+            Tag = _tags[run],
             Logical = logical,
             Baseline = (float)(-glyph.X * sin + glyph.Y * cos),
         });

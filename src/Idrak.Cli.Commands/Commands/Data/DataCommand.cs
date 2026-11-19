@@ -27,6 +27,7 @@ internal sealed class DataCommand : Command
           idrak data dedupe FILE / data split FILE / data sample FILE -n N / data mix RECIPE.json
           idrak data text -n N --unit pages -o OUT.txt  random text in a language (-l ar, en, ...) to draw pages from
           idrak data fonts DIR [--harfbuzz REFS.json]   check fonts: characters, layout features, shaping against HarfBuzz
+          idrak data redact IN.pdf --text T -o OUT.pdf  remove what lies under areas of a PDF for real (text, drawings, pixels)
           idrak data synth IN -o OUT --fonts DIR        tuning pages drawn from text, made to look scanned
           idrak data code REPO -o OUT                   a code repository as pretraining rows and proven coding tasks
 

@@ -406,6 +406,13 @@ public sealed record DocumentTextRun(string Text, DocumentBox Box, float FontSiz
     /// <summary>The run's place in its page's content (text runs, images and paths share one count).</summary>
     public int Order { get; init; }
 
+    /// <summary>
+    /// Where the run stands in a tagged document's structure (the reading order its author gave), or null when it is not
+    /// tagged; an artifact (a page number, a running header) is <see cref="DocumentTag.Artifact"/>. The
+    /// <see cref="DocumentTextLayouts.Tagged"/> layout orders text by it.
+    /// </summary>
+    public DocumentTag? Tag { get; init; }
+
     /// <summary>The y of the run's baseline, points from the page's top edge; null when the format gives none (the box's bottom is used).</summary>
     public float? Baseline { get; init; }
 

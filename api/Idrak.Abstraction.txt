@@ -1000,24 +1000,49 @@ public readonly record struct Idrak.Abstraction.Data.BoundingBox : System.IEquat
 
 public sealed record Idrak.Abstraction.Data.DocumentAnnotation : System.IEquatable<Idrak.Abstraction.Data.DocumentAnnotation>
   public DocumentAnnotation(string Kind, int Page, Idrak.Abstraction.Data.DocumentBox Box)
+  public Idrak.Abstraction.Data.DocumentAnnotationFlags Flags { get; init; }
   public Idrak.Abstraction.Data.DocumentAttachment? Attachment { get; init; }
   public Idrak.Abstraction.Data.DocumentBox Box { get; init; }
   public Idrak.Abstraction.Data.DocumentColour? Colour { get; init; }
+  public Idrak.Abstraction.Data.DocumentColour? InteriorColour { get; init; }
   public Idrak.Abstraction.Data.DocumentDestination? Destination { get; init; }
   public Idrak.Abstraction.Data.DocumentPage? Appearance { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentAnnotation> Replies { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentPath> Ink { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> LineEndings { get; init; }
   public System.DateTimeOffset? Created { get; init; }
   public System.DateTimeOffset? Modified { get; init; }
   public System.ReadOnlyMemory<float> Points { get; init; }
+  public bool Open { get; init; }
   public float Opacity { get; init; }
+  public float? BorderWidth { get; init; }
   public int Page { get; init; }
   public string Kind { get; init; }
   public string? Author { get; init; }
   public string? Contents { get; init; }
   public string? Icon { get; init; }
   public string? Id { get; init; }
+  public string? InReplyTo { get; init; }
+  public string? OverlayText { get; init; }
+  public string? Parent { get; init; }
+  public string? Popup { get; init; }
+  public string? ReplyType { get; init; }
+  public string? State { get; init; }
+  public string? StateModel { get; init; }
   public string? Uri { get; init; }
+
+[Flags] public enum Idrak.Abstraction.Data.DocumentAnnotationFlags : int
+  Hidden = 2
+  Invisible = 1
+  Locked = 128
+  LockedContents = 512
+  NoRotate = 16
+  NoView = 32
+  NoZoom = 8
+  None = 0
+  Print = 4
+  ReadOnly = 64
+  ToggleNoView = 256
 
 public static class Idrak.Abstraction.Data.DocumentAnnotationKinds
   public const string Caret = "caret"
@@ -1039,6 +1064,9 @@ public static class Idrak.Abstraction.Data.DocumentAnnotationKinds
   public const string StrikeOut = "strike-out"
   public const string Underline = "underline"
   public const string Widget = "widget"
+
+public static class Idrak.Abstraction.Data.DocumentAnnotationLooks
+  public static Idrak.Abstraction.Data.DocumentPage? Look(Idrak.Abstraction.Data.DocumentAnnotation annotation, float width, float height)
 
 public sealed class Idrak.Abstraction.Data.DocumentAttachment
   public DocumentAttachment(string name, System.Func<System.IO.Stream> read)
@@ -1104,11 +1132,24 @@ public enum Idrak.Abstraction.Data.DocumentColourSpace : byte
 
 public sealed record Idrak.Abstraction.Data.DocumentDestination : System.IEquatable<Idrak.Abstraction.Data.DocumentDestination>
   public DocumentDestination(int Page)
+  public Idrak.Abstraction.Data.DocumentDestinationFit Fit { get; init; }
+  public float? Bottom { get; init; }
+  public float? Right { get; init; }
   public float? X { get; init; }
   public float? Y { get; init; }
   public float? Zoom { get; init; }
   public int Page { get; init; }
   public string? Name { get; init; }
+
+public enum Idrak.Abstraction.Data.DocumentDestinationFit : byte
+  Bounds = 5
+  BoundsHeight = 7
+  BoundsWidth = 6
+  Box = 4
+  Height = 3
+  Page = 1
+  Position = 0
+  Width = 2
 
 public enum Idrak.Abstraction.Data.DocumentDrawColour : byte
   Grey = 0
@@ -1499,6 +1540,28 @@ public sealed class Idrak.Abstraction.Data.DocumentPattern
   Print = 1
   PrintHighQuality = 128
 
+public sealed record Idrak.Abstraction.Data.DocumentRedaction : System.IEquatable<Idrak.Abstraction.Data.DocumentRedaction>
+  public DocumentRedaction(Idrak.Abstraction.Data.DocumentBox Box)
+  public Idrak.Abstraction.Data.DocumentBox Box { get; init; }
+  public Idrak.Abstraction.Data.DocumentColour? Fill { get; init; }
+
+public sealed record Idrak.Abstraction.Data.DocumentRedactionResult : System.IEquatable<Idrak.Abstraction.Data.DocumentRedactionResult>
+  public DocumentRedactionResult(int Page)
+  public bool Removed { get; }
+  public int Annotations { get; init; }
+  public int Areas { get; init; }
+  public int Characters { get; init; }
+  public int Glyphs { get; init; }
+  public int Images { get; init; }
+  public int Page { get; init; }
+  public int PathsClipped { get; init; }
+  public int PathsRemoved { get; init; }
+  public long Pixels { get; init; }
+
+public static class Idrak.Abstraction.Data.DocumentRedactions
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> Find(Idrak.Abstraction.Data.DocumentPage page, string text, System.StringComparison comparison = (System.StringComparison)4, Idrak.Abstraction.Data.DocumentColour? fill = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> Marked(Idrak.Abstraction.Data.DocumentPage page)
+
 public enum Idrak.Abstraction.Data.DocumentSaveMode : byte
   Incremental = 0
   Rewrite = 1
@@ -1583,6 +1646,14 @@ public sealed class Idrak.Abstraction.Data.DocumentSoftMask
   public Idrak.Abstraction.Data.DocumentPage Content { get; }
   public bool Luminosity { get; }
 
+public readonly record struct Idrak.Abstraction.Data.DocumentTag : System.IEquatable<Idrak.Abstraction.Data.DocumentTag>
+  public DocumentTag(string Type, int Element, int Order)
+  public bool IsArtifact { get; }
+  public int Element { get; init; }
+  public int Order { get; init; }
+  public static Idrak.Abstraction.Data.DocumentTag Artifact { get; }
+  public string Type { get; init; }
+
 public sealed record Idrak.Abstraction.Data.DocumentText : System.IEquatable<Idrak.Abstraction.Data.DocumentText>
   public DocumentText(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentLine> Lines, string Text)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentLine> Lines { get; init; }
@@ -1597,6 +1668,7 @@ public enum Idrak.Abstraction.Data.DocumentTextDirection : byte
 public static class Idrak.Abstraction.Data.DocumentTextLayouts
   public const string Content = "content"
   public const string Lines = "lines"
+  public const string Tagged = "tagged"
   public static Idrak.Abstraction.Data.DocumentText Arrange(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentTextRun> runs, float width, float height, Idrak.Abstraction.Data.DocumentOptions options)
   public static Idrak.Abstraction.Data.IDocumentTextLayout Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Data.IDocumentTextLayout? Default(string name)
@@ -1622,6 +1694,7 @@ public sealed record Idrak.Abstraction.Data.DocumentTextRun : System.IEquatable<
   public Idrak.Abstraction.Data.DocumentColour Colour { get; init; }
   public Idrak.Abstraction.Data.DocumentColour StrokeColour { get; init; }
   public Idrak.Abstraction.Data.DocumentMatrix? GlyphMatrix { get; init; }
+  public Idrak.Abstraction.Data.DocumentTag? Tag { get; init; }
   public Idrak.Abstraction.Data.DocumentTextMode Mode { get; init; }
   public Idrak.Abstraction.Data.IFontFace? Face { get; init; }
   public System.ReadOnlyMemory<Idrak.Abstraction.Data.DocumentGlyph> Glyphs { get; init; }
@@ -2057,6 +2130,7 @@ public interface Idrak.Abstraction.Data.IAugmentationKind : Idrak.Abstraction.IK
   public Idrak.Abstraction.Data.IAugmentation Create(Idrak.Abstraction.Data.AugmentationOptions options)
 
 public interface Idrak.Abstraction.Data.IDocument : System.IDisposable
+  public (default) System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentDestination> Destinations { get; }
   public Idrak.Abstraction.Data.DocumentDrawing DrawPage(int index, Idrak.Abstraction.Data.DocumentDrawOptions options)
   public Idrak.Abstraction.Data.DocumentInfo Info { get; }
   public Idrak.Abstraction.Data.DocumentPage ReadPage(int index, Idrak.Abstraction.Data.DocumentParts parts)
@@ -2082,6 +2156,7 @@ public interface Idrak.Abstraction.Data.IDocumentBuilder : System.IDisposable
   public void Sign(string field, Idrak.Abstraction.Data.SigningOptions options)
 
 public interface Idrak.Abstraction.Data.IDocumentEditor : System.IDisposable
+  public (default) Idrak.Abstraction.Data.DocumentRedactionResult Redact(int index, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> areas)
   public (default) void Flatten(scoped params System.ReadOnlySpan<string> names)
   public Idrak.Abstraction.Data.IDocument Source { get; }
   public Idrak.Abstraction.Data.IDocumentPageBuilder AddPage(float width, float height)

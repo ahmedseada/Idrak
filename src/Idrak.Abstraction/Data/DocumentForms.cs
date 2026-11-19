@@ -386,8 +386,48 @@ public sealed record DocumentAnnotation(string Kind, int Page, DocumentBox Box)
     /// <summary>The replies to it, in order (its thread).</summary>
     public IReadOnlyList<DocumentAnnotation> Replies { get; init; } = [];
 
-    /// <summary>How it looks, as the document draws it: its parts placed on the page (drawn when annotations are asked for), or null when it has none.</summary>
+    /// <summary>
+    /// How it looks, as the document draws it: its parts placed on the page (drawn when annotations are asked for), or null
+    /// when it has none. A reader fills its parts as the page's own were asked (<see cref="DocumentParts"/>): asked for
+    /// annotations alone, an appearance holds the page's size and nothing more.
+    /// </summary>
     public DocumentPage? Appearance { get; init; }
+
+    /// <summary>Its inside's colour (a square's, a circle's, a polygon's, a line's ends', a redaction mark's fill), or null when it has none.</summary>
+    public DocumentColour? InteriorColour { get; init; }
+
+    /// <summary>The width of its border, line or strokes in points, or null when the document gives none.</summary>
+    public float? BorderWidth { get; init; }
+
+    /// <summary>How a line's (or polyline's) first and last ends are drawn, by the names the document gives ("None", "OpenArrow", "ClosedArrow", "Circle", "Square", "Diamond", "Butt", ...); empty when none are given.</summary>
+    public IReadOnlyList<string> LineEndings { get; init; } = [];
+
+    /// <summary>How it behaves: hidden, printed, locked, ...</summary>
+    public DocumentAnnotationFlags Flags { get; init; }
+
+    /// <summary>The <see cref="Id"/> of the annotation it replies to, or null.</summary>
+    public string? InReplyTo { get; init; }
+
+    /// <summary>How it stands to <see cref="InReplyTo"/>: "reply" (in its thread) or "group" (one with it), or null.</summary>
+    public string? ReplyType { get; init; }
+
+    /// <summary>The state a reply sets ("Accepted", "Rejected", "Completed", "Marked", ...), or null.</summary>
+    public string? State { get; init; }
+
+    /// <summary>The model of <see cref="State"/> ("Review" or "Marked"), or null.</summary>
+    public string? StateModel { get; init; }
+
+    /// <summary>The <see cref="Id"/> of the popup its text opens in, or null.</summary>
+    public string? Popup { get; init; }
+
+    /// <summary>A popup's annotation (its <see cref="Id"/>), or null.</summary>
+    public string? Parent { get; init; }
+
+    /// <summary>Whether a note or a popup is shown open.</summary>
+    public bool Open { get; init; }
+
+    /// <summary>A redaction mark's text, shown over its area once it is applied, or null.</summary>
+    public string? OverlayText { get; init; }
 }
 
 /// <summary>A place in a document: a page with a position and zoom, or a destination's name the document resolves.</summary>
@@ -405,6 +445,19 @@ public sealed record DocumentDestination(int Page)
 
     /// <summary>The destination's name, for a named destination, or null.</summary>
     public string? Name { get; init; }
+
+    /// <summary>
+    /// How the page is shown: at <see cref="X"/>, <see cref="Y"/> and <see cref="Zoom"/>
+    /// (<see cref="DocumentDestinationFit.Position"/>, the default), or fitted to the window (the whole page, its width at
+    /// <see cref="Y"/>, its height at <see cref="X"/>, a box, or its content's bounds).
+    /// </summary>
+    public DocumentDestinationFit Fit { get; init; }
+
+    /// <summary>The right edge of the box shown (<see cref="DocumentDestinationFit.Box"/>), in page points, or null.</summary>
+    public float? Right { get; init; }
+
+    /// <summary>The bottom edge of the box shown (<see cref="DocumentDestinationFit.Box"/>), in page points, or null.</summary>
+    public float? Bottom { get; init; }
 }
 
 /// <summary>A link to write on a page: its box and its target (a web address or a place in the document).</summary>

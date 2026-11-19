@@ -249,6 +249,9 @@ public interface IDocument : IDisposable
 
     /// <summary>The signatures, in the order they were made (empty when there are none).</summary>
     IReadOnlyList<DocumentSignature> Signatures { get; }
+
+    /// <summary>The named destinations (each with its <see cref="DocumentDestination.Name"/>), in the order of their names; empty when there are none or the format names none.</summary>
+    IReadOnlyList<DocumentDestination> Destinations => [];
 }
 
 /// <summary>
@@ -495,6 +498,8 @@ public static class DocumentFormats
 
         public IReadOnlyList<DocumentSignature> Signatures => inner.Signatures;
 
+        public IReadOnlyList<DocumentDestination> Destinations => inner.Destinations;
+
         public DocumentPage ReadPage(int index, DocumentParts parts) => inner.ReadPage(index, parts);
 
         public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => inner.DrawPage(index, options);
@@ -607,6 +612,9 @@ public static class DocumentFormats
 
         public IReadOnlyList<DocumentSignature> Signatures =>
             slot.Call(() => App.Signatures, () => Library.Signatures, (a, b) => Comparisons.Sequences(a.Select(x => x.Field).ToArray(), b.Select(x => x.Field).ToArray()));
+
+        public IReadOnlyList<DocumentDestination> Destinations =>
+            slot.Call(() => App.Destinations, () => Library.Destinations, (a, b) => Comparisons.Sequences(a.Select(x => $"{x.Name}={x.Page}").ToArray(), b.Select(x => $"{x.Name}={x.Page}").ToArray()));
 
         public DocumentPage ReadPage(int index, DocumentParts parts) => slot.Call(() => App.ReadPage(index, parts), () => Library.ReadPage(index, parts), (a, b) => ComparePages(a, b));
 

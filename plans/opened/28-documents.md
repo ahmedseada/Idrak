@@ -26,7 +26,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Built (2026-11-18) |
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
 | D9 | Forms: fields read (text, check, radio, choice, push button, signature), filled, created, flattened; appearances generated | A | Built (2026-11-19) |
-| D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Planned |
+| D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Built (2026-11-19) |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Built (2026-11-18) |
 | D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Built (2026-11-19) |
 | D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Planned |
@@ -1719,6 +1719,124 @@ comes in its tagged order.
 
 **Tests (CPU here):** one build; `documents pdf: annotations|document layouts|documents pdf: write|documents drawers|
 cli: data redact|environment variables|help text`.
+
+**As built (2026-11-19):**
+- **The contract (public API, dumps regenerated through the runner):** `DocumentAnnotation` gains `InteriorColour`,
+  `BorderWidth`, `LineEndings`, `Flags` (`DocumentAnnotationFlags`), `InReplyTo`, `ReplyType`, `State`, `StateModel`,
+  `Popup`, `Parent`, `Open`, `OverlayText`; `DocumentDestination` gains `Fit` (`DocumentDestinationFit`: position, page,
+  width, height, box, bounds and their width and height), `Right`, `Bottom`; `DocumentTextRun.Tag` (`DocumentTag`: the
+  element's type, its place among the elements, the marked content's place in the structure's order; an artifact);
+  `IDocument.Destinations` (the named destinations) and `IDocumentEditor.Redact(index, areas)`, both default members (an
+  implementer of the contract keeps compiling; the registry's wrappers forward the first); `DocumentRedaction` (a box and
+  its fill, black unless set, null unfilled), `DocumentRedactionResult` (what was removed, counted); `DocumentRedactions`
+  (`Find`: every place a text stands in a page's runs, from its glyphs; `Marked`: a page's redaction marks as areas);
+  `DocumentAnnotationLooks.Look` (an annotation without an appearance drawn from its properties: rectangle, ellipse, line
+  and its endings, polygon, polyline, ink, a highlight multiplied, underline, strike-out, wavy line, a note's icon, caret,
+  a stamp's and an attachment's frame, a link's border; none for free text, popups, widgets and kinds not known), shared by
+  the drawer and the writer so a created annotation looks as one without an appearance draws; the `tagged` layout
+  (`DocumentTextLayouts.Tagged`, `DocumentTaggedLayout.cs`): each structure element's runs laid out by `lines`, the
+  elements in the structure's order, untagged runs after, artifacts out; a page with no tagged run reads as `lines`.
+- **Read** (`src/Idrak.Data/Pdf/PdfAnnotations.cs`, `PdfOutline.cs`, `PdfAnnotationsContent.cs`): every annotation of a
+  page's `/Annots` in order (a form's widgets among them), every field the samples state; the box, quads, a line's ends,
+  vertices and ink strokes through the page's display map; a link's `/Dest` or action (a web address or a place; any
+  other action not taken), named ones resolved and kept by name; a file attachment's file; the replies to an annotation
+  under it (and each reply still in the page's list); the appearance read as D9 reads a widget's (`PdfForms.AppearanceStream`
+  of `/AS`, `Placement`, `PdfDocument.Content` through `ReadForm`, now taking `/CA` as a group's opacity), none for a
+  hidden annotation; an annotation without `/NM` known by its object (`#12`) or place. Bookmarks (open and closed, colours,
+  styles, nesting, a cycle ended), destinations in the page's points as shown, named destinations (the name tree and the
+  catalog's `/Dests`), page labels (the number tree), each read once a document; the structure tree read once (elements
+  and `/MCID`s, marked-content references, `/Pg` inherited), each run tagged by the innermost `BDC` with an `/MCID` (inline
+  or named in `/Properties`) or `/Artifact` it stands in.
+- **Drawn** (`DocumentDrawer.cs`): with `DocumentParts.Annotations` asked, each annotation's appearance, or its look
+  from its properties, over the page in the page's order (D9's widget appearances included, its hidden-text option kept);
+  hidden, not-viewed and popup annotations not drawn, one drawn from its text alone (free text without an appearance)
+  counted `not-drawn`.
+- **Written** (`PdfAnnotationsWrite.cs`, `PdfAnnotationsEdit.cs`): `AddAnnotation` and `AddLink` on a page builder, the
+  look drawn at once into a form of the page's user space (paths, images, glyph runs; a highlight under `/BM /Multiply`),
+  the dictionary written at the document's end (every page numbered then: destinations to later pages), its points in
+  user space, threads and popups by id, a file attachment's file embedded; one `/Annots` with D9's widgets. `AddOutline`
+  and `SetPageLabels` on the builder (`/Outlines` with counts as the format asks, `/PageLabels`). The editor:
+  `AddAnnotation`, `RemoveAnnotation` (by the id it was read with; its popup with it), `AddOutline` (the source's bookmarks
+  kept, followed to where their pages stand now), both save modes; page changes ride on `PdfEditPages.Write` through
+  `PdfPageEdits` (the page's dictionary changed before the copier writes it, new objects named by references the copier
+  writes as they are), beside D9's `PdfAnnotsEdit`.
+- **Redaction** (`PdfRedaction.cs`): the page's content interpreted as read and written again operator by operator: a
+  text operator keeps the glyphs whose boxes do not overlap an area (by a hundredth of the glyph each way) and moves past
+  the removed ones by `TJ` offsets of their advances, so what stays stands where it stood (a span's `/ActualText` over a
+  removed glyph dropped, its named properties too); a path inside an area is not painted (its clip kept), one crossing an
+  area painted under even-odd clips leaving out each area it crosses, a shading likewise; an image (XObject or inline)
+  under an area drawn from a copy whose pixels with their centre inside take the area's fill (black when unfilled), the
+  original left out of the resources when no longer drawn; a form under an area drawn from a redacted copy of its content
+  (within `MaxDepth`); the annotations over an area removed (a popup with its annotation); each filled area painted after
+  the content. Saved as a rewrite only (an incremental save refused naming `Rewrite`), so nothing removed survives.
+- **The command** `idrak data redact IN.pdf (--boxes FILE | --text TEXT | --marked) -o OUT.pdf` (`DataRedactCommand.cs`):
+  the three sources together, `--ignore-case`, `--fill black|white|none|#rrggbb`, `--password`; a progress line (pages,
+  areas removed) and a writing stage; a line per page of what was removed and a total, `--json` the same; written to
+  `OUT.partial` then moved (nothing left when refused); help and README with generic examples; in the variables table
+  (`DocumentCommands`), its Arabic summary in the catalog.
+- **Merged over D9 and D12** (onto `d18fd2f`): D9 read widgets alone (`PdfForms.Widgets`): replaced by the one reader,
+  which reuses D9's appearance helpers, so widgets read and draw as before (D9's group passes) and every other kind joins
+  them; `ReadForm` takes the opacity; D9's unused refusals in `PdfDocument` and the editor removed; a signed save counts
+  annotation and bookmark edits as edits.
+- **Tests:** group `documents pdf: annotations` (7, `tests/Idrak.Tests.Library/DocumentPdfAnnotationsTests.cs`): every
+  annotation of the D10 samples (49) as its JSON says, field by field, replies under their note; navigation's bookmarks,
+  named destinations and labels; the tagged page's order and tags (the artifact out; `lines` the default; untagged files
+  the same through both); every kind created by the builder with links, bookmarks and labels, and the editor's adds,
+  removals and bookmark (incremental: the source its prefix; rewrite) read back; redaction by the sample's marks (16
+  glyphs, the path inside, the crossing one clipped with an even-odd clip leaving out the area, the image's 81 pixels
+  exactly as `.redacted.png`, the three marks; no removed word in the file's bytes, any decoded stream or any object,
+  as text or hex; drawn against pdfium's `redaction-applied`), by a text match and a box; drawing against pdfium; timings.
+  Group `cli: data redact` (2, `tests/Idrak.Tests/CliRedactTests.cs`). D6's and D11's refusal checks now check D10's misuse.
+  Run (the filter below, with the update flags): 138 tests, 133 passed, 5 failed, all new: the reading test's floor of 50
+  (the samples hold 49; now every one is counted); the editor's rewrite lost a reply (finding its `/IRT` copied the
+  source's annotation while the reply's object was open: references and images are now found first); redaction dropped a
+  name's `/` and a string's `(` from copied operators (the lexer's start is past them), losing the third line; a link with
+  no border counted not drawn (its look is now empty). Rebuilt once: `documents pdf: annotations|cli: data redact` 8
+  passed, 1 failed (the CLI test parsed one line of indented `--json`); rebuilt: 2 passed; then `public API|abstraction
+  inventory` without the flags and the timing runs: 10 passed, 0 failed. `api/Idrak.Abstraction.txt` and the inventory
+  regenerated through the runner.
+- **Drawn against pdfium** (100 dpi, the share of pixels off by more than 32 levels after a 3 x 3 mean; standard-font
+  pages held to 8%): `annotations` 0.45% with its annotations (3.82% without them), `annotations-no-appearance` 1.57%
+  (2.80% without: the looks from properties land where pdfium's own do), `navigation` 0.74% (its links have no border);
+  the redacted page against pdfium's `redaction-applied` 1.21%.
+- **The checker's verdicts** (`tools/documents/check_written.py --expected auto`): `test-output/documents/annotated`, 3
+  files (the builder's every kind, the editor's update and rewrite), and `test-output/documents/redacted`, 8 files (the
+  library's and the command's redactions by marks, text, boxes, and a 500-page file before and after): all 11 pass, qpdf
+  without damage or warning, pdfminer.six and pdfium extracting exactly the expected text (no removed word). pdfium lists
+  every created annotation with its subtype, both links (the place link to page 2) and the bookmarks.
+- **Timings** (this container, 4 cores; the owner's devices give the real ones): the 52 annotations of the six D10
+  samples, opened each pass, read with their appearances (as D9 reads widgets): warm median 3.7 ms a pass, 543 KiB; with
+  every part of their pages: cold 33.7 ms, warm 5.6 ms, 745 KiB; `redaction`'s page redacted by its marks and saved as a
+  rewrite: cold 74.2 ms (compiling), warm 1.85 ms, 101 KiB; 500 pages (142 KB) redacted through the command by a text on
+  every page: 0.14 s (0.28 ms a page) after the group's other runs, 168 KB written.
+- **Decisions the plan did not settle, taken here:** (1) Replies are listed on the page and under the annotation they
+  reply to. (2) An appearance is read with text, paths and images whatever was asked (D9's rule for widgets, now for all),
+  none for a hidden annotation. (3) A glyph is removed when its box overlaps an area by a hundredth of the glyph both ways
+  (a neighbour that only touches stays); a pixel by its centre (the samples' rule). (4) Annotations over an area are
+  removed, widgets and popups only with their annotation; an unfilled area's pixels take black. (5) Redacting turns a
+  page's images under an area into Flate RGB or grey copies (masks not carried) and keeps fonts' glyph programs (no text
+  left in them). (6) New bookmarks and destinations name pages of the document as saved; the editor writes the bookmark
+  tree again (source items kept). (7) `--password` is an option of the command, not a variable (D2's decision 2).
+- **Left:** a reply whose parent is removed by redaction can copy the parent back into a rewrite (a reference to it); text
+  matched within one run only (a word split across text operators is not found); images in patterns, soft masks and
+  Type 3 glyphs are not redacted; a redacted image loses its soft mask; free text without an appearance is not drawn
+  (its font is the document's); the builder's copied page's new annotations reach earlier pages only.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: annotations|document layouts|documents pdf: edit|documents pdf: write|documents pdf: vector|documents pdf: text|documents pdf: file|documents pdf: images|documents pdf: forms|documents pdf: signatures|documents drawers|documents contracts|conformance kit:|outside plug-in|override loop:|cli: data redact|cli polish: help lists|cli polish: the environment table names real commands|cli arabic:|public API|abstraction inventory|every environment variable read in src|hidden boxing|test runner"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d10.txt
+  $env:IDRAK_FILTER = "documents pdf: annotations: timings|documents pdf: annotations: annotations draw|documents pdf: annotations: redaction applied|cli: data redact: the redaction sample"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d10-timing.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- data redact test-output\documents\samples\d10\redaction.pdf --marked -o test-output\documents\redacted\redaction-marked.pdf
+  python -I tools\documents\check_written.py test-output\documents\annotated -o test-output\documents\annotated-check.json --expected auto
+  python -I tools\documents\check_written.py test-output\documents\redacted -o test-output\documents\redacted-check.json --expected auto
+  ```
+  The redaction run writes `test-output\documents\redacted\redaction-marked.pdf` (the sample's three marks applied) to
+  open beside `test-output\documents\samples\d10\redaction.pdf`.
 
 ## Phase D11: editing in place, and saving
 

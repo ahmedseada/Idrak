@@ -23,7 +23,7 @@ internal abstract partial class Tests
         ("documents pdf: write: vector pages: every verb (re, c, v and y, a quadratic), both fill rules, fill and stroke, caps, joins, miter limits, dashes with a phase, grey, RGB and CMYK with opacity, nested clips under Save and Restore read back exactly; a Restore without a Save, a path without a move and an empty dash refused", PdfWriteVector),
         ("documents pdf: write: text: each face embedded once as a Type0, Identity-H subset (ids kept, /W from the advances, a ToUnicode map), runs read back with their text, glyph ids, places and boxes; /ActualText where glyphs do not read as their text (a lam-alef ligature right to left, a character drawn by two glyphs); hidden and stroked runs; a CFF face, a mapped legacy face and whole embedding", PdfWriteText),
         ("documents pdf: write: a searchable scan (the page's image and its OCR text hidden over it) reads back both; the page-of-shapes helper writes a synthetic page (areas, dashed and dotted strokes, laid-out lines) whose paths and text read back", PdfWriteScanAndShapes),
-        ("documents pdf: write: the same input writes the same bytes (on several threads too); a builder disposed without Finish leaves a file the reader repairs with its pages; attached files and the information read back; the parts later phases fill refused naming their phase; a page used after the next one started refused", PdfWriteDeterministicAndLimits),
+        ("documents pdf: write: the same input writes the same bytes (on several threads too); a builder disposed without Finish leaves a file the reader repairs with its pages; attached files and the information read back; the parts later phases fill refused naming their phase (and D10's misuse); a page used after the next one started refused", PdfWriteDeterministicAndLimits),
         ("documents pdf: write: a 500-page image PDF written with one page of buffers (JPEG scans and Flate line art), timed cold and warm, the managed memory sampled per page and its growth bounded", PdfWriteManyPages),
         ("documents pdf: write: a sample document for a person to open (test-output/documents/written/sample.pdf): a vector page with text, a photograph, a searchable scan and a page of shapes", PdfWriteSample),
     ];
@@ -836,11 +836,12 @@ internal abstract partial class Tests
         {
             var page = builder.AddPage(100, 100);
             ExpectRefusal<ArgumentNullException>(() => builder.AddField(null!), "", "no field to add");
-            ExpectRefusal<NotSupportedException>(() => builder.AddOutline(null!), "D10", "bookmarks");
-            ExpectRefusal<NotSupportedException>(() => builder.SetPageLabels([]), "D10", "page labels");
+            ExpectRefusal<ArgumentNullException>(() => builder.AddOutline(null!), "outline", "a bookmark that is null (D10 writes them)");
+            ExpectRefusal<ArgumentException>(() => builder.SetPageLabels([new DocumentPageLabel(0, DocumentPageNumbering.Decimal), new DocumentPageLabel(0, DocumentPageNumbering.LowerRoman)]),
+                "same page", "two page label ranges on one page");
             ExpectRefusal<ArgumentNullException>(() => builder.Sign("Signature1", null!), "options", "signing without options");
-            ExpectRefusal<NotSupportedException>(() => page.AddLink(null!), "D10", "links");
-            ExpectRefusal<NotSupportedException>(() => page.AddAnnotation(null!), "D10", "annotations");
+            ExpectRefusal<ArgumentException>(() => page.AddLink(new DocumentLink(new DocumentBox(0, 0, 10, 10))), "neither", "a link leading nowhere");
+            ExpectRefusal<ArgumentNullException>(() => page.AddAnnotation(null!), "annotation", "an annotation that is null");
             builder.AddPage(100, 100);
             ExpectRefusal<InvalidOperationException>(() => page.Path(new DocumentPath(PdfBoxVerbs, PdfBoxPoints(new DocumentBox(0, 0, 5, 5)))), "was written", "a page used after the next one started");
             builder.Finish();

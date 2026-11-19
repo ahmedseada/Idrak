@@ -80,9 +80,9 @@ internal static class EnvironmentVariables
     private static readonly string[] FontCommands = ["data synth", "data fonts"];
 
     // Plan 28: read by the document options (DocumentOptions, DocumentWriteOptions, DocumentDrawOptions, SignatureCheckOptions)
-    // and FontWriteOptions in Idrak.Abstraction, wherever documents are read, written or drawn and fonts written; no command
-    // reads a document yet (idrak data redact comes with phase D10).
-    private static readonly string[] DocumentCommands = [];
+    // and FontWriteOptions in Idrak.Abstraction, wherever documents are read, written or drawn and fonts written: idrak data
+    // redact reads and writes documents (phase D10).
+    private static readonly string[] DocumentCommands = ["data redact"];
 
     // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code names them in its help, its flags win.
     private static readonly string[] CodeData = ["data code"];
@@ -504,7 +504,7 @@ internal static class EnvironmentVariables
         new("IDRAK_WOFF_MAX_BYTES", Fonts, "a quarter of the memory free when a WOFF font is read", "The most bytes the font inside a WOFF file may take once unpacked (bytes, or with k, m or g); a file whose tables claim more is refused before anything is inflated, naming the limit (Idrak.Imaging.Plugins' WoffFormat.MaxFontBytes)", FontCommands),
         new("IDRAK_WOFF_COMPRESSION", Fonts, "9", "The zlib level, 0 to 9, the woff font writer compresses each table at (0: every table stored); a table stays stored when compressing does not make it smaller (Idrak.Imaging.Plugins' WoffWriter.CompressionLevel)", DocumentCommands),
         new("IDRAK_FONT_CURVE_TOLERANCE", Fonts, "1", "How far a curve a font writer converts to another kind (cubic to quadratic) may stray from the original, in font units (FontWriteOptions.CurveTolerance)", DocumentCommands),
-        new("IDRAK_DOCUMENT_LAYOUT", Documents, "lines", "The layout that arranges a document page's text runs into lines and text: a DocumentTextLayouts name (lines, content, or a plug-in's; DocumentOptions.Layout)", DocumentCommands),
+        new("IDRAK_DOCUMENT_LAYOUT", Documents, "lines", "The layout that arranges a document page's text runs into lines and text: a DocumentTextLayouts name (lines, content, tagged: the order a tagged file gives, or a plug-in's; DocumentOptions.Layout)", DocumentCommands),
         new("IDRAK_DOCUMENT_READING_ORDER", Documents, "bidi", "The reading order that puts a document line's text in logical order: a ReadingOrders name (bidi, runs; DocumentOptions.ReadingOrder)", DocumentCommands),
         new("IDRAK_DOCUMENT_MAX_STREAM_BYTES", Documents, "a quarter of the memory free when a document is opened", "The most bytes one decoded part of a document file may take (bytes, or with k, m or g); a file that passes it fails naming the limit (DocumentOptions.MaxStreamBytes)", DocumentCommands),
         new("IDRAK_DOCUMENT_CACHE_BYTES", Documents, "an eighth of the memory free when a document is opened", "The most bytes a document keeps decoded for reuse (fonts and other shared parts; bytes, or with k, m or g; DocumentOptions.CacheBytes)", DocumentCommands),
