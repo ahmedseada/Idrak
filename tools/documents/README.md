@@ -60,6 +60,71 @@ fontTools (the Adobe Glyph List and the ITC Zapf Dingbats list) and pdfminer.six
 fonts' AFM metrics), with the Symbol and ZapfDingbats built-in encodings of ISO 32000-2 Annex D checked code by code
 against pdfium; the licence notices go into the file. Reruns give the same bytes.
 
+## Real files
+
+The test group `documents real:` (`tests/Idrak.Tests.Library/DocumentRealTests.cs`, plan 28's D5 with D13's real-files
+clause) reads a folder of real PDFs: every `*.pdf` under the folder `IDRAK_DOCUMENTS_REAL` names (its subfolders too, in
+the order of their paths; nothing is written into it). Without the variable its three tests are SKIP lines. For each
+file it:
+
+- **reads** it within the default limits: opened (version, encryption, repaired), every page's text through the `lines`
+  and the `tagged` layouts, its images (each decoded, with its mask), paths, clips, shadings and annotations, the
+  fields, bookmarks, named destinations, page labels, attachments (each read to its end) and signatures (each checked,
+  nothing trusted and nothing fetched, so the digest, signature and changes steps are what it proves);
+- **draws** every page at the drawer's default DPI (text, images, paths and annotations);
+- **writes it back** as a rewrite and as an incremental update with its title changed, each read back: the same page
+  count, sizes, turns, text, runs and images, the title written; the update also keeps the source's bytes as its prefix
+  and every signature's digest and signature as they checked;
+- **times** each step (open, text, tagged, parts, images, navigation, signatures, draw, rewrite, incremental) cold (the
+  file's first pass of the step in the run; the first file's also compiles the code) and warm (the median of the warm
+  passes) apart, with the time and the managed memory a page.
+
+A file fails the group only for a crash (an exception the contract does not document), a page or part that cannot be
+read and says nothing why, or a written-back file that does not read the same; the failure names the file and the step.
+A damaged, hostile or unsupported file reports its reason (an `InvalidDataException` or `NotSupportedException` with its
+message) and the run goes on; an encrypted file that needs a password and has none is listed as skipped.
+
+The summary, `test-output/documents/real/summary.json` and `summary.txt` (written again every few seconds while the run
+goes, so a long run can be followed in it): per file its pages, bytes, version, the counts (runs, lines, characters,
+images and pixels decoded, paths, annotations by kind, fields by kind, bookmarks, attachments, signatures and each one's
+check), the issues by kind with their details and pages, what drawing left out, every step's times cold and warm with a
+page's time and memory, the written-back files' sizes and checks, the reference's differences and every reported
+failure; then the totals.
+
+| Variable (the tests' own) | Default | What it sets |
+|---|---|---|
+| `IDRAK_DOCUMENTS_REAL` | none: the group is skipped | The folder of PDFs |
+| `IDRAK_DOCUMENTS_REAL_REFERENCE` | `test-output/documents/real-reference` when it is there | A folder of reference text: `NAME.reference.txt` at the PDF's path under it (a `NAME.reference.txt` beside the PDF comes first) |
+| `IDRAK_DOCUMENTS_REAL_SAVE` | none | `pages`, `files` or both (`all`): the drawn pages as PNG in `test-output/documents/real/drawn/` and the written-back files in `.../written/` (the folder's paths kept), else nothing is kept |
+| `IDRAK_DOCUMENTS_REAL_WARM` | 3 | The warm passes of each step, 0 to 100 (0: cold alone, for a large folder) |
+
+A password is never a variable: the first line of `NAME.password.txt` beside `NAME.pdf` opens it. The run takes as long
+as the folder needs (each step once cold and three times warm), longer than the runner's 300 seconds a test for a large
+folder: give it `IDRAK_TIMEOUT` (seconds).
+
+**The reference text.** `reference_text.py FOLDER [-o OUT] [--beside] [--password PW] [--timeout S] [--memory-mb M]`
+writes pdfminer.six's text of every PDF in the folder (the reader the samples' reference text comes from, pinned in
+`requirements.txt`) as `NAME.reference.txt` at the PDF's path under `OUT` (default
+`test-output/documents/real-reference`, the folder the group reads), or beside each PDF with `--beside`: each page's text
+in order, the pages separated by a form feed. Each file is read in a child process with a time limit (120 s) and, on
+Linux, a memory limit (4 GiB); a file it cannot read is listed with its error and gets no text (an older one is
+removed). It prints each file with the rate and the time left and writes `reference.json` into `OUT`. The group compares
+each page, whitespace collapsed: the same, the same but for spaces, the same words in another order, the same words with
+some of them as drawn (a right-to-left word's characters in the order they are drawn, which is how pdfminer.six gives
+them, where Idrak gives logical order), or words that differ (the reference's words Idrak lacks and Idrak's extra ones,
+and the share in common). The differences are listed, never failed: the reference fixes what the text must say, not how
+fast Idrak may be. pdfminer.six also ignores `/ActualText` and cannot read an embedded Type 1 font's own encoding
+(`(cid:N)` in its text), so such pages list differences that are the reference's.
+
+```powershell
+# Windows PowerShell, from D:\Projects\Idrak (the folder D:\Documents\pdf-samples is an example)
+python -I tools\documents\reference_text.py D:\Documents\pdf-samples
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents real:"; $env:IDRAK_DOCUMENTS_REAL = "D:\Documents\pdf-samples"; $env:IDRAK_TIMEOUT = "7200"
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-real.txt
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:IDRAK_TIMEOUT
+Get-Content test-output\documents\real\summary.txt
+```
+
 ## Reproducible
 
 Every byte comes from the seed and the pinned versions (`requirements.txt`): no dates, no random identifiers (the file

@@ -21,7 +21,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D2 | PDF encryption: the standard security handler (RC4, AES-128, AES-256), an empty or a given open password | B | Built (2026-11-18) |
 | D3 | PDF text: pages, the content-stream interpreter, fonts to Unicode, glyph widths, text runs with boxes, the `lines` layout | A | Built (2026-11-18) |
 | D4 | PDF images and embedded files (a scanned PDF's pages as images) | B | Built (2026-11-18) |
-| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | In progress (the generator, every phase's samples and the checkers built; the READMEs and the owner's runs left) |
+| D5 | Fixtures and their generator, READMEs, the owner's runs on real files | A | Built (2026-11-19) |
 | D6 | PDF writing: pages of images, vector paths and text (fonts embedded, searchable), several pages, the same bytes from the same input | B | Built (2026-11-18) |
 | D7 | PDF vector content read, and any page drawn to pixels (paths, text through the embedded fonts, images, clipping) | A | Built (2026-11-18) |
 | D8 | Fonts written: TrueType (`.ttf`) built in, with subsetting and legacy fonts converted once (D6 embeds through it; plan 38 exports through it); WOFF (read and write) from a plug-in, the one proof of the plug-in path | B | Built (2026-11-18) |
@@ -954,6 +954,103 @@ pyhanko-certvalidator 0.33.0, asn1crypto 1.5.1, Brotli 1.2.1, opentype-sanitizer
 reference tools' gaps found are in the README (pdfium ignores knockout groups and has no XFA; pdfminer.six cannot
 read an embedded Type 1 font's built-in encoding; pyHanko reads neither legacy SHA-1 form). The owner makes the large
 set with `python -I tools\documents\make_fixtures.py --only none --large` after the samples.
+
+**As built, third piece (2026-11-19): the real-files group and the docs.**
+- **The group `documents real:`** (`tests/Idrak.Tests.Library/DocumentRealTests.cs`, three tests, CPU only; D13's third
+  bullet, the owner's files written back, edited, drawn and timed, is this group): every `*.pdf` under the folder
+  `IDRAK_DOCUMENTS_REAL` names (subfolders too, in ordinal order of their paths; nothing written into it). Without the
+  variable each test is a SKIP naming it. **Read:** opened (version, encryption, repaired), every page's text through
+  `lines` and `tagged`, its images (each decoded, with its mask), paths, clips, shadings and annotations, the fields,
+  bookmarks, named destinations, page labels, attachments (each read to its end) and signatures (each checked with
+  nothing trusted and nothing fetched: the digest, signature and changes steps are what it proves, "intact" when the
+  first two pass), all within the default limits (C8); the reference's differences listed. **Drawn:** every page at the
+  drawer's default DPI (150, `IDRAK_DOCUMENT_DPI`) with text, images, paths and annotations, its drawing issues counted.
+  **Written back:** as a rewrite and as an incremental update with the information's title changed, each written again
+  to a file and read back: the same page count, sizes, turns, text, run and image counts, the title written; the update
+  also keeps the source's bytes as its prefix and every signature's digest and signature results. **Timed:** each step
+  (open, text, tagged, parts, images, navigation, signatures, draw, rewrite, incremental) cold and warm apart (rule 76),
+  with a page's time and managed memory. A file fails only for a crash, a page or part that cannot be read and gives no
+  reason, or a written-back file that does not read the same; the message names the file and step, and the run goes on
+  to the other files first. **The summary,** `test-output/documents/real/summary.json` and `summary.txt` (written again
+  every 5 seconds while a test runs, and at its end): per file its pages, bytes, version, counts (runs, lines,
+  characters, images and pixels, paths, annotations by kind, fields by kind, bookmarks, attachments, signatures with
+  each step's result), issues by kind with their details and pages, drawing issues, each step's times, the written-back
+  sizes and checks, the reference's differences and every reported failure; then the totals.
+- **The reference text:** `tools/documents/reference_text.py FOLDER [-o OUT] [--beside] [--password PW] [--timeout S]
+  [--memory-mb M]`: pdfminer.six (the pinned reader the samples' reference text comes from, `docfixtures.reference`'s
+  `pdfminer_text`) in a child process per file with a time limit (120 s) and on Linux a memory limit (4 GiB), each page's
+  text separated by a form feed, into `NAME.reference.txt` at the PDF's path under `OUT` (default
+  `test-output/documents/real-reference`, which the group reads) or beside the PDF; progress a file a line with the rate
+  and the time left, and `reference.json`. The group compares each page with whitespace collapsed: the same, the same
+  but for spaces, the same words in another order, the same words with some as drawn (a word's text elements reversed:
+  a right-to-left word as pdfminer.six gives it), or words that differ (the reference's missing, Idrak's extra, the share
+  in common). Listed, never failed.
+- **The docs:** the root README's `Idrak.Data` line names what documents can do (PDF read, written, edited, signed and
+  checked, drawn; forms, annotations, bookmarks, redaction), `Idrak.Imaging`'s names Type 1, TrueType written and pages
+  drawn, `Idrak.Data.Plugins` stays the place for Office, to come; `src/Idrak.Data/README.md` gains "Documents": open
+  and read, write (a page of an image, a path and text set through the text setter), edit and save (incremental,
+  rewrite, merge, overlay, encryption), forms (read, fill, add, flatten), annotations and redaction (with `idrak data
+  redact`), sign and check, draw a page, the options and their variables, and what is not supported (from every phase's
+  "Left" and "Not in this plan"); `src/Idrak.Imaging/README.md` gains "Fonts written" (TrueType whole and subset, the
+  options, what is not written, legacy fonts converted once and kept by `FontCache`, `IDRAK_FONT_CACHE`) and
+  "Documents" (the "coverage" drawer and every setting of D7's drawer settings with its variable, the "shaped" text
+  setter, `DocumentShapes`), the "cff" and "type1" formats in its font row; `src/Idrak.Imaging.Plugins/README.md`
+  already had WOFF; `tools/documents/README.md` gains "Real files". The bench is D13's.
+- **Decisions the plan did not settle, taken here:** (1) The group's variables are the tests' own, read in the tests
+  as `IDRAK_DOCUMENTS_SAMPLES` is, not in the tool's table: `IDRAK_DOCUMENTS_REAL`, `IDRAK_DOCUMENTS_REAL_REFERENCE`
+  (default `test-output/documents/real-reference` when there; a `NAME.reference.txt` beside the PDF comes first),
+  `IDRAK_DOCUMENTS_REAL_SAVE` (`pages`, `files`, `all`: the drawn pages as PNG under `real/drawn/` and the written-back
+  files under `real/written/`, else nothing kept) and `IDRAK_DOCUMENTS_REAL_WARM` (3 warm passes, 0 to 100); a bad
+  value fails naming its variable. (2) A password is never a variable (D2's decision 2): the first line of
+  `NAME.password.txt` beside the PDF; a file that needs one and has none (or a wrong one) is listed as skipped. (3) A
+  crash is any exception but the contract's `InvalidDataException` and `NotSupportedException` (an aggregate of them
+  too); those are listed with their message, and one with no message fails. (4) Cold is the file's first pass of each
+  step in the run (the first file's also compiles the code), warm the median of the warm passes; each pass opens the
+  document anew outside its clock, so a warm pass reuses no document's cache; memory is
+  `GC.GetTotalAllocatedBytes(precise: true)` (drawing spreads over the cores). The timed write-back passes write to a
+  stream that only counts, and the check writes once more to a file. (5) The plan's run pattern named an output
+  variable (`IDRAK_DOCUMENTS_OUT`): not built; the outputs are `test-output/documents/real/`, as every other document
+  group's are fixed under `test-output/documents/`, and the run's own `drawn/` and `written/` start empty. (6) The
+  runner stops a test after 300 seconds; a large folder needs `IDRAK_TIMEOUT` (the command below gives two hours).
+- **Tests:** one build (no error, no warning); the filter `documents real:|documents contracts|public API|abstraction
+  inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test
+  runner` on the CPU without `IDRAK_DOCUMENTS_REAL`: 22 passed, 0 failed, 3 skipped (the group, naming the variable);
+  with it on a scratch folder of 20 samples (`IDRAK_DOCUMENTS_REAL_SAVE=all`): 25 passed, 0 failed. Reading that
+  summary showed four things to tidy, none a failure: counts written "1 pages", an empty totals list printed as nothing,
+  an empty reference page counted as one empty word, and the right-to-left page listed as words that differ (now "words
+  as drawn"); rebuilt once, the same filter on the folder: 25 passed, 0 failed.
+- **The scratch run** (20 samples in five folders: text, right-to-left and tagged letters, two scans, a form,
+  annotations, attachments, two vector pages, a repaired file, a 12-page filters file, two signed files, three
+  encrypted ones (one opened with the empty password, one with its `NAME.password.txt`, one without), three hostile
+  ones; this container, 4 cores, another agent building beside it): 18 opened, 1 skipped (its password not given), 1
+  not opened (the page-tree cycle, named); 33 pages, 112 runs (11 hidden), 3 images (2.9 megapixels decoded), 33
+  paths, 39 annotations, 15 fields, 5 attachments, 3 signatures, all 3 intact (the chain not trusted, as nothing is);
+  10 reported failures, each with its reason (the reference cycle's and the form recursion's page at every step); every
+  rewrite and update read the same (18 of 18 each), the updates keeping the source as their prefix and both signed
+  files' signatures. A page, cold / warm: open 1.88 / 0.11 ms, text 2.82 / 0.26, tagged 0.45 / 0.25, parts 1.59 / 0.33,
+  images 1.22 / 0.38, navigation 0.94 / 0.06, signatures 1.99 / 0.11, draw 8.49 / 5.09 (150 dpi, no fonts folder: 114
+  runs in fonts not embedded left out and counted), rewrite 1.33 / 0.24, incremental 0.53 / 0.02. The reference
+  (`reference_text.py` on the folder: 18 files with text in 32 s; the file with no password refused, the reference
+  cycle past its 30-second limit): 17 files, 32 pages: 27 the same, 1 in another order (the tagged page: pdfminer.six
+  groups its text boxes otherwise than `lines` orders the lines), 1 with words as drawn (the right-to-left page), 2 in words (`filters` page 2, a Flate stream without its zlib header pdfminer.six reads nothing
+  from; `vector-fonts`, whose Type 1 font's own encoding pdfminer.six gives as `(cid:N)`), 1 not compared (the form
+  recursion's page, which Idrak reports).
+- **Left:** a run that keeps nothing leaves `real/written/`'s empty folders behind; the summary's times are this
+  container's (the owner's devices give the real ones).
+- **The owner's run** (held with the others until asked; `D:\Documents\pdf-samples` stands for the owner's folder):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  python -I tools\documents\reference_text.py D:\Documents\pdf-samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents real:|test runner"; $env:IDRAK_DOCUMENTS_REAL = "D:\Documents\pdf-samples"; $env:IDRAK_TIMEOUT = "7200"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-real.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:IDRAK_TIMEOUT
+  Get-Content test-output\documents\real\summary.txt
+  ```
+  The summary is `test-output\documents\real\summary.txt` (and `summary.json` beside it); the reference text is in
+  `test-output\documents\real-reference\`. `$env:IDRAK_DOCUMENTS_REAL_SAVE = "pages"` before the run also keeps every
+  drawn page as PNG under `test-output\documents\real\drawn\`.
 
 ## Phase D6: PDF writing
 
@@ -2363,11 +2460,12 @@ cd D:\Projects\Idrak; git checkout documents; git pull origin documents
 dotnet build -c Release tests\Idrak.Tests
 # the samples, into the ignored folder (once per pull that changes tools\documents)
 python -I tools\documents\make_fixtures.py -o test-output\documents\samples
-# D3 onwards: the owner's own PDFs (a folder of real files; nothing is written into it). From D6 each is also written
-# back and read again, and from D7 its pages are drawn: the summary, the copies and the drawn pages go to test-output.
-$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents real:"; $env:IDRAK_DOCUMENTS_REAL = "D:\Documents\pdf-samples"; $env:IDRAK_DOCUMENTS_OUT = "test-output\documents"
-dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
-Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:IDRAK_DOCUMENTS_OUT
+# The owner's own PDFs (a folder of real files; nothing is written into it), read, drawn, written back and timed: the
+# summary goes to test-output\documents\real (D5's third piece); the reference text first, from the same folder.
+python -I tools\documents\reference_text.py D:\Documents\pdf-samples
+$env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents real:"; $env:IDRAK_DOCUMENTS_REAL = "D:\Documents\pdf-samples"; $env:IDRAK_TIMEOUT = "7200"
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-real.txt
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_DOCUMENTS_REAL, Env:IDRAK_TIMEOUT
 ```
 
 ## Risks
