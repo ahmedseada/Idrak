@@ -1349,6 +1349,7 @@ public enum Idrak.Abstraction.Data.DocumentImageEncoding : byte
 
 public sealed record Idrak.Abstraction.Data.DocumentInfo : System.IEquatable<Idrak.Abstraction.Data.DocumentInfo>
   public DocumentInfo()
+  public Idrak.Abstraction.Data.DocumentSecurity? Security { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string> Entries { get; init; }
   public System.DateTimeOffset? Created { get; init; }
   public System.DateTimeOffset? Modified { get; init; }
@@ -1585,6 +1586,17 @@ public static class Idrak.Abstraction.Data.DocumentRedactions
 public enum Idrak.Abstraction.Data.DocumentSaveMode : byte
   Incremental = 0
   Rewrite = 1
+
+public sealed record Idrak.Abstraction.Data.DocumentSecurity : System.IEquatable<Idrak.Abstraction.Data.DocumentSecurity>
+  public DocumentSecurity()
+  public Idrak.Abstraction.Data.DocumentPermissions Permissions { get; init; }
+  public bool MetadataEncrypted { get; init; }
+  public int KeyBits { get; init; }
+  public int Revision { get; init; }
+  public string EmbeddedFiles { get; init; }
+  public string Handler { get; init; }
+  public string Streams { get; init; }
+  public string Strings { get; init; }
 
 public sealed record Idrak.Abstraction.Data.DocumentSetLine : System.IEquatable<Idrak.Abstraction.Data.DocumentSetLine>
   public DocumentSetLine(string Text, float Width, bool RightToLeft, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentSetRun> Runs)

@@ -50,6 +50,14 @@ internal abstract partial class Tests
                 bool asOwner = user.Length > 0 && password == owner;
                 Check(security.Revision == (int)encryption["R"]! && security.Owner == asOwner,
                     $"{what}: revision {security.Revision}, opened as {(security.Owner ? "owner" : "user")}; expected {encryption["R"]}, as {(asOwner ? "owner" : "user")}");
+
+                // The information says how it is encrypted, as its JSON states it: nothing random (no key, salt or IV).
+                string cipher = (string)encryption["cipher"]!;
+                string strings = (string?)encryption["stringFilter"] == "Identity" ? "none" : cipher;
+                Check(info.Security is { Handler: "Standard" } described && described.Revision == (int)encryption["R"]! && described.KeyBits == (int)encryption["lengthBits"]!
+                      && described.Streams == cipher && described.Strings == strings && described.EmbeddedFiles == cipher
+                      && described.Permissions == PdfSecurity.ToPermissions((int)encryption["permissions"]!) && described.MetadataEncrypted == (bool)encryption["encryptMetadata"]!,
+                    $"{what}: the information's encryption {info.Security}; expected revision {encryption["R"]}, {encryption["lengthBits"]} bits, {cipher} (strings {strings}), /P {encryption["permissions"]}, metadata encrypted {encryption["encryptMetadata"]}");
                 if (expected["info"] is JsonObject stated)
                 {
                     PdfCheckInfo(what, info, stated);
@@ -162,7 +170,7 @@ internal abstract partial class Tests
 
         PdfCheckInfo($"{what}, as its twin", document.Info, twin.Expected["info"]!.AsObject());
         using var plain = DocumentFormats.Open(twin.Path);
-        Check(plain.PageCount == document.PageCount && !plain.Info.Encrypted, $"{what}: {document.PageCount} pages, its twin {plain.PageCount}");
+        Check(plain.PageCount == document.PageCount && !plain.Info.Encrypted && plain.Info.Security is null, $"{what}: {document.PageCount} pages, its twin {plain.PageCount}, its twin's encryption {plain.Info.Security}");
         for (int i = 0; i < plain.PageCount; i++)
         {
             var mine = document.ReadPage(i, DocumentParts.Text);

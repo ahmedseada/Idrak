@@ -2638,6 +2638,54 @@ speed and memory first), its results unchanged.
     src|the environment table names real commands|hidden boxing|test runner`: 53 passed, 0 failed, 3 skipped (`documents
     real:` without a folder). The build failed once on three nullable errors in the new tests (result tuples starting as
     `default`), fixed together and rebuilt once: no error or warning. No public API, inventory or variable changed.
+- **Encrypted outputs hashed by read-back, 2026-11-19 (owner, 3a)** (`DocumentBench.cs`, `DocumentBenchReadBack.cs`,
+  `BenchDocumentsCommand.cs`; in the library `DocumentInfo.Security`, `PdfSecurity.Describe`). The owner's choice for
+  the finding above: an encrypted output is hashed by what it reads back to, every other output by its bytes as before;
+  the IV stays random (never fixed or seeded).
+  - **How:** a case that saves an encrypted source again (`edit-incremental`, `edit-rewrite`, `fill`, `sign`: the editor
+    keeps a file's own encryption) keeps its output when hashing (the copy's time and allocation, counted on the
+    writing thread, left out of the run's), and once the run is measured (time, allocation, working set, compiling)
+    opens it with the options its source was opened with (the same password) and hashes a canonical read-back: the
+    information (other entries by sorted key) and the encryption (`DocumentInfo.Security`, below), every page's label,
+    size, rotation, text, runs (text, box, font, size, colours, glyphs, order), images (decoded values and mask), paths
+    and clips, issues, annotations (replies, an appearance's content), the fields with their values and widgets, the
+    outline, the named destinations, the attached files' contents, and each signature's check (whether it is valid and
+    each step passed; checked at the time the signer states, trusting no root, offline, so it is the same whatever the
+    bench was given). Left out: what the standard makes random (IVs, the file key, `/O`, `/U`, `/OE`, `/UE`, `/Perms`,
+    `/ID`), where objects lie (a signature's byte range) and a check's times and wording. Numbers by their bits,
+    little-endian; text as UTF-8 after its length; trees in pre-order on a stack of its own. An output that opens
+    unencrypted keeps its bytes' hash; one that does not open is hashed by why. The RC4 outputs repeat byte for byte
+    but are read back too: the owner's rule is for every encrypted output.
+  - **The encryption's parameters made public** (they were not, and the read-back holds them): `DocumentInfo.Security`
+    (`DocumentSecurity`: the handler, its revision, the key's bits, the strings', streams' and attached files' ciphers,
+    the permissions, whether metadata is encrypted; nothing random), filled by the PDF reader and ignored by writers;
+    `api/Idrak.Abstraction.txt` updated (the generator's order, checked by `public API`), the inventory unchanged.
+  - **Labels:** a case's line ends "(read back: N encrypted)"; the results hold `read_back` and `read_back_files` a case
+    and `read_back` a differing file; a difference line marks "(encrypted, read back)". `--compare` compares like with
+    like: a file read back in one run and hashed by its bytes in the other (results saved before this) is named
+    "hashed another way, not compared", its case neither the same nor changed; a real change beside such files is
+    CHANGED, naming only its own files.
+  - **The run** (this container, 4 cores; `--hash`, every case, the samples and the large set, `--save`, then
+    `--compare`): 70 cases, every one the same output every run (`edit-incremental`, `edit-rewrite` and `sign` on the
+    samples: read back: 10 encrypted each, the 7 AES and 3 RC4 samples the empty password opens), and all 70 the same as
+    saved, under the same limits (a stream 2.00 GiB, a cache 1.25 GiB, 10,502,019 objects, nesting 64). Against the
+    results the run above saved (bytes hashed): 67 of 70 the same, the three hashed another way with every other file
+    the same as saved (an unencrypted output hashes as it did: rule 71); their allocations within 0.5% of those.
+  - **Found, left as it is (the owner decides):** a file whose user password is empty opens as its user even when
+    `DocumentOptions.Password` gives its owner password (D2: the empty password is tried first), so its encryption
+    cannot be changed or removed (D11's decision 2 needs the owner password).
+  - **Tests:** group `documents bench:` (1 new, 5 in all): `edit-incremental`, `edit-rewrite` and `sign` on the samples
+    over three runs give the same output every run, each naming at least 6 AES files read back; one edit of an AES-256
+    sample saved twice reads back the same (other bytes), another title reads back otherwise and is named as differing
+    "(encrypted, read back)"; the plain sample encrypted twice with one set of permissions reads back the same, with
+    another otherwise; the bench's own encrypted output reads back as that edit, an unencrypted one keeps its bytes'
+    SHA-256; a save with its encrypted files' bytes hashed (no `read_back_files`) is "hashed another way, not compared",
+    and with a plain file's output changed too, CHANGED naming that file alone; the lines' "(read back: 10 encrypted)".
+    `documents pdf: encryption` checks `Info.Security` against every encrypted sample's JSON (revision, key bits,
+    ciphers, `/StrF /Identity` as none, `/P`, metadata) and none on its twin. **Run:** the brief's filter with
+    `documents pdf: encryption`: 57 tests, 56 passed, 1 failed (the new test changed an empty-user-password sample's
+    permissions: the finding above; it encrypts the plain sample now), rebuilt once, that test rerun: passed. Both
+    builds without an error or a warning.
 
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 

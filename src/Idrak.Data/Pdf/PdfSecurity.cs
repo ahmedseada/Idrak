@@ -159,6 +159,23 @@ internal sealed partial class PdfSecurity : IDisposable
     public bool Cleared => _key.AsSpan().IndexOfAnyExcept((byte)0) < 0;
 
     /// <summary>
+    /// The encryption as <see cref="DocumentInfo.Security"/> gives it: the handler, its revision, the key's length, the
+    /// strings', streams' and attached files' ciphers, the permissions and whether metadata is encrypted; nothing random
+    /// (the key, <c>/O</c>, <c>/U</c>, <c>/OE</c>, <c>/UE</c>, <c>/Perms</c>, the file's identifier).
+    /// </summary>
+    public DocumentSecurity Describe() => new()
+    {
+        Handler = "Standard",
+        Revision = Revision,
+        KeyBits = _keyLength * 8,
+        Strings = CipherName(_strings),
+        Streams = CipherName(_streams),
+        EmbeddedFiles = CipherName(_embedded),
+        Permissions = Permissions,
+        MetadataEncrypted = _encryptMetadata,
+    };
+
+    /// <summary>
     /// Unlocks <paramref name="file"/> when its trailer names an encryption dictionary: the standard handler's file key
     /// found from the empty password or <paramref name="password"/>, and every string and stream read from then on
     /// decrypted. Nothing is done for a file that is not encrypted.
@@ -849,6 +866,16 @@ internal sealed partial class PdfSecurity : IDisposable
         PdfCryptMethod.Aes128 => "AES-128",
         PdfCryptMethod.Aes256 => "AES-256",
         _ => "no cipher",
+    };
+
+    // A crypt method as DocumentSecurity names it.
+    private static string CipherName(PdfCryptMethod method) => method switch
+    {
+        PdfCryptMethod.Identity => "none",
+        PdfCryptMethod.Rc4 => "RC4",
+        PdfCryptMethod.Aes128 => "AES-128",
+        PdfCryptMethod.Aes256 => "AES-256",
+        _ => "unknown",
     };
 
     private InvalidDataException Damaged(string what) => new($"{_name}: the file is encrypted, but its encryption dictionary {what}: it is damaged.");

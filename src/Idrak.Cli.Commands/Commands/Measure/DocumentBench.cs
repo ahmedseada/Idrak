@@ -73,7 +73,10 @@ internal sealed record DocumentBenchOptions
     /// <summary>The most pages every case takes of a file (0: all): the short mode's few.</summary>
     public int Pages { get; init; }
 
-    /// <summary>Whether every run's output (text, pixels, written bytes) is hashed (SHA-256), file by file, so runs and saved results show the same output.</summary>
+    /// <summary>
+    /// Whether every run's output (text, pixels, written bytes) is hashed (SHA-256), file by file, so runs and saved results
+    /// show the same output; an encrypted output by what it reads back to (<see cref="DocumentBenchReadBack"/>), not its bytes.
+    /// </summary>
     public bool Hash { get; init; }
 
     /// <summary>
@@ -102,10 +105,21 @@ internal sealed record DocumentBenchRun(double Milliseconds, long Allocated, lon
 /// <summary>A file whose output differs between the runs of one case: its output in each run, cold first (null where a run did not read it: refused, or not taken).</summary>
 internal sealed record DocumentBenchDifference(string File, IReadOnlyList<string?> Outputs);
 
-/// <summary>What one run of a case did: its units (the case's own: files, pages, signatures), the other counts, the bytes written and the output's hash, whole and file by file.</summary>
+/// <summary>
+/// What one run of a case did: its units (the case's own: files, pages, signatures), the other counts, the bytes written
+/// and the output's hash, whole and file by file. A file's work hashes what it adds; a run's hashes its files' hashes in
+/// order (<see cref="Finish"/>), an encrypted output's taken from what it reads back to once the run is measured
+/// (<see cref="ReadBack"/>).
+/// </summary>
 internal sealed class DocumentBenchWork
 {
     private readonly IncrementalHash? _hash;
+
+    // A file's work: its output (written encrypted), kept to be hashed by what it reads back to in place of its bytes.
+    private ReadOnlyMemory<byte>? _readBack;
+
+    // A run's work: the outputs kept to be read back, each with its place in FileOutputs.
+    private List<(int At, string File, ReadOnlyMemory<byte> Output)>? _readBacks;
 
     public DocumentBenchWork(bool hash) => _hash = hash ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
 
@@ -125,8 +139,14 @@ internal sealed class DocumentBenchWork
     /// <summary>Parts a writing case left out (text without a face to write it in, a clip of text, a part the writer refused).</summary>
     public long LeftOut { get; set; }
 
-    /// <summary>The time spent on files refused during the run (left out of its time), in timestamp ticks.</summary>
+    /// <summary>The time spent on files refused during the run and on keeping outputs to read back (left out of its time), in timestamp ticks.</summary>
     public long ExcludedTicks { get; set; }
+
+    /// <summary>The bytes allocated keeping outputs to read back (left out of the run's allocation, as their time is of its time).</summary>
+    public long ExcludedBytes { get; set; }
+
+    /// <summary>The files whose output was hashed by what it reads back to (encrypted outputs), in the order they went through; filled by <see cref="ReadBack"/>.</summary>
+    public List<string> ReadBackFiles { get; } = [];
 
     /// <summary>The files refused during the run, with why.</summary>
     public List<(string File, string Reason)> Refused { get; } = [];
@@ -219,6 +239,12 @@ internal sealed class DocumentBenchWork
         }
     }
 
+    /// <summary>
+    /// Keeps <paramref name="output"/> (this file's whole output, written encrypted) to be hashed by what it reads back to
+    /// once the run is measured, in place of its bytes (an encrypted save repeats nothing byte for byte: a fresh random IV).
+    /// </summary>
+    public void ReadBackLater(ReadOnlyMemory<byte> output) => _readBack = output;
+
     /// <summary>Takes <paramref name="file"/>'s work in (its counts, whether it met a limit and, hashed, its output's hash, kept under its name too).</summary>
     public void Merge(string file, DocumentBenchWork part)
     {
@@ -229,6 +255,8 @@ internal sealed class DocumentBenchWork
         Pixels += part.Pixels;
         Written += part.Written;
         LeftOut += part.LeftOut;
+        ExcludedTicks += part.ExcludedTicks;
+        ExcludedBytes += part.ExcludedBytes;
         if (part.MetLimit)
         {
             LimitFiles.Add(file);
@@ -236,23 +264,73 @@ internal sealed class DocumentBenchWork
 
         if (_hash is not null && part._hash is not null)
         {
-            Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
-            part._hash.GetHashAndReset(digest);
-            _hash.AppendData(digest);
-            FileOutputs.Add((file, Convert.ToHexStringLower(digest)));
+            if (part._readBack is { } output)
+            {
+                (_readBacks ??= []).Add((FileOutputs.Count, file, output));
+                FileOutputs.Add((file, ""));     // its hash once read back
+            }
+            else
+            {
+                Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
+                part._hash.GetHashAndReset(digest);
+                FileOutputs.Add((file, Convert.ToHexStringLower(digest)));
+            }
         }
 
         part._hash?.Dispose();
     }
 
-    /// <summary>Ends the run: its output's hash taken (once), the hash released.</summary>
+    /// <summary>
+    /// Hashes each output kept to be read back (<see cref="ReadBackLater"/>) by what it reads back to
+    /// (<see cref="DocumentBenchReadBack"/>), opened with <paramref name="read"/> (the options, and so the password, the case
+    /// opened its source with). Called once the run is measured, so the reading is in neither its time, its allocation nor
+    /// its working set; an output that opens unencrypted keeps its bytes' hash.
+    /// </summary>
+    public void ReadBack(DocumentOptions read)
+    {
+        if (_readBacks is null)
+        {
+            return;
+        }
+
+        foreach (var (at, file, output) in _readBacks)
+        {
+            var (hash, readBack) = DocumentBenchReadBack.Hash(output, file, read);
+            FileOutputs[at] = (file, hash);
+            if (readBack)
+            {
+                ReadBackFiles.Add(file);
+            }
+        }
+
+        _readBacks = null;
+    }
+
+    /// <summary>
+    /// Ends the work: its output's hash taken (once), the hash released. A file's is the hash of what it added; a run's
+    /// the hash of its files' hashes in the order they went through (once every kept output was read back).
+    /// </summary>
     public void Finish()
     {
-        if (_hash is not null && Output is null)
+        if (_hash is null || Output is not null)
         {
-            Output = Convert.ToHexStringLower(_hash.GetHashAndReset());
-            _hash.Dispose();
+            return;
         }
+
+        if (_readBacks is { Count: > 0 })
+        {
+            throw new InvalidOperationException($"{_readBacks.Count} outputs kept to be read back were not: ReadBack comes before Finish.");
+        }
+
+        Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
+        foreach (var (_, output) in FileOutputs)
+        {
+            Convert.FromHexString(output, digest, out _, out _);
+            _hash.AppendData(digest);
+        }
+
+        Output = Convert.ToHexStringLower(_hash.GetHashAndReset());
+        _hash.Dispose();
     }
 }
 
@@ -364,7 +442,7 @@ internal static class DocumentBench
     /// <summary>
     /// Runs <paramref name="case"/> once on <paramref name="set"/> (at <paramref name="dpi"/> for a drawing case),
     /// measured: a full collection first, then the time, the bytes allocated on every thread, the JIT's share and the
-    /// working set sampled while it runs.
+    /// working set sampled while it runs. Hashed, an encrypted output is read back and hashed after all of it is measured.
     /// </summary>
     public static DocumentBenchRun Measure(string @case, float dpi, DocumentBenchSet set, DocumentBenchOptions options, Action<long> progress)
     {
@@ -382,9 +460,20 @@ internal static class DocumentBench
         var (peak, samplerAllocated) = sampler.Stop();
         double jitMs = (System.Runtime.JitInfo.GetCompilationTime(currentThread: false) - jitTime).TotalMilliseconds;
         jitMethods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false) - jitMethods;
+        work.ReadBack(options.Read);     // outside everything measured above
         work.Finish();
-        return new DocumentBenchRun(Math.Max(0, ticks) * 1000.0 / Stopwatch.Frequency, Math.Max(0, allocated - samplerAllocated), peak, jitMs, jitMethods, work);
+        return new DocumentBenchRun(Math.Max(0, ticks) * 1000.0 / Stopwatch.Frequency, Math.Max(0, allocated - samplerAllocated - work.ExcludedBytes), peak, jitMs, jitMethods, work);
     }
+
+    /// <summary>The title the editing cases write over each file's (and its subject below): a change every edit makes.</summary>
+    public const string EditedTitle = "Edited copy";
+
+    /// <summary>The subject the editing cases write.</summary>
+    public const string EditedSubject = "A copy saved by the benchmark";
+
+    // Whether a case that saves `document` again keeps its output to be read back: hashed, and the source encrypted (an
+    // editor keeps a file's own encryption, so the output is written encrypted, with a fresh random IV every time).
+    private static bool ReadsBack(IDocument document, DocumentBenchWork work) => work.Hashing && document.Info.Encrypted;
 
     private static DocumentBenchWork Run(string @case, float dpi, DocumentBenchSet set, DocumentBenchOptions options, Action<long> progress)
     {
@@ -503,13 +592,14 @@ internal static class DocumentBench
                 EachFile(set, set.Take(options.Files), work, (file, w) =>
                 {
                     using var document = Open(set, file, read);
-                    using var destination = new CountingStream(w);
+                    using var destination = new CountingStream(w, keep: ReadsBack(document, w));
                     using (var editor = DocumentWriters.Get(document.Format).Edit(document, destination, new DocumentWriteOptions()))
                     {
-                        editor.SetInfo(document.Info with { Title = "Edited copy", Subject = "A copy saved by the benchmark" });
+                        editor.SetInfo(document.Info with { Title = EditedTitle, Subject = EditedSubject });
                         editor.Save(mode);
                     }
 
+                    destination.ReadBackLater();
                     w.Units = w.Files = 1;
                     w.Pages = document.PageCount;
                     w.Written = destination.Length;
@@ -526,7 +616,7 @@ internal static class DocumentBench
                         return;     // no form: not a unit of this case
                     }
 
-                    using var destination = new CountingStream(w);
+                    using var destination = new CountingStream(w, keep: ReadsBack(document, w));
                     using (var editor = DocumentWriters.Get(document.Format).Edit(document, destination, new DocumentWriteOptions()))
                     {
                         foreach (var field in fields)
@@ -538,6 +628,7 @@ internal static class DocumentBench
                         editor.Save(DocumentSaveMode.Incremental);
                     }
 
+                    destination.ReadBackLater();
                     w.Units = w.Files = 1;
                     w.Items = fields.Count;
                     w.Written = destination.Length;
@@ -558,7 +649,15 @@ internal static class DocumentBench
                     }
 
                     byte[] bytes = destination.ToArray();
-                    w.Add(bytes);
+                    if (ReadsBack(document, w))
+                    {
+                        w.ReadBackLater(bytes);     // kept for the checking case anyway
+                    }
+                    else
+                    {
+                        w.Add(bytes);
+                    }
+
                     w.Units = w.Files = 1;
                     w.Written = bytes.Length;
                     lock (signed)
@@ -600,6 +699,7 @@ internal static class DocumentBench
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 work.ExcludedTicks += Stopwatch.GetTimestamp() - start;
+                work.ExcludedBytes += part.ExcludedBytes;
                 work.Refuse(file, Reason(e), part.MetLimit);
                 part.Finish();
             }
@@ -965,10 +1065,22 @@ internal static class DocumentBench
         return (files, before - files.Count);
     }
 
-    // A stream that counts (and, hashing, hashes) what is written: the bench measures the writer, not a disk.
-    private sealed class CountingStream(DocumentBenchWork work) : Stream
+    // A stream that counts (and, hashing, hashes) what is written: the bench measures the writer, not a disk. One told to
+    // keep (an encrypted output, read back once the run is measured) keeps the bytes instead of hashing them, the
+    // keeping's time and allocation left out of the run's (counted on the writing thread around each copy).
+    private sealed class CountingStream(DocumentBenchWork work, bool keep = false) : Stream
     {
         private long _length;
+        private MemoryStream? _kept;
+
+        // Hands what was kept to the work, to be read back (nothing when not keeping).
+        public void ReadBackLater()
+        {
+            if (keep)
+            {
+                work.ReadBackLater(_kept is null ? ReadOnlyMemory<byte>.Empty : _kept.GetBuffer().AsMemory(0, (int)_kept.Length));
+            }
+        }
 
         public override bool CanRead => false;
 
@@ -989,7 +1101,16 @@ internal static class DocumentBench
         public override void Write(ReadOnlySpan<byte> buffer)
         {
             _length += buffer.Length;
-            work.Add(buffer);
+            if (!keep)
+            {
+                work.Add(buffer);
+                return;
+            }
+
+            long start = Stopwatch.GetTimestamp(), allocated = GC.GetAllocatedBytesForCurrentThread();
+            (_kept ??= new MemoryStream()).Write(buffer);
+            work.ExcludedBytes += GC.GetAllocatedBytesForCurrentThread() - allocated;
+            work.ExcludedTicks += Stopwatch.GetTimestamp() - start;
         }
 
         public override void Flush()
@@ -1001,6 +1122,17 @@ internal static class DocumentBench
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
 
         public override void SetLength(long value) => throw new NotSupportedException();
+
+        // What was kept stays readable through the memory handed on (a memory stream's buffer outlives it).
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _kept?.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     // The process's working set sampled on a thread of its own while a run lasts (every 10 ms, and at its start and end):

@@ -73,6 +73,13 @@ public sealed record DocumentInfo
     /// <summary>Whether the file is encrypted (opened with <see cref="DocumentOptions.Password"/> or the empty password).</summary>
     public bool Encrypted { get; init; }
 
+    /// <summary>
+    /// How the file is encrypted (its handler, revision, key length, ciphers and permissions; never a key, salt or
+    /// initialization vector), or null when it is not or the format does not say. Read only: a writer encrypts through
+    /// <see cref="IDocumentBuilder.Encrypt"/> or <see cref="IDocumentEditor.Encrypt"/>, never from this.
+    /// </summary>
+    public DocumentSecurity? Security { get; init; }
+
     /// <summary>Whether the file was damaged and rebuilt to be read (its index found by scanning it).</summary>
     public bool Repaired { get; init; }
 

@@ -311,3 +311,36 @@ public sealed record DocumentEncryption
         return true;
     }
 }
+
+/// <summary>
+/// How a document that was read is encrypted (<see cref="DocumentInfo.Security"/>), as its security handler states it:
+/// only what stays the same when the file is saved again with its own encryption (the handler, its revision, the key's
+/// length, the ciphers, the permissions, whether the metadata is encrypted), never a key, a salt, an initialization vector
+/// or the file's identifier, which the standard makes random.
+/// </summary>
+public sealed record DocumentSecurity
+{
+    /// <summary>The security handler, as the file names it ("Standard" for PDF's password handler).</summary>
+    public string Handler { get; init; } = "";
+
+    /// <summary>The handler's revision (PDF's standard handler: 2 to 6).</summary>
+    public int Revision { get; init; }
+
+    /// <summary>The file key's length in bits (40 to 128 for RC4 and AES-128, 256 for AES-256).</summary>
+    public int KeyBits { get; init; }
+
+    /// <summary>How strings are encrypted: "RC4", "AES-128", "AES-256", or "none".</summary>
+    public string Strings { get; init; } = "";
+
+    /// <summary>How streams are encrypted: "RC4", "AES-128", "AES-256", or "none".</summary>
+    public string Streams { get; init; } = "";
+
+    /// <summary>How attached files are encrypted: "RC4", "AES-128", "AES-256", or "none".</summary>
+    public string EmbeddedFiles { get; init; } = "";
+
+    /// <summary>What a user who opens the file with the user password may do, as the file states it (a reader enforces none of it).</summary>
+    public DocumentPermissions Permissions { get; init; }
+
+    /// <summary>Whether the document's metadata is encrypted with the rest (false: left plain for search tools).</summary>
+    public bool MetadataEncrypted { get; init; } = true;
+}

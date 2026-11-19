@@ -33,7 +33,8 @@ foreach (var issue in page.Issues)
   a broken cross-reference rebuilt by scanning the file (`Info.Repaired`); every standard filter and predictor.
 - **Encryption:** the standard security handler, revisions 2 to 6 (RC4 40 to 128 bits, AES-128, AES-256), opened with
   the empty password or `DocumentOptions.Password` (the user's or the owner's); a wrong or missing one is an
-  `InvalidDataException` naming the option.
+  `InvalidDataException` naming the option. `Info.Security` says how a file is encrypted (the handler, its revision, the
+  key's length, the ciphers, the permissions; never a key, salt or IV).
 - **Text:** runs with their box, size, font, colour and whether they are hidden (a scan's text layer), from simple,
   composite, Type 3 and the standard 14 fonts, through `ToUnicode`, the encodings, the Adobe Glyph List and the embedded
   font's own `cmap`; `/ActualText` wins over its glyphs. A page's runs become lines and text through a layout of

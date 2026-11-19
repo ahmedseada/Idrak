@@ -100,10 +100,13 @@ internal sealed class BenchDocumentsCommand : Command
               --hash           hash every run's output (text, pixels, written bytes; SHA-256), file by file, into the
                                results, so two runs or two saved results show the same output; a case whose runs
                                differ names each file that differs and its hash in each run (the hashing is inside
-                               the runs' time)
+                               the runs' time). An encrypted output (a fresh random IV every save) is hashed by what
+                               it reads back to (its information and encryption, pages, fields, outline, attachments,
+                               signatures' checks), read after the run is measured: "read back: N encrypted"
               --save NAME      keep the results as NAME under the cache folder (bench/NAME.json)
               --compare NAME   show the change against the results saved as NAME: whether it read under other limits,
                                and, hashed, which outputs changed, their files, and whether the other limits explain it
+                               (a file read back in one and hashed by its bytes in the other is named, not compared)
 
         Shows its progress: the case and set, the run, how far it is, how fast and the time left.
 
@@ -139,6 +142,9 @@ internal sealed class BenchDocumentsCommand : Command
 
         /// <summary>The files whose output differs between the runs (hashed runs only; none when every run gave the same).</summary>
         public List<DocumentBenchDifference> Differing { get; } = DocumentBench.Differences(Cold, Warm);
+
+        /// <summary>The files whose output a run hashed by what it reads back to (encrypted outputs).</summary>
+        public HashSet<string> ReadBack { get; } = FilesReadBack(Cold, Warm);
     }
 
     public override int Run(CommandContext context)
@@ -501,9 +507,11 @@ internal sealed class BenchDocumentsCommand : Command
                 : ", OUTPUT DIFFERS BETWEEN RUNS (every file the same alone: their order or number)",
             null => "",
         };
+        int readBack = cold.Work.ReadBackFiles.Count;
+        string back = readBack > 0 ? string.Create(CultureInfo.InvariantCulture, $" (read back: {readBack:N0} encrypted)") : "";
         return string.Create(CultureInfo.InvariantCulture,
             $"  {m.Label} on {m.Set.Name}: {Work(m)}{refused}; warm {BenchCommand.Format(m.WarmMs)} ms ({PerUnit(m)}), {Size(m.WarmAllocated)} allocated, working set {Size(m.WarmPeak)}; "
-            + $"cold {BenchCommand.Format(cold.Milliseconds)} ms ({BenchCommand.Format(cold.JitMilliseconds)} ms compiling {cold.JitMethods:N0} methods), {Size(cold.Allocated)}, {Size(cold.PeakWorkingSet)}{output}");
+            + $"cold {BenchCommand.Format(cold.Milliseconds)} ms ({BenchCommand.Format(cold.JitMilliseconds)} ms compiling {cold.JitMethods:N0} methods), {Size(cold.Allocated)}, {Size(cold.PeakWorkingSet)}{output}{back}");
     }
 
     private static string Work(Measured m)
@@ -579,13 +587,15 @@ internal sealed class BenchDocumentsCommand : Command
 
     /// <summary>
     /// The lines that name each file whose output differs between a case's runs (at most 20; the results hold them all),
-    /// with its output in every run (the hash's first 16 digits) or why a run did not read it. Every run reads under the
-    /// same limits and takes the same files, so such a file is a finding to look into, not the bench's noise.
+    /// with its output in every run (the hash's first 16 digits) or why a run did not read it, and "(encrypted, read back)"
+    /// when that output was hashed by what it reads back to. Every run reads under the same limits and takes the same
+    /// files, so such a file is a finding to look into, not the bench's noise.
     /// </summary>
     internal static List<string> DifferenceLines(string label, DocumentBenchSet set, DocumentBenchRun cold, IReadOnlyList<DocumentBenchRun> warm, IReadOnlyList<DocumentBenchDifference> differing)
     {
         const int Shown = 20;
         var lines = new List<string>();
+        var readBack = FilesReadBack(cold, warm);
         foreach (var difference in differing.Take(Shown))
         {
             var runs = new List<string>(difference.Outputs.Count);
@@ -598,7 +608,8 @@ internal sealed class BenchDocumentsCommand : Command
                     : $"{run} not read");
             }
 
-            lines.Add($"    differs in {label}: {set.Relative(difference.File)}: {string.Join(", ", runs)}");
+            string how = readBack.Contains(difference.File) ? " (encrypted, read back)" : "";
+            lines.Add($"    differs in {label}: {set.Relative(difference.File)}{how}: {string.Join(", ", runs)}");
         }
 
         if (differing.Count > Shown)
@@ -607,6 +618,18 @@ internal sealed class BenchDocumentsCommand : Command
         }
 
         return lines;
+    }
+
+    // The files whose output any of a case's runs hashed by what it reads back to.
+    private static HashSet<string> FilesReadBack(DocumentBenchRun cold, IReadOnlyList<DocumentBenchRun> warm)
+    {
+        var files = new HashSet<string>(cold.Work.ReadBackFiles, StringComparer.Ordinal);
+        foreach (var run in warm)
+        {
+            files.UnionWith(run.Work.ReadBackFiles);
+        }
+
+        return files;
     }
 
     // Whether the saved run read under the limits this one does: a line naming each limit that differs (now and saved),
@@ -643,6 +666,9 @@ internal sealed class BenchDocumentsCommand : Command
     // output). A case that did not names the files that changed (each file's output is saved) and, when the saved run read
     // under other limits, whether they explain it: every changed file met a limit in one of the two runs (refused by one,
     // or a part left out naming one). A changed case is listed as changed either way: other limits never hide a difference.
+    // Like is compared with like: a file hashed by what it reads back to in one run (an encrypted output) and by its bytes
+    // in the other (a save made before encrypted outputs were read back) is named as hashed another way, not compared and
+    // not a change; a case whose only differences are such files is neither the same nor changed.
     private static JsonArray CompareOutputs(CommandContext context, string name, JsonObject saved, List<Measured> measured, bool? sameLimits)
     {
         var before = (saved["cases"] as JsonArray ?? []).OfType<JsonObject>()
@@ -651,6 +677,7 @@ internal sealed class BenchDocumentsCommand : Command
             .ToDictionary(g => g.Key, g => g.First());
         var rows = new JsonArray();
         var changed = new List<string>();
+        var otherWay = new List<string>();
         var details = new List<string>();
         int same = 0;
         foreach (var m in measured.Where(m => m.Cold.Work.Output is not null))
@@ -670,29 +697,68 @@ internal sealed class BenchDocumentsCommand : Command
                 continue;
             }
 
-            changed.Add(key);
+            // How each file was hashed here and when saved: read back (an encrypted output) or by its bytes. Results saved
+            // before encrypted outputs were read back hold no read_back_files: every file there was hashed by its bytes.
+            var readBackNow = new HashSet<string>(m.Cold.Work.ReadBackFiles.Select(m.Set.Relative), StringComparer.Ordinal);
+            var readBackThen = new HashSet<string>((old["read_back_files"] as JsonArray ?? []).Select(f => (string?)f).OfType<string>(), StringComparer.Ordinal);
             if (old["file_outputs"] is not JsonObject savedFiles)
             {
                 row["files"] = null;
                 row["limits_explain"] = false;
+                if (readBackNow.Count > 0 && old["read_back_files"] is null)
+                {
+                    row["same"] = null;
+                    row["hashed_another_way"] = null;
+                    otherWay.Add(key);
+                    details.Add(string.Create(CultureInfo.InvariantCulture,
+                        $"    {key}: {readBackNow.Count:N0} encrypted output{(readBackNow.Count == 1 ? "" : "s")} read back here, hashed by their bytes in '{name}', which holds no file's own output: not compared"));
+                    continue;
+                }
+
+                changed.Add(key);
                 details.Add($"    {key}: '{name}' holds no file's own output, so the files are not named; a change all the same");
                 continue;
             }
 
-            // The files whose output is not the same (or that one of the two runs did not read), in the order they ran.
+            // The files whose output is not the same (or that one of the two runs did not read), in the order they ran, and
+            // those read by both but hashed another way.
             var files = new List<string>();
+            var another = new List<string>();
             var now = new HashSet<string>(StringComparer.Ordinal);
             foreach (var (file, output) in m.Cold.Work.FileOutputs)
             {
                 string relative = m.Set.Relative(file);
                 now.Add(relative);
-                if ((string?)savedFiles[relative] != output)
+                string? then = (string?)savedFiles[relative];
+                if (then != output)
                 {
-                    files.Add(relative);
+                    (then is not null && readBackNow.Contains(relative) != readBackThen.Contains(relative) ? another : files).Add(relative);
                 }
             }
 
             files.AddRange(savedFiles.Select(p => p.Key).Where(f => !now.Contains(f)));
+            if (another.Count > 0)
+            {
+                row["hashed_another_way"] = new JsonArray([.. another.Select(f => (JsonNode)f)]);
+            }
+
+            string how = another.All(readBackNow.Contains) ? $"read back here (encrypted), hashed by their bytes in '{name}'"
+                : another.All(readBackThen.Contains) ? $"hashed by their bytes here, read back in '{name}'"
+                : "read back in one of the two runs, hashed by their bytes in the other";
+            string anotherText = string.Create(CultureInfo.InvariantCulture,
+                $"{another.Count:N0} file{(another.Count == 1 ? "" : "s")} hashed another way ({string.Join(", ", another.Take(10))}{(another.Count > 10 ? $", and {another.Count - 10:N0} more" : "")}): {how}, not compared");
+            bool sameOrder = savedFiles.Select(p => p.Key).SequenceEqual(m.Cold.Work.FileOutputs.Select(f => m.Set.Relative(f.File)), StringComparer.Ordinal);
+            if (files.Count == 0 && another.Count > 0 && sameOrder)
+            {
+                row["same"] = null;
+                row["files"] = new JsonArray();
+                row["limits_explain"] = false;
+                otherWay.Add(key);
+                details.Add($"    {key}: {anotherText}; every other file's output the same as saved");
+                continue;
+            }
+
+            changed.Add(key);
 
             // The files that met a limit in either run: in this case, or refused by one when the set's files were opened
             // (left out of every case after it).
@@ -714,17 +780,20 @@ internal sealed class BenchDocumentsCommand : Command
                 false => string.Create(CultureInfo.InvariantCulture, $"NOT explained by the other limits: {unexplained:N0} of them met none"),
                 null => "the saved limits unknown",
             };
+            string also = another.Count > 0 ? $"; besides, {anotherText}" : "";
             details.Add(files.Count == 0
-                ? $"    {key}: every file's output the same as saved, their order or number not; {why}"
+                ? $"    {key}: every file's output the same as saved, their order or number not; {why}{also}"
                 : string.Create(CultureInfo.InvariantCulture,
-                    $"    {key}: {files.Count:N0} file{(files.Count == 1 ? "" : "s")} changed ({string.Join(", ", files.Take(10))}{(files.Count > 10 ? $", and {files.Count - 10:N0} more" : "")}); {why}"));
+                    $"    {key}: {files.Count:N0} file{(files.Count == 1 ? "" : "s")} changed ({string.Join(", ", files.Take(10))}{(files.Count > 10 ? $", and {files.Count - 10:N0} more" : "")}); {why}{also}"));
         }
 
         if (rows.Count > 0)
         {
-            context.Write(changed.Count == 0
+            context.Write(changed.Count == 0 && otherWay.Count == 0
                 ? $"  outputs: all {same} hashed cases the same as '{name}'"
-                : $"  outputs: {same} of {rows.Count} hashed cases the same as '{name}'; CHANGED: {string.Join(", ", changed)}");
+                : $"  outputs: {same} of {rows.Count} hashed cases the same as '{name}'"
+                  + (changed.Count > 0 ? $"; CHANGED: {string.Join(", ", changed)}" : "")
+                  + (otherWay.Count > 0 ? $"; hashed another way, not compared: {string.Join(", ", otherWay)}" : ""));
             foreach (string line in details)
             {
                 context.Write(line);
@@ -810,10 +879,15 @@ internal sealed class BenchDocumentsCommand : Command
                 ["output"] = m.Cold.Work.Output,
                 ["same_output"] = m.SameOutput,
                 ["file_outputs"] = m.Cold.Work.Output is null ? null : FileOutputs(m),
+                // The files whose output was hashed by what it reads back to (encrypted outputs), so a comparison hashes like with like.
+                ["read_back"] = m.Cold.Work.Output is null ? null : JsonValue.Create(m.Cold.Work.ReadBackFiles.Count),
+                ["read_back_files"] = m.Cold.Work.Output is null ? null
+                    : new JsonArray([.. m.Cold.Work.ReadBackFiles.Select(m.Set.Relative).Order(StringComparer.Ordinal).Select(f => (JsonNode)f)]),
                 ["limit_files"] = new JsonArray([.. m.Cold.Work.LimitFiles.Select(m.Set.Relative).Order(StringComparer.Ordinal).Select(f => (JsonNode)f)]),
                 ["differing_files"] = m.Differing.Count == 0 ? null : new JsonArray([.. m.Differing.Select(d => (JsonNode)new JsonObject
                 {
                     ["file"] = m.Set.Relative(d.File),
+                    ["read_back"] = m.ReadBack.Contains(d.File),
                     ["outputs"] = new JsonArray([.. d.Outputs.Select(o => (JsonNode?)o)]),
                 })]),
                 ["cold"] = Run(m.Cold),

@@ -616,7 +616,8 @@ case cold and warm apart, with its time, the managed bytes it allocated and the 
 the library's `IDRAK_DOCUMENT_*` settings recorded with the limits every run read under (measured from the machine's
 memory once, when the bench starts, where no variable sets them). With `--hash` each file's output is hashed: a case
 whose runs differ names its files, and `--compare` says when the saved run read under other limits and whether they
-explain a changed output.
+explain a changed output. An encrypted output (a fresh random IV every save) is hashed by what it reads back to, after
+the run is measured, and each case says how many (`read back: N encrypted`).
 
 | Command | What it does |
 |---|---|

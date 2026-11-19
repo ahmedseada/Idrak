@@ -606,7 +606,7 @@ internal sealed partial class PdfDocument : IDocument
         return new DocumentInfo
         {
             Title = title, Author = author, Subject = subject, Keywords = keywords, Creator = creator, Producer = producer, Created = created, Modified = modified,
-            Version = _version, Encrypted = _file.Security is not null, Repaired = _file.Repaired, Entries = entries.AsReadOnly(),
+            Version = _version, Encrypted = _file.Security is not null, Security = _file.Security?.Describe(), Repaired = _file.Repaired, Entries = entries.AsReadOnly(),
         };
     }
 

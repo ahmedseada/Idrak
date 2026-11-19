@@ -1,10 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using BenchDocumentsCommand = global::Idrak.Cli.Commands.Measure.BenchDocumentsCommand;
 using DocumentBench = global::Idrak.Cli.Commands.Measure.DocumentBench;
 using DocumentBenchOptions = global::Idrak.Cli.Commands.Measure.DocumentBenchOptions;
+using DocumentBenchReadBack = global::Idrak.Cli.Commands.Measure.DocumentBenchReadBack;
 using DocumentBenchRun = global::Idrak.Cli.Commands.Measure.DocumentBenchRun;
 using DocumentBenchSet = global::Idrak.Cli.Commands.Measure.DocumentBenchSet;
 using DocumentBenchWork = global::Idrak.Cli.Commands.Measure.DocumentBenchWork;
@@ -12,8 +14,9 @@ using DocumentBenchWork = global::Idrak.Cli.Commands.Measure.DocumentBenchWork;
 // Plan 28, phase D13: idrak bench documents, run in-process on the samples tools/documents/make_fixtures.py writes into the
 // ignored test-output/documents/samples, in its short mode (a few files and pages, one warm run): its cases, what each
 // records (cold and warm apart), its settings, --save and --compare; and that one bench run's runs are comparable (the
-// same files, the limits pinned once), --compare telling other limits from a real change. Speeds are not checked here,
-// only the output's shape; the real numbers come from the owner's devices.
+// same files, the limits pinned once), --compare telling other limits from a real change; an encrypted output (a fresh
+// random IV every save) hashed by what it reads back to. Speeds are not checked here, only the output's shape; the real
+// numbers come from the owner's devices.
 internal abstract partial class DesktopTests
 {
     internal static readonly (string Name, Action<Device> Run)[] DocumentBenchGroup =
@@ -22,6 +25,7 @@ internal abstract partial class DesktopTests
         ("documents bench: --save and --compare round-trip (each case's time, allocation and working set matched, cold beside warm, the hashed outputs compared); the options' variables, the option winning; usage errors exit with 2", DocumentBenchSaveCompare),
         ("documents bench: one bench run is comparable: the measured limits pinned once (every run reads under them, the saved results hold them) and a capped case takes the same files in every run whatever the cold run refused, so the samples drawn with --hash give the same output every run; a file whose output differs between runs is named with its case and its hash in each run", DocumentBenchSameEveryRun),
         ("documents bench: --compare notes limits other than the saved ones and says whether they explain a changed output (each changed file named); a deliberately changed output is reported as changed under the same limits and under other ones", DocumentBenchCompareLimits),
+        ("documents bench: an encrypted output (a fresh random IV every save) is hashed by what it reads back to: edit-incremental, edit-rewrite and sign on the samples give the same output every run, the lines and results saying how many were read back; another title or other permissions read back otherwise and are named as differing; an unencrypted output keeps its bytes' hash; --compare names a save that hashed them by their bytes as hashed another way, not as a change", DocumentBenchReadBackEncrypted),
     ];
 
     // The samples (IDRAK_DOCUMENTS_SAMPLES, else test-output/documents/samples): missing, the group fails naming the command that makes them.
@@ -305,6 +309,164 @@ internal abstract partial class DesktopTests
                           + (stream == "1g" ? "read under the same limits" : "NOT explained by the other limits: 1 of them met none"), StringComparison.Ordinal),
                     $"a changed output reported under a {stream} stream limit: {changed.ToJsonString()} {text.Output}");
             }
+        }
+        finally
+        {
+            Directory.Delete(cache, true);
+        }
+    }
+
+    private static void DocumentBenchReadBackEncrypted(Device device)
+    {
+        CpuOnly(device);
+        string samples = BenchSamples(), cache = MeasureTemp();
+        try
+        {
+            // Several runs on the samples: each encrypted output (the AES ones get a fresh IV every save) read back, so every
+            // run gives the same output, file by file; the results name the files read back.
+            var json = IdrakJson(cache, "bench", "documents", "--hash", "-n", "2", "--cases", "edit-incremental,edit-rewrite,sign", "--sets", samples);
+            var cases = json["cases"]!.AsArray().Select(c => c!.AsObject()).ToList();
+            Check(cases.Select(c => (string)c["label"]!).SequenceEqual(["edit-incremental", "edit-rewrite", "sign"]), $"the three cases: {BenchHead(json)}");
+            foreach (var c in cases)
+            {
+                string label = (string)c["label"]!;
+                var readBack = c["read_back_files"]!.AsArray().Select(f => (string)f!).ToList();
+                Check((bool?)c["same_output"] == true && c["differing_files"] is null && c["warm"]!["runs"]!.AsArray().Count == 2
+                      && c["warm"]!["runs"]!.AsArray().All(r => (string?)r!["output"] == (string?)c["output"]),
+                    $"{label}: the same output every run: {c["output"]}, {c["same_output"]}, differing {c["differing_files"]?.ToJsonString()}");
+                Check((int)c["read_back"]! == readBack.Count && readBack.Count(f => f.Contains("-aes-", StringComparison.Ordinal)) >= 6
+                      && readBack.All(f => f.StartsWith("d2/", StringComparison.Ordinal) && c["file_outputs"]![f] is not null),
+                    $"{label}: the encrypted outputs read back, each with its output: {c["read_back"]}: {string.Join(", ", readBack)}");
+            }
+
+            // An encrypted output read back: the same title twice reads back the same though its bytes differ; another
+            // title, or other permissions (the encryption's parameters are in what it reads back to), read back otherwise.
+            string aes = Path.Combine(samples, "d2", "r6-aes-256-empty.pdf"), plain = Path.Combine(samples, "d2", "plain.pdf");
+            var read = DocumentBench.Pin(new DocumentOptions());
+            byte[] Edit(string file, string title, DocumentEncryption? encryption = null)
+            {
+                using var document = DocumentFormats.Open(file, read);
+                using var output = new MemoryStream();
+                using (var editor = DocumentWriters.Get(document.Format).Edit(document, output, new DocumentWriteOptions()))
+                {
+                    editor.SetInfo(document.Info with { Title = title, Subject = DocumentBench.EditedSubject });
+                    if (encryption is not null)
+                    {
+                        editor.Encrypt(encryption);
+                    }
+
+                    editor.Save(DocumentSaveMode.Rewrite);
+                }
+
+                return output.ToArray();
+            }
+
+            byte[] first = Edit(aes, DocumentBench.EditedTitle), second = Edit(aes, DocumentBench.EditedTitle), retitled = Edit(aes, "Another title");
+            var (firstBack, firstRead) = DocumentBenchReadBack.Hash(first, aes, read);
+            var (secondBack, secondRead) = DocumentBenchReadBack.Hash(second, aes, read);
+            var (retitledBack, _) = DocumentBenchReadBack.Hash(retitled, aes, read);
+            Check(!first.AsSpan().SequenceEqual(second) && firstRead && secondRead && firstBack == secondBack && retitledBack != firstBack && firstBack.Length == 64,
+                $"the same edit twice: other bytes ({first.Length} and {second.Length}), the same read-back ({firstBack}, {secondBack}); another title: {retitledBack}");
+            // The unencrypted sample encrypted by a rewrite (a file whose user password is empty opens as its user, so the
+            // encrypted samples' own encryption cannot be changed): twice with one set of permissions, once with another.
+            var print = new DocumentEncryption { Permissions = DocumentPermissions.Print };
+            byte[] printOnce = Edit(plain, DocumentBench.EditedTitle, print), printAgain = Edit(plain, DocumentBench.EditedTitle, print);
+            byte[] printCopy = Edit(plain, DocumentBench.EditedTitle, print with { Permissions = DocumentPermissions.Print | DocumentPermissions.Copy });
+            using (var printed = DocumentFormats.Open(printOnce, "printed.pdf", read))
+            {
+                Check(printed.Info.Security is { Revision: 6, KeyBits: 256, Streams: "AES-256", Permissions: DocumentPermissions.Print }, $"encrypted anew: {printed.Info.Security}");
+            }
+
+            var (printBack, printRead) = DocumentBenchReadBack.Hash(printOnce, plain, read);
+            Check(printRead && !printOnce.AsSpan().SequenceEqual(printAgain) && printBack == DocumentBenchReadBack.Hash(printAgain, plain, read).Output
+                  && printBack != DocumentBenchReadBack.Hash(printCopy, plain, read).Output,
+                "the permissions are in what an encrypted output reads back to (each encryption's key, salts and IVs are not)");
+
+            // The bench's own edit of the encrypted sample reads back as the edit above; an unencrypted output keeps its
+            // bytes' hash (also when read back: it opens unencrypted).
+            DocumentBenchRun Rewrite(string file) => DocumentBench.Measure("edit-rewrite", 0f, new DocumentBenchSet("d2", Path.GetDirectoryName(file)!, [file], 0),
+                new DocumentBenchOptions { Cases = ["edit-rewrite"], Dpis = [150f], Hash = true, Read = read }, _ => { });
+            var encryptedRun = Rewrite(aes);
+            var plainRun = Rewrite(plain);
+            byte[] plainBytes = Edit(plain, DocumentBench.EditedTitle);
+            string plainHash = Convert.ToHexStringLower(SHA256.HashData(plainBytes));
+            Check(encryptedRun.Work.ReadBackFiles.SequenceEqual([aes]) && encryptedRun.Work.FileOutputs.Single().Output == firstBack,
+                $"the bench's encrypted output read back: {string.Join(", ", encryptedRun.Work.ReadBackFiles)}; {encryptedRun.Work.FileOutputs.Single().Output} against {firstBack}");
+            Check(plainRun.Work.ReadBackFiles.Count == 0 && plainRun.Work.FileOutputs.Single().Output == plainHash && DocumentBenchReadBack.Hash(plainBytes, plain, read) == (plainHash, false),
+                $"an unencrypted output hashed by its bytes: {plainRun.Work.FileOutputs.Single().Output} against {plainHash}");
+
+            // A changed encrypted output between runs is named as differing, marked as read back.
+            DocumentBenchRun Run(byte[] output)
+            {
+                var work = new DocumentBenchWork(hash: true);
+                var part = new DocumentBenchWork(hash: true) { Units = 1, Files = 1 };
+                part.ReadBackLater(output);
+                work.Merge(aes, part);
+                work.ReadBack(read);
+                work.Finish();
+                return new DocumentBenchRun(1, 0, 0, 0, 0, work);
+            }
+
+            var cold = Run(first);
+            var warm1 = Run(second);
+            var warm2 = Run(retitled);
+            Check(DocumentBench.Differences(cold, [warm1]).Count == 0 && cold.Work.Output == warm1.Work.Output, "two saves of one edit: nothing differs");
+            var differing = DocumentBench.Differences(cold, [warm1, warm2]);
+            var lines = BenchDocumentsCommand.DifferenceLines("edit-rewrite", new DocumentBenchSet("d2", Path.GetDirectoryName(aes)!, [aes], 0), cold, [warm1, warm2], differing);
+            Check(differing.Count == 1 && differing[0].File == aes && differing[0].Outputs[2] != differing[0].Outputs[0] && lines.Count == 1
+                  && lines[0].StartsWith("    differs in edit-rewrite: r6-aes-256-empty.pdf (encrypted, read back): cold ", StringComparison.Ordinal),
+                $"another title written is named as differing: {string.Join(" | ", lines)}");
+
+            // The labels, and a save made before encrypted outputs were read back (no read_back_files, those files hashed by
+            // their bytes): hashed another way, not a change; a real change beside them is one, naming its file alone.
+            string[] args = ["bench", "documents", "--hash", "-n", "1", "--cases", "edit-rewrite", "--sets", Path.Combine(samples, "d2")];
+            var pinned = new Dictionary<string, string?>     // the same limits for the save and the comparisons
+            {
+                [DocumentOptions.MaxStreamBytesVariable] = "1g", [DocumentOptions.MaxObjectsVariable] = "1000000", [DocumentOptions.CacheBytesVariable] = "64m",
+            };
+            WithEnvironment(pinned, () => IdrakJson(cache, [.. args, "--save", "read-back"]));
+            var before = JsonNode.Parse(File.ReadAllText(Path.Combine(cache, "bench", "read-back.json")))!.AsObject();
+            var beforeCase = before["cases"]![0]!.AsObject();
+            var readBackFiles = beforeCase["read_back_files"]!.AsArray().Select(f => (string)f!).ToList();
+            Check((int)beforeCase["read_back"]! == readBackFiles.Count && readBackFiles.Count >= 7 && readBackFiles.Contains("r6-aes-256-empty.pdf"),
+                $"the results name the files read back: {beforeCase["read_back"]}: {string.Join(", ", readBackFiles)}");
+            beforeCase.Remove("read_back");
+            beforeCase.Remove("read_back_files");
+            foreach (string file in readBackFiles)
+            {
+                beforeCase["file_outputs"]![file] = new string('1', 64);
+            }
+
+            beforeCase["output"] = new string('1', 64);
+            File.WriteAllText(Path.Combine(cache, "bench", "bytes.json"), before.ToJsonString());
+            beforeCase["file_outputs"]!["plain.pdf"] = new string('0', 64);
+            File.WriteAllText(Path.Combine(cache, "bench", "bytes-and-change.json"), before.ToJsonString());
+
+            JsonObject? compared = null, changedJson = null;
+            string text = "", changedText = "";
+            WithEnvironment(pinned, () =>
+            {
+                compared = IdrakJson(cache, [.. args, "--compare", "bytes"]);
+                text = MeasureIdrak(cache, [.. args, "--compare", "bytes"]).Output;
+                changedJson = IdrakJson(cache, [.. args, "--compare", "bytes-and-change"]);
+                changedText = MeasureIdrak(cache, [.. args, "--compare", "bytes-and-change"]).Output;
+            });
+            var row = compared!["compare"]!["outputs"]!.AsArray().Single()!;
+            Check(row["same"] is null && row["hashed_another_way"]!.AsArray().Select(f => (string)f!).Order(StringComparer.Ordinal).SequenceEqual(readBackFiles)
+                  && text.Contains("outputs: 0 of 1 hashed cases the same as 'bytes'; hashed another way, not compared: edit-rewrite d2", StringComparison.Ordinal)
+                  && text.Contains("read back here (encrypted), hashed by their bytes in 'bytes', not compared; every other file's output the same as saved", StringComparison.Ordinal)
+                  && !text.Contains("CHANGED", StringComparison.Ordinal),
+                $"a save that hashed the encrypted outputs by their bytes: hashed another way: {row.ToJsonString()} {text}");
+            Check(text.Contains("edit-rewrite on d2: ", StringComparison.Ordinal)
+                  && text.Contains($"the same output every run (read back: {readBackFiles.Count} encrypted)", StringComparison.Ordinal),
+                $"the line says how many were read back: {text}");
+
+            var changedRow = changedJson!["compare"]!["outputs"]!.AsArray().Single()!;
+            Check((bool?)changedRow["same"] == false && changedRow["files"]!.AsArray().Select(f => (string?)f).SequenceEqual(["plain.pdf"])
+                  && changedRow["hashed_another_way"]!.AsArray().Count == readBackFiles.Count
+                  && changedText.Contains("CHANGED: edit-rewrite d2", StringComparison.Ordinal)
+                  && changedText.Contains($"edit-rewrite d2: 1 file changed (plain.pdf); read under the same limits; besides, {readBackFiles.Count} files hashed another way", StringComparison.Ordinal),
+                $"a real change beside them is one: {changedRow.ToJsonString()} {changedText}");
         }
         finally
         {
