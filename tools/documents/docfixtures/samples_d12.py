@@ -5,7 +5,9 @@ certificates, both CRLs and the OCSP response), a signer whose certificate is re
 of the signed revision changed afterwards), a wrong chain (signed under a root the check is not given as trusted),
 changes after a certification signature (a form filled: allowed by its DocMDP permissions; page content replaced: not
 allowed), two signatures (CMS adbe.pkcs7.detached, then PAdES), and the legacy adbe.pkcs7.sha1 and adbe.x509.rsa_sha1
-forms. Every byte repeats on every run (pki.py says how).
+forms; then the known-bad cases a check must refuse (samples_d12_bad.py: bad certificate paths, revocation data signed by
+the wrong key, a timestamp of other bytes, a path past the limit, a weak key). Every byte repeats on every run (pki.py
+says how).
 
 A signature, as `signatures` lists it: `field`, `subFilter`, `kind`, `signer` and `chain` (certificates, the PKI files
 beside), `byteRange`, `contentsReserved` (bytes in /Contents) and `cmsLength`, `revision` (which revision holds it,
@@ -13,7 +15,7 @@ beside), `byteRange`, `contentsReserved` (bytes in /Contents) and `cmsLength`, `
 (/M), `cmsSigningTime` (its signingTime attribute, when it has one), `timestamp` (time, authority, policy, serial),
 `reason`, `location`, `docMdp` (a certification signature's permission), `trust` (decision 16: the only certificates a
 check is given as trusted), `validationTime` (the time a check validates at), and `results`: `digest` and `signature`
-(valid or invalid), `chain` (trusted or untrusted), `timestamp` (valid, or null without one), `revocation` (good,
+(valid or invalid), `chain` (trusted or untrusted), `timestamp` (valid or invalid, or null without one), `revocation` (good,
 revoked, or not-checked when the file holds no revocation data and fetching is off), `modifications` (none, allowed,
 not-allowed) with `modificationLevel` (none, form-filling, annotations, other)."""
 import hashlib
@@ -163,18 +165,22 @@ class SignedDoc:
         pdf.put(ref, Stream({"Filter": N("FlateDecode")}, flate(data), data))
         self._update([ref.num])
 
-    def add_dss(self, pki, contents_list, revoked=False):
+    def add_dss(self, pki, contents_list, revoked=False, signer=None, crls=None, ocsps=None):
         """An update adding the DSS: the chain's certificates, both CRLs, the OCSP response, and a VRI entry per
-        signature (keyed by the SHA-1 of its /Contents, upper-case hex)."""
+        signature (keyed by the SHA-1 of its /Contents, upper-case hex). The known-bad samples give their own signer,
+        lists and responses ((file name, DER) pairs) in place of the PKI's."""
         pdf = self.pdf
 
         def stream(data):
             return pdf.add(Stream({"Filter": N("FlateDecode")}, flate(data), data))
 
-        signer = pki.revoked if revoked else pki.signer
+        signer = signer or (pki.revoked if revoked else pki.signer)
+        crl_items = crls if crls is not None else [("pki.intermediate.crl", pki.intermediate_crl),
+                                                    ("pki.root.crl", pki.root_crl)]
+        ocsp_items = ocsps if ocsps is not None else ([] if revoked else [("pki.signer.ocsp", pki.signer_ocsp)])
         certs = [stream(p.der) for p in (signer, pki.intermediate, pki.root, pki.tsa)]
-        crls = [stream(pki.intermediate_crl), stream(pki.root_crl)]
-        ocsps = [] if revoked else [stream(pki.signer_ocsp)]
+        crls = [stream(data) for _, data in crl_items]
+        ocsps = [stream(data) for _, data in ocsp_items]
         vri = {}
         for contents in contents_list:
             vri[hashlib.sha1(contents).hexdigest().upper()] = {"Cert": certs, "CRL": crls, "OCSP": ocsps}
@@ -188,8 +194,7 @@ class SignedDoc:
             [v.num for v in pdf.get(dss)["VRI"].values()]
         self._update(nums)
         return {"certs": [f"pki.{p.label}.cer" for p in (signer, pki.intermediate, pki.root, pki.tsa)],
-                "crls": ["pki.intermediate.crl", "pki.root.crl"], "ocsps": [] if revoked else ["pki.signer.ocsp"],
-                "vri": sorted(vri)}
+                "crls": [n for n, _ in crl_items], "ocsps": [n for n, _ in ocsp_items], "vri": sorted(vri)}
 
     def data(self):
         return bytes(self.w.buf)
@@ -404,6 +409,10 @@ def build(seed):
                        "with pyhanko-certvalidator (pyHanko does not read the form).",
                        [_expect(info, pki, pki.signer, "legacy PKCS #1 SHA-1", "rsa-pkcs1v15-sha1", digest="sha1",
                                 results=_results())], pki, checks=[check_legacy]))
+
+    from .samples_d12_bad import build_bad
+
+    out += build_bad(seed, pki)
     return out
 
 
@@ -511,6 +520,11 @@ def check_signatures(path, exp, notes):
             whole = got["coverage"] == "ENTIRE_FILE"
             if whole != want["coversWholeFile"]:
                 mismatch.append("coversWholeFile")
+            # A step where Idrak's rule differs from pyHanko's by design (the known-bad samples name it): recorded, expected.
+            by_design = want.get("referenceDiffers") or {}
+            if any(m in by_design for m in mismatch):
+                got["differsByDesign"] = {m: by_design[m] for m in mismatch if m in by_design}
+            mismatch = [m for m in mismatch if m not in by_design]
             if mismatch:
                 problems.append({"field": want["field"], "differs": mismatch})
     if len(embedded) != len(exp["signatures"]):

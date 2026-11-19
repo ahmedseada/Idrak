@@ -404,6 +404,9 @@ No leftovers.
 | 28.22 | ~~Redaction as a command~~ Answered 2026-11-18: `idrak data redact` in D10 (decision 17). | question (answered) | Open questions (5) |
 | 28.23 | ~~The font plug-in project's name~~ Answered 2026-11-18: `Idrak.Imaging.Plugins`, new (decision 21). | question (answered) | Open questions (6) |
 | 28.24 | A Flate image written with one band of buffers instead of one copy of the image: the deflater would take the filtered rows a band at a time, but .NET's zlib-ng writes other bytes when its input comes in other pieces (measured 2026-11-19: pieces of 32 KiB multiples from 64 KiB match one piece at levels 4 to 9; level 1 never does), so the written files would change once (rule 71). Built only if the owner accepts the new bytes, as decision 24 did for fonts. | question | Phase D13 |
+| 28.25 | Name constraints, policy constraints, policy mappings and inhibit-any-policy read (RFC 5280, 6.1.3-6.1.5) instead of every path carrying one failing, named (x509-limbo's name-constraint cases that should pass are printed `LIMIT:` by `documents pdf: signatures: known bad`). | feature | Phase D12, known-bad cases (2026-11-19) |
+| 28.26 | DSA, EdDSA and ML-DSA keys read for signatures and paths (x509-limbo's valid ML-DSA paths are printed `LIMIT:`). | feature | Phase D12, known-bad cases (2026-11-19) |
+| 28.27 | ECDSA's curve arithmetic in C# for secp256k1 and the Brainpool curves (the DER, the ranges and the digest are Idrak's already), so a platform whose `ECDsa` lacks them answers alike (rule 70; P-256, P-384 and P-521 are on every platform); the Wycheproof test prints `LIMIT:` where the platform lacks one. | feature | Phase D12, known-bad cases (2026-11-19) |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 

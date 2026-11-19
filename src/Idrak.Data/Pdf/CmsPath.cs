@@ -18,11 +18,27 @@ internal enum CmsUsage : byte
 /// nothing fetched: from a certificate, through issuers found among the certificates given (the signature's, the document's
 /// validation data), to a certificate the app trusts (decision 16: only those; never one the document carries). Each link's
 /// signature, each certificate's validity at the time, the CA's basic constraints, path length and key usage, the first
-/// certificate's usage, and critical extensions this does not read (which fail the path, naming them).
+/// certificate's usage, critical extensions this does not read and name or policy constraints critical or not (which fail
+/// the path, naming them: never a path they would limit passed unread), RSA keys shorter than the
+/// check takes, and the path's length (<see cref="SignatureCheckOptions.MinimumRsaKeyBits"/>,
+/// <see cref="SignatureCheckOptions.MaxChainLength"/>). The search verifies each link once, names a loop, and tries a bounded
+/// number of issuers, so the certificates a document carries cannot keep it searching. Checked against the D12 known-bad
+/// samples and x509-limbo's path cases.
 /// </summary>
 internal static class CmsPath
 {
-    private const int MaxLength = 12;
+    // The issuers a search may try for each certificate a path may hold (a document's own certificates bound no search).
+    private const int TriesPerPlace = 64;
+
+    // Extensions that limit a path in ways this check does not read (the names a CA may certify, its policies): a certificate
+    // of a path carrying one, critical or not, fails it, naming it, rather than a path it would limit passing.
+    private static readonly Dictionary<string, string> Limiting = new(StringComparer.Ordinal)
+    {
+        [CmsOids.NameConstraints] = "name constraints",
+        [CmsOids.PolicyConstraints] = "policy constraints",
+        [CmsOids.PolicyMappings] = "policy mappings",
+        [CmsOids.InhibitAnyPolicy] = "an inhibit-any-policy limit",
+    };
 
     // Extensions a path is checked by, or whose meaning does not limit a signature's path; any other critical one fails it.
     private static readonly HashSet<string> Known =
@@ -41,107 +57,173 @@ internal static class CmsPath
 
     /// <summary>
     /// A path from <paramref name="first"/> to one of <paramref name="anchors"/> through <paramref name="pool"/>, checked at
-    /// <paramref name="at"/>: the path (first to anchor) and what was found, or null and why none is valid.
+    /// <paramref name="at"/> within <paramref name="options"/>' limits (its key size and path length): the path (first to
+    /// anchor) and what was found, or null and why none is valid.
     /// </summary>
     public static (List<CmsCertificate>? Path, string Detail) Build(CmsCertificate first, IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors,
-        DateTimeOffset at, CmsUsage usage)
+        DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options)
     {
         if (anchors.Count == 0)
         {
             return (null, "no certificate is trusted: a check trusts only the certificates the app gives (SignatureCheckOptions.Trusted, or the machine's store with UseMachineStore)");
         }
 
-        string? best = null;
-        var path = new List<CmsCertificate> { first };
-        var found = Walk(path, pool, anchors, at, usage, ref best);
+        var search = new Search(pool, anchors, at, usage, options);
+        var found = search.Walk([first]);
         if (found is not null)
         {
             string chain = string.Join(" < ", found.Select(c => c.Named));
             return (found, $"{chain}, trusted, valid at {CmsText.Time(at)}");
         }
 
-        return (null, best ?? $"no path from {first.Named} to a trusted certificate: its issuer '{first.IssuerName}' is neither trusted nor among the certificates the signature and the document carry");
+        return (null, search.Best ?? $"no path from {first.Named} to a trusted certificate: its issuer '{first.IssuerName}' is neither trusted nor among the certificates the signature and the document carry");
     }
 
-    // Depth first: each issuer the names (and key identifiers) allow, whose key verifies the link, until a trusted one;
-    // the first whole path that checks is taken, else the reason the deepest attempt failed.
-    private static List<CmsCertificate>? Walk(List<CmsCertificate> path, IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors, DateTimeOffset at,
-        CmsUsage usage, ref string? best)
+    // One path search: depth first, each issuer the names (and key identifiers) allow whose key verifies the link, until a
+    // trusted one; the first whole path that checks is taken, else the reason the first failed attempt gave.
+    private sealed class Search(IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors, DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options)
     {
-        var current = path[^1];
-        if (anchors.Any(a => a.Same(current)))
+        private readonly Dictionary<(CmsCertificate Certificate, CmsCertificate Issuer), string?> _links = [];
+        private int _tried;
+        private bool _stopped;
+
+        /// <summary>Why the search found no path (the first failure met), or null.</summary>
+        public string? Best { get; private set; }
+
+        public List<CmsCertificate>? Walk(List<CmsCertificate> path)
         {
-            string? failed = Check(path, at, usage);
-            if (failed is null)
+            var current = path[^1];
+            if (anchors.Any(a => a.Same(current)))
             {
-                return [.. path];
+                string? failed = Check(path, at, usage, options.MinimumRsaKeyBits);
+                if (failed is null)
+                {
+                    return [.. path];
+                }
+
+                Best ??= failed;
+                return null;
             }
 
-            best ??= failed;
+            if (path.Count >= options.MaxChainLength)
+            {
+                Best ??= $"a path longer than {options.MaxChainLength} certificates (SignatureCheckOptions.MaxChainLength, {SignatureCheckOptions.MaxChainLengthVariable})";
+                return null;
+            }
+
+            foreach (bool trusted in (ReadOnlySpan<bool>)[true, false])
+            {
+                foreach (var candidate in trusted ? anchors : pool)
+                {
+                    if (!current.NamesIssuer(candidate) || (!trusted && anchors.Any(a => a.Same(candidate))))
+                    {
+                        continue;
+                    }
+
+                    if (path.Exists(c => c.Same(candidate)))
+                    {
+                        if (!candidate.Same(current))
+                        {
+                            Best ??= $"the path loops: {current.Named}'s issuer {candidate.Named} is already in it";
+                        }
+
+                        continue;
+                    }
+
+                    if (++_tried > TriesPerPlace * options.MaxChainLength)
+                    {
+                        // A search cut short says so first (the paths it did not try may hold one), then the first failure it met.
+                        if (!_stopped)
+                        {
+                            _stopped = true;
+                            Best = $"the path search stopped after {TriesPerPlace * options.MaxChainLength} issuers tried ({TriesPerPlace} for each certificate a path may hold, SignatureCheckOptions.MaxChainLength){(Best is null ? "" : $"; the first failure met: {Best}")}";
+                        }
+
+                        return null;
+                    }
+
+                    if (Link(current, candidate) is { } broken)
+                    {
+                        Best ??= $"{current.Named}'s certificate does not verify with {candidate.Named}'s key: {broken}";
+                        continue;
+                    }
+
+                    path.Add(candidate);
+                    var found = Walk(path);
+                    path.RemoveAt(path.Count - 1);
+                    if (found is not null)
+                    {
+                        return found;
+                    }
+                }
+            }
+
+            if (current.SelfIssued && Best is null)
+            {
+                Best = $"{current.Named}'s certificate is a root that is not trusted (the check trusts only the certificates the app gives)";
+            }
+
             return null;
         }
 
-        if (path.Count > MaxLength)
+        // Each link verified once a search, however many paths pass through it.
+        private string? Link(CmsCertificate certificate, CmsCertificate issuer)
         {
-            best ??= $"a path longer than {MaxLength} certificates";
-            return null;
-        }
-
-        foreach (bool trusted in (ReadOnlySpan<bool>)[true, false])
-        {
-            foreach (var candidate in trusted ? anchors : pool)
+            if (!_links.TryGetValue((certificate, issuer), out string? broken))
             {
-                if (!current.NamesIssuer(candidate) || path.Exists(c => c.Same(candidate)) || (!trusted && anchors.Any(a => a.Same(candidate))))
-                {
-                    continue;
-                }
-
-                if (VerifiedBy(current, candidate) is { } broken)
-                {
-                    best ??= $"{current.Named}'s certificate does not verify with {candidate.Named}'s key: {broken}";
-                    continue;
-                }
-
-                path.Add(candidate);
-                var found = Walk(path, pool, anchors, at, usage, ref best);
-                path.RemoveAt(path.Count - 1);
-                if (found is not null)
-                {
-                    return found;
-                }
+                broken = VerifiedBy(certificate, issuer);
+                _links[(certificate, issuer)] = broken;
             }
-        }
 
-        if (current.SelfIssued && best is null)
-        {
-            best = $"{current.Named}'s certificate is a root that is not trusted (the check trusts only the certificates the app gives)";
+            return broken;
         }
-
-        return null;
     }
 
     // The basic path checks (RFC 5280, 6.1.3 and 6.1.4) on a path from its first certificate to its anchor; null when it passes.
-    private static string? Check(List<CmsCertificate> path, DateTimeOffset at, CmsUsage usage)
+    private static string? Check(List<CmsCertificate> path, DateTimeOffset at, CmsUsage usage, int minimumRsaBits)
     {
+        // A certificate's dates are whole seconds (RFC 5280, 4.1.2.5, inclusive): the time is compared floored to its second,
+        // so the last second of a validity holds whole and the one before its first does not (x509-limbo's reading).
+        var second = new DateTimeOffset(at.UtcTicks - (at.UtcTicks % TimeSpan.TicksPerSecond), TimeSpan.Zero);
         for (int i = 0; i < path.Count; i++)
         {
             var certificate = path[i];
             bool anchor = i == path.Count - 1 && path.Count > 1;
-            if (!anchor && (at < certificate.NotBefore || at > certificate.NotAfter))
+            if (!anchor && (second < certificate.NotBefore || second > certificate.NotAfter))
             {
                 return $"{certificate.Named}'s certificate is not valid at {CmsText.Time(at)} (from {CmsText.Time(certificate.NotBefore)} to {CmsText.Time(certificate.NotAfter)})";
             }
 
             foreach (var (oid, critical, _) in certificate.Extensions)
             {
+                if (Limiting.TryGetValue(oid, out string? limiting))
+                {
+                    return $"{certificate.Named}'s certificate has {limiting} ({oid}), which this check does not read: a path they may limit is refused";
+                }
+
                 if (critical && !Known.Contains(oid))
                 {
                     return $"{certificate.Named}'s certificate has the critical extension {oid}, which this check does not read";
                 }
             }
 
+            if (certificate.Problem is { } problem)
+            {
+                return $"{certificate.Named}'s certificate has {problem}";
+            }
+
+            if (CmsKeys.Weak(certificate, minimumRsaBits) is { } weak)
+            {
+                return weak;
+            }
+
             if (i == 0)
             {
+                if (certificate.Asserts(CmsCertificate.KeyCertSign) && certificate.IsCa != true)
+                {
+                    return $"{certificate.Named}'s key usage names keyCertSign, but its certificate is not a CA (basic constraints; RFC 5280 4.2.1.3)";
+                }
+
                 continue;
             }
 

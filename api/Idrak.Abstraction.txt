@@ -2989,7 +2989,11 @@ public sealed record Idrak.Abstraction.Data.SignatureCheckOptions : System.IEqua
   public bool Online { get; init; }
   public bool RequireRevocation { get; init; }
   public bool UseMachineStore { get; init; }
+  public const string MaxChainLengthVariable = "IDRAK_DOCUMENT_SIGNATURE_CHAIN"
+  public const string MinimumRsaKeyBitsVariable = "IDRAK_DOCUMENT_SIGNATURE_RSA_BITS"
   public const string OnlineVariable = "IDRAK_DOCUMENT_SIGNATURE_ONLINE"
+  public int MaxChainLength { get; init; }
+  public int MinimumRsaKeyBits { get; init; }
 
 public readonly record struct Idrak.Abstraction.Data.SignatureCheckStep : System.IEquatable<Idrak.Abstraction.Data.SignatureCheckStep>
   public SignatureCheckStep(string Name, bool Passed, string Detail)

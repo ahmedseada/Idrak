@@ -14,7 +14,8 @@ namespace Idrak.Data.Pdf;
 /// certificate the app trusts (decision 16: <see cref="SignatureCheckOptions.Trusted"/>, the machine's store only when
 /// asked), at the trusted time; the <b>timestamp</b> (its imprint, its own signature, its authority's chain); the chain's
 /// <b>revocation</b> from the document's validation data (DSS) and the signature's own, fetched online only when
-/// <see cref="SignatureCheckOptions.Online"/>; and the <b>changes</b> made after signing. The legacy forms
+/// <see cref="SignatureCheckOptions.Online"/>; and the <b>changes</b> made after signing. A path's limits (its RSA keys'
+/// size, its length) are the options'. The legacy forms
 /// (<c>adbe.pkcs7.sha1</c>, <c>adbe.x509.rsa_sha1</c>) and document timestamps (<c>ETSI.RFC3161</c>) are checked by their own
 /// rules. A signature never makes a document trusted on its own. Safe from several threads.
 /// </summary>
@@ -62,7 +63,7 @@ internal static class PdfSignatureCheck
         else
         {
             var usage = entry.IsDocumentTimestamp ? CmsUsage.Timestamp : CmsUsage.Signer;
-            (path, string detail) = CmsPath.Build(certificate, pool, anchors, at, usage);
+            (path, string detail) = CmsPath.Build(certificate, pool, anchors, at, usage, options);
             string when = options.At is not null ? "" : trustedTime is not null ? " (the timestamp's time)" : " (now: no trusted time)";
             steps.Add(new SignatureCheckStep(SignatureCheck.Chain, path is not null, (path is null ? detail : detail + when) + Noted(notes)));
         }
@@ -324,7 +325,7 @@ internal static class PdfSignatureCheck
         }
 
         var at = options.At ?? stamp.Time;
-        var (path, detail) = CmsPath.Build(authority, [.. pool, .. stamp.Token.Certificates], anchors, at, CmsUsage.Timestamp);
+        var (path, detail) = CmsPath.Build(authority, [.. pool, .. stamp.Token.Certificates], anchors, at, CmsUsage.Timestamp, options);
         if (path is null)
         {
             return (Fail(SignatureCheck.Timestamp, $"the timestamp authority is not trusted: {detail}"), null);

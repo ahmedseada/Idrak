@@ -29,9 +29,12 @@ internal enum CmsSchemeKind : byte
 
 /// <summary>
 /// Signatures verified and made. RSA signatures are verified here, on <see cref="BigInteger"/> (RFC 8017's public
-/// operation, then EMSA-PKCS1-v1_5 or EMSA-PSS checked), so every platform gives the same answer for every digest (SHA-1's
-/// legacy forms too, which some platforms' policies refuse) and every PSS salt length; ECDSA through the base library's
-/// <see cref="ECDsa"/>. Signing uses the app's key as the base library holds it (a key in a store signs where it is).
+/// operation, then EMSA-PKCS1-v1_5 or EMSA-PSS checked; a key certified for RSA-PSS held to its parameters), so every
+/// platform gives the same answer for every digest (SHA-1's legacy forms too, which some platforms' policies refuse) and
+/// every PSS salt length; ECDSA's DER, its numbers' ranges and the digest's length are read here too, and only the curve
+/// arithmetic is the base library's <see cref="ECDsa"/>. Checked against Project Wycheproof's vectors
+/// (tests/Idrak.Tests/data/wycheproof). Signing uses the app's key as the base library holds it (a key in a store signs where
+/// it is).
 /// </summary>
 internal static class CmsKeys
 {
@@ -44,6 +47,21 @@ internal static class CmsKeys
     private static readonly byte[] Sha256InfoBare = Convert.FromHexString("302F300B06096086480165030402010420");
     private static readonly byte[] Sha384InfoBare = Convert.FromHexString("303F300B06096086480165030402020430");
     private static readonly byte[] Sha512InfoBare = Convert.FromHexString("304F300B06096086480165030402030440");
+
+    // The orders of the named curves (SEC 2: P-256, P-384, P-521, secp256k1; RFC 5639: Brainpool P256r1, P384r1, P512r1), by
+    // their object identifiers: an ECDSA signature's r and s are checked against them here, not by the platform.
+    private static readonly Dictionary<string, BigInteger> CurveOrders = new(StringComparer.Ordinal)
+    {
+        ["1.2.840.10045.3.1.7"] = Order("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"),
+        ["1.3.132.0.34"] = Order("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973"),
+        ["1.3.132.0.35"] = Order("01FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFA51868783BF2F966B7FCC0148F709A5D03BB5C9B8899C47AEBB6FB71E91386409"),
+        ["1.3.132.0.10"] = Order("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141"),
+        ["1.3.36.3.3.2.8.1.1.7"] = Order("A9FB57DBA1EEA9BC3E660A909D838D718C397AA3B561A6F7901E0E82974856A7"),
+        ["1.3.36.3.3.2.8.1.1.11"] = Order("8CB91E82A3386D280F5D6F7E50E641DF152F7109ED5456B31F166E6CAC0425A7CF3AB6AF6B7FC3103B883202E9046565"),
+        ["1.3.36.3.3.2.8.1.1.13"] = Order("AADD9DB8DBE9C48B3FD4E6AE33C9FC07CB308DB3B3C9D20ED6639CCA70330870553E5C414CA92619418661197FAC10471DB1D381085DDADDB58796829CA90069"),
+    };
+
+    private static BigInteger Order(string hex) => new(Convert.FromHexString(hex), isUnsigned: true, isBigEndian: true);
 
     /// <summary>
     /// The scheme <paramref name="algorithm"/> names (a signer's signatureAlgorithm), its digest from
@@ -154,26 +172,17 @@ internal static class CmsKeys
     {
         if (scheme.Kind == CmsSchemeKind.Ecdsa)
         {
-            if (key.KeyAlgorithm.Oid != CmsOids.EcPublicKey)
-            {
-                return $"an ECDSA signature, but {key.Named}'s key is {key.KeyAlgorithm.Oid}";
-            }
-
-            try
-            {
-                using var ecdsa = ECDsa.Create();
-                ecdsa.ImportSubjectPublicKeyInfo(key.PublicKeyInfo.Span, out _);
-                return ecdsa.VerifyHash(hash, signature, DSASignatureFormat.Rfc3279DerSequence) ? null : $"the {scheme} signature does not verify with {key.Named}'s key";
-            }
-            catch (CryptographicException e)
-            {
-                return $"{key.Named}'s EC key cannot be used here ({e.Message})";
-            }
+            return key.KeyAlgorithm.Oid != CmsOids.EcPublicKey ? $"an ECDSA signature, but {key.Named}'s key is {key.KeyAlgorithm.Oid}" : VerifyEcdsa(key, scheme, hash, signature);
         }
 
         if (key.Rsa() is not { } rsa)
         {
             return $"an RSA signature, but {key.Named}'s key is not an RSA key ({key.KeyAlgorithm.Oid})";
+        }
+
+        if (PssKeyBound(key, scheme) is { } bound)
+        {
+            return bound;
         }
 
         var encoded = PublicOperation(rsa, signature, out string? problem);
@@ -185,6 +194,133 @@ internal static class CmsKeys
         return scheme.Kind == CmsSchemeKind.RsaPkcs1
             ? (Pkcs1Matches(encoded, scheme.Digest, hash) ? null : $"the {scheme} signature does not verify with {key.Named}'s key")
             : (PssMatches(encoded, rsa.Bits, scheme, hash) ? null : $"the {scheme} signature does not verify with {key.Named}'s key");
+    }
+
+    /// <summary>
+    /// Why <paramref name="certificate"/>'s RSA key is too short for a check (fewer bits than <paramref name="minimumBits"/>,
+    /// <see cref="SignatureCheckOptions.MinimumRsaKeyBits"/>), or null: not an RSA key, or long enough.
+    /// </summary>
+    public static string? Weak(CmsCertificate certificate, int minimumBits) =>
+        certificate.Rsa() is { } rsa && rsa.Bits < minimumBits
+            ? $"{certificate.Named}'s RSA key is {rsa.Bits} bits, under the {minimumBits} a check takes (SignatureCheckOptions.MinimumRsaKeyBits, {SignatureCheckOptions.MinimumRsaKeyBitsVariable})"
+            : null;
+
+    // A key certified as id-RSASSA-PSS signs with PSS alone; with parameters, with their digest and mask and a salt at least
+    // theirs (RFC 4055, 3.1 and 3.3). Null when the scheme is one the key may make.
+    private static string? PssKeyBound(CmsCertificate key, CmsScheme scheme)
+    {
+        if (key.KeyAlgorithm.Oid != CmsOids.RsaPss)
+        {
+            return null;
+        }
+
+        if (scheme.Kind != CmsSchemeKind.RsaPss)
+        {
+            return $"the {scheme} signature, but {key.Named}'s key is certified for RSA-PSS alone";
+        }
+
+        if (key.KeyAlgorithm.Parameters.IsEmpty)
+        {
+            return null;
+        }
+
+        if (Pss(key.KeyAlgorithm.Parameters, out string? problem) is not { } limits)
+        {
+            return $"{key.Named}'s RSA-PSS key parameters cannot be read ({problem})";
+        }
+
+        return limits.Digest == scheme.Digest && limits.MaskDigest == scheme.MaskDigest && scheme.SaltLength >= limits.SaltLength ? null
+            : $"the {scheme} signature, but {key.Named}'s key is certified for {limits} or a longer salt";
+    }
+
+    // ECDSA: the signature's DER read here (RFC 3279's Ecdsa-Sig-Value, DER alone: minimal lengths and integers, both
+    // positive, nothing after it), r and s from 1 to the curve's order less one where the curve is a named one whose order is
+    // known here, the digest cut to the order's length (SEC 1, 4.1.4); then the base library verifies the two numbers in their
+    // fixed-size form. So no platform's own DER reader, range check or digest length decides what passes (rule 70).
+    private static string? VerifyEcdsa(CmsCertificate key, CmsScheme scheme, ReadOnlySpan<byte> hash, ReadOnlySpan<byte> signature)
+    {
+        try
+        {
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportSubjectPublicKeyInfo(key.PublicKeyInfo.Span, out _);
+            var order = CurveOrder(key.KeyAlgorithm);
+            if (EcdsaNumbers(signature, (ecdsa.KeySize + 7) / 8, order) is not { } numbers)
+            {
+                return $"the {scheme} signature is not one DER ECDSA signature whose r and s are in range for {key.Named}'s key";
+            }
+
+            if (order is { } n && n.GetBitLength() is var bits && bits % 8 == 0 && hash.Length * 8L > bits)
+            {
+                hash = hash[..(int)(bits / 8)];
+            }
+
+            return ecdsa.VerifyHash(hash, numbers, DSASignatureFormat.IeeeP1363FixedFieldConcatenation) ? null : $"the {scheme} signature does not verify with {key.Named}'s key";
+        }
+        catch (CryptographicException e)
+        {
+            return $"{key.Named}'s EC key cannot be used here ({e.Message})";
+        }
+    }
+
+    // r and s of an Ecdsa-Sig-Value (SEQUENCE { r INTEGER, s INTEGER }) in DER, each written big-endian into `field` bytes;
+    // null when the bytes are not exactly one such value, or a number is not from 1 to the order less one (to the field's
+    // size when the order is not known).
+    private static byte[]? EcdsaNumbers(ReadOnlySpan<byte> der, int field, BigInteger? order)
+    {
+        try
+        {
+            var reader = new AsnReader(der.ToArray(), AsnEncodingRules.DER);
+            var sequence = reader.ReadSequence();
+            reader.ThrowIfNotEmpty();
+            byte[] numbers = new byte[2 * field];
+            for (int k = 0; k < 2; k++)
+            {
+                var value = sequence.ReadIntegerBytes().Span;
+                if ((value[0] & 0x80) != 0)
+                {
+                    return null;                                               // negative
+                }
+
+                if (value.Length > 1 && value[0] == 0)
+                {
+                    value = value[1..];
+                }
+
+                if (value.Length > field)
+                {
+                    return null;
+                }
+
+                var number = new BigInteger(value, isUnsigned: true, isBigEndian: true);
+                if (number.IsZero || (order is { } n && number >= n))
+                {
+                    return null;
+                }
+
+                value.CopyTo(numbers.AsSpan((k * field) + field - value.Length));
+            }
+
+            sequence.ThrowIfNotEmpty();
+            return numbers;
+        }
+        catch (AsnContentException)
+        {
+            return null;
+        }
+    }
+
+    // The order of the named curve an EC key's parameters name, or null for another curve (or explicit parameters).
+    private static BigInteger? CurveOrder(CmsAlgorithm key)
+    {
+        try
+        {
+            var reader = CmsAsn.Reader(key.Parameters);
+            return CmsAsn.Next(reader, Asn1Tag.ObjectIdentifier) && CurveOrders.TryGetValue(reader.ReadObjectIdentifier(), out var order) ? order : null;
+        }
+        catch (Exception e) when (CmsAsn.IsDamage(e))
+        {
+            return null;
+        }
     }
 
     /// <summary>

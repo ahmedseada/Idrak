@@ -90,6 +90,15 @@ public sealed record SignatureCheckOptions
     /// <summary>The variable that lets a check fetch revocation data online (off unless set to on): "IDRAK_DOCUMENT_SIGNATURE_ONLINE".</summary>
     public const string OnlineVariable = "IDRAK_DOCUMENT_SIGNATURE_ONLINE";
 
+    /// <summary>The variable that sets <see cref="MinimumRsaKeyBits"/> (0 to 16384): "IDRAK_DOCUMENT_SIGNATURE_RSA_BITS".</summary>
+    public const string MinimumRsaKeyBitsVariable = "IDRAK_DOCUMENT_SIGNATURE_RSA_BITS";
+
+    /// <summary>The variable that sets <see cref="MaxChainLength"/> (1 to 64): "IDRAK_DOCUMENT_SIGNATURE_CHAIN".</summary>
+    public const string MaxChainLengthVariable = "IDRAK_DOCUMENT_SIGNATURE_CHAIN";
+
+    private readonly int _minimumRsaKeyBits = DocumentSettings.Int(MinimumRsaKeyBitsVariable, 0, 16384) ?? 2048;
+    private readonly int _maxChainLength = DocumentSettings.Int(MaxChainLengthVariable, 1, 64) ?? 12;
+
     /// <summary>The certificates trusted as roots of a signer's chain.</summary>
     public IReadOnlyList<X509Certificate2> Trusted { get; init; } = [];
 
@@ -113,6 +122,34 @@ public sealed record SignatureCheckOptions
 
     /// <summary>How long a service asked online may take to answer (30 seconds).</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// The fewest bits an RSA key of a signer's path may have, the signer's own and the trusted one's included (2048, as
+    /// pyHanko's default policy; <see cref="MinimumRsaKeyBitsVariable"/>): a path with a shorter key fails the chain step,
+    /// naming the key and its size, while its signatures still verify. 0 takes a key of any size (an archive of old
+    /// documents).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 0 or above 16384.</exception>
+    public int MinimumRsaKeyBits
+    {
+        get => _minimumRsaKeyBits;
+        init => _minimumRsaKeyBits = value is >= 0 and <= 16384 ? value
+            : throw new ArgumentOutOfRangeException(nameof(MinimumRsaKeyBits), value, "The fewest bits an RSA key may have: 0 (any size) to 16384.");
+    }
+
+    /// <summary>
+    /// The most certificates a signer's path may hold, the signer's and the trusted one's included (12;
+    /// <see cref="MaxChainLengthVariable"/>): a longer path fails the chain step, naming the limit. The path search also tries
+    /// at most 64 issuers for each certificate a path may hold, so the certificates a document carries cannot keep a check
+    /// searching.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1 or above 64.</exception>
+    public int MaxChainLength
+    {
+        get => _maxChainLength;
+        init => _maxChainLength = value is >= 1 and <= 64 ? value
+            : throw new ArgumentOutOfRangeException(nameof(MaxChainLength), value, "The most certificates a path may hold: 1 to 64.");
+    }
 }
 
 /// <summary>

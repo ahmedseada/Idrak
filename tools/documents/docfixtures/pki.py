@@ -116,7 +116,9 @@ class Party:
 
 
 def _cert(subject, subject_key, issuer_name, issuer_key, serial, start, end, ca=False, path_len=None, usages=(),
-          eku=None, issuer_cert=None, crl_url=None, ocsp_url=None):
+          eku=None, issuer_cert=None, crl_url=None, ocsp_url=None, extra=()):
+    """A certificate from cryptography's builder, signed with `issuer_key` (RSA PKCS #1 v1.5, SHA-256); `extra` more
+    extensions as (extension, critical) pairs, added last (the known-bad samples' unknown critical one)."""
     pub = subject_key.public_key()
     b = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer_name).public_key(pub)
          .serial_number(serial).not_valid_before(start).not_valid_after(end)
@@ -136,6 +138,8 @@ def _cert(subject, subject_key, issuer_name, issuer_key, serial, start, end, ca=
     if ocsp_url:
         b = b.add_extension(x509.AuthorityInformationAccess([x509.AccessDescription(
             x509.oid.AuthorityInformationAccessOID.OCSP, x509.UniformResourceIdentifier(ocsp_url))]), critical=False)
+    for extension, critical in extra:
+        b = b.add_extension(extension, critical=critical)
     return b.sign(issuer_key, hashes.SHA256())
 
 

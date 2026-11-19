@@ -2368,6 +2368,84 @@ first valid.
   python -I tools\documents\check_signed.py test-output\documents\signed-encrypted -o test-output\documents\signed-encrypted-check.json --password reader-2026
   ```
 
+**Signatures against known-bad cases, 2026-11-19 (owner, 1a):** Idrak keeps its own RSA verification (`BigInteger`, PKCS #1
+v1.5 and PSS) and its own path building, the same on every platform, offline, with the file's own revocation data; they
+are tested against public known-bad cases, every failure fixed in the library or named as a limit (printed `LIMIT: <case>:
+<why>`, in `src/Idrak.Data/README.md`'s "What is not supported", rows 28.25-28.27 of `plans/leftovers.md`). On `aaae777`.
+- **Project Wycheproof** (C2SP/wycheproof `testvectors_v1/` at `65ca4947`, Apache-2.0; 34 files, gzipped, in
+  `tests/Idrak.Tests/data/wycheproof` with the notice and commit in its README), through `CmsKeys.Verify` (and, for PKCS #1,
+  the legacy form's route, `Recover` then `Verify`, alike on every case): **RSA PKCS #1 v1.5**, 12 files (2048, 3072 and
+  4096 bits with SHA-256, -384 and -512, 258-260 cases each; the three sig-gen files with SHA-1): 2,415 cases, 140 valid
+  all verified, 2,253 invalid all refused, 22 acceptable all accepted (9 DigestInfo without NULL, 8 SHA-1, 5 small public
+  keys; 8 SHA-224 cases not read). **RSA-PSS**, 13 files (salts 0 to 64, MGF1 with SHA-1 and SHA-2, two with keys certified
+  with their parameters, the scheme read from the key): 1,561 cases, 1,064 valid verified, 497 invalid refused (the
+  SHA-224 groups counted as not read). **ECDSA**, 9 files (P-256, P-384, P-521, secp256k1, Brainpool P256r1, P384r1,
+  P512r1): 4,662 cases, 1,877 valid verified, 2,785 invalid refused. None differs. The start's ECDSA (the DER handed to the
+  base library) accepted 6 invalid "MissingZero" signatures (an r or s that is a negative DER integer): fixed.
+- **This platform's RSA, cross-checked** (a test-only guard: `RSA.VerifyHash`, Ubuntu 24.04, .NET 10.0.15): 3,404 cases it
+  can be asked (620 PSS cases whose salt or mask it cannot be asked for passed over; no input refused): no valid or invalid
+  case differs; it refuses the 9 acceptable DigestInfo-without-NULL cases Idrak accepts (listed).
+- **The generator's known-bad paths** (`docfixtures/samples_d12_bad.py`: 16 new D12 samples, `bad-*`, each with its chain
+  in its CMS or DSS, the root alone trusted, `knownBad` in its JSON; pyHanko's verdicts recorded, all as the JSON says): the
+  chain step refuses a signer expired at the signing time, one not yet valid, a forged issuer signature, an issuer not a
+  CA, a path past the intermediate's pathLenConstraint 0, an issuer without keyCertSign, a signer whose usage is
+  keyEncipherment alone, an unknown critical extension, an issuer name no certificate has, two CAs that issued each other
+  ("the path loops"), a 14-certificate path ("longer than 12", passes with `MaxChainLength` 16; pyHanko builds any length,
+  recorded as `differsByDesign`) and a 1024-bit RSA signer (passes with `MinimumRsaKeyBits` 1024; pyHanko alike: valid,
+  not trusted); the revocation step refuses a signer revoked by its OCSP response (by the CRL: `pades-revoked`) and, with
+  `RequireRevocation`, a CRL and an OCSP response signed by the wrong key (soft-fail passes them as "not checked", saying
+  they do not verify); the timestamp step refuses a token stamping other bytes. Of them, the start accepted the weak key
+  alone.
+- **x509-limbo** (C2SP/x509-limbo `b1242378`, Apache-2.0; its 165 path and list cases in `tests/Idrak.Tests/data/x509-limbo`,
+  the leaf as a document's signer, each case's lists read for each link): 121 as limbo says; 25 named as not applied by
+  design (a trust anchor's own dates, as RFC 5280 6.1 and pyHanko; a list issued after the time and a revocation after it,
+  PAdES long-term validation; how a CA writes certificates and lists: key identifiers, serial numbers, criticality, empty
+  subjects, CRL numbers; subject alternative names and a server's extended purpose; a CA certificate as the signer; a
+  depth that leaves self-issued certificates out); 19 limits (16 name-constraint cases that should pass, 3 ML-DSA); none
+  differs; the web namespaces (bettertls, webpki, online: 9,642) counted, not applied. The start hung on
+  `pathological-chain-same-subject-same-key` (100 CAs, one name and key: every issuer verifies), took an empty extended
+  key usage, non-critical name and policy constraints, keyCertSign on a non-CA leaf and an extension twice, and refused a
+  certificate in its last second (`notafter-fractional`).
+- **Fixes** (`Cms*.cs`): ECDSA's DER read here (DER alone, nothing after it, positive minimal integers, r and s from 1 to
+  the order less one for the seven named curves whose orders are known, the digest cut to the order's length), the base
+  library given the fixed-size numbers, so no platform's DER reader or range check decides; a key certified for RSA-PSS
+  signs with PSS alone, its digest, mask and at least its salt (RFC 4055); the path's RSA keys (the signer's and the
+  trusted one's too) at least `SignatureCheckOptions.MinimumRsaKeyBits` (2048, pyHanko's default;
+  `IDRAK_DOCUMENT_SIGNATURE_RSA_BITS`), else the chain fails naming the size; a path at most `MaxChainLength` certificates
+  (12, now exact: 13 passed before; `IDRAK_DOCUMENT_SIGNATURE_CHAIN`); each link verified once a search, a loop named, the
+  search bounded to 64 issuers tried for each certificate a path may hold (36 mesh certificates: stopped after 768 in
+  150 ms); name constraints, policy constraints, policy mappings and inhibit-any-policy fail the path critical or not
+  (non-critical ones were passed unread); an extension twice, an extended key usage naming no purpose and keyCertSign on
+  a non-CA first certificate fail it; validity compared at the whole second; a CRL naming a serial twice is not used. Both
+  options are in the tool's table and `documents contracts`' variables test; the public API dump regenerated through the
+  runner (the inventory unchanged).
+- **Limits:** name and policy constraints not read (every path carrying one refused); DSA, EdDSA and ML-DSA keys; ECDSA's
+  curve arithmetic is the platform's (P-256, P-384 and P-521 everywhere; secp256k1 and Brainpool where the platform's
+  `ECDsa` takes them: here all are).
+- **Nothing valid changed:** every signature of the 38 signed files at hand (the 13 D12 samples, the 13 edited, the 11
+  signed and the encrypted signed one), checked through the public API under eight trusts and times (the root at the
+  validation time, at the timestamp's, in 2036, with revocation required; none; the intermediate; the signer; both roots):
+  2,337 lines, SHA-256 `59087b1c…`, identical with the start's build and this one; the generator writes the 13 D12 samples
+  and the PKI byte for byte as before.
+- **Tests:** group `documents pdf: signatures` (13: seven `known bad` added, `tests/Idrak.Tests.Library/DocumentPdfSignatureVectorsTests.cs`;
+  `PdfExpectResults` reads an invalid timestamp); each writes what it found into `test-output/documents/known-bad/`. Filter
+  `documents pdf: signatures|documents pdf: edit|documents pdf: write|documents pdf: encryption|documents pdf: file|documents
+  pdf: text|documents pdf: images|documents pdf: vector|documents pdf: forms|documents pdf: annotations|documents
+  real:|documents contracts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every
+  environment variable read in src|the environment table names real commands|hidden boxing|test runner` with the update
+  flags, one build (clean): 129 passed, 2 failed, 3 skipped (the owner's real files): the PKCS #1 test's count floor set too
+  high (2,415 read), and limbo's `notafter-fractional` (fixed: the whole second). Rebuilt once: 131 passed, 0 failed, 3
+  skipped.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: signatures|documents contracts"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-known-bad.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+
 ## Phase D13: any workload
 
 - **The documents bench** (`idrak bench documents`, with the library's settings as variables, `--save` and `--compare`):

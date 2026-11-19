@@ -82,6 +82,9 @@ internal sealed class CmsCertificate
     /// <summary>Whether it carries id-pkix-ocsp-nocheck (a responder's certificate needing no status of its own).</summary>
     public bool OcspNoCheck { get; private set; }
 
+    /// <summary>What makes it unfit for a path though it reads (an extension twice, an empty extended key usage), or null.</summary>
+    public string? Problem { get; private set; }
+
     public string SubjectName => CmsName.Describe(Subject);
 
     public string IssuerName => CmsName.Describe(Issuer);
@@ -97,7 +100,10 @@ internal sealed class CmsCertificate
     public X509Certificate2 Certificate => _certificate ??= X509CertificateLoader.LoadCertificate(_raw);
 
     /// <summary>Whether the key usage allows <paramref name="bit"/> (true when the certificate has no key usage).</summary>
-    public bool Allows(int bit) => KeyUsage is not { } bits || (bit / 8 < bits.Length && (bits[bit / 8] & (0x80 >> (bit % 8))) != 0);
+    public bool Allows(int bit) => KeyUsage is not { } bits || Asserts(bit);
+
+    /// <summary>Whether the key usage names <paramref name="bit"/> (false when the certificate has no key usage).</summary>
+    public bool Asserts(int bit) => KeyUsage is { } bits && bit / 8 < bits.Length && (bits[bit / 8] & (0x80 >> (bit % 8))) != 0;
 
     /// <summary>Whether the extended key usage lists <paramref name="oid"/> (or any purpose).</summary>
     public bool HasPurpose(string oid) => ExtendedKeyUsage is { } usages && (usages.Contains(oid) || usages.Contains(CmsOids.AnyExtendedKeyUsage));
@@ -238,8 +244,14 @@ internal sealed class CmsCertificate
         }
 
         Extensions = extensions;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (oid, _, value) in extensions)
         {
+            if (!seen.Add(oid))
+            {
+                Problem ??= $"the extension {oid} twice (a certificate holds each at most once, RFC 5280 4.2)";
+            }
+
             ReadExtension(oid, value);
         }
     }
@@ -267,6 +279,11 @@ internal sealed class CmsCertificate
                 while (sequence.HasData)
                 {
                     usages.Add(sequence.ReadObjectIdentifier());
+                }
+
+                if (usages.Count == 0)
+                {
+                    Problem ??= "an extended key usage naming no purpose (it names one or more, RFC 5280 4.2.1.12)";
                 }
 
                 ExtendedKeyUsage = usages;

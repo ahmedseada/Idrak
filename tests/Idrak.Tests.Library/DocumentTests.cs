@@ -92,8 +92,9 @@ internal abstract partial class Tests
             DocumentOptions.LayoutVariable, DocumentOptions.ReadingOrderVariable, DocumentOptions.MaxStreamBytesVariable, DocumentOptions.CacheBytesVariable,
             DocumentWriteOptions.ImageEncodingVariable, DocumentWriteOptions.JpegQualityVariable, DocumentWriteOptions.EmbedFontsVariable, DocumentWriteOptions.SaveModeVariable,
             DocumentDrawOptions.DpiVariable, DocumentDrawOptions.FontsVariable, SignatureCheckOptions.OnlineVariable, FontWriteOptions.CurveToleranceVariable,
+            SignatureCheckOptions.MinimumRsaKeyBitsVariable, SignatureCheckOptions.MaxChainLengthVariable,
         ];
-        Check(variables.All(v => v.StartsWith("IDRAK_DOCUMENT_", StringComparison.Ordinal) || v == "IDRAK_FONT_CURVE_TOLERANCE") && variables.Distinct().Count() == 12, "the twelve variables");
+        Check(variables.All(v => v.StartsWith("IDRAK_DOCUMENT_", StringComparison.Ordinal) || v == "IDRAK_FONT_CURVE_TOLERANCE") && variables.Distinct().Count() == 14, "the fourteen variables");
 
         // Unset: the defaults, the size limits measured from the free memory.
         WithEnvironment(variables.ToDictionary(v => v, _ => (string?)null), () =>
@@ -113,6 +114,7 @@ internal abstract partial class Tests
             Check(MathF.Abs(draw.Dpi - 150f) < 1e-3f && MathF.Abs(draw.PixelsPerPoint - 150f / 72f) < 1e-6f && draw.Fonts is null && draw.Colour == DocumentDrawColour.Rgb
                   && draw.Parts == (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths) && !draw.Hidden && draw.Drawer == DocumentPageDrawers.Coverage, $"the drawing defaults: {draw}");
             Check(!new SignatureCheckOptions().Online && new FontWriteOptions().CurveTolerance == 1f && new FontWriteOptions().KeepLayout, "a check is offline, curves within one unit");
+            Check(new SignatureCheckOptions().MinimumRsaKeyBits == 2048 && new SignatureCheckOptions().MaxChainLength == 12, "a check takes RSA keys of 2048 bits or more, paths of 12 certificates or fewer");
         });
 
         // Set: each variable read.
@@ -123,6 +125,7 @@ internal abstract partial class Tests
             [DocumentOptions.CacheBytesVariable] = "1GiB", [DocumentWriteOptions.ImageEncodingVariable] = "Jpeg", [DocumentWriteOptions.JpegQualityVariable] = "75",
             [DocumentWriteOptions.EmbedFontsVariable] = "whole", [DocumentWriteOptions.SaveModeVariable] = "rewrite", [DocumentDrawOptions.DpiVariable] = "300",
             [DocumentDrawOptions.FontsVariable] = fonts, [SignatureCheckOptions.OnlineVariable] = "on", [FontWriteOptions.CurveToleranceVariable] = "0.25",
+            [SignatureCheckOptions.MinimumRsaKeyBitsVariable] = "1024", [SignatureCheckOptions.MaxChainLengthVariable] = "20",
         }, () =>
         {
             var options = new DocumentOptions();
@@ -132,6 +135,8 @@ internal abstract partial class Tests
                 $"read: {write}");
             var draw = new DocumentDrawOptions();
             Check(MathF.Abs(draw.Dpi - 300f) < 1e-3f && draw.Fonts == fonts && new SignatureCheckOptions().Online && new FontWriteOptions().CurveTolerance == 0.25f, $"read: {draw}");
+            var signatures = new SignatureCheckOptions();
+            Check(signatures.MinimumRsaKeyBits == 1024 && signatures.MaxChainLength == 20, $"read: {signatures}");
         });
 
         // A value that cannot be read is refused, naming its variable and what it takes.
@@ -144,6 +149,8 @@ internal abstract partial class Tests
                      (DocumentWriteOptions.SaveModeVariable, "1", () => new DocumentWriteOptions()),
                      (DocumentDrawOptions.DpiVariable, "0", () => new DocumentDrawOptions()),
                      (SignatureCheckOptions.OnlineVariable, "maybe", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.MinimumRsaKeyBitsVariable, "-1", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.MaxChainLengthVariable, "0", () => new SignatureCheckOptions()),
                      (FontWriteOptions.CurveToleranceVariable, "none", () => new FontWriteOptions()),
                  })
         {
@@ -170,7 +177,8 @@ internal abstract partial class Tests
                  {
                      () => new DocumentOptions { WordGap = -1f }, () => new DocumentOptions { MaxStreamBytes = 0 }, () => new DocumentOptions { MaxDepth = 0 },
                      () => new DocumentWriteOptions { Compression = 10 }, () => new DocumentWriteOptions { JpegQuality = 0 }, () => new DocumentDrawOptions { Dpi = 0f },
-                     () => new FontWriteOptions { CurveTolerance = 0f },
+                     () => new FontWriteOptions { CurveTolerance = 0f }, () => new SignatureCheckOptions { MinimumRsaKeyBits = -1 },
+                     () => new SignatureCheckOptions { MaxChainLength = 0 }, () => new SignatureCheckOptions { MaxChainLength = 65 },
                  })
         {
             try

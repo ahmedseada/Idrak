@@ -237,7 +237,10 @@ using (var editor = DocumentWriters.Get("pdf").Edit(source, output, new Document
   PSS, ECDSA), the chain against the certificates the app trusts (`Trusted`; the machine's store only with
   `UseMachineStore`), the timestamp, revocation (from the file's own data, or fetched only when `Online` or
   `IDRAK_DOCUMENT_SIGNATURE_ONLINE` turns it on), and the changes made after signing (allowed by the signature's
-  permissions or not). A signature never makes a file trusted on its own.
+  permissions or not). A signature never makes a file trusted on its own. RSA is verified and paths are built by
+  Idrak itself, the same on every platform, and tested against public known-bad cases (Project Wycheproof's RSA and
+  ECDSA vectors, x509-limbo's path cases, the sample generator's bad paths): a path with an RSA key under 2048 bits
+  (`MinimumRsaKeyBits`) or longer than 12 certificates (`MaxChainLength`) fails the chain step, naming it.
 - **Signed** as PAdES B-B, B-T (a timestamp from the authority the app names) and B-LT (revocation data added), SHA-256,
   -384 or -512, with a visible appearance (text, an image) or none; a second signature keeps the first valid. The
   network goes through `SignatureServices` ("http" and "https" built in, an app's in their place).
@@ -275,6 +278,8 @@ folder (`DocumentDrawOptions.Fonts`, `IDRAK_DOCUMENT_FONTS`); without one such t
 | | `Compression`, `LineArtLevels`, `SmoothSteps`, `Version`, `Deterministic`, `ObjectStreams`, `Forms` | | 6; 32; 0.25; the writer's; true; true; `DocumentFormOptions` |
 | `DocumentDrawOptions` (drawing) | `Dpi`, `Fonts` and the drawer's settings | `IDRAK_DOCUMENT_DPI`, `IDRAK_DOCUMENT_FONTS`, ... | 150 dpi; none (Idrak.Imaging's README) |
 | `SignatureCheckOptions`, `SigningOptions` | `Online` | `IDRAK_DOCUMENT_SIGNATURE_ONLINE` | off |
+| `SignatureCheckOptions` | `MinimumRsaKeyBits` (0: any size) | `IDRAK_DOCUMENT_SIGNATURE_RSA_BITS` | 2048 bits (pyHanko's default) |
+| | `MaxChainLength` (certificates, the signer's and the trusted one's included) | `IDRAK_DOCUMENT_SIGNATURE_CHAIN` | 12 |
 | `FontWriteOptions` (fonts embedded) | `CurveTolerance` | `IDRAK_FONT_CURVE_TOLERANCE` | 1 font unit |
 
 Each variable is in the `idrak` tool's table (`idrak env`); a bad value is refused naming its variable. A limit's
@@ -313,8 +318,18 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
   under one page-tree node; objects an incremental update no longer uses stay in the file.
 - **Signatures:** document timestamps (B-LTA) are not written; a signature's appearance text is set in the standard
   Helvetica's WinAnsi encoding (other characters show as `?`: give `AppearanceImage` for any script); delta and
-  indirect revocation lists, name and policy constraints (a critical one fails the chain, named), DSA and EdDSA keys
-  are not read.
+  indirect revocation lists are not read. Known limits (the known-bad tests print a `LIMIT:` line for each case they meet):
+  - **name and policy constraints** (name constraints, policy constraints, policy mappings, inhibit-any-policy) are not
+    read: a path whose certificates carry one, critical or not, fails the chain step naming it (x509-limbo's name
+    constraint cases that should pass are refused);
+  - **DSA, EdDSA and ML-DSA keys** are not read (RSA and ECDSA are): a path or a signature made with one fails;
+  - **ECDSA's curves are the platform's:** the DER signature, the ranges of r and s and the digest's length are read by
+    Idrak, the curve arithmetic by the base library's `ECDsa`: P-256, P-384 and P-521 on every platform, secp256k1 and
+    the Brainpool curves only where the platform's `ECDsa` takes them.
+  - By design, not limits: a trusted certificate's own dates are not checked (RFC 5280 6.1 and pyHanko alike), a list
+    issued after the time a check is made at is used and a certificate revoked after that time is good then (PAdES
+    long-term validation), and the rules for how a CA writes certificates and lists (key identifiers present, serial
+    numbers' form, which extensions are critical, the CRL number) are not refused.
 - **Not built on the contract yet:** a `pdf` dataset format (a row per page), document chunking for retrieval, OCR of
   pages whose text has issues.
 

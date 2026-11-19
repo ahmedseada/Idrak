@@ -28,6 +28,13 @@ internal abstract partial class Tests
         ("documents pdf: signatures: revocation is fetched online only when turned on (the option, or IDRAK_DOCUMENT_SIGNATURE_ONLINE), through SignatureServices (the library's http and https, an app's over them, not registered named)", PdfSignatureOnline),
         ("documents pdf: signatures: signing as incremental updates: PAdES B-B (RSA, RSA-PSS, ECDSA), B-T and B-LT (RSA, ECDSA) with appearances, an empty field of a form, a second signature keeping the first valid, the builder's Sign at Finish, an encrypted file, after other edits and after a rewrite: each checks valid, the source's bytes its prefix, nothing asked of a service the app did not name", PdfSignatureSigning),
         ("documents pdf: signatures: misuse refused (no options, no private key, SHA-1, B-T without an authority, B-LT without revocation data, a field that is not a signature field or is signed already, a dotted new name, a page out of range, the builder signing after its first page, an authority not registered or answering for another request)", PdfSignatureRefusals),
+        ("documents pdf: signatures: known bad: Project Wycheproof's RSA PKCS #1 v1.5 vectors (2048, 3072 and 4096 bits; SHA-1, SHA-256, -384, -512): every valid case verifies and every invalid one fails, through CmsKeys and the legacy form's route; the acceptable ones listed with Idrak's answer", PdfKnownBadPkcs1),
+        ("documents pdf: signatures: known bad: Project Wycheproof's RSA-PSS vectors (salt lengths 0 to 64, MGF1 digests, keys certified with their parameters): every valid case verifies, every invalid one fails", PdfKnownBadPss),
+        ("documents pdf: signatures: known bad: Project Wycheproof's ECDSA vectors (P-256, P-384, P-521, secp256k1, Brainpool; the DER signature read by Idrak, r and s ranged by the curve's order): every valid case verifies, every invalid one fails; a curve this platform's ECDsa does not take is a named limit", PdfKnownBadEcdsa),
+        ("documents pdf: signatures: known bad: this platform's RSA (RSA.VerifyHash, a test-only guard) gives every Wycheproof valid and invalid case it takes the verdict Idrak gives (PSS where its salt is as long as the digest; an input it refuses printed and passed over)", PdfKnownBadPlatformRsa),
+        ("documents pdf: signatures: known bad: the generator's known-bad samples (expired and not yet valid, a forged issuer signature, an issuer not a CA, a path past its length, an issuer without keyCertSign, a signer without a signing usage, an unknown critical extension, names that do not chain, a loop, revoked by OCSP, a CRL and an OCSP response signed by the wrong key, a timestamp of other bytes, a path past the limit, a weak RSA key): each refused at its step saying why; the option that is the cause lets it pass", PdfKnownBadPaths),
+        ("documents pdf: signatures: known bad: x509-limbo's path and revocation-list cases through Idrak's path builder give limbo's verdict; the cases a document's check answers otherwise named with the rule it applies, the limits named", PdfKnownBadLimbo),
+        ("documents pdf: signatures: known bad: certificates that issued each other many times over end a path search within its bound, quickly, naming it; the trusted one among them found at once", PdfKnownBadSearchBound),
     ];
 
     private static readonly DateTimeOffset PdfSigningTime = new(2026, 3, 2, 9, 30, 0, TimeSpan.Zero);
@@ -277,8 +284,13 @@ internal abstract partial class Tests
             "revoked" => !revocation.Passed && revocation.Detail.StartsWith("revoked", StringComparison.Ordinal),
             _ => revocation.Passed && revocation.Detail.StartsWith("not checked", StringComparison.Ordinal),
         }, $"{what}: revocation {revoked}: {revocation.Detail}");
-        Check(results["timestamp"] is null ? timestamp.Passed && timestamp.Detail.StartsWith("none", StringComparison.Ordinal)
-                : timestamp.Passed && timestamp.Detail.StartsWith("valid", StringComparison.Ordinal), $"{what}: timestamp {results["timestamp"]}: {timestamp.Detail}");
+        string? stamped = (string?)results["timestamp"];
+        Check(stamped switch
+        {
+            null => timestamp.Passed && timestamp.Detail.StartsWith("none", StringComparison.Ordinal),
+            "valid" => timestamp.Passed && timestamp.Detail.StartsWith("valid", StringComparison.Ordinal),
+            _ => !timestamp.Passed,
+        }, $"{what}: timestamp {stamped ?? "none"}: {timestamp.Detail}");
         string modifications = (string)results["modifications"]!, level = (string)results["modificationLevel"]!;
         Check(changes.Passed == (modifications != "not-allowed"), $"{what}: changes {modifications}: {changes.Detail}");
         string words = level switch
@@ -289,7 +301,7 @@ internal abstract partial class Tests
             _ => modifications == "none" ? "nothing changed" : "validation data",
         };
         Check(changes.Detail.Contains(words, StringComparison.Ordinal), $"{what}: the changes' level {level}: {changes.Detail}");
-        bool valid = digest.Passed && signature.Passed && trusted && revoked != "revoked" && modifications != "not-allowed";
+        bool valid = digest.Passed && signature.Passed && trusted && revoked != "revoked" && modifications != "not-allowed" && (stamped is null or "valid");
         Check(check.Valid == valid, $"{what}: valid {check.Valid}, expected {valid}: {all}");
     }
 

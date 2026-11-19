@@ -26,7 +26,8 @@ internal readonly record struct CmsStatusAnswer(CmsStatus Status, string Detail,
 /// <summary>
 /// A certificate revocation list (RFC 5280, 5) read on its DER: its issuer, its times, the serial numbers it revokes (with
 /// their dates and reasons), and the signature over its signed part. Only direct, complete lists are used: a delta list, an
-/// indirect one (entries naming another issuer) or one with a critical extension not read here says so, and is not used.
+/// indirect one (entries naming another issuer), one with a critical extension not read here or one naming a serial number
+/// twice says so, and is not used.
 /// </summary>
 internal sealed class CmsCrl
 {
@@ -102,7 +103,10 @@ internal sealed class CmsCrl
                         }
                     }
 
-                    crl._revoked[serial] = (date, reason);
+                    if (!crl._revoked.TryAdd(serial, (date, reason)))
+                    {
+                        crl.NotUsable ??= $"a list naming the serial number {serial} twice";
+                    }
                 }
             }
 

@@ -37,6 +37,8 @@ internal static class CmsOids
         CrlDistributionPoints = "2.5.29.31", AuthorityInfoAccess = "1.3.6.1.5.5.7.1.1", SubjectInfoAccess = "1.3.6.1.5.5.7.1.11",
         FreshestCrl = "2.5.29.46", PrivateKeyUsagePeriod = "2.5.29.16";
 
+    public const string NameConstraints = "2.5.29.30", PolicyMappings = "2.5.29.33", PolicyConstraints = "2.5.29.36", InhibitAnyPolicy = "2.5.29.54";
+
     public const string CrlNumber = "2.5.29.20", CrlReason = "2.5.29.21", InvalidityDate = "2.5.29.24", DeltaCrlIndicator = "2.5.29.27",
         IssuingDistributionPoint = "2.5.29.28", CertificateIssuer = "2.5.29.29";
 
