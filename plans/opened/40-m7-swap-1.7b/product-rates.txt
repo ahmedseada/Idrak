@@ -1,0 +1,40 @@
+# M7 product kernels' work and rate (product-rates.sh, copied from M6); Qwen3-1.7B: hidden 2048, intermediate 6144
+./profile-control-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 multi 512x2048+1024+1024x2048   28 calls   4.254 ms   240.52 GFLOP   56.5 TFLOP/s
+./profile-control-q4_0-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.812 ms  1202.59 GFLOP   76.1 TFLOP/s
+./profile-swap-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 multi 512x6144+6144x2048     28 calls  11.114 ms   721.55 GFLOP   64.9 TFLOP/s
+./profile-swap-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 512x2048x6144                28 calls   6.276 ms   360.78 GFLOP   57.5 TFLOP/s
+./profile-swap-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 multi 512x2048+1024+1024x2048   28 calls   4.423 ms   240.52 GFLOP   54.4 TFLOP/s
+./profile-swap-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 512x2048x2048                28 calls   2.284 ms   120.26 GFLOP   52.7 TFLOP/s
+./profile-control-q8_0-prompt.txt gemm_tc_nt_b32x34c8sp0o2f5m10at0 multi 512x2048+1024+1024x2048   28 calls   4.254 ms   240.52 GFLOP   56.5 TFLOP/s
+./profile-control-q8_0-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.744 ms  1202.59 GFLOP   76.4 TFLOP/s
+./profile-swap-q8_0-prompt.txt gemm_tc_nt_b32x34c8sp0o2f5m10at0 multi 512x6144+6144x2048      28 calls  11.499 ms   721.55 GFLOP   62.7 TFLOP/s
+./profile-swap-q8_0-prompt.txt gemm_tc_nt_b32x34c8sp0o2f5m10at0 512x2048x6144                 28 calls   6.556 ms   360.78 GFLOP   55.0 TFLOP/s
+./profile-swap-q8_0-prompt.txt gemm_tc_nt_b32x34c8sp0o2f5m10at0 multi 512x2048+1024+1024x2048   28 calls   4.314 ms   240.52 GFLOP   55.8 TFLOP/s
+./profile-swap-q8_0-prompt.txt gemm_tc_nt_b32x34c8sp0o2f5m10at0 512x2048x2048                 28 calls   2.367 ms   120.26 GFLOP   50.8 TFLOP/s
+./profile-control-int8-prompt.txt gemm_tc_nt_int8w multi 512x6144+6144x2048                      28 calls   9.916 ms   721.55 GFLOP   72.8 TFLOP/s
+./profile-control-int8-prompt.txt gemm_tc_nt_int8w multi 512x2048+1024+1024x2048                 28 calls   3.540 ms   240.52 GFLOP   67.9 TFLOP/s
+./profile-control-int8-prompt.txt native_mma_bf16_r64_s3_n256_x_ri8 (native kind)                           5.050 ms   360.78 GFLOP   71.4 TFLOP/s
+./profile-control-int8-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                               1.744 ms   120.26 GFLOP   69.0 TFLOP/s
+./profile-swap-int8-prompt.txt gemm_tc_nt_int8w multi 512x6144+6144x2048                      28 calls   9.905 ms   721.55 GFLOP   72.8 TFLOP/s
+./profile-swap-int8-prompt.txt gemm_tc_nt_int8w 512x2048x6144                                 28 calls   5.761 ms   360.78 GFLOP   62.6 TFLOP/s
+./profile-swap-int8-prompt.txt gemm_tc_nt_int8w multi 512x2048+1024+1024x2048                 28 calls   3.608 ms   240.52 GFLOP   66.7 TFLOP/s
+./profile-swap-int8-prompt.txt gemm_tc_nt_int8w 512x2048x2048                                 28 calls   2.042 ms   120.26 GFLOP   58.9 TFLOP/s
+./profile-control-q4_k-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.549 ms  1443.11 GFLOP   73.8 TFLOP/s
+./profile-swap-q4_k-A-prompt.txt gemm_tc_nt_q4_k multi 512x6144+6144x2048                       28 calls  13.157 ms   721.55 GFLOP   54.8 TFLOP/s
+./profile-swap-q4_k-A-prompt.txt gemm_tc_nt_bf16w widened 512x2048x6144                         28 calls   5.439 ms   360.78 GFLOP   66.3 TFLOP/s
+./profile-swap-q4_k-A-prompt.txt gemm_tc_nt_q4_k multi 512x2048+1024+1024x2048                  28 calls   4.654 ms   240.52 GFLOP   51.7 TFLOP/s
+./profile-swap-q4_k-A-prompt.txt gemm_tc_nt_bf16w widened m64 512x2048x2048                     28 calls   1.996 ms   120.26 GFLOP   60.3 TFLOP/s
+./profile-swap-q4_k-B-prompt.txt gemm_tc_nt_q4_k multi 512x6144+6144x2048                       28 calls  12.984 ms   721.55 GFLOP   55.6 TFLOP/s
+./profile-swap-q4_k-B-prompt.txt gemm_tc_nt_q4_k 512x2048x6144                                  28 calls   7.319 ms   360.78 GFLOP   49.3 TFLOP/s
+./profile-swap-q4_k-B-prompt.txt gemm_tc_nt_q4_k multi 512x2048+1024+1024x2048                  28 calls   4.653 ms   240.52 GFLOP   51.7 TFLOP/s
+./profile-swap-q4_k-B-prompt.txt gemm_tc_nt_q4_k 512x2048x2048                                  28 calls   2.616 ms   120.26 GFLOP   46.0 TFLOP/s
+./profile-control-iq2_xxs-prompt.txt gemm_tc_nt_iq2_xxs multi 512x2048+1024+1024x2048               28 calls   3.908 ms   240.52 GFLOP   61.5 TFLOP/s
+./profile-control-iq2_xxs-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.769 ms  1202.59 GFLOP   76.3 TFLOP/s
+./profile-swap-iq2_xxs-A-prompt.txt gemm_tc_nt_iq2_xxs multi 512x6144+6144x2048                    28 calls  10.976 ms   721.55 GFLOP   65.7 TFLOP/s
+./profile-swap-iq2_xxs-A-prompt.txt gemm_tc_nt_bf16w widened 512x2048x6144                         28 calls   5.407 ms   360.78 GFLOP   66.7 TFLOP/s
+./profile-swap-iq2_xxs-A-prompt.txt gemm_tc_nt_iq2_xxs multi 512x2048+1024+1024x2048               28 calls   4.052 ms   240.52 GFLOP   59.4 TFLOP/s
+./profile-swap-iq2_xxs-A-prompt.txt gemm_tc_nt_bf16w widened m64 512x2048x2048                     28 calls   2.011 ms   120.26 GFLOP   59.8 TFLOP/s
+./profile-swap-iq2_xxs-B-prompt.txt gemm_tc_nt_iq2_xxs multi 512x6144+6144x2048                    28 calls  10.994 ms   721.55 GFLOP   65.6 TFLOP/s
+./profile-swap-iq2_xxs-B-prompt.txt gemm_tc_nt_iq2_xxs 512x2048x6144                               28 calls   6.451 ms   360.78 GFLOP   55.9 TFLOP/s
+./profile-swap-iq2_xxs-B-prompt.txt gemm_tc_nt_iq2_xxs multi 512x2048+1024+1024x2048               28 calls   3.973 ms   240.52 GFLOP   60.5 TFLOP/s
+./profile-swap-iq2_xxs-B-prompt.txt gemm_tc_nt_iq2_xxs 512x2048x2048                               28 calls   2.421 ms   120.26 GFLOP   49.7 TFLOP/s

@@ -956,8 +956,8 @@ widening, packing and summing; pass: each layer drained; q4_0 name and iq3_xxs a
   - **Not settled**: whether these choices (the native kind with the weight widened on every call, the gate/up group off)
     are the fastest adad has in the pass: the profiles show only what was chosen. A tuning-entry swap like M2's (for
     example q4_0's 512-row entries set to 6 and its gate/up group to 1), profiled against the type's own choice, would
-    settle it. Nor why name's separate launches gained with the size (the tiles a launch fills is the first suspect): no
-    kernel's tile count or occupancy was read.
+    settle it (done in M7, below: the choices are the fastest or tied in the pass). Nor why name's separate launches
+    gained with the size (the tiles a launch fills is the first suspect): no kernel's tile count or occupancy was read.
 - **M6-2. Generation: the few-row lanes read the stored rows** (`profile-cuda-{bf16,int8,q4_0,q4_k}-{adad,name}-decode.txt`,
   a step's median of 5): bf16 5.90 against 6.21 ms; int8 3.87 against 5.37; q4_0 3.88 against 10.41; q4_k 4.57 against
   10.35. name's float32-held types spend 10.49–10.57 ms of a step's kernels in `gemv_nn_f32` over 7,177 MiB of float32
@@ -983,6 +983,132 @@ widening, packing and summing; pass: each layer drained; q4_0 name and iq3_xxs a
   4,362 MiB (name widens each weight on every call, M0-6); q4_0 654 against 1,259 ms (name's k/v `matmul_stored
   [1x128x1024]` 250.8 ms, M0-7). The lane choices differ between the two runs of a type (above): M1's subject. The causes
   of the CPU's moves from 0.6B were not traced.
+
+### The lane swap on Qwen3-1.7B (M7)
+
+Plan 40's M7, the question M6-1 left open. At 1.7B the measurement chose the native kind for the stored types' prompt
+products, a lane that widens each weight on every call (13–23% of the pass). Is that choice the fastest in the full pass,
+or would the tensor rows (0.6B's choice, which read the stored rows with no per-call widening) win there, although they
+lost when each product was timed alone? Measuring only: no code was changed; the choices were swapped by editing copies
+of M6's tuning folders. Files: `test-output\adad\m7-swap\`, copied to [40-m7-swap-1.7b/](40-m7-swap-1.7b/) (no trace was
+made).
+
+- **Code and CLI**: the M6 build (commit `de1f8a96`, `idrak 0.4.1-dev.2611191810`, informational version
+  `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`), checked before the first run. The M6 tuning folders
+  name its commit, so it reads them, and their copies, as filled. No other run beside these (the same idle service of
+  another project ran throughout).
+- **The variants** (`m7.sh setup`; each edit written as `swap-{type}[-A|-B].diff`, M6's file against the edited copy):
+  - q4_0, q8_0: the four `2000 512 …` entries 2 → 6 (o's and down's lanes, and the grouped products' own entries); the
+    gate/up group `9700 512 2048 6144 6144 0 0` 0 → 1.
+  - int8: q/o `2000 512 2048 2048 7` 2 → 6, down `2000 512 2048 6144 7` 5 → 6 (its groups were already 1).
+  - q4_k, iq2_xxs, A: the four `3000 512 …` entries 1 → 4 (the tensor rows over rows widened for the call) and the
+    512-row groups → 1 (q4_k both, iq2_xxs gate/up); B: the same with 3 (the tensor rows decoding as each tile loads, no
+    widening).
+  - Each key's candidate-count field kept, and each lane set among that key's candidates. `StoredMeasured` builds its
+    candidates in lane order 0–6 (`CudaBackend.Typed.cs`), so q4_0's and q8_0's six and int8's seven include 6 (0.6B
+    chose 6 with the same counts). `StoredSuper`'s are {0, 1, [2], [3], [4]} (`CudaBackend.Super.cs`): q4_k's five are all
+    of them, iq2_xxs's four are {0, 1, 3, 4} (its q/k/v group already runs the decoding kernel `gemm_tc_nt_iq2_xxs`). A
+    group's are {0, 1}. A stored value that is not among the candidates is measured again (`TryPersistedLocked`), which
+    the diffs would show.
+  - Controls: `tuning-control-{type}`, untouched copies (byte-equal to M6's folders at the start; the q4_0, q4_k and int8
+    folders also hold the 128-row entries M6's decode profiles stored, which a 512-token prompt does not read).
+- **Runs**, one at a time (23:03–23:11), `m7.sh`, the route set on every run, `out` = `D:/Projects/idrak/test-output/adad/m7-swap`:
+  - Each type's control: `IDRAK_ROUTES={adad|name} IDRAK_TUNING_CACHE=$out/tuning-control-{type} idrak bench
+    Qwen/Qwen3-1.7B -w {type} -d cuda --prompt-tokens 512 --tokens 128 -n 3` (a warm run of each route); the adad prompt
+    profile `idrak profile Qwen/Qwen3-1.7B -w {type} -d cuda --pass prompt --prompt-tokens 512 --top 30`; the greedy
+    continuation `idrak complete Qwen/Qwen3-1.7B -w {type} -d cuda -i $out/prompt.txt --temperature 0 --max-tokens 48`.
+  - Each variant on its `tuning-swap-…` folder: an adad fill bench, the greedy continuation (compared with the control's
+    before going on), an adad warm bench, the adad prompt profile.
+  - `prompt.txt`: a generic newsletter text of 475 tokens (`idrak tokenize … --count`). Its prompt pass falls in the
+    bench's 512 size class (`TuneSizes.Class`), so it runs the same product lanes.
+  - Every run diffed its folder (`tuning-added.txt`). No bench or profile stored or changed a line; no run stored a
+    `ProductRoute` line; every swapped entry still held its edited value at the end. The 12 continuations stored
+    exact-size (m = 475) tile and split entries and window-512 decode entries, none of them a product's lane.
+  - Derived tables: `compare.sh` → `compare.txt` (the benches), `lanes.sh` → `lanes.txt` (the profiles' kernels by
+    lane), M6's `product-rates.sh` → `product-rates.txt`.
+- **The swapped lanes ran**: the warm logs' "measured lane:" lines name the tensor rows for o and down (q4_0, q8_0, int8:
+  "tensor rows (today's tensor-core kernel over the rows as stored …)"; A: "tensor rows (widened to bfloat16 rows …)";
+  B: "tensor rows (the description's values decoded as each tile loads …)"), and no gate/up or q/k/v product runs on its
+  own lane (the groups). The swapped profiles run only `gemm_tc_nt_*` product kernels (A also `super_widen`/`grid_widen`,
+  56 calls: o's and down's rows widened for the call): no `native_mma_*`, `native_pack_*` or `typed_sum_parts`.
+- **Same output**: every variant's 48 greedy tokens are byte-equal to its control's (`complete-*-adad.txt`). For iq2_xxs
+  the text is degenerate ("ony" repeated) under the control, both variants and `name` alike
+  (`complete-control-iq2_xxs-name.txt`): the 2-bit type's quality on this text, not a lane's; for that type the check
+  proves less.
+
+**The benches and passes** (prompt tok/s; the controls in the same session; pass: the prompt profile, each layer
+drained; `compare.txt`, `lanes.txt`)
+
+| Type, variant | What ran in the prompt pass | swapped fill / warm | control adad | control name | warm / control adad | pass ms swapped / control |
+|---|---|---|---|---|---|---|
+| q4_0 | o, down: tensor rows; gate/up, q/k/v: groups | 18,312 / 18,504 | 18,665 | 17,922 | 0.991 | 28.61 / 27.94 |
+| q8_0 | the same | 17,492 / 17,714 | 18,330 | 17,679 | 0.966 | 29.66 / 28.67 |
+| int8 | the same | 20,274 / 20,169 | 20,214 | 20,585 | 0.998 | 26.21 / 25.72 |
+| q4_k A | o, down: tensor rows over rows widened for the call; groups decoding as tiles load | 16,923 / 17,077 | 18,247 | 17,775 | 0.936 | 30.81 / 29.67 |
+| q4_k B | every product decoding as tiles load | 16,228 / 16,284 | 18,247 | 17,775 | 0.892 | 32.17 / 29.67 |
+| iq2_xxs A | as q4_k A | 18,541 / 18,775 | 18,946 | 17,832 | 0.991 | 27.88 / 27.80 |
+| iq2_xxs B | as q4_k B | 18,576 / 18,479 | 18,946 | 17,832 | 0.975 | 28.50 / 27.80 |
+
+The spread: a variant's fill and warm runs differ by up to 1.3%; the controls against M6's warm runs of the same folders
+by up to 2.0% (adad) and 2.4% (name) (`compare.txt`).
+
+**The products by lane** (ms, the prompt profiles' kernels: `lanes.txt`; "products" the sum of the lane columns)
+
+| Profile | native kind | widening | x packing | sums | tensor rows alone | tensor-row groups | products | pass |
+|---|---|---|---|---|---|---|---|---|
+| q4_0 control | 15.81 | 3.09 | 0.87 | – | – | 4.25 | 24.02 | 27.94 |
+| q4_0 swapped | – | – | – | – | 8.56 | 15.54 | 24.10 | 28.61 |
+| q8_0 control | 15.74 | 3.62 | 0.88 | – | – | 4.25 | 24.49 | 28.67 |
+| q8_0 swapped | – | – | – | – | 8.92 | 15.81 | 24.74 | 29.66 |
+| int8 control | 6.79 | 0.39 | 0.64 | 0.36 | – | 13.46 | 21.65 | 25.72 |
+| int8 swapped | – | – | – | – | 7.80 | 13.51 | 21.32 | 26.21 |
+| q4_k control | 19.55 | 4.61 | 1.43 | 0.65 | – | – | 26.24 | 29.67 |
+| q4_k A | – | 1.48 | – | – | 7.44 | 17.81 | 26.73 | 30.81 |
+| q4_k B | – | – | – | – | 9.94 | 17.64 | 27.57 | 32.17 |
+| iq2_xxs control | 15.77 | 3.41 | 0.92 | – | – | 3.91 | 24.00 | 27.80 |
+| iq2_xxs A | – | 1.42 | – | – | 7.42 | 15.03 | 23.86 | 27.88 |
+| iq2_xxs B | – | – | – | – | 8.87 | 14.97 | 23.84 | 28.50 |
+
+Each product in the swapped passes (`product-rates.txt`; ms, TFLOP/s: gate/up group, down, q/k/v group, o):
+
+- q4_0: 11.11 (64.9), 6.28 (57.5), 4.42 (54.4), 2.28 (52.7).
+- q8_0: 11.50 (62.7), 6.56 (55.0), 4.31 (55.8), 2.37 (50.8).
+- int8: 9.91 (72.8), 5.76 (62.6), 3.61 (66.7), 2.04 (58.9); the control's native kind: down 5.05 (71.4), o 1.74 (69.0).
+- q4_k A: 13.16 (54.8), 5.44 (66.3, rows widened for the call), 4.65 (51.7), 2.00 (60.3, widened); B: 12.98 (55.6),
+  7.32 (49.3), 4.65 (51.7), 2.62 (46.0).
+- iq2_xxs A: 10.98 (65.7), 5.41 (66.7, widened), 4.05 (59.4), 2.01 (59.8, widened); B: 10.99 (65.6), 6.45 (55.9), 3.97
+  (60.5), 2.42 (49.7).
+- The controls' native kind (q4_0, q8_0, q4_k, iq2_xxs): 73.8–76.4 TFLOP/s.
+
+A kernel table's sum carries each launch's own timing, and the controls' passes launch 373–709 kernels against the
+swaps' 261–317, so a kernel sum overstates a many-launch pass. For example, q4_0's control sums 28.55 ms of kernels
+against a 27.94 ms pass, the swap 28.21 against 28.61 (products + head + other in `lanes.txt`). So the passes and the
+benches decide, not the kernel sums.
+
+**Conclusion**:
+
+- **In the full pass the measured choice is the fastest or tied, for every type; the tensor rows never win.** Within the
+  spread (−0.2% to −0.9%): q4_0, int8, iq2_xxs A. Slower beyond it: q8_0 −3.4%, iq2_xxs B −2.5%, q4_k A −6.4%, q4_k B
+  −10.8% (`compare.txt`). Every swapped pass is the longer one (`lanes.txt`).
+- **Timing each product alone did not mislead here**: warm for the 32-value blocks and int8 (`MeasureStoredRoute`, whose
+  comment records that cold timing cost bfloat16, int8 and q4_0 prompts 6%), cold for the super-blocks and grids
+  (`MeasureSuper`), and the groups both ways. No lane it rejected beats its choice in the pass by more than the spread.
+- **The per-call widening is paid back.** The lanes that avoid it run slower per product. The decoding tensor rows run
+  q4_0's products at 52.7–64.9 TFLOP/s against the native kind's 76.1, so its products take 24.10 ms against the native
+  kind's 24.02 ms with the widening. q4_k's decoding tensor rows run at 46.0–55.6 TFLOP/s: 27.57 against 26.24 ms. For
+  the block, super-block and grid types no tensor-rows lane measured here reaches the native kind's rate: 46.0–65.7
+  TFLOP/s decoding as the tiles load, 59.8–66.7 over widened rows, against 73.8–76.4. So M6-1's open question is
+  settled: at 1.7B, adad's stored-type prompt is at the best of its own lanes.
+- **int8**:
+  - The swap removes 1.39 ms of packing and sums, and its o is quicker (2.04 ms against the native kind's 1.74 plus
+    packing).
+  - But its down by the tensor rows (5.76 ms) is slower than the native kind reading the int8 codes raw (5.05, plus its
+    share of the packing and sums).
+  - The benches are equal (0.998), the passes 26.21 against 25.72 ms.
+  - Neither adad variant reaches name's int8 (20,585 tok/s: 0.980 and 0.982).
+- **An observation from the profiles**: with the gate/up group launch on (every swap), the gated activation after it
+  takes 0.56–0.75 ms, against 0.98–1.00 ms after the native kind's separate gate and up products (the profiles'
+  `gated_act_f32`; int8 0.74 in both, its group on in both). Its cause was not checked.
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

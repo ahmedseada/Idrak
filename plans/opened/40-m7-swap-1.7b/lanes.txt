@@ -1,0 +1,13 @@
+# M7 prompt profiles' kernels by lane (ms), from lanes.sh
+control-q4_0       pass  27.94  native 15.812  widen 3.089  packx 0.868  parts 0.000  rows  0.000  groups  4.254  products 24.023  head 0.337  other 4.188
+swap-q4_0          pass  28.61  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  8.560  groups 15.537  products 24.097  head 0.359  other 3.749
+control-q8_0       pass  28.67  native 15.744  widen 3.619  packx 0.877  parts 0.000  rows  0.000  groups  4.254  products 24.494  head 0.433  other 4.155
+swap-q8_0          pass  29.66  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  8.923  groups 15.813  products 24.736  head 0.431  other 3.868
+control-int8       pass  25.72  native  6.794  widen 0.393  packx 0.644  parts 0.359  rows  0.000  groups 13.456  products 21.646  head 0.387  other 3.948
+swap-int8          pass  26.21  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  7.803  groups 13.513  products 21.316  head 0.386  other 3.920
+control-q4_k       pass  29.67  native 19.549  widen 4.605  packx 1.433  parts 0.648  rows  0.000  groups  0.000  products 26.235  head 0.467  other 4.292
+swap-q4_k-A        pass  30.81  native  0.000  widen 1.484  packx 0.000  parts 0.000  rows  7.435  groups 17.811  products 26.730  head 0.467  other 3.891
+swap-q4_k-B        pass  32.17  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  9.935  groups 17.637  products 27.572  head 0.468  other 3.816
+control-iq2_xxs    pass  27.80  native 15.769  widen 3.407  packx 0.916  parts 0.000  rows  0.000  groups  3.908  products 24.000  head 0.532  other 4.153
+swap-iq2_xxs-A     pass  27.88  native  0.000  widen 1.417  packx 0.000  parts 0.000  rows  7.418  groups 15.028  products 23.863  head 0.531  other 3.660
+swap-iq2_xxs-B     pass  28.50  native  0.000  widen 0.000  packx 0.000  parts 0.000  rows  8.872  groups 14.967  products 23.839  head 0.535  other 3.720

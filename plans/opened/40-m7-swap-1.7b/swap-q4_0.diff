@@ -1,0 +1,26 @@
+--- D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt	2026-11-19 21:40:50.186737000 +0300
++++ D:/Projects/idrak/test-output/adad/m7-swap/tuning-swap-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt	2026-11-19 23:03:10.956929600 +0300
+@@ -52,10 +52,10 @@
+ ProductRoute 2000 128 2048 2048 6 0 0 = 6
+ ProductRoute 2000 128 2048 6144 6 0 0 = 6
+ ProductRoute 2000 128 6144 2048 6 0 0 = 6
+-ProductRoute 2000 512 1024 2048 6 0 0 = 2
+-ProductRoute 2000 512 2048 2048 6 0 0 = 2
+-ProductRoute 2000 512 2048 6144 6 0 0 = 2
+-ProductRoute 2000 512 6144 2048 6 0 0 = 2
++ProductRoute 2000 512 1024 2048 6 0 0 = 6
++ProductRoute 2000 512 2048 2048 6 0 0 = 6
++ProductRoute 2000 512 2048 6144 6 0 0 = 6
++ProductRoute 2000 512 6144 2048 6 0 0 = 6
+ ProductRoute 4000 1 6144 2048 0 0 0 = 0
+ ProductRoute 5000 1 2048 2048 0 0 0 = 1
+ ProductRoute 9000 2048 2048 2048 9 0 0 = 4
+@@ -78,7 +78,7 @@
+ ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+ ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+ ProductRoute 9700 512 2048 2048 1024 1024 0 = 1
+-ProductRoute 9700 512 2048 6144 6144 0 0 = 0
++ProductRoute 9700 512 2048 6144 6144 0 0 = 1
+ RowThreads 0 128 32 0 0 0 0 = 64
+ RowThreads 0 128 4096 0 0 0 0 = 64
+ RowThreads 0 128 16384 0 0 0 0 = 64

@@ -1,0 +1,193 @@
+== control-q4_0-adad-warm (23:03:28): lines added or changed in tuning-control-q4_0
+  (none)
+== control-q4_0-name-warm (23:03:47): lines added or changed in tuning-control-q4_0
+  (none)
+== profile-control-q4_0-prompt (23:03:53): lines added or changed in tuning-control-q4_0
+  (none)
+== complete-control-q4_0-adad (23:04:00): lines added or changed in tuning-control-q4_0
+> PackedTile 1300 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 100 475 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 600 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-q4_0-adad-fill (23:04:11): lines added or changed in tuning-swap-q4_0
+  (none)
+== complete-swap-q4_0-adad (23:04:20): lines added or changed in tuning-swap-q4_0
+> PackedSplits 100 475 2048 2048 0 0 0 = 2
+> PackedSplits 100 475 2048 6144 0 0 0 = 8
+> PackedSplits 600 475 2048 2048 0 0 0 = 1
+> PackedSplits 600 475 2048 6144 0 0 0 = 6
+> PackedTile 300 475 2048 2048 0 0 0 = 128
+> PackedTile 300 475 2048 6144 0 0 0 = 128
+> PackedTile 1300 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1300 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 100 475 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 600 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-q4_0-adad-warm (23:04:30): lines added or changed in tuning-swap-q4_0
+  (none)
+== profile-swap-q4_0-prompt (23:04:33): lines added or changed in tuning-swap-q4_0
+  (none)
+== control-q8_0-adad-warm (23:04:48): lines added or changed in tuning-control-q8_0
+  (none)
+== control-q8_0-name-warm (23:05:07): lines added or changed in tuning-control-q8_0
+  (none)
+== profile-control-q8_0-prompt (23:05:13): lines added or changed in tuning-control-q8_0
+  (none)
+== complete-control-q8_0-adad (23:05:20): lines added or changed in tuning-control-q8_0
+> PackedTile 1300 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 100 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 600 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 8
+== swap-q8_0-adad-fill (23:05:28): lines added or changed in tuning-swap-q8_0
+  (none)
+== complete-swap-q8_0-adad (23:05:36): lines added or changed in tuning-swap-q8_0
+> PackedSplits 100 475 2048 2048 0 0 0 = 2
+> PackedSplits 100 475 2048 6144 0 0 0 = 8
+> PackedSplits 600 475 2048 2048 0 0 0 = 1
+> PackedSplits 600 475 2048 6144 0 0 0 = 2
+> PackedTile 300 475 2048 2048 0 0 0 = 128
+> PackedTile 300 475 2048 6144 0 0 0 = 128
+> PackedTile 1300 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1300 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 100 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 600 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-q8_0-adad-warm (23:05:44): lines added or changed in tuning-swap-q8_0
+  (none)
+== profile-swap-q8_0-prompt (23:05:51): lines added or changed in tuning-swap-q8_0
+  (none)
+== control-int8-adad-warm (23:05:59): lines added or changed in tuning-control-int8
+  (none)
+== control-int8-name-warm (23:06:06): lines added or changed in tuning-control-int8
+  (none)
+== profile-control-int8-prompt (23:06:12): lines added or changed in tuning-control-int8
+  (none)
+== complete-control-int8-adad (23:06:19): lines added or changed in tuning-control-int8
+> PackedTile 1241 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1241 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 41 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 541 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-int8-adad-fill (23:06:27): lines added or changed in tuning-swap-int8
+  (none)
+== complete-swap-int8-adad (23:06:35): lines added or changed in tuning-swap-int8
+> PackedSplits 41 475 2048 2048 0 0 0 = 2
+> PackedSplits 41 475 2048 6144 0 0 0 = 8
+> PackedSplits 541 475 2048 2048 0 0 0 = 1
+> PackedSplits 541 475 2048 6144 0 0 0 = 2
+> PackedTile 241 475 2048 2048 0 0 0 = 128
+> PackedTile 241 475 2048 6144 0 0 0 = 128
+> PackedTile 1241 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1241 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 41 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 541 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-int8-adad-warm (23:06:43): lines added or changed in tuning-swap-int8
+  (none)
+== profile-swap-int8-prompt (23:06:49): lines added or changed in tuning-swap-int8
+  (none)
+== control-q4_k-adad-warm (23:07:08): lines added or changed in tuning-control-q4_k
+  (none)
+== control-q4_k-name-warm (23:07:27): lines added or changed in tuning-control-q4_k
+  (none)
+== profile-control-q4_k-prompt (23:07:34): lines added or changed in tuning-control-q4_k
+  (none)
+== complete-control-q4_k-adad (23:07:43): lines added or changed in tuning-control-q4_k
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-q4_k-A-adad-fill (23:07:53): lines added or changed in tuning-swap-q4_k-A
+  (none)
+== complete-swap-q4_k-A-adad (23:08:02): lines added or changed in tuning-swap-q4_k-A
+> PackedSplits 1300 475 2048 2048 0 0 0 = 1
+> PackedSplits 1300 475 2048 6144 0 0 0 = 4
+> PackedSplits 1800 475 2048 2048 0 0 0 = 1
+> PackedSplits 1800 475 2048 6144 0 0 0 = 2
+> PackedTile 1500 475 2048 2048 0 0 0 = 128
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1500 475 2048 6144 0 0 0 = 128
+> PackedTile 1500 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-q4_k-A-adad-warm (23:08:11): lines added or changed in tuning-swap-q4_k-A
+  (none)
+== profile-swap-q4_k-A-prompt (23:08:18): lines added or changed in tuning-swap-q4_k-A
+  (none)
+== swap-q4_k-B-adad-fill (23:08:28): lines added or changed in tuning-swap-q4_k-B
+  (none)
+== complete-swap-q4_k-B-adad (23:08:37): lines added or changed in tuning-swap-q4_k-B
+> PackedSplits 300 475 2048 2048 0 0 0 = 2
+> PackedSplits 300 475 2048 6144 0 0 0 = 2
+> PackedSplits 800 475 2048 2048 0 0 0 = 2
+> PackedSplits 800 475 2048 6144 0 0 0 = 2
+> PackedTile 500 475 2048 2048 0 0 0 = 128
+> PackedTile 500 475 2048 6144 0 0 0 = 128
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1500 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 16
+== swap-q4_k-B-adad-warm (23:08:45): lines added or changed in tuning-swap-q4_k-B
+  (none)
+== profile-swap-q4_k-B-prompt (23:08:53): lines added or changed in tuning-swap-q4_k-B
+  (none)
+== control-iq2_xxs-adad-warm (23:09:05): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== control-iq2_xxs-name-warm (23:09:32): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== profile-control-iq2_xxs-prompt (23:09:42): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== complete-control-iq2_xxs-adad (23:09:52): lines added or changed in tuning-control-iq2_xxs
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== complete-control-iq2_xxs-name (23:10:19): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== swap-iq2_xxs-A-adad-fill (23:10:33): lines added or changed in tuning-swap-iq2_xxs-A
+  (none)
+== complete-swap-iq2_xxs-A-adad (23:10:44): lines added or changed in tuning-swap-iq2_xxs-A
+> PackedSplits 1300 475 2048 2048 0 0 0 = 1
+> PackedSplits 1300 475 2048 6144 0 0 0 = 6
+> PackedSplits 1800 475 2048 2048 0 0 0 = 1
+> PackedSplits 1800 475 2048 6144 0 0 0 = 2
+> PackedTile 1500 475 2048 2048 0 0 0 = 128
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1500 475 2048 6144 0 0 0 = 128
+> PackedTile 1500 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-iq2_xxs-A-adad-warm (23:10:55): lines added or changed in tuning-swap-iq2_xxs-A
+  (none)
+== profile-swap-iq2_xxs-A-prompt (23:11:05): lines added or changed in tuning-swap-iq2_xxs-A
+  (none)
+== swap-iq2_xxs-B-adad-fill (23:11:18): lines added or changed in tuning-swap-iq2_xxs-B
+  (none)
+== complete-swap-iq2_xxs-B-adad (23:11:29): lines added or changed in tuning-swap-iq2_xxs-B
+> PackedSplits 300 475 2048 2048 0 0 0 = 2
+> PackedSplits 300 475 2048 6144 0 0 0 = 4
+> PackedSplits 800 475 2048 2048 0 0 0 = 2
+> PackedSplits 800 475 2048 6144 0 0 0 = 2
+> PackedTile 500 475 2048 2048 0 0 0 = 128
+> PackedTile 500 475 2048 6144 0 0 0 = 128
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1500 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== swap-iq2_xxs-B-adad-warm (23:11:40): lines added or changed in tuning-swap-iq2_xxs-B
+  (none)
+== profile-swap-iq2_xxs-B-prompt (23:11:50): lines added or changed in tuning-swap-iq2_xxs-B
+  (none)
