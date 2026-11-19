@@ -30,6 +30,21 @@ at the end as not proved; nothing there may be taken as proved.
 
 ## Words used here
 
+- **`name`** (`IDRAK_ROUTES=name`, the default at `cf77ceeb`): Idrak as it was before the proof, the baseline every
+  bench compared against. A weight's product runs the kernel written for its format, picked by the format's name:
+  Idrak's int8 format runs `Int8MatMulKernel`, bfloat16 `BFloat16MatMulKernel`, int4 `Int4MatMulKernel`. A type with no
+  kernel of its own (float16, q8_0, q4_0, iq4_nl, the k-quants, the grids) is held as float32 and multiplied by the float32
+  product: weights memory 2,590 MiB on Qwen3-0.6B in the re-bench, against 464–1,454 MiB under `adad`. Every bench ran it
+  on the same machine and tuning folder right after `adad`, so a number that moves under `name` too (its code unchanged)
+  is the machine's run-to-run spread, not a change.
+- **Named kernel**: a kernel written for one format and chosen by that format's name: the three above and the fused
+  passes over Idrak's packed formats (`PackedMatMulEpilogueKernel`, `PackedMatMulNormAddRmsNormKernel`, the
+  `IFusedPackedKernels` members).
+- **`adad`** (`IDRAK_ROUTES=adad`): the proof's design. Each weight is kept as stored (the file's rows) and read through its
+  type's description (`FloatBits`, integer bits and sign, `ScaledBlock`, `SuperBlock`, `GridBlock`); each product's lane
+  is chosen by measuring the candidates on the device at that shape.
+- **Route**: the switch `IDRAK_ROUTES` the proof added (`src/Idrak.Abstraction/Devices/ProductRoutes.cs`) so one build
+  could run `name` and `adad` side by side; it also has `generic` and `measured` ("The routes, exactly").
 - **Lane**: one way a device multiplies x by a stored weight (a kernel or a short pipeline of kernels). CUDA's lanes are
   numbered as `StoredMeasured`'s candidates (below); the CPU's are named (row, panel, today's path, tiles, block route).
 - **Few-row lane**: the product for a decoding step (at most 8 rows of x), one warp a column (CUDA) or a row of the weight
@@ -81,7 +96,8 @@ In Idrak this became:
 
 ## The routes, exactly
 
-- `name`: today's kernels, chosen by the format's name (Idrak's int8, int4 and bfloat16 packed formats).
+- `name`: today's kernels, chosen by the format's name (Idrak's int8, int4 and bfloat16 packed formats); a type with
+  none of these (float16, the GGUF types) is held as float32 and multiplied by the float32 product.
 - `generic`: one product per device from the description; no named kernel; no measurement.
 - `measured`: per shape, the faster of the lanes. For weights still in Idrak's int8 or bfloat16 packed formats, the
   format's own (named) kernel is one of the candidates: on CUDA `RoutedNamed` (`CudaBackend.Typed.cs`), on the CPU

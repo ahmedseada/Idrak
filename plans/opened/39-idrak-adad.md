@@ -1,13 +1,36 @@
 # Plan 39: Idrak.Adad (the proof's Adad design as its own devices)
 
-> **Status: under review. Do not follow this plan until the owner marks it ready** (this banner removed by the owner's
-> word). Earlier versions of this plan (commits 2be7627d, 7e7248fc, 1e504c50, 59aa4611) are superseded and must not be
-> followed.
+> **Status: ready, in progress (phase 1).** The owner, 2026-11-19: "commit the plan and the suggested model and start
+> piece by piece fix what ever the bench or the trace shows then move to the next when done and pushed I will test
+> later". Earlier versions of this plan (commits 2be7627d, 7e7248fc, 1e504c50, 59aa4611, 224493d8) are superseded and
+> must not be followed.
 
 The first version of the Idrak.Adad package: the Adad design the proof built and measured on branch `migration`
 (commits `5a056e27` and `cf77ceeb`), moved out of Idrak's core into a package of its own that registers two devices,
 `adad-cpu` and `adad-cuda`. The plain `cpu` and `cuda` devices keep the behaviour of the proof's `name` route at
 `cf77ceeb` (today's kernels, chosen by the format's name).
+
+## Words used here
+
+- **`name`** (`IDRAK_ROUTES=name`, the default at `cf77ceeb`): Idrak as it was before the proof, the baseline every
+  bench compared against. A weight's product runs the kernel written for its format, picked by the format's name:
+  Idrak's int8 format runs `Int8MatMulKernel`, bfloat16 `BFloat16MatMulKernel`, int4 `Int4MatMulKernel`. A type with no
+  kernel of its own (float16, q8_0, q4_0, iq4_nl, the k-quants, the grids) is held as float32 and multiplied by the float32
+  product: weights memory 2,590 MiB on Qwen3-0.6B in the re-bench, against 464–1,454 MiB under `adad`. Every bench ran it
+  on the same machine and tuning folder right after `adad`, so a number that moves under `name` too (its code unchanged)
+  is the machine's run-to-run spread, not a change.
+- **Named kernel**: a kernel written for one format and chosen by that format's name: the three above and the fused
+  passes over Idrak's packed formats (`PackedMatMulEpilogueKernel`, `PackedMatMulNormAddRmsNormKernel`, the
+  `IFusedPackedKernels` members).
+- **`adad`** (`IDRAK_ROUTES=adad`): the proof's design. Each weight is kept as stored (the file's rows) and read through its
+  type's description (`FloatBits`, integer bits and sign, `ScaledBlock`, `SuperBlock`, `GridBlock`); each product's lane
+  is chosen by measuring the candidates on the device at that shape.
+- **Route**: the switch `IDRAK_ROUTES` the proof added (`src/Idrak.Abstraction/Devices/ProductRoutes.cs`) so one build
+  could run `name` and `adad` side by side; it also has `generic` and `measured` (the record, "The routes, exactly").
+- **After this plan**: there is no route. `name` is what the plain `cpu` and `cuda` devices do; `adad` is what `adad-cpu`
+  and `adad-cuda` do; `generic` and `measured` are not carried; step 7 deletes `IDRAK_ROUTES`. Decision 3 ("no `name`")
+  means the Adad devices never run, measure or fall back to a named kernel.
+- Lanes, the few-row lane, the native kind, fill and warm runs, cold timing and the rest: the record's "Words used here".
 
 ## Rules for the session that follows this plan
 
@@ -15,8 +38,8 @@ The first version of the Idrak.Adad package: the Adad design the proof built and
    what the proof followed, how it was done, the tools, the choices and why, what it proved and what it did not prove.
    This plan does not repeat it and does not override it.
 2. **Build only what the record says the proof did, under the owner's decisions below.** Move the proof's code; do not
-   rewrite it, redesign it, change what a kept lane computes, or add a lane, a kernel, a setting or a design of your own.
-   Where a decision needs code the proof did not have, this plan specifies it (below); nothing beyond that.
+   rewrite it, redesign it, change what a kept lane computes, or add a lane, a kernel, a setting or a design of your own,
+   except a fix rule 9 calls for. Where a decision needs code the proof did not have, this plan specifies it (below).
 3. **Nothing from the record's "Not proved" list is part of this plan** unless a decision below requires it.
 4. **Sources: only the proof**, commits `5a056e27` and `cf77ceeb`, and commit `cf7b8c48` only to restore core's pre-proof
    bodies that step 3 and step 4 name. Never `main`, an older Idrak, the memory notes as a source of code, or the old Adad
@@ -24,10 +47,24 @@ The first version of the Idrak.Adad package: the Adad design the proof built and
    ported from Adad (the record names them); they are taken from the proof as they are.
 5. **Stop and ask the owner** in one line at every stop point listed under "Stop points", and whenever the code differs
    from what this plan says (a name, a line, a member, a file), before going on. Do not decide it.
-6. **CLAUDE.md applies, except where the owner settles otherwise at stop S0** (this plan and CLAUDE.md conflict on the
-   branch, fixing without asking, settings, packaging and build cadence). Until S0 is settled, nothing is done.
+6. **CLAUDE.md is off for this plan, as it was for the proof.** The owner, when the proof began (2026-11-14): "forget
+   the current rules and restrictions", and "Yes i want to turn it off and revise the expirement"; for this plan
+   (2026-11-19): "keep it off man like the way we started". The session follows this plan, the record and the owner's
+   words only. Where CLAUDE.md says otherwise (the branch, fixing a slow path without asking, a setting for every
+   behaviour, packaging, building once, agents, its abstraction rule), this plan holds.
 7. **Every step is checked**: its tests pass, and step 11's bench reproduces the acceptance table within its tolerances.
    A number out of line is traced with the record's tools and reported to the owner with its cause before the step closes.
+8. **Only what trace, bench and profile show decides.** The owner (2026-11-19): "we only follows what the trace, bench and
+   profile tells use like we did earlier to get those better results". Every choice and every claim rests on an
+   `idrak trace`, `idrak bench` or `idrak profile` output saved under `test-output\` and cited; a number with no file
+   behind it is not evidence; an open question is settled by a run, not an argument.
+9. **Fix whatever the bench or the trace shows, piece by piece.** The owner (2026-11-19): "start piece by piece fix what
+   ever the bench or the trace shows then move to the next when done and pushed I will test later". A slow path, an
+   allocation, a host fallback, a conversion or a regression that a bench, profile or trace shows is fixed in the piece
+   at hand, with its before-and-after files saved and cited; a fix keeps results proven unchanged by tests (bit for bit
+   where the proof's were). A piece moves on only when it is done and pushed. The owner tests later: the agent runs each
+   piece's targeted tests itself. A stop point that needs the owner's decision is brought to the owner by the main
+   session while the agent goes on with the next piece whose inputs are ready; it never waits idle.
 
 ## Decisions (the owner's)
 
@@ -52,6 +89,28 @@ The first version of the Idrak.Adad package: the Adad design the proof built and
    kernels. This is new design beyond the proof (Phase B below).
 7. **The tied bfloat16 head on the Adad devices is a stored copy** of the table's rows (+297 MiB on Qwen3-0.6B), read by the
    Adad lanes, as the proof's rounds before round 7 ran it.
+8. **Adad follows abstraction by its own rules, not a copy of Idrak's, and its rules come from measurement.** The owner
+   (2026-11-14): "when commiting i want it adad to follow abstraction rule but it's own abstraction rules so it beahive
+   not copy idrak abstraction"; (2026-11-19) yes to: abstraction proved by bench and profile, not rules written in
+   advance. So:
+   - The package's abstraction is what the proof measured: types read through their descriptions, each product's lane
+     chosen by measurement on the device, the two devices registered through Idrak's `DeviceProviders` (as any device
+     package does).
+   - A contract, interface or layer beyond that is added only with a bench and a profile before and after it (the
+     record's commands, step 11's tolerances), and kept only if it is no slower and uses no more memory (stop S12).
+   - Nothing copies Idrak's contract-plus-`SlotTable` design for its own sake.
+9. **Scope: inference and training.** The owner (2026-11-19): "both training and inference". Inference: `idrak run`,
+   `serve`, `bench`, `profile`, `perplexity`. Training: `idrak train tune` (LoRA over frozen weights, and trainable
+   float32 weights), `pretrain`, `reinforce`, `distill`. The proof never built or checked training through stored
+   weights (the record, "Not checked"): it is Phase C, after its own design note.
+10. **Model: Qwen3-0.6B only while the plan is worked.** The owner (2026-11-19): "use Qwen3-0.6B only / use can run full
+   bench on larger one to get a full baseline but only when the plan is finished you can remeasure on the larger
+   model"; then: "you can take a baseline now before starting but not now". So a larger model's full baseline on `cpu`
+   and `cuda` is taken before step 1; the Adad devices are
+   measured on it only when the plan is finished. The model: **Qwen/Qwen3-1.7B** (the owner, 2026-11-19, taking the
+   suggestion: the largest Qwen3 whose float32-held block types fit a 16 GB card under today's kernels, so every type
+   has a baseline on both devices; same family as Qwen3-0.6B, products about 4× larger). With Qwen3-0.6B only, the commands that need other models (image,
+   speech and line training; the audio, voice and vision models) are not part of this plan.
 
 ### Decision 4's table
 
@@ -166,16 +225,16 @@ src/Idrak.Adad/
 
 Phase A moves the proof (steps 0-11). Phase B (the embedding table and the cache by description, decision 6) starts only
 after the owner approves its design note (stop S9). Each step ends with: one build of the changed projects
-(`-nodeReuse:false`), the step's tests, the CLI reinstalled from the local build (the record's commands), and a commit
-pushed to the branch S0 names.
+(`-nodeReuse:false`), the step's tests, the CLI reinstalled from the local build (the record's commands), and the
+agent's commit, which the main session cherry-picks onto `migration` and pushes ("Who does what", below).
 
-### Step 0: settle the conflicts with CLAUDE.md (stop S0)
+### Step 0: tell the owner how the session runs (stop S0)
 
-Ask the owner, in one message, to settle each: the branch (`migration`, against "main only"); a slow path found during
-the move is reported and asked about, not fixed (against "fixed without asking"); no setting for the lanes (against
-"every behaviour has a setting"); `dotnet pack` to `test-output\packages` for the local CLI (against "do not package");
-a build per step (against "build once after all the work"); the CLI printing `AdadChoices` directly (against
-"abstraction always"); agents or not. Write the answers into this plan before step 1.
+In one message: CLAUDE.md is off for this plan (rule 6); the branch is `migration`; a slow path that a bench or trace
+shows is fixed with its before and after (rule 9); the lanes get no setting, the device name is the choice; the CLI
+is packed to `test-output\packages` and reinstalled after each build, never published; each step ends with a build, its
+tests, a commit and a push; one agent does the work, the main session tracks ("Who does what"). Start step 1 only
+after the owner answers.
 
 ### Step 1: open core to a subclass (no behaviour change)
 
@@ -278,9 +337,78 @@ the key/value cache's rows are kept (a description) and how attention reads them
 each is proved (tests bit for bit against the values where the arithmetic allows, else within float32's bound; the bench
 against step 11's numbers), and what it costs or saves in memory. Nothing of Phase B is part of Phase A.
 
+## Ready to use (decisions 9 and 10)
+
+The Adad devices are ready to be used when every item below is done on Qwen3-0.6B and each has its bench, profile and
+trace (rule 8) saved under `test-output\adad\` and cited here. Nothing counts as ready because it builds.
+
+### What is measured for every device, weight type and command in scope
+
+- `idrak bench`: a fresh tuning folder per type, a fill run then a warm run, `adad-cuda` against `cuda` and `adad-cpu`
+  against `cpu`, the record's sizes (CUDA `--prompt-tokens 512 --tokens 128 -n 3`, CPU `--prompt-tokens 128 --tokens 32
+  -n 2`), `--save`.
+- `idrak profile`: the prompt pass and one decode step: where the time goes and which kernels ran (no named kernel may
+  appear).
+- `idrak trace --stacks`: hot spots, waits, collections, allocations, host fallbacks, element conversions.
+- `idrak perplexity Qwen/Qwen3-0.6B <text> -w <type> -d <device>`: the same generic text and window on each device (the
+  quality the speed must not cost).
+- Training (Phase C): a training step's time and memory, and the loss over the same steps, seed and data as the plain
+  device.
+
+The bars: speed at least the plain device's (within the measured spread), weights memory no more, peak memory no more
+(bf16: +297 MiB, decision 7), no named kernel, no host fallback, no element conversion. The bars for perplexity and for
+the training loss are set by the owner after their first measurement (stop S15).
+
+### Who does what (the owner, 2026-11-19: "make 1 agent but keep the main session free for tracking so the bench and work doesn't affect or harm the process")
+
+- **One agent does all the work**, in its own worktree, one piece after another: code, builds, tests and every
+  measurement. It never builds or tests while a measurement runs, saves every measurement under `test-output\adad\`,
+  and reports each piece with its commit's hash and its result files.
+- **The main session only tracks**: it answers the owner at once, reads the agent's report when a piece ends (never
+  polls), brings the owner every stop point, cherry-picks the agent's commits onto `migration` and pushes, and keeps
+  this plan's status current. It never builds, tests or benches, so nothing it does touches a measurement.
+- **The agent works as the session that made the proof did** (the owner, 2026-11-19: "the agent should always this
+  current session as it it did"): CLAUDE.md off, trace → fix → bench, every number from a saved file, the record's tools
+  and commands, and it reports each piece back to the main session.
+
+### Phases, in order
+
+| Phase | The agent does | Ends with the owner's stop |
+|---|---|---|
+| 0. Plan ready | Nothing (the main session commits and pushes the plan on the owner's word) | The owner marks plan 39 ready |
+| 1. Baseline and open questions (measuring only, no code) | M0 Qwen3-1.7B's baseline on `cpu` and `cuda` (decision 10); M1 the CPU's lane choices, five runs a type; M2 iq2_xxs's and iq3_xxs's gate/up; M3 the six figures with no file; M4 perplexity for each type, `adad` against `name` and float32. Results into the record | The owner reviews them; M1 may change what `adad-cpu` keeps |
+| 2. Design notes (writing only) | Phase B's note (the embedding table and the cache by description) and Phase C's (training through stored weights) | S9, S13: the owner approves both |
+| 3. The package (steps 0-10) | Phase A, step by step: a build, the step's tests and a commit each | S0-S8, S10, S12 as they arise |
+| 4. Acceptance (step 11) | Bench, profile and trace of `adad-*` against `cpu`/`cuda` on Qwen3-0.6B, against the re-bench | S11 for anything outside its tolerance |
+| 5. Phase B | The embedding table and the cache by description: code, tests, then bench, profile, trace and perplexity | S15: the perplexity bar |
+| 6. Phase C | Training through stored weights: the backward product over stored rows, LoRA over frozen stored weights, the float32 trainable products; gradient tests; a training step's time, memory and loss against the plain device | S15: the training-loss bar |
+| 7. Coverage | Each item measured (int4, float32 weights, Q2_K/Q3_K/Q5_K, the undescribed types, a ggml-made GGUF, long prompts, batches, `serve`, CUDA graphs), then what the owner chooses for it | S14: supported or refused, item by item |
+| 8. The ready-to-use run | Every device, type and command in scope measured against the bars | The owner sees the results |
+| 9. The larger model | The Adad devices on it, against phase 1's baseline | The owner sees the results |
+
+The measurements of phase 1 run on the proof's code as it is on `migration` (`IDRAK_ROUTES=adad` against `name`); each
+result names the commit it was built from.
+
+**M2's exact setup**: a copy of each type's re-bench tuning folder with the entry `9700 512 1024 3072 3072 0 0` set to 1
+(the old group launch), a warm bench and a prompt profile, against the re-bench's own choice.
+
+**M3's figures**: attention 17.3 → 1.1 ms, `norm_rope_heads` 1.55 → 0.63 ms, the CPU pool 1,037 → 441 MiB, allocations
+6–11 GB → 0.5–2.4 GB, the dotnet-trace 170 ms, 94 → 504 tok/s: re-measured with the tool that first gave them, or marked
+not proved in the record.
+
+**M4**: `idrak perplexity Qwen/Qwen3-0.6B <text> -w <type> -d <device>` on one generic text and window, every type,
+`adad` and `name` on CPU and CUDA, and float32: whether the CPU's block route (x rounded to 8-bit blocks) and float16 x
+change the scores.
+
+**Phase C's design note covers**: the backward product over stored rows (dx = g · W; the proof has only y = x · Wᵀ, and
+Idrak's `gemm_tc_nt_bf16w_lr_f32` is a named bfloat16 kernel); LoRA over frozen stored weights; trainable float32
+weights' products on the Adad devices (lane 0's f32 tile, never benched); what `pretrain`, `reinforce` and `distill`
+need beyond `tune`; how each is proved (gradients tested against the plain device; a training step benched, profiled
+and traced).
+
 ## Stop points
 
-- **S0** before step 1: the CLAUDE.md conflicts (step 0).
+- **S0** before step 1: step 0's message, and the owner's answer on agents.
 - **S1** the code differs from a name, line, member or file this plan gives.
 - **S2** a kept lane would compute something different from the proof (any change beyond moving, renaming the class,
   taking the `adad` branch, removing a left-out candidate, keys by description).
@@ -293,6 +421,11 @@ against step 11's numbers), and what it costs or saves in memory. Nothing of Pha
 - **S9** Phase B's design note, before any Phase B code.
 - **S10** a test whose place (carried, not carried, core) is unclear.
 - **S11** an acceptance column outside its tolerance, or an ordering against `name` that changed.
+- **S12** before keeping a contract, interface or layer beyond the proof's (decision 8): its bench and profile before and
+  after, shown to the owner.
+- **S13** Phase C's design note, before any training code.
+- **S14** each coverage item, after its measurement: supported or refused.
+- **S15** the first perplexity and training-loss measurements: the owner sets their bars.
 
 ## Done when (Phase A)
 
@@ -301,10 +434,18 @@ against step 11's numbers), and what it costs or saves in memory. Nothing of Pha
 - Core names no route; every test group above passes on its devices; the API dump and inventory are current.
 - Everything is pushed, a commit per step.
 
+## Done when (ready to use)
+
+- Phase A, Phase B and Phase C are done, and every item of "Ready to use" is measured (bench, profile, trace, perplexity,
+  training loss), meets its bar, and is cited with its files; every stop point the owner was asked has its answer
+  written into this plan.
+- Only then: the Adad devices on the larger model (decision 10).
+
 ## Not in this plan
 
 - Everything in the record's "Not proved" list that no decision requires (the tensor rows generated per description, a
-  lanes setting, Vulkan, HIP, descriptions for more types, other machines and models).
+  lanes setting, Vulkan, HIP, other machines; descriptions for more types unless the owner chooses at S14 to support
+  one; other models, but for the larger model after the plan, decision 10).
 - Changing the gates the kept lanes inherit from the native kind.
 - Making the Adad devices the default.
 - Replacing Idrak.Gpu. The owner may decide it later, only if Idrak.Adad has proved itself and has every backend; until
