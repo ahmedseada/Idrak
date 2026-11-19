@@ -264,12 +264,13 @@ internal sealed partial class PdfContentReader
         bool stroke = op is OpStroke or OpCloseStroke or OpFillStroke or OpFillStrokeEvenOdd or OpCloseFillStroke or OpCloseFillStrokeEvenOdd;
         if (!_path.IsEmpty)
         {
-            double scale = Math.Sqrt(Math.Abs(_state.Ctm.A * _state.Ctm.D - _state.Ctm.B * _state.Ctm.C));
+            var (pen, scale) = Pen(_state.Ctm);
             var (verbs, points) = _path.ToArrays();
             (_paths ??= []).Add(new DocumentPath(verbs, points)
             {
                 Fill = fill,
                 Stroke = stroke ? (float)(_state.LineWidth * scale) : null,
+                StrokeMatrix = stroke ? pen : null,
                 Cap = (DocumentLineCap)_state.Cap,
                 Join = (DocumentLineJoin)_state.Join,
                 MiterLimit = (float)_state.MiterLimit,
@@ -284,6 +285,23 @@ internal sealed partial class PdfContentReader
         }
 
         EndPath();
+    }
+
+    // A stroke's pen under the CTM (ISO 32000-2, 8.5.3.1: the line width is in user space): the root of the determinant's
+    // size scales the width and the dashes into page points, and the CTM's linear part over that scale is the pen's shape
+    // when it is not uniform (its columns not of one length at a right angle: stretched or skewed); null when it is (a
+    // turn and one scale, mirrored or not: the pen stays round), within float rounding of a matrix written to a few places.
+    private static (DocumentMatrix? Pen, double Scale) Pen(PdfMatrix m)
+    {
+        double scale = Math.Sqrt(Math.Abs(m.A * m.D - m.B * m.C));
+        if (!(scale > 0) || !double.IsFinite(scale))
+        {
+            return (null, scale);                                      // the width as it always was: no pen to shape
+        }
+
+        double a = m.A / scale, b = m.B / scale, c = m.C / scale, d = m.D / scale;
+        bool uniform = Math.Abs(a * a + b * b - 1) <= 1e-4 && Math.Abs(c * c + d * d - 1) <= 1e-4 && Math.Abs(a * c + b * d) <= 1e-4;
+        return (uniform ? null : new DocumentMatrix((float)a, (float)b, (float)c, (float)d, 0f, 0f), scale);
     }
 
     private DocumentColour FillPaint() => (_fixed ?? _state.FillColour).WithAlpha(Math.Clamp(_state.FillAlpha, 0f, 1f));

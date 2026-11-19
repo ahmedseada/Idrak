@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction.Data;
 
@@ -295,6 +296,23 @@ public sealed class DocumentPath
 
     /// <summary>How far into the dash pattern the stroke starts, in points.</summary>
     public float DashPhase { get; init; }
+
+    /// <summary>
+    /// The shape of the stroke's pen when it is not round on the page, or null for a round pen (the width the same every
+    /// way). A format whose line width is measured in a space the page does not map uniformly (PDF's user space under a
+    /// stretched or skewed matrix: ISO 32000-2, 8.5.3.1) gives that map's linear part (<see cref="DocumentMatrix.A"/> to
+    /// <see cref="DocumentMatrix.D"/>; E and F are 0) divided by the root of its determinant's size, so its determinant
+    /// is 1 or -1: the stroke is the path taken back through it, stroked with a round pen of <see cref="Stroke"/> and
+    /// dashed by <see cref="Dash"/> along it, then put forward through it again (the same area as a round stroke).
+    /// </summary>
+    public DocumentMatrix? StrokeMatrix
+    {
+        get => _strokeMatrix?.Value;
+        init => _strokeMatrix = value is { } pen ? new StrongBox<DocumentMatrix>(pen) : null;
+    }
+
+    // Kept by reference: a round pen (nearly every path) costs a path one reference, not a nullable matrix's 28 bytes.
+    private readonly StrongBox<DocumentMatrix>? _strokeMatrix;
 
     /// <summary>The fill's colour (black).</summary>
     public DocumentColour FillColour { get; init; }

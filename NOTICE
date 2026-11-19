@@ -10,8 +10,11 @@ Unicode, Inc., used under the Unicode License v3 (https://www.unicode.org/licens
 src/Idrak.Data/Pdf/PdfFontTables.Data.cs is generated (tools/documents/make_pdf_tables.py) from the Adobe Glyph List and
 the ITC Zapf Dingbats glyph list, Copyright 2002-2019 Adobe, used under the BSD 3-clause licence quoted in that file, and
 holds the standard 14 fonts' widths and metrics taken from Adobe's Core 14 AFM files, under the notice those files carry
-(quoted in that file).
+(quoted in that file), and the 258 standard Macintosh glyph names as fontTools 4.68 carries them (its
+ttLib.standardGlyphOrder; MIT licence, Copyright (c) 2017 Just van Rossum and the fontTools contributors).
 
 src/Idrak.Imaging/PostScriptFontTables.cs holds the CFF specification's 391 standard strings and the standard encoding
 (Adobe Technical Note #5176, appendices A and B), copied as fontTools 4.68 carries them (its cffLib and encodings;
-fontTools is under the MIT licence, Copyright (c) 2017 Just van Rossum and the fontTools contributors).
+fontTools is under the MIT licence, Copyright (c) 2017 Just van Rossum and the fontTools contributors), and its
+predefined Expert encoding and Expert and Expert Subset charsets (appendix C; the charsets as fontTools' cffLib names
+them, the encoding as the specification lists it, checked against pdf.js's and FreeType's copies).

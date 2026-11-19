@@ -249,3 +249,36 @@ public sealed class DocumentSoftMask
     /// <summary>The colour the content is drawn on, for a luminosity mask (black: nothing shows where the content is not).</summary>
     public DocumentColour Backdrop { get; init; } = DocumentColour.Black;
 }
+
+/// <summary>
+/// A font face whose glyphs may be drawings of their own rather than outlines (PDF's Type 3 fonts: a glyph's procedure
+/// can stroke, show images, paint in its own colours, clip): a drawer asks for a glyph's drawing and draws it in the
+/// glyph's place, else the glyph's outline, filled in its run's colour, as for any face. Safe from several threads.
+/// </summary>
+public interface IDocumentGlyphDrawings
+{
+    /// <summary>Glyph <paramref name="glyph"/>'s drawing, or null when its outline is all of it (filled shapes alone).</summary>
+    DocumentGlyphDrawing? Drawing(int glyph);
+}
+
+/// <summary>
+/// A glyph drawn by parts of its own (<see cref="IDocumentGlyphDrawings"/>): <see cref="Parts"/> in the face's font units
+/// with y up (the frame of its outlines), placed as its outline is, through its run's glyph matrix over the units per em
+/// from the glyph's origin; painted in their own colours (<see cref="Coloured"/>: PDF's <c>d0</c>), or their shape alone
+/// painted in the run's colour (PDF's <c>d1</c>).
+/// </summary>
+public sealed class DocumentGlyphDrawing
+{
+    /// <summary>A glyph drawn by <paramref name="parts"/>, in their own colours when <paramref name="coloured"/>.</summary>
+    public DocumentGlyphDrawing(DocumentPage parts, bool coloured)
+    {
+        ArgumentNullException.ThrowIfNull(parts);
+        (Parts, Coloured) = (parts, coloured);
+    }
+
+    /// <summary>The parts that draw the glyph, in font units, y up.</summary>
+    public DocumentPage Parts { get; }
+
+    /// <summary>Whether the parts keep their own colours (true), or only their shape counts, painted in the run's colour (false).</summary>
+    public bool Coloured { get; }
+}

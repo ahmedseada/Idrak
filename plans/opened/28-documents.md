@@ -768,8 +768,9 @@ come out in logical order through `bidi` with no language code; pages read in pa
   allocated a page; the same pages of documents kept open (fonts read once): 6.1-6.4 ms a pass (196-205 µs a page), 32
   KiB a page. One change measured before and after: the page's glyphs in a pooled buffer and simple fonts' one-character
   texts in a table (94.7 to 65.2 and 48.6 to 31.8 KiB a page, the text the same).
-- **Left for later phases:** CFF programs' built-in encodings (StandardEncoding stands in), runs' colours and clips,
-  vertical position vectors and faces for Type 1, CFF and Type 3 (D7); images (D4). Most of the 32 KiB a page is D0's
+- **Left for later phases:** ~~CFF programs' built-in encodings (StandardEncoding stands in), runs' colours and
+  clips, vertical position vectors and faces for Type 1, CFF and Type 3 (D7)~~ (done: D7, and D7's "Drawing gaps
+  closed, 2026-11-19"); images (D4). Most of the 32 KiB a page is D0's
   `lines` layout's own (strings, groups, the reading order), a piece of its own.
 - **The owner's run** (held with the others until asked):
   ```powershell
@@ -942,8 +943,10 @@ bytes.
   9 µs and 1.8 KiB a decode, RGB 934 µs and 771 KiB to 14 µs and 2.7 KiB; the D4 pass 10.9 to 8.4 ms and 1.74 to
   1.05 MiB a megapixel), the pixels the same (the expected hashes).
 - **Left:** CCITT's and JBIG2's parameters for a codec (decision 5); images-only reading without the text interpreter
-  (decision 6); Lab pixels a power at a time (a table or cache if real files need it); images in Type 3 glyphs,
-  patterns and annotation appearances (D7, D10); an image's clip and fill colour for a stencil (D7).
+  (decision 6); Lab pixels a power at a time (a table or cache if real files need it); ~~images in Type 3 glyphs,
+  patterns and annotation appearances (D7, D10); an image's clip and fill colour for a stencil (D7)~~ (done: patterns
+  and a stencil's clip and colour in D7, annotation appearances in D10, Type 3 glyphs' images in D7's "Drawing gaps
+  closed, 2026-11-19").
 - **The owner's run** (held with the others until asked):
   ```powershell
   cd D:\Projects\Idrak; git checkout documents; git pull origin documents
@@ -1475,13 +1478,14 @@ fonts|synthetic pages`.
     pixels returned, 0.5 MiB besides (the bands); the GC's peak heap 329 MiB with 211 MiB of the test process before it.
   - the 11 D7 samples at 150 dpi, warm: one after another 170 ms, in parallel 162 ms: little gain, since each page's
     bands already take every core; the pixels are the same either way.
-- **Left for later:** a non-isolated group with another blend or opacity is drawn as an isolated one; a stroke under a
-  matrix that is not uniform has its width scaled by the root of its determinant (its pen not sheared); a `d0` Type 3
-  glyph's own colours and images and every glyph's strokes are not kept; a TrueType font's Mac standard glyph names
-  (`post` version 1, and version 2's indices below 258) are not read when a font's glyph is found by name; a CFF
-  Expert encoding reads as the standard one; a tiling cell's `/BBox` is not a clip; a pixel at an edge is the AGG
-  rule's approximation; annotations are not drawn (D10); no command of the CLI draws a page yet (D13's bench). The
-  drawer's numbers became settings: see "Drawer settings, 2026-11-19" at the end of this phase.
+- **Left for later:** ~~a non-isolated group with another blend or opacity is drawn as an isolated one~~ (done); ~~a
+  stroke under a matrix that is not uniform has its width scaled by the root of its determinant (its pen not sheared)~~
+  (done); ~~a `d0` Type 3 glyph's own colours and images and every glyph's strokes are not kept~~ (done); ~~a TrueType
+  font's Mac standard glyph names (`post` version 1, and version 2's indices below 258) are not read when a font's glyph
+  is found by name~~ (done); ~~a CFF Expert encoding reads as the standard one~~ (done); ~~a tiling cell's `/BBox` is
+  not a clip~~ (done 2026-11-19: "Drawing gaps closed" at the end of this phase); a pixel at an edge is the AGG rule's
+  approximation; annotations are not drawn (D10); no command of the CLI draws a page yet (D13's bench). The drawer's
+  numbers became settings: see "Drawer settings, 2026-11-19" at the end of this phase.
 - **Decisions the plan did not settle, taken here:** (1) The fill rule is a default member of `IOutlineRasterizer`
   with its own enum, so every rasterizer keeps working and the glyph path is not touched. (2) Vector paint (patterns,
   shadings, groups, soft masks, blend modes) is new public data on the page, not a drawer's private reading of the PDF,
@@ -1567,6 +1571,96 @@ fonts|synthetic pages`.
     fill row for row; every D3, D4 and D7 sample page drawn with one-row, seven-row and one band equals the default
     bands' drawing and issues. **Run:** the same filter, no flags: 151 passed, 0 failed (every sample still within its
     tolerance against pdfium).
+- **Drawing gaps closed, 2026-11-19 (plan 28 completed, P3)** (the "Left for later" items above and D3's and D4's
+  hand-offs; `DocumentScene.cs`, `DocumentPaints.cs`, `PdfType3.cs`, `PdfContentType3.cs`, `PdfContentVector.cs`,
+  `PdfContent.cs`, `PdfFonts.cs`, `PdfFontProgram.cs`, `PdfFontTables`, `PdfWriterPage.cs`, `CffOutlines.cs`,
+  `PostScriptFontTables.cs`, `PostScriptFonts.cs`; in the contract `DocumentPath.StrokeMatrix`, `IDocumentGlyphDrawings`
+  and `DocumentGlyphDrawing`; `api/Idrak.Abstraction.txt` and the inventory regenerated through the runner). Each gap
+  has a generator sample of its own in `d7/` (`samples_d7_gaps.py`, generic content, pdfium's render beside it) and a
+  test. A score is the share of the page's pixels off pdfium's by more than 32 levels (the drawers test's measure),
+  before and after:
+  - **A group that is not isolated** (11.4.7-11.4.8). Cause: every group started from a clear surface. Fix: a group that
+    is not isolated starts from a copy of what is under it, keeps its own alpha, and when it closes takes the backdrop
+    back out (C = Cn + (Cn - C0)(a0/ag - a0)) before it is composed by its own blend and opacity; a knockout group
+    composes each part with the group's backdrop, not with the parts before it, mixed by the part's shape. Sample
+    `vector-groups-non-isolated` (a group that is not isolated and a knockout one over a coloured backdrop, each beside
+    the same group reset, and probes whose colours the generator works out by the rules): the probes were up to 143
+    levels off, now 0. pdfium draws every group as an isolated one and does not knock out, so the groups' paths are left
+    out of the pixel comparison: 0.44% before and after without them (1.07% to 25.94% with them, pdfium the one off).
+  - **A stroke's pen** (8.5.3.1). Cause: under a matrix that is not uniform a stroke's width was scaled by the root of
+    the determinant, its pen round. Fix: the reader gives the width times that root and `DocumentPath.StrokeMatrix`, the
+    matrix's linear part over the root (determinant 1 or -1; null for a uniform scale or a turn, within 1e-4); the
+    drawer takes the path back through it, strokes and dashes it with a round pen and puts the outline forward again;
+    the writer writes it as `q a b c d 0 0 cm` around the path taken back. The pen is kept by reference: a nullable
+    matrix held in every path cost deep-forms' fourth page 3.60 MiB a draw against 3.53; by reference 3.54-3.56. Sample
+    `vector-strokes-pen`: 3.19% to 0.04%; D7's `vector-strokes` (one stretched stroke) 0.89% to 0.74%.
+  - **Type 3 glyphs that are more than filled shapes** (9.6.4). Cause: a glyph's procedure was read for its filled paths
+    alone. Fix: a glyph that strokes, clips, shows an image or text, paints a shading, sets a graphics state or, after
+    `d0`, a colour of its own is a drawing (`IDocumentGlyphDrawings` on the face; read once a glyph, as a page of parts,
+    by `PdfContentReader.GlyphPage`): after `d1` its shape in the text's colour, after `d0` in its own colours. The
+    drawer draws a run's drawn glyphs as one part: a scene of their pages, each placed as its outline would be, over
+    their pixel box, drawn per band for its rows, under the run's clip, group, soft mask and blend; a glyph's own
+    drawing draws its glyphs by their outlines (none draws itself). Sample `vector-type3-drawn` (a stroked frame and an
+    image mask after d1, a d0 glyph in its own colour, a filled glyph): 7.13% to 1.56%.
+  - **TrueType's standard Macintosh names** (9.6.5.4's last step). Cause: `post` format 1, and format 2's indices below
+    258, were not read. Fix: the 258 names are a generated table (`make_pdf_tables.py`, from fontTools' standard glyph
+    order, credited in `NOTICE`); a simple TrueType font whose cmap does not give a code's glyph finds it by the code's
+    name in the program's own names. Sample `vector-truetype-mac-names` (programs with format 1 and format 2 tables,
+    cmaps without the letters): pdfium does not find a glyph through format 1 (it draws `.notdef`), so those two runs
+    are left out: 7.94% to 0.10% without them (6.81% to 7.28% with them).
+  - **CFF's Expert encoding** (the CFF specification's predefined encodings and charsets). Cause: a bare CFF's
+    predefined Expert encoding read as the standard one, and the Expert and Expert Subset charsets were not built in.
+    Fix: the three tables in `PostScriptFontTables` (the specification's; where FreeType's table differs, at code 175,
+    the specification's `Macronsmall` is kept); a bare CFF with no `/Encoding` reads its text through its program's own
+    encoding (each code's glyph name), the standard encoding's names where it encodes none. Sample `vector-cff-expert`:
+    4.97% to 0.16%; its text now reads as written.
+  - **A tiling cell's box** (8.7.3.1). Cause: the cell was not clipped to its `/BBox`. Fix: an upright tiling whose box
+    is its steps is snapped as before; one whose box is not its steps (at most twice them, its cell within the drawer's
+    tile size) has its cell drawn once, its box stretched to whole pixels as pdfium does, clipped to the box and placed
+    at each cell rounded to whole pixels, overlapping cells composed column by column, then row by row; any other tiling
+    is drawn as before with each copy clipped to its box. Sample `vector-tiling-bbox` (cells smaller than, larger than
+    and offset from their steps): 15.84% to 1.69%.
+  - **Vertical position vectors** (9.7.4.3). Cause: a vertical glyph's origin was always half its width across and
+    `/DW2`'s vy up. Fix: `/W2`'s vx and vy are read by CID and move the glyph's origin and its box ([-vx, w - vx]
+    across). Sample `vector-vertical-w2`: 1.05% to 0.09%.
+  - **D3's and D4's hand-offs, one by one:** CFF programs' built-in encodings: drawn by name since D7, read for text now
+    (above); runs' colours and clips: D7 (`documents pdf: vector`'s check of every D7 sample page); vertical position
+    vectors: `/W2`'s w1y and Identity-V in D3, vx and vy now; vertical faces: CFF CID faces in D7, while Type 1 and Type
+    3 are simple fonts, never a vertical CIDFont's program (9.7.4), so none is due; images in patterns (D7) and
+    annotation appearances (D10), and in Type 3 glyphs now; a stencil's clip and fill colour: D7, its check now holds
+    the colour too.
+  - **Found, left as it is (the owner decides):** a text run carries a colour, not a pattern, so text painted with a
+    pattern is drawn in a solid colour (black for a coloured pattern), its outlines and now its glyph drawings alike.
+    D10's `redaction-nested` shows it: its `d1` glyphs (image masks) were not drawn before; now they are drawn in their
+    shape, black, where the page's tiling pattern is due (pdfium paints them flat grey): 5.33% to 6.59% off pdfium.
+  - **Rule 71** (38a30bf's build and the new one, the same samples, limits pinned: streams 2g, cache 1280m, 10,502,019
+    objects, depth 64). Every sample page (at most 12 a file) and the large set's pages in six configurations (150 dpi
+    RGB with fonts, 72 dpi grey, 300 dpi with annotations, 150 dpi in one-row bands, 100 dpi without fonts with hidden
+    text, 150 dpi through the app's rasterizer): 1,737 drawings and 12 refusals, 54 changed: the seven new samples' 42,
+    and six each of `vector-strokes` (its stretched stroke) and `redaction-nested` (its glyphs, above). 580 page reads
+    hashed, 5 changed, all of new samples: `vector-cff-expert` (its text), `vector-truetype-mac-names` (its glyph ids),
+    `vector-vertical-w2` (its boxes). Hashed at 37699be the same way, the same changes.
+  - **Bench** (`idrak bench documents --cases draw --hash`, limits pinned, the start's build and the new one alternated,
+    three runs each; warm medians, ms): samples 325 to 387 at 150 dpi and 1,115 to 1,136 at 300; deep-forms 15.3 to 15.7
+    and 49.6 to 49.3; huge-image 1,926 to 2,028 and 1,927 to 1,928; pages-3000 126 to 121 and 453 to 420; many-small 162
+    to 165 and 576 to 560; allocations within 1.2%. The samples at 150 dpi alone, eight more pairs: 353.5 to 365.5 ms
+    (339-375 and 348-435), the cost in the pages that now draw more (`redaction-nested`'s glyphs about 3.5 ms a draw,
+    `vector-strokes`' pen 0.3 ms), every other file the same within noise. The outputs changed only in the four bench
+    files whose drawings changed (above).
+  - **A bench test fixed:** `documents bench:`'s short mode failed on d8e5f44's samples: its six files are spread over
+    the whole set, refused ones included (so every run takes the same files), and P5's four new samples moved two of
+    them onto files that open only with a password, leaving 5 pages where the test asked for 6. The test now asks that
+    each of the six is read (a page at least) or named in the set's refused list, the text read over the cores still the
+    text read page by page; the bench is unchanged.
+  - **Tests:** `documents drawers` 4 new (the groups, the pen, Type 3 drawings, the tiling box); `documents pdf: vector`
+    1 new (the pen read, written and read back) and its D7 sample check (the new samples, what pdfium departs on left
+    out with why; a stencil's colour); `documents pdf: text` 3 new (Mac names, CFF Expert, `/W2`). **Run:** one build at
+    38a30bf, no error or warning; the filter `documents drawers|documents pdf: vector|documents pdf: text|documents pdf:
+    images|documents pdf: forms|documents pdf: annotations|documents pdf: write|documents pdf: edit|documents
+    workload:|documents bench:|documents contracts|cli: data redact|fonts:|outline tracers:|pages:|shapes:|glyph
+    poses:|kind table:|conformance kit:|public API|abstraction inventory|every environment variable read in src|the
+    environment table names real commands|hidden boxing|test runner` with the API and inventory flags: 182 passed, 0
+    failed (the flags changed neither dump).
 
 ## Phase D8: fonts written (TrueType built in, WOFF from a plug-in)
 

@@ -1349,8 +1349,8 @@ internal sealed partial class PdfContentReader : IDisposable
         return runs;
     }
 
-    // Each glyph's id and origin: a vertical glyph's origin moved by its position vector (half its width across, the
-    // font's vertical origin up) to where its outline is drawn from.
+    // Each glyph's id and origin: a vertical glyph's origin moved by its position vector (its /W2 entry's, else half its
+    // width across and the font's vertical origin up) to where its outline is drawn from.
     private DocumentGlyph[] Glyphs(ReadRun run)
     {
         var glyphs = new DocumentGlyph[run.Count];
@@ -1361,7 +1361,7 @@ internal sealed partial class PdfContentReader : IDisposable
             double x = g.X, y = g.Y;
             if (s.Vertical)
             {
-                double vx = g.Width / 2, vy = s.Font.VerticalOrigin;
+                var (vx, vy) = s.Font.Position(g.Code, g.CodeLength, g.Width);
                 (x, y) = (x - (s.A * vx + s.C * vy), y - (s.B * vx + s.D * vy));
             }
 
@@ -1395,14 +1395,16 @@ internal sealed partial class PdfContentReader : IDisposable
     }
 
     // A glyph's four corners on the page: along the baseline its width, across it the font's descent to ascent (raised
-    // by the rise); a vertical glyph its width centred across the column and its vertical advance down it.
+    // by the rise); a vertical glyph its width across the column from its position vector's -vx (centred unless /W2
+    // gives one) and its vertical advance down it.
     private void Corners(in Glyph g, Span<double> xy)
     {
         var s = _segments[g.Segment];
         double x0, x1, y0, y1;
         if (s.Vertical)
         {
-            (x0, x1, y0, y1) = (-g.Width / 2, g.Width / 2, g.Height, 0);
+            double vx = s.Font.Position(g.Code, g.CodeLength, g.Width).X;
+            (x0, x1, y0, y1) = (-vx, g.Width - vx, g.Height, 0);
         }
         else
         {

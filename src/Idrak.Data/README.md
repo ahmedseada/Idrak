@@ -332,9 +332,8 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
   U+FFFD and counted in `unmapped-glyphs`.
 - **Images:** JPEG 2000, CCITT and JBIG2 are not decoded built in (register a codec), and the parameters of CCITT and
   JBIG2 are not handed to one; ICC profiles and calibrations are not applied.
-- **Drawing:** a non-isolated transparency group with another blend mode or opacity is drawn as an isolated one; a
-  stroke under a matrix that is not uniform takes the root of its determinant as its scale; a Type 3 glyph's own colours
-  and images are not kept; a tiling cell's box is not a clip; free text annotations without an appearance are not drawn.
+- **Drawing:** text painted with a pattern is drawn in a solid colour (black for a coloured pattern); free text
+  annotations without an appearance are not drawn.
 - **Forms:** a rich text's paragraph alignment is the field's, and a line of several styled runs is laid out with its
   runs in order (each run shaped in its own direction: a right-to-left line of several styles is not reordered across
   them); calculation order and actions are never run.

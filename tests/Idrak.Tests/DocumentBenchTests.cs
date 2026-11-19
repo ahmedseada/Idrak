@@ -77,8 +77,17 @@ internal abstract partial class DesktopTests
             }
 
             JsonObject Case(string label) => cases.Single(c => (string)c["label"]! == label);
-            Check((long)Case("text-lines")["pages"]! >= 6 && (long)Case("text-lines")["units"]! == (long)Case("text-parallel")["units"]!
-                  && (string?)Case("text-lines")["output"] == (string?)Case("text-parallel")["output"], "the text read over the cores is the text read one page after another");
+            // The short mode's six files spread over the whole set, refused ones included (the same files every run), so
+            // which of them open moves as the samples grow: each is read (a page at least) or named as refused in the set's
+            // list (by the first case that met it; every case takes the same six).
+            var lines = Case("text-lines");
+            var parallel = Case("text-parallel");
+            long linesFiles = (long)lines["files"]!, linesPages = (long)lines["pages"]!;
+            int linesRefused = set["refused"]?.AsArray().Count ?? 0;
+            Check(linesFiles >= 1 && linesFiles + linesRefused == 6 && linesPages >= linesFiles && (long)lines["units"]! == (long)parallel["units"]!
+                  && (string?)lines["output"] == (string?)parallel["output"],
+                $"the text read over the cores is the text read one page after another: text-lines {linesFiles} files read, {linesRefused} refused, {linesPages} pages, "
+                + $"{lines["units"]} units, output {lines["output"]}; text-parallel {parallel["units"]} units, output {parallel["output"]}");
             Check((long)Case("write-vector")["items"]! > 0 && (long)Case("write-vector")["written_bytes"]! > 0 && (long)Case("write-image")["written_bytes"]! > 0,
                 $"the writing cases wrote: {Case("write-vector").ToJsonString()}");
             Check((long)Case("check")["units"]! >= (long)Case("sign")["units"]!, $"check took every signature sign made: {Case("check")["units"]}, {Case("sign")["units"]}");

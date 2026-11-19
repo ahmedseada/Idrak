@@ -84,6 +84,15 @@ internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
         }
 
         var content = Content();
+        // A stroke whose pen is not round: drawn under its matrix (q, cm, Q), the path's points taken back through it, so
+        // the reader's CTM gives the same pen, width and dashes (the fill the same region).
+        var pen = stroke && path.StrokeMatrix is { } m && Normalised(m) is { } shape ? shape : (DocumentMatrix?)null;
+        var saved = _state;
+        if (pen is { } p)
+        {
+            content.Raw("q "u8).Number(p.A, 6).Space().Number(p.B, 6).Space().Number(p.C, 6).Space().Number(p.D, 6).Raw(" 0 0 cm\n"u8);
+        }
+
         Alpha(content, fill ? path.FillColour.Alpha : _state.FillAlpha, stroke ? path.StrokeColour.Alpha : _state.StrokeAlpha);
         if (fill)
         {
@@ -96,9 +105,39 @@ internal sealed partial class PdfPageBuilder : IDocumentPageBuilder
             LineState(content, path);
         }
 
-        Construct(content, path);
+        Construct(content, pen is { } back ? Through(path, back) : path);
         bool evenOdd = path.Fill == DocumentFill.EvenOdd;
         content.Raw(fill && stroke ? evenOdd ? "B*\n"u8 : "B\n"u8 : fill ? evenOdd ? "f*\n"u8 : "f\n"u8 : "S\n"u8);
+        if (pen is not null)
+        {
+            content.Raw("Q\n"u8);
+            _state = saved;                                                    // what the q held is back
+        }
+    }
+
+    // A pen's matrix over the root of its determinant's size (the contract's shape: determinant 1 or -1), or null for one
+    // that cannot be taken back (its determinant 0, or a number not finite).
+    private static DocumentMatrix? Normalised(DocumentMatrix m)
+    {
+        double scale = Math.Sqrt(Math.Abs((double)m.A * m.D - (double)m.B * m.C));
+        return scale > 0 && double.IsFinite(scale) && float.IsFinite(m.A) && float.IsFinite(m.B) && float.IsFinite(m.C) && float.IsFinite(m.D)
+            ? new DocumentMatrix((float)(m.A / scale), (float)(m.B / scale), (float)(m.C / scale), (float)(m.D / scale), 0f, 0f)
+            : null;
+    }
+
+    // The path's points taken back through a pen's linear map (its inverse), as a path of the same verbs.
+    private static DocumentPath Through(DocumentPath path, DocumentMatrix m)
+    {
+        double det = (double)m.A * m.D - (double)m.B * m.C;
+        double a = m.D / det, b = -m.B / det, c = -m.C / det, d = m.A / det;
+        var points = path.Points.ToArray();
+        for (int i = 0; i + 1 < points.Length; i += 2)
+        {
+            double x = points[i], y = points[i + 1];
+            (points[i], points[i + 1]) = ((float)(a * x + c * y), (float)(b * x + d * y));
+        }
+
+        return new DocumentPath(path.Verbs.ToArray(), points) { Fill = path.Fill };
     }
 
     public void Glyphs(IFontFace face, float size, ReadOnlySpan<DocumentGlyph> glyphs, string text, DocumentTextMode mode, DocumentColour colour)

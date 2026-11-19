@@ -327,13 +327,18 @@ internal sealed class ShadingPaint
 }
 
 /// <summary>
-/// A tiling's colours. An upright tiling (its matrix neither turned nor slanted) whose cell covers no more than the largest
-/// tile's pixels (<see cref="DocumentDrawOptions.MaxTilePixels"/>) is snapped to whole pixels as readers draw tilings, so
-/// its cells meet with no seam: its cell drawn once into a tile of the cell's size on the surface rounded up, the tiles
-/// repeated every that many pixels from where the pattern's origin falls, rounded. Any other tiling is drawn into a tile
-/// at the surface's resolution, made smaller to hold no more than the largest tile's pixels (the cells around it too when
-/// the cell reaches past its steps), each surface pixel's centre taken back into the pattern's space, wrapped by the steps
-/// and read from the tile.
+/// A tiling's colours. An upright tiling (its matrix neither turned nor slanted) whose cell is its steps from the pattern's
+/// origin (its box from 0, 0 one step by the other: cells that meet) and covers no more than the largest tile's pixels
+/// (<see cref="DocumentDrawOptions.MaxTilePixels"/>) is snapped to whole pixels as readers draw such tilings, so its cells
+/// meet with no seam: its cell drawn once into a tile of the cell's size on the surface rounded up, the tiles repeated
+/// every that many pixels from where the pattern's origin falls, rounded. A cell whose box is not its steps (cells with
+/// room between them, or reaching past their steps by up to one) is drawn once in the surface's own frame, clipped to its
+/// box (<see cref="DocumentPattern.Bounds"/>, a cell's /BBox: ISO 32000-2, 8.7.3.1), the rectangle around its box
+/// stretched to whole pixels, and placed at each cell's place on the surface rounded to whole pixels (as readers draw such
+/// tilings: crisp, and no cell drifts), cells that overlap composed in turn, across then up. Any other tiling is drawn into a tile at the surface's resolution, made smaller to
+/// hold no more than the largest tile's pixels (the cells around it too when the cell reaches past its steps, each
+/// clipped to its box), each surface pixel's centre taken back into the pattern's space, wrapped by the steps and read
+/// from the tile.
 /// </summary>
 internal sealed class TilePaint
 {
@@ -342,6 +347,9 @@ internal sealed class TilePaint
     private readonly float _alpha;
     private readonly bool _upright;
     private readonly int _startX, _startY;      // an upright tiling: where one tile starts on the surface
+    private readonly bool _placed;              // a cell drawn once on the surface's frame, placed at each cell, rounded
+    private readonly Affine _linear, _back;     // placed: the pattern space to the surface (its linear part), and back
+    private readonly double _left, _top;        // placed: cell 0, 0's box on the surface, its left and top
     private readonly Lazy<(float[] Pixels, int Width, int Height, float Scale)?> _tile;
 
     /// <summary><paramref name="pattern"/> on a surface placed by <paramref name="map"/>, at <paramref name="alpha"/>; its tile holds at most <paramref name="maxTilePixels"/> pixels.</summary>
@@ -352,7 +360,9 @@ internal sealed class TilePaint
         var toPixels = Affine.Of(pattern.Matrix).Then(map);
         _toPattern = toPixels.Invertible ? toPixels.Inverse() : new Affine(0, 0, 0, 0, double.NaN, double.NaN);
         double xs = Math.Abs(pattern.XStep), ys = Math.Abs(pattern.YStep);
-        _upright = Math.Abs(toPixels.B) < 1e-9 && Math.Abs(toPixels.C) < 1e-9 && toPixels.Invertible && Math.Abs(toPixels.A * xs) * Math.Abs(toPixels.D * ys) <= maxTilePixels;
+        var box = pattern.Bounds;
+        bool steps = Math.Abs(box.X) < 1e-3 && Math.Abs(box.Y) < 1e-3 && Math.Abs(box.Width - xs) < 1e-3 && Math.Abs(box.Height - ys) < 1e-3;
+        _upright = steps && Math.Abs(toPixels.B) < 1e-9 && Math.Abs(toPixels.C) < 1e-9 && toPixels.Invertible && Math.Abs(toPixels.A * xs) * Math.Abs(toPixels.D * ys) <= maxTilePixels;
         if (_upright)
         {
             // The cell (one step by the other from the bounds' corner) on the surface, its size rounded up.
@@ -365,6 +375,32 @@ internal sealed class TilePaint
             var cellMap = toPixels.Then(new Affine(1, 0, 0, 1, -left, -top));
             _tile = new Lazy<(float[], int, int, float)?>(() => DrawUpright(pattern, cellMap, width, height, context), LazyThreadSafetyMode.ExecutionAndPublication);
             return;
+        }
+
+        if (!steps && toPixels.Invertible && box.Width <= 2 * xs + 1e-3 && box.Height <= 2 * ys + 1e-3)
+        {
+            // The box on the surface (cell 0, 0): the rectangle around it, the cell drawn once into it when it fits.
+            double left = double.PositiveInfinity, top = double.PositiveInfinity, right = double.NegativeInfinity, bottom = double.NegativeInfinity;
+            foreach (var (u, v) in (ReadOnlySpan<(double, double)>)[(box.X, box.Y), (box.X + box.Width, box.Y), (box.X + box.Width, box.Y + box.Height), (box.X, box.Y + box.Height)])
+            {
+                var (x, y) = toPixels.Apply(u, v);
+                (left, top, right, bottom) = (Math.Min(left, x), Math.Min(top, y), Math.Max(right, x), Math.Max(bottom, y));
+            }
+
+            double cells = Math.Ceiling(right - left) * Math.Ceiling(bottom - top);
+            if (double.IsFinite(cells) && cells <= maxTilePixels)
+            {
+                int width = Math.Max(1, (int)Math.Ceiling(right - left)), height = Math.Max(1, (int)Math.Ceiling(bottom - top));
+                (_placed, _left, _top) = (true, left, top);
+                _linear = new Affine(toPixels.A, toPixels.B, toPixels.C, toPixels.D, 0, 0);
+                _back = _linear.Inverse();
+                // The rectangle around the box stretched onto the whole pixels that hold it, so the box's edges fall on
+                // pixels' edges (by less than a pixel).
+                double stretchX = right - left > 0 ? width / (right - left) : 1, stretchY = bottom - top > 0 ? height / (bottom - top) : 1;
+                var cellMap = toPixels.Then(new Affine(1, 0, 0, 1, -left, -top)).Then(new Affine(stretchX, 0, 0, stretchY, 0, 0));
+                _tile = new Lazy<(float[], int, int, float)?>(() => DrawPlaced(pattern, cellMap, width, height, context), LazyThreadSafetyMode.ExecutionAndPublication);
+                return;
+            }
         }
 
         double scale = toPixels.Scale;
@@ -386,6 +422,12 @@ internal sealed class TilePaint
                 if (tile is not { } t || work.Coverage[row + x] <= 0f)
                 {
                     colour[k + 3] = 0f;
+                    continue;
+                }
+
+                if (_placed)
+                {
+                    Placed(t, x, y, colour, k);
                     continue;
                 }
 
@@ -424,13 +466,101 @@ internal sealed class TilePaint
         }
     }
 
-    // An upright cell drawn at its place's scale into a tile of `width` x `height` pixels.
+    // A surface pixel's colour from every cell whose drawing, placed at the cell's place on the surface rounded to whole
+    // pixels (cell 0, 0's box at its left and top, the others moved by the steps), holds it: the cells in turn, across
+    // then up, each over those before (straight colours and opacity into colour[k..]).
+    private void Placed((float[] Pixels, int Width, int Height, float Scale) t, int x, int y, float[] colour, int k)
+    {
+        double xs = Math.Abs(_pattern.XStep), ys = Math.Abs(_pattern.YStep);
+        // The cells whose drawing can hold the pixel: their move on the surface within a drawing's size of it (a pixel
+        // more each way for the rounding), taken back into the pattern's space and counted in steps.
+        double qx = x - _left, qy = y - _top, i0 = double.PositiveInfinity, i1 = double.NegativeInfinity, j0 = double.PositiveInfinity, j1 = double.NegativeInfinity;
+        foreach (var (cx, cy) in (ReadOnlySpan<(double, double)>)[(qx - t.Width - 1, qy - t.Height - 1), (qx + 1, qy - t.Height - 1), (qx + 1, qy + 1), (qx - t.Width - 1, qy + 1)])
+        {
+            var (u, v) = _back.Apply(cx, cy);
+            (i0, i1, j0, j1) = (Math.Min(i0, u / xs), Math.Max(i1, u / xs), Math.Min(j0, v / ys), Math.Max(j1, v / ys));
+        }
+
+        float r = 0f, g = 0f, b = 0f, a = 0f;
+        if (double.IsFinite(i0 + i1 + j0 + j1))
+        {
+            for (int i = (int)Math.Floor(i0); i <= (int)Math.Ceiling(i1); i++)
+            {
+                for (int j = (int)Math.Floor(j0); j <= (int)Math.Ceiling(j1); j++)
+                {
+                    var (dx, dy) = _linear.Apply(i * xs, j * ys);
+                    int px = x - (int)Math.Round(_left + dx, MidpointRounding.AwayFromZero), py = y - (int)Math.Round(_top + dy, MidpointRounding.AwayFromZero);
+                    if ((uint)px >= (uint)t.Width || (uint)py >= (uint)t.Height)
+                    {
+                        continue;
+                    }
+
+                    int p = 4 * (py * t.Width + px);
+                    float pa = t.Pixels[p + 3];
+                    if (pa > 0f)
+                    {
+                        (r, g, b, a) = (t.Pixels[p] + r * (1 - pa), t.Pixels[p + 1] + g * (1 - pa), t.Pixels[p + 2] + b * (1 - pa), pa + a * (1 - pa));
+                    }
+                }
+            }
+        }
+
+        if (a <= 0f)
+        {
+            colour[k + 3] = 0f;
+            return;
+        }
+
+        (colour[k], colour[k + 1], colour[k + 2], colour[k + 3]) = (r / a, g / a, b / a, a * _alpha);
+    }
+
+    // A cell whose box is not its steps drawn once on the surface's frame into `width` x `height` pixels (the rectangle
+    // around its box, stretched onto them), clipped to its box.
+    private static (float[] Pixels, int Width, int Height, float Scale)? DrawPlaced(DocumentPattern pattern, Affine cellMap, int width, int height, DrawContext context)
+    {
+        var box = pattern.Bounds;
+        var outline = new PixelOutline();
+        Span<float> quad = stackalloc float[8];
+        int at = 0;
+        foreach (var (u, v) in (ReadOnlySpan<(double, double)>)[(box.X, box.Y), (box.X + box.Width, box.Y), (box.X + box.Width, box.Y + box.Height), (box.X, box.Y + box.Height)])
+        {
+            var (x, y) = cellMap.Apply(u, v);
+            (quad[at], quad[at + 1]) = ((float)x, (float)y);
+            at += 2;
+        }
+
+        outline.Polygon(quad);
+        var surface = new float[4 * width * height];
+        var scene = DocumentScene.Build(pattern.Cell!, cellMap, width, height, context, DocumentParts.All, hidden: false, within: outline.Build());
+        scene.Render(surface, 0, height);
+        return (surface, width, height, 1f);
+    }
+
+    // An upright cell (its box its steps) drawn at its place's scale into a tile of `width` x `height` pixels.
     private static (float[] Pixels, int Width, int Height, float Scale)? DrawUpright(DocumentPattern pattern, Affine cellMap, int width, int height, DrawContext context)
     {
         var surface = new float[4 * width * height];
         var scene = DocumentScene.Build(pattern.Cell!, cellMap, width, height, context, DocumentParts.All, hidden: false);
         scene.Render(surface, 0, height);
         return (surface, width, height, 1f);
+    }
+
+    // The cell's box through `map` as a clip of a tile `width` x `height` pixels, or null when it covers the tile: nothing
+    // of the tile lies outside it.
+    private static GlyphOutline? BoxClip(DocumentPattern pattern, Affine map, int width, int height)
+    {
+        var box = pattern.Bounds;
+        var (ax, ay) = map.Apply(box.X, box.Y);
+        var (cx, cy) = map.Apply(box.X + box.Width, box.Y + box.Height);
+        double x0 = Math.Min(ax, cx), x1 = Math.Max(ax, cx), y0 = Math.Min(ay, cy), y1 = Math.Max(ay, cy);
+        if (!double.IsFinite(x0 + x1 + y0 + y1) || (x0 <= 0 && y0 <= 0 && x1 >= width && y1 >= height))
+        {
+            return null;
+        }
+
+        var outline = new PixelOutline();
+        outline.Polygon([(float)x0, (float)y0, (float)x1, (float)y0, (float)x1, (float)y1, (float)x0, (float)y1]);
+        return outline.Build();
     }
 
     // The cell drawn into a tile of one step by the other at the surface's resolution (smaller for a tile past
@@ -454,14 +584,17 @@ internal sealed class TilePaint
         var surface = new float[4 * width * height];
         float bx = pattern.Bounds.X, by = pattern.Bounds.Y;
         bool spills = pattern.Bounds.Width > xs + 1e-3f || pattern.Bounds.Height > ys + 1e-3f || pattern.Bounds.Width < 0 || pattern.Bounds.Height < 0;
+        bool smaller = pattern.Bounds.Width < xs - 1e-3f || pattern.Bounds.Height < ys - 1e-3f;
         int reach = spills ? 1 : 0;
         for (int j = -reach; j <= reach; j++)
         {
             for (int i = -reach; i <= reach; i++)
             {
-                // Pattern space to the tile: x from the cell's left, y down from its top, a copy shifted by whole steps.
+                // Pattern space to the tile: x from the cell's left, y down from its top, a copy shifted by whole steps; each
+                // copy clipped to its own box when the box is not the steps' (exactly: the tile is resampled anyway).
                 var map = new Affine(s, 0, 0, -s, -(bx - i * xs) * s, (by - j * ys + ys) * s);
-                var scene = DocumentScene.Build(pattern.Cell!, map, width, height, context, DocumentParts.All, hidden: false);
+                var within = spills || smaller ? BoxClip(pattern, map, width, height) : null;
+                var scene = DocumentScene.Build(pattern.Cell!, map, width, height, context, DocumentParts.All, hidden: false, within: within);
                 scene.Render(surface, 0, height);
             }
         }

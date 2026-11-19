@@ -108,7 +108,7 @@ internal sealed class CffOutlines
 
     /// <summary>
     /// The charset: each glyph's SID (a name-keyed font) or CID (a CID-keyed one), glyph 0 the .notdef; the predefined
-    /// ISOAdobe charset (0) is the SIDs in order.
+    /// charsets: ISOAdobe (0) the SIDs in order, Expert (1) and Expert Subset (2) their lists (a glyph past one: SID 0).
     /// </summary>
     public int[] Charset()
     {
@@ -118,9 +118,10 @@ internal sealed class CffOutlines
         int at = _top.TryGetValue(15, out var c) && c.Length > 0 ? (int)c[0] : 0;
         if (at <= 2)
         {
+            ReadOnlySpan<ushort> expert = at == 1 ? PostScriptFontTables.ExpertCharset : PostScriptFontTables.ExpertSubsetCharset;
             for (int g = 0; g < count; g++)
             {
-                ids[g] = g;                                                       // ISOAdobe (the experts' sets are not read)
+                ids[g] = at == 0 ? g : g < expert.Length ? expert[g] : 0;
             }
 
             return ids;
@@ -152,9 +153,13 @@ internal sealed class CffOutlines
         return ids;
     }
 
+    /// <summary>Whether the built-in encoding is the predefined Expert encoding (Top DICT Encoding 1).</summary>
+    public bool ExpertEncoded => _top.TryGetValue(16, out var e) && e.Length > 0 && e[0] == 1;
+
     /// <summary>
-    /// The built-in encoding as a glyph a code (0: none), or null for the standard encoding (0; the expert one, 1, is
-    /// read as standard): a custom encoding's codes (formats 0 and 1) and its supplements.
+    /// The built-in encoding as a glyph a code (0: none), or null for a predefined one (the standard encoding, 0, or the
+    /// Expert encoding, 1: <see cref="ExpertEncoded"/>; their names are the glyphs' by the charset): a custom encoding's
+    /// codes (formats 0 and 1) and its supplements.
     /// </summary>
     public int[]? Encoding(int[] charset)
     {

@@ -9,6 +9,8 @@ widths with (plan 28, phase D3), from the pinned packages of tools/documents/req
   gives them (ISO 32000, Annex D.2): codes to glyph names.
 - The built-in encodings of the standard Symbol and ZapfDingbats fonts (ISO 32000-2, Annex D.5 and D.6, written out
   below), checked here against pdfium's own reading of every code of both fonts (pypdfium2).
+- The 258 standard Macintosh glyph names in their order (a TrueType `post` table's: format 1 names its glyphs by them,
+  format 2 by their indices below 258), as fontTools.ttLib.standardGlyphOrder gives them (MIT).
 - The standard 14 fonts' metrics (ascender, descender, bounding box and every glyph's width), as pdfminer.six's
   fontmetrics gives them from Adobe's Core 14 AFM files, under the notice those files carry (copied into the output).
   Widths are keyed by the text of the glyph's name (as the AFM data is), the Zapf Dingbats' by their list's text, its
@@ -23,6 +25,7 @@ import os
 import sys
 
 from fontTools import agl
+from fontTools.ttLib.standardGlyphOrder import standardGlyphOrder
 from pdfminer.fontmetrics import FONT_METRICS
 from pdfminer.latin_enc import ENCODING
 
@@ -269,6 +272,11 @@ def main():
                 raise ValueError(f"{font}: {name} ({code:#04x}) has no width")
     starts.append(len(keys))
 
+    # The standard Macintosh order: 258 names, kept in their order (an index is the name's place).
+    if len(standardGlyphOrder) != 258 or len(set(standardGlyphOrder)) != 258:
+        raise ValueError(f"the standard Macintosh order holds {len(standardGlyphOrder)} names, not 258 different ones")
+    mac_lines, mac_ends = utf8_blob(list(standardGlyphOrder))
+
     check_against_pdfium()
 
     afm = afm_notice()
@@ -290,7 +298,8 @@ def main():
     ] + [f"//   {line}" for line in afm] + [
         "//",
         "// The base encodings are ISO 32000's Annex D.2 (pdfminer.six's latin_enc); the Symbol and ZapfDingbats built-in",
-        "// encodings Annex D.5 and D.6, checked against pdfium.",
+        "// encodings Annex D.5 and D.6, checked against pdfium. The 258 standard Macintosh glyph names, in their order, are",
+        "// fontTools.ttLib.standardGlyphOrder's (fontTools, MIT licence; the TrueType and OpenType post table's list).",
         "// </auto-generated>",
         "",
         "namespace Idrak.Data.Pdf;",
@@ -317,6 +326,8 @@ def main():
         span_property("StandardWidthStarts", "int", starts, "Where each standard font's widths start in <see cref=\"StandardWidthKeys\"/> (and one past the last)."),
         span_property("StandardWidthKeys", "ushort", keys, "The code points each standard font has a width for, ascending within a font.", fmt=lambda v: f"0x{v:04X}", per_line=16),
         span_property("StandardWidths", "short", widths, "The widths of <see cref=\"StandardWidthKeys\"/>, in thousandths of the size."),
+        u8_property("MacGlyphNames", mac_lines, "The 258 standard Macintosh glyph names (a TrueType post table's), in their order, one after another."),
+        span_property("MacGlyphNameEnds", "ushort", mac_ends, "Where each name of <see cref=\"MacGlyphNames\"/> ends."),
     ]
     text = "\n".join(header) + "\n" + "\n".join(parts) + "}\n"
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:

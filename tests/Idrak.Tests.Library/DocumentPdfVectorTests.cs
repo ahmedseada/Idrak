@@ -20,6 +20,7 @@ internal abstract partial class Tests
         ("documents pdf: vector: every D7 sample page's paths (verbs, points within 0.002 point, fill rule, stroke width, cap, join, miter limit, dash, colours as RGB within their tolerance and device components as given, opacity, blend mode, pattern, clip, group, soft mask and order), clips (rule, parent, points, a text clip naming its run), shadings (type, order, clip, opacity), groups (isolated, knockout) and the runs' and images' colours, clips and opacity, as their JSON says", PdfVectorSamples),
         ("documents pdf: vector: every font of vector-fonts read as a face to draw with (Type 1 through eexec, Type 3 from its glyphs' streams, TrueType, a bare CFF, OpenType CFF), the Type 1 glyphs' outlines and widths as fontTools reads the program, each run's glyphs through its face", PdfVectorFonts),
         ("documents pdf: vector: a quadratic written by the pdf writer reads back as that quadratic, a cubic that is not one stays a cubic; PDF functions of types 0, 2, 3 and 4 on known values (the calculator's operators and bounds); hand-made pages: every path operator, a dash, nested clips, colour spaces by tint transform, a Separation image; text alone reads no vectors", PdfVectorHandMade),
+        ("documents pdf: vector: a stroke's pen: a CTM that is not uniform gives the stroke the width times the root of its determinant and its pen the CTM over that root (a stretch of 4 up: width 2, pen 0.5 by -2 on the page), a uniform scale and a turn written to three places a round pen; the pdf writer writes the pen as its matrix and the stroke reads back the same (points, width, pen)", PdfVectorStrokePen),
     ];
 
     internal static readonly (string Name, Action<Device> Run)[] DocumentDrawerGroup =
@@ -32,6 +33,10 @@ internal abstract partial class Tests
         ("documents drawers: clips' memory: pages of 10, 100 and 1,000 clips as the pdf writer writes them (siblings under one page clip, each part under an upright rectangle, a turned one, or three nested) render every band within one fixed allocation past the shared pools whatever the count, and each clip adds no more than its outline made ready to a draw; the large set's deep-forms page (one form drawn 1,000 times, each under its /BBox) drawn within a fixed bound beyond its pixels, when the set is there (timed cold and warm)", PdfDrawClipMemory),
         ("documents drawers: clips draw as they did: a clip's coverage worked over its own box by the library's rasterizer is the band-wide coverage value for value (upright rectangles at sub-pixel and whole-pixel edges, smaller than a pixel, of no width or height, off and past the surface, closed by a fifth line, by either rule; turned ones, a circle, an even-odd frame; nested in each other, six deep, missing their parent; bands of 1, 7, 64 rows and one); a crafted page of every kind of clip under parts that reach past them (a shading, an image, a stroke, a tiling wholly outside its clip, a text clip whose runs are not there, a group, a soft mask) and a page of text clips (whose runs were left out or are in a font not there, at the top, nested under and over rectangles, a turned one, a circle, an even-odd frame and each other; under a text clip whose glyphs were read and under one of spaces; in a soft mask) draw the same bytes and issues with default, one-row and seven-row bands and one band, through the library's rasterizer and an app's (the band-wide clips), as the same pages with each unread text clip's parts and clips under the clip it was made under and each part under the clip of spaces under a clip off the page, at 150 dpi and 2 pixels a point in grey", PdfDrawClipsExact),
         ("documents drawers: a text clip whose runs were not read answers the clip it was made under every time, in every band (regression, D13's clip-memory finding: the crafted page drawn in the default bands and in one band differed at 3,150 values at 150 dpi, a part under such a clip, or a clip made under it, cut by the clip it was made under only when it was the band's first to ask)", PdfDrawTextClipBands),
+        ("documents drawers: a group that is not isolated (ISO 32000-2, 11.4.7-11.4.8) composes its parts with what is under it and takes that back out when it closes: over a yellow backdrop, a Normal square at 0.5 and a Multiply square at 0.7 in a group at 0.8 give the rules' colours, knocking out too (the Multiply square composed with the backdrop, not the first square); an isolated group draws as it always did", PdfDrawGroupsNotIsolated),
+        ("documents drawers: a stroke's pen under a matrix that is not uniform (ISO 32000-2, 8.5.3.1): lines along x and y under a pen stretched 4 times up are 4 and 1 points thick for a width of 1 in user space, a round pen's both 2", PdfDrawStrokePen),
+        ("documents drawers: Type 3 glyphs that are more than filled shapes (ISO 32000-2, 9.6.4): a stroked frame and an image mask (d1) in the text's colour, a d0 glyph in its own colour, a filled glyph as an outline; the face gives a drawing for the first three only", PdfDrawType3Drawings),
+        ("documents drawers: a tiling cell is clipped to its box (ISO 32000-2, 8.7.3.1): a 14-point square in a 10-point box every 16 points shows inside the box only, upright and turned", PdfDrawTilingBox),
     ];
 
     // ---- documents pdf: vector -------------------------------------------------------------------------------------------
@@ -122,6 +127,11 @@ internal abstract partial class Tests
                     Check(image is not null, $"{what}: no image at {e["order"]}");
                     Check(image!.Clip == ((int?)e["clip"] ?? -1) && MathF.Abs(image.Alpha - ((float?)e["alpha"]?["fill"] ?? 1f)) < 1e-4f && (image.Stencil is not null) == (bool)e["imageMask"]!,
                         $"{what}: image {image.Order}: clip {image.Clip}, alpha {image.Alpha}, stencil {image.Stencil}; expected {e["clip"]}, {e["alpha"]}, {e["imageMask"]}");
+                    if (image.Stencil is { } stencil && e["fillColour"] is JsonObject fillColour)
+                    {
+                        PdfVectorColour($"{what}: image {image.Order}: the stencil's colour", stencil, fillColour, 1f, ignoreAlpha: true);
+                    }
+
                     images++;
                 }
 
@@ -450,6 +460,10 @@ internal abstract partial class Tests
             "pdfium turns CMYK ink (and Separation and DeviceN into CMYK) into light by a rule of its own, not D4's that the JSON states, and paints a DeviceN whose tint transform is a one-input stitching function white"),
         ["colour-spaces"] = ("images", [3, 5, 6, 11], "pdfium's own CMYK and Lab conversions, and an index past the highest painted otherwise than clamped (D4's rule)"),
         ["predictors"] = ("images", [7], "pdfium misreads the TIFF predictor on 4-bit samples (the pixels are checked exactly by the D1 and D4 groups)"),
+        ["vector-groups-non-isolated"] = ("paths", [4, 5, 6, 7, 8],
+            "pdfium draws a group that is not isolated as an isolated one (its parts blend with nothing under it), and a knockout group's parts over each other; the groups' probes check the rules' colours"),
+        ["vector-truetype-mac-names"] = ("runs", [0, 1],
+            "pdfium does not find a TrueType glyph by its name in a post table of format 1 (the standard Macintosh order): it draws .notdef; the glyph ids are checked by documents pdf: text, and the same glyphs found through format 2 are compared"),
     };
 
     private static void PdfDrawSamples(Device device)
@@ -608,7 +622,7 @@ internal abstract partial class Tests
                 skip.AsSpan(y * image.Width + x0, Math.Max(0, x1 - x0)).Fill(true);
             }
 
-            if (kind == "paths" && (part["fillColour"] ?? part["strokeColour"]) is JsonObject colour)
+            if (kind == "paths" && part["group"] is null && (string?)part["blend"] is null or "Normal" && (part["fillColour"] ?? part["strokeColour"]) is JsonObject colour)
             {
                 int px = (int)((box[0] + box[2] / 2) * scale), py = (int)((box[1] + box[3] / 2) * scale);
                 int[] rgb = [.. colour["rgb"]!.AsArray().Select(v => (int)v!)];

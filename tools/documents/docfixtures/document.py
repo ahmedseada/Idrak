@@ -221,7 +221,13 @@ class Content(VectorContent):
         f = self.font
         trm = mul((self.size * self.th, 0, 0, self.size, 0, self.rise), mul(self.tm, self.ctm))
         w = g.width / 1000
-        if f.vertical:
+        own = getattr(f, "w2_of", None)
+        w2 = own(g) if own is not None else None
+        if f.vertical and w2 is not None:
+            # A /W2 entry: its vertical advance, and across the column -vx to the width less vx (the position vector).
+            w1, vx = w2[0] / 1000, w2[1] / 1000
+            corners = [(-vx, w1), (w - vx, w1), (w - vx, 0), (-vx, 0)]
+        elif f.vertical:
             w1 = f.dw2[1] / 1000
             corners = [(-w / 2, w1), (w / 2, w1), (w / 2, 0), (-w / 2, 0)]
         else:
@@ -231,7 +237,10 @@ class Content(VectorContent):
 
     def _advance(self, g=None, adjust=0.0):
         if self.font.vertical:
-            ty = (self.font.dw2[1] / 1000 * self.size + self.tc + (self.tw if g.space else 0)) if g else 0.0
+            own = getattr(self.font, "w2_of", None)
+            w2 = own(g) if own is not None and g else None
+            w1y = w2[0] if w2 is not None else self.font.dw2[1]
+            ty = (w1y / 1000 * self.size + self.tc + (self.tw if g.space else 0)) if g else 0.0
             ty -= adjust / 1000 * self.size
             self.tm = mul((1, 0, 0, 1, 0, ty), self.tm)
         else:

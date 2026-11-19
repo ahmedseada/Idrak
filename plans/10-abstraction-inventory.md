@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 217 | 19 | 80 | 316 | 0 |
+| `Idrak.Abstraction` | 218 | 19 | 80 | 317 | 0 |
 | `Idrak` | 59 | 5 | 23 | 87 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -101,6 +101,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IDocumentBuilder` | interface | public | — | DocumentWriters.OwningBuilder, DocumentWriters.ShadowBuilder, PdfDocumentBuilder |  | Abstraction, Data, Text | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentEditor` | interface | public | — | PdfEditor |  | Abstraction, Data, Text | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentFormat` | interface | public | — | DocumentFormats.GuardedFormat, PdfFormat |  | Data | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentGlyphDrawings` | interface | public | — | PdfType3Face |  | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder, PdfPageBuilder |  | Abstraction, Data, Imaging, Text | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | CoverageDocumentDrawer, DocumentPageDrawers.GuardedDrawer |  | Abstraction, Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout, TaggedLayout |  | Data | Abstraction |

@@ -681,5 +681,7 @@ def turned_page(seed):
 
 
 def build(seed):
+    from . import samples_d7_gaps
+
     return [paths(seed), fill_rules(seed), strokes(seed), clipping(seed), colour_spaces(seed), shadings(seed),
-            patterns(seed), transparency(seed), fonts(seed), images(seed), turned_page(seed)]
+            patterns(seed), transparency(seed), fonts(seed), images(seed), turned_page(seed)] + samples_d7_gaps.build(seed)

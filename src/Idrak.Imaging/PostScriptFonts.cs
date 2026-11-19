@@ -51,8 +51,9 @@ internal sealed class CffFace : IFontFace
             _names[g] = g == 0 ? ".notdef" : _cff.CidKeyed ? string.Create(CultureInfo.InvariantCulture, $"cid{charset[g]:D5}") : _cff.String(charset[g]);
         }
 
-        // The built-in encoding: a custom one's codes, else the standard encoding's names through the charset.
-        _encoding = _cff.CidKeyed ? new int[256] : _cff.Encoding(charset) ?? ByNames(PostScriptFontTables.StandardEncoding, _names);
+        // The built-in encoding: a custom one's codes, else the predefined one's names (standard or Expert) through the charset.
+        _encoding = _cff.CidKeyed ? new int[256]
+            : _cff.Encoding(charset) ?? ByNames(_cff.ExpertEncoded ? PostScriptFontTables.ExpertEncoding : PostScriptFontTables.StandardEncoding, _names);
         _outlines = new GlyphOutline?[count];
         _advances = new int[count];
         Array.Fill(_advances, -1);

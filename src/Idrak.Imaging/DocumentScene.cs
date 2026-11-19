@@ -39,67 +39,111 @@ internal sealed class DocumentScene
     /// <summary>
     /// <paramref name="page"/>'s parts (those of <paramref name="parts"/>; hidden text only when <paramref name="hidden"/>)
     /// on a surface <paramref name="width"/> x <paramref name="height"/> pixels, placed by <paramref name="map"/> (the
-    /// parts' points to the surface's pixels).
+    /// parts' points to the surface's pixels). A run whose face draws glyphs by parts of their own (a Type 3 font's,
+    /// <see cref="IDocumentGlyphDrawings"/>) has those glyphs drawn so when <paramref name="drawings"/> (a glyph's own
+    /// drawing has its glyphs' outlines alone, so one never draws itself). <paramref name="within"/>, when given, clips
+    /// every part (an outline in the surface's pixels: a tiling cell's box).
     /// </summary>
-    public static DocumentScene Build(DocumentPage page, Affine map, int width, int height, DrawContext context, DocumentParts parts, bool hidden)
+    public static DocumentScene Build(DocumentPage page, Affine map, int width, int height, DrawContext context, DocumentParts parts, bool hidden,
+        bool drawings = true, GlyphOutline? within = null) =>
+        Build([(page, map)], width, height, context, parts, hidden, drawings, within);
+
+    // The parts of several pages, each placed by its own map, in turn (each page's parts in their content order): a page's
+    // clips, groups and soft masks keep to its own parts.
+    private static DocumentScene Build(ReadOnlySpan<(DocumentPage Page, Affine Map)> sources, int width, int height, DrawContext context, DocumentParts parts,
+        bool hidden, bool drawings, GlyphOutline? within)
     {
-        var builder = new Builder(page, map, width, height, context);
         var items = new List<SceneItem>();
-        if ((parts & DocumentParts.Paths) != 0)
+        int clipCount = within is null ? 0 : 1;
+        foreach (var (page, _) in sources)
         {
-            foreach (var path in page.Paths)
-            {
-                builder.Path(path, items);
-            }
-
-            foreach (var shading in page.Shadings)
-            {
-                builder.Shading(shading, items);
-            }
+            clipCount += page.Clips.Count;
         }
 
-        if ((parts & DocumentParts.Images) != 0)
+        var clips = new SceneClip?[clipCount];                                 // made once, at its size
+        int clipsMade = 0;
+        if (within is { } root)
         {
-            foreach (var image in page.Images)
-            {
-                builder.Image(image, items);
-            }
+            clips[clipsMade++] = new SceneClip(root, OutlineFill.NonZero, -1, false, ClipBox.Of(root, width, height));
         }
 
-        if ((parts & DocumentParts.Text) != 0)
+        IReadOnlyList<DocumentGroup> groups = sources.Length == 1 ? sources[0].Page.Groups : [];
+        var allGroups = sources.Length == 1 ? null : new List<DocumentGroup>();
+        var masks = new List<SceneMask>();
+        foreach (var (page, map) in sources)
         {
-            foreach (var run in page.Runs)
+            int start = items.Count, clipBase = clipsMade, groupBase = allGroups?.Count ?? 0, maskBase = masks.Count;
+            var builder = new Builder(page, map, width, height, context, drawings);
+            if ((parts & DocumentParts.Paths) != 0)
             {
-                if (!run.Hidden || hidden)
+                foreach (var path in page.Paths)
                 {
-                    builder.Run(run, items);
+                    builder.Path(path, items);
+                }
+
+                foreach (var shading in page.Shadings)
+                {
+                    builder.Shading(shading, items);
                 }
             }
-        }
 
-        for (int i = 0; i < items.Count; i++)
-        {
-            items[i].Sequence = i;
-        }
+            if ((parts & DocumentParts.Images) != 0)
+            {
+                foreach (var image in page.Images)
+                {
+                    builder.Image(image, items);
+                }
+            }
 
-        items.Sort((a, b) => a.Order != b.Order ? a.Order.CompareTo(b.Order) : a.Sequence.CompareTo(b.Sequence));
-        var clips = new SceneClip?[page.Clips.Count];
-        for (int c = 0; c < clips.Length; c++)
-        {
-            clips[c] = builder.Clip(c);
+            if ((parts & DocumentParts.Text) != 0)
+            {
+                foreach (var run in page.Runs)
+                {
+                    if (!run.Hidden || hidden)
+                    {
+                        builder.Run(run, items);
+                    }
+                }
+            }
+
+            for (int i = start; i < items.Count; i++)
+            {
+                var item = items[i];
+                item.Sequence = i;
+                // A later page's indices move past the parts before it; a part under no clip goes under the root one.
+                item.Clip = item.Clip >= 0 ? item.Clip + clipBase : clipBase > 0 && within is not null ? 0 : -1;
+                item.Group = item.Group >= 0 ? item.Group + groupBase : -1;
+                item.SoftMask = item.SoftMask >= 0 ? item.SoftMask + maskBase : -1;
+            }
+
+            items.Sort(start, items.Count - start, Comparer<SceneItem>.Create((a, b) => a.Order != b.Order ? a.Order.CompareTo(b.Order) : a.Sequence.CompareTo(b.Sequence)));
+            for (int c = 0; c < page.Clips.Count; c++)
+            {
+                var clip = builder.Clip(c);
+                clips[clipsMade++] = clip is null || clipBase == 0 ? clip : clip with { Parent = clip.Parent >= 0 ? clip.Parent + clipBase : within is not null ? 0 : -1 };
+            }
+
+            if (allGroups is not null)
+            {
+                foreach (var g in page.Groups)
+                {
+                    allGroups.Add(new DocumentGroup
+                    {
+                        Isolated = g.Isolated, Knockout = g.Knockout, Alpha = g.Alpha, Blend = g.Blend,
+                        Parent = g.Parent >= 0 ? g.Parent + groupBase : -1, SoftMask = g.SoftMask >= 0 ? g.SoftMask + maskBase : -1,
+                    });
+                }
+            }
+
+            builder.ReportMissing();
+            foreach (var mask in page.SoftMasks)
+            {
+                masks.Add(new SceneMask(mask, new Lazy<DocumentScene>(() => Build(mask.Content, map, width, height, context, DocumentParts.All, hidden: false, drawings))));
+            }
         }
 
         Unread(items, clips);
-        builder.ReportMissing();
-
-        var masks = new SceneMask[page.SoftMasks.Count];
-        for (int m = 0; m < masks.Length; m++)
-        {
-            var mask = page.SoftMasks[m];
-            masks[m] = new SceneMask(mask, new Lazy<DocumentScene>(() => Build(mask.Content, map, width, height, context, DocumentParts.All, hidden: false)));
-        }
-
-        return new DocumentScene(items, clips, page.Groups, masks, width, context);
+        return new DocumentScene(items, clips, allGroups ?? groups, [.. masks], width, context);
     }
 
     // A clip of text whose runs were not read (their font not there, or the runs left out) clips nothing of its own: every
@@ -234,7 +278,7 @@ internal sealed class DocumentScene
 
                     for (int k = open.Count; k < depth; k++)
                     {
-                        open.Add(Open(chain[k], size));
+                        open.Add(Open(chain[k], size, TargetOf(open, target, out _, out _, out _)));
                     }
 
                     var clip = item.Clip >= 0 ? Cover(item.Clip, covers, work) : default;
@@ -244,10 +288,10 @@ internal sealed class DocumentScene
                     // decoded, a tiling's cell drawn) is as it was.
                     var (cx0, cx1, cy0, cy1) = clip.Clips ? clip.Within(x0, x1, y0, y1) : (x0, x1, y0, y1);
                     bool solid = item.Render(work, cx0, cx1, cy0, cy1, out var paint);
-                    var layer = TargetOf(open, target, out bool knockout);
+                    var layer = TargetOf(open, target, out bool knockout, out var shape, out var backdrop);
                     if (cx0 < cx1 && cy0 < cy1)
                     {
-                        Composite(work, layer, cx0, cx1, cy0, cy1, solid, paint, clip, soft, item.Blend, knockout);
+                        Composite(work, layer, cx0, cx1, cy0, cy1, solid, paint, clip, soft, item.Blend, knockout, shape, backdrop);
                     }
 
                     // The item's whole box: its fill wrote its coverage there, whatever its clip.
@@ -278,6 +322,11 @@ internal sealed class DocumentScene
                 if (layer.Pixels is { } pixels)
                 {
                     ArrayPool<float>.Shared.Return(pixels);
+                }
+
+                if (layer.Shape is { } shape)
+                {
+                    ArrayPool<float>.Shared.Return(shape);
                 }
             }
 
@@ -312,37 +361,67 @@ internal sealed class DocumentScene
     }
 
     // A group drawn straight onto what is under it (not isolated, not knockout, opaque, normal, no mask: the same
-    // pixels), or into a transparent layer of its own (an isolated group, a knockout group, or one composed with an
-    // opacity, a blend mode or a soft mask; a group that is not isolated is drawn as one that is, here).
-    private Layer Open(int group, int size)
+    // pixels), or into a layer of its own (an isolated group, a knockout group, or one composed with an opacity, a blend
+    // mode or a soft mask): an isolated group's starts transparent; one that is not isolated (ISO 32000-2, 11.4.7) starts
+    // as what is under it (`under`, its backdrop), so its parts blend with that, and keeps the group's own alpha apart
+    // (its shape: what its parts painted) to take the backdrop back out when it closes.
+    private Layer Open(int group, int size, ReadOnlySpan<float> under)
     {
         var g = _groups[group];
         if (!g.Isolated && !g.Knockout && g.Alpha >= 1f && g.Blend == DocumentBlend.Normal && g.SoftMask < 0)
         {
-            return new Layer(group, null, false);
+            return new Layer(group, null, false, null);
         }
 
         var pixels = ArrayPool<float>.Shared.Rent(4 * size);
-        pixels.AsSpan(0, 4 * size).Clear();
-        return new Layer(group, pixels, g.Knockout);
+        if (g.Isolated)
+        {
+            pixels.AsSpan(0, 4 * size).Clear();
+            return new Layer(group, pixels, g.Knockout, null);
+        }
+
+        under[..(4 * size)].CopyTo(pixels);
+        var shape = ArrayPool<float>.Shared.Rent(size);
+        shape.AsSpan(0, size).Clear();
+        return new Layer(group, pixels, g.Knockout, shape);
     }
 
-    private static Span<float> TargetOf(List<Layer> open, Span<float> target, out bool knockout)
+    // The innermost layer with pixels (else the target): whether it knocks out, its own alpha when it is not isolated,
+    // and, for one that knocks out and is not isolated, its backdrop (what is under it: unchanged while it is open).
+    private static Span<float> TargetOf(List<Layer> open, Span<float> target, out bool knockout, out float[]? shape, out Span<float> backdrop)
     {
         for (int k = open.Count - 1; k >= 0; k--)
         {
             if (open[k].Pixels is { } pixels)
             {
-                knockout = open[k].Knockout;
+                (knockout, shape) = (open[k].Knockout, open[k].Shape);
+                backdrop = knockout && shape is not null ? Below(open, k, target) : default;
                 return pixels.AsSpan(0, target.Length);
             }
         }
 
-        knockout = false;
+        (knockout, shape) = (false, null);
+        backdrop = default;
         return target;
     }
 
-    // The innermost open layer composed onto the one under it with its group's opacity, blend mode and soft mask.
+    // The layer under open layer k: the next one in with pixels, else the target.
+    private static Span<float> Below(List<Layer> open, int k, Span<float> target)
+    {
+        for (int j = k - 1; j >= 0; j--)
+        {
+            if (open[j].Pixels is { } pixels)
+            {
+                return pixels.AsSpan(0, target.Length);
+            }
+        }
+
+        return target;
+    }
+
+    // The innermost open layer composed onto the one under it with its group's opacity, blend mode and soft mask. A group
+    // that is not isolated gives its backdrop back out first (11.4.8: C = Cn + (Cn - C0)(a0 / ag - a0), its alpha its own
+    // ag), so what is under it is composed once.
     private void Close(List<Layer> open, Span<float> target, Dictionary<int, float[]> softMasks, SceneWork work)
     {
         var layer = open[^1];
@@ -356,12 +435,35 @@ internal sealed class DocumentScene
         {
             var g = _groups[layer.Group];
             float[]? soft = g.SoftMask >= 0 && g.SoftMask < _masks.Length ? SoftMask(g.SoftMask, softMasks, work) : null;
-            var under = TargetOf(open, target, out bool knockout);
+            var under = TargetOf(open, target, out bool knockout, out var underShape, out var underBackdrop);
             int n = target.Length / 4;
+            if (layer.Shape is not { } own)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    float a = pixels[4 * i + 3];
+                    if (a <= 0f)
+                    {
+                        continue;
+                    }
+
+                    float f = g.Alpha * (soft is null ? 1f : soft[i]);
+                    if (f <= 0f)
+                    {
+                        continue;
+                    }
+
+                    float r = pixels[4 * i] / a, gr = pixels[4 * i + 1] / a, b = pixels[4 * i + 2] / a;
+                    Compose(under, underShape, underBackdrop, i, r, gr, b, a * f, 1f, g.Blend, knockout);
+                }
+
+                return;
+            }
+
             for (int i = 0; i < n; i++)
             {
-                float a = pixels[4 * i + 3];
-                if (a <= 0f)
+                float ag = own[i], an = pixels[4 * i + 3];
+                if (ag <= 0f || an <= 0f)
                 {
                     continue;
                 }
@@ -372,15 +474,26 @@ internal sealed class DocumentScene
                     continue;
                 }
 
-                float r = pixels[4 * i] / a, gr = pixels[4 * i + 1] / a, b = pixels[4 * i + 2] / a;
-                Blend(under, 4 * i, r, gr, b, a * f, 1f, g.Blend, knockout);
+                float a0 = under[4 * i + 3], k = a0 > 0f ? a0 / MathF.Min(1f, ag) - a0 : 0f;
+                float r = Unit(Back(pixels[4 * i] / an, under[4 * i], a0, k)), gr = Unit(Back(pixels[4 * i + 1] / an, under[4 * i + 1], a0, k)),
+                    b = Unit(Back(pixels[4 * i + 2] / an, under[4 * i + 2], a0, k));
+                Compose(under, underShape, underBackdrop, i, r, gr, b, MathF.Min(1f, ag) * f, 1f, g.Blend, knockout);
             }
         }
         finally
         {
             ArrayPool<float>.Shared.Return(pixels);
+            if (layer.Shape is { } shape)
+            {
+                ArrayPool<float>.Shared.Return(shape);
+            }
         }
     }
+
+    // A colour with its backdrop (c0, premultiplied by a0) taken back out: cn + (cn - c0)(a0 / ag - a0).
+    private static float Back(float cn, float c0Premultiplied, float a0, float k) => a0 > 0f ? cn + (cn - c0Premultiplied / a0) * k : cn;
+
+    private static float Unit(float v) => v < 0f ? 0f : v > 1f ? 1f : v;
 
     // ---- clips and soft masks ----------------------------------------------------------------------------------------
 
@@ -451,7 +564,7 @@ internal sealed class DocumentScene
     // The item's coverage (times the clip and the soft mask) and colour composed onto the layer, row by row in order; a
     // clip's box holds [x0, x1) x [y0, y1).
     private static void Composite(SceneWork work, Span<float> layer, int x0, int x1, int y0, int y1, bool solid, (float R, float G, float B, float A) paint,
-        in ClipCover clip, float[]? soft, DocumentBlend blend, bool knockout)
+        in ClipCover clip, float[]? soft, DocumentBlend blend, bool knockout, float[]? shape, ReadOnlySpan<float> backdrop)
     {
         int w = work.Width;
         var coverage = work.Coverage;
@@ -465,16 +578,16 @@ internal sealed class DocumentScene
             for (int x = x0; x < x1; x++)
             {
                 int i = row + x;
-                float shape = coverage[i];
-                if (shape <= 0f)
+                float cover = coverage[i];
+                if (cover <= 0f)
                 {
                     continue;
                 }
 
                 if (clipped)
                 {
-                    shape *= cut[x - origin];
-                    if (shape <= 0f)
+                    cover *= cut[x - origin];
+                    if (cover <= 0f)
                     {
                         continue;
                     }
@@ -500,9 +613,58 @@ internal sealed class DocumentScene
                     continue;
                 }
 
-                Blend(layer, 4 * i, r, g, b, knockout ? a : a * MathF.Min(1f, shape), MathF.Min(1f, shape), blend, knockout);
+                float s = MathF.Min(1f, cover);
+                if (shape is null)
+                {
+                    Blend(layer, 4 * i, r, g, b, knockout ? a : a * s, s, blend, knockout);    // the call as it always was
+                }
+                else
+                {
+                    Compose(layer, shape, backdrop, i, r, g, b, a, s, blend, knockout);         // a group that is not isolated
+                }
             }
         }
+    }
+
+    // One pixel of a layer: the colour (straight) at opacity `a` and shape `s` composed onto pixel `i` by the blend mode.
+    // A layer that is not isolated (its own alpha in `shape`) adds the part's alpha to its own; one that also knocks out
+    // composes the part with its backdrop (the group's first, unchanged) and mixes that in by the shape (11.4.7.2).
+    private static void Compose(Span<float> layer, float[]? shape, ReadOnlySpan<float> backdrop, int i, float r, float g, float b, float a, float s, DocumentBlend blend,
+        bool knockout)
+    {
+        if (shape is null)
+        {
+            Blend(layer, 4 * i, r, g, b, knockout ? a : a * s, s, blend, knockout);
+            return;
+        }
+
+        if (!knockout)
+        {
+            float alpha = a * s;
+            Blend(layer, 4 * i, r, g, b, alpha, s, blend, false);
+            shape[i] += alpha - shape[i] * alpha;
+            return;
+        }
+
+        int at = 4 * i;
+        float br = backdrop[at], bg = backdrop[at + 1], bb = backdrop[at + 2], ab = backdrop[at + 3];
+        float cr, cg, cb;
+        if (blend == DocumentBlend.Normal || ab <= 0f)
+        {
+            (cr, cg, cb) = (br * (1 - a) + r * a, bg * (1 - a) + g * a, bb * (1 - a) + b * a);
+        }
+        else
+        {
+            var (mr, mg, mb) = BlendModes.Mix(blend, br / ab, bg / ab, bb / ab, r, g, b);
+            (cr, cg, cb) = ((1 - a) * br + a * ((1 - ab) * r + ab * mr), (1 - a) * bg + a * ((1 - ab) * g + ab * mg), (1 - a) * bb + a * ((1 - ab) * b + ab * mb));
+        }
+
+        float ca = ab + a - ab * a;
+        layer[at] = layer[at] * (1 - s) + cr * s;
+        layer[at + 1] = layer[at + 1] * (1 - s) + cg * s;
+        layer[at + 2] = layer[at + 2] * (1 - s) + cb * s;
+        layer[at + 3] = layer[at + 3] * (1 - s) + ca * s;
+        shape[i] = shape[i] * (1 - s) + a * s;
     }
 
     // One pixel: the colour (r, g, b; straight) at opacity `a` over the premultiplied pixel at `at`, by the blend mode.
@@ -537,11 +699,13 @@ internal sealed class DocumentScene
         pixels[at + 3] = ab + a - ab * a;
     }
 
-    private readonly record struct Layer(int Group, float[]? Pixels, bool Knockout);
+    // An open group: its pixels (premultiplied; null when drawn straight through), whether it knocks out, and, when it is
+    // not isolated, its own alpha a pixel.
+    private readonly record struct Layer(int Group, float[]? Pixels, bool Knockout, float[]? Shape);
 
     // ---- building ----------------------------------------------------------------------------------------------------
 
-    private sealed class Builder(DocumentPage page, Affine map, int width, int height, DrawContext context)
+    private sealed class Builder(DocumentPage page, Affine map, int width, int height, DrawContext context, bool drawings)
     {
         private readonly Dictionary<string, int> _missing = new(StringComparer.Ordinal);
         private readonly float _scale = (float)map.Scale;
@@ -588,7 +752,15 @@ internal sealed class DocumentScene
                 var outline = new PixelOutline();
                 float width = stroke > 0 ? stroke * _scale : 1f;   // 0: the thinnest line, a pixel
                 float[] dash = path.Dash.Length == 0 ? [] : [.. path.Dash.ToArray().Select(d => d * _scale)];
-                Stroke(outline, path.Verbs.Span, path.Points.Span, width, path.Cap, path.Join, path.MiterLimit, dash, path.DashPhase * _scale, path.Order);
+                if (stroke > 0 && Pen(path.StrokeMatrix) is { } pen)
+                {
+                    StrokeThrough(outline, path, width, dash, pen);
+                }
+                else
+                {
+                    Stroke(outline, path.Verbs.Span, path.Points.Span, width, path.Cap, path.Join, path.MiterLimit, dash, path.DashPhase * _scale, path.Order);
+                }
+
                 if (!outline.IsEmpty)
                 {
                     var paint = Paint(path.StrokePattern, path.StrokeColour);
@@ -628,12 +800,28 @@ internal sealed class DocumentScene
 
         public void Run(DocumentTextRun run, List<SceneItem> items)
         {
-            var outline = RunOutline(run, null, out bool embolden);
-            if (outline is null || outline.IsEmpty)
+            // Glyphs a face draws by parts of their own (a Type 3 font's): asked once, drawn as one part after its outlines.
+            var drawn = drawings && run.Face is IDocumentGlyphDrawings faceDrawings && !run.Glyphs.IsEmpty ? Drawings(run, faceDrawings) : null;
+            var outline = RunOutline(run, null, out bool embolden, drawn);
+            if (outline is null)
             {
                 return;
             }
 
+            if (!outline.IsEmpty)
+            {
+                Outlines(run, outline, embolden, items);
+            }
+
+            if (drawn is not null)
+            {
+                GlyphDrawings(run, drawn, items);
+            }
+        }
+
+        // A run's glyph outlines filled, and stroked when its mode strokes (or its substitute face is emboldened).
+        private void Outlines(DocumentTextRun run, PixelOutline outline, bool embolden, List<SceneItem> items)
+        {
             bool fill = run.Mode is DocumentTextMode.Fill or DocumentTextMode.FillStroke or DocumentTextMode.Hidden;
             bool stroke = run.Mode is DocumentTextMode.Stroke or DocumentTextMode.FillStroke;
             if (fill)
@@ -660,6 +848,137 @@ internal sealed class DocumentScene
                     items.Add(Place(new SceneItem(new OutlineItem(stroked.Build(), OutlineFill.NonZero, new ScenePaint(stroke ? run.StrokeColour : run.Colour)).Render), stroked, run.Order, run.Clip, run.Group, run.SoftMask, run.Blend));
                 }
             }
+        }
+
+        // Each glyph's own drawing (null where its outline is all of it), or null when none of the run's has one; a glyph whose
+        // drawing cannot be read is counted and drawn by its outline.
+        private DocumentGlyphDrawing?[]? Drawings(DocumentTextRun run, IDocumentGlyphDrawings face)
+        {
+            var glyphs = run.Glyphs.Span;
+            DocumentGlyphDrawing?[]? found = null;
+            for (int i = 0; i < glyphs.Length; i++)
+            {
+                try
+                {
+                    if (face.Drawing(glyphs[i].Glyph) is { } drawing)
+                    {
+                        (found ??= new DocumentGlyphDrawing?[glyphs.Length])[i] = drawing;
+                    }
+                }
+                catch (Exception e) when (e is InvalidDataException or NotSupportedException)
+                {
+                    context.Issue(DocumentIssue.NotDrawn, $"page {page.Index + 1}: a glyph of {run.Face?.Family} is drawn by its outline alone: its own drawing could not be read ({e.Message})");
+                }
+            }
+
+            return found;
+        }
+
+        // The run's glyphs drawn by parts of their own (ISO 32000-2, 9.6.4): their drawings, each placed as its outline
+        // would be (the run's glyph matrix over the units per em, from the glyph's origin), made one scene over their box;
+        // that scene drawn per band into a surface of the box is one part, under the run's clip, group, soft mask, blend and
+        // opacity: in their own colours (d0), or their shape painted in the run's colour (d1), each kind a part of its own.
+        // A glyph's own drawing draws its glyphs by their outlines (no drawing draws itself).
+        private void GlyphDrawings(DocumentTextRun run, DocumentGlyphDrawing?[] drawn, List<SceneItem> items)
+        {
+            var face = run.Face!;
+            int upem = face.Metrics.UnitsPerEm > 0 ? face.Metrics.UnitsPerEm : 1000;
+            var m = run.GlyphMatrix ?? new DocumentMatrix(run.FontSize, 0f, 0f, -run.FontSize, 0f, 0f);
+            float k = 1f / upem;
+            var glyphs = run.Glyphs.Span;
+            List<(DocumentPage Page, Affine Map)>? coloured = null, shaped = null;
+            double left = double.PositiveInfinity, top = double.PositiveInfinity, right = double.NegativeInfinity, bottom = double.NegativeInfinity;
+            for (int i = 0; i < glyphs.Length; i++)
+            {
+                if (drawn[i] is not { } drawing)
+                {
+                    continue;
+                }
+
+                var glyphMap = new Affine(m.A * k, m.B * k, m.C * k, m.D * k, glyphs[i].X, glyphs[i].Y).Then(map);
+                (drawing.Coloured ? (coloured ??= []) : (shaped ??= [])).Add((drawing.Parts, glyphMap));
+                if (PartsBounds(drawing.Parts) is { } b)
+                {
+                    foreach (var (u, v) in (ReadOnlySpan<(double, double)>)[(b.MinX, b.MinY), (b.MaxX, b.MinY), (b.MaxX, b.MaxY), (b.MinX, b.MaxY)])
+                    {
+                        var (x, y) = glyphMap.Apply(u, v);
+                        (left, top, right, bottom) = (Math.Min(left, x), Math.Min(top, y), Math.Max(right, x), Math.Max(bottom, y));
+                    }
+                }
+                else
+                {
+                    (left, top, right, bottom) = (0, 0, width, height);                // a part that may paint anywhere (a shading)
+                }
+            }
+
+            if (!(left <= right) || !double.IsFinite(left + right + top + bottom))
+            {
+                return;
+            }
+
+            int x0 = Math.Clamp((int)Math.Floor(left) - 2, 0, width), x1 = Math.Clamp((int)Math.Ceiling(right) + 2, 0, width);
+            int y0 = Math.Clamp((int)Math.Floor(top) - 2, 0, height), y1 = Math.Clamp((int)Math.Ceiling(bottom) + 2, 0, height);
+            if (x0 >= x1 || y0 >= y1)
+            {
+                return;
+            }
+
+            var shift = new Affine(1, 0, 0, 1, -x0, 0);
+            foreach (var (sources, own) in (ReadOnlySpan<(List<(DocumentPage Page, Affine Map)>?, bool)>)[(coloured, true), (shaped, false)])
+            {
+                if (sources is null)
+                {
+                    continue;
+                }
+
+                var placed = new (DocumentPage, Affine)[sources.Count];
+                for (int i = 0; i < placed.Length; i++)
+                {
+                    placed[i] = (sources[i].Page, sources[i].Map.Then(shift));
+                }
+
+                var scene = DocumentScene.Build(placed, x1 - x0, height, context, DocumentParts.All, hidden: false, drawings: false, within: null);
+                var item = new SceneItem(new GlyphDrawingItem(scene, x0, x1 - x0, own, run.Colour).Render);
+                items.Add(Set(item, x0, y0, x1, y1, run.Order, run.Clip, run.Group, run.SoftMask, run.Blend));
+            }
+        }
+
+        // Where a glyph drawing's parts can paint, in its own units (y up): its paths (a stroke's width and miters around
+        // them), images and runs (a size around their boxes); null when a shading may paint anywhere.
+        private static (double MinX, double MinY, double MaxX, double MaxY)? PartsBounds(DocumentPage parts)
+        {
+            if (parts.Shadings.Count > 0)
+            {
+                return null;
+            }
+
+            double minX = double.PositiveInfinity, minY = double.PositiveInfinity, maxX = double.NegativeInfinity, maxY = double.NegativeInfinity;
+            void Add(double x0, double y0, double x1, double y1) =>
+                (minX, minY, maxX, maxY) = (Math.Min(minX, x0), Math.Min(minY, y0), Math.Max(maxX, x1), Math.Max(maxY, y1));
+            foreach (var path in parts.Paths)
+            {
+                var b = path.Bounds();
+                double pad = path.Stroke is { } w ? w * Math.Max(1, path.MiterLimit) * (path.StrokeMatrix is null ? 1 : 4) + 1 : 0;
+                Add(b.X - pad, b.Y - pad, b.Right + pad, b.Bottom + pad);
+            }
+
+            foreach (var image in parts.Images)
+            {
+                var corners = Affine.Of(image.Placement);
+                foreach (var (u, v) in (ReadOnlySpan<(double, double)>)[(0, 0), (1, 0), (1, 1), (0, 1)])
+                {
+                    var (x, y) = corners.Apply(u, v);
+                    Add(x, y, x, y);
+                }
+            }
+
+            foreach (var run in parts.Runs)
+            {
+                float pad = Math.Max(1f, run.FontSize);
+                Add(run.Box.X - pad, run.Box.Y - pad, run.Box.Right + pad, run.Box.Bottom + pad);
+            }
+
+            return minX <= maxX ? (minX, minY, maxX, maxY) : (0, 0, 0, 0);
         }
 
         /// <summary>Clip <paramref name="index"/> of the page made ready: its outline and rule (a clip of text: its runs' glyphs).</summary>
@@ -760,8 +1079,9 @@ internal sealed class DocumentScene
         // A path stroked: flattened into polylines in pixels (each subpath closed by its close), cut by the dash, through
         // the options' pen (its points) and outlined by the stroker with the path's caps, joins and miter limit.
         private void Stroke(PixelOutline outline, ReadOnlySpan<OutlineVerb> verbs, ReadOnlySpan<float> points, float width, DocumentLineCap cap, DocumentLineJoin join,
-            float miterLimit, float[] dash, float phase, int seed, bool pixels = false)
+            float miterLimit, float[] dash, float phase, int seed, bool pixels = false, float flatness = float.NaN)
         {
+            float flat = float.IsNaN(flatness) ? _strokeFlatness : flatness;
             var polyline = new List<float>();
             var pen = context.Pen;
             var settings = context.PenSettings;
@@ -786,7 +1106,7 @@ internal sealed class DocumentScene
                     }
 
                     pen.Stroke(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(path), pieceClosed, settings, seed, stroke);
-                    DocumentStroker.Stroke(outline, stroke.Points, stroke.Closed, cap, join, miterLimit, _strokeFlatness, dx, dy);
+                    DocumentStroker.Stroke(outline, stroke.Points, stroke.Closed, cap, join, miterLimit, flat, dx, dy);
                 });
             }
 
@@ -815,7 +1135,7 @@ internal sealed class DocumentScene
                         var (qx, qy) = At(points, k, pixels);
                         var (ex, ey) = At(points, k + 2, pixels);
                         double dd = Math.Sqrt((cx - 2 * qx + ex) * (cx - 2 * qx + ex) + (cy - 2 * qy + ey) * (cy - 2 * qy + ey));
-                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(dd / (8 * _strokeFlatness))), 1, 4096);
+                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(dd / (8 * flat))), 1, 4096);
                         for (int i = 1; i <= n; i++)
                         {
                             double t = (double)i / n, u = 1 - t;
@@ -835,7 +1155,7 @@ internal sealed class DocumentScene
                         var (ex, ey) = At(points, k + 4, pixels);
                         double dd = Math.Max(Math.Sqrt((cx - 2 * ax + bx) * (cx - 2 * ax + bx) + (cy - 2 * ay + by) * (cy - 2 * ay + by)),
                             Math.Sqrt((ax - 2 * bx + ex) * (ax - 2 * bx + ex) + (ay - 2 * by + ey) * (ay - 2 * by + ey)));
-                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(3 * dd / (4 * _strokeFlatness))), 1, 4096);
+                        int n = Math.Clamp((int)Math.Ceiling(Math.Sqrt(3 * dd / (4 * flat))), 1, 4096);
                         for (int i = 1; i <= n; i++)
                         {
                             double t = (double)i / n, u = 1 - t;
@@ -864,12 +1184,113 @@ internal sealed class DocumentScene
         // A point of a path: through the map, or already in pixels.
         private (double X, double Y) At(ReadOnlySpan<float> points, int at, bool pixels) => pixels ? (points[at], points[at + 1]) : map.Apply(points[at], points[at + 1]);
 
+        // The stroke's pen on the surface when it is not round (ISO 32000-2, 8.5.3.1): the map's linear part after the path's
+        // own pen (DocumentPath.StrokeMatrix), over the root of its determinant's size, when that is not a turn (a stretch or
+        // a skew of the map or the path's pen); null for a round pen, drawn as it always was.
+        private Affine? Pen(DocumentMatrix? stroke)
+        {
+            var linear = new Affine(map.A, map.B, map.C, map.D, 0, 0);
+            if (stroke is { } m)
+            {
+                linear = new Affine(m.A, m.B, m.C, m.D, 0, 0).Then(linear);
+            }
+
+            double scale = linear.Scale;
+            if (!(scale > 0) || !double.IsFinite(scale))
+            {
+                return null;
+            }
+
+            var u = new Affine(linear.A / scale, linear.B / scale, linear.C / scale, linear.D / scale, 0, 0);
+            bool round = Math.Abs(u.A * u.A + u.B * u.B - 1) <= 1e-4 && Math.Abs(u.C * u.C + u.D * u.D - 1) <= 1e-4 && Math.Abs(u.A * u.C + u.B * u.D) <= 1e-4;
+            return round ? null : u;
+        }
+
+        // A stroke whose pen is not round: the path's pixels taken back through the pen (a space where it is round, at the
+        // surface's scale), stroked there with its width and dashes (flattened within the flatness over the pen's largest
+        // stretch), and the outline put forward through the pen onto the surface.
+        private void StrokeThrough(PixelOutline outline, DocumentPath path, float width, float[] dash, Affine pen)
+        {
+            var back = pen.Inverse();
+            var verbs = path.Verbs.Span;
+            var points = path.Points.Span;
+            var inPen = new float[points.Length];
+            for (int i = 0; i + 1 < points.Length; i += 2)
+            {
+                var (px, py) = map.Apply(points[i], points[i + 1]);
+                var (qx, qy) = back.Apply(px - map.E, py - map.F);
+                (inPen[i], inPen[i + 1]) = ((float)qx, (float)qy);
+            }
+
+            // The largest stretch of the pen (its largest singular value): a polygon within f / stretch in the pen's space
+            // is within f on the surface.
+            double frobenius = pen.A * pen.A + pen.B * pen.B + pen.C * pen.C + pen.D * pen.D, det = pen.Determinant;
+            double stretch = Math.Sqrt((frobenius + Math.Sqrt(Math.Max(0, frobenius * frobenius - 4 * det * det))) / 2);
+            var stroked = new PixelOutline();
+            Stroke(stroked, verbs, inPen, width, path.Cap, path.Join, path.MiterLimit, dash, path.DashPhase * _scale, path.Order, pixels: true,
+                flatness: (float)(_strokeFlatness / Math.Max(1, stretch)));
+            Forward(stroked.Build(), new Affine(pen.A, pen.B, pen.C, pen.D, map.E, map.F), outline);
+        }
+
+        // An outline (y up, as built) through `through` (surface pixels to surface pixels) into `into`.
+        private static void Forward(GlyphOutline from, Affine through, PixelOutline into)
+        {
+            var p = from.Points.Span;
+            int at = 0;
+            foreach (var verb in from.Verbs.Span)
+            {
+                switch (verb)
+                {
+                    case OutlineVerb.Move:
+                    {
+                        var (x, y) = through.Apply(p[at], -p[at + 1]);
+                        into.Move((float)x, (float)y);
+                        at += 2;
+                        break;
+                    }
+
+                    case OutlineVerb.Line:
+                    {
+                        var (x, y) = through.Apply(p[at], -p[at + 1]);
+                        into.Line((float)x, (float)y);
+                        at += 2;
+                        break;
+                    }
+
+                    case OutlineVerb.Quadratic:
+                    {
+                        var (x1, y1) = through.Apply(p[at], -p[at + 1]);
+                        var (x, y) = through.Apply(p[at + 2], -p[at + 3]);
+                        into.Quadratic((float)x1, (float)y1, (float)x, (float)y);
+                        at += 4;
+                        break;
+                    }
+
+                    case OutlineVerb.Cubic:
+                    {
+                        var (x1, y1) = through.Apply(p[at], -p[at + 1]);
+                        var (x2, y2) = through.Apply(p[at + 2], -p[at + 3]);
+                        var (x, y) = through.Apply(p[at + 4], -p[at + 5]);
+                        into.Cubic((float)x1, (float)y1, (float)x2, (float)y2, (float)x, (float)y);
+                        at += 6;
+                        break;
+                    }
+
+                    case OutlineVerb.Close:
+                        into.Close();
+                        break;
+                }
+            }
+
+            into.Close();
+        }
+
         // A run's glyphs as one outline in surface pixels (a new one, or added to `into`), or null when its font is not there
         // (counted: the run is left out). A face found for a font the document does not embed draws each glyph stretched to
         // the advance the document gives it (within the options' stretch bounds), slanted by the options' slant when the
         // font's name says it is italic or oblique and the face is not, and says when the name says bold and the face is not
         // and the options stroke such faces (`embolden`).
-        private PixelOutline? RunOutline(DocumentTextRun run, PixelOutline? into, out bool embolden)
+        private PixelOutline? RunOutline(DocumentTextRun run, PixelOutline? into, out bool embolden, DocumentGlyphDrawing?[]? drawn = null)
         {
             var face = run.Face;
             bool substitute = false;
@@ -933,6 +1354,11 @@ internal sealed class DocumentScene
             float across = MathF.Sqrt(m.A * m.A + m.B * m.B);
             for (int i = 0; i < glyphs.Length; i++)
             {
+                if (drawn?[i] is not null)
+                {
+                    continue;                                                  // drawn by its own parts
+                }
+
                 var g = glyphs[i];
                 int id = mapped is null ? g.Glyph : mapped[i];
                 var placed = m;
@@ -1387,6 +1813,60 @@ internal sealed class OutlineItem(GlyphOutline outline, OutlineFill rule, SceneP
 
         paint.Colours(work, x0, x1, y0, y1);
         return false;
+    }
+}
+
+/// <summary>
+/// A run's glyphs drawn by parts of their own: their scene (on a surface of their box, its left column at
+/// <c>left</c>) drawn for the rows asked, its alpha the coverage, its colours its own (<c>coloured</c>) or the run's.
+/// </summary>
+internal sealed class GlyphDrawingItem(DocumentScene scene, int left, int width, bool coloured, DocumentColour colour)
+{
+    public bool Render(SceneWork work, int x0, int x1, int y0, int y1, out (float R, float G, float B, float A) solid)
+    {
+        solid = (colour.Red, colour.Green, colour.Blue, colour.Alpha);
+        int rows = y1 - y0;
+        if (rows <= 0 || x0 >= x1)
+        {
+            return !coloured;                                                 // nothing to draw: no coverage written
+        }
+
+        int size = width * rows, w = work.Width;
+        float[] surface = ArrayPool<float>.Shared.Rent(4 * size);
+        try
+        {
+            var drawing = surface.AsSpan(0, 4 * size);
+            drawing.Clear();
+            scene.Render(drawing, y0, rows);
+            for (int y = y0; y < y1; y++)
+            {
+                int row = (y - work.Top) * w, from = (y - y0) * width - left;
+                for (int x = x0; x < x1; x++)
+                {
+                    int k = 4 * (from + x);
+                    float a = drawing[k + 3];
+                    work.Coverage[row + x] = MathF.Min(1f, a);
+                    if (coloured)
+                    {
+                        int c = 4 * (row + x);
+                        if (a > 0f)
+                        {
+                            (work.Colour[c], work.Colour[c + 1], work.Colour[c + 2], work.Colour[c + 3]) = (drawing[k] / a, drawing[k + 1] / a, drawing[k + 2] / a, colour.Alpha);
+                        }
+                        else
+                        {
+                            work.Colour[c + 3] = 0f;
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(surface);
+        }
+
+        return !coloured;
     }
 }
 

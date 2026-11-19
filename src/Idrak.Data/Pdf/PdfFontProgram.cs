@@ -18,6 +18,7 @@ internal sealed class PdfFontProgram
     private readonly Dictionary<int, int>? _symbol;
     private readonly Dictionary<int, int>? _macintosh;
     private readonly Lazy<Dictionary<string, int>> _names;
+    private string?[]? _glyphNames;   // each glyph's name (the first the names give it), made when first asked
 
     private PdfFontProgram(IFontFace face, int[] codePoints, Dictionary<int, int>? symbol, Dictionary<int, int>? macintosh, Dictionary<string, int>? names = null)
     {
@@ -32,13 +33,70 @@ internal sealed class PdfFontProgram
     /// <summary>The glyph its own name (the font's "post" names: a PostScript font's, a TrueType font's of its own) gives, or -1.</summary>
     public int GlyphByName(string name) => _names.Value.TryGetValue(name, out int glyph) ? glyph : -1;
 
+    /// <summary>The glyph a name given as its bytes (Latin-1, as a font dictionary's names are read) gives, or -1; nothing is allocated.</summary>
+    public int GlyphByName(ReadOnlySpan<byte> name)
+    {
+        if (name.Length > 255)
+        {
+            return -1;                                                         // no post name is longer
+        }
+
+        Span<char> chars = stackalloc char[name.Length];
+        for (int i = 0; i < name.Length; i++)
+        {
+            chars[i] = (char)name[i];
+        }
+
+        return _names.Value.GetAlternateLookup<ReadOnlySpan<char>>().TryGetValue(chars, out int glyph) ? glyph : -1;
+    }
+
+    /// <summary>
+    /// The glyph name the program's own Macintosh (1,0) subtable gives <paramref name="code"/> (a bare CFF's built-in
+    /// encoding: its code's glyph, named by the program's names), or null when it encodes none.
+    /// </summary>
+    public string? EncodedName(int code)
+    {
+        if (_macintosh is not { } mac || !mac.TryGetValue(code, out int glyph) || glyph <= 0)
+        {
+            return null;
+        }
+
+        var names = Volatile.Read(ref _glyphNames);
+        if (names is null)
+        {
+            names = new string?[Math.Max(Face.GlyphCount, 0)];
+            foreach (var (name, g) in _names.Value)
+            {
+                if ((uint)g < (uint)names.Length)
+                {
+                    names[g] ??= name;
+                }
+            }
+
+            Volatile.Write(ref _glyphNames, names);
+        }
+
+        return (uint)glyph < (uint)names.Length ? names[glyph] : null;
+    }
+
     /// <summary>A CID-keyed program's glyph for <paramref name="cid"/> (its glyphs named "cid" and five digits), or -1.</summary>
     public int CidGlyph(int cid) => cid >= 0 && _names.Value.Count > 0 ? GlyphByName(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"cid{cid:D5}")) : -1;
 
-    // A "post" table of version 2's names given as strings of its own (an index of 258 or more), each glyph's.
+    // A "post" table's glyph names, each name's first glyph: version 1 names glyphs in the 258 standard Macintosh names'
+    // order; version 2 by an index, below 258 one of those names, else one of its own strings.
     private static Dictionary<string, int> PostNames(ReadOnlySpan<byte> post, int glyphCount)
     {
         var names = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (post.Length >= 32 && BinaryPrimitives.ReadUInt32BigEndian(post) == 0x00010000)
+        {
+            for (int g = 0; g < Math.Min(glyphCount, PdfFontTables.MacGlyphCount); g++)
+            {
+                names.TryAdd(System.Text.Encoding.Latin1.GetString(PdfFontTables.MacGlyphName(g)), g);
+            }
+
+            return names;
+        }
+
         if (post.Length < 34 || BinaryPrimitives.ReadUInt32BigEndian(post) != 0x00020000)
         {
             return names;
@@ -67,10 +125,14 @@ internal sealed class PdfFontProgram
 
         for (int g = 0; g < count; g++)
         {
-            int index = BinaryPrimitives.ReadUInt16BigEndian(post[(34 + 2 * g)..]) - 258;
-            if ((uint)index < (uint)list.Count)
+            int index = BinaryPrimitives.ReadUInt16BigEndian(post[(34 + 2 * g)..]);
+            if (index < PdfFontTables.MacGlyphCount)
             {
-                names.TryAdd(list[index], g);
+                names.TryAdd(System.Text.Encoding.Latin1.GetString(PdfFontTables.MacGlyphName(index)), g);
+            }
+            else if (index - PdfFontTables.MacGlyphCount < list.Count)
+            {
+                names.TryAdd(list[index - PdfFontTables.MacGlyphCount], g);
             }
         }
 

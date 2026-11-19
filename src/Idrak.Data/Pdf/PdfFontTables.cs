@@ -10,8 +10,9 @@ namespace Idrak.Data.Pdf;
 /// tools/documents/make_pdf_tables.py; nothing is built when the reader starts): the base encodings (Standard, MacRoman,
 /// WinAnsi, PDFDoc) and the Symbol and ZapfDingbats fonts' built-in ones, codes to glyph names; glyph names to text by the
 /// Adobe Glyph List's rules (a suffix after a period dropped, components joined by underscores, the list itself, then
-/// <c>uniXXXX</c> and <c>uXXXX[XX]</c>, the ITC Zapf Dingbats list first for that font); and the standard 14 fonts'
-/// ascender, descender, bounding box and widths, by name or a common alternative name.
+/// <c>uniXXXX</c> and <c>uXXXX[XX]</c>, the ITC Zapf Dingbats list first for that font); the standard 14 fonts'
+/// ascender, descender, bounding box and widths, by name or a common alternative name; and the 258 standard Macintosh
+/// glyph names a TrueType font's <c>post</c> table names its glyphs by.
 /// </summary>
 internal static partial class PdfFontTables
 {
@@ -26,6 +27,19 @@ internal static partial class PdfFontTables
 
     /// <summary>The longest text one glyph name gives here (a name of many components is cut there).</summary>
     public const int MaxGlyphText = 64;
+
+    /// <summary>How many standard Macintosh glyph names there are: a TrueType <c>post</c> table's index below it is one of them.</summary>
+    public const int MacGlyphCount = 258;
+
+    /// <summary>
+    /// Standard Macintosh glyph name <paramref name="index"/> (0 to <see cref="MacGlyphCount"/> - 1, a TrueType
+    /// <c>post</c> table's order: what format 1 names each glyph, and format 2 an index below 258), as bytes.
+    /// </summary>
+    public static ReadOnlySpan<byte> MacGlyphName(int index)
+    {
+        var ends = MacGlyphNameEnds;
+        return MacGlyphNames[(index == 0 ? 0 : ends[index - 1])..ends[index]];
+    }
 
     /// <summary>The base encoding a font's <c>/Encoding</c> (or <c>/BaseEncoding</c>) names, or -1 for another name.</summary>
     public static int EncodingIndex(ReadOnlySpan<byte> name) =>

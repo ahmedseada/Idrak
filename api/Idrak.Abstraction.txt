@@ -1343,6 +1343,11 @@ public readonly record struct Idrak.Abstraction.Data.DocumentGlyph : System.IEqu
   public float Y { get; init; }
   public int Glyph { get; init; }
 
+public sealed class Idrak.Abstraction.Data.DocumentGlyphDrawing
+  public DocumentGlyphDrawing(Idrak.Abstraction.Data.DocumentPage parts, bool coloured)
+  public Idrak.Abstraction.Data.DocumentPage Parts { get; }
+  public bool Coloured { get; }
+
 public sealed class Idrak.Abstraction.Data.DocumentGroup
   public DocumentGroup()
   public Idrak.Abstraction.Data.DocumentBlend Blend { get; init; }
@@ -1557,6 +1562,7 @@ public sealed class Idrak.Abstraction.Data.DocumentPath
   public Idrak.Abstraction.Data.DocumentFill Fill { get; init; }
   public Idrak.Abstraction.Data.DocumentLineCap Cap { get; init; }
   public Idrak.Abstraction.Data.DocumentLineJoin Join { get; init; }
+  public Idrak.Abstraction.Data.DocumentMatrix? StrokeMatrix { get; init; }
   public Idrak.Abstraction.Data.DocumentPattern? FillPattern { get; init; }
   public Idrak.Abstraction.Data.DocumentPattern? StrokePattern { get; init; }
   public System.ReadOnlyMemory<Idrak.Abstraction.Data.OutlineVerb> Verbs { get; }
@@ -2266,6 +2272,9 @@ public interface Idrak.Abstraction.Data.IDocumentFormat
   public System.Collections.Generic.IReadOnlyCollection<string> MediaTypes { get; }
   public bool Accepts(System.ReadOnlySpan<byte> header)
   public string Name { get; }
+
+public interface Idrak.Abstraction.Data.IDocumentGlyphDrawings
+  public Idrak.Abstraction.Data.DocumentGlyphDrawing? Drawing(int glyph)
 
 public interface Idrak.Abstraction.Data.IDocumentPageBuilder
   public (default) void Glyphs(Idrak.Abstraction.Data.IFontFace face, System.ReadOnlySpan<Idrak.Abstraction.Data.DocumentGlyph> glyphs, System.ReadOnlySpan<Idrak.Abstraction.Data.DocumentMatrix> matrices, string text, Idrak.Abstraction.Data.DocumentTextMode mode, Idrak.Abstraction.Data.DocumentColour colour)
