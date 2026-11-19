@@ -136,9 +136,6 @@ internal sealed class PdfDocument : IDocument
         }
     }
 
-    /// <summary>The options it was opened with.</summary>
-    internal DocumentOptions Options => _options;
-
     /// <summary>Page <paramref name="index"/>'s object number (0 for a page held inside another object): what a widget's /P names.</summary>
     internal int PageNumber(int index) => _pages[index].Node.IsReference ? _pages[index].Node.AsReference.Number : 0;
 

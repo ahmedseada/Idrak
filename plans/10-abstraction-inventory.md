@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 215 | 19 | 79 | 313 | 0 |
+| `Idrak.Abstraction` | 216 | 19 | 80 | 315 | 0 |
 | `Idrak` | 59 | 5 | 23 | 87 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -86,6 +86,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.DocumentFormats` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.DocumentPageDrawers` | registry | public | — |  | coverage | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.DocumentTextLayouts` | registry | public | — |  | content, lines | Data | Abstraction |
+| `Idrak.Abstraction.Data.DocumentTextSetters` | registry | public | — |  | shaped | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.DocumentWriters` | registry | public | — |  | pdf | Data | Abstraction |
 | `Idrak.Abstraction.Data.FontFormats` | registry | public | — |  | cff, opentype, type1 | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Data.FontMakers` | registry | public | — |  | traced | Imaging | Abstraction |
@@ -103,6 +104,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.IDocumentPageBuilder` | interface | public | — | DocumentWriters.ShadowPageBuilder, PdfPageBuilder |  | Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentPageDrawer` | interface | public | — | CoverageDocumentDrawer, DocumentPageDrawers.GuardedDrawer |  | Abstraction, Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentTextLayout` | interface | public | — | ContentLayout, DocumentTextLayouts.GuardedLayout, LinesLayout |  | Data | Abstraction |
+| `Idrak.Abstraction.Data.IDocumentTextSetter` | interface | public | — | DocumentTextSetters.GuardedSetter, ShapedTextSetter |  | Abstraction, Data, Imaging | Abstraction |
 | `Idrak.Abstraction.Data.IDocumentWriter` | interface | public | — | DocumentWriters.GuardedWriter, PdfWriter |  | Data | Abstraction |
 | `Idrak.Abstraction.Data.IDownloader` | interface | public | — | Downloader |  | Abstraction, Data, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Data.IFontFace` | interface | public | — | CffFace, MadeFontFace, MappedFontFace, OpenTypeFace, PdfType3Face, Type1Face |  | Abstraction, Data, Imaging, Imaging.Plugins, Text | Abstraction |
@@ -290,7 +292,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSession` | interface | public | — | ProcessCommandSession |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, AttentionPositionBiases.BuiltInKind, +140 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +205 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, ArcShape, ArrowShape, +207 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +39 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Imaging.Plugins, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
