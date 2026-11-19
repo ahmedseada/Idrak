@@ -2670,6 +2670,7 @@ public sealed class Idrak.Abstraction.Data.ShapePlan
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeArea> Areas { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapePath> Paths { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeRegion> Regions { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ShapeText> Texts { get; init; }
   public bool IsEmpty { get; }
   public override string ToString()
   public static Idrak.Abstraction.Data.ShapePlan Empty { get; }
@@ -2689,6 +2690,7 @@ public static class Idrak.Abstraction.Data.ShapeProfiles
   public static Idrak.Abstraction.Data.IShapeProfile? Default(string name)
   public static Idrak.Abstraction.Data.IShapeProfile? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IShapeProfile> Choices(string list)
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
@@ -2742,6 +2744,17 @@ public sealed class Idrak.Abstraction.Data.ShapeStep : System.IEquatable<Idrak.A
   public string? Value { get; }
   public void CheckCommon()
   public void ThrowIfUnknownOptions(System.Collections.Generic.IReadOnlySet<string> keys)
+
+public sealed class Idrak.Abstraction.Data.ShapeText
+  public (float, float, float, float) Bounds()
+  public ShapeText(float[] path, float size, System.Collections.Generic.IReadOnlyList<string>? words = null, int pick = 0, bool initials = false, float tone = 1f)
+  public System.Collections.Generic.IReadOnlyList<string> Words { get; }
+  public System.ReadOnlyMemory<float> Path { get; }
+  public bool Initials { get; }
+  public float Size { get; }
+  public float Tone { get; }
+  public int Count { get; }
+  public int Pick { get; }
 
 public readonly record struct Idrak.Abstraction.Data.ShapedGlyph : System.IEquatable<Idrak.Abstraction.Data.ShapedGlyph>
   public ShapedGlyph(int Glyph, int Cluster, int XAdvance, int YAdvance, int XOffset, int YOffset)

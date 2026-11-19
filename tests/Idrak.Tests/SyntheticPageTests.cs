@@ -347,6 +347,27 @@ internal abstract partial class DesktopTests : Tests
             Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
         }
 
+        // The letter's ornaments: into the options, a profile list given again adding to it; bad ones refused, named.
+        var ornate = SyntheticPages.Style(style,
+            "emblem-shapes=emblem-star,emblem-shapes=emblem-seal|emblem-box,stamp-shapes=stamp-oval,stamp-turn=-5..5,stamp-ink=0.3,stamp-black=0.5,signature=0.8,signature-pen=ideal,emblem-pen=ideal,stamp-pen=ballpoint");
+        Check(ornate.Options.Count == 9 && ornate.Options["emblem-shapes"] == "emblem-star|emblem-seal|emblem-box" && ornate.Options["stamp-shapes"] == "stamp-oval"
+              && ornate.Options["stamp-turn"] == "-5..5" && ornate.Options["signature-pen"] == "ideal" && style.Options.Count == 0, $"the letter's settings in the options: {string.Join(", ", ornate.Options)}");
+        Check(SyntheticPages.Style(ornate, "emblem-shapes=emblem-rings").Options["emblem-shapes"] == "emblem-rings", "a later settings text replaces a list");
+        Check(new[] { "emblem-shapes", "stamp-shapes", "signature-shapes", "emblem-pen", "stamp-pen", "signature-pen", "stamp-turn", "stamp-ink", "stamp-black", "signature" }.All(SyntheticPages.StyleKeys.Contains),
+            "the letter's keys are known");
+        foreach (var (bad, named) in new[]
+        {
+            ("emblem-shapes=nope", "emblem-shapes"), ("stamp-shapes=stamp-oval||stamp-ring", "stamp-oval"), ("signature-shapes=scribble@2", "chance"), ("stamp-pen=nope", "stamp-pen"),
+            ("signature-pen=nope", "signature-pen"), ("stamp-turn=500", "stamp-turn"), ("stamp-ink=2", "stamp-ink"), ("stamp-black=x", "stamp-black"), ("signature=1.5", "signature"),
+        })
+        {
+            ThrowsNaming<ArgumentException>(() => SyntheticPages.Style(style, bad), bad, named);
+        }
+
+        var letters = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"], Layouts = ["letter"] };
+        Throws<ArgumentException>(() => SyntheticPages.Make("Body.", letters with { Style = letters.Style with { Options = new Dictionary<string, string> { ["stamp-ink"] = "x" } } }),
+            "a bad letter setting given in code, refused before the first page");
+
         var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] };
         foreach (string newLine in new[] { "\n", "\r\n" })
         {

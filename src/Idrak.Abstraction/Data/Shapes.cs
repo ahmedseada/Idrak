@@ -224,7 +224,103 @@ public sealed class ShapeArea
     public (float MinX, float MinY, float MaxX, float MaxY) Bounds() => ShapePlan.Bounds(Points.Span);
 }
 
-/// <summary>What a shape draws, as data: the ideal paths a pen strokes, the filled areas and the regions it makes for text.</summary>
+/// <summary>
+/// A text a shape sets along a path (a ring's arc, a line across its box): the glyphs stand on the path, upright to its
+/// left (above a path drawn left to right), in the order they are drawn from its first point, centred along it, at
+/// <see cref="Size"/> or smaller so that the text fits the path's length and its ink stays within <see cref="Size"/> of
+/// the path on either side. What it says: one of its <see cref="Words"/> (those the page's fonts can draw, read in the
+/// page's direction when some are; <see cref="Pick"/> chooses), or the text the page gives its shapes (a letter's
+/// name line) when it has none; whole or as its <see cref="Initials"/>. A shape's text is ornament (an emblem's, a
+/// stamp's): it is not part of the page's text.
+/// </summary>
+public sealed class ShapeText
+{
+    /// <summary>The text along <paramref name="path"/> (x, y pairs in pixels, at least one point; used directly, not copied).</summary>
+    /// <param name="path">The points the text stands on, x then y.</param>
+    /// <param name="size">The most it is set at, in pixels per em (above 0).</param>
+    /// <param name="words">The words it may say (one is drawn); none or null for the page's own text.</param>
+    /// <param name="pick">Which of the words it says (of those the page can draw, counted round), from 0.</param>
+    /// <param name="initials">Whether it says the first letters of the text's first three words instead of the text.</param>
+    /// <param name="tone">How dark it is drawn, a share of the ink (0 to 1).</param>
+    /// <exception cref="ArgumentException">No point, an odd count, a size not above 0 and finite, a negative pick, a tone outside 0 to 1, or an empty word.</exception>
+    public ShapeText(float[] path, float size, IReadOnlyList<string>? words = null, int pick = 0, bool initials = false, float tone = 1)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        if (path.Length < 2 || path.Length % 2 != 0)
+        {
+            throw new ArgumentException($"A text's path is x, y pairs, at least one point; {path.Length} values are given.", nameof(path));
+        }
+
+        if (!(size > 0) || !float.IsFinite(size) || pick < 0 || !(tone is >= 0 and <= 1))
+        {
+            throw new ArgumentException($"A text's size is above 0 ({size}), its pick not below 0 ({pick}) and its tone from 0 to 1 ({tone}).", nameof(size));
+        }
+
+        words ??= [];
+        if (words.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("A text's words are not empty.", nameof(words));
+        }
+
+        Path = path;
+        Size = size;
+        Words = words;
+        Pick = pick;
+        Initials = initials;
+        Tone = tone;
+    }
+
+    /// <summary>The points the text stands on, x then y, in pixels.</summary>
+    public ReadOnlyMemory<float> Path { get; }
+
+    /// <summary>How many points there are.</summary>
+    public int Count => Path.Length / 2;
+
+    /// <summary>The most it is set at, in pixels per em; its ink stays within this of the path on either side.</summary>
+    public float Size { get; }
+
+    /// <summary>The words it may say; empty for the page's own text.</summary>
+    public IReadOnlyList<string> Words { get; }
+
+    /// <summary>Which of the words it says (of those the page can draw, counted round).</summary>
+    public int Pick { get; }
+
+    /// <summary>Whether it says the first letters of the text's first three words.</summary>
+    public bool Initials { get; }
+
+    /// <summary>How dark it is drawn, a share of the ink.</summary>
+    public float Tone { get; }
+
+    /// <summary>The smallest box around where its ink may be: every point of its path and the points <see cref="Size"/> away across the path from it.</summary>
+    public (float MinX, float MinY, float MaxX, float MaxY) Bounds()
+    {
+        var p = Path.Span;
+        int n = p.Length / 2;
+        float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+        for (int i = 0; i < n; i++)
+        {
+            // Across the path at a point: the normal of the chord between its neighbours (all round for a lone point).
+            int a = Math.Max(0, i - 1), b = Math.Min(n - 1, i + 1);
+            float tx = p[2 * b] - p[2 * a], ty = p[2 * b + 1] - p[2 * a + 1], length = MathF.Sqrt(tx * tx + ty * ty);
+            float x = p[2 * i], y = p[2 * i + 1];
+            if (!(length > 0))
+            {
+                (minX, minY, maxX, maxY) = (MathF.Min(minX, x - Size), MathF.Min(minY, y - Size), MathF.Max(maxX, x + Size), MathF.Max(maxY, y + Size));
+                continue;
+            }
+
+            float nx = -ty / length * Size, ny = tx / length * Size;
+            minX = MathF.Min(minX, MathF.Min(x - nx, x + nx));
+            maxX = MathF.Max(maxX, MathF.Max(x - nx, x + nx));
+            minY = MathF.Min(minY, MathF.Min(y - ny, y + ny));
+            maxY = MathF.Max(maxY, MathF.Max(y - ny, y + ny));
+        }
+
+        return (minX, minY, maxX, maxY);
+    }
+}
+
+/// <summary>What a shape draws, as data: the ideal paths a pen strokes, the filled areas, the texts it sets along paths and the regions it makes for text.</summary>
 public sealed class ShapePlan
 {
     /// <summary>A plan of <paramref name="paths"/>, <paramref name="areas"/> and <paramref name="regions"/> (each list kept as given).</summary>
@@ -248,14 +344,22 @@ public sealed class ShapePlan
     /// <summary>The regions for text, in reading order.</summary>
     public IReadOnlyList<ShapeRegion> Regions { get; }
 
+    /// <summary>The texts it sets along paths (an emblem's name round its ring, a stamp's word), drawn after the paths; ornament, not the page's text. None unless given.</summary>
+    public IReadOnlyList<ShapeText> Texts { get; init; } = [];
+
     /// <summary>Whether it draws nothing and makes no region.</summary>
-    public bool IsEmpty => Paths.Count == 0 && Areas.Count == 0 && Regions.Count == 0;
+    public bool IsEmpty => Paths.Count == 0 && Areas.Count == 0 && Regions.Count == 0 && Texts.Count == 0;
 
     /// <summary>A line on what it holds (counts and the box around it), for comparisons and descriptions.</summary>
     public override string ToString()
     {
         var text = new StringBuilder();
         text.Append(System.Globalization.CultureInfo.InvariantCulture, $"{Paths.Count} paths, {Areas.Count} areas, {Regions.Count} regions");
+        if (Texts.Count > 0)
+        {
+            text.Append(System.Globalization.CultureInfo.InvariantCulture, $", {Texts.Count} texts");
+        }
+
         foreach (var path in Paths)
         {
             var (x0, y0, x1, y1) = path.Bounds();
@@ -265,6 +369,13 @@ public sealed class ShapePlan
         foreach (var region in Regions)
         {
             text.Append(System.Globalization.CultureInfo.InvariantCulture, $"; region {region.Group}.{region.Index} {region.X:F2},{region.Y:F2} {region.Width:F2}x{region.Height:F2}");
+        }
+
+        foreach (var said in Texts)
+        {
+            var (x0, y0, x1, y1) = said.Bounds();
+            text.Append(System.Globalization.CultureInfo.InvariantCulture,
+                $"; text {said.Count} {said.Size:F2}px {x0:F2},{y0:F2},{x1:F2},{y1:F2} {(said.Words.Count == 0 ? "page" : string.Join(":", said.Words))}#{said.Pick}{(said.Initials ? " initials" : "")}");
         }
 
         return text.ToString();
@@ -708,7 +819,9 @@ public sealed class ShapePipeline : IEquatable<ShapePipeline>
 /// holds), <c>gap</c> (below a stacked step, line heights), <c>height</c> (a stacked step's own, line heights),
 /// <c>lines</c> (N|rest: how many of the page's lines it takes), <c>holds</c> (lines|paragraphs) and <c>valign</c>
 /// (center|top|bottom|a share: where wrapped paragraphs sit down their region). Built in also:
-/// <c>text</c> (no lines drawn, one region of wrapped paragraphs). Register another with <see cref="Register"/>; one under a library name shadows
+/// <c>text</c> (no lines drawn, one region of wrapped paragraphs), and the emblems', stamps' and signatures' pieces:
+/// <c>ring-text</c> (a text round a ring), <c>lettering</c> (a line of text across its box), <c>star</c>, <c>shield</c>
+/// and <c>scribble</c> (a hand's signature-like scribble, never text). Register another with <see cref="Register"/>; one under a library name shadows
 /// the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
 public static class Shapes

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Buffers;
 using System.Globalization;
 using static Idrak.Imaging.PageDrawing;
 
@@ -18,7 +17,9 @@ namespace Idrak.Imaging;
 /// smaller so its ink stays inside the region (a text that would need to be smaller than least-size is left out: its
 /// region stays empty), the shapes stroked by the pen; the page grows taller when the rows need it. Only the body is
 /// drawn; the text is what was drawn, a line a group of regions in reading order (the binding's label, less what was left
-/// out). A profile that makes no region sets the lines in rows down the page.
+/// out). A profile that makes no region sets the lines in rows down the page. A shape's own texts (<see cref="ShapeText"/>:
+/// a ring-text's or a lettering's words) are set in the body's font as ornament, outside the page's text; one that asks
+/// for the page's own text has none here and is left out.
 /// </summary>
 internal sealed class ShapesLayout : IPageLayout
 {
@@ -143,6 +144,11 @@ internal sealed class ShapesLayout : IPageLayout
             {
                 bottom = Math.Max(bottom, a.Bounds().MaxY);
             }
+
+            foreach (var t in plan.Texts)
+            {
+                bottom = Math.Max(bottom, t.Bounds().MaxY);
+            }
         }
 
         bottom += strokeWidth * widest / 2 + stray;
@@ -155,7 +161,7 @@ internal sealed class ShapesLayout : IPageLayout
         using var canvas = new PageCanvas(width, height);
         var layer = blue ? canvas.Blue : canvas.Ink;
         var blocks = new List<PageBlock>(drawn.Count + usable.Count);
-        Draw(canvas, layer, drawn, pen, penSettings, penSeed, strokeWidth, blocks);
+        ShapeDrawing.Draw(canvas, layer, drawn, pen, penSettings, penSeed, strokeWidth, blocks, new ShapeLettering(body, null, rtl));
 
         // Each region's text, fitted inside it, placed as a hand would (aimed at its alignment, a little off).
         var place = new Random(placeSeed);
@@ -213,7 +219,7 @@ internal sealed class ShapesLayout : IPageLayout
 
     // Every step's plan in order: in the page, or once inside each region the step before ended with (in=last); a step
     // whose plans make regions there takes those regions' place, one that makes none leaves them.
-    private static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(ShapePipeline pipeline, ShapeContext area, int shapeSeed)
+    internal static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(ShapePipeline pipeline, ShapeContext area, int shapeSeed)
     {
         var drawn = new List<(ShapeStep, ShapePlan)>();
         var regions = new List<ShapeRegion?>();
@@ -292,65 +298,6 @@ internal sealed class ShapesLayout : IPageLayout
         }
 
         return groups + numbers.Count;
-    }
-
-    // The shapes, in order: each one's areas, then its paths through the pen; a block for each that drew something.
-    private static void Draw(PageCanvas canvas, Span<float> layer, List<(ShapeStep Step, ShapePlan Plan)> drawn, IPen pen, PenSettings settings, int penSeed,
-        float strokeWidth, List<PageBlock> blocks)
-    {
-        using var stroke = new PenStroke(256);
-        using var outline = new OutlineBuilder();
-        var path = ArrayPool<PenPoint>.Shared.Rent(64);
-        try
-        {
-            int strokes = 0;
-            foreach (var (_, plan) in drawn)
-            {
-                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-                foreach (var area in plan.Areas)
-                {
-                    outline.Clear();
-                    outline.Polygon(area.Points.Span);
-                    canvas.Fill(layer, outline.ToOutline(), area.Tone);
-                    var (ax0, ay0, ax1, ay1) = area.Bounds();
-                    (x0, y0, x1, y1) = (Math.Min(x0, ax0), Math.Min(y0, ay0), Math.Max(x1, ax1), Math.Max(y1, ay1));
-                }
-
-                foreach (var shapePath in plan.Paths)
-                {
-                    int count = shapePath.Count;
-                    if (path.Length < count)
-                    {
-                        ArrayPool<PenPoint>.Shared.Return(path);
-                        path = ArrayPool<PenPoint>.Shared.Rent(count);
-                    }
-
-                    float w = strokeWidth * shapePath.Width;
-                    var points = shapePath.Points.Span;
-                    for (int i = 0; i < count; i++)
-                    {
-                        path[i] = new PenPoint(points[2 * i], points[2 * i + 1], w);
-                    }
-
-                    pen.Stroke(path.AsSpan(0, count), shapePath.Closed, settings, Mix(penSeed, strokes++), stroke);
-                    outline.Clear();
-                    StrokeOutline.Add(outline, stroke.Points, stroke.Closed, shapePath.Dash.Span, w);
-                    canvas.Fill(layer, outline.ToOutline(), stroke.MeanInk() * shapePath.Tone);
-                    var (px0, py0, px1, py1) = shapePath.Bounds();
-                    float reach = w / 2 + pen.Stray(settings, w);
-                    (x0, y0, x1, y1) = (Math.Min(x0, px0 - reach), Math.Min(y0, py0 - reach), Math.Max(x1, px1 + reach), Math.Max(y1, py1 + reach));
-                }
-
-                if (x1 > x0 && y1 > y0)
-                {
-                    blocks.Add(new PageBlock("shape", "", Math.Max(0, x0), Math.Max(0, y0), Math.Min(canvas.Width, x1) - Math.Max(0, x0), Math.Min(canvas.Height, y1) - Math.Max(0, y0)));
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<PenPoint>.Shared.Return(path);
-        }
     }
 
     // The text set on one line at the body's size, or smaller so that its ink (and its advance box), with a pixel round
@@ -605,6 +552,11 @@ internal sealed class ShapesLayout : IPageLayout
             {
                 bottom = Math.Max(bottom, a.Bounds().MaxY);
             }
+
+            foreach (var t in plan.Texts)
+            {
+                bottom = Math.Max(bottom, t.Bounds().MaxY);
+            }
         }
 
         bottom += p.StrokeWidth * widest / 2 + p.Stray;
@@ -617,7 +569,7 @@ internal sealed class ShapesLayout : IPageLayout
         using var canvas = new PageCanvas(width, height);
         var layer = p.Blue ? canvas.Blue : canvas.Ink;
         var blocks = new List<PageBlock>(drawn.Count + usable.Count);
-        Draw(canvas, layer, drawn, p.Pen, p.PenSettings, p.PenSeed, p.StrokeWidth, blocks);
+        ShapeDrawing.Draw(canvas, layer, drawn, p.Pen, p.PenSettings, p.PenSeed, p.StrokeWidth, blocks, new ShapeLettering(p.Body, null, p.Rtl));
 
         // Each region's text: one line fitted as a hand would place it, or paragraphs wrapped inside its edge.
         var place = new Random(p.PlaceSeed);
@@ -878,6 +830,11 @@ internal sealed class ShapesLayout : IPageLayout
         foreach (var area in plan.Areas)
         {
             bottom = Math.Max(bottom, area.Bounds().MaxY);
+        }
+
+        foreach (var text in plan.Texts)
+        {
+            bottom = Math.Max(bottom, text.Bounds().MaxY);
         }
 
         bottom += p.StrokeWidth * widest / 2 + (widest > 0 ? p.Stray : 0);

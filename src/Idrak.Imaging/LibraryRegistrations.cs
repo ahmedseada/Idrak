@@ -60,8 +60,8 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
             PageLayouts.Register(new PlainLayout());
             PageLayouts.Register(new ShapesLayout());
         },
-        [typeof(Shapes)] = RegisterShapes,                                       // line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text
-        [typeof(ShapeProfiles)] = RegisterShapeProfiles,                         // none, grid, ruled, boxed, text-grid-text, framed, circled
+        [typeof(Shapes)] = RegisterShapes,                                       // line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text; ring-text, lettering, star, shield, scribble
+        [typeof(ShapeProfiles)] = RegisterShapeProfiles,                         // none, grid, ruled, boxed, text-grid-text, framed, circled; the letter's emblems, stamps and signature
         [typeof(Pens)] = () =>                                                   // ideal, ballpoint
         {
             Pens.Register(new IdealPen());
@@ -78,7 +78,8 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
     private static void RegisterShapes()
     {
         foreach (var shape in (IShape[])[new LineShape(), new PolylineShape(), new PolygonShape(), new BoxShape(), new GridShape(), new CircleShape(), new EllipseShape(),
-                     new ArcShape(), new ArrowShape(), new FillShape(), new HatchShape(), new TextShape()])
+                     new ArcShape(), new ArrowShape(), new FillShape(), new HatchShape(), new TextShape(), new RingTextShape(), new LetteringShape(), new StarShape(), new ShieldShape(),
+                     new ScribbleShape()])
         {
             Shapes.Register(shape);
         }
@@ -95,6 +96,7 @@ internal sealed class LibraryRegistrations : ILibraryRegistrations
             "two lines of paragraphs, a grid of the lines between (a row a line), a closing line of paragraph, stacked down the page"));
         ShapeProfiles.Register(new ShapeProfile("framed", "box,holds=paragraphs,flow=down,pad=0.6", "a box around every line of the text, set as wrapped paragraphs"));
         ShapeProfiles.Register(new ShapeProfile("circled", "circle,holds=paragraphs,flow=down,pad=0.3", "a ring with the text written inside it, its lines shortened to the ring"));
+        Ornaments.Register();
     }
 
     private static void RegisterImageCodecs()

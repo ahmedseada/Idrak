@@ -186,7 +186,7 @@ internal abstract partial class Tests
         Check(!plainLetter.Blocks.Any(b => b.Kind is "rule" or "emblem" or "stamp"), $"no rule, emblem or stamp when their chances are 0 ({plainLetter.Description})");
         var all = new PageStyle { Fonts = [SubsetFace()], Rule = 1, Emblem = 1, Stamp = 1 };
         var ornate = letter.Render(ArabicLetter, all, 3);
-        Check(new[] { "rule", "emblem", "stamp" }.All(k => ornate.Blocks.Any(b => b.Kind == k)), $"each when its chance is 1 ({ornate.Description})");
+        Check(new[] { "rule", "emblem", "stamp", "scribble" }.All(k => ornate.Blocks.Any(b => b.Kind == k)), $"each when its chance is 1, a signature drawn over the name ({ornate.Description})");
 
         var longBody = ArabicLetter with { Body = [.. Enumerable.Repeat(ArabicLetter.Body[0], 30)] };
         foreach (string name in new[] { "letter", "plain" })

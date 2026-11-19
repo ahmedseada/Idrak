@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing;
 /// <item>its regions are inside the box asked for (below its top and within its width when the box may grow down);</item>
 /// <item>no two regions overlap;</item>
 /// <item>widths given (<c>widths=</c>) are honoured: a wider share gives a wider region of the group, the first in reading order at the start side;</item>
-/// <item>its paths stay inside the box, give or take half their stroke (and below it when the box may grow down);</item>
+/// <item>its paths stay inside the box, give or take half their stroke (and below it when the box may grow down), and so do its texts (<see cref="ShapeText.Bounds"/>: where their ink may be);</item>
 /// <item>its keys take neither a common option's name nor a registered shape's, and an option it does not take is refused.</item>
 /// </list>
 /// </summary>
@@ -153,6 +153,15 @@ public sealed class ShapeSuite(IReadOnlyList<ShapeStep> steps) : ContractSuite<I
             if (stray is null && (x0 < context.X - 0.5f || y0 < context.Y - 0.5f || x1 > context.Right + 0.5f || y1 > bottom + 0.5f))
             {
                 stray = string.Create(CultureInfo.InvariantCulture, $"an area {x0:F1},{y0:F1} to {x1:F1},{y1:F1} outside the box");
+            }
+        }
+
+        foreach (var text in plan.Texts)
+        {
+            var (x0, y0, x1, y1) = text.Bounds();
+            if (stray is null && (x0 < context.X - 0.5f || y0 < context.Y - 0.5f || x1 > context.Right + 0.5f || y1 > bottom + 0.5f || !float.IsFinite(x0 + y0 + x1 + y1)))
+            {
+                stray = string.Create(CultureInfo.InvariantCulture, $"a text's ink may reach {x0:F1},{y0:F1} to {x1:F1},{y1:F1}, outside the box");
             }
         }
 

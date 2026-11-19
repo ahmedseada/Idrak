@@ -67,3 +67,37 @@ fonts) come after TrueType outlines.
   the Bitstream Vera / DejaVu license allows it), HarfBuzz reference shapings and FreeType reference masks made by
   `tools/fonts/make_font_references.py` (reruns give the same bytes).
 - Every phase's group in the test program ("fonts:", "shaping:", "pages:", "scans:", "synthetic data:").
+
+## Emblems, stamps and signatures from shapes and pens, 2026-11-18
+
+As built (owner: "the library has IShape now so it can generate any kind of shape, remove that fixed emblem"). The
+letter's fixed rings are gone: its emblem, stamp and signature are shape profiles (`ShapeProfiles`) drawn through the
+shape pipeline by a pen, every choice from a seed of its own (`Mix` parts 11, 12, 13), so a page without them is drawn
+byte for byte as before (checked against the build before the change: 58 letter pages without an emblem, a stamp or a
+signature, English and Arabic, signature blocks drawn at signature=0, and 16 plain and shapes pages: the same PNG bytes
+and descriptions).
+
+- Shapes: `ShapePlan.Texts` (`ShapeText`: a text set along a path, upright to its left, centred, smaller to fit its
+  length and to keep its ink within its size of the path; one of its words the page's fonts draw, those read in the
+  page's direction first, or the page's own text, or its initials; ornament, never the page's text). New registered
+  shapes: `ring-text` (a text round a ring's top or bottom), `lettering` (a line of text across its box), `star`,
+  `shield` and `scribble` (a running stroke of letter-like loops, ascenders, descenders, a flourish, at times a cross
+  stroke: never text). The shape suite checks a plan's texts inside its box too; the "shapes" layout draws a plan's
+  texts in its body's font.
+- Profiles (`Ornaments`, generic designs): emblems `emblem-rings` (the old two rings), `emblem-seal` (the page's name
+  round the top, its initials inside), `emblem-star`, `emblem-shield`, `emblem-badge` (a hatched shield),
+  `emblem-monogram`, `emblem-box`; stamps `stamp-ring`, `stamp-seal`, `stamp-rectangle`, `stamp-oval`, `stamp-double`
+  (generic office words in two directions: RECEIVED, APPROVED, COPY, ... and their Arabic counterparts, or the page's
+  name); signature `scribble`. `ShapeProfiles.Choices` reads several between '|'.
+- The letter: the emblem in the header's ink; the stamp turned (stamp-turn, -12..12 degrees), drawn in a canvas of its
+  own and laid on with uneven ink (stamp-ink, 0.2..0.65: smooth noise of two scales), blue on a colour page or black
+  at stamp-black (0.2); the signature drawn over the signature block's name by signature-pen (ballpoint, with the
+  page's pen keys), blue at blue-signature, the name then black (signature=0 keeps the old blue name). Blocks
+  "emblem", "stamp" and "scribble"; the description names each profile and pen. Options emblem-shapes, stamp-shapes,
+  signature-shapes (again for more), emblem-pen, stamp-pen, signature-pen, stamp-turn, stamp-ink, stamp-black,
+  signature, in `PageStyle.Options`, read and checked by `SyntheticPages.Style` and in `idrak data synth --page`'s help.
+- Tests: "shapes:" (the new shapes' suites; every ornament profile inside its box on 12 seeds, each step through the
+  suite; what a text says; each emblem and stamp on a letter, its ink only inside its block, the text unchanged; the
+  signature's pen, colour and block; the settings leave a page without ornaments as it was; refusals), "pages:" and
+  "synthetic data:" (the settings read, listed again, refused). `DocumentShapes` (PDF) writes a plan's paths and areas;
+  its texts are not written there yet.

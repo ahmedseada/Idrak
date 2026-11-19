@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
 using Idrak.Abstraction.Testing;
+using Idrak.Imaging;
 
 // Shapes drawn by a pen and the page's text set in the regions they make: the "shapes" page layout and its contracts
 // (shapes, shape profiles, pens, text bindings), each checked by its suite on every built-in.
@@ -15,7 +16,9 @@ internal abstract partial class Tests
         ("shapes: a grid page left to right and right to left: the rows and columns asked for, the first column on the start side, a line a row in the text, every region's text ink inside its region", ShapeGridPage),
         ("shapes: blanked regions draw nothing and are absent from the text, which is the lines less the blanked units; take=1:rest keeps a run of words in one region; blank-at picks the regions that may be blank; a text that would be set smaller than least-size is left out", ShapeBlanks),
         ("shapes: the same seed draws the same bytes; a grid draws each line once; profiles by name and as text (ranges, chances, in=last), pipelines as text and JSON; unknown shapes, options and bad values are refused; an app's pen replaces the library's of its name only", ShapeProfilesAndPipelines),
-        ("shapes: letter and plain draw the same bytes with no options and with the shapes layout's options", ShapeOptionsLeaveLetters),
+        ("shapes: letter and plain draw the same bytes with no options and with the shapes layout's options; the pens' keys move only a letter's pen-drawn signature", ShapeOptionsLeaveLetters),
+        ("shapes: every emblem, stamp and signature profile the library registers draws inside its box (paths, areas and texts) on many seeds, each of its steps passing the shape suite; a text says one of its words the page's fonts draw (those in the page's direction first), the page's own text or its initials when it has none, nothing when none can be drawn", OrnamentProfiles),
+        ("shapes: a letter draws each emblem and stamp profile asked for, named in its description, its ink only inside its block, the text unchanged; the signature is drawn by the pen asked over the name, blue or black, only inside its block; the same seed the same page; their settings leave a page without them byte for byte as it was, and bad ones are refused naming them", LetterOrnamentPages),
     ];
 
     internal static readonly PageContent LatinRows = new()
@@ -56,6 +59,18 @@ internal abstract partial class Tests
             ["arrow"] = [ShapeStepOf("arrow", null), ShapeStepOf("arrow", null, ("head-style", "filled"), ("from", "1:1"), ("to", "0:0")), ShapeStepOf("arrow", null, ("head-style", "closed"))],
             ["fill"] = [ShapeStepOf("fill", null)],
             ["hatch"] = [ShapeStepOf("hatch", null), ShapeStepOf("hatch", null, ("angle", "-30"), ("spacing", "3"))],
+            ["ring-text"] =
+            [
+                ShapeStepOf("ring-text", null), ShapeStepOf("ring-text", null, ("side", "bottom"), ("words", "ONE:TWO"), ("font-size", "0.3")),
+                ShapeStepOf("ring-text", null, ("radius", "0.6"), ("span", "250"), ("initials", "on")),
+            ],
+            ["lettering"] = [ShapeStepOf("lettering", null), ShapeStepOf("lettering", null, ("words", "COPY"), ("font-size", "0.9")), ShapeStepOf("lettering", null, ("initials", "on"))],
+            ["star"] = [ShapeStepOf("star", null), ShapeStepOf("star", "8", ("inner", "0.7"))],
+            ["shield"] = [ShapeStepOf("shield", null), ShapeStepOf("shield", null, ("shoulder", "0.3"))],
+            ["scribble"] =
+            [
+                ShapeStepOf("scribble", null), ShapeStepOf("scribble", null, ("letters", "12"), ("slant", "-20"), ("flourish", "under")), ShapeStepOf("scribble", null, ("flourish", "loop")),
+            ],
         };
         Check(steps.Keys.All(Shapes.Names.Contains), $"the built-in shapes: {string.Join(", ", Shapes.Names)}");
         foreach (var (name, given) in steps)
@@ -292,7 +307,7 @@ internal abstract partial class Tests
     internal static void ShapeOptionsLeaveLetters(Device device)
     {
         _ = device;
-        var options = PageOptionsOf(("shapes", "grid"), ("pen", "ballpoint"), ("bind", "sequence"), ("blank", "0.5"), ("blue-pen", "1"), ("cell-align", "end"), ("pen-wobble", "3"));
+        var options = PageOptionsOf(("shapes", "grid"), ("pen", "ballpoint"), ("bind", "sequence"), ("blank", "0.5"), ("blue-pen", "1"), ("cell-align", "end"));
         foreach (string name in new[] { "letter", "plain" })
         {
             foreach (var content in new[] { ArabicLetter, EnglishLetter })
@@ -310,5 +325,200 @@ internal abstract partial class Tests
                 }
             }
         }
+
+        // The pens' keys are the page's: a letter's signature pen (a ballpoint) reads them, and nothing else moves.
+        foreach (var content in new[] { ArabicLetter, EnglishLetter })
+        {
+            var style = TestPageStyle() with { Emblem = 0, Stamp = 0 };
+            var plain = PageLayouts.Get("letter").Render(content, style, 2);
+            var wobbly = PageLayouts.Get("letter").Render(content, style with { Options = PageOptionsOf(("pen-wobble", "3")) }, 2);
+            var signature = plain.Blocks.Concat(wobbly.Blocks).Where(b => b.Kind == "scribble").ToList();
+            int outside = DifferingPixels(plain, wobbly).Count(p => !signature.Any(b => Within(p, b, 1)));
+            Check(signature.Count == 2 && outside == 0 && !SamePage(plain, wobbly) && plain.Text == wobbly.Text,
+                $"pen-wobble moves the pen-drawn signature only ({outside} pixels changed away from it)");
+        }
+    }
+
+    // Whether a pixel is inside a block, give or take `pad` pixels.
+    internal static bool Within((int X, int Y) p, PageBlock b, float pad) => p.X + 0.5f >= b.X - pad && p.X + 0.5f <= b.X + b.Width + pad && p.Y + 0.5f >= b.Y - pad && p.Y + 0.5f <= b.Y + b.Height + pad;
+
+    internal static void OrnamentProfiles(Device device)
+    {
+        _ = device;
+        string[] names = [.. Ornaments.Emblems.Split('|'), .. Ornaments.Stamps.Split('|'), Ornaments.Signature];
+        Check(names.Length == 13 && names.All(ShapeProfiles.Names.Contains), $"the ornaments registered: {string.Join(", ", ShapeProfiles.Names)}");
+        foreach (string name in names)
+        {
+            var profile = ShapeProfiles.Get(name);
+            var steps = new Dictionary<string, List<ShapeStep>>();
+            string? stray = null;
+            int texts = 0;
+            for (int seed = 0; seed < 12; seed++)
+            {
+                var box = new ShapeContext { X = 40, Y = 30, Width = 200, Height = 200, StrokeWidth = 4, RightToLeft = seed % 2 == 1, Seed = seed };
+                var (drawn, _) = ShapesLayout.Plan(profile.Sample(seed), box, seed);
+                foreach (var (step, plan) in drawn)
+                {
+                    (steps.TryGetValue(step.Name, out var list) ? list : steps[step.Name] = []).Add(step);
+                    foreach (var path in plan.Paths)
+                    {
+                        var (x0, y0, x1, y1) = path.Bounds();
+                        float reach = path.Width * box.StrokeWidth / 2 + 0.5f;
+                        stray ??= x0 < box.X - reach || y0 < box.Y - reach || x1 > box.Right + reach || y1 > box.Bottom + reach ? $"seed {seed}: {step} draws {x0:F1},{y0:F1} to {x1:F1},{y1:F1}" : null;
+                    }
+
+                    foreach (var area in plan.Areas)
+                    {
+                        var (x0, y0, x1, y1) = area.Bounds();
+                        stray ??= x0 < box.X - 0.5f || y0 < box.Y - 0.5f || x1 > box.Right + 0.5f || y1 > box.Bottom + 0.5f ? $"seed {seed}: {step} fills {x0:F1},{y0:F1} to {x1:F1},{y1:F1}" : null;
+                    }
+
+                    foreach (var text in plan.Texts)
+                    {
+                        var (x0, y0, x1, y1) = text.Bounds();
+                        texts++;
+                        stray ??= x0 < box.X - 0.5f || y0 < box.Y - 0.5f || x1 > box.Right + 0.5f || y1 > box.Bottom + 0.5f ? $"seed {seed}: {step}'s text may reach {x0:F1},{y0:F1} to {x1:F1},{y1:F1}" : null;
+                    }
+                }
+            }
+
+            Check(stray is null && steps.Count > 0, $"{name}: inside its box ({stray})");
+            Check(name.StartsWith("emblem-rings", StringComparison.Ordinal) || name.StartsWith("emblem-star", StringComparison.Ordinal) || name == "scribble" || texts > 0, $"{name}: says something ({texts} texts)");
+            // The suite places each step itself (its random cases add at and size), so it gets them without the profile's own.
+            foreach (var (shape, given) in steps)
+            {
+                var unplaced = given.Select(s => new ShapeStep(s.Name, s.Value, s.Options.Where(o => o.Key is not ("at" or "size")))).Distinct().Take(6).ToList();
+                Conformance.CheckShape(shape, steps: unplaced).ThrowIfFailed();
+            }
+        }
+
+        // What a text says on a page.
+        var face = SubsetFace();
+        var latin = new ShapeLettering(new TextStyle(face, 20), "Northwind Trading Company", RightToLeft: false);
+        var arabic = latin with { PageText = "شركة النور للتقنية", RightToLeft = true };
+        float[] line = [0, 0, 100, 0];
+        Check(ShapeDrawing.Say(new ShapeText(line, 10), latin) == "Northwind Trading Company" && ShapeDrawing.Say(new ShapeText(line, 10, initials: true), latin) == "NTC",
+            "no words: the page's own text, or its initials in capitals");
+        Check(ShapeDrawing.Say(new ShapeText(line, 10, initials: true), arabic) == "ش ا ل", $"right-to-left initials stand apart: {ShapeDrawing.Say(new ShapeText(line, 10, initials: true), arabic)}");
+        string[] words = ["COPY", "نسخة", "DRAFT", "مسودة"];
+        Check(Enumerable.Range(0, 4).All(pick => ShapeDrawing.Say(new ShapeText(line, 10, words, pick), latin) is "COPY" or "DRAFT")
+              && Enumerable.Range(0, 4).All(pick => ShapeDrawing.Say(new ShapeText(line, 10, words, pick), arabic) is "نسخة" or "مسودة")
+              && ShapeDrawing.Say(new ShapeText(line, 10, words, 1), latin) == "DRAFT", "words read in the page's direction first, the pick counted round");
+        Check(ShapeDrawing.Say(new ShapeText(line, 10, ["漢字", "COPY"], 0), arabic) == "COPY" && ShapeDrawing.Say(new ShapeText(line, 10, ["漢字"]), latin) is null
+              && ShapeDrawing.Say(new ShapeText(line, 10), latin with { PageText = null }) is null, "a word the fonts cannot draw is not said; with nothing to say, nothing is drawn");
+        Throws<ArgumentException>(() => new ShapeText([0, 0, 1], 10), "an odd path");
+        Throws<ArgumentException>(() => new ShapeText(line, 0), "a size of 0");
+        Throws<ArgumentException>(() => new ShapeText(line, 10, [" "]), "an empty word");
+    }
+
+    internal static void LetterOrnamentPages(Device device)
+    {
+        _ = device;
+        var letter = PageLayouts.Get("letter");
+        string[] emblems = Ornaments.Emblems.Split('|'), stamps = Ornaments.Stamps.Split('|');
+        foreach (var content in new[] { ArabicLetter, EnglishLetter })
+        {
+            var style = TestPageStyle() with { Emblem = 1, Stamp = 1 };
+            for (int i = 0; i < emblems.Length; i++)
+            {
+                int seed = 3 + i;
+                string emblem = emblems[i], stamp = stamps[i % stamps.Length];
+                var page = letter.Render(content, style with { Options = PageOptionsOf(("emblem-shapes", emblem), ("stamp-shapes", stamp)) }, seed);
+                string where = $"{content.Language}, {emblem}, {stamp}, seed {seed}";
+                Check(page.Text == content.ReadingOrder() && page.Description.Contains($", emblem {emblem},", StringComparison.Ordinal)
+                      && page.Description.Contains($", stamp {stamp}", StringComparison.Ordinal) && page.Description.Contains(", signed scribble with ballpoint", StringComparison.Ordinal),
+                    $"{where}: the text unchanged, the ornaments named ({page.Description})");
+                Check(new[] { "emblem", "stamp", "scribble" }.All(k => page.Blocks.Count(b => b.Kind == k && b.Text.Length == 0 && b.Width > 0 && b.Height > 0
+                    && b.X >= 0 && b.Y >= 0 && b.X + b.Width <= page.Image.Width && b.Y + b.Height <= page.Image.Height) == 1), $"{where}: a block each, inside the page");
+                Check(SamePage(page, letter.Render(content, style with { Options = PageOptionsOf(("emblem-shapes", emblem), ("stamp-shapes", stamp)) }, seed)),
+                    $"{where}: the same seed, the same page");
+
+                // Another emblem and stamp on the same seed: the pages differ inside the two ornaments' blocks and nowhere else.
+                string otherEmblem = emblems[(i + 1) % emblems.Length], otherStamp = stamps[(i + 1) % stamps.Length];
+                var other = letter.Render(content, style with { Options = PageOptionsOf(("emblem-shapes", otherEmblem), ("stamp-shapes", otherStamp)) }, seed);
+                var ornaments = page.Blocks.Concat(other.Blocks).Where(b => b.Kind is "emblem" or "stamp").ToList();
+                var changed = DifferingPixels(page, other).ToList();
+                int outside = changed.Count(p => !ornaments.Any(b => Within(p, b, 1)));
+                Check(outside == 0 && changed.Count > 0 && page.Blocks.Where(b => b.Text.Length > 0).SequenceEqual(other.Blocks.Where(b => b.Text.Length > 0)),
+                    $"{where}: against {otherEmblem} and {otherStamp}, {changed.Count} pixels changed, {outside} of them away from the ornaments; the text's parts where they were");
+            }
+        }
+
+        // The signature: drawn by the pen asked, only inside its block; blue at blue-signature 1, the name black.
+        var plainStyle = TestPageStyle() with { Emblem = 0, Stamp = 0 };
+        var ballpoint = letter.Render(EnglishLetter, plainStyle with { BlueSignature = 1 }, 5);
+        var ideal = letter.Render(EnglishLetter, plainStyle with { BlueSignature = 1, Options = PageOptionsOf(("signature-pen", "ideal")) }, 5);
+        var scribbles = ballpoint.Blocks.Concat(ideal.Blocks).Where(b => b.Kind == "scribble").ToList();
+        int away = DifferingPixels(ballpoint, ideal).Count(p => !scribbles.Any(b => Within(p, b, 1)));
+        Check(scribbles.Count == 2 && away == 0 && !SamePage(ballpoint, ideal) && ideal.Description.Contains(", signed scribble with ideal", StringComparison.Ordinal)
+              && ballpoint.Text == EnglishLetter.ReadingOrder(), $"the signature drawn by the pen asked, {away} pixels changed away from it ({ideal.Description})");
+        static (int R, int B) DarkestInk(RenderedPage page, PageBlock block)
+        {
+            var planes = Planes(page.Image);
+            int width = page.Image.Width, best = int.MaxValue, r = 0, b = 0;
+            for (int y = (int)block.Y; y < (int)(block.Y + block.Height); y++)
+            {
+                for (int x = (int)block.X; x < (int)(block.X + block.Width); x++)
+                {
+                    int i = y * width + x, sum = planes[0][i] + planes[1][i] + planes[2][i];
+                    (best, r, b) = sum < best ? (sum, planes[0][i], planes[2][i]) : (best, r, b);
+                }
+            }
+
+            return (r, b);
+        }
+
+        // The signature's part above the name (the two may touch), and the name's block.
+        static PageBlock Above(RenderedPage page)
+        {
+            var (signature, nameBlock) = (page.Blocks.Single(b => b.Kind == "scribble"), page.Blocks.Single(b => b.Kind == "signature"));
+            return signature with { Height = Math.Max(1, nameBlock.Y - signature.Y) };
+        }
+
+        var blueInk = DarkestInk(ballpoint, Above(ballpoint));
+        var name = DarkestInk(ballpoint, ballpoint.Blocks.Single(b => b.Kind == "signature"));
+        var black = letter.Render(EnglishLetter, plainStyle with { BlueSignature = 0 }, 5);
+        var blackInk = DarkestInk(black, Above(black));
+        Check(blueInk.B - blueInk.R > 40 && Math.Abs(name.B - name.R) < 30 && Math.Abs(blackInk.B - blackInk.R) < 30 && ballpoint.Description.Contains(", blue signature", StringComparison.Ordinal),
+            $"a blue signature over a black name (signature {blueInk}, name {name}), a black one at blue-signature 0 ({blackInk})");
+
+        var unsigned = letter.Render(EnglishLetter, plainStyle with { Options = PageOptionsOf(("signature", "0")) }, 5);
+        var signedName = black.Blocks.Single(b => b.Kind == "signature");
+        var bareName = unsigned.Blocks.Single(b => b.Kind == "signature");
+        Check(!unsigned.Blocks.Any(b => b.Kind == "scribble") && !unsigned.Description.Contains("signed", StringComparison.Ordinal) && bareName.Y < signedName.Y && unsigned.Text == black.Text,
+            $"signature=0: no signature drawn, the name where the signature would stand ({bareName.Y:F0} above {signedName.Y:F0})");
+
+        // Their settings leave a page without them as it was: no emblem, stamp or signature drawn, the same bytes.
+        var bare = plainStyle with { Options = PageOptionsOf(("signature", "0")) };
+        var given = plainStyle with
+        {
+            Options = PageOptionsOf(("signature", "0"), ("emblem-shapes", "emblem-star"), ("stamp-shapes", "stamp-oval|stamp-ring"), ("stamp-turn", "30"), ("stamp-ink", "1"),
+                ("stamp-black", "1"), ("signature-pen", "ideal"), ("emblem-pen", "ballpoint"), ("stamp-pen", "ballpoint"), ("signature-shapes", "scribble,letters=3")),
+        };
+        foreach (var content in new[] { ArabicLetter, EnglishLetter, Newsletter })
+        {
+            for (int seed = 1; seed <= 3; seed++)
+            {
+                var a = letter.Render(content, bare, seed);
+                var b = letter.Render(content, given, seed);
+                Check(SamePage(a, b) && a.Description == b.Description, $"{content.Language}, seed {seed}: the ornaments' settings leave a page without them as it was");
+            }
+
+            // A page with no signature block draws none, whatever the chance: the same bytes as at chance 0.
+            if (content.Signature.Count == 0)
+            {
+                Check(SamePage(letter.Render(content, plainStyle, 4), letter.Render(content, bare, 4)), "no signature block: nothing signed, the page as at signature=0");
+            }
+        }
+
+        // Bad settings, refused naming them.
+        foreach (var (key, value) in new[] { ("stamp-turn", "abc"), ("stamp-turn", "200"), ("stamp-ink", "2"), ("stamp-black", "1.5"), ("signature", "-1") })
+        {
+            ThrowsNaming<ArgumentException>(() => letter.Render(EnglishLetter, TestPageStyle() with { Options = PageOptionsOf((key, value)) }, 1), $"{key}={value}", key);
+        }
+
+        Throws<ArgumentException>(() => letter.Render(EnglishLetter, TestPageStyle() with { Options = PageOptionsOf(("emblem-shapes", "emblem-star||emblem-box")) }, 1), "an empty profile between |");
+        Throws<NotSupportedException>(() => letter.Render(EnglishLetter, TestPageStyle() with { Options = PageOptionsOf(("stamp-shapes", "nope")) }, 1), "an unknown stamp profile");
+        Throws<NotSupportedException>(() => letter.Render(EnglishLetter, TestPageStyle() with { Options = PageOptionsOf(("signature-pen", "nope")) }, 1), "an unknown pen");
     }
 }

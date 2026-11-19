@@ -236,8 +236,11 @@ public sealed class ShapeProfile : IShapeProfile
 /// <summary>
 /// The shape profiles, by name. Built in (Idrak.Imaging): "none" (no shapes), "grid" (a grid fitted to the text: a row a
 /// line, a column a unit), "ruled" (a line under every text line: a region a line) and "boxed" (a box around the text: a
-/// region a line). Register another, or one of those names over the library's, with <see cref="Register"/>; or write one
-/// as text (<see cref="ShapeProfile"/>, through <see cref="Resolve"/>).
+/// region a line), and the letter's ornaments: the emblems "emblem-rings", "emblem-seal", "emblem-star",
+/// "emblem-shield", "emblem-badge", "emblem-monogram" and "emblem-box", the stamps "stamp-ring", "stamp-seal",
+/// "stamp-rectangle", "stamp-oval" and "stamp-double", and the signature "scribble". Register another, or one of those
+/// names over the library's, with <see cref="Register"/>; or write one as text (<see cref="ShapeProfile"/>, through
+/// <see cref="Resolve"/>); <see cref="Choices"/> reads several, one drawn per page.
 /// </summary>
 public static class ShapeProfiles
 {
@@ -301,6 +304,30 @@ public static class ShapeProfiles
         }
 
         return Written.GetOrAdd(text, parsed);
+    }
+
+    /// <summary>
+    /// The profiles <paramref name="list"/> names or writes, separated by '|' (each as <see cref="Resolve"/> takes it), in
+    /// order: a page draws one of them, so a name given twice is drawn twice as often.
+    /// </summary>
+    /// <exception cref="ArgumentException">An empty list or item, or a profile written as text that does not parse.</exception>
+    /// <exception cref="NotSupportedException">A name that is not registered.</exception>
+    public static IReadOnlyList<IShapeProfile> Choices(string list)
+    {
+        ArgumentNullException.ThrowIfNull(list);
+        var items = list.Split('|', StringSplitOptions.TrimEntries);
+        if (items.Any(i => i.Length == 0))
+        {
+            throw new ArgumentException($"Shape profiles are names or profiles written as text between '|', none empty, not '{list}'.", nameof(list));
+        }
+
+        var profiles = new IShapeProfile[items.Length];
+        for (int i = 0; i < items.Length; i++)
+        {
+            profiles[i] = Resolve(items[i]);
+        }
+
+        return profiles;
     }
 
     /// <summary>The library's profile of that name, or null.</summary>

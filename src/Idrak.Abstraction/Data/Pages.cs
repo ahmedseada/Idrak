@@ -84,13 +84,19 @@ public sealed record PageStyle
     /// <summary>How often a letter has a rule under its header (0 to 1).</summary>
     public float Rule { get; init; } = 0.7f;
 
-    /// <summary>How often a letter with no centre header lines has an emblem's ring there (0 to 1).</summary>
+    /// <summary>
+    /// How often a letter with no centre header lines has an emblem there (0 to 1): one of the shape profiles its
+    /// <c>emblem-shapes</c> option names (<see cref="Options"/>; the library's emblems by default).
+    /// </summary>
     public float Emblem { get; init; } = 0.5f;
 
-    /// <summary>How often a letter with a signature has a stamp's ring over it (0 to 1).</summary>
+    /// <summary>
+    /// How often a letter with a signature has a stamp over it (0 to 1): one of the shape profiles its <c>stamp-shapes</c>
+    /// option names (<see cref="Options"/>; the library's stamps by default), slightly turned, its ink uneven.
+    /// </summary>
     public float Stamp { get; init; } = 0.3f;
 
-    /// <summary>How often a colour letter's signature is in blue ink (0 to 1).</summary>
+    /// <summary>How often a colour letter's signature (the pen-drawn one over the name, or the name itself when none is drawn) is in blue ink (0 to 1).</summary>
     public float BlueSignature { get; init; } = 0.4f;
 
     /// <summary>The ink's darkness range (0 paper, 1 black).</summary>
@@ -112,8 +118,14 @@ public sealed record PageStyle
     /// <summary>
     /// Settings a layout reads by key (keys ignore case), values as text: the "shapes" layout's <c>shapes</c> (a shape
     /// profile's name or text), <c>pen</c>, <c>bind</c>, <c>blue-pen</c>, <c>cell-align</c>, <c>stroke</c>, <c>least-size</c> and the chosen
-    /// pen's and text binding's own keys; every built-in layout's <c>pose</c> (a glyph pose, <see cref="GlyphPoses"/>; none by
-    /// default) and that pose's own keys. A layout reads its own keys and leaves the others; none by default.
+    /// pen's and text binding's own keys; the "letter" layout's <c>emblem-shapes</c>, <c>stamp-shapes</c> and
+    /// <c>signature-shapes</c> (shape profiles between '|', one drawn per page, <see cref="ShapeProfiles.Choices"/>),
+    /// <c>emblem-pen</c>, <c>stamp-pen</c> (ideal) and <c>signature-pen</c> (ballpoint) with the pens' own keys,
+    /// <c>stamp-turn</c> (degrees, a range; -12..12), <c>stamp-ink</c> (how uneven a stamp's ink is, 0 to 1, a range;
+    /// 0.2..0.65), <c>stamp-black</c> (the chance a colour page's stamp is black; 0.2) and <c>signature</c> (the chance a
+    /// signature is drawn over the signature block's name; 1); every built-in layout's <c>pose</c> (a glyph pose,
+    /// <see cref="GlyphPoses"/>; none by default) and that pose's own keys. A layout reads its own keys and leaves the
+    /// others; none by default.
     /// </summary>
     public IReadOnlyDictionary<string, string> Options { get; init; } = PageOptions.None;
 
@@ -144,7 +156,7 @@ public enum PageLabel
 }
 
 /// <summary>A drawn part of a page: what it is, its text and its box (pixels).</summary>
-/// <param name="Kind">"header", "title", "subject", "body", "signature", "footer", "stamp" or "rule"; "shape" (a drawn shape's box) or "region" (a region a shape made, with its text).</param>
+/// <param name="Kind">"header", "title", "subject", "body", "signature", "footer", "emblem", "stamp", "scribble" (a pen-drawn signature, not text) or "rule"; "shape" (a drawn shape's box) or "region" (a region a shape made, with its text).</param>
 /// <param name="Text">Its text in reading order (empty for a drawing).</param>
 /// <param name="X">Its left edge.</param>
 /// <param name="Y">Its top edge.</param>
@@ -173,8 +185,8 @@ public interface IPageLayout
 }
 
 /// <summary>
-/// The page layouts, by name. Built in (Idrak.Imaging): "letter" (an official letter: a header of three places, a rule,
-/// subject, body, signature block, an optional stamp, footer), "plain" (header lines, title, body, footer, no ornament)
+/// The page layouts, by name. Built in (Idrak.Imaging): "letter" (an official letter: a header of three places with an
+/// optional emblem, a rule, subject, body, a signature block with a pen-drawn signature, an optional stamp, footer), "plain" (header lines, title, body, footer, no ornament)
 /// and "shapes" (shapes drawn by a pen, <see cref="Shapes"/> and <see cref="Pens"/>, the body's lines set in the regions
 /// they make, <see cref="TextBindings"/>; it reads <see cref="PageStyle.Options"/>). Register another with
 /// <see cref="Register"/>.

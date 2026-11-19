@@ -64,10 +64,10 @@ internal sealed class DataSynthCommand : Command
                                   no shapes, grid: a grid fitted to the text, ruled: a line under each line, boxed: a
                                   box around the text) or one written as text, steps NAME[=VALUE][@CHANCE] with their
                                   options, "grid=auto x 18,widths=1:4:1*16,heavy-every=4,heavy-width=2..3" (shapes:
-                                  line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text;
-                                  any takes flow=down to stack down the page, lines=N|rest, holds=paragraphs,
-                                  valign=center|top|bottom|SHARE (where paragraphs sit); also text-grid-text, framed,
-                                  circled; none)
+                                  line, polyline, polygon, box, grid, circle, ellipse, arc, arrow, fill, hatch, text,
+                                  ring-text, lettering, star, shield, scribble; any takes flow=down to stack down the
+                                  page, lines=N|rest, holds=paragraphs, valign=center|top|bottom|SHARE (where
+                                  paragraphs sit); also text-grid-text, framed, circled; none)
               --grey P            the share of pages in grey (0.3)
               --page SETTINGS     page settings, KEY=VALUE,...: width, height, size, spacing, margin, ink, justify,
                                   color, rule, emblem, stamp, blue-signature, header-font, crop (a chance
@@ -78,6 +78,14 @@ internal sealed class DataSynthCommand : Command
                                   3..18), blue-pen (a chance), cell-align (start, center, end, mixed), stroke (a share
                                   of the text size), least-size (the smallest a region's text is set, a share of size),
                                   sections (blank: empty lines split the text into sections, one a step);
+                                  for the letter layout: emblem-shapes, stamp-shapes and signature-shapes (shape
+                                  profiles between |, one drawn per page, again for more; emblems: emblem-rings,
+                                  emblem-seal, emblem-star, emblem-shield, emblem-badge, emblem-monogram, emblem-box;
+                                  stamps: stamp-ring, stamp-seal, stamp-rectangle, stamp-oval, stamp-double;
+                                  signature: scribble), emblem-pen and stamp-pen (ideal), signature-pen (ballpoint),
+                                  stamp-turn (degrees, -12..12), stamp-ink (how uneven, 0.2..0.65), stamp-black (the
+                                  chance a stamp is black; 0.2), signature (the chance a signature is drawn over the
+                                  signature block's name; 1);
                                   for every layout: pose (none, drift: each glyph drawn a little differently),
                                   pose-slant, pose-size, pose-baseline, pose-rotate, pose-pressure (ranges); habits
                                   (none, the default; a habits name such as arabic-handwriting, or a rules file: the
@@ -100,6 +108,8 @@ internal sealed class DataSynthCommand : Command
           idrak synth letters.txt -o pages.jsonl --fonts fonts --answer-key full_text --scan old --scan office
           idrak data synth train.jsonl -o trial.jsonl --fonts fonts --limit 5 --page "size=20..28,stamp=0.5" --zip
           idrak data synth rows.txt -o rows.jsonl --fonts fonts --layout shapes --shapes grid --page pen=ballpoint
+          idrak data synth letters.txt -o letters.jsonl --fonts fonts --parts parts.json --layout letter
+            --page "emblem=1,stamp=0.6,stamp-shapes=stamp-seal|stamp-oval"
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =

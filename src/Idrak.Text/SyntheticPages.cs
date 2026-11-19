@@ -356,10 +356,19 @@ public static class SyntheticPages
     public static IReadOnlyList<string> StyleKeys { get; } =
         ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
          "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections",
+         "emblem-shapes", "emblem-pen", "stamp-shapes", "stamp-pen", "stamp-turn", "stamp-ink", "stamp-black", "signature", "signature-shapes", "signature-pen",
          "habits", "habit-chance", "habit.NAME", "label"];
 
     // The keys of StyleKeys that go into the style's options for the layouts that read them.
-    private static readonly string[] OptionStyleKeys = ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections"];
+    private static readonly string[] OptionStyleKeys =
+        ["pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections",
+         "emblem-shapes", "emblem-pen", "stamp-shapes", "stamp-pen", "stamp-turn", "stamp-ink", "stamp-black", "signature", "signature-shapes", "signature-pen"];
+
+    // The letter's settings that name shape profiles: given again in one settings text, each adds to the list ('|').
+    private static readonly string[] ProfileListKeys = ["emblem-shapes", "stamp-shapes", "signature-shapes"];
+
+    // The letter's settings that name a pen.
+    private static readonly string[] LetterPenKeys = ["emblem-pen", "stamp-pen", "signature-pen"];
 
     /// <summary>
     /// The keys of the registered pens (<see cref="Pens"/>), text bindings (<see cref="TextBindings"/>) and glyph poses
@@ -377,7 +386,10 @@ public static class SyntheticPages
     /// settings go into the style's options (<see cref="PageStyle.Options"/>): pen and bind (a registered pen and text
     /// binding), blue-pen (a chance), cell-align (start, center, end or mixed), stroke (the stroke's width, a share of the
     /// text size, a range), least-size (the smallest a region's text is set, a share of the body's size), sections (none, or
-    /// blank: the text's empty lines split it into sections, one a step that takes text; off by default); for every layout,
+    /// blank: the text's empty lines split it into sections, one a step that takes text; off by default); the "letter"
+    /// layout's emblem-shapes, stamp-shapes and signature-shapes (shape profiles between '|', one drawn per page; given
+    /// again, each adds to its list), emblem-pen, stamp-pen and signature-pen (registered pens), stamp-turn (degrees, a
+    /// range), stamp-ink (how uneven a stamp's ink is, 0 to 1, a range), stamp-black and signature (chances); for every layout,
     /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
     /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
     /// checked by the kinds that take it); habits (none, the
@@ -390,6 +402,7 @@ public static class SyntheticPages
     {
         ArgumentNullException.ThrowIfNull(style);
         Dictionary<string, string>? options = null;
+        HashSet<string>? listed = null;
         foreach (var (key, value) in PageOptions.Split(settings))
         {
             string what = $"Page setting {key}";
@@ -397,7 +410,10 @@ public static class SyntheticPages
             if (OptionStyleKeys.Contains(key, StringComparer.Ordinal) || IsKindKey(key))
             {
                 CheckOption(key, value);
-                (options ??= new Dictionary<string, string>(style.Options, StringComparer.OrdinalIgnoreCase))[key] = value;
+                options ??= new Dictionary<string, string>(style.Options, StringComparer.OrdinalIgnoreCase);
+                // A profile list given again adds to the list; any other setting given again replaces it.
+                bool again = ProfileListKeys.Contains(key, StringComparer.Ordinal) && !(listed ??= []).Add(key);
+                options[key] = again ? options[key] + "|" + value : value;
                 continue;
             }
 
@@ -481,6 +497,29 @@ public static class SyntheticPages
             case "pose":
                 _ = GlyphPoses.Find(value) ?? throw new ArgumentException($"{what} is a registered glyph pose ({string.Join(", ", GlyphPoses.Names)}), not '{value}'.");
                 return;
+            case "emblem-shapes" or "stamp-shapes" or "signature-shapes":
+                try
+                {
+                    _ = ShapeProfiles.Choices(value);
+                }
+                catch (NotSupportedException e)
+                {
+                    throw new ArgumentException($"{what} names shape profiles between '|' (registered: {string.Join(", ", ShapeProfiles.Names)}): {e.Message}", e);
+                }
+
+                return;
+            case "emblem-pen" or "stamp-pen" or "signature-pen":
+                _ = Pens.Find(value) ?? throw new ArgumentException($"{what} is a registered pen ({string.Join(", ", Pens.Names)}), not '{value}'.");
+                return;
+            case "stamp-turn":
+                _ = PageOptions.Range(what, value, -180, 180);
+                return;
+            case "stamp-ink":
+                _ = PageOptions.Range(what, value, 0, 1);
+                return;
+            case "stamp-black" or "signature":
+                _ = PageOptions.Chance(what, value);
+                return;
         }
 
         var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
@@ -526,6 +565,11 @@ public static class SyntheticPages
 
         var pen = Pens.Get(options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
         _ = pen.Read(PageOptions.Only(options, pen.Keys));
+        foreach (string key in LetterPenKeys)
+        {
+            var letterPen = Pens.Get(options.TryGetValue(key, out var letterPenName) ? letterPenName : key == "signature-pen" ? "ballpoint" : Pens.Ideal);
+            _ = letterPen.Read(PageOptions.Only(options, letterPen.Keys));
+        }
         var binding = TextBindings.Get(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
         _ = binding.Read(PageOptions.Only(options, binding.Keys));
         var pose = GlyphPoses.Get(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
