@@ -1,0 +1,15 @@
+Quarterly engineering newsletter
+
+This quarter the platform team finished moving the build system to the new cluster. Every project now builds in a clean container, and the average build takes eleven minutes instead of twenty-six. The cache that holds compiled packages was rewritten so that two machines asking for the same package wait for one download instead of starting two. Disk use on the build machines fell by a third, and the nightly jobs now finish before the morning shift begins.
+
+The data team released version two of the reporting service. Reports are generated from a single query plan, so a chart and the table under it can no longer disagree. The service keeps the last thirty days of results, which lets a reader compare this week with last week without running the report again. Several teams asked for exports in more formats; spreadsheet and plain text exports are now available, and a printable layout is planned for next quarter.
+
+On the infrastructure side, the network between the two offices was upgraded. Video calls between the offices drop far less often, and file transfers that used to take an afternoon now take a few minutes. The old routers were donated to a local school, together with a short guide for setting them up.
+
+The support team answered more requests than in any earlier quarter, while the time to a first answer went down from nine hours to four. Most of the improvement came from a shared list of common questions, written by the support staff and reviewed by the engineers who own each product. The list is public, and customers have started to use it before they open a request.
+
+Security work continued in the background. All laptops now encrypt their disks, every service account has an owner, and passwords older than a year were replaced. A short training session on suspicious email was attended by nearly everyone in the company, and the number of reported phishing messages doubled, which the security team counts as a success.
+
+Next quarter the main goals are to reduce the cost of the test environments, to finish the move of the remaining services to the new cluster, and to publish a clear guide for new engineers that explains how a change travels from a laptop to production. The guide will include diagrams, a glossary, and a checklist for the first week. Each team will review the parts that describe its own systems, so that the guide stays correct as those systems change over the coming year.
+
+Looking further ahead, the team plans to

@@ -1110,6 +1110,119 @@ benches decide, not the kernel sums.
   takes 0.56–0.75 ms, against 0.98–1.00 ms after the native kind's separate gate and up products (the profiles'
   `gated_act_f32`; int8 0.74 in both, its group on in both). Its cause was not checked.
 
+### The winner everywhere on Qwen3-1.7B (M8)
+
+Plan 40's M8, on the owner's word ("test with one type of each type family on the winner"; "use the same method as M7
+on the same model"). The winner is the native kind: Adad's GemmMma, `StoredMeasured` lane 2 or `StoredSuper` lane 1. M8
+forces it on every prompt product (the 512-row entries) of one type per family, with every 512-row group launch off, so
+each product runs the native kind on its own. Decode entries stay as they were. The question: does that beat the
+measured choices (the group launches, int8's raw and tensor-row lanes) in the full pass? Measuring only, M7's method:
+copies of M6's tuning folders edited, no code changed. Files: `test-output\adad\m8-winner\`, copied to
+[40-m8-winner-1.7b/](40-m8-winner-1.7b/) (no trace was made).
+
+- **Code and CLI**: the M6 build (`idrak 0.4.1-dev.2611191810`, informational version
+  `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`), checked before the first run. Worktree at `78dd095f`.
+  No other run beside these (the same idle service of another project ran throughout).
+- **The edits** (`m8.sh setup`; each written as `force-{type}.diff`, M6's file against the edited copy): every
+  `ProductRoute 2000 512 …` entry set to 2, or every `3000 512 …` entry to 1, and every `9700 512 …` group to 0.
+  - Each key's candidate-count field is kept. Lane 2 is among each 2000 key's candidates: bf16's five and q4_0's six
+    already hold 2, and int8's seven are every lane 0–6 (`CudaBackend.Typed.cs`). `StoredSuper` always lists 0 and 1
+    (`CudaBackend.Super.cs`).
+  - What each type needed, checked against its M6 folder:
+    - bf16 (16-bit float): the q/k/v group 1 → 0 (its products were already 2, gate/up's group already 0).
+    - int8 (plain integer): k/v and gate/up 6 → 2, down 5 → 2 (q/o was already 2), both groups 1 → 0.
+    - q4_0 (32-value blocks): the q/k/v group 1 → 0.
+    - iq2_xxs (grids): the q/k/v group 1 → 0.
+    - q4_k (super-blocks): nothing. Every product was already `StoredSuper` 1 and both groups 0 (`force-q4_k.diff` is
+      empty), so in M6 q4_k already ran the winner everywhere. It runs here only as a control, with no forced runs.
+  - Controls: `tuning-control-{type}`, untouched copies (byte-equal to M6's folders at the start).
+- **Runs**, one at a time (23:27–23:32), `m8.sh`, the route set on every run, with M7's commands:
+  - each type's control: adad warm and name warm benches, the adad prompt profile, the greedy continuation (q4_k: no
+    continuation, nothing to compare it with);
+  - each forced type: an adad fill bench, the greedy continuation (compared with the control's before going on), an adad
+    warm bench, the adad prompt profile.
+  - The continuation is M7's `prompt.txt` (475 tokens, the bench's 512 size class), 48 greedy tokens.
+  - One profile was repeated (`profile-force-iq2_xxs-prompt-rerun.txt`). The first (31.64 ms) had its norm and
+    activation kernels slower than every other profile's (`add_rms_norm_affine_f32` 1.46 ms against 1.24–1.28,
+    `gated_act_f32` 1.21 against 0.95–1.00 where gate and up run as separate products), as in M6-3; the repeat is used.
+  - Every run diffed its folder (`tuning-added.txt`, 36 runs). No bench or profile stored or changed a line; no run
+    stored a `ProductRoute` line; every forced entry still held its value at the end. The 8 continuations stored
+    exact-size (m = 475) tile and split entries and window-512 decode entries, none of them a product's lane.
+  - Derived tables: `compare.sh` → `compare.txt`, M7's `lanes.sh` → `lanes.txt`, `shares.sh` → `shares.txt`, M6's
+    `product-rates.sh` → `product-rates.txt`.
+- **The winner ran everywhere it was forced**: each forced warm log's "measured lane:" lines name the native kind for all
+  four 512-row shapes (k/v, q/o, gate/up, down; "native bfloat16 kind (packed)", iq2_xxs "native bfloat16 kind (rows
+  widened from the description)"). The forced profiles run `native_mma_bf16_r64_s6_n128_x` 196 times (seven products
+  × 28 layers), and no `gemm_tc_nt_*` product kernel.
+- **Same output**: every forced type's 48 greedy tokens are byte-equal to its control's (`complete-*-adad.txt`).
+  iq2_xxs's text is the degenerate one M7 found under every route.
+
+**The benches and passes** (prompt tok/s, the controls in the same session; pass: the prompt profile, each layer
+drained; `compare.txt`, `lanes.txt`)
+
+| Type (family) | forced fill / warm | control adad | control name | forced warm / control adad | pass ms forced / control |
+|---|---|---|---|---|---|
+| bf16 (16-bit float) | 20,682 / 20,785 | 20,965 | 19,294 | 0.991 | 26.70 / 25.30 |
+| int8 (plain integer) | 18,377 / 18,358 | 20,252 | 20,569 | 0.906 | 29.09 / 25.73 |
+| q4_0 (32-value blocks) | 18,658 / 18,596 | 18,835 | 17,809 | 0.987 | 28.71 / 28.00 |
+| q4_k (super-blocks) | nothing to force | 18,286 | 17,796 | – | – / 29.28 |
+| iq2_xxs (grids) | 18,389 / 18,320 | 18,781 | 17,917 | 0.975 | 29.35 / 27.86 |
+
+The spread: a forced type's fill and warm runs differ by at most 0.5%; the controls against M6's warm runs of the same
+folders by up to 1.7% (adad) and 2.9% (name) (`compare.txt`). Forced against name: bf16 1.077, int8 0.893, q4_0 1.044,
+iq2_xxs 1.022 (q4_k's control 1.028).
+
+**The products by lane and by step** (ms, `lanes.txt`: the native kind's kernel, the weight's conversion to bfloat16 on
+every call (`native_pack_w_*`, `super_widen_*`, `grid_widen_*`), x packing (`native_pack_x_*`), the parts' sums
+(`typed_sum_parts`), the tensor-row group launches; "products" their sum)
+
+| Profile | native kernel | weight conversion | x packing | sums | tensor-row groups | products | pass |
+|---|---|---|---|---|---|---|---|
+| bf16 control | 15.81 | – | 0.85 | – | 3.50 | 20.16 | 25.30 |
+| bf16 forced | 19.46 | – | 1.10 | 0.51 | – | 21.07 | 26.70 |
+| int8 control | 6.73 | 0.39 | 0.59 | 0.34 | 13.46 | 21.51 | 25.73 |
+| int8 forced | 19.45 | 4.49 | 1.13 | 0.51 | – | 25.59 | 29.09 |
+| q4_0 control | 15.71 | 2.96 | 0.80 | – | 4.26 | 23.73 | 28.00 |
+| q4_0 forced | 19.72 | 4.19 | 1.11 | 0.58 | – | 25.59 | 28.71 |
+| q4_k control (the winner everywhere) | 19.50 | 4.54 | 1.21 | 0.66 | – | 25.91 | 29.28 |
+| iq2_xxs control | 15.90 | 3.79 | 0.87 | – | 3.96 | 24.51 | 27.86 |
+| iq2_xxs forced (repeat) | 19.62 | 4.68 | 1.25 | 0.56 | – | 26.10 | 29.35 |
+
+The native kernel runs at 73.2–74.2 TFLOP/s over all seven products in the forced passes (and q4_k's), against
+75.6–76.5 over the four large ones (gate, up, o, down) in the controls; the controls' q/k/v groups run at 68.8 (bf16),
+56.5 (q4_0) and 60.8 TFLOP/s (iq2_xxs) (`product-rates.txt`).
+
+**How much of the winner's time is conversion** (`shares.txt`; the winner's products: the native kernel, the weight's
+conversion, x packing and the sums)
+
+| Family (type, profile) | weight conversion ms | share of the winner's products | share of the pass | conversion, x packing and sums: share of products |
+|---|---|---|---|---|
+| 16-bit float (bf16, forced) | 0 | 0% | 0% | 7.6% |
+| plain integer (int8, forced) | 4.49 | 17.6% | 15.4% | 24.0% |
+| 32-value blocks (q4_0, forced) | 4.19 | 16.4% | 14.6% | 23.0% |
+| super-blocks (q4_k, control: already the winner everywhere) | 4.54 | 17.5% | 15.5% | 24.7% |
+| grids (iq2_xxs, forced, repeat) | 4.68 | 17.9% | 15.9% | 24.8% |
+
+**Conclusion**:
+
+- **Forcing the winner everywhere does not beat the measured choices in any family; they hold.** Against its same-session
+  control, each forced type ties or loses: q4_0 −1.3% and bf16 −0.9% (within the session-to-session spread, but their
+  passes are 0.71 and 1.40 ms longer), iq2_xxs −2.5% (pass +1.49 ms), int8 −9.4% (pass +3.36 ms) (`compare.txt`,
+  `lanes.txt`).
+- **Where the q/k/v group launch is turned off** (bf16, q4_0, iq2_xxs), q, k and v run as three native-kind products. The
+  kernel then costs about what the group did, but the separate products add x packing, `typed_sum_parts` (56 calls) and,
+  for a stored type, the conversion of the q/k/v weights on every call:
+  - bf16: native kernel 19.46 ms against 15.81 + the group's 3.50, and +0.24 ms x packing and +0.51 ms sums;
+  - q4_0: conversion 4.19 against 2.96 ms;
+  - iq2_xxs: conversion 4.68 against 3.79 ms.
+- **int8**: the native kind converts every int8 weight to bfloat16 on every call (4.49 ms), where the measured choices
+  read the int8 rows as they are (the tensor-row groups, 13.46 ms for q/k/v and gate/up) or the int8 codes raw (down, no
+  packing pass). That conversion is why the forced int8 is the clearest loss.
+- **The conversion share**: wherever the winner runs a stored type, converting the weight to bfloat16 on every call takes
+  16.4–17.9% of its products' time (14.6–15.9% of the pass), and 23.0–24.8% with x packing and the sums. bf16, which converts
+  nothing, spends 7.6% of its products on x packing and the sums. So the measured choices, which keep the group launches
+  and int8's lanes over the stored rows, are the faster ones in the full pass on Qwen3-1.7B.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

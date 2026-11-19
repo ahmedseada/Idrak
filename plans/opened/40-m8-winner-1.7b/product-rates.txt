@@ -1,0 +1,16 @@
+# M8 product kernels' work and rate (product-rates.sh, M6's); Qwen3-1.7B: hidden 2048, intermediate 6144
+./profile-control-bf16-prompt.txt gemm_tc_nt_bf16w multi 512x2048+1024+1024x2048                 28 calls   3.496 ms   240.52 GFLOP   68.8 TFLOP/s
+./profile-control-bf16-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.814 ms  1202.59 GFLOP   76.0 TFLOP/s
+./profile-force-bf16-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.456 ms  1443.11 GFLOP   74.2 TFLOP/s
+./profile-control-int8-prompt.txt gemm_tc_nt_int8w multi 512x6144+6144x2048                      28 calls   9.921 ms   721.55 GFLOP   72.7 TFLOP/s
+./profile-control-int8-prompt.txt gemm_tc_nt_int8w multi 512x2048+1024+1024x2048                 28 calls   3.534 ms   240.52 GFLOP   68.1 TFLOP/s
+./profile-control-int8-prompt.txt native_mma_bf16_r64_s3_n256_x_ri8 (native kind)                           5.021 ms   360.78 GFLOP   71.9 TFLOP/s
+./profile-control-int8-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                               1.709 ms   120.26 GFLOP   70.4 TFLOP/s
+./profile-force-int8-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.451 ms  1443.11 GFLOP   74.2 TFLOP/s
+./profile-control-q4_0-prompt.txt gemm_tc_nt_b32x18c4hun8o2f5m10at0 multi 512x2048+1024+1024x2048   28 calls   4.258 ms   240.52 GFLOP   56.5 TFLOP/s
+./profile-control-q4_0-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.713 ms  1202.59 GFLOP   76.5 TFLOP/s
+./profile-force-q4_0-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.716 ms  1443.11 GFLOP   73.2 TFLOP/s
+./profile-control-q4_k-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.498 ms  1443.11 GFLOP   74.0 TFLOP/s
+./profile-control-iq2_xxs-prompt.txt gemm_tc_nt_iq2_xxs multi 512x2048+1024+1024x2048               28 calls   3.955 ms   240.52 GFLOP   60.8 TFLOP/s
+./profile-control-iq2_xxs-prompt.txt native_mma_bf16_r64_s6_n128_x (native kind)                              15.897 ms  1202.59 GFLOP   75.6 TFLOP/s
+./profile-force-iq2_xxs-prompt-rerun.txt native_mma_bf16_r64_s6_n128_x (native kind)                              19.617 ms  1443.11 GFLOP   73.6 TFLOP/s

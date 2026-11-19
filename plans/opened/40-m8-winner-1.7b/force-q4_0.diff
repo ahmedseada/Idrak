@@ -1,0 +1,11 @@
+--- D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt	2026-11-19 21:40:50.186737000 +0300
++++ D:/Projects/idrak/test-output/adad/m8-winner/tuning-force-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt	2026-11-19 23:27:14.099145100 +0300
+@@ -77,7 +77,7 @@
+ ProductRoute 9300 512 6144 2048 4 0 0 = 2
+ ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+ ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+-ProductRoute 9700 512 2048 2048 1024 1024 0 = 1
++ProductRoute 9700 512 2048 2048 1024 1024 0 = 0
+ ProductRoute 9700 512 2048 6144 6144 0 0 = 0
+ RowThreads 0 128 32 0 0 0 0 = 64
+ RowThreads 0 128 4096 0 0 0 0 = 64

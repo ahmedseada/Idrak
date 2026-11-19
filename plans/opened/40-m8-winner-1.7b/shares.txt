@@ -1,0 +1,6 @@
+family     profile                         pass   kernel   conv. x pack   sums  products   conv/prod conv/pass all extra/prod
+16-bit-float force-bf16                     26.70   19.456   0.000  1.095  0.514    21.065        0.0%      0.0%          7.6%
+plain-integer force-int8                     29.09   19.451   4.491  1.131  0.512    25.585       17.6%     15.4%         24.0%
+32-value-blocks force-q4_0                     28.71   19.716   4.186  1.108  0.582    25.592       16.4%     14.6%         23.0%
+super-blocks control-q4_k                   29.28   19.498   4.542  1.205  0.661    25.906       17.5%     15.5%         24.7%
+grids      force-iq2_xxs-prompt-rerun     29.35   19.617   4.678  1.248  0.555    26.098       17.9%     15.9%         24.8%

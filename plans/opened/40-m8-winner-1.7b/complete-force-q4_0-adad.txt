@@ -1,0 +1,1 @@
+ implement a new version of the reporting service, which will allow for more complex queries and better performance. The new version will also be compatible with the current version, so that the existing users will not have to switch. The team is also working

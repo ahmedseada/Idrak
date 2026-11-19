@@ -1,0 +1,93 @@
+== control-bf16-adad-warm (23:27:25): lines added or changed in tuning-control-bf16
+  (none)
+== control-bf16-name-warm (23:27:32): lines added or changed in tuning-control-bf16
+  (none)
+== profile-control-bf16-prompt (23:27:37): lines added or changed in tuning-control-bf16
+  (none)
+== complete-control-bf16-adad (23:27:43): lines added or changed in tuning-control-bf16
+> PackedTile 1240 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 40 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 540 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== force-bf16-adad-fill (23:27:50): lines added or changed in tuning-force-bf16
+  (none)
+== complete-force-bf16-adad (23:27:56): lines added or changed in tuning-force-bf16
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== force-bf16-adad-warm (23:28:03): lines added or changed in tuning-force-bf16
+  (none)
+== profile-force-bf16-prompt (23:28:07): lines added or changed in tuning-force-bf16
+  (none)
+== control-int8-adad-warm (23:28:17): lines added or changed in tuning-control-int8
+  (none)
+== control-int8-name-warm (23:28:23): lines added or changed in tuning-control-int8
+  (none)
+== profile-control-int8-prompt (23:28:29): lines added or changed in tuning-control-int8
+  (none)
+== complete-control-int8-adad (23:28:35): lines added or changed in tuning-control-int8
+> PackedTile 1241 475 2048 2048 1024 1024 0 = 128
+> PackedTile 1241 475 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 41 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 541 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== force-int8-adad-fill (23:28:45): lines added or changed in tuning-force-int8
+  (none)
+== complete-force-int8-adad (23:28:52): lines added or changed in tuning-force-int8
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 16
+== force-int8-adad-warm (23:28:59): lines added or changed in tuning-force-int8
+  (none)
+== profile-force-int8-prompt (23:29:05): lines added or changed in tuning-force-int8
+  (none)
+== control-q4_0-adad-warm (23:29:14): lines added or changed in tuning-control-q4_0
+  (none)
+== control-q4_0-name-warm (23:29:33): lines added or changed in tuning-control-q4_0
+  (none)
+== profile-control-q4_0-prompt (23:29:38): lines added or changed in tuning-control-q4_0
+  (none)
+== complete-control-q4_0-adad (23:29:45): lines added or changed in tuning-control-q4_0
+> PackedTile 1300 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 100 475 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 600 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== force-q4_0-adad-fill (23:29:52): lines added or changed in tuning-force-q4_0
+  (none)
+== complete-force-q4_0-adad (23:29:59): lines added or changed in tuning-force-q4_0
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 16
+== force-q4_0-adad-warm (23:30:06): lines added or changed in tuning-force-q4_0
+  (none)
+== profile-force-q4_0-prompt (23:30:12): lines added or changed in tuning-force-q4_0
+  (none)
+== control-q4_k-adad-warm (23:30:22): lines added or changed in tuning-control-q4_k
+  (none)
+== control-q4_k-name-warm (23:30:41): lines added or changed in tuning-control-q4_k
+  (none)
+== profile-control-q4_k-prompt (23:30:49): lines added or changed in tuning-control-q4_k
+  (none)
+== control-iq2_xxs-adad-warm (23:31:00): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== control-iq2_xxs-name-warm (23:31:26): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== profile-control-iq2_xxs-prompt (23:31:36): lines added or changed in tuning-control-iq2_xxs
+  (none)
+== complete-control-iq2_xxs-adad (23:31:46): lines added or changed in tuning-control-iq2_xxs
+> PackedTile 1500 475 2048 2048 1024 1024 0 = 128
+> PackedMultiSplits 300 475 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 800 475 2048 2048 1024 1024 0 = 1
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 1
+== force-iq2_xxs-adad-fill (23:31:57): lines added or changed in tuning-force-iq2_xxs
+  (none)
+== complete-force-iq2_xxs-adad (23:32:07): lines added or changed in tuning-force-iq2_xxs
+> DecodeSplits 2 16 512 128 0 0 0 = 8
+> DecodeMinChunk 2 16 512 128 8 0 0 = 16
+== force-iq2_xxs-adad-warm (23:32:18): lines added or changed in tuning-force-iq2_xxs
+  (none)
+== profile-force-iq2_xxs-prompt (23:32:27): lines added or changed in tuning-force-iq2_xxs
+  (none)
+== profile-force-iq2_xxs-prompt-rerun (23:32:46): lines added or changed in tuning-force-iq2_xxs
+  (none)

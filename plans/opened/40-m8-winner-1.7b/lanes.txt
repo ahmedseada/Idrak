@@ -1,0 +1,11 @@
+# M8 prompt profiles' kernels by lane (ms), from lanes.sh (M7's)
+control-bf16       pass  25.30  native 15.814  widen 0.000  packx 0.854  parts 0.000  rows  0.000  groups  3.496  products 20.164  head 0.779  other 4.075
+force-bf16         pass  26.70  native 19.456  widen 0.000  packx 1.095  parts 0.514  rows  0.000  groups  0.000  products 21.065  head 0.777  other 4.077
+control-int8       pass  25.73  native  6.730  widen 0.391  packx 0.594  parts 0.342  rows  0.000  groups 13.455  products 21.512  head 0.388  other 3.869
+force-int8         pass  29.09  native 19.451  widen 4.491  packx 1.131  parts 0.512  rows  0.000  groups  0.000  products 25.585  head 0.386  other 4.087
+control-q4_0       pass  28.00  native 15.713  widen 2.960  packx 0.801  parts 0.000  rows  0.000  groups  4.258  products 23.732  head 0.341  other 4.083
+force-q4_0         pass  28.71  native 19.716  widen 4.186  packx 1.108  parts 0.582  rows  0.000  groups  0.000  products 25.592  head 0.336  other 4.147
+control-q4_k       pass  29.28  native 19.498  widen 4.542  packx 1.205  parts 0.661  rows  0.000  groups  0.000  products 25.906  head 0.466  other 4.122
+control-iq2_xxs    pass  27.86  native 15.897  widen 3.790  packx 0.868  parts 0.000  rows  0.000  groups  3.955  products 24.510  head 0.528  other 4.104
+force-iq2_xxs      pass  31.64  native 19.919  widen 5.024  packx 1.309  parts 0.519  rows  0.000  groups  0.000  products 26.771  head 0.528  other 4.610
+force-iq2_xxs-prompt-rerun pass  29.35  native 19.617  widen 4.678  packx 1.248  parts 0.555  rows  0.000  groups  0.000  products 26.098  head 0.532  other 4.330
