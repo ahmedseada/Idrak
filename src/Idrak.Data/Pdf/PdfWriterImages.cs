@@ -18,9 +18,11 @@ internal readonly record struct PdfImageMeasures(int Levels, double SmallSteps, 
 /// its residuals as libpng chooses, kept where it lowers the rows' residuals by a fifth, then Flate at the options' level)
 /// or <see cref="DocumentImageEncoding.Jpeg"/> (<c>DCTDecode</c>, written by <see cref="ImageEncoders"/>' "jpeg" at
 /// <see cref="DocumentWriteOptions.JpegQuality"/>); <see cref="DocumentImageEncoding.Auto"/> measures the image
-/// (<see cref="DocumentWriteOptions.LineArtLevels"/>, then <see cref="DocumentWriteOptions.SmoothSteps"/>). The image's
-/// buffers are rented from the pool and returned before the call ends; rows are worked in parallel, each one's result
-/// its own, so any number of threads gives the same bytes.
+/// (<see cref="DocumentWriteOptions.LineArtLevels"/>, then <see cref="DocumentWriteOptions.SmoothSteps"/>). The image is
+/// measured a band of rows at a time (its levels made for the band, never copied whole), and a Flate image holds one copy
+/// besides itself: the stream the deflater takes in one piece (filtered band by band); every buffer is rented from the
+/// pool and returned before the call ends; rows are worked in parallel, each one's result its own, so any number of
+/// threads gives the same bytes.
 /// </summary>
 internal static class PdfWriterImages
 {
@@ -52,28 +54,104 @@ internal static class PdfWriterImages
             return encoding;
         }
 
-        int length = width * height * channels;
-        byte[] levels = ArrayPool<byte>.Shared.Rent(length);
+        if (encoding == DocumentImageEncoding.Auto)
+        {
+            var measures = Measure(image, options.LineArtLevels);
+            bool photographic = measures.Levels > options.LineArtLevels && measures.SmallSteps >= options.SmoothSteps;
+            if (photographic && ImageEncoders.Names.Contains(JpegEncoder, StringComparer.OrdinalIgnoreCase))
+            {
+                WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder));
+                return DocumentImageEncoding.Jpeg;
+            }
+        }
+
+        WriteFlate(file, number, image);
+        return DocumentImageEncoding.Flate;
+    }
+
+    // The rows an image is worked in at a time: four parts a thread of the 64 KiB grains rows are spread in (at least a row).
+    private static int BandRows(int row) => Math.Max(1, 4 * ComputeResources.MaxCpuThreads * Math.Max(1, (1 << 16) / Math.Max(1, row)));
+
+    /// <summary>
+    /// <see cref="Measure(byte[], int, int, int, int)"/> of <paramref name="image"/>'s levels, made a band of rows at a time
+    /// (the image is not copied whole): the same measures.
+    /// </summary>
+    public static PdfImageMeasures Measure(ImageData image, int lineArtLevels)
+    {
+        int width = image.Width, height = image.Height, channels = image.Channels, row = width * channels, band = BandRows(row);
+        byte[] rows = ArrayPool<byte>.Shared.Rent(checked((band + 1) * row));
         try
         {
-            Levels(image, levels);
-            if (encoding == DocumentImageEncoding.Auto)
+            Span<bool> seen = stackalloc bool[3 * 256];
+            seen.Clear();
+            for (int y0 = 0; y0 < height; y0 += band)
             {
-                var measures = Measure(levels, width, height, channels, options.LineArtLevels);
-                bool photographic = measures.Levels > options.LineArtLevels && measures.SmallSteps >= options.SmoothSteps;
-                if (photographic && ImageEncoders.Names.Contains(JpegEncoder, StringComparer.OrdinalIgnoreCase))
+                int n = Math.Min(band, height - y0), length = n * row;
+                Levels(image, y0, n, rows, 0);
+                for (int c = 0; c < channels; c++)
                 {
-                    WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder));
-                    return DocumentImageEncoding.Jpeg;
+                    var used = seen.Slice(c * 256, 256);
+                    for (int i = c; i < length; i += channels)
+                    {
+                        used[rows[i]] = true;
+                    }
                 }
             }
 
-            WriteFlate(file, number, levels, width, height, channels);
-            return DocumentImageEncoding.Flate;
+            int levels = 0;
+            for (int c = 0; c < channels; c++)
+            {
+                levels = Math.Max(levels, seen.Slice(c * 256, 256).Count(true));
+            }
+
+            if (levels <= lineArtLevels)
+            {
+                return new PdfImageMeasures(levels, double.NaN, double.NaN);
+            }
+
+            // The steps: each band with the row below it, each pixel against its right and its lower neighbour.
+            long small = 0, large = 0;
+            var gate = new Lock();
+            for (int y0 = 0; y0 < height; y0 += band)
+            {
+                int n = Math.Min(band, height - y0), withBelow = Math.Min(n + 1, height - y0);
+                Levels(image, y0, withBelow, rows, 0);
+                HostParallel.For(n, Math.Max(1, (1 << 16) / Math.Max(1, row)), (first, last) =>
+                {
+                    long s = 0, l = 0;
+                    for (int y = first; y < last; y++)
+                    {
+                        var here = rows.AsSpan(y * row, row);
+                        var below = y + 1 < withBelow ? rows.AsSpan((y + 1) * row, row) : default;
+                        for (int x = 0; x < width; x++)
+                        {
+                            int at = x * channels;
+                            if (x + 1 < width)
+                            {
+                                Count(Step(here, at, here, at + channels, channels), ref s, ref l);
+                            }
+
+                            if (!below.IsEmpty)
+                            {
+                                Count(Step(here, at, below, at, channels), ref s, ref l);
+                            }
+                        }
+                    }
+
+                    lock (gate)
+                    {
+                        small += s;
+                        large += l;
+                    }
+                });
+            }
+
+            double pairs = (double)(width - 1) * height + (double)width * (height - 1);
+            return pairs > 0 ? new PdfImageMeasures(levels, small / pairs, large / pairs) : new PdfImageMeasures(levels, 0, 0);
         }
         finally
         {
-            ArrayPool<byte>.Shared.Return(levels);
+            ArrayPool<byte>.Shared.Return(rows);
         }
     }
 
@@ -165,9 +243,15 @@ internal static class PdfWriterImages
     }
 
     /// <summary>The image's levels into <paramref name="destination"/>, rows of interleaved channels: each value rounded to a byte, or an 8-bit image's own bytes.</summary>
-    public static void Levels(ImageData image, byte[] destination)
+    public static void Levels(ImageData image, byte[] destination) => Levels(image, 0, image.Height, destination, 0);
+
+    /// <summary>
+    /// Rows [<paramref name="firstRow"/>, + <paramref name="rows"/>) of the image's levels into <paramref name="destination"/>
+    /// from <paramref name="at"/>, as <see cref="Levels(ImageData, byte[])"/> makes them.
+    /// </summary>
+    public static void Levels(ImageData image, int firstRow, int rows, byte[] destination, int at)
     {
-        int channels = image.Channels, plane = image.Width * image.Height;
+        int channels = image.Channels, plane = image.Width * image.Height, start = firstRow * image.Width, count = rows * image.Width;
         if (image.TryGetPlanes(out var planes, out var table))
         {
             var map = new byte[256];
@@ -181,18 +265,18 @@ internal static class PdfWriterImages
 
             if (channels == 1 && identity)
             {
-                planes[0].Span.CopyTo(destination);
+                planes[0].Span.Slice(start, count).CopyTo(destination.AsSpan(at));
                 return;
             }
 
-            HostParallel.For(plane, 1 << 15, (first, last) =>
+            HostParallel.For(count, 1 << 15, (first, last) =>
             {
                 for (int c = 0; c < channels; c++)
                 {
                     var source = planes[c].Span;
                     for (int i = first; i < last; i++)
                     {
-                        destination[i * channels + c] = map[source[i]];
+                        destination[at + i * channels + c] = map[source[start + i]];
                     }
                 }
             });
@@ -200,14 +284,14 @@ internal static class PdfWriterImages
         }
 
         var pixels = image.Pixels;
-        HostParallel.For(plane, 1 << 15, (first, last) =>
+        HostParallel.For(count, 1 << 15, (first, last) =>
         {
             for (int c = 0; c < channels; c++)
             {
-                int offset = c * plane;
+                int offset = c * plane + start;
                 for (int i = first; i < last; i++)
                 {
-                    destination[i * channels + c] = Level(pixels[offset + i]);
+                    destination[at + i * channels + c] = Level(pixels[offset + i]);
                 }
             }
         });
@@ -227,84 +311,143 @@ internal static class PdfWriterImages
         file.BeginStream(number).Raw("/Type/XObject/Subtype/Image/Width "u8).Integer(width).Raw("/Height "u8).Integer(height)
             .Raw(channels == 1 ? "/ColorSpace/DeviceGray"u8 : "/ColorSpace/DeviceRGB"u8).Raw("/BitsPerComponent 8"u8);
 
-    private static void WriteFlate(PdfFileWriter file, int number, byte[] levels, int width, int height, int channels)
+    private static void WriteFlate(PdfFileWriter file, int number, ImageData image)
     {
-        int row = width * channels, length = row * height;
+        int width = image.Width, height = image.Height, channels = image.Channels, row = width * channels;
         if (file.Level == 0)
         {
-            Header(file, number, width, height, channels);
-            file.EndStream(levels.AsSpan(0, length), deflate: false);           // stored: no filter, no predictor
+            // Stored: no filter, no predictor; the file takes a stored stream whole.
+            byte[] levels = ArrayPool<byte>.Shared.Rent(checked(row * height));
+            try
+            {
+                Levels(image, levels);
+                Header(file, number, width, height, channels);
+                file.EndStream(levels.AsSpan(0, row * height), deflate: false);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(levels);
+            }
+
             return;
         }
 
-        int filtered = (row + 1) * height;
-        byte[] rows = ArrayPool<byte>.Shared.Rent(filtered);
+        // First each row's filter (the PNG predictor's five, the one whose residuals sum smallest, as libpng chooses) and
+        // whether the predictor pays (the chosen rows' sums under PredictorPays of the plain rows'), the levels made a band
+        // of rows at a time; then the stream the deflater takes in one piece, as it always has (its bytes depend on the
+        // pieces it is given): the filtered rows (a filter byte, then the row), made band by band, or the plain levels.
+        int band = BandRows(row);
+        byte[] rows = ArrayPool<byte>.Shared.Rent(checked((band + 1) * row));
+        byte[] filters = ArrayPool<byte>.Shared.Rent(height);
+        byte[]? stream = null;
         try
         {
-            if (Predict(levels, rows, row, height, channels))
+            long plainTotal = 0, chosenTotal = 0;
+            var gate = new Lock();
+            for (int y0 = 0; y0 < height; y0 += band)
             {
-                Header(file, number, width, height, channels).Raw("/DecodeParms<</Predictor 15/Colors "u8).Integer(channels)
-                    .Raw("/BitsPerComponent 8/Columns "u8).Integer(width).Raw(">>"u8);
-                file.EndStream(rows.AsSpan(0, filtered), deflate: true);
+                int n = BandWithAbove(image, y0, band, rows);
+                HostParallel.For(n, Math.Max(1, (1 << 16) / Math.Max(1, row)), (first, last) =>
+                {
+                    long plain = 0, chosen = 0;
+                    for (int k = first; k < last; k++)
+                    {
+                        var here = rows.AsSpan((k + 1) * row, row);
+                        var above = y0 + k > 0 ? rows.AsSpan(k * row, row) : default;
+                        var (none, best, filter) = Choose(here, above, channels);
+                        filters[y0 + k] = (byte)filter;
+                        plain += none;
+                        chosen += best;
+                    }
+
+                    lock (gate)
+                    {
+                        plainTotal += plain;
+                        chosenTotal += chosen;
+                    }
+                });
+            }
+
+            if (chosenTotal >= PredictorPays * plainTotal)
+            {
+                stream = ArrayPool<byte>.Shared.Rent(checked(row * height));
+                Levels(image, stream);
+                Header(file, number, width, height, channels);
+                file.EndStream(stream.AsSpan(0, row * height), deflate: true);
                 return;
             }
+
+            int filtered = checked((row + 1) * height);
+            byte[] filteredRows = stream = ArrayPool<byte>.Shared.Rent(filtered);
+            for (int y0 = 0; y0 < height; y0 += band)
+            {
+                int n = BandWithAbove(image, y0, band, rows);
+                HostParallel.For(n, Math.Max(1, (1 << 16) / Math.Max(1, row)), (first, last) =>
+                {
+                    for (int k = first; k < last; k++)
+                    {
+                        var here = rows.AsSpan((k + 1) * row, row);
+                        var above = y0 + k > 0 ? rows.AsSpan(k * row, row) : default;
+                        var target = filteredRows.AsSpan((y0 + k) * (row + 1), row + 1);
+                        target[0] = filters[y0 + k];
+                        Residuals(here, above, channels, filters[y0 + k], target[1..]);
+                    }
+                });
+            }
+
+            Header(file, number, width, height, channels).Raw("/DecodeParms<</Predictor 15/Colors "u8).Integer(channels)
+                .Raw("/BitsPerComponent 8/Columns "u8).Integer(width).Raw(">>"u8);
+            file.EndStream(filteredRows.AsSpan(0, filtered), deflate: true);
         }
         finally
         {
             ArrayPool<byte>.Shared.Return(rows);
+            ArrayPool<byte>.Shared.Return(filters);
+            if (stream is not null)
+            {
+                ArrayPool<byte>.Shared.Return(stream);
+            }
         }
-
-        Header(file, number, width, height, channels);
-        file.EndStream(levels.AsSpan(0, length), deflate: true);
     }
 
-    /// <summary>
-    /// The PNG predictor's rows (a filter byte, then the row filtered) of <paramref name="pixels"/> into
-    /// <paramref name="output"/>, each row's filter the one whose residuals, read as signed bytes, sum smallest (None,
-    /// Sub, Up, Average, Paeth); whether it pays: the chosen rows' sums under <see cref="PredictorPays"/> of the plain rows'.
-    /// </summary>
-    public static bool Predict(byte[] pixels, byte[] output, int row, int height, int bpp)
+    // Rows [y0, y0 + n) of the image's levels into `rows` from its second row, the row above them (when there is one) in
+    // its first; n, the band's rows.
+    private static int BandWithAbove(ImageData image, int y0, int band, byte[] rows)
     {
-        long plainTotal = 0, chosenTotal = 0;
-        var gate = new Lock();
-        HostParallel.For(height, Math.Max(1, (1 << 16) / Math.Max(1, row)), (first, last) =>
+        int n = Math.Min(band, image.Height - y0);
+        if (y0 > 0)
         {
-            long plain = 0, chosen = 0;
-            for (int y = first; y < last; y++)
+            Levels(image, y0 - 1, n + 1, rows, 0);
+        }
+        else
+        {
+            Levels(image, 0, n, rows, image.Width * image.Channels);
+        }
+
+        return n;
+    }
+
+    // A row's filter: the one of five whose residuals, read as signed bytes, sum smallest (the first
+    // of equal sums); with the plain row's sum and the chosen one's.
+    private static (long None, long Best, int Filter) Choose(ReadOnlySpan<byte> here, ReadOnlySpan<byte> above, int bpp)
+    {
+        long none = 0, best = long.MaxValue;
+        int filter = 0;
+        for (int f = 0; f < 5; f++)
+        {
+            long sum = Residuals(here, above, bpp, f, default);
+            if (f == 0)
             {
-                var here = pixels.AsSpan(y * row, row);
-                var above = y > 0 ? pixels.AsSpan((y - 1) * row, row) : default;
-                var target = output.AsSpan(y * (row + 1), row + 1);
-                long none = 0, best = long.MaxValue;
-                int filter = 0;
-                for (int f = 0; f < 5; f++)
-                {
-                    long sum = Residuals(here, above, bpp, f, default);
-                    if (f == 0)
-                    {
-                        none = sum;
-                    }
-
-                    if (sum < best)
-                    {
-                        (best, filter) = (sum, f);
-                    }
-                }
-
-                target[0] = (byte)filter;
-                Residuals(here, above, bpp, filter, target[1..]);
-                plain += none;
-                chosen += best;
+                none = sum;
             }
 
-            lock (gate)
+            if (sum < best)
             {
-                plainTotal += plain;
-                chosenTotal += chosen;
+                (best, filter) = (sum, f);
             }
-        });
+        }
 
-        return chosenTotal < PredictorPays * plainTotal;
+        return (none, best, filter);
     }
 
     // A row through PNG filter `filter` (0 None, 1 Sub, 2 Up, 3 Average, 4 Paeth): the residuals written to `output` when

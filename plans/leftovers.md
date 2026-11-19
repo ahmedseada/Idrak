@@ -399,10 +399,11 @@ No leftovers.
 | 28.17 | Phase D10, not started: annotations (every kind read, drawn, created, removed; redaction applied), links, bookmarks, destinations, page labels, the `tagged` layout. | feature | Phase D10 |
 | 28.18 | Phase D11, not started: editing in place (incremental updates, rewrite, page operations, merge and split, saved with AES-256). | feature | Phase D11 |
 | 28.19 | Phase D12, not started: signatures read and checked (CMS, chain, timestamps, revocation from the file) and signing (PAdES B-B, B-T, B-LT). | feature | Phase D12 |
-| 28.20 | Phase D13, not started: any workload (`idrak bench documents`, large and many files, bounded memory, the owner's real files written back and drawn). | feature | Phase D13 |
+| 28.20 | ~~Phase D13: any workload.~~ Built 2026-11-19 (`idrak bench documents`, memory bounded at any size, every limit measured and settable; the owner's real files in D5's `documents real:`). What is left of it: the bench's baseline on the owner's devices (the owner's run in D13's note). | owner's run | Phase D13 |
 | 28.21 | ~~Signing's trust by default~~ Answered 2026-11-18: only the app's certificates (decision 16). | question (answered) | Open questions (4) |
 | 28.22 | ~~Redaction as a command~~ Answered 2026-11-18: `idrak data redact` in D10 (decision 17). | question (answered) | Open questions (5) |
 | 28.23 | ~~The font plug-in project's name~~ Answered 2026-11-18: `Idrak.Imaging.Plugins`, new (decision 21). | question (answered) | Open questions (6) |
+| 28.24 | A Flate image written with one band of buffers instead of one copy of the image: the deflater would take the filtered rows a band at a time, but .NET's zlib-ng writes other bytes when its input comes in other pieces (measured 2026-11-19: pieces of 32 KiB multiples from 64 KiB match one piece at levels 4 to 9; level 1 never does), so the written files would change once (rule 71). Built only if the owner accepts the new bytes, as decision 24 did for fonts. | question | Phase D13 |
 
 ## Plug-in points ([plug-in.md](done/plug-in.md))
 

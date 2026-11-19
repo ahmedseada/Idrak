@@ -597,11 +597,16 @@ measurement's first call (`Cold`, what a first token pays) apart from its warm v
 timed calls after a warm-up that runs rounds until the last few agree within a few percent and the JIT compiles
 nothing more, within a budget (`--warmup`, `--warmup-calls`, `--settle`, `--settle-rounds`, `--warmup-round` and
 their `IDRAK_BENCH_*` variables). Saved results record the timing method, and `--compare` says when a saved run was
-timed another way.
+timed another way. `idrak bench documents` measures the library's document work (opening, text with and without the
+layout, text over the cores, images, pages drawn at chosen resolutions, image and vector PDFs written, incremental and
+rewritten saves, forms filled, signing and checking) on the sample generator's sets or any folders of PDF files: each
+case cold and warm apart, with its time, the managed bytes it allocated and the process's working set at its highest,
+the library's `IDRAK_DOCUMENT_*` settings recorded with the limits measured from the machine's memory.
 
 | Command | What it does |
 |---|---|
 | `idrak bench` (`b`) | Speed of a model (tokens per second, GFLOP/s, memory) or of the kernels on a device |
+| `idrak bench documents` (`b documents`) | Speed and memory of reading, drawing, writing, editing and signing documents, cold and warm |
 | `idrak eval` | Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1) |
 | `idrak perplexity` | Perplexity of a text under a model (compare weight formats and fine-tunes) |
 | `idrak profile` | Time per layer, operation and kernel of one decoding step |
@@ -613,6 +618,8 @@ idrak b qwen --save laptop && idrak b qwen --compare laptop
 idrak b qwen --devices all                     # one table across every device
 idrak b --kernels matmul,gemv -d cuda:0 -j     # the kernel benchmarks, without a model
 idrak b --devices cpu --warmup 5s --settle 2   # kernels with a longer, stricter warm-up
+idrak bench documents --save laptop            # the documents bench on the samples and the large set
+idrak b documents --sets ./reports --cases open,text-lines,text-parallel --compare laptop
 idrak eval qwen held-out.jsonl --limit 100
 idrak perplexity qwen wiki.txt -w int4
 ```

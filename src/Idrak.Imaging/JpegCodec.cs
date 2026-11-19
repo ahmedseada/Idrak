@@ -145,6 +145,17 @@ internal sealed class JpegDecoder
     private ulong bits;
     private int count, position, eobRun;
 
+    // The image is made a strip of MCU rows at a time (EmitStrip): each component's window of sample rows holds the strip's
+    // rows after the row above them (the context the fancy upsampling reads), and the output rows the strip completes are
+    // converted at once, so a decode holds a strip's samples, not the image's. A sequential file with one scan of every
+    // component also decodes its coefficients a strip at a time (SequentialScan), so it holds a strip's blocks too.
+    private const int Context = 1;
+    private byte[][]? output;
+    private byte[][] windows = [];
+    private int[] windowFirst = [];
+    private int stripMcuRows, rowsWritten;
+    private bool rgb, ycck;
+
     static JpegDecoder()
     {
         const int scale = 16, half = 1 << (scale - 1);
@@ -159,7 +170,8 @@ internal sealed class JpegDecoder
         static int Fix(double v) => (int)(v * (1 << scale) + 0.5);
     }
 
-    // The pooled coefficients back to the pool (after Output, or when decoding failed); a second call does nothing.
+    // The pooled coefficients and sample windows back to the pool (after Output, or when decoding failed); a second call
+    // does nothing.
     internal void ReturnCoefficients()
     {
         foreach (var c in components)
@@ -169,8 +181,39 @@ internal sealed class JpegDecoder
                 c.Pooled = false;
                 ArrayPool<short>.Shared.Return(c.Coefficients);
                 c.Coefficients = [];
+                c.Whole = false;
             }
         }
+
+        ReturnWindows();
+    }
+
+    private void ReturnWindows()
+    {
+        foreach (var window in windows)
+        {
+            ArrayPool<byte>.Shared.Return(window);
+        }
+
+        windows = [];
+    }
+
+    // Every block of a sequential frame's component, from the pool (a scan that is not decoded a strip at a time, or the
+    // output of components no scan reached, needs them all); a progressive frame has them from its frame header.
+    private static void EnsureWhole(Component c)
+    {
+        if (c.Whole)
+        {
+            return;
+        }
+
+        if (c.Pooled)
+        {
+            ArrayPool<short>.Shared.Return(c.Coefficients);
+        }
+
+        c.Coefficients = ArrayPool<short>.Shared.Rent(checked(c.BlocksPerLine * c.BlockRows * 64));
+        (c.Pooled, c.Whole, c.BlockRow0) = (true, true, 0);
     }
 
     private JpegDecoder(byte[] data, int fileSize) => (this.data, this.fileSize) = (data, fileSize);
@@ -212,6 +255,7 @@ internal sealed class JpegDecoder
             decoder.QuantizationTables(tables);
             foreach (var c in decoder.components)
             {
+                EnsureWhole(c);
                 c.Scanned = true;                                                       // its blocks are all written by the caller
             }
 
@@ -416,11 +460,14 @@ internal sealed class JpegDecoder
             c.Height = (height * c.V + maxV - 1) / maxV;
             c.BlocksPerLine = mcusX * c.H;
             c.BlockRows = mcusY * c.V;
-            // A sequential frame's blocks are each cleared as its scan reaches them (in cache), so its coefficients come
-            // from the pool; a progressive frame's scans add to every block, so they start as zeros.
-            int length = checked(c.BlocksPerLine * c.BlockRows * 64);
-            c.Coefficients = isProgressive ? new short[length] : ArrayPool<short>.Shared.Rent(length);
-            c.Pooled = !isProgressive;
+            // A progressive frame's scans add to every block, so its coefficients start as zeros, all of them; a sequential
+            // frame's come from the pool when a scan needs them (each block cleared as the scan reaches it, in cache): a
+            // strip's when one scan holds every component (SequentialScan), else every block (EnsureWhole).
+            if (isProgressive)
+            {
+                c.Coefficients = new short[checked(c.BlocksPerLine * c.BlockRows * 64)];
+                c.Whole = true;
+            }
         }
     }
 
@@ -524,7 +571,11 @@ internal sealed class JpegDecoder
         eobRun = 0;
         if (mode == Mode.Sequential)
         {
-            SequentialScan(scan);
+            // Every component in this one scan, and no scan after it (an SOS marker cannot appear in entropy-coded data):
+            // the image is made as the scan goes, a strip at a time.
+            ReadOnlySpan<byte> sos = [0xFF, 0xDA];
+            bool strips = output is null && n == components.Length && data.AsSpan(start, fileSize - start).IndexOf(sos) < 0;
+            SequentialScan(scan, strips);
             return position;
         }
 
@@ -674,8 +725,10 @@ internal sealed class JpegDecoder
     // at a time while the next 0xFF (found with IndexOf) is at least eight bytes away, else one at a time as Fill takes
     // them (a stuffed 0xFF 0x00, or a marker that stops the reader and feeds zero bits). An AC code whose value bits also
     // lie in the lookahead is one lookup (Huffman.Combined). The same bits are read in the same order as Block reads them.
+    // With `strips`, the blocks of a strip of MCU rows are decoded into a strip's buffer, and the strip is made into the
+    // image's rows (EmitStrip) before the next is decoded.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private void SequentialScan(Component[] scan)
+    private void SequentialScan(Component[] scan, bool strips)
     {
         byte[] bytes = data;
         int size = fileSize, pos = position, nextFF = NextFF(bytes, pos, size);
@@ -687,11 +740,30 @@ internal sealed class JpegDecoder
         int units = unitsAcross * unitsDown, done = 0;
 
         // The blocks of one unit (an MCU, or one block of a lone component), in their order: component, row and column.
-        int perUnit = 0;
+        int perUnit = 0, stripUnits = int.MaxValue;
+        if (strips)
+        {
+            BeginOutput();
+            stripUnits = n == 1 ? stripMcuRows * scan[0].V : stripMcuRows;            // a lone component's units are its block rows
+        }
+
         foreach (var c in scan)
         {
             perUnit += n == 1 ? 1 : c.H * c.V;
             c.Scanned = true;                                                           // its blocks are all decoded below
+            if (!strips)
+            {
+                EnsureWhole(c);
+                continue;
+            }
+
+            if (c.Pooled)
+            {
+                ArrayPool<short>.Shared.Return(c.Coefficients);
+            }
+
+            c.Coefficients = ArrayPool<short>.Shared.Rent(checked(stripMcuRows * c.V * c.BlocksPerLine * 64));
+            (c.Pooled, c.Whole, c.BlockRow0) = (true, false, 0);
         }
 
         var unitComponent = new Component[perUnit];
@@ -717,12 +789,13 @@ internal sealed class JpegDecoder
         ref byte zigzag = ref MemoryMarshal.GetArrayDataReference(natural);
         for (int uy = 0; uy < unitsDown; uy++)
         {
+            int row = uy % stripUnits;                                                  // the unit row in the coefficients held
             for (int ux = 0; ux < unitsAcross; ux++)
             {
                 for (int b = 0; b < perUnit; b++)
                 {
                     var c = unitComponent[b];
-                    var block = c.Coefficients.AsSpan(unitOffset[b] + uy * unitDown[b] + ux * unitAcross[b], 64);
+                    var block = c.Coefficients.AsSpan(unitOffset[b] + row * unitDown[b] + ux * unitAcross[b], 64);
                     block.Clear();
                     ref short first = ref MemoryMarshal.GetReference(block);
                     var dc = unitDc[b];
@@ -816,6 +889,15 @@ internal sealed class JpegDecoder
                     }
 
                     nextFF = NextFF(bytes, pos, size);
+                }
+            }
+
+            if (strips && (row == stripUnits - 1 || uy == unitsDown - 1))
+            {
+                EmitStrip(uy / stripUnits, last: uy == unitsDown - 1);
+                foreach (var c in scan)
+                {
+                    c.BlockRow0 += stripMcuRows * c.V;                                  // the next strip's blocks go where these were
                 }
             }
         }
@@ -1027,7 +1109,8 @@ internal sealed class JpegDecoder
         public int Id, H, V, Table, DcTable, AcTable, Predictor;
         public int Width, Height, BlocksPerLine, BlockRows;
         public short[] Coefficients = [];
-        public bool Pooled, Scanned;
+        public int BlockRow0;                                                           // the block row Coefficients starts at
+        public bool Pooled, Scanned, Whole;
     }
 
     // A Huffman table: codes of up to 9 bits from one lookup, longer ones from the canonical code limits.
@@ -1135,148 +1218,204 @@ internal sealed class JpegDecoder
 
     private byte[][] Output()
     {
-        // Each component's samples at its own resolution (whole blocks; the rows and columns past its size unused).
-        var samples = new byte[components.Length][];
-        try
+        if (output is { } made)
         {
-            for (int i = 0; i < components.Length; i++)
-            {
-                var c = components[i];
-                if (c.Pooled && !c.Scanned)
-                {
-                    c.Coefficients.AsSpan().Clear();                                        // no scan reached it: zeros, as a new array
-                }
+            return made;                                                                // made as its one scan went
+        }
 
-                int stride = c.BlocksPerLine * 8, rows = (c.Height + 7) / 8, across = (c.Width + 7) / 8;
-                var plane = samples[i] = ArrayPool<byte>.Shared.Rent(checked(stride * rows * 8));  // every byte read below is written by the IDCT
-                var table = quant[c.Table] ?? throw new InvalidDataException("a JPEG component without a quantization table.");
-                HostParallel.For(rows, 1, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, last) =>
+        foreach (var c in components)
+        {
+            if (!c.Whole)
+            {
+                EnsureWhole(c);
+            }
+
+            if (c.Pooled && !c.Scanned)
+            {
+                c.Coefficients.AsSpan().Clear();                                        // no scan reached it: zeros, as a new array
+            }
+        }
+
+        BeginOutput();
+        int strips = (mcusY + stripMcuRows - 1) / stripMcuRows;
+        for (int strip = 0; strip < strips; strip++)
+        {
+            EmitStrip(strip, last: strip == strips - 1);
+        }
+
+        return output!;
+    }
+
+    // The output planes, and each component's window of sample rows for a strip of MCU rows: enough rows that the
+    // conversion gives every CPU thread two bands of 16 rows (the whole image when it is shorter).
+    private void BeginOutput()
+    {
+        int n = components.Length;
+        rgb = n == 3 && (sawJfif ? false
+            : sawAdobe ? adobeTransform == 0
+            : components[0].Id == 'R' && components[1].Id == 'G' && components[2].Id == 'B');
+        ycck = n == 4 && sawAdobe && adobeTransform == 2;
+        var planes = new byte[n == 1 ? 1 : 3][];
+        for (int i = 0; i < planes.Length; i++)
+        {
+            planes[i] = GC.AllocateUninitializedArray<byte>(checked(width * height));         // every byte written by EmitStrip
+        }
+
+        stripMcuRows = Math.Clamp((2 * 16 * ComputeResources.MaxCpuThreads + 8 * maxV - 1) / (8 * maxV), 1, mcusY);
+        windows = new byte[n][];
+        windowFirst = new int[n];
+        for (int i = 0; i < n; i++)
+        {
+            var c = components[i];
+            windows[i] = ArrayPool<byte>.Shared.Rent(checked((Context + stripMcuRows * c.V * 8) * c.BlocksPerLine * 8));   // every row read is written first
+        }
+
+        (output, rowsWritten) = (planes, 0);
+    }
+
+    // Strip `strip` of MCU rows: each component's blocks of it (its coefficients from block row BlockRow0) through the
+    // inverse DCT into its window, after the row above the strip kept from the last; then every output row whose samples
+    // are all there (all, for the last strip; else all but the last row, whose upsampling may read the next strip's
+    // first) converted into the output planes.
+    private void EmitStrip(int strip, bool last)
+    {
+        for (int i = 0; i < components.Length; i++)
+        {
+            var c = components[i];
+            int perStrip = stripMcuRows * c.V, b0 = strip * perStrip, b1 = Math.Min(b0 + perStrip, (c.Height + 7) / 8);
+            int stride = c.BlocksPerLine * 8, across = (c.Width + 7) / 8, row0 = c.BlockRow0;
+            var window = windows[i];
+            if (strip > 0)
+            {
+                int kept = b0 * 8 - Context - windowFirst[i];                           // where the row above the strip is now
+                window.AsSpan(kept * stride, Context * stride).CopyTo(window);
+            }
+
+            windowFirst[i] = b0 * 8 - Context;
+            var coefficients = c.Coefficients;
+            var table = quant[c.Table] ?? throw new InvalidDataException("a JPEG component without a quantization table.");
+            HostParallel.For(b1 - b0, 1, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, end) =>
+            {
+                Span<int> workspace = stackalloc int[64];
+                for (int by = b0 + first; by < b0 + end; by++)
                 {
-                    Span<int> workspace = stackalloc int[64];
-                    for (int by = first; by < last; by++)
+                    for (int bx = 0; bx < across; bx++)
                     {
-                        for (int bx = 0; bx < across; bx++)
+                        var block = coefficients.AsSpan(((by - row0) * c.BlocksPerLine + bx) * 64, 64);
+                        var target = window.AsSpan((Context + (by - b0) * 8) * stride + bx * 8);
+                        if (Vector256.IsHardwareAccelerated)
                         {
-                            var block = c.Coefficients.AsSpan((by * c.BlocksPerLine + bx) * 64, 64);
-                            var target = plane.AsSpan(by * 8 * stride + bx * 8);
-                            if (Vector256.IsHardwareAccelerated)
-                            {
-                                IdctVector(block, table, target, stride);
-                            }
-                            else
-                            {
-                                Idct(block, table, target, stride, workspace);
-                            }
-                        }
-                    }
-                });
-            }
-
-            // Every component at full size and to RGB in one pass over the output, a band of rows at a time: each output row's
-            // samples of every component (a sample plane's own row where the component is not subsampled, else upsampled into
-            // a row buffer), then the colour conversion straight into the output planes.
-            int n = components.Length;
-            bool rgb = n == 3 && (sawJfif ? false
-                : sawAdobe ? adobeTransform == 0
-                : components[0].Id == 'R' && components[1].Id == 'G' && components[2].Id == 'B');
-            bool ycck = n == 4 && sawAdobe && adobeTransform == 2;
-            var output = new byte[n == 1 ? 1 : 3][];
-            for (int i = 0; i < output.Length; i++)
-            {
-                output[i] = GC.AllocateUninitializedArray<byte>(checked(width * height));         // every byte written below
-            }
-
-            int w = width, widest = 0;
-            foreach (var c in components)
-            {
-                widest = Math.Max(widest, c.Width);
-            }
-
-            HostParallel.For(height, 16, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, last) =>
-            {
-                var buffers = new byte[n][];
-                int[] sums = ArrayPool<int>.Shared.Rent(widest);
-                ushort[] narrowSums = ArrayPool<ushort>.Shared.Rent(widest + Vector<ushort>.Count);
-                byte[] wide = ArrayPool<byte>.Shared.Rent(2 * widest);
-                for (int i = 0; i < n; i++)
-                {
-                    buffers[i] = ArrayPool<byte>.Shared.Rent(w);
-                }
-
-                try
-                {
-                    for (int y = first; y < last; y++)
-                    {
-                        int at = y * w;
-                        var s0 = ComponentRow(0, samples[0], y, buffers[0], sums, narrowSums, wide);
-                        if (n == 1)
-                        {
-                            s0.CopyTo(output[0].AsSpan(at, w));
-                            continue;
-                        }
-
-                        var s1 = ComponentRow(1, samples[1], y, buffers[1], sums, narrowSums, wide);
-                        var s2 = ComponentRow(2, samples[2], y, buffers[2], sums, narrowSums, wide);
-                        if (n == 4)
-                        {
-                            CmykRow(s0, s1, s2, ComponentRow(3, samples[3], y, buffers[3], sums, narrowSums, wide), ycck,
-                                output[0].AsSpan(at, w), output[1].AsSpan(at, w), output[2].AsSpan(at, w));
-                        }
-                        else if (rgb)
-                        {
-                            s0.CopyTo(output[0].AsSpan(at, w));
-                            s1.CopyTo(output[1].AsSpan(at, w));
-                            s2.CopyTo(output[2].AsSpan(at, w));
+                            IdctVector(block, table, target, stride);
                         }
                         else
                         {
-                            YccRow(s0, s1, s2, output[0].AsSpan(at, w), output[1].AsSpan(at, w), output[2].AsSpan(at, w));
+                            Idct(block, table, target, stride, workspace);
                         }
                     }
                 }
-                finally
-                {
-                    ArrayPool<int>.Shared.Return(sums);
-                    ArrayPool<ushort>.Shared.Return(narrowSums);
-                    ArrayPool<byte>.Shared.Return(wide);
-                    foreach (var buffer in buffers)
-                    {
-                        ArrayPool<byte>.Shared.Return(buffer);
-                    }
-                }
             });
-            return output;
         }
-        finally
+
+        int rows = last ? height : Math.Min(height, (strip + 1) * stripMcuRows * maxV * 8 - Context);
+        if (rows > rowsWritten)
         {
-            foreach (var plane in samples)
-            {
-                if (plane is not null)
-                {
-                    ArrayPool<byte>.Shared.Return(plane);
-                }
-            }
+            ConvertRows(rowsWritten, rows);
+            rowsWritten = rows;
+        }
+
+        if (last)
+        {
+            ReturnWindows();
         }
     }
 
-    // Output row y of component i at the image's size: the sample plane's own row when the component has the largest
-    // sampling; libjpeg's fancy (triangle) upsampling for 2:1 in either direction or both; repeated samples for other ratios.
+    // Output rows [from, to): each row's samples of every component (a window's own row where the component is not
+    // subsampled, else upsampled into a row buffer), then the colour conversion straight into the output planes, a band
+    // of rows at a time over the cores.
+    private void ConvertRows(int from, int to)
+    {
+        int n = components.Length, w = width, widest = 0;
+        var planes = output!;
+        foreach (var c in components)
+        {
+            widest = Math.Max(widest, c.Width);
+        }
+
+        HostParallel.For(to - from, 16, [MethodImpl(MethodImplOptions.AggressiveOptimization)] (first, last) =>
+        {
+            var buffers = new byte[n][];
+            int[] sums = ArrayPool<int>.Shared.Rent(widest);
+            ushort[] narrowSums = ArrayPool<ushort>.Shared.Rent(widest + Vector<ushort>.Count);
+            byte[] wide = ArrayPool<byte>.Shared.Rent(2 * widest);
+            for (int i = 0; i < n; i++)
+            {
+                buffers[i] = ArrayPool<byte>.Shared.Rent(w);
+            }
+
+            try
+            {
+                for (int y = from + first; y < from + last; y++)
+                {
+                    int at = y * w;
+                    var s0 = ComponentRow(0, y, buffers[0], sums, narrowSums, wide);
+                    if (n == 1)
+                    {
+                        s0.CopyTo(planes[0].AsSpan(at, w));
+                        continue;
+                    }
+
+                    var s1 = ComponentRow(1, y, buffers[1], sums, narrowSums, wide);
+                    var s2 = ComponentRow(2, y, buffers[2], sums, narrowSums, wide);
+                    if (n == 4)
+                    {
+                        CmykRow(s0, s1, s2, ComponentRow(3, y, buffers[3], sums, narrowSums, wide), ycck,
+                            planes[0].AsSpan(at, w), planes[1].AsSpan(at, w), planes[2].AsSpan(at, w));
+                    }
+                    else if (rgb)
+                    {
+                        s0.CopyTo(planes[0].AsSpan(at, w));
+                        s1.CopyTo(planes[1].AsSpan(at, w));
+                        s2.CopyTo(planes[2].AsSpan(at, w));
+                    }
+                    else
+                    {
+                        YccRow(s0, s1, s2, planes[0].AsSpan(at, w), planes[1].AsSpan(at, w), planes[2].AsSpan(at, w));
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<int>.Shared.Return(sums);
+                ArrayPool<ushort>.Shared.Return(narrowSums);
+                ArrayPool<byte>.Shared.Return(wide);
+                foreach (var buffer in buffers)
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+            }
+        });
+    }
+
+    // Output row y of component i at the image's size, from the component's window of sample rows (rows from windowFirst):
+    // the window's own row when the component has the largest sampling; libjpeg's fancy (triangle) upsampling for 2:1 in either direction or both; repeated samples for other ratios.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private ReadOnlySpan<byte> ComponentRow(int i, byte[] plane, int y, byte[] buffer, int[] sums, ushort[] narrowSums, byte[] wide)
+    private ReadOnlySpan<byte> ComponentRow(int i, int y, byte[] buffer, int[] sums, ushort[] narrowSums, byte[] wide)
     {
         var c = components[i];
+        var plane = windows[i];
+        int top = windowFirst[i];
         int stride = c.BlocksPerLine * 8, cw = c.Width, ch = c.Height, w = width;
         int rx = maxH / c.H, ry = maxV / c.V;
         if (rx == 1 && ry == 1)
         {
-            return plane.AsSpan(y * stride, w);
+            return plane.AsSpan((y - top) * stride, w);
         }
 
         var target = buffer.AsSpan(0, w);
         bool fancy = rx == 2 && ry is 1 or 2 || rx == 1 && ry == 2;
         if (!fancy || cw < 2 && rx == 2)
         {
-            var source = plane.AsSpan(Math.Min(y / ry, ch - 1) * stride);
+            var source = plane.AsSpan((Math.Min(y / ry, ch - 1) - top) * stride);
             for (int x = 0; x < w; x++)
             {
                 target[x] = source[Math.Min(x / rx, cw - 1)];
@@ -1286,7 +1425,7 @@ internal sealed class JpegDecoder
         }
 
         int r = y / ry, v = y % ry;
-        var current = plane.AsSpan(r * stride, cw);
+        var current = plane.AsSpan((r - top) * stride, cw);
         if (ry == 1)
         {
             H2V1(current, target, wide);
@@ -1295,7 +1434,7 @@ internal sealed class JpegDecoder
 
         // Vertically: three parts of this row and one of the row above (for the upper output row) or below (for the
         // lower), the edges repeated.
-        var other = plane.AsSpan(Math.Clamp(v == 0 ? r - 1 : r + 1, 0, ch - 1) * stride, cw);
+        var other = plane.AsSpan((Math.Clamp(v == 0 ? r - 1 : r + 1, 0, ch - 1) - top) * stride, cw);
         if (rx == 2)
         {
             FancyH2V2(current, other, target, narrowSums, sums, wide);

@@ -16,7 +16,7 @@ dotnet add package Idrak.Imaging
 
 | Area | What is there |
 |------|---------------|
-| Codecs | `PngCodec`, `JpegCodec` (baseline and progressive, decoded to Pillow's RGB), `BmpCodec`, `NetpbmCodec`; `PngEncoder`, `JpegEncoder`, `NetpbmEncoder`; registered in `ImageCodecs` and `ImageEncoders` ("png", "jpeg", "netpbm"; Idrak.Abstraction) when the registry is first used, so `ImageCodecs.Decode(path)` reads them and `ImageEncoders.Save(path, image)` writes them |
+| Codecs | `PngCodec`, `JpegCodec` (baseline and progressive, decoded to Pillow's RGB; a file of one scan decoded a strip of MCU rows at a time, so a large image costs its pixels and a strip), `BmpCodec`, `NetpbmCodec`; `PngEncoder`, `JpegEncoder`, `NetpbmEncoder`; registered in `ImageCodecs` and `ImageEncoders` ("png", "jpeg", "netpbm"; Idrak.Abstraction) when the registry is first used, so `ImageCodecs.Decode(path)` reads them and `ImageEncoders.Save(path, image)` writes them |
 | Transforms | `PillowImageOps` (resize with Pillow's filters, rank filters, blur, blends, point maps), the named transforms of `ImageTransforms` ("grayscale", "max_width", "contrast", ...), and scan degradations ("rotate", "perspective", "noise", "speckle", "fade", "tint", "stain", "lowres", "bleed"; seeded) mixed by the scan profiles of `ScanProfiles` ("clean", "office", "old", "fax", or one written as text) |
 | Preprocessing | `ImagePreprocessor`: a model family's resize, crop, rescale and normalization from its preprocessor config, on the host or the device |
 | Chat images | `ChatImageDecoder`: the images of a chat request (data URLs, files, bytes) decoded once |

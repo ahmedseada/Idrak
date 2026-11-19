@@ -66,7 +66,7 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             var group = global::Idrak.Cli.Commands.MeasureCommands.All.Concat(global::Idrak.Cli.Commands.RetrievalCommands.All).ToList();
-            Check(group.Count == 10, $"10 commands, got {group.Count}");
+            Check(group.Count == 11, $"11 commands, got {group.Count}");
             foreach (var command in group)
             {
                 var (code, output, _) = MeasureIdrak(cache, ["help", .. command.Name.Split(' ')]);

@@ -50,6 +50,9 @@ internal sealed class PdfFile : IDisposable
 
     public int MaxDepth { get; }
 
+    /// <summary>The bytes the cache holds now (each kept part's estimate), never more than <see cref="DocumentOptions.CacheBytes"/>.</summary>
+    public long CachedBytes => _cache.Bytes;
+
     /// <summary>How many bytes come before <c>%PDF-</c>.</summary>
     public long HeaderOffset { get; private set; }
 
@@ -226,7 +229,7 @@ internal sealed class PdfFile : IDisposable
         if (stream.Length > MaxStreamBytes)
         {
             throw PdfLimit.Error(
-                $"{Name}: object {stream.Number}: a stream of {stream.Length:N0} stored bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} ({MaxStreamBytes:N0}; DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}).");
+                $"{Name}: object {stream.Number}: a stream of {stream.Length:N0} stored bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}).");
         }
 
         try
@@ -254,7 +257,7 @@ internal sealed class PdfFile : IDisposable
 
     /// <summary>What <see cref="Decode"/> throws when stream <paramref name="number"/> decodes past <see cref="MaxStreamBytes"/> (made only then).</summary>
     internal string StreamOverLimit(int number) => string.Create(CultureInfo.InvariantCulture,
-        $"{Name}: object {number}: a stream decodes to more than {MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to read this file.");
+        $"{Name}: object {number}: a stream decodes to more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to read this file.");
 
     /// <summary>A stream's (or an inline image's) filters and their parameters, every reference resolved.</summary>
     internal PdfFilter[] Filters(PdfDictionary dictionary)
@@ -600,7 +603,7 @@ internal sealed class PdfFile : IDisposable
 
     /// <summary>The error for more objects than <see cref="DocumentOptions.MaxObjects"/>.</summary>
     public InvalidDataException ObjectsLimit(long count, string what) =>
-        PdfLimit.Error($"{Name}: {what} claims {count:N0} objects, more than the limit {nameof(DocumentOptions.MaxObjects)} ({MaxObjects:N0}; DocumentOptions.MaxObjects).");
+        PdfLimit.Error($"{Name}: {what} claims {count:N0} objects, more than the limit {nameof(DocumentOptions.MaxObjects)} allows (DocumentOptions.MaxObjects, or {DocumentOptions.MaxObjectsVariable}).");
 
     /// <summary>
     /// Rebuilds the cross-reference by scanning the file, once per document, unless another thread did since
@@ -726,6 +729,9 @@ internal sealed class PdfCache(long limit)
     private readonly ConcurrentDictionary<long, (PdfValue Value, object? Extra, long Bytes)> _entries = new();
     private readonly ConcurrentQueue<long> _order = new();
     private long _bytes;
+
+    /// <summary>The bytes held now (the estimates of what is kept).</summary>
+    public long Bytes => Interlocked.Read(ref _bytes);
 
     public bool TryGet(long key, out PdfValue value, out object? extra)
     {

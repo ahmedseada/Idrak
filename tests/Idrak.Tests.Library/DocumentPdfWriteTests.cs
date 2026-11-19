@@ -332,6 +332,7 @@ internal abstract partial class Tests
             byte[] levels = new byte[w * h * c];
             PdfWriterImages.Levels(image, levels);
             var measures = PdfWriterImages.Measure(levels, w, h, c, 0);
+            Check(PdfWriterImages.Measure(image, 0) == measures, $"{name}: measured a band at a time {PdfWriterImages.Measure(image, 0)}, whole {measures}");
             Check(c == (int)entry["channels"]! && measures.Levels <= (int)entry["distinctColours"]! && (c == 3 || measures.Levels == (int)entry["distinctColours"]!)
                   && Math.Abs(Math.Round(measures.SmallSteps, 4) - (double)entry["smallSteps"]!) < 1e-9 && Math.Abs(Math.Round(measures.LargeSteps, 4) - (double)entry["largeSteps"]!) < 1e-9,
                 $"{name}: measured {measures}, the sample's {entry["distinctColours"]} colours, {entry["smallSteps"]} small and {entry["largeSteps"]} large steps");

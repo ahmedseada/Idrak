@@ -29,7 +29,7 @@ Idrak, no JSON font file, WOFF alone in a plug-in (decision 20); two agents at m
 | D10 | Annotations and navigation: every annotation kind read, drawn, created and removed; links, bookmarks (outlines), named destinations, page labels; tagged structure read for reading order | B | Built (2026-11-19) |
 | D11 | Editing in place and saving: incremental updates, a full rewrite (unused objects dropped), pages merged, split, inserted, removed, moved, rotated; saved encrypted (AES-256) | A | Built (2026-11-18) |
 | D12 | Signatures: read and validated (CMS, the byte range, the chain against trust the app gives, timestamps, revocation from the file), and signing (PAdES baseline) | B | Built (2026-11-19) |
-| D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Planned |
+| D13 | Any workload: the documents bench (open, text, draw, write, edit; cold and warm), large and many files, memory bounded, the limits measured | A | Built (2026-11-19; the real-files bullet built with D5's `documents real:`) |
 
 ## Goal
 
@@ -2385,6 +2385,131 @@ count beyond its cache and one page's buffers; each slow path the bench finds is
 speed and memory first), its results unchanged.
 
 **Tests (CPU here):** one build; `documents|fonts write`; the bench's real numbers come from the owner's devices.
+
+**As built (2026-11-19):**
+- **The bench** (`src/Idrak.Cli.Commands/Commands/Measure/BenchDocumentsCommand.cs`, `DocumentBench.cs`): `idrak bench
+  documents` (`b documents`), a command of two words beside `idrak bench` (bench kinds have no registry: the command's own
+  pattern, as `cluster bench` and `tuning show`), through the public document API only (any registered format, writer and
+  drawer). Cases, in order: `open`; `text-lines` and `text-content` (every page's text through the `lines` layout and
+  with none); `text-parallel` (the same over `ComputeResources.ParallelOptions`: the files at once, or one file's pages);
+  `images` (every image decoded); `draw` (a case a resolution); `write-image` (each file's images written as an image PDF,
+  `Auto`); `write-vector` (each file's paths and text written back, each under its clips; text whose font the file does
+  not embed in `--font`'s face, else left out and counted); `edit-incremental`, `edit-rewrite` (the information changed);
+  `fill` (every text field); `sign` (PAdES B-B with the sample generator's test certificate, at its first day plus one, so
+  a file signs to the same bytes); `check` (every signature `sign` made, against the generator's root). Each case runs
+  once cold (its first run on a set; the first set's also compiles the case's code, its JIT time and methods recorded)
+  and `--repeat` times warm, each run after a full collection: the time (files refused during it left out), the managed
+  bytes allocated on every thread (`GC.GetTotalAllocatedBytes(precise)`, the sampler's own allocations taken off) and the
+  process's working set at its highest (`Environment.WorkingSet` sampled every 10 ms on a thread of the run's own).
+  Options and variables (the option winning): `--cases` (`IDRAK_BENCH_DOCUMENTS_CASES`), `--sets`
+  (`IDRAK_BENCH_DOCUMENTS_SETS`: `samples` (its manifest's hostile samples left out), `large` (each member of the large set
+  a set of its own: `deep-forms`, `huge-image`, `pages-3000`, `many-small`), or folders and files), `--dpi`
+  (`IDRAK_BENCH_DOCUMENTS_DPI`, 150,300), `-n, --repeat` (`IDRAK_BENCH_DOCUMENTS_REPEAT`, 3), `--draw-files` and
+  `--draw-pages` (`IDRAK_BENCH_DOCUMENTS_DRAW_FILES`, `_DRAW_PAGES`: 50 files spread evenly, 10 pages each), `--font`
+  (`IDRAK_BENCH_DOCUMENTS_FONT`), `--certificate`, `--key`, `--chain`, `--trust`; `--short` (6 files spread evenly, 2
+  pages each, one warm run, one resolution) and `--hash` (every run's output hashed: text, pixels, written bytes; a run
+  that differs from the cold one is flagged, and `--compare` says which hashed cases changed against the saved ones:
+  rule 71 as a tool). A file no format opens (a password, damage) is refused once and left out of every run.
+  `--save NAME` and `--compare NAME` are `idrak bench`'s own (its `Compare`, `LoadSaved` and `SavedPath`, now shared):
+  three results a case and set (time, allocation, working set), each with its cold value. The saved results record every
+  variable the tool's table names for the command (the `IDRAK_DOCUMENT_*` ones with D7's drawer settings, the bench's,
+  the CPU's) as the environment gives them, and the limits they come to here. Live progress: the case, set and run, the
+  units done of the total, the rate and the time left, and the run of all. Help and the CLI README with generic examples.
+- **The limits (C8), measured and settable:** `MaxStreamBytes` (a quarter of the memory free when a document opens, at
+  most the largest array), `CacheBytes` (an eighth) and `MaxObjects` (one a KiB) from the CPU device's available memory
+  within `ComputeResources.CpuMemoryLimit`, read once at open; `MaxDepth` is a count of levels, not a size (64 by
+  default, `DefaultMaxDepth`; each level is also checked against the stack the reading thread has left), at most
+  `MostNesting` (2^20, so the reader's counts of nested parts stay in an `int`). Each is set by its option and its
+  variable: `IDRAK_DOCUMENT_MAX_OBJECTS` and `IDRAK_DOCUMENT_MAX_DEPTH` new (the stream's and the cache's existed). Two
+  faults fixed: `CacheBytes = 0` read back as the measured size (0 meant unset), so no option could turn the cache off
+  (D1's "read without a cache" read with it); now 0 keeps nothing, by option or variable (`IDRAK_DOCUMENT_CACHE_BYTES=0`),
+  unset is measured. And a limit's message printed its measured value, so two hostile samples gave other issue text on
+  each run (found by the reader's agent): the eight messages now name the limit, its option and its variable, never the
+  measured number (`PdfFile`, `PdfBytes`, `PdfImages`, `PdfEditCopy`).
+- **Memory bounded at any size** (group `documents workload:`, 4, `tests/Idrak.Tests.Library/DocumentWorkloadTests.cs`):
+  the limits within a memory limit (64 and 192 MiB: exactly a quarter, an eighth, one a KiB) and from the free memory
+  (between two readings), each by option and variable, bad values refused naming the variable, `MaxObjects=1000` tripping
+  on `pages-3000` naming its variable, the deep forms (8, 16, 24 levels) read within 64 and 24 refused under 20;
+  `pages-3000` read page by page (text and images, every page's text against the generator's hash) under the measured
+  cache, a 2 MiB one and none: the managed memory after every page, a full collection every 250 pages, grows at most the
+  cache's held bytes and one page (1.09, 1.08 and 0.00 MiB from page 20 to 3,000; the cache holds 1.64 MiB: estimates
+  that hold the real memory); written back page by page (images and text in a test face): -4.0 MiB from page 20 to 3,000,
+  30 KiB allocated a page; 600 pages drawn: 0.76 MiB; the huge image's page drawn: 21.9 MiB besides the decoded image and
+  the page's pixels (1.2 GiB more before the decoder's fix below); 1,000 small files read in parallel within
+  `MaxCpuThreads` (4 at once; 2 when set to 2), the same text, 2.68x one by one; `pages-3000`'s pages in parallel 3.54x
+  (rule 79: it pays, here).
+- **Slow paths the bench found, fixed, the outputs proven the same** (`--hash` runs before and after compared:
+  `images` and `write-image` on the samples, `huge-image` and `pages-3000`; `write-vector` and `write-image` on the samples,
+  `pages-3000` and `many-small`; every hashed case the same, and the `jpeg:` group's Pillow-exact decodes passing):
+  - **The JPEG decoder held the image two and a half times** (`src/Idrak.Imaging/JpegCodec.cs`): every coefficient
+    (2 bytes a sample) and full component planes before the output, all rented from the shared pool, which kept them.
+    Now the image is made a strip of MCU rows at a time (enough rows for two 16-row bands a thread): each component's
+    window of sample rows after the row above (the fancy upsampling's context), the output rows the strip completes
+    converted at once; a sequential file whose one scan holds every component (no other scan after it) also decodes its
+    coefficients a strip at a time. Progressive and multi-scan files keep their coefficients and convert by strips. The
+    huge image (139.5 Mpx): cold 1,555 to 411 MiB allocated, the process's working set after it 1,140 to 516 MiB, warm
+    decode the same (230-250 ms); drawing its page at 36 dpi: 1.36 GiB to 427 MiB.
+  - **Writing an image held it twice more** (`src/Idrak.Data/Pdf/PdfWriterImages.cs`): `Auto` copied the image whole,
+    interleaved, to measure it, and Flate filtered the whole copy into a second one. Now the measures are made a band of
+    rows at a time (no copy; the same measures, checked against the whole-image ones on every D6 writer sample), and a
+    Flate image holds one copy, the stream the deflater takes in one piece, filtered band by band. The huge image
+    (Flate by `Auto`): cold 1,432 to 945 MiB, working set 1.27 GiB to 936 MiB, 5.5 to 5.0 s, the same 11,553,322 bytes.
+  - **The writer matched every text run's glyphs to its characters** (`PdfWriterFonts.Map`): lists, a sort and a string a
+    glyph, though only glyphs not met before take a text. A run of known glyphs is no longer matched (the same map, the
+    same answer). `write-vector` on `pages-3000` (39,000 runs): 1,061 to 84.9 MiB allocated, 1,242 to 788 ms.
+- **Found in the other agents' files, reported, not fixed:** the drawer keeps a band-sized float coverage mask for every
+  clip of a band (`DocumentScene.ClipMask`), and the reader gives each form's `/BBox` as a clip of its own
+  (`PdfContent`): `deep-forms`' page drawing one form 1,000 times allocates about 372 MiB a draw at 150 dpi and raises the
+  working set by 490 MiB (its other three pages 7.8 MiB together). Masks over a clip's own box, identical clips shared, or
+  a mask dropped after the last part that uses it would each bound it.
+- **Decisions the plan did not settle, taken here:** (1) The bench is a command, `bench documents`, not a kind of
+  `bench`'s positional (a model named `documents` stays possible). (2) The large set's members are sets of their own, so
+  each workload is timed apart; the samples are one set. (3) Drawing takes at most 50 files of a set and 10 pages of a
+  file by default (every page of 1,000 small files at 300 dpi is minutes, not a workload). (4) `MaxDepth` stays a count
+  (64), settable, not a share of the memory: nesting costs stack, which each level checks. (5) A fully streamed Flate
+  image (a band, not one copy) is not built: .NET's zlib-ng writes other bytes when its input comes in other pieces
+  (measured: pieces of 32 KiB multiples from 64 KiB match one piece at levels 4 to 9, level 1 never), so the written files
+  would change (rule 71); the owner decides (leftovers 28.24).
+- **Tests:** group `documents bench:` (2, `tests/Idrak.Tests/DocumentBenchTests.cs`): every case on the samples in the
+  short mode with `--hash` (cold and warm apart, the same output every run, the variables and measured limits recorded,
+  `IDRAK_DOCUMENT_CACHE_BYTES=64m` read as such), `fill` on the form samples, the text output; `--save` and `--compare`
+  (each case's three results, cold beside warm, the outputs the same), the variables under their options, usage errors.
+  `cli measure:`'s help count 10 to 11; D6's image test checks the band-wise measures. Runs (each with `--no-build`, CPU):
+  the brief's filter with `cli measure:`, 120 tests, 2 failed (the option `CacheBytes = 0` read as measured; the huge
+  page allocating 1.64 GB: the decoder) and fixed; after moving onto `6153b50` and `6765477` and the fixes above, with
+  `jpeg|image transforms|image data:|image preprocessing:` added for the decoder: 140 passed, 0 failed (3 `documents
+  real:` skipped without a folder), and again on the final code (after the writer's map): 140 passed, 0 failed. Two builds
+  failed once each (a local named twice in nested scopes; spans in a tuple), each fixed and rebuilt once. The API dump
+  (`DocumentOptions`' four constants) regenerated through the runner; the inventory unchanged; both pass without the
+  flags.
+- **Timings** (this container, 4 cores, other agents building beside it: noisy; the owner's devices give the real
+  baseline; `test-output/bench-cache/bench/d13-final.json`, the whole run 75 s): the samples (100 files opened, 13
+  refused for a password or an unsupported handler; 175 pages): open warm 11 ms (113 µs a file), cold 93 ms (80 ms
+  compiling); text-lines 44 ms (252 µs a page, 4.2 MiB), text-content 41 ms, text-parallel 22 ms; images 86 ms (80 images,
+  10.5 Mpx); 79 pages drawn at 150 dpi 380 ms (4.8 ms a page), at 300 dpi 1.29 s (16 ms); write-image 250 ms,
+  write-vector 117 ms; incremental save 74 µs a file, rewrite 203 µs; 7 forms filled 1.2 ms each; signing 0.87 ms a file,
+  checking 1.2 ms a signature. `pages-3000`: opened 6.4 ms (10.3 MiB: the page tree), text 67 µs a page (57 without a
+  layout, 21 over 4 threads), images 54 µs a page, write-image 158 µs a page, write-vector 265 µs a page (85 MiB),
+  incremental save 8 ms with the open, rewrite 37 ms, signed 16 ms, checked 8 ms. `many-small` (1,000 files): open 11 µs
+  a file, text 59 µs (19 over 4 threads), write-vector 534 µs a file (228 MiB: a font subset a file), signing 557 µs,
+  checking 651 µs. `huge-image`: decoded 237 ms (400 MiB, the planes), drawn at 300 dpi 1.45 s (800 MiB: the planes and
+  the page), written by `Auto` (Flate) 4.9 s. The process's working set at most 1.7 GiB (the huge image's runs).
+- **Left:** the drawer's clip masks (above); a fully streamed Flate image (decision 5, leftovers 28.24); `write-vector`
+  of many small files spends most of its 228 KiB a file on each file's font subset and its first runs' matching.
+- **The owner's real files** (the plan's third bullet): built with D5's `documents real:` group (6765477), which writes
+  each file back, edits, draws and times it.
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples --large
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- bench documents --font tests\Idrak.Tests\data\fonts\dejavu-sans-subset.ttf --cache test-output\bench-cache --save owner -O test-output\bench-documents.txt
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents|fonts write|cli measure:|cli polish:|cli arabic:|public API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden boxing|test runner|jpeg|image transforms|image data:|image preprocessing:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-d13.txt
+  $env:IDRAK_FILTER = "documents workload:"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\d13-workload.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
 
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 

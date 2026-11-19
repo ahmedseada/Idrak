@@ -289,7 +289,7 @@ internal readonly struct PdfLimitMessage
 
     public override string ToString() =>
         _text ?? (_page
-            ? $"{_file!.Name}: page {_number}: its content streams together pass {_file.MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."
+            ? $"{_file!.Name}: page {_number}: its content streams together pass the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."
             : _file!.StreamOverLimit(_number));
 }
 

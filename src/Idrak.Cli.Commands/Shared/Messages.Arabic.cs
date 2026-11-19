@@ -399,6 +399,7 @@ internal static partial class Messages
         ["The Android (Termux) setup steps that are safe to automate, then the phone checks"] = "خطوات إعداد Android (في Termux) الآمنة للأتمتة، ثم فحوص الهاتف",
         ["Whether a newer version of the tool exists, and the command to install it"] = "هل يوجد إصدار أحدث من الأداة، والأمر الذي يثبته",
         ["Speed of a model (tokens per second, GFLOP/s, memory) or of the kernels on a device"] = "سرعة نموذج (رموز في الثانية و GFLOP/s والذاكرة) أو سرعة النوى على جهاز",
+        ["Speed and memory of reading, drawing, writing, editing and signing documents, cold and warm"] = "سرعة قراءة المستندات ورسمها وكتابتها وتحريرها وتوقيعها وذاكرتها، في أول تشغيل وبعد الإحماء",
         ["Compare token ids, chat templates, logits and greedy output with a transformers reference"] =
             "مقارنة أرقام الرموز وقوالب المحادثة والقيم اللوغاريتمية والمخرجات الجشعة بمرجع transformers",
         ["Compares a vision-language model with a transformers reference: pixels, features, logits, tokens"] =

@@ -259,8 +259,10 @@ folder (`DocumentDrawOptions.Fonts`, `IDRAK_DOCUMENT_FONTS`); without one such t
 | | `Layout` | `IDRAK_DOCUMENT_LAYOUT` | `lines` |
 | | `ReadingOrder` | `IDRAK_DOCUMENT_READING_ORDER` | `bidi` |
 | | `MaxStreamBytes` | `IDRAK_DOCUMENT_MAX_STREAM_BYTES` | measured from the free memory when a document opens |
-| | `CacheBytes` | `IDRAK_DOCUMENT_CACHE_BYTES` | measured from the free memory when a document opens |
-| | `MaxObjects`, `MaxDepth`, `IncludeHidden`, `Direction`, `WordGap`, `LineTolerance` | | measured; 64; true; each line's own; 0.2; 0.5 |
+| | `CacheBytes` | `IDRAK_DOCUMENT_CACHE_BYTES` | measured from the free memory when a document opens (0: nothing kept) |
+| | `MaxObjects` | `IDRAK_DOCUMENT_MAX_OBJECTS` | measured from the free memory when a document opens |
+| | `MaxDepth` | `IDRAK_DOCUMENT_MAX_DEPTH` | 64 levels (each also checked against the stack the reading thread has left) |
+| | `IncludeHidden`, `Direction`, `WordGap`, `LineTolerance` | | true; each line's own; 0.2; 0.5 |
 | `DocumentWriteOptions` (writing, editing) | `ImageEncoding` | `IDRAK_DOCUMENT_IMAGE_ENCODING` | `auto` |
 | | `JpegQuality` | `IDRAK_DOCUMENT_JPEG_QUALITY` | 90 |
 | | `EmbedFonts` | `IDRAK_DOCUMENT_EMBED_FONTS` | `subset` |
@@ -270,7 +272,17 @@ folder (`DocumentDrawOptions.Fonts`, `IDRAK_DOCUMENT_FONTS`); without one such t
 | `SignatureCheckOptions`, `SigningOptions` | `Online` | `IDRAK_DOCUMENT_SIGNATURE_ONLINE` | off |
 | `FontWriteOptions` (fonts embedded) | `CurveTolerance` | `IDRAK_FONT_CURVE_TOLERANCE` | 1 font unit |
 
-Each variable is in the `idrak` tool's table (`idrak env`); a bad value is refused naming its variable.
+Each variable is in the `idrak` tool's table (`idrak env`); a bad value is refused naming its variable. A limit's
+message names the limit, its option and its variable, never a measured value, so a file gives the same messages on
+every run. The memory a document holds is its cache (within `CacheBytes`) and the page being read; a file is written
+and a page drawn with one page's (or one band's) buffers; a large JPEG is decoded a strip of rows at a time, and an
+image written is measured a band at a time and stored with one copy of it (the stream the deflater takes).
+
+`idrak bench documents` measures all of it on any folders of PDF files (by default the sample generator's samples and
+large set): opening, text with the `lines` layout and with none, text over the cores, images, pages drawn at chosen
+resolutions, image and vector PDFs written, incremental and rewritten saves, forms filled, signing and checking; each
+case cold and warm apart (the time, the managed bytes allocated, the process's working set at its highest), the
+settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak` tool's README).
 
 ### What is not supported
 

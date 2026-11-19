@@ -5,12 +5,13 @@ using Idrak.Cli.Commands.Measure;
 
 namespace Idrak.Cli.Commands;
 
-/// <summary>The bench, eval, perplexity, profile, check and tuning show commands (plans/done/idrak-cli.md, "Measure").</summary>
+/// <summary>The bench, bench documents, eval, perplexity, profile, check and tuning show commands (plans/done/idrak-cli.md, "Measure").</summary>
 internal static class MeasureCommands
 {
     public static IReadOnlyList<Command> All { get; } =
     [
         new BenchCommand(),
+        new BenchDocumentsCommand(),
         new EvalCommand(),
         new PerplexityCommand(),
         new ProfileCommand(),

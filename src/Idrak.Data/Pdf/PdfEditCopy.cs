@@ -420,7 +420,7 @@ internal sealed class PdfEditCopier : IDisposable
         if (stream.Length > file.MaxStreamBytes)
         {
             throw PdfLimit.Error(
-                $"{file.Name}: object {number}: a stream of {stream.Length:N0} stored bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} ({file.MaxStreamBytes:N0}; DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}).");
+                $"{file.Name}: object {number}: a stream of {stream.Length:N0} stored bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}).");
         }
 
         var filters = file.Filters(stream.Dictionary);
@@ -565,7 +565,7 @@ internal sealed class PdfEditCopier : IDisposable
             }
 
             using var decoded = PdfFilters.Decode(stored.Memory, null, filters, file.MaxStreamBytes,
-                string.Create(CultureInfo.InvariantCulture, $"{file.Name}: object {number}: a stream decodes to more than {file.MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."));
+                string.Create(CultureInfo.InvariantCulture, $"{file.Name}: object {number}: a stream decodes to more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."));
             if (decoded.Damaged)
             {
                 return false;                                                 // kept as it is: what it holds past the damage too

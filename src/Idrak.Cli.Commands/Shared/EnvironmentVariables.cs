@@ -81,8 +81,11 @@ internal static class EnvironmentVariables
 
     // Plan 28: read by the document options (DocumentOptions, DocumentWriteOptions, DocumentDrawOptions, SignatureCheckOptions)
     // and FontWriteOptions in Idrak.Abstraction, wherever documents are read, written or drawn and fonts written: idrak data
-    // redact reads and writes documents (phase D10).
-    private static readonly string[] DocumentCommands = ["data redact"];
+    // redact reads and writes documents (phase D10), idrak bench documents measures all of it (phase D13).
+    private static readonly string[] DocumentCommands = ["data redact", "bench documents"];
+
+    // Plan 28, phase D13: the documents bench's own settings (BenchDocumentsCommand), each under its option.
+    private static readonly string[] DocumentBenchCommands = ["bench documents"];
 
     // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code names them in its help, its flags win.
     private static readonly string[] CodeData = ["data code"];
@@ -301,6 +304,13 @@ internal static class EnvironmentVariables
         new("IDRAK_BENCH_SETTLE", Tests, "5", "Percent: a kernel benchmark's warm-up stops once its last rounds' medians agree within it and the last round compiled no method; --settle wins", ["bench"]),
         new("IDRAK_BENCH_SETTLE_ROUNDS", Tests, "3", "How many warm-up rounds in a row must agree before a kernel benchmark's timed calls; --settle-rounds wins", ["bench"]),
         new("IDRAK_BENCH_WARMUP_ROUND", Tests, "100ms", "The shortest warm-up round of a kernel benchmark (at least one call); --warmup-round wins", ["bench"]),
+        new("IDRAK_BENCH_DOCUMENTS_CASES", Tests, "all", "The cases idrak bench documents runs, comma-separated (open, text-lines, text-content, text-parallel, images, draw, write-image, write-vector, edit-incremental, edit-rewrite, fill, sign, check) or all; --cases wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_SETS", Tests, "samples,large", "The sets idrak bench documents runs on: samples, large (the sample generator's, under test-output/documents), or folders and PDF files, comma-separated; --sets wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_DPI", Tests, "150,300", "The resolutions idrak bench documents draws pages at, in dots per inch, comma-separated; --dpi wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_REPEAT", Tests, "3", "The warm runs of each idrak bench documents case after its cold one (the median is kept); --repeat wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_DRAW_FILES", Tests, "50", "The most files an idrak bench documents drawing case takes from a set, spread evenly (0: all); --draw-files wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_DRAW_PAGES", Tests, "10", "The most pages an idrak bench documents drawing case draws of a file (0: all); --draw-pages wins", DocumentBenchCommands),
+        new("IDRAK_BENCH_DOCUMENTS_FONT", Tests, "none (such text is left out and counted)", "A font file idrak bench documents' write-vector case writes text in whose font a file does not embed; --font wins", DocumentBenchCommands),
         new("IDRAK_DEVICES", Tests, "every listed device", "Devices the test runner uses, comma-separated (cpu, cuda:0, vulkan:0, ...)", ["test", "report"]),
         new("IDRAK_FILTER", Tests, "every test", "Run only tests whose names contain this text", ["test", "report"]),
         new("IDRAK_TIMEOUT", Tests, "300", "Seconds before a running test is reported as HANG and the run stops", ["test", "report"]),
@@ -504,10 +514,13 @@ internal static class EnvironmentVariables
         new("IDRAK_WOFF_MAX_BYTES", Fonts, "a quarter of the memory free when a WOFF font is read", "The most bytes the font inside a WOFF file may take once unpacked (bytes, or with k, m or g); a file whose tables claim more is refused before anything is inflated, naming the limit (Idrak.Imaging.Plugins' WoffFormat.MaxFontBytes)", FontCommands),
         new("IDRAK_WOFF_COMPRESSION", Fonts, "9", "The zlib level, 0 to 9, the woff font writer compresses each table at (0: every table stored); a table stays stored when compressing does not make it smaller (Idrak.Imaging.Plugins' WoffWriter.CompressionLevel)", DocumentCommands),
         new("IDRAK_FONT_CURVE_TOLERANCE", Fonts, "1", "How far a curve a font writer converts to another kind (cubic to quadratic) may stray from the original, in font units (FontWriteOptions.CurveTolerance)", DocumentCommands),
+        new("IDRAK_DOCUMENT_MAX_OBJECTS", Documents, "one per KiB of the memory free when a document is opened", "The most objects a document file may hold; a file that claims more fails naming the limit (DocumentOptions.MaxObjects)", DocumentCommands),
+        new("IDRAK_DOCUMENT_MAX_DEPTH", Documents, "64 (and no deeper than the reading thread's stack holds, checked at each level)", "The deepest nesting a document file may hold: containers within containers, content drawn within content (DocumentOptions.MaxDepth)", DocumentCommands),
+
         new("IDRAK_DOCUMENT_LAYOUT", Documents, "lines", "The layout that arranges a document page's text runs into lines and text: a DocumentTextLayouts name (lines, content, tagged: the order a tagged file gives, or a plug-in's; DocumentOptions.Layout)", DocumentCommands),
         new("IDRAK_DOCUMENT_READING_ORDER", Documents, "bidi", "The reading order that puts a document line's text in logical order: a ReadingOrders name (bidi, runs; DocumentOptions.ReadingOrder)", DocumentCommands),
         new("IDRAK_DOCUMENT_MAX_STREAM_BYTES", Documents, "a quarter of the memory free when a document is opened", "The most bytes one decoded part of a document file may take (bytes, or with k, m or g); a file that passes it fails naming the limit (DocumentOptions.MaxStreamBytes)", DocumentCommands),
-        new("IDRAK_DOCUMENT_CACHE_BYTES", Documents, "an eighth of the memory free when a document is opened", "The most bytes a document keeps decoded for reuse (fonts and other shared parts; bytes, or with k, m or g; DocumentOptions.CacheBytes)", DocumentCommands),
+        new("IDRAK_DOCUMENT_CACHE_BYTES", Documents, "an eighth of the memory free when a document is opened", "The most bytes a document keeps decoded for reuse (fonts and other shared parts; bytes, or with k, m or g; 0: nothing kept; DocumentOptions.CacheBytes)", DocumentCommands),
         new("IDRAK_DOCUMENT_IMAGE_ENCODING", Documents, "auto", "How a document writer stores page images: auto (JPEG for photographs and scans, exact for line art and few levels, measured per image), flate (exact) or jpeg (DocumentWriteOptions.ImageEncoding)", DocumentCommands),
         new("IDRAK_DOCUMENT_JPEG_QUALITY", Documents, "90", "The quality of the JPEG images a document writer stores, 1 to 100 (DocumentWriteOptions.JpegQuality)", DocumentCommands),
         new("IDRAK_DOCUMENT_EMBED_FONTS", Documents, "subset", "How a document writer embeds fonts: subset (only the glyphs used) or whole (DocumentWriteOptions.EmbedFonts)", DocumentCommands),

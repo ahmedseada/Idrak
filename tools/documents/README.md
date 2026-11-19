@@ -26,7 +26,9 @@ python -I tools\documents\make_fixtures.py --only none --large --large-out test-
 - `--only d1,d7` some phases only (`d1 d2 d3 d4 d6 d7 d8 d9 d10 d11 d12`; `none` for no phase); `--no-reference` the
   samples and their JSON without the reference tools' runs; `--seed S` another seed (default `2026`).
 - `--large` also writes the D13 set into `--large-out` (default `test-output/documents/large`, emptied first, with its
-  own `manifest.json`); it is off by default so the normal run stays quick.
+  own `manifest.json`); it is off by default so the normal run stays quick. `idrak bench documents` runs on the samples
+  and on this set (each of its members a set of its own), and the `documents workload:` tests read, write and draw it
+  within bounded memory.
 - `--compare A B` compares two output folders: the manifests byte for byte and every file's SHA-256 (exit code 1 on a
   difference); it works on two large folders too.
 

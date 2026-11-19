@@ -71,17 +71,24 @@ internal sealed class PdfWriterFont
     /// </summary>
     public bool Map(ReadOnlySpan<DocumentGlyph> glyphs, string text)
     {
+        bool known = true;
         foreach (var g in glyphs)
         {
             _used[g.Glyph] = true;
+            known &= _text.ContainsKey(g.Glyph);
         }
 
-        var assigned = Align(glyphs, text);
-        for (int i = 0; i < glyphs.Length; i++)
+        // The run's glyphs matched to its characters, for the glyphs whose text is not known yet (a glyph keeps the first
+        // text it was given): a run of known glyphs alone changes nothing, so it is not matched.
+        if (!known)
         {
-            if (assigned[i] is { Length: > 0 } characters && !_text.ContainsKey(glyphs[i].Glyph))
+            var assigned = Align(glyphs, text);
+            for (int i = 0; i < glyphs.Length; i++)
             {
-                _text[glyphs[i].Glyph] = characters;
+                if (assigned[i] is { Length: > 0 } characters && !_text.ContainsKey(glyphs[i].Glyph))
+                {
+                    _text[glyphs[i].Glyph] = characters;
+                }
             }
         }
 

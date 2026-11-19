@@ -37,7 +37,8 @@ internal sealed class BenchCommand : Command
         "With MODEL (a Hugging Face id, a folder, a GGUF file or an alias): prompt and generation tokens per second,\n" +
         "GFLOP/s (2 x parameters per token) and the memory used on the device. Without one: the kernel benchmarks,\n" +
         "each with its first call (Cold: what a first token pays) apart from its warm value: the median of the timed\n" +
-        "calls after a warm-up that runs rounds until the last few agree and the JIT has nothing left to compile.\n\n" +
+        "calls after a warm-up that runs rounds until the last few agree and the JIT has nothing left to compile.\n" +
+        "Documents (reading, drawing, writing, editing, signing) have their own: idrak bench documents.\n\n" +
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (the model's weights; the gemv kernels)\n" +
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
@@ -622,7 +623,7 @@ internal sealed class BenchCommand : Command
     // The change of every result that the saved run also has (matched by run label and name), as a table and as JSON.
     // Kernel results saved by the same timing method compare warm with warm and cold with cold; results saved before
     // the method was recorded (the mean after one warm-up call) still compare, with a note that the method changed.
-    private static JsonObject Compare(CommandContext context, string name, JsonObject saved, List<(string Label, BenchResult Result)> results, string? timing)
+    internal static JsonObject Compare(CommandContext context, string name, JsonObject saved, List<(string Label, BenchResult Result)> results, string? timing)
     {
         var before = (saved["results"] as JsonArray ?? []).OfType<JsonObject>()
             .Where(r => r["name"] is not null && r["value"] is not null)
@@ -688,7 +689,7 @@ internal sealed class BenchCommand : Command
 
     private static string Key(string label, string name) => label + "\n" + name;
 
-    private static JsonObject LoadSaved(CommandContext context, string name)
+    internal static JsonObject LoadSaved(CommandContext context, string name)
     {
         string path = SavedPath(context, name);
         if (!File.Exists(path))
@@ -703,7 +704,7 @@ internal sealed class BenchCommand : Command
         return JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? throw new InvalidDataException($"{path} is not a JSON object.");
     }
 
-    private static string SavedPath(CommandContext context, string name)
+    internal static string SavedPath(CommandContext context, string name)
     {
         if (name.Length == 0 || name.IndexOfAny([.. Path.GetInvalidFileNameChars(), '/', '\\']) >= 0 || name is "." or "..")
         {
@@ -739,7 +740,7 @@ internal sealed class BenchCommand : Command
         return sorted.Count == 0 ? 0 : sorted.Count % 2 == 1 ? sorted[sorted.Count / 2] : (sorted[sorted.Count / 2 - 1] + sorted[sorted.Count / 2]) / 2;
     }
 
-    private static JsonObject ToJson(BenchResult r, string label) => new()
+    internal static JsonObject ToJson(BenchResult r, string label) => new()
     {
         ["name"] = r.Name,
         ["run"] = label.Length > 0 ? label : null,
@@ -754,5 +755,5 @@ internal sealed class BenchCommand : Command
         ["settled"] = r.Settled,
     };
 
-    private static string Format(double value) => value.ToString(Math.Abs(value) >= 100 ? "F0" : Math.Abs(value) >= 10 ? "F1" : "F2", CultureInfo.InvariantCulture);
+    internal static string Format(double value) => value.ToString(Math.Abs(value) >= 100 ? "F0" : Math.Abs(value) >= 10 ? "F1" : "F2", CultureInfo.InvariantCulture);
 }

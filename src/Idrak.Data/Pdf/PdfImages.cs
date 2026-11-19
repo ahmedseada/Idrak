@@ -606,7 +606,7 @@ internal sealed class PdfImage
 
         return PdfFilters.Decode(_inline, null, _inlineFilters, _file.MaxStreamBytes,
             string.Create(CultureInfo.InvariantCulture,
-                $"{_where}: its data decodes to more than {_file.MaxStreamBytes:N0} bytes, the limit {nameof(DocumentOptions.MaxStreamBytes)} (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."));
+                $"{_where}: its data decodes to more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable})."));
     }
 
     // The pixels' bytes within MaxStreamBytes, checked before anything is decoded.
@@ -616,7 +616,7 @@ internal sealed class PdfImage
         if (bytes > _file.MaxStreamBytes || bytes > Array.MaxLength || width * channels > Array.MaxLength)
         {
             throw PdfLimit.Error(string.Create(CultureInfo.InvariantCulture,
-                $"{_where}: {width:N0} x {height:N0} pixels decode to {bytes:N0} bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} ({_file.MaxStreamBytes:N0}; DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to decode this image."));
+                $"{_where}: {width:N0} x {height:N0} pixels decode to {bytes:N0} bytes, more than the limit {nameof(DocumentOptions.MaxStreamBytes)} allows (DocumentOptions.MaxStreamBytes, or {DocumentOptions.MaxStreamBytesVariable}); raise it to decode this image."));
         }
     }
 

@@ -1416,8 +1416,12 @@ public sealed record Idrak.Abstraction.Data.DocumentOptions : System.IEquatable<
   public DocumentOptions()
   public Idrak.Abstraction.Data.DocumentTextDirection Direction { get; init; }
   public bool IncludeHidden { get; init; }
+  public const int DefaultMaxDepth = 64
+  public const int MostNesting = 1048576
   public const string CacheBytesVariable = "IDRAK_DOCUMENT_CACHE_BYTES"
   public const string LayoutVariable = "IDRAK_DOCUMENT_LAYOUT"
+  public const string MaxDepthVariable = "IDRAK_DOCUMENT_MAX_DEPTH"
+  public const string MaxObjectsVariable = "IDRAK_DOCUMENT_MAX_OBJECTS"
   public const string MaxStreamBytesVariable = "IDRAK_DOCUMENT_MAX_STREAM_BYTES"
   public const string ReadingOrderVariable = "IDRAK_DOCUMENT_READING_ORDER"
   public float LineTolerance { get; init; }

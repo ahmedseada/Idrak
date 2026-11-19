@@ -82,9 +82,11 @@ public sealed record DocumentInfo
 
 /// <summary>
 /// How a document is opened and its text arranged. Every limit guards against a hostile file: passing one is an
-/// <see cref="InvalidDataException"/> naming it, never a hang or an out-of-memory. The size limits default to a share of the
-/// memory the machine has free when a document is opened (within <see cref="ComputeResources.CpuMemoryLimit"/>), never a
-/// fixed size; the environment variables named below set them, the layout and the reading order.
+/// <see cref="InvalidDataException"/> naming it, never a hang or an out-of-memory. The size limits (a stream, the objects,
+/// the cache) default to a share of the memory the machine has free when a document is opened (within
+/// <see cref="ComputeResources.CpuMemoryLimit"/>), never a fixed size; the nesting limit is a count of levels, and each
+/// level is also checked against the stack the reading thread has left. Each is set by its option or its environment
+/// variable (named below, as are the layout's and the reading order's), the option winning.
 /// </summary>
 public sealed record DocumentOptions
 {
@@ -100,11 +102,20 @@ public sealed record DocumentOptions
     /// <summary>The variable that sets <see cref="CacheBytes"/> (bytes, or with k, m or g): "IDRAK_DOCUMENT_CACHE_BYTES".</summary>
     public const string CacheBytesVariable = "IDRAK_DOCUMENT_CACHE_BYTES";
 
+    /// <summary>The variable that sets <see cref="MaxObjects"/> (a whole number): "IDRAK_DOCUMENT_MAX_OBJECTS".</summary>
+    public const string MaxObjectsVariable = "IDRAK_DOCUMENT_MAX_OBJECTS";
+
+    /// <summary>The variable that sets <see cref="MaxDepth"/> (a whole number of levels): "IDRAK_DOCUMENT_MAX_DEPTH".</summary>
+    public const string MaxDepthVariable = "IDRAK_DOCUMENT_MAX_DEPTH";
+
+    /// <summary>The nesting limit when neither the option nor <see cref="MaxDepthVariable"/> sets one: 64 levels.</summary>
+    public const int DefaultMaxDepth = 64;
+
     private readonly long _maxStreamBytes = DocumentSettings.Bytes(MaxStreamBytesVariable) ?? 0;
-    private readonly long _cacheBytes = DocumentSettings.Bytes(CacheBytesVariable) ?? 0;
-    private readonly long _maxObjects;
+    private readonly long _cacheBytes = DocumentSettings.Bytes(CacheBytesVariable, zero: true) ?? -1;   // -1: measured
+    private readonly long _maxObjects = DocumentSettings.Count(MaxObjectsVariable) ?? 0;
     private readonly float _wordGap = 0.2f, _lineTolerance = 0.5f;
-    private readonly int _maxDepth = 64;
+    private readonly int _maxDepth = DocumentSettings.Int(MaxDepthVariable, 1, MostNesting) ?? DefaultMaxDepth;
 
     /// <summary>
     /// The password to open an encrypted file with (as either of its passwords), tried after the empty one; null tries the
@@ -162,8 +173,8 @@ public sealed record DocumentOptions
     }
 
     /// <summary>
-    /// The most objects a document may hold: one per kilobyte of the memory free when it is opened unless set. A format
-    /// reads it once, when it opens a document.
+    /// The most objects a document may hold: one per kilobyte of the memory free when it is opened unless set
+    /// (<see cref="MaxObjectsVariable"/>). A format reads it once, when it opens a document.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Not positive.</exception>
     public long MaxObjects
@@ -172,22 +183,31 @@ public sealed record DocumentOptions
         init => _maxObjects = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(MaxObjects), value, "An object limit is more than 0.");
     }
 
-    /// <summary>The deepest nesting a document may hold (containers within containers, content drawn within content): 64 unless set.</summary>
-    /// <exception cref="ArgumentOutOfRangeException">Not positive.</exception>
+    /// <summary>
+    /// The deepest nesting a document may hold (containers within containers, content drawn within content):
+    /// <see cref="DefaultMaxDepth"/> unless set (<see cref="MaxDepthVariable"/>). A count of levels, not a size: a reader also
+    /// checks each level against the stack its thread has left, and fails naming this limit when a level would not fit.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not positive, or more than <see cref="MostNesting"/>.</exception>
     public int MaxDepth
     {
         get => _maxDepth;
-        init => _maxDepth = value > 0 ? value : throw new ArgumentOutOfRangeException(nameof(MaxDepth), value, "A nesting limit is more than 0.");
+        init => _maxDepth = value is > 0 and <= MostNesting ? value
+            : throw new ArgumentOutOfRangeException(nameof(MaxDepth), value, $"A nesting limit is more than 0 and at most {MostNesting} ({MaxDepthVariable}).");
     }
+
+    /// <summary>The highest <see cref="MaxDepth"/> takes: 1,048,576 levels, far deeper than a thread's stack holds (a reader's counts of nested parts stay within a whole number).</summary>
+    public const int MostNesting = 1 << 20;
 
     /// <summary>
     /// The most bytes a document keeps decoded for reuse (fonts and other parts its pages share, each decoded once): an
-    /// eighth of the memory free when it is opened unless set (<see cref="CacheBytesVariable"/>).
+    /// eighth of the memory free when it is opened unless set (<see cref="CacheBytesVariable"/>); 0 keeps nothing, every
+    /// part read again when asked.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Negative.</exception>
     public long CacheBytes
     {
-        get => _cacheBytes > 0 ? _cacheBytes : Math.Max(0, DocumentSettings.FreeMemory() / 8);
+        get => _cacheBytes >= 0 ? _cacheBytes : Math.Max(0, DocumentSettings.FreeMemory() / 8);
         init => _cacheBytes = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(CacheBytes), value, $"A cache size is a number of bytes, 0 or more ({CacheBytesVariable}).");
     }
 
@@ -199,7 +219,7 @@ public sealed record DocumentOptions
             .Append(", LineTolerance = ").Append(LineTolerance.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Append(", MaxDepth = ").Append(MaxDepth).Append(", MaxStreamBytes = ").Append(_maxStreamBytes > 0 ? _maxStreamBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) : "measured")
             .Append(", MaxObjects = ").Append(_maxObjects > 0 ? _maxObjects.ToString(System.Globalization.CultureInfo.InvariantCulture) : "measured")
-            .Append(", CacheBytes = ").Append(_cacheBytes > 0 ? _cacheBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) : "measured");
+            .Append(", CacheBytes = ").Append(_cacheBytes >= 0 ? _cacheBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) : "measured");
         return true;
     }
 }
@@ -724,8 +744,9 @@ internal static class DocumentSettings
 {
     public static string? Text(string variable) => Environment.GetEnvironmentVariable(variable)?.Trim() is { Length: > 0 } value ? value : null;
 
-    // Bytes: a whole number, or one followed by k, m or g (KiB, MiB, GiB; any case, an optional "b" or "ib" after it).
-    public static long? Bytes(string variable)
+    // Bytes: a whole number, or one followed by k, m or g (KiB, MiB, GiB; any case, an optional "b" or "ib" after it);
+    // more than 0, or 0 too where `zero` says it means something (a cache that keeps nothing).
+    public static long? Bytes(string variable, bool zero = false)
     {
         if (Text(variable) is not { } text)
         {
@@ -749,10 +770,23 @@ internal static class DocumentSettings
             span = span[..^1];
         }
 
-        return long.TryParse(span.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value) && value > 0
+        return long.TryParse(span.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value) && (value > 0 || zero && value == 0)
                && value <= long.MaxValue / unit
             ? value * unit
-            : throw new ArgumentException($"{variable}={text}: a number of bytes more than 0 (such as 268435456, 256m or 1g).", variable);
+            : throw new ArgumentException($"{variable}={text}: a number of bytes {(zero ? "0 or more" : "more than 0")} (such as 268435456, 256m or 1g).", variable);
+    }
+
+    // A count: a whole number more than 0 (no unit).
+    public static long? Count(string variable)
+    {
+        if (Text(variable) is not { } text)
+        {
+            return null;
+        }
+
+        return long.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value) && value > 0
+            ? value
+            : throw new ArgumentException($"{variable}={text}: a whole number more than 0.", variable);
     }
 
     public static int? Int(string variable, int min, int max)
