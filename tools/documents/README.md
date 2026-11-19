@@ -1,7 +1,7 @@
 # tools/documents: the PDF and font samples of plan 28
 
 `make_fixtures.py` writes plan 28's samples (phase D5, decision 13) and what a reader, a drawer, an editor or a
-signature check must get from each: 166 samples for phases D1-D4 and D6-D12 (the file, encryption, text, images and
+signature check must get from each: 193 samples for phases D1-D4 and D6-D12 (the file, encryption, text, images and
 embedded files; writing, vector content and drawing, fonts, forms, annotations and navigation, editing, signatures),
 10 of them hostile; with `--large`, the D13 set (thousands of pages, many small files, a huge image page, deep forms)
 in a folder of its own. Nothing it writes is committed: everything goes into the folder given by `-o` (default
@@ -201,7 +201,7 @@ What the specifications leave random, and how it is fixed here (D12, `docfixture
 | `d9/` | `forms-filled` (every field kind with appearances), `forms-empty`, `forms-need-appearances` (/NeedAppearances, no appearance for text, choice, push button and signature fields), `forms-inherited` (FT, Ff, DA, V inherited; one field with two widgets on two pages), `forms-xfa` (XFA template and datasets with AcroForm twins), `forms-flattened` (forms-filled with its appearances drawn into the page and no fields) |
 | `d10/` | `annotations` and `annotations-no-appearance` (every kind: markup over words, a note with a popup and replies, free text, line, square with an open popup, circle, polygon, polyline, ink, stamp, caret, file attachment, links), `navigation` (links to explicit and named destinations, a bookmarks tree, page labels i ii 1 2 3 A-1 A-2 A Cover), `tagged` (structure order differs from content order, an artifact), `redaction` and `redaction-applied` (text, paths and an image under three redaction areas; the result of applying them) |
 | `d11/` | `edit-incremental-table` (three classic updates: a field filled and a note added, a page added and the title changed, a page turned and the note freed), `edit-incremental-stream` (two updates as cross-reference streams over object streams), `merge-a`, `merge-b` and `stamp` (resources inherited from the page tree under the same names /F1 /Im1 /GS1), `merge-plan` (no PDF: what the merge and the stamp must give), `split-source`, `encrypted-aes256` (revision 6, user and owner passwords, permissions), `page-operations` (insert, remove, move, rotate and a combination, with the pages each gives) |
-| `d12/` | `pki` (no PDF: the test PKI's files), `pades-bb`, `pades-bb-pss`, `pades-bb-ecdsa`, `pades-bt`, `pades-blt`, `pades-revoked`, `broken-digest`, `wrong-chain`, `changed-allowed`, `changed-not-allowed`, `two-signatures` (CMS then PAdES ECDSA), `legacy-pkcs7-sha1`, `legacy-x509-sha1`; the known-bad cases (`docfixtures/samples_d12_bad.py`): `bad-expired`, `bad-not-yet-valid`, `bad-issuer-signature`, `bad-not-ca`, `bad-path-length`, `bad-no-cert-sign`, `bad-signer-usage`, `bad-critical-extension`, `bad-issuer-name`, `bad-loop`, `bad-long-chain`, `bad-weak-key` (B-B), `bad-revoked-ocsp`, `bad-crl-wrong-key`, `bad-ocsp-wrong-key` (B-LT), `bad-timestamp-imprint` (B-T) |
+| `d12/` | `pki` (no PDF: the test PKI's files), `pades-bb`, `pades-bb-pss`, `pades-bb-ecdsa`, `pades-bt`, `pades-blt`, `pades-revoked`, `broken-digest`, `wrong-chain`, `changed-allowed`, `changed-not-allowed`, `two-signatures` (CMS then PAdES ECDSA), `legacy-pkcs7-sha1`, `legacy-x509-sha1`; the known-bad cases (`docfixtures/samples_d12_bad.py`): `bad-expired`, `bad-not-yet-valid`, `bad-issuer-signature`, `bad-not-ca`, `bad-path-length`, `bad-no-cert-sign`, `bad-signer-usage`, `bad-critical-extension`, `bad-issuer-name`, `bad-loop`, `bad-long-chain`, `bad-weak-key` (B-B), `bad-revoked-ocsp`, `bad-crl-wrong-key`, `bad-ocsp-wrong-key` (B-LT), `bad-timestamp-imprint` (B-T); the trust samples (`docfixtures/samples_d12_trust.py`): name constraints `trust-nc-names-valid`, `trust-nc-{dn,email,dns,uri}-{excluded,not-permitted}`, `trust-nc-ip-valid`, `trust-nc-{ipv4,ipv6}-{excluded,not-permitted}`, `trust-nc-othername-unused`, `trust-nc-othername`; policies `trust-policy-valid`, `trust-policy-explicit`, `trust-policy-mapping`, `trust-policy-mapping-inhibited`, `trust-policy-any`, `trust-policy-any-inhibited` (B-B); revocation `trust-crl-delta-revoked`, `trust-crl-delta-released`, `trust-crl-indirect-revoked`, `trust-crl-indirect-good`, `trust-stale-revocation` (B-LT) |
 | `d13/` (with `--large`, in its own folder) | `pages-3000` (3,000 Letter pages of text with a shared image and 300 page images, object streams), `many-small/` (1,000 one-page files; `many-small.json` lists them), `huge-image` (an A0 page holding one 9,933 by 14,043 RGB JPEG, 418 MB decoded), `deep-forms` (form XObjects nested 8, 16 and 24 deep; one form drawn 1,000 times) |
 
 Text in the samples is ordinary business and technology text in English and Arabic (reports, meetings, orders, a
@@ -222,7 +222,7 @@ Beside each `NAME.pdf` in its phase's folder:
 | `NAME.pN.imK.redacted.png` | `redaction`: the image's expected pixels once the redactions are applied |
 | `NAME.dump.json`, `NAME.shaping.json` | D8: the font's dump and HarfBuzz's shaping of the sample lines (below); `NAME` is the font's file name (`amiri.woff2.dump.json`) or `NAME.source` for the repository font |
 | `inputs.NAME.png` | D6: an image the writer is given |
-| `pki.*` | D12: `pki.LABEL.cer` (DER) and `.pem`, `pki.LABEL.key.pem` (unencrypted PKCS #8, throwaway test keys), `pki.root.crl`, `pki.intermediate.crl`, `pki.signer.ocsp`; beside the known-bad samples, their own certificates (`pki.bad-*.cer`), lists and responses (`pki.bad-*.crl`, `pki.bad-*.ocsp`) |
+| `pki.*` | D12: `pki.LABEL.cer` (DER) and `.pem`, `pki.LABEL.key.pem` (unencrypted PKCS #8, throwaway test keys), `pki.root.crl`, `pki.intermediate.crl`, `pki.signer.ocsp`; beside the known-bad and trust samples, their own certificates (`pki.bad-*.cer`, `pki.trust-*.cer`), lists and responses (`pki.bad-*.crl`, `pki.bad-*.ocsp`, `pki.trust-*.crl`, `pki.trust-*.delta.crl`, `pki.trust-*.ocsp`) |
 
 `manifest.json` lists every sample (`name`, `folder`, `file`, `kind`, `phases`, `hostile`, `expected`: its JSON,
 `files`: the files beside it, `size`, `sha256`), every file written (`path`, `size`, `sha256`; the manifest itself
@@ -374,9 +374,12 @@ SHA-1, legacy PKCS #1 SHA-1), `signer` (`subject`, `issuer`, `serial`, `certific
 trusted, decision 16), `validationTime`, `results`: `digest` and `signature` valid/invalid, `chain` trusted/untrusted,
 `timestamp` valid/invalid or null, `revocation` good/revoked/not-checked, `modifications` none/allowed/not-allowed,
 `modificationLevel` none/form-filling/annotations/other); a known-bad sample's signature adds `knownBad` (`case`; `step`,
-the step that refuses it; `detail`, a part of its reason; `failsWith`, null or "RequireRevocation" when soft-fail passes
-the step as not checked; `passesWith`, the option that is the cause and a value that lets it pass) and, where Idrak's
-rule differs from pyHanko's by design, `referenceDiffers` (the result and why: a path longer than the check's limit);
+the step that refuses it; `detail`, a part of its reason; `failsWith`, null, "RequireRevocation" when soft-fail passes
+the step as not checked, or an object of policy options (`InitialPolicies`, `RequireExplicitPolicy`,
+`InhibitPolicyMapping`, `InhibitAnyPolicy`) with which a path valid by default fails; `passesWith`, the option that is
+the cause and a value that lets it pass) and, where Idrak's rule differs from pyHanko's by design, `referenceDiffers`
+(the result and why: a path longer than the check's limit, a name constraint pyHanko cannot evaluate); `policies` (a
+policy sample: the policies a check with the default options finds the path valid for);
 `dss` (`certs`, `crls`, `ocsps`, `vri`); `damage` (`broken-digest`: the byte changed). `pki` (the PKI sample): `parties`, `crls`, `ocsp`, `signingTime`,
 `validationTime`, `timestampPolicy`. `reference.validator`: pyHanko's verdict per signature and the `problems`.
 
@@ -453,7 +456,10 @@ hash):
   DSS alone, revocation required (hard-fail), at the timestamp's time. The known-bad samples are checked alike (pyHanko
   trusts none of their paths but the 14-certificate one, which it builds at any length, and refuses the 1024-bit
   signer's path while its signature verifies); a difference a sample names in `referenceDiffers` is recorded as
-  `differsByDesign`, not as a problem.
+  `differsByDesign`, not as a problem. The trust samples alike: pyHanko applies name constraints and policies as their
+  JSON says, but stops on an iPAddress constraint (NotImplementedError) and on an otherName one (TypeError), recorded as
+  `error` with `differsByDesign`; a sample whose `failsWith` names policy options is also validated by
+  pyhanko-certvalidator with the matching PKIX parameters (`withOptions`).
 - **D13:** qpdf and pdfium open every large file and count its pages, pdfium draws the first page, pdfminer.six reads
   the listed pages exactly; each of the 1,000 small files opens with one page and reads its text.
 

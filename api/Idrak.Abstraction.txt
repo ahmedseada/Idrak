@@ -2973,6 +2973,7 @@ public static class Idrak.Abstraction.Data.Shapes
 public sealed record Idrak.Abstraction.Data.SignatureCheck : System.IEquatable<Idrak.Abstraction.Data.SignatureCheck>
   public SignatureCheck(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.SignatureCheckStep> Steps)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.SignatureCheckStep> Steps { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Policies { get; init; }
   public bool Valid { get; }
   public const string Chain = "chain"
   public const string Changes = "changes"
@@ -2984,15 +2985,28 @@ public sealed record Idrak.Abstraction.Data.SignatureCheck : System.IEquatable<I
 public sealed record Idrak.Abstraction.Data.SignatureCheckOptions : System.IEquatable<Idrak.Abstraction.Data.SignatureCheckOptions>
   public SignatureCheckOptions()
   public System.Collections.Generic.IReadOnlyList<System.Security.Cryptography.X509Certificates.X509Certificate2> Trusted { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> InitialPolicies { get; init; }
   public System.DateTimeOffset? At { get; init; }
+  public System.TimeSpan FreshnessGrace { get; init; }
   public System.TimeSpan Timeout { get; init; }
+  public bool InhibitAnyPolicy { get; init; }
+  public bool InhibitPolicyMapping { get; init; }
   public bool Online { get; init; }
+  public bool RequireExplicitPolicy { get; init; }
   public bool RequireRevocation { get; init; }
   public bool UseMachineStore { get; init; }
+  public const string AnyPolicy = "2.5.29.32.0"
+  public const string FreshnessGraceVariable = "IDRAK_DOCUMENT_SIGNATURE_GRACE"
+  public const string InhibitAnyPolicyVariable = "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_ANY_POLICY"
+  public const string InhibitPolicyMappingVariable = "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_MAPPING"
+  public const string InitialPoliciesVariable = "IDRAK_DOCUMENT_SIGNATURE_POLICIES"
   public const string MaxChainLengthVariable = "IDRAK_DOCUMENT_SIGNATURE_CHAIN"
+  public const string MaxNameConstraintChecksVariable = "IDRAK_DOCUMENT_SIGNATURE_NAME_CHECKS"
   public const string MinimumRsaKeyBitsVariable = "IDRAK_DOCUMENT_SIGNATURE_RSA_BITS"
   public const string OnlineVariable = "IDRAK_DOCUMENT_SIGNATURE_ONLINE"
+  public const string RequireExplicitPolicyVariable = "IDRAK_DOCUMENT_SIGNATURE_EXPLICIT_POLICY"
   public int MaxChainLength { get; init; }
+  public int MaxNameConstraintChecks { get; init; }
   public int MinimumRsaKeyBits { get; init; }
 
 public readonly record struct Idrak.Abstraction.Data.SignatureCheckStep : System.IEquatable<Idrak.Abstraction.Data.SignatureCheckStep>

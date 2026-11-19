@@ -28,6 +28,7 @@ internal abstract partial class Tests
         ("documents pdf: signatures: revocation is fetched online only when turned on (the option, or IDRAK_DOCUMENT_SIGNATURE_ONLINE), through SignatureServices (the library's http and https, an app's over them, not registered named)", PdfSignatureOnline),
         ("documents pdf: signatures: signing as incremental updates: PAdES B-B (RSA, RSA-PSS, ECDSA), B-T and B-LT (RSA, ECDSA) with appearances, an empty field of a form, a second signature keeping the first valid, the builder's Sign at Finish, an encrypted file, after other edits and after a rewrite: each checks valid, the source's bytes its prefix, nothing asked of a service the app did not name", PdfSignatureSigning),
         ("documents pdf: signatures: misuse refused (no options, no private key, SHA-1, B-T without an authority, B-LT without revocation data, a field that is not a signature field or is signed already, a dotted new name, a page out of range, the builder signing after its first page, an authority not registered or answering for another request)", PdfSignatureRefusals),
+        ("documents pdf: signatures: trust: the policies a path is valid for named (by default and for the options' initial policies and flags), an indirect and a delta list answering, stale data not checked offline, fetched again online and taken with a grace, each list's and response's signature verified once a check", PdfSignatureTrust),
         ("documents pdf: signatures: known bad: Project Wycheproof's RSA PKCS #1 v1.5 vectors (2048, 3072 and 4096 bits; SHA-1, SHA-256, -384, -512): every valid case verifies and every invalid one fails, through CmsKeys and the legacy form's route; the acceptable ones listed with Idrak's answer", PdfKnownBadPkcs1),
         ("documents pdf: signatures: known bad: Project Wycheproof's RSA-PSS vectors (salt lengths 0 to 64, MGF1 digests, keys certified with their parameters): every valid case verifies, every invalid one fails", PdfKnownBadPss),
         ("documents pdf: signatures: known bad: Project Wycheproof's ECDSA vectors (P-256, P-384, P-521, secp256k1, Brainpool; the DER signature read by Idrak, r and s ranged by the curve's order): every valid case verifies, every invalid one fails; a curve this platform's ECDsa does not take is a named limit", PdfKnownBadEcdsa),
@@ -229,6 +230,10 @@ internal abstract partial class Tests
                 var at = DateTimeOffset.Parse((string)want["validationTime"]!, CultureInfo.InvariantCulture);
                 var check = signature.Check(new SignatureCheckOptions { Trusted = trust, At = at, Online = false });
                 PdfExpectResults(what, check, results);
+                if (want["policies"] is JsonArray policies)
+                {
+                    Check(check.Policies.SequenceEqual(policies.Select(p => (string)p!)), $"{what}: valid for the policies {string.Join(", ", check.Policies)}, expected {policies.ToJsonString()}");
+                }
 
                 // The same when checked at the trusted time (the timestamp's, else now), and alike from several threads.
                 var parallel = new SignatureCheck[4];
@@ -351,6 +356,79 @@ internal abstract partial class Tests
         var signature = document.Signatures[0];
         document.Dispose();
         ExpectRefusal<ObjectDisposedException>(() => signature.Check(pki.Trust()), "", "a disposed document's signature checked");
+    }
+
+    // Signature trust completed (2026-11-19) on the generator's trust samples: the policies a check names, the options for
+    // the initial policies and flags, an indirect and a delta list in the revocation step, stale data (not checked offline,
+    // fetched again online, fresh with a grace), and each source's signature verified once a check.
+    private static void PdfSignatureTrust(Device device)
+    {
+        CpuOnly(device);
+        var pki = PdfSignaturePki();
+        SignatureCheck First(string sample, SignatureCheckOptions options)
+        {
+            using var opened = PdfEditOpen(File.ReadAllBytes(PdfEditSample(sample).Path), sample);
+            return opened.Signatures[0].Check(options);
+        }
+
+        // The policies a path is valid for: by default, for the policies the app asks for, none for a path that states none.
+        var mapped = First("trust-policy-mapping", pki.Trust());
+        Check(mapped.Valid && mapped.Policies.SequenceEqual(["2.999.2.1"]) && PdfStep(mapped, SignatureCheck.Chain).Detail.Contains("for the policy 2.999.2.1", StringComparison.Ordinal),
+            $"a mapped policy named by its trusted side's identifier: {string.Join(", ", mapped.Policies)}; {PdfStep(mapped, SignatureCheck.Chain).Detail}");
+        var asked = First("trust-policy-mapping", pki.Trust() with { InitialPolicies = ["2.999.2.1"], RequireExplicitPolicy = true });
+        Check(asked.Valid && asked.Policies.SequenceEqual(["2.999.2.1"]), $"the policy asked for, required: {PdfDescribe(asked)}");
+        var other = First("trust-policy-any", pki.Trust() with { InitialPolicies = ["2.999.2.2"] });
+        Check(other.Valid && other.Policies.Count == 0, $"a path for none of the policies asked for passes unless one is required: {PdfDescribe(other)}");
+        var plain = First("pades-bb", pki.Trust());
+        Check(plain.Valid && plain.Policies.Count == 0 && !PdfStep(plain, SignatureCheck.Chain).Detail.Contains("polic", StringComparison.Ordinal),
+            $"a path stating no policy says nothing of them: {PdfStep(plain, SignatureCheck.Chain).Detail}");
+        var required = First("pades-bb", pki.Trust() with { RequireExplicitPolicy = true });
+        string requiredWhy = PdfStep(required, SignatureCheck.Chain).Detail;
+        Check(!required.Valid && requiredWhy.Contains("leaves the path no valid certificate policy", StringComparison.Ordinal)
+              && requiredWhy.Contains(SignatureCheckOptions.RequireExplicitPolicyVariable, StringComparison.Ordinal), $"an explicit policy required of a path stating none: {requiredWhy}");
+
+        // An indirect list and a delta list answering for the signer.
+        var indirect = First("trust-crl-indirect-good", pki.Trust() with { RequireRevocation = true });
+        Check(indirect.Valid && PdfStep(indirect, SignatureCheck.Revocation).Detail.Contains("not on Example Test CRL Issuer's indirect list", StringComparison.Ordinal),
+            $"an indirect list: {PdfDescribe(indirect)}");
+        var released = First("trust-crl-delta-released", pki.Trust() with { RequireRevocation = true });
+        Check(released.Valid && PdfStep(released, SignatureCheck.Revocation).Detail.Contains("taken off Example Test Intermediate CA's list of 2026-03-01 00:00:00 UTC (removeFromCRL) by Example Test Intermediate CA's delta list", StringComparison.Ordinal),
+            $"a hold the delta list releases: {PdfDescribe(released)}");
+
+        // Stale data: not checked (stale) offline, fresh with a grace long enough, fetched again online.
+        var stale = First("trust-stale-revocation", pki.Trust());
+        string staleWhy = PdfStep(stale, SignatureCheck.Revocation).Detail;
+        Check(stale.Valid && staleWhy.StartsWith("not checked (stale): ", StringComparison.Ordinal) && staleWhy.Contains("is stale at 2026-03-09 12:00:00 UTC (next update 2026-02-27", StringComparison.Ordinal),
+            $"stale data offline: {staleWhy}");
+        var shortGrace = First("trust-stale-revocation", pki.Trust() with { RequireRevocation = true, FreshnessGrace = TimeSpan.FromDays(3) });
+        Check(!shortGrace.Valid && PdfStep(shortGrace, SignatureCheck.Revocation).Detail.Contains("taken 3 days past it", StringComparison.Ordinal),
+            $"a grace too short: {PdfStep(shortGrace, SignatureCheck.Revocation).Detail}");
+        var graced = First("trust-stale-revocation", pki.Trust() with { RequireRevocation = true, FreshnessGrace = TimeSpan.FromDays(14) });
+        Check(graced.Valid && PdfStep(graced, SignatureCheck.Revocation).Detail.StartsWith("good", StringComparison.Ordinal), $"a grace of 14 days: {PdfDescribe(graced)}");
+        var network = new PdfTestNetwork(pki);
+        SignatureServices.Register(network);
+        try
+        {
+            var online = First("trust-stale-revocation", pki.Trust() with { Online = true, RequireRevocation = true });
+            var step = PdfStep(online, SignatureCheck.Revocation);
+            Check(online.Valid && step.Detail.StartsWith("good", StringComparison.Ordinal) && step.Detail.Contains("fetched online", StringComparison.Ordinal)
+                  && network.Asked.Contains("Ocsp http://ocsp.example.com/"), $"stale data fetched again online: {string.Join(", ", network.Asked)}; {step.Detail}");
+        }
+        finally
+        {
+            Check(SignatureServices.Unregister("http") && SignatureServices.Origin("http") == Overrides.Library, "the library's http back");
+        }
+
+        // Each list's and response's signature verified once a check: pades-blt's signer response and two lists, asked about
+        // five times between the timestamp authority's path and the signer's; the next check verifies them again.
+        using var document = PdfEditOpen(File.ReadAllBytes(PdfEditSample("pades-blt").Path), "pades-blt");
+        var signature = document.Signatures[0];
+        CmsVerifications.Made = 0;
+        var first = signature.Check(pki.Trust() with { RequireRevocation = true });
+        int once = CmsVerifications.Made;
+        var second = signature.Check(pki.Trust() with { RequireRevocation = true });
+        int again = CmsVerifications.Made - once;
+        Check(first.Valid && second.Valid && once == 3 && again == 3, $"the sources' signatures verified {once} times in a check and {again} in the next (3 each expected): {PdfDescribe(first)}");
     }
 
     private static void PdfSignatureOnline(Device device)

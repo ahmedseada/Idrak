@@ -10,7 +10,8 @@ namespace Idrak.Data.Pdf;
 
 /// <summary>
 /// An X.509 certificate (RFC 5280) read on its DER here, the same on every platform: what a signature check needs of it
-/// (the signed part, the names, the validity, the key, the extensions a path is checked by), and the
+/// (the signed part, the names and alternative names, the validity, the key, the extensions a path is checked by: its
+/// constraints on names and policies, its revocation lists' distribution points among them), and the
 /// <see cref="X509Certificate2"/> the contract hands out, made when asked. Immutable; safe from several threads.
 /// </summary>
 internal sealed class CmsCertificate
@@ -82,7 +83,37 @@ internal sealed class CmsCertificate
     /// <summary>Whether it carries id-pkix-ocsp-nocheck (a responder's certificate needing no status of its own).</summary>
     public bool OcspNoCheck { get; private set; }
 
-    /// <summary>What makes it unfit for a path though it reads (an extension twice, an empty extended key usage), or null.</summary>
+    /// <summary>Its CRL distribution points as they are written (names, reasons, CRL issuers), for a list's scope.</summary>
+    public IReadOnlyList<CmsDistributionPoint> CrlPoints { get; private set; } = [];
+
+    /// <summary>The addresses of its delta lists (freshest CRL, RFC 5280 4.2.1.15).</summary>
+    public IReadOnlyList<string> FreshestAddresses { get; private set; } = [];
+
+    /// <summary>The subject alternative names (null without the extension), and why they cannot be read (null when they can).</summary>
+    public IReadOnlyList<CmsGeneralName>? AltNames { get; private set; }
+
+    public string? AltNamesProblem { get; private set; }
+
+    /// <summary>The name constraints (null without the extension).</summary>
+    public CmsNameConstraints? NameConstraints { get; private set; }
+
+    /// <summary>The certificate policies' identifiers (null without the extension).</summary>
+    public IReadOnlyList<string>? Policies { get; private set; }
+
+    /// <summary>The policy mappings: issuer domain policy to subject domain policy (null without the extension).</summary>
+    public IReadOnlyList<(string Issuer, string Subject)>? PolicyMappings { get; private set; }
+
+    /// <summary>The policy constraints' requireExplicitPolicy and inhibitPolicyMapping (null when absent), and inhibit-any-policy's skip count.</summary>
+    public int? RequireExplicitPolicy { get; private set; }
+
+    public int? InhibitPolicyMapping { get; private set; }
+
+    public int? InhibitAnyPolicy { get; private set; }
+
+    /// <summary>
+    /// What makes it unfit for a path though it reads (an extension twice, an empty extended key usage, name constraints or
+    /// policy extensions that cannot be used), or null.
+    /// </summary>
     public string? Problem { get; private set; }
 
     public string SubjectName => CmsName.Describe(Subject);
@@ -110,6 +141,25 @@ internal sealed class CmsCertificate
 
     /// <summary>Whether this is the same certificate as <paramref name="other"/> (byte for byte).</summary>
     public bool Same(CmsCertificate other) => ReferenceEquals(this, other) || _raw.AsSpan().SequenceEqual(other._raw);
+
+    /// <summary>Whether one of its distribution points names <paramref name="crlIssuer"/> (a name's encoding) as its lists' issuer (cRLIssuer: an indirect list's).</summary>
+    public bool NamesCrlIssuer(ReadOnlyMemory<byte> crlIssuer)
+    {
+        CmsNameAttribute[][]? wanted = null;
+        foreach (var point in CrlPoints)
+        {
+            foreach (var name in point.CrlIssuer ?? [])
+            {
+                if (name.Form == CmsNameForm.Directory
+                    && (name.Value.Span.SequenceEqual(crlIssuer.Span) || ((wanted ??= CmsDn.Read(crlIssuer)) is { } dn && CmsDn.Read(name.Value) is { } named && CmsDn.Same(named, dn))))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Whether <paramref name="issuer"/> could have issued this one: its subject is this one's issuer, and the key identifiers agree where both are given.</summary>
     public bool NamesIssuer(CmsCertificate issuer) =>
@@ -344,7 +394,109 @@ internal sealed class CmsCertificate
                 OcspNoCheck = true;
                 break;
         }
+
+        Constraint(oid, value);
     }
+
+    // The extensions a path's constraints and a list's scope are read from: one that cannot be read leaves the certificate
+    // read, and fails a path it is on (Problem) or a check of its names (AltNamesProblem); a distribution point that cannot be
+    // read leaves its addresses as read above.
+    private void Constraint(string oid, ReadOnlyMemory<byte> value)
+    {
+        try
+        {
+            switch (oid)
+            {
+                case CmsOids.SubjectAltName:
+                    var names = CmsAsn.Reader(value);
+                    AltNames = CmsGeneralName.ReadAll(names.ReadSequence());
+                    names.ThrowIfNotEmpty();
+                    break;
+                case CmsOids.NameConstraints:
+                    NameConstraints = CmsNameConstraints.Read(value, out string? problem);
+                    if (problem is not null)
+                    {
+                        Problem ??= problem;
+                    }
+
+                    break;
+                case CmsOids.CertificatePolicies:
+                    var policies = new List<string>();
+                    var list = CmsAsn.Reader(value).ReadSequence();
+                    while (list.HasData)
+                    {
+                        var information = list.ReadSequence();
+                        string policy = information.ReadObjectIdentifier();
+                        if (!policies.Contains(policy))
+                        {
+                            policies.Add(policy);                              // the qualifiers are not read
+                        }
+                    }
+
+                    Policies = policies.Count > 0 ? policies : throw new InvalidDataException("certificate policies naming none (RFC 5280 4.2.1.4: one or more)");
+                    break;
+                case CmsOids.PolicyMappings:
+                    var mappings = new List<(string, string)>();
+                    var pairs = CmsAsn.Reader(value).ReadSequence();
+                    while (pairs.HasData)
+                    {
+                        var pair = pairs.ReadSequence();
+                        mappings.Add((pair.ReadObjectIdentifier(), pair.ReadObjectIdentifier()));
+                    }
+
+                    PolicyMappings = mappings.Count > 0 ? mappings : throw new InvalidDataException("policy mappings naming none (RFC 5280 4.2.1.5: one or more)");
+                    break;
+                case CmsOids.PolicyConstraints:
+                    var constraints = CmsAsn.Reader(value).ReadSequence();
+                    var require = new Asn1Tag(TagClass.ContextSpecific, 0);
+                    var inhibit = new Asn1Tag(TagClass.ContextSpecific, 1);
+                    if (CmsAsn.Next(constraints, require))
+                    {
+                        RequireExplicitPolicy = SkipCount(constraints.ReadInteger(require));
+                    }
+
+                    if (CmsAsn.Next(constraints, inhibit))
+                    {
+                        InhibitPolicyMapping = SkipCount(constraints.ReadInteger(inhibit));
+                    }
+
+                    if (RequireExplicitPolicy is null && InhibitPolicyMapping is null)
+                    {
+                        throw new InvalidDataException("policy constraints naming neither requireExplicitPolicy nor inhibitPolicyMapping (RFC 5280 4.2.1.11)");
+                    }
+
+                    break;
+                case CmsOids.InhibitAnyPolicy:
+                    InhibitAnyPolicy = SkipCount(CmsAsn.Reader(value).ReadInteger());
+                    break;
+                case CmsOids.CrlDistributionPoints:
+                    CrlPoints = CmsDistributionPoint.ReadAll(value);
+                    break;
+                case CmsOids.FreshestCrl:
+                    FreshestAddresses = [.. CmsDistributionPoint.ReadAll(value).SelectMany(p => p.Addresses)];
+                    break;
+            }
+        }
+        catch (Exception e) when (CmsAsn.IsDamage(e))
+        {
+            switch (oid)
+            {
+                case CmsOids.SubjectAltName:
+                    AltNamesProblem = e.Message;
+                    AltNames = [];
+                    break;
+                case CmsOids.CrlDistributionPoints or CmsOids.FreshestCrl:
+                    break;                                                     // the addresses read above stay
+                default:
+                    Problem ??= $"the extension {oid}, which cannot be read ({e.Message})";
+                    break;
+            }
+        }
+    }
+
+    // A skip count (RFC 5280 4.2.1.11 and 4.2.1.14): 0 or more; a count past what a path can hold is as good as no limit.
+    private static int SkipCount(BigInteger count) =>
+        count.Sign < 0 ? throw new InvalidDataException("a negative skip count") : count > 1024 ? 1024 : (int)count;
 
     // A GeneralName read: its text when it is a uniformResourceIdentifier ([6] IA5String), else null (passed over).
     private static string? Uri(AsnReader reader)

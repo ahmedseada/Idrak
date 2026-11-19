@@ -11,41 +11,41 @@ internal enum CmsUsage : byte
 
     /// <summary>A timestamp authority: the timeStamping purpose.</summary>
     Timestamp,
+
+    /// <summary>An indirect revocation list's issuer: a key that may sign revocation lists (cRLSign).</summary>
+    CrlSigner,
+}
+
+/// <summary>A path search's answer: the path (first to anchor) or null, what was found or why none is valid, and the policies the path is valid for.</summary>
+internal readonly record struct CmsPathResult(List<CmsCertificate>? Path, string Detail, IReadOnlyList<string> Policies)
+{
+    public void Deconstruct(out List<CmsCertificate>? path, out string detail) => (path, detail) = (Path, Detail);
 }
 
 /// <summary>
-/// Certification paths built and checked here (RFC 5280, 6.1's basic path validation), the same on every platform and with
+/// Certification paths built and checked here (RFC 5280, 6.1's path validation), the same on every platform and with
 /// nothing fetched: from a certificate, through issuers found among the certificates given (the signature's, the document's
 /// validation data), to a certificate the app trusts (decision 16: only those; never one the document carries). Each link's
 /// signature, each certificate's validity at the time, the CA's basic constraints, path length and key usage, the first
-/// certificate's usage, critical extensions this does not read and name or policy constraints critical or not (which fail
-/// the path, naming them: never a path they would limit passed unread), RSA keys shorter than the
-/// check takes, and the path's length (<see cref="SignatureCheckOptions.MinimumRsaKeyBits"/>,
-/// <see cref="SignatureCheckOptions.MaxChainLength"/>). The search verifies each link once, names a loop, and tries a bounded
-/// number of issuers, so the certificates a document carries cannot keep it searching. Checked against the D12 known-bad
-/// samples and x509-limbo's path cases.
+/// certificate's usage, critical extensions this does not read, RSA keys shorter than the check takes, the path's length
+/// (<see cref="SignatureCheckOptions.MinimumRsaKeyBits"/>, <see cref="SignatureCheckOptions.MaxChainLength"/>), its name
+/// constraints (<see cref="CmsNameCheck"/>) and its certificate policies (<see cref="CmsPolicies"/>), the constraints read
+/// whether marked critical or not. The search verifies each link once, names a loop, and tries a bounded number of issuers,
+/// so the certificates a document carries cannot keep it searching; a path its constraints refuse leaves the search to try
+/// another. Checked against the D12 known-bad samples and x509-limbo's path cases.
 /// </summary>
 internal static class CmsPath
 {
     // The issuers a search may try for each certificate a path may hold (a document's own certificates bound no search).
     private const int TriesPerPlace = 64;
 
-    // Extensions that limit a path in ways this check does not read (the names a CA may certify, its policies): a certificate
-    // of a path carrying one, critical or not, fails it, naming it, rather than a path it would limit passing.
-    private static readonly Dictionary<string, string> Limiting = new(StringComparer.Ordinal)
-    {
-        [CmsOids.NameConstraints] = "name constraints",
-        [CmsOids.PolicyConstraints] = "policy constraints",
-        [CmsOids.PolicyMappings] = "policy mappings",
-        [CmsOids.InhibitAnyPolicy] = "an inhibit-any-policy limit",
-    };
-
     // Extensions a path is checked by, or whose meaning does not limit a signature's path; any other critical one fails it.
     private static readonly HashSet<string> Known =
     [
         CmsOids.BasicConstraints, CmsOids.KeyUsage, CmsOids.ExtendedKeyUsage, CmsOids.SubjectKeyId, CmsOids.AuthorityKeyId, CmsOids.CertificatePolicies,
         CmsOids.SubjectAltName, CmsOids.IssuerAltName, CmsOids.CrlDistributionPoints, CmsOids.AuthorityInfoAccess, CmsOids.SubjectInfoAccess,
-        CmsOids.FreshestCrl, CmsOids.PrivateKeyUsagePeriod, CmsOids.OcspNoCheck,
+        CmsOids.FreshestCrl, CmsOids.PrivateKeyUsagePeriod, CmsOids.OcspNoCheck, CmsOids.NameConstraints, CmsOids.PolicyConstraints,
+        CmsOids.PolicyMappings, CmsOids.InhibitAnyPolicy,
     ];
 
     /// <summary>Whether <paramref name="issuer"/>'s key verifies <paramref name="certificate"/>'s signature; null when it does, else why not.</summary>
@@ -57,31 +57,39 @@ internal static class CmsPath
 
     /// <summary>
     /// A path from <paramref name="first"/> to one of <paramref name="anchors"/> through <paramref name="pool"/>, checked at
-    /// <paramref name="at"/> within <paramref name="options"/>' limits (its key size and path length): the path (first to
-    /// anchor) and what was found, or null and why none is valid.
+    /// <paramref name="at"/> within <paramref name="options"/>' limits (its key size, path length and name comparisons) and
+    /// for <paramref name="policy"/> (RFC 5280's defaults when null): the path (first to anchor), what was found and the
+    /// policies the path is valid for, or null and why none is valid.
     /// </summary>
-    public static (List<CmsCertificate>? Path, string Detail) Build(CmsCertificate first, IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors,
-        DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options)
+    public static CmsPathResult Build(CmsCertificate first, IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors,
+        DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options, CmsPolicyInputs? policy = null)
     {
         if (anchors.Count == 0)
         {
-            return (null, "no certificate is trusted: a check trusts only the certificates the app gives (SignatureCheckOptions.Trusted, or the machine's store with UseMachineStore)");
+            return new(null, "no certificate is trusted: a check trusts only the certificates the app gives (SignatureCheckOptions.Trusted, or the machine's store with UseMachineStore)", []);
         }
 
-        var search = new Search(pool, anchors, at, usage, options);
+        var search = new Search(pool, anchors, at, usage, options, policy ?? CmsPolicyInputs.Default);
         var found = search.Walk([first]);
         if (found is not null)
         {
             string chain = string.Join(" < ", found.Select(c => c.Named));
-            return (found, $"{chain}, trusted, valid at {CmsText.Time(at)}");
+            var policies = search.Policies;
+
+            // The policies are named where the path's certificates state some (a path that states none says nothing of them).
+            string named = found.Exists(c => c.Policies is not null) ? $", for {(policies.Count == 0 ? "no certificate policy" : string.Join(", ", policies.Select(Policy)))}" : "";
+            return new(found, $"{chain}, trusted, valid at {CmsText.Time(at)}{named}", policies);
         }
 
-        return (null, search.Best ?? $"no path from {first.Named} to a trusted certificate: its issuer '{first.IssuerName}' is neither trusted nor among the certificates the signature and the document carry");
+        return new(null, search.Best ?? $"no path from {first.Named} to a trusted certificate: its issuer '{first.IssuerName}' is neither trusted nor among the certificates the signature and the document carry", []);
     }
+
+    private static string Policy(string oid) => oid == CmsOids.AnyPolicy ? "any policy" : $"the policy {oid}";
 
     // One path search: depth first, each issuer the names (and key identifiers) allow whose key verifies the link, until a
     // trusted one; the first whole path that checks is taken, else the reason the first failed attempt gave.
-    private sealed class Search(IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors, DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options)
+    private sealed class Search(IReadOnlyList<CmsCertificate> pool, IReadOnlyList<CmsCertificate> anchors, DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options,
+        CmsPolicyInputs policy)
     {
         private readonly Dictionary<(CmsCertificate Certificate, CmsCertificate Issuer), string?> _links = [];
         private int _tried;
@@ -90,14 +98,18 @@ internal static class CmsPath
         /// <summary>Why the search found no path (the first failure met), or null.</summary>
         public string? Best { get; private set; }
 
+        /// <summary>The policies the path found is valid for.</summary>
+        public IReadOnlyList<string> Policies { get; private set; } = [];
+
         public List<CmsCertificate>? Walk(List<CmsCertificate> path)
         {
             var current = path[^1];
             if (anchors.Any(a => a.Same(current)))
             {
-                string? failed = Check(path, at, usage, options.MinimumRsaKeyBits);
+                string? failed = Check(path, at, usage, options, policy, out var policies);
                 if (failed is null)
                 {
+                    Policies = policies;
                     return [.. path];
                 }
 
@@ -179,9 +191,12 @@ internal static class CmsPath
         }
     }
 
-    // The basic path checks (RFC 5280, 6.1.3 and 6.1.4) on a path from its first certificate to its anchor; null when it passes.
-    private static string? Check(List<CmsCertificate> path, DateTimeOffset at, CmsUsage usage, int minimumRsaBits)
+    // The path checks (RFC 5280, 6.1.3 to 6.1.5) on a path from its first certificate to its anchor; null when it passes,
+    // with the policies it is valid for.
+    private static string? Check(List<CmsCertificate> path, DateTimeOffset at, CmsUsage usage, SignatureCheckOptions options, CmsPolicyInputs policy, out List<string> policies)
     {
+        policies = [];
+        int minimumRsaBits = options.MinimumRsaKeyBits;
         // A certificate's dates are whole seconds (RFC 5280, 4.1.2.5, inclusive): the time is compared floored to its second,
         // so the last second of a validity holds whole and the one before its first does not (x509-limbo's reading).
         var second = new DateTimeOffset(at.UtcTicks - (at.UtcTicks % TimeSpan.TicksPerSecond), TimeSpan.Zero);
@@ -196,11 +211,6 @@ internal static class CmsPath
 
             foreach (var (oid, critical, _) in certificate.Extensions)
             {
-                if (Limiting.TryGetValue(oid, out string? limiting))
-                {
-                    return $"{certificate.Named}'s certificate has {limiting} ({oid}), which this check does not read: a path they may limit is refused";
-                }
-
                 if (critical && !Known.Contains(oid))
                 {
                     return $"{certificate.Named}'s certificate has the critical extension {oid}, which this check does not read";
@@ -255,6 +265,11 @@ internal static class CmsPath
             return $"{first.Named}'s certificate is not for timestamping (no timeStamping purpose)";
         }
 
-        return null;
+        if (usage == CmsUsage.CrlSigner && !first.Allows(CmsCertificate.CrlSign))
+        {
+            return $"{first.Named}'s key may not sign revocation lists (key usage)";
+        }
+
+        return CmsNameCheck.Check(path, options.MaxNameConstraintChecks) ?? CmsPolicies.Check(path, policy, out policies);
     }
 }

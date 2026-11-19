@@ -2350,10 +2350,10 @@ first valid.
   document) cold 46.5 ms, warm 12.3 ms (880 µs and 27.8 KiB a signature). A two-page document of 4,720 bytes signed at
   B-B: 9,933 bytes added, cold 53.5 ms (the process's first signature), warm 1.30 ms, 103 KiB allocated; at B-LT (a
   timestamp from the stand-in authority, then the DSS update): 47,643 bytes added, cold 14.9 ms, warm 2.82 ms, 296 KiB.
-- **Left:** document timestamps written (B-LTA); appearance text in any script (D9's shaped appearances); a list's or a
+- **Left:** document timestamps written (B-LTA); appearance text in any script (D9's shaped appearances); ~~a list's or a
   response's signature verified once a check, not once a certificate it is asked about; delta and indirect lists, name
-  constraints and policy constraints (a critical one fails the path, named); DSA and EdDSA keys; freshness beyond a
-  list's or a response's next update.
+  constraints and policy constraints (a critical one fails the path, named)~~; DSA and EdDSA keys; ~~freshness beyond a
+  list's or a response's next update~~ (the struck items done 2026-11-19: "Signature trust completed" below).
 - **The owner's run** (held with the others until asked):
   ```powershell
   cd D:\Projects\Idrak; git checkout documents; git pull origin documents
@@ -2443,6 +2443,125 @@ are tested against public known-bad cases, every failure fixed in the library or
   python -I tools\documents\make_fixtures.py -o test-output\documents\samples
   $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: signatures|documents contracts"
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-known-bad.txt
+  Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
+  ```
+
+**Signature trust completed, 2026-11-19:** name constraints and certificate policies are evaluated instead of refused,
+revocation reads delta and indirect lists and names stale data, and each list's and response's signature is verified once
+a check (D12's "Left": the struck items). Idrak keeps its own path building (decision 1a), the same on every platform,
+offline unless the app turns fetching on, trusting only the app's certificates (decision 16). On `0598a01`.
+- **Name constraints** (RFC 5280 4.2.1.10, 6.1.3 (b) and (c), 6.1.4 (g); `src/Idrak.Data/Pdf/CmsNames.cs`): every CA's,
+  and the trusted certificate's (as x509-limbo, OpenSSL and Go read them; pyHanko only when asked), over the subject and
+  every alternative name of each certificate below it (a self-issued one only when it is the first), critical or not: a
+  name of a form a CA permits must be in one of its permitted subtrees of that form (the subtrees of a path intersect),
+  none in an excluded one. Directory names by relative name (RFC 4518's insignificant spaces, the Unicode simple case
+  folding the base library's ordinal comparison holds on every platform); mailboxes (a mailbox: its local part exactly,
+  its host case-insensitively; a host; a domain with a leading period; e-mail addresses in a subject without alternative
+  names); DNS names (labels added on the left, ASCII case-insensitive; a wildcard name refused where it may name an
+  excluded host, CVE-2025-61727); a URI's host (a host, or a domain with a leading period; a URI without one, or naming an
+  address, refused); IPv4 and IPv6 under a mask. Refused, named: a constraint that is not a valid name of its form (a
+  wildcard or a leading period in a dNSName, an address without its mask, a malformed mailbox), an empty list, a minimum
+  or a maximum, name constraints in a certificate that is not a CA, a name below a constraint that is not a valid name of
+  its form, and a constraint of a form not compared (otherName, x400Address, ediPartyName, registeredID) over a
+  certificate holding such a name. The comparisons a path asks for are counted before any is made (each constrained
+  certificate's subject attributes and alternative names times the constraints over it) against
+  `SignatureCheckOptions.MaxNameConstraintChecks` (1,048,576, OpenSSL's bound; `IDRAK_DOCUMENT_SIGNATURE_NAME_CHECKS`):
+  x509-limbo's three pathological cases ask for 8.4 to 16.8 million and are refused naming it, and pass with the bound
+  raised.
+- **Policies** (RFC 5280 6.1.2-6.1.5; `CmsPolicies.cs`): the valid policy tree as RFC 9618's graph (the same policies, a
+  node a policy and depth, so mappings cannot grow it exponentially), `explicit_policy`, `policy_mapping`,
+  `inhibit_anyPolicy`, the certificates' policies, mappings (anyPolicy mapped refused), policy constraints and
+  inhibit-any-policy below the anchor, critical or not; the user-constrained set as RFC 9618 5.4 computes it. A path whose
+  certificates state no policy extension takes a fast path (no graph). New options for the signer's path, RFC 5280's
+  defaults: `SignatureCheckOptions.InitialPolicies` (empty: any policy; `IDRAK_DOCUMENT_SIGNATURE_POLICIES`, identifiers
+  separated by commas, or "any"), `RequireExplicitPolicy`, `InhibitPolicyMapping`, `InhibitAnyPolicy`
+  (`IDRAK_DOCUMENT_SIGNATURE_EXPLICIT_POLICY`, `_INHIBIT_MAPPING`, `_INHIBIT_ANY_POLICY`, off); a timestamp authority's
+  path and an indirect list's issuer's are checked with the defaults. The result names the valid policies:
+  `SignatureCheck.Policies` (a new init property on the record, so the API's shape holds: ordinal order, anyPolicy
+  "2.5.29.32.0" when every policy is, empty without a path or for a path stating none), and the chain step's detail adds
+  ", for the policy …" only where the path's certificates state policies.
+- **Revocation lists** (`CmsRevocation.cs`, `CmsRevocationCheck.cs`, which replaces the check's own sources class): a
+  list's number, issuing distribution point (end entities or CAs only, its distribution point name against the
+  certificate's, full or relative, or the issuer's when the certificate names none; attribute certificates only refused;
+  `onlySomeReasons`: lists covering some reasons each count once they cover every reason between them), authority key
+  identifier and freshest-CRL addresses are read. **Delta lists:** the newest delta (deltaCRLIndicator) of the same
+  issuer, scope and key identifier, whose base number the complete list reaches and whose own number is above it, fresh
+  and verified by the same key, applies to its complete list: an entry in it revokes (or, removeFromCRL, releases a hold
+  the complete list puts). **Indirect lists:** a list whose issuing distribution point says indirectCRL answers for a
+  certificate whose distribution point names the list's issuer (cRLIssuer); entries take their certificates' issuer from
+  certificateIssuer (it stays until the next); the list's issuer's certificate, among the signature's and the
+  document's, must allow cRLSign, verify the list, have a valid path to the same trusted certificate as the path asked
+  about, and not be revoked (nor unknown, with `RequireRevocation`), a recursion guarded. A certificateIssuer entry in a
+  list that is not indirect still makes it unusable. All three sources as before: the DSS, the signature's own lists and
+  revocation attribute, and online (`Online`) the certificate's responder, then its lists with their deltas.
+- **Freshness:** a list or a response whose next update, with `SignatureCheckOptions.FreshnessGrace` (0;
+  `IDRAK_DOCUMENT_SIGNATURE_GRACE`, seconds or a number with s, m, h or d, up to 3650 days), is before the check's time is
+  stale: online, fetched again (an answer from a fetched source says "fetched online", also one fetched for another
+  certificate of the check, as the timestamp authority's path is checked first); offline the step says "not checked
+  (stale): …", which fails with `RequireRevocation`.
+- **Verified once a check:** each list's and response's signature, and a delegated responder's link, through a cache of
+  the check's (`CmsVerifications`, never across checks): pades-blt's three sources, asked five times between the
+  timestamp authority's path and the signer's, are verified three times a check (the test counts them).
+- **The blanket refusal removed:** `CmsPath` no longer fails a path for name constraints, policy constraints, policy
+  mappings or inhibit-any-policy; they are among the extensions it reads.
+- **x509-limbo** (the same 165 cases): **before** 121 as limbo says, 25 by design, 19 limits; **after** 135 as limbo
+  says, 27 by design, 3 limits (ML-DSA alone), none differs. The 16 name-constraint cases that should pass now pass
+  (`LIMIT:` gone); every failing name-constraint case is refused for its own reason (the excluded or unpermitted name, the
+  malformed constraint or name, the end entity's constraints, the wildcard, the otherName, the bound). Moved to "by
+  design": `rfc5280::nc::permitted-dns-match-noncritical` and `rfc5280::pc::ica-noncritical-pc` (limbo refuses them for
+  the extension's criticality; a check applies both either way, pyHanko alike, and the CA/Browser Forum lets a CA mark
+  name constraints non-critical: limbo tags that case rfc5280-incompatible-with-webpki). **Wycheproof:** unchanged (2,415
+  RSA PKCS #1 v1.5, 1,561 RSA-PSS and 4,662 ECDSA cases, none differs; this platform's RSA 3,404 compared, none differs).
+  **The generator's bad paths:** the 16 and pades-revoked refused as before, the same details.
+- **Nothing valid changed (rule 71):** the previous piece's harness (every signature of the 38 signed files at hand
+  checked through the public API under eight trusts and times) gives 2,337 lines, SHA-256 `59087b1c…`, identical with the
+  start's build: none of them carries a constraint. The 16 known-bad samples alike (`8bbbc1d5…`). The generator writes the
+  earlier 30 D12 samples and the PKI byte for byte as before (92 files hashed).
+- **The generator's trust samples** (`tools/documents/docfixtures/samples_d12_trust.py`, 27 new D12 samples, `trust-*`,
+  the root alone trusted; pyHanko's verdicts recorded, all as their JSON says): name constraints in three CAs (directory
+  name, mailbox, DNS name and URI permitted and excluded; IPv4 and IPv6; an otherName excluded): a signer within them
+  (other case in its names, and a mailbox differing from an excluded one only in its local part's case), and per form
+  one excluded and one not permitted (12 refused), an otherName under its constraint refused and a signer without one
+  valid; policies: a path for one policy (refused when the app requires another), a CA requiring an explicit policy over
+  a signer stating none, a mapping (refused when the app inhibits mapping), a CA inhibiting mapping above one that maps,
+  anyPolicy (refused when the app inhibits it), a CA inhibiting anyPolicy above one asserting it; B-LT with a complete
+  list and its delta revoking the signer or releasing its hold; an indirect list revoking the signer or not; a stale
+  response and list (not checked offline, refused with `RequireRevocation`, good with a grace of 14 days). A known-bad
+  sample's `failsWith` may now name policy options; a policy sample's `policies` the valid ones. pyHanko stops on an
+  iPAddress constraint (no checker: NotImplementedError) and on an otherName one (TypeError): recorded as
+  `differsByDesign`, the reference check catching both. `add_dss` takes more certificates and `_ocsp` its times
+  (defaults as before).
+- **Tests:** group `documents pdf: signatures` (14: `trust` added: the policies named by default and for the options,
+  an indirect and a delta list answering, stale data offline, with a short and a long grace and fetched again online,
+  the verifications counted; `known bad` extended to the 39 cases and policy options; the samples test reads `policies`;
+  limbo's bound raised on nc-dos-1); `documents contracts` (20 variables: defaults, values read, bad values and ranges
+  refused). Filter `documents pdf: signatures|documents pdf: edit|documents pdf: write|documents pdf: encryption|documents
+  contracts|outside plug-in|override loop:|conformance kit:|public API|abstraction inventory|every environment variable
+  read in src|the environment table names real commands|hidden boxing|test runner` with `IDRAK_UPDATE_API=1` (the public
+  API dump regenerated through the runner; the inventory unchanged). Four builds before the first run (a type named
+  `CmsAttribute` twice; `ReadSetOf`'s arguments in the wrong order; a local `why` declared twice), then 99 passed, 1
+  failed: the online stale test (the timestamp authority's path had fetched the fresh response the signer's status then
+  used without saying so: an answer from a fetched source now says "fetched online"); rebuilt, rerun: passed. Then the
+  checks' allocation trimmed (no list copy a status, no closure a verification, the policy fast path), one build: 98
+  passed, 2 failed (`abstraction inventory`: an internal interface for the sources is an abstraction outside plan 10's
+  namespaces; dropped for a switch on the three source types); rebuilt once, the whole filter: 100 passed, 0 failed.
+- **Timings** (this container, 4 cores, other agents building beside it; the owner's devices give the real ones): the 56
+  D12 samples' 57 signatures checked (every step) cold 107.6 ms, warm 43.9 ms (771 µs and 27.1 KiB a signature). The
+  38 files' checks of the harness, warm (four trusts, 20 passes): 25.9-26.0 KiB a check against the start's 26.3-26.5,
+  the time within the container's noise of the start's.
+- **Limits left** (README, leftovers 28.25): name-constraint forms otherName, x400Address, ediPartyName and registeredID
+  not compared; directory names without RFC 4518's NFKC; policy qualifiers not read; a distribution point's reasons field
+  not read; an indirect list's issuer's certificate not fetched; B-LT signing fetches complete lists, not deltas; DSA,
+  EdDSA and ML-DSA keys (28.26); ECDSA's curves the platform's (28.27).
+- **The owner's run** (held with the others until asked):
+  ```powershell
+  cd D:\Projects\Idrak; git checkout documents; git pull origin documents
+  dotnet build -c Release tests\Idrak.Tests
+  python -I tools\documents\make_fixtures.py -o test-output\documents\samples
+  $env:IDRAK_DEVICES = "cpu"; $env:IDRAK_FILTER = "documents pdf: signatures|documents contracts"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails-trust.txt
+  $env:IDRAK_FILTER = "documents pdf: signatures: timings"
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress | Out-File -Encoding utf8 test-output\trust-timing.txt
   Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
   ```
 

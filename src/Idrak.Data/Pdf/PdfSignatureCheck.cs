@@ -12,10 +12,11 @@ namespace Idrak.Data.Pdf;
 /// byte range read from the file) against the one signed; the <b>signature</b> over the signed attributes (content type,
 /// message digest, the ESS signing certificate PAdES asks for) with the signer's key; the signer's <b>chain</b> to a
 /// certificate the app trusts (decision 16: <see cref="SignatureCheckOptions.Trusted"/>, the machine's store only when
-/// asked), at the trusted time; the <b>timestamp</b> (its imprint, its own signature, its authority's chain); the chain's
-/// <b>revocation</b> from the document's validation data (DSS) and the signature's own, fetched online only when
-/// <see cref="SignatureCheckOptions.Online"/>; and the <b>changes</b> made after signing. A path's limits (its RSA keys'
-/// size, its length) are the options'. The legacy forms
+/// asked), at the trusted time, with its name constraints and certificate policies (the signer's path for the options'
+/// initial policies and flags); the <b>timestamp</b> (its imprint, its own signature, its authority's chain); the chain's
+/// <b>revocation</b> from the document's validation data (DSS) and the signature's own (delta and indirect lists read,
+/// stale data named), fetched online only when <see cref="SignatureCheckOptions.Online"/>; and the <b>changes</b> made
+/// after signing. A path's limits (its RSA keys' size, its length, its name comparisons) are the options'. The legacy forms
 /// (<c>adbe.pkcs7.sha1</c>, <c>adbe.x509.rsa_sha1</c>) and document timestamps (<c>ETSI.RFC3161</c>) are checked by their own
 /// rules. A signature never makes a document trusted on its own. Safe from several threads.
 /// </summary>
@@ -52,26 +53,29 @@ internal static class PdfSignatureCheck
         steps.Add(signature);
 
         // The timestamp first (its time is the chain's when the app gives none), reported after the chain.
-        var revocations = new Revocations(entry, data, options, entry.Context.File.MaxStreamBytes);
+        var revocations = Revocations(entry, data, pool, options);
         var (stampStep, trustedTime) = Timestamp(entry, anchors, pool, options, revocations);
         var at = options.At ?? trustedTime ?? DateTimeOffset.UtcNow;
         List<CmsCertificate>? path = null;
+        IReadOnlyList<string> policies = [];
         if (certificate is null)
         {
             steps.Add(new SignatureCheckStep(SignatureCheck.Chain, false, "no signer's certificate to build a chain from"));
         }
         else
         {
+            // A document timestamp's path is its authority's, checked for any policy; a signer's for the options' policies.
             var usage = entry.IsDocumentTimestamp ? CmsUsage.Timestamp : CmsUsage.Signer;
-            (path, string detail) = CmsPath.Build(certificate, pool, anchors, at, usage, options);
+            var built = CmsPath.Build(certificate, pool, anchors, at, usage, options, entry.IsDocumentTimestamp ? null : CmsPolicyInputs.From(options));
+            (path, policies) = (built.Path, built.Policies);
             string when = options.At is not null ? "" : trustedTime is not null ? " (the timestamp's time)" : " (now: no trusted time)";
-            steps.Add(new SignatureCheckStep(SignatureCheck.Chain, path is not null, (path is null ? detail : detail + when) + Noted(notes)));
+            steps.Add(new SignatureCheckStep(SignatureCheck.Chain, path is not null, (path is null ? built.Detail : built.Detail + when) + Noted(notes)));
         }
 
         steps.Add(stampStep);
         steps.Add(revocations.Step(path, at));
         steps.Add(new SignatureCheckStep(SignatureCheck.Changes, entry.Changes.Changes != DocumentSignatureChanges.NotAllowed, entry.Changes.Detail));
-        return new SignatureCheck(steps);
+        return new SignatureCheck(steps) { Policies = policies };
     }
 
     private static string Noted(List<string> notes) => notes.Count == 0 ? "" : " (" + string.Join("; ", notes) + ")";
@@ -289,7 +293,7 @@ internal static class PdfSignatureCheck
     // The timestamp step: none (passed), or its imprint over the signature's value, its own signature, its authority's
     // chain and revocation; the trusted time when it is valid.
     private static (SignatureCheckStep Step, DateTimeOffset? Time) Timestamp(PdfSignatureEntry entry, List<CmsCertificate> anchors, List<CmsCertificate> pool,
-        SignatureCheckOptions options, Revocations revocations)
+        SignatureCheckOptions options, CmsRevocationCheck revocations)
     {
         if (entry.TimestampProblem is { } problem)
         {
@@ -345,56 +349,14 @@ internal static class PdfSignatureCheck
 
     private static SignatureCheckStep Fail(string name, string detail) => new(name, false, detail);
 
-    /// <summary>
-    /// The revocation sources a check reads (the document's DSS, the signature's own revocation lists and Adobe's
-    /// revocation attribute; online ones only when allowed), and the revocation step over a path.
-    /// </summary>
-    private sealed class Revocations
+    // The revocation sources a check reads: the document's DSS, the signature's own revocation lists and Adobe's revocation
+    // attribute (RevocationInfoArchival: [0] lists, [1] OCSP responses, signed with the signature); online ones only when allowed.
+    private static CmsRevocationCheck Revocations(PdfSignatureEntry entry, PdfValidationData data, List<CmsCertificate> pool, SignatureCheckOptions options)
     {
-        private readonly List<CmsCrl> _crls = [];
-        private readonly List<CmsOcsp> _ocsps = [];
-        private readonly List<string> _notes = [];
-        private readonly SignatureCheckOptions _options;
-        private readonly long _maxBytes;
-
-        public Revocations(PdfSignatureEntry entry, PdfValidationData data, SignatureCheckOptions options, long maxBytes)
-        {
-            (_options, _maxBytes) = (options, maxBytes);
-            _crls.AddRange(data.Crls);
-            _ocsps.AddRange(data.Ocsps);
-            foreach (var list in entry.Cms?.RevocationLists ?? [])
-            {
-                Add(() => _crls.Add(CmsCrl.Parse(list)), "a revocation list in the signature");
-            }
-
-            // Adobe's revocation attribute (RevocationInfoArchival: [0] lists, [1] OCSP responses), signed with the signature.
-            if (entry.Signer?.Signed(CmsOids.AdobeRevocation) is { Values.Length: >= 1 } archival)
-            {
-                Add(() =>
-                {
-                    var sequence = CmsAsn.Reader(archival.Values[0]).ReadSequence();
-                    while (sequence.HasData)
-                    {
-                        var tag = sequence.PeekTag();
-                        var items = sequence.ReadSequence(tag).ReadSequence();
-                        while (items.HasData)
-                        {
-                            var item = items.ReadEncodedValue();
-                            if (tag.TagValue == 0)
-                            {
-                                _crls.Add(CmsCrl.Parse(item));
-                            }
-                            else if (tag.TagValue == 1)
-                            {
-                                _ocsps.Add(CmsOcsp.Parse(item));
-                            }
-                        }
-                    }
-                }, "the signature's revocation attribute");
-            }
-        }
-
-        private void Add(Action parse, string what)
+        var crls = new List<CmsCrl>(data.Crls);
+        var ocsps = new List<CmsOcsp>(data.Ocsps);
+        var notes = new List<string>();
+        void Add(Action parse, string what)
         {
             try
             {
@@ -402,155 +364,40 @@ internal static class PdfSignatureCheck
             }
             catch (Exception e) when (CmsAsn.IsDamage(e))
             {
-                _notes.Add($"{what} cannot be read ({e.Message})");
+                notes.Add($"{what} cannot be read ({e.Message})");
             }
         }
 
-        /// <summary>Why a certificate of <paramref name="path"/> is revoked at <paramref name="at"/>, or null (what is not known is not revoked).</summary>
-        public string? Revoked(List<CmsCertificate> path, DateTimeOffset at)
+        foreach (var list in entry.Cms?.RevocationLists ?? [])
         {
-            for (int i = 0; i + 1 < path.Count; i++)
+            Add(() => crls.Add(CmsCrl.Parse(list)), "a revocation list in the signature");
+        }
+
+        if (entry.Signer?.Signed(CmsOids.AdobeRevocation) is { Values.Length: >= 1 } archival)
+        {
+            Add(() =>
             {
-                var (status, detail) = StatusOf(path[i], path[i + 1], at);
-                if (status == CmsStatus.Revoked)
+                var sequence = CmsAsn.Reader(archival.Values[0]).ReadSequence();
+                while (sequence.HasData)
                 {
-                    return detail;
-                }
-            }
-
-            return null;
-        }
-
-        public SignatureCheckStep Step(List<CmsCertificate>? path, DateTimeOffset at)
-        {
-            if (path is null)
-            {
-                return new SignatureCheckStep(SignatureCheck.Revocation, !_options.RequireRevocation, "not checked: there is no path to a trusted certificate to check");
-            }
-
-            var details = new List<string>();
-            bool revoked = false, unknown = false;
-            for (int i = 0; i + 1 < path.Count; i++)
-            {
-                if (path[i].OcspNoCheck)
-                {
-                    details.Add($"{path[i].Named} needs no check (ocsp-nocheck)");
-                    continue;
-                }
-
-                var (status, detail) = StatusOf(path[i], path[i + 1], at);
-                revoked |= status == CmsStatus.Revoked;
-                unknown |= status == CmsStatus.Unknown;
-                details.Add(detail);
-            }
-
-            details.AddRange(_notes);
-            string all = string.Join("; ", details);
-            if (revoked)
-            {
-                return new SignatureCheckStep(SignatureCheck.Revocation, false, "revoked: " + all);
-            }
-
-            if (unknown)
-            {
-                string online = _options.Online ? "" : " (fetching is off: SignatureCheckOptions.Online, or IDRAK_DOCUMENT_SIGNATURE_ONLINE)";
-                return new SignatureCheckStep(SignatureCheck.Revocation, !_options.RequireRevocation, $"not checked: {all}{online}");
-            }
-
-            return new SignatureCheckStep(SignatureCheck.Revocation, true, path.Count == 1 ? "good: the signer's certificate is trusted itself" : "good: " + all);
-        }
-
-        // A certificate's status from every source: revoked when one says so, good when one says so, else unknown (fetched
-        // online first, when allowed).
-        private (CmsStatus Status, string Detail) StatusOf(CmsCertificate certificate, CmsCertificate issuer, DateTimeOffset at)
-        {
-            var (status, detail) = Known(certificate, issuer, at);
-            if (status != CmsStatus.Unknown || !_options.Online)
-            {
-                return (status, detail);
-            }
-
-            var fetched = Fetch(certificate, issuer);
-            (status, detail) = Known(certificate, issuer, at);
-            return status == CmsStatus.Unknown ? (status, $"{detail} ({fetched})") : (status, $"{detail} (fetched online)");
-        }
-
-        private (CmsStatus, string) Known(CmsCertificate certificate, CmsCertificate issuer, DateTimeOffset at)
-        {
-            CmsStatusAnswer? good = null;
-            string? why = null;
-            lock (_ocsps)
-            {
-                foreach (var answer in _ocsps.Select(o => o.StatusOf(certificate, issuer, at)).Concat(_crls.Select(c => c.StatusOf(certificate, issuer, at))))
-                {
-                    switch (answer.Status)
+                    var tag = sequence.PeekTag();
+                    var items = sequence.ReadSequence(tag).ReadSequence();
+                    while (items.HasData)
                     {
-                        case CmsStatus.Revoked:
-                            return (CmsStatus.Revoked, answer.Detail);
-                        case CmsStatus.Good:
-                            good ??= answer;
-                            break;
-                        default:
-                            if (!answer.Detail.StartsWith("a response for another", StringComparison.Ordinal) && !answer.Detail.StartsWith("another issuer", StringComparison.Ordinal))
-                            {
-                                why ??= answer.Detail;
-                            }
-
-                            break;
+                        var item = items.ReadEncodedValue();
+                        if (tag.TagValue == 0)
+                        {
+                            crls.Add(CmsCrl.Parse(item));
+                        }
+                        else if (tag.TagValue == 1)
+                        {
+                            ocsps.Add(CmsOcsp.Parse(item));
+                        }
                     }
                 }
-            }
-
-            return good is { } found ? (CmsStatus.Good, found.Detail) : (CmsStatus.Unknown, why ?? $"no revocation data for {certificate.Named}");
+            }, "the signature's revocation attribute");
         }
 
-        // Revocation data fetched from the addresses the certificate names (OCSP first, then its lists), through SignatureServices.
-        private string Fetch(CmsCertificate certificate, CmsCertificate issuer)
-        {
-            var tried = new List<string>();
-            foreach (string address in certificate.OcspAddresses)
-            {
-                try
-                {
-                    byte[] answer = SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.Ocsp)
-                    {
-                        Body = CmsRevocation.Request(certificate, issuer), Timeout = _options.Timeout, MaxResponseBytes = _maxBytes,
-                    });
-                    lock (_ocsps)
-                    {
-                        _ocsps.Add(CmsOcsp.Parse(answer));
-                    }
-
-                    return $"asked {address}";
-                }
-                catch (Exception e) when (e is IOException or InvalidDataException or UriFormatException or NotSupportedException or OperationCanceledException or TimeoutException)
-                {
-                    tried.Add($"{address}: {e.Message}");
-                }
-            }
-
-            foreach (string address in certificate.CrlAddresses)
-            {
-                try
-                {
-                    byte[] answer = SignatureServices.Send(new SignatureServiceRequest(new Uri(address), SignatureServiceKind.RevocationList)
-                    {
-                        Timeout = _options.Timeout, MaxResponseBytes = _maxBytes,
-                    });
-                    lock (_ocsps)
-                    {
-                        _crls.Add(CmsCrl.Parse(answer));
-                    }
-
-                    return $"fetched {address}";
-                }
-                catch (Exception e) when (e is IOException or InvalidDataException or UriFormatException or NotSupportedException or OperationCanceledException or TimeoutException)
-                {
-                    tried.Add($"{address}: {e.Message}");
-                }
-            }
-
-            return tried.Count == 0 ? $"{certificate.Named}'s certificate names no address to ask" : "fetching failed: " + string.Join("; ", tried);
-        }
+        return new CmsRevocationCheck(crls, ocsps, notes, pool, options, entry.Context.File.MaxStreamBytes);
     }
 }

@@ -74,9 +74,11 @@ def _crl(issuer, signing_key, revoked, number):
     return b.sign(signing_key, hashes.SHA256()).public_bytes(serialization.Encoding.DER)
 
 
-def _ocsp(pki, party, signing_key, revoked):
+def _ocsp(pki, party, signing_key, revoked, this_update=T(2026, 3, 2, 9, 0, 0), next_update=T(2036, 3, 2),
+          produced_at=T(2026, 3, 2, 9, 31, 0)):
     """An OCSP response for `party` naming the intermediate as its responder (by its key's SHA-1), its status revoked
-    (keyCompromise, 2026-02-15) or good, signed with `signing_key`; fixed times, as the PKI's own response."""
+    (keyCompromise, 2026-02-15) or good, signed with `signing_key`; fixed times, as the PKI's own response (the trust
+    samples' stale one gives its own)."""
     ia = pki.intermediate.asn1
     key_hash = hashlib.sha1(ia.public_key["public_key"].contents[1:]).digest()
     cert_id = ocsp.CertId({"hash_algorithm": {"algorithm": "sha1"},
@@ -85,10 +87,10 @@ def _ocsp(pki, party, signing_key, revoked):
     status = (ocsp.CertStatus(name="revoked", value=ocsp.RevokedInfo({"revocation_time": REVOKED_AT,
                                                                       "revocation_reason": "key_compromise"}))
               if revoked else ocsp.CertStatus(name="good", value=core.Null()))
-    single = ocsp.SingleResponse({"cert_id": cert_id, "cert_status": status, "this_update": T(2026, 3, 2, 9, 0, 0),
-                                  "next_update": T(2036, 3, 2)})
+    single = ocsp.SingleResponse({"cert_id": cert_id, "cert_status": status, "this_update": this_update,
+                                  "next_update": next_update})
     data = ocsp.ResponseData({"responder_id": ocsp.ResponderId(name="by_key", value=key_hash),
-                              "produced_at": T(2026, 3, 2, 9, 31, 0), "responses": [single]})
+                              "produced_at": produced_at, "responses": [single]})
     sig = signing_key.sign(data.dump(), padding.PKCS1v15(), hashes.SHA256())
     basic = ocsp.BasicOCSPResponse({"tbs_response_data": data, "signature_algorithm": {"algorithm": "sha256_rsa"},
                                     "signature": sig})

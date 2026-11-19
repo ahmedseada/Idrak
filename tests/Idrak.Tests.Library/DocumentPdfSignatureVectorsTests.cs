@@ -17,8 +17,10 @@ using Idrak.Data.Pdf;
 // Wycheproof's RSA PKCS #1 v1.5, RSA-PSS and ECDSA vectors (tests/Idrak.Tests/data/wycheproof, their notice and commit in its
 // README) through CmsKeys; this platform's RSA cross-checked on the cases it takes (a test-only guard, never a library path);
 // the generator's known-bad certificate paths (D12's bad-* samples in the ignored test-output/documents/samples);
-// x509-limbo's path and revocation-list cases (tests/Idrak.Tests/data/x509-limbo); the path search's bound. Each test keeps
-// what it found in test-output/documents/known-bad/NAME.txt (every case counted, acceptable cases and limits named).
+// x509-limbo's path and revocation-list cases (tests/Idrak.Tests/data/x509-limbo), name constraints and policies among them
+// (signature trust completed, 2026-11-19); the generator's trust samples refused (name constraints, policies, delta and
+// indirect lists, stale data); the path search's bound. Each test keeps what it found in
+// test-output/documents/known-bad/NAME.txt (every case counted, acceptable cases and limits named).
 internal abstract partial class Tests
 {
     private static readonly string[] WycheproofPkcs1Files =
@@ -454,8 +456,8 @@ internal abstract partial class Tests
 
     private static string RuntimeInformationText() => $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription.Trim()}, {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}";
 
-    // The generator's known-bad samples (D12's bad-*): each refused at the step its JSON names, saying why; with the option
-    // that is the cause raised, it passes.
+    // The generator's known-bad samples (D12's bad-* and trust-*): each refused at the step its JSON names, saying why (with
+    // the options it names, when it fails only with them); with the option that is the cause raised, it passes.
     private static void PdfKnownBadPaths(Device device)
     {
         CpuOnly(device);
@@ -466,6 +468,12 @@ internal abstract partial class Tests
             "expired", "not-yet-valid", "wrong-issuer-signature", "issuer-not-ca", "path-length", "issuer-without-keycertsign", "signer-without-signature-usage",
             "unknown-critical-extension", "names-do-not-chain", "loop", "chain-too-long", "weak-rsa-key", "revoked-by-ocsp", "crl-wrong-key", "ocsp-wrong-key",
             "timestamp-imprint",
+            "name-constraints-dn-excluded", "name-constraints-dn-not-permitted", "name-constraints-email-excluded", "name-constraints-email-not-permitted",
+            "name-constraints-dns-excluded", "name-constraints-dns-not-permitted", "name-constraints-uri-excluded", "name-constraints-uri-not-permitted",
+            "name-constraints-ipv4-excluded", "name-constraints-ipv4-not-permitted", "name-constraints-ipv6-excluded", "name-constraints-ipv6-not-permitted",
+            "name-constraints-unsupported-form", "policy-not-the-initial", "policy-explicit-required", "policy-mapping-inhibited-by-the-check",
+            "policy-mapping-inhibited", "policy-any-inhibited-by-the-check", "policy-any-inhibited", "delta-crl-revoked", "indirect-crl-revoked",
+            "stale-revocation",
         ];
         var found = new List<string>();
         foreach (var sample in PdfSignedSamples().Where(s => s.Expected["signatures"]!.AsArray().Any(g => g?["knownBad"] is not null)))
@@ -487,30 +495,42 @@ internal abstract partial class Tests
                 var options = new SignatureCheckOptions { Trusted = trust, At = DateTimeOffset.Parse((string)want["validationTime"]!, CultureInfo.InvariantCulture), Online = false };
                 var check = signature.Check(options);
                 PdfExpectResults(sample.Name, check, want["results"]!);
-                if ((string?)bad["failsWith"] == "RequireRevocation")
+                var failing = options;
+                string? failsWith = null;
+                if (bad["failsWith"] is JsonValue required && (string?)required == "RequireRevocation")
                 {
                     // A source that cannot be used leaves the status unknown: soft-fail passes it as not checked, saying why.
                     var soft = PdfStep(check, stepName);
                     Check(soft.Passed && soft.Detail.StartsWith("not checked", StringComparison.Ordinal) && soft.Detail.Contains(detail, StringComparison.Ordinal),
                         $"{sample.Name} ({kind}): soft-fail passes the {stepName} step as not checked, saying '{detail}': {soft.Detail}");
-                    check = signature.Check(options with { RequireRevocation = true });
+                    failing = options with { RequireRevocation = true };
+                    failsWith = "RequireRevocation";
+                }
+                else if (bad["failsWith"] is JsonObject asked)
+                {
+                    // A path valid with the default options, refused with the policy options the app asks for.
+                    Check(PdfStep(check, stepName).Passed, $"{sample.Name} ({kind}): the {stepName} step passes with the default options: {PdfDescribe(check)}");
+                    failing = PdfWithOptions(options, asked);
+                    failsWith = asked.ToJsonString();
                 }
 
+                check = signature.Check(failing);
                 var step = PdfStep(check, stepName);
                 Check(!step.Passed && !check.Valid && step.Detail.Contains(detail, StringComparison.Ordinal),
                     $"{sample.Name} ({kind}): the {stepName} step fails saying '{detail}': {PdfDescribe(check)}");
                 string pyhanko = reference is not null && i < reference.Count && reference[i] is JsonObject r
-                    ? $" (pyHanko: intact {r["intact"]}, valid {r["valid"]}, trusted {r["trusted"]}{(r["lt"] is JsonObject lt ? $", from the DSS {lt["revocation"]}" : "")}{(r["differsByDesign"] is JsonObject d ? $"; differs by design: {d.ToJsonString()}" : "")})"
+                    ? $" (pyHanko: {(r["error"] is { } error ? $"stops: {error}" : $"intact {r["intact"]}, valid {r["valid"]}, trusted {r["trusted"]}")}{(r["lt"] is JsonObject lt ? $", from the DSS {lt["revocation"]}" : "")}{(r["withOptions"] is JsonObject o ? $", with those options trusted {o["trusted"]}" : "")}{(r["differsByDesign"] is JsonObject d ? $"; differs by design: {d.ToJsonString()}" : "")})"
                     : "";
-                report.Line($"path case {kind} ({sample.Name}){((string?)bad["failsWith"] is { } required ? $" with {required}" : "")}: {stepName} refused: {step.Detail}{pyhanko}");
+                report.Line($"path case {kind} ({sample.Name}){(failsWith is null ? "" : $" with {failsWith}")}: {stepName} refused: {step.Detail}{pyhanko}");
                 if (bad["passesWith"] is JsonObject passes)
                 {
                     string option = (string)passes["option"]!;
                     int value = (int)passes["value"]!;
                     var lifted = option switch
                     {
-                        "MaxChainLength" => options with { MaxChainLength = value },
-                        "MinimumRsaKeyBits" => options with { MinimumRsaKeyBits = value },
+                        "MaxChainLength" => failing with { MaxChainLength = value },
+                        "MinimumRsaKeyBits" => failing with { MinimumRsaKeyBits = value },
+                        "FreshnessGrace" => failing with { FreshnessGrace = TimeSpan.FromSeconds(value) },
                         _ => throw new InvalidOperationException($"an option the test does not know: {option}"),
                     };
                     var again = signature.Check(lifted);
@@ -535,6 +555,25 @@ internal abstract partial class Tests
             $"the known-bad samples' cases: {string.Join(", ", found)}; expected {string.Join(", ", expectedCases)} (make the samples again: tools/documents/make_fixtures.py)");
     }
 
+    // A check's options with the policy options a sample's JSON names (InitialPolicies, RequireExplicitPolicy,
+    // InhibitPolicyMapping, InhibitAnyPolicy).
+    private static SignatureCheckOptions PdfWithOptions(SignatureCheckOptions options, JsonObject asked)
+    {
+        foreach (var (name, value) in asked)
+        {
+            options = name switch
+            {
+                "InitialPolicies" => options with { InitialPolicies = [.. value!.AsArray().Select(p => (string)p!)] },
+                "RequireExplicitPolicy" => options with { RequireExplicitPolicy = (bool)value! },
+                "InhibitPolicyMapping" => options with { InhibitPolicyMapping = (bool)value! },
+                "InhibitAnyPolicy" => options with { InhibitAnyPolicy = (bool)value! },
+                _ => throw new InvalidOperationException($"an option the test does not know: {name}"),
+            };
+        }
+
+        return options;
+    }
+
     // x509-limbo's cases whose verdict a document's check gives otherwise on purpose: the rule it applies instead.
     private static readonly (string Case, string Why)[] LimboByDesign =
     [
@@ -553,12 +592,13 @@ internal abstract partial class Tests
         ("crl::temporal::this-update-in-future", "a document check uses a list issued after the time it checks at: a later list proves the status then (PAdES long-term validation)"),
         ("crl::temporal::revocation-date-in-future", "a certificate revoked after the time a document is checked at was not revoked then: its signature made before stays valid (PAdES long-term validation)"),
         ("crl::crlnumber-", "the CRL number's presence and criticality are rules for how a CA writes lists; a check reads a list either way"),
+        ("rfc5280::nc::permitted-dns-match-noncritical", "name constraints are applied whether marked critical or not (pyHanko alike; the CA/Browser Forum lets a CA mark them non-critical, limbo tags the case rfc5280-incompatible-with-webpki): the leaf is within them"),
+        ("rfc5280::pc::ica-noncritical-pc", "policy constraints are applied whether marked critical or not (pyHanko alike): the CA's requireExplicitPolicy 3 does not reach this two-certificate path"),
     ];
 
     // x509-limbo's cases Idrak cannot answer as limbo does yet: a named limit (src/Idrak.Data/README.md, plans/leftovers.md).
     private static readonly (string Case, string Why)[] LimboLimits =
     [
-        ("rfc5280::nc::", "name constraints are not read: a certificate with them fails the path, naming them (never a path they would limit passed unread)"),
         ("rfc9881::", "ML-DSA keys are not read (RSA and ECDSA are): a path signed with one fails"),
     ];
 
@@ -575,7 +615,7 @@ internal abstract partial class Tests
     // carries, the trusted certificates as the app's trust, at the case's time (its depth as MaxChainLength: the leaf and the
     // anchor more); then each of the case's lists read for each link: a link revoked, or a list naming its issuer that
     // cannot be used, refuses the path.
-    private static (bool Passed, string Detail) LimboRun(JsonNode limbo)
+    private static (bool Passed, string Detail) LimboRun(JsonNode limbo, SignatureCheckOptions? given = null)
     {
         static List<CmsCertificate> Read(JsonNode? list) =>
             list is JsonArray certificates ? [.. certificates.Select(p => CmsCertificate.TryParse(PemBytes((string)p!))).OfType<CmsCertificate>()] : [];
@@ -586,7 +626,7 @@ internal abstract partial class Tests
         }
 
         var at = (string?)limbo["validation_time"] is { } time ? DateTimeOffset.Parse(time, CultureInfo.InvariantCulture) : DateTimeOffset.UtcNow;
-        var options = new SignatureCheckOptions { Online = false };
+        var options = given ?? new SignatureCheckOptions { Online = false };
         if ((int?)limbo["max_chain_depth"] is { } depth)
         {
             options = options with { MaxChainLength = Math.Min(depth + 2, 64) };
@@ -661,6 +701,12 @@ internal abstract partial class Tests
                 failures.Add($"{id}: limbo {expected}, Idrak {answer}");
             }
         }
+
+        // The name-constraint bound is the cause of the pathological cases' refusal: raised, the first (technically valid) passes.
+        var dos = data["cases"]!.AsArray().Single(c => (string)c!["id"]! == "pathological::nc-dos-1")!;
+        var (raised, raisedWhy) = LimboRun(dos, new SignatureCheckOptions { Online = false, MaxNameConstraintChecks = 1 << 30 });
+        report.Line($"pathological::nc-dos-1 with MaxNameConstraintChecks = {1 << 30}: {(raised ? "valid" : $"refused: {raisedWhy}")}");
+        Check(raised, $"pathological::nc-dos-1 passes once the name comparisons are allowed: {raisedWhy}");
 
         foreach (var (name, count) in data["otherNamespaces"]!.AsObject())
         {

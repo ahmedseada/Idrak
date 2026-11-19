@@ -37,7 +37,8 @@ internal static class CmsOids
         CrlDistributionPoints = "2.5.29.31", AuthorityInfoAccess = "1.3.6.1.5.5.7.1.1", SubjectInfoAccess = "1.3.6.1.5.5.7.1.11",
         FreshestCrl = "2.5.29.46", PrivateKeyUsagePeriod = "2.5.29.16";
 
-    public const string NameConstraints = "2.5.29.30", PolicyMappings = "2.5.29.33", PolicyConstraints = "2.5.29.36", InhibitAnyPolicy = "2.5.29.54";
+    public const string NameConstraints = "2.5.29.30", PolicyMappings = "2.5.29.33", PolicyConstraints = "2.5.29.36", InhibitAnyPolicy = "2.5.29.54",
+        AnyPolicy = "2.5.29.32.0", EmailAddress = "1.2.840.113549.1.9.1";
 
     public const string CrlNumber = "2.5.29.20", CrlReason = "2.5.29.21", InvalidityDate = "2.5.29.24", DeltaCrlIndicator = "2.5.29.27",
         IssuingDistributionPoint = "2.5.29.28", CertificateIssuer = "2.5.29.29";
@@ -244,4 +245,13 @@ internal static class CmsText
     public static string Time(DateTimeOffset time) => time.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture);
 
     public static string Serial(ReadOnlySpan<byte> serial) => Convert.ToHexString(serial);
+
+    /// <summary>A span of time for messages: whole days, hours, minutes or seconds ("7 days", "90 minutes"), invariant.</summary>
+    public static string Span(TimeSpan span) =>
+        span.Ticks % TimeSpan.TicksPerDay == 0 ? Unit(span.Ticks / TimeSpan.TicksPerDay, "day")
+        : span.Ticks % TimeSpan.TicksPerHour == 0 ? Unit(span.Ticks / TimeSpan.TicksPerHour, "hour")
+        : span.Ticks % TimeSpan.TicksPerMinute == 0 ? Unit(span.Ticks / TimeSpan.TicksPerMinute, "minute")
+        : Unit((long)span.TotalSeconds, "second");
+
+    private static string Unit(long count, string unit) => string.Create(CultureInfo.InvariantCulture, $"{count} {unit}{(count == 1 ? "" : "s")}");
 }

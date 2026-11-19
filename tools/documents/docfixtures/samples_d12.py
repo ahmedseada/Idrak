@@ -165,10 +165,11 @@ class SignedDoc:
         pdf.put(ref, Stream({"Filter": N("FlateDecode")}, flate(data), data))
         self._update([ref.num])
 
-    def add_dss(self, pki, contents_list, revoked=False, signer=None, crls=None, ocsps=None):
+    def add_dss(self, pki, contents_list, revoked=False, signer=None, crls=None, ocsps=None, extra_certs=()):
         """An update adding the DSS: the chain's certificates, both CRLs, the OCSP response, and a VRI entry per
-        signature (keyed by the SHA-1 of its /Contents, upper-case hex). The known-bad samples give their own signer,
-        lists and responses ((file name, DER) pairs) in place of the PKI's."""
+        signature (keyed by the SHA-1 of its /Contents, upper-case hex). The known-bad and trust samples give their own
+        signer, lists and responses ((file name, DER) pairs) in place of the PKI's, and more certificates (an indirect
+        list's issuer) after the chain's."""
         pdf = self.pdf
 
         def stream(data):
@@ -178,7 +179,8 @@ class SignedDoc:
         crl_items = crls if crls is not None else [("pki.intermediate.crl", pki.intermediate_crl),
                                                     ("pki.root.crl", pki.root_crl)]
         ocsp_items = ocsps if ocsps is not None else ([] if revoked else [("pki.signer.ocsp", pki.signer_ocsp)])
-        certs = [stream(p.der) for p in (signer, pki.intermediate, pki.root, pki.tsa)]
+        parties = (signer, pki.intermediate, pki.root, pki.tsa, *extra_certs)
+        certs = [stream(p.der) for p in parties]
         crls = [stream(data) for _, data in crl_items]
         ocsps = [stream(data) for _, data in ocsp_items]
         vri = {}
@@ -193,7 +195,7 @@ class SignedDoc:
         nums = [r.num for r in certs + crls + ocsps] + [dss.num, self.doc.catalog.num] + \
             [v.num for v in pdf.get(dss)["VRI"].values()]
         self._update(nums)
-        return {"certs": [f"pki.{p.label}.cer" for p in (signer, pki.intermediate, pki.root, pki.tsa)],
+        return {"certs": [f"pki.{p.label}.cer" for p in parties],
                 "crls": [n for n, _ in crl_items], "ocsps": [n for n, _ in ocsp_items], "vri": sorted(vri)}
 
     def data(self):
@@ -411,8 +413,10 @@ def build(seed):
                                 results=_results())], pki, checks=[check_legacy]))
 
     from .samples_d12_bad import build_bad
+    from .samples_d12_trust import build_trust
 
     out += build_bad(seed, pki)
+    out += build_trust(seed, pki)
     return out
 
 
@@ -470,7 +474,19 @@ def check_signatures(path, exp, notes):
         for want, emb in zip(exp["signatures"], embedded):
             vc = ValidationContext(trust_roots=[certs["root"]], other_certs=[certs["intermediate"]], moment=moment,
                                    allow_fetching=False, revocation_mode="soft-fail")
-            st = validate_pdf_signature(emb, signer_validation_context=vc, ts_validation_context=vc)
+            try:
+                st = validate_pdf_signature(emb, signer_validation_context=vc, ts_validation_context=vc)
+            except (NotImplementedError, TypeError) as e:
+                # pyHanko cannot evaluate what the path holds (an iPAddress or an otherName name constraint): recorded,
+                # and expected where the sample says Idrak's rule differs from it by design.
+                got = {"field": emb.field_name, "error": f"{type(e).__name__}: {str(e)[:200]}"}
+                by_design = want.get("referenceDiffers") or {}
+                if "chain" in by_design:
+                    got["differsByDesign"] = {"chain": by_design["chain"]}
+                else:
+                    problems.append({"field": want["field"], "differs": ["error"]})
+                results.append(got)
+                continue
             got = {"field": emb.field_name, "intact": st.intact, "valid": st.valid, "trusted": st.trusted,
                    "coverage": st.coverage.name, "modificationLevel": _level(st.modification_level),
                    "docmdpOk": st.docmdp_ok, "bottomLine": st.bottom_line,
@@ -496,6 +512,8 @@ def check_signatures(path, exp, notes):
                                   "reason": rd.revocation_reason.native}}
                 except Exception as e:  # noqa: BLE001 - recorded
                     got["lt"] = {"error": f"{type(e).__name__}: {str(e)[:200]}", "revocation": "failed"}
+            if isinstance((want.get("knownBad") or {}).get("failsWith"), dict):
+                got["withOptions"] = _with_options(emb, certs["root"], moment, want["knownBad"]["failsWith"])
             results.append(got)
             r = want["results"]
             mismatch = []
@@ -534,6 +552,30 @@ def check_signatures(path, exp, notes):
     return "validator", {"tool": "pyHanko (pyhanko-certvalidator), trust: pki.root.cer only, no fetching; B-LT also "
                                  "with the DSS alone, revocation required, at the timestamp's time",
                          "signatures": results, "problems": problems}, {}
+
+
+def _with_options(emb, root, moment, options):
+    """pyHanko's verdict on a signer's path under a check's policy options (a trust sample's `failsWith`): the signer's
+    certificate and the CMS's others through pyhanko-certvalidator with the matching PKIX parameters, nothing fetched."""
+    import asyncio
+
+    from pyhanko_certvalidator import CertificateValidator, ValidationContext
+    from pyhanko_certvalidator.policy_decl import PKIXValidationParams
+
+    policies = options.get("InitialPolicies")
+    params = PKIXValidationParams(
+        user_initial_policy_set=frozenset(policies) if policies else frozenset(["any_policy"]),
+        initial_explicit_policy=bool(options.get("RequireExplicitPolicy")),
+        initial_policy_mapping_inhibit=bool(options.get("InhibitPolicyMapping")),
+        initial_any_policy_inhibit=bool(options.get("InhibitAnyPolicy")))
+    others = [c.chosen for c in emb.signed_data["certificates"] if c.chosen.dump() != emb.signer_cert.dump()]
+    vc = ValidationContext(trust_roots=[root], moment=moment, allow_fetching=False, revocation_mode="soft-fail")
+    try:
+        asyncio.run(CertificateValidator(emb.signer_cert, intermediate_certs=others, validation_context=vc, pkix_params=params)
+                    .async_validate_usage({"digital_signature"}))
+        return {"options": options, "trusted": True}
+    except Exception as e:  # noqa: BLE001 - recorded
+        return {"options": options, "trusted": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
 def check_legacy(path, exp, notes):

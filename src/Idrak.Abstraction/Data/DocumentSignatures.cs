@@ -78,6 +78,13 @@ public sealed record SignatureCheck(IReadOnlyList<SignatureCheckStep> Steps)
 
     /// <summary>Whether every step passed (false when there is none).</summary>
     public bool Valid => Steps.Count > 0 && Steps.All(s => s.Passed);
+
+    /// <summary>
+    /// The certificate policies the signer's path is valid for (RFC 5280 6.1's user-constrained policy set, as object
+    /// identifiers in ordinal order; <see cref="SignatureCheckOptions.AnyPolicy"/> when the path holds every policy), or
+    /// empty: no path was built, or its certificates leave no policy (which passes unless an explicit policy is required).
+    /// </summary>
+    public IReadOnlyList<string> Policies { get; init; } = [];
 }
 
 /// <summary>
@@ -96,8 +103,40 @@ public sealed record SignatureCheckOptions
     /// <summary>The variable that sets <see cref="MaxChainLength"/> (1 to 64): "IDRAK_DOCUMENT_SIGNATURE_CHAIN".</summary>
     public const string MaxChainLengthVariable = "IDRAK_DOCUMENT_SIGNATURE_CHAIN";
 
+    /// <summary>
+    /// The variable that sets <see cref="InitialPolicies"/> (policy object identifiers separated by commas or spaces; "any" or
+    /// unset: any policy): "IDRAK_DOCUMENT_SIGNATURE_POLICIES".
+    /// </summary>
+    public const string InitialPoliciesVariable = "IDRAK_DOCUMENT_SIGNATURE_POLICIES";
+
+    /// <summary>The variable that sets <see cref="RequireExplicitPolicy"/> (on or off): "IDRAK_DOCUMENT_SIGNATURE_EXPLICIT_POLICY".</summary>
+    public const string RequireExplicitPolicyVariable = "IDRAK_DOCUMENT_SIGNATURE_EXPLICIT_POLICY";
+
+    /// <summary>The variable that sets <see cref="InhibitPolicyMapping"/> (on or off): "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_MAPPING".</summary>
+    public const string InhibitPolicyMappingVariable = "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_MAPPING";
+
+    /// <summary>The variable that sets <see cref="InhibitAnyPolicy"/> (on or off): "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_ANY_POLICY".</summary>
+    public const string InhibitAnyPolicyVariable = "IDRAK_DOCUMENT_SIGNATURE_INHIBIT_ANY_POLICY";
+
+    /// <summary>
+    /// The variable that sets <see cref="FreshnessGrace"/> (seconds, or a number with s, m, h or d; 0 to 3650 days):
+    /// "IDRAK_DOCUMENT_SIGNATURE_GRACE".
+    /// </summary>
+    public const string FreshnessGraceVariable = "IDRAK_DOCUMENT_SIGNATURE_GRACE";
+
+    /// <summary>The variable that sets <see cref="MaxNameConstraintChecks"/> (1 to 1073741824): "IDRAK_DOCUMENT_SIGNATURE_NAME_CHECKS".</summary>
+    public const string MaxNameConstraintChecksVariable = "IDRAK_DOCUMENT_SIGNATURE_NAME_CHECKS";
+
+    /// <summary>The policy identifier anyPolicy (RFC 5280 4.2.1.4): "2.5.29.32.0".</summary>
+    public const string AnyPolicy = "2.5.29.32.0";
+
+    private static readonly TimeSpan MostGrace = TimeSpan.FromDays(3650);
+
     private readonly int _minimumRsaKeyBits = DocumentSettings.Int(MinimumRsaKeyBitsVariable, 0, 16384) ?? 2048;
     private readonly int _maxChainLength = DocumentSettings.Int(MaxChainLengthVariable, 1, 64) ?? 12;
+    private readonly IReadOnlyList<string> _initialPolicies = PoliciesOf(InitialPoliciesVariable);
+    private readonly TimeSpan _freshnessGrace = GraceOf(FreshnessGraceVariable) ?? TimeSpan.Zero;
+    private readonly int _maxNameConstraintChecks = DocumentSettings.Int(MaxNameConstraintChecksVariable, 1, 1 << 30) ?? 1 << 20;
 
     /// <summary>The certificates trusted as roots of a signer's chain.</summary>
     public IReadOnlyList<X509Certificate2> Trusted { get; init; } = [];
@@ -149,6 +188,148 @@ public sealed record SignatureCheckOptions
         get => _maxChainLength;
         init => _maxChainLength = value is >= 1 and <= 64 ? value
             : throw new ArgumentOutOfRangeException(nameof(MaxChainLength), value, "The most certificates a path may hold: 1 to 64.");
+    }
+
+    /// <summary>
+    /// The certificate policies a signer's path must be valid for, as object identifiers (RFC 5280 6.1.1's
+    /// user-initial-policy-set; <see cref="InitialPoliciesVariable"/>): empty, the default, takes any policy (anyPolicy, as
+    /// does a list holding <see cref="AnyPolicy"/>). A path for none of them fails the chain step only when an explicit
+    /// policy is required (<see cref="RequireExplicitPolicy"/>, or a CA's policy constraints); the policies a path is valid
+    /// for are <see cref="SignatureCheck.Policies"/>. A timestamp authority's path is checked for any policy.
+    /// </summary>
+    /// <exception cref="ArgumentException">An item that is not a dotted object identifier.</exception>
+    public IReadOnlyList<string> InitialPolicies
+    {
+        get => _initialPolicies;
+        init
+        {
+            ArgumentNullException.ThrowIfNull(value);
+            foreach (string policy in value)
+            {
+                if (!IsOid(policy))
+                {
+                    throw new ArgumentException($"'{policy}' is not a policy's object identifier (such as 2.999.1.2; {AnyPolicy} for any policy).", nameof(InitialPolicies));
+                }
+            }
+
+            _initialPolicies = [.. value];
+        }
+    }
+
+    /// <summary>
+    /// Whether a signer's path must be valid for a policy of <see cref="InitialPolicies"/> (RFC 5280's initial-explicit-policy;
+    /// false; <see cref="RequireExplicitPolicyVariable"/>): with it, a path whose certificates leave none fails the chain step.
+    /// </summary>
+    public bool RequireExplicitPolicy { get; init; } = DocumentSettings.Switch(RequireExplicitPolicyVariable) ?? false;
+
+    /// <summary>
+    /// Whether the policy mappings of a signer's path's CAs are refused (RFC 5280's initial-policy-mapping-inhibit; false;
+    /// <see cref="InhibitPolicyMappingVariable"/>): with it, a policy a CA maps leaves the path.
+    /// </summary>
+    public bool InhibitPolicyMapping { get; init; } = DocumentSettings.Switch(InhibitPolicyMappingVariable) ?? false;
+
+    /// <summary>
+    /// Whether anyPolicy in a signer's path's certificates is not taken as every policy (RFC 5280's initial-any-policy-inhibit;
+    /// false; <see cref="InhibitAnyPolicyVariable"/>).
+    /// </summary>
+    public bool InhibitAnyPolicy { get; init; } = DocumentSettings.Switch(InhibitAnyPolicyVariable) ?? false;
+
+    /// <summary>
+    /// How long past its next update a revocation list or an OCSP response is still taken as fresh (zero: none;
+    /// <see cref="FreshnessGraceVariable"/>). Revocation data whose next update, with this grace, is before the time a check
+    /// is made at is stale: fetched again when <see cref="Online"/>, else the revocation step says "not checked (stale)", which
+    /// fails with <see cref="RequireRevocation"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative, or more than 3650 days.</exception>
+    public TimeSpan FreshnessGrace
+    {
+        get => _freshnessGrace;
+        init => _freshnessGrace = value >= TimeSpan.Zero && value <= MostGrace ? value
+            : throw new ArgumentOutOfRangeException(nameof(FreshnessGrace), value, "A revocation list's grace past its next update: zero to 3650 days.");
+    }
+
+    /// <summary>
+    /// The most name comparisons a path's name constraints may ask for (1,048,576, OpenSSL's bound;
+    /// <see cref="MaxNameConstraintChecksVariable"/>): each constrained certificate's names (its subject's attributes and its
+    /// alternative names) times the constraints that apply to it, over the path. A path asking for more fails the chain step,
+    /// naming the limit, before any is compared, so the certificates a document carries cannot keep a check comparing.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1 or above 1073741824.</exception>
+    public int MaxNameConstraintChecks
+    {
+        get => _maxNameConstraintChecks;
+        init => _maxNameConstraintChecks = value is >= 1 and <= 1 << 30 ? value
+            : throw new ArgumentOutOfRangeException(nameof(MaxNameConstraintChecks), value, "The most name comparisons a path's constraints may ask for: 1 to 1073741824.");
+    }
+
+    // A dotted object identifier: two or more arcs of digits, the first 0, 1 or 2.
+    private static bool IsOid(string? text)
+    {
+        if (string.IsNullOrEmpty(text) || text[0] is not ('0' or '1' or '2'))
+        {
+            return false;
+        }
+
+        int arcs = 0;
+        foreach (var arc in text.AsSpan().Split('.'))
+        {
+            var digits = text.AsSpan()[arc];
+            if (digits.IsEmpty)
+            {
+                return false;
+            }
+
+            foreach (char digit in digits)
+            {
+                if (!char.IsAsciiDigit(digit))
+                {
+                    return false;
+                }
+            }
+
+            arcs++;
+        }
+
+        return arcs >= 2;
+    }
+
+    // The initial policies a variable names: object identifiers separated by commas or spaces; "any" (or unset) is any.
+    private static IReadOnlyList<string> PoliciesOf(string variable)
+    {
+        if (DocumentSettings.Text(variable) is not { } text || text.Equals("any", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var policies = new List<string>();
+        foreach (string item in text.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            policies.Add(IsOid(item) ? item : throw new ArgumentException($"{variable}={text}: policy object identifiers separated by commas (such as 2.999.1.2), or any.", variable));
+        }
+
+        return policies;
+    }
+
+    // A grace a variable names: seconds, or a number followed by s, m, h or d; 0 to 3650 days.
+    private static TimeSpan? GraceOf(string variable)
+    {
+        if (DocumentSettings.Text(variable) is not { } text)
+        {
+            return null;
+        }
+
+        var number = text.AsSpan();
+        double unit = 1;
+        if (number.Length > 0 && char.ToLowerInvariant(number[^1]) is 's' or 'm' or 'h' or 'd')
+        {
+            unit = char.ToLowerInvariant(number[^1]) switch { 'm' => 60, 'h' => 3600, 'd' => 86400, _ => 1 };
+            number = number[..^1].TrimEnd();
+        }
+
+        return double.TryParse(number, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)
+               && value >= 0 && value * unit <= MostGrace.TotalSeconds
+            ? TimeSpan.FromSeconds(value * unit)
+            : throw new ArgumentException($"{variable}={text}: a grace of 0 to 3650 days (seconds, or a number with s, m, h or d, such as 3600, 30m, 12h or 7d).", variable);
     }
 }
 

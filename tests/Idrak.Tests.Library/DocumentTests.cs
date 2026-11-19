@@ -92,9 +92,11 @@ internal abstract partial class Tests
             DocumentOptions.LayoutVariable, DocumentOptions.ReadingOrderVariable, DocumentOptions.MaxStreamBytesVariable, DocumentOptions.CacheBytesVariable,
             DocumentWriteOptions.ImageEncodingVariable, DocumentWriteOptions.JpegQualityVariable, DocumentWriteOptions.EmbedFontsVariable, DocumentWriteOptions.SaveModeVariable,
             DocumentDrawOptions.DpiVariable, DocumentDrawOptions.FontsVariable, SignatureCheckOptions.OnlineVariable, FontWriteOptions.CurveToleranceVariable,
-            SignatureCheckOptions.MinimumRsaKeyBitsVariable, SignatureCheckOptions.MaxChainLengthVariable,
+            SignatureCheckOptions.MinimumRsaKeyBitsVariable, SignatureCheckOptions.MaxChainLengthVariable, SignatureCheckOptions.InitialPoliciesVariable,
+            SignatureCheckOptions.RequireExplicitPolicyVariable, SignatureCheckOptions.InhibitPolicyMappingVariable, SignatureCheckOptions.InhibitAnyPolicyVariable,
+            SignatureCheckOptions.FreshnessGraceVariable, SignatureCheckOptions.MaxNameConstraintChecksVariable,
         ];
-        Check(variables.All(v => v.StartsWith("IDRAK_DOCUMENT_", StringComparison.Ordinal) || v == "IDRAK_FONT_CURVE_TOLERANCE") && variables.Distinct().Count() == 14, "the fourteen variables");
+        Check(variables.All(v => v.StartsWith("IDRAK_DOCUMENT_", StringComparison.Ordinal) || v == "IDRAK_FONT_CURVE_TOLERANCE") && variables.Distinct().Count() == 20, "the twenty variables");
 
         // Unset: the defaults, the size limits measured from the free memory.
         WithEnvironment(variables.ToDictionary(v => v, _ => (string?)null), () =>
@@ -115,6 +117,9 @@ internal abstract partial class Tests
                   && draw.Parts == (DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths) && !draw.Hidden && draw.Drawer == DocumentPageDrawers.Coverage, $"the drawing defaults: {draw}");
             Check(!new SignatureCheckOptions().Online && new FontWriteOptions().CurveTolerance == 1f && new FontWriteOptions().KeepLayout, "a check is offline, curves within one unit");
             Check(new SignatureCheckOptions().MinimumRsaKeyBits == 2048 && new SignatureCheckOptions().MaxChainLength == 12, "a check takes RSA keys of 2048 bits or more, paths of 12 certificates or fewer");
+            var trust = new SignatureCheckOptions();
+            Check(trust.InitialPolicies.Count == 0 && !trust.RequireExplicitPolicy && !trust.InhibitPolicyMapping && !trust.InhibitAnyPolicy && trust.FreshnessGrace == TimeSpan.Zero
+                  && trust.MaxNameConstraintChecks == 1 << 20, $"RFC 5280's policy defaults (any policy, every flag off), no grace, 1,048,576 name comparisons: {trust}");
         });
 
         // Set: each variable read.
@@ -126,6 +131,9 @@ internal abstract partial class Tests
             [DocumentWriteOptions.EmbedFontsVariable] = "whole", [DocumentWriteOptions.SaveModeVariable] = "rewrite", [DocumentDrawOptions.DpiVariable] = "300",
             [DocumentDrawOptions.FontsVariable] = fonts, [SignatureCheckOptions.OnlineVariable] = "on", [FontWriteOptions.CurveToleranceVariable] = "0.25",
             [SignatureCheckOptions.MinimumRsaKeyBitsVariable] = "1024", [SignatureCheckOptions.MaxChainLengthVariable] = "20",
+            [SignatureCheckOptions.InitialPoliciesVariable] = "2.999.1.2, 2.999.1.3", [SignatureCheckOptions.RequireExplicitPolicyVariable] = "on",
+            [SignatureCheckOptions.InhibitPolicyMappingVariable] = "yes", [SignatureCheckOptions.InhibitAnyPolicyVariable] = "1",
+            [SignatureCheckOptions.FreshnessGraceVariable] = "12h", [SignatureCheckOptions.MaxNameConstraintChecksVariable] = "4096",
         }, () =>
         {
             var options = new DocumentOptions();
@@ -137,6 +145,13 @@ internal abstract partial class Tests
             Check(MathF.Abs(draw.Dpi - 300f) < 1e-3f && draw.Fonts == fonts && new SignatureCheckOptions().Online && new FontWriteOptions().CurveTolerance == 0.25f, $"read: {draw}");
             var signatures = new SignatureCheckOptions();
             Check(signatures.MinimumRsaKeyBits == 1024 && signatures.MaxChainLength == 20, $"read: {signatures}");
+            Check(signatures.InitialPolicies.SequenceEqual(["2.999.1.2", "2.999.1.3"]) && signatures.RequireExplicitPolicy && signatures.InhibitPolicyMapping && signatures.InhibitAnyPolicy
+                  && signatures.FreshnessGrace == TimeSpan.FromHours(12) && signatures.MaxNameConstraintChecks == 4096, $"read: {signatures}");
+        });
+        WithEnvironment(new Dictionary<string, string?> { [SignatureCheckOptions.InitialPoliciesVariable] = "any", [SignatureCheckOptions.FreshnessGraceVariable] = "90" }, () =>
+        {
+            var signatures = new SignatureCheckOptions();
+            Check(signatures.InitialPolicies.Count == 0 && signatures.FreshnessGrace == TimeSpan.FromSeconds(90), $"any policy, a grace in seconds: {signatures}");
         });
 
         // A value that cannot be read is refused, naming its variable and what it takes.
@@ -151,6 +166,12 @@ internal abstract partial class Tests
                      (SignatureCheckOptions.OnlineVariable, "maybe", () => new SignatureCheckOptions()),
                      (SignatureCheckOptions.MinimumRsaKeyBitsVariable, "-1", () => new SignatureCheckOptions()),
                      (SignatureCheckOptions.MaxChainLengthVariable, "0", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.InitialPoliciesVariable, "policy-a", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.RequireExplicitPolicyVariable, "sometimes", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.InhibitPolicyMappingVariable, "2", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.InhibitAnyPolicyVariable, "maybe", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.FreshnessGraceVariable, "-1h", () => new SignatureCheckOptions()),
+                     (SignatureCheckOptions.MaxNameConstraintChecksVariable, "0", () => new SignatureCheckOptions()),
                      (FontWriteOptions.CurveToleranceVariable, "none", () => new FontWriteOptions()),
                  })
         {
@@ -179,6 +200,8 @@ internal abstract partial class Tests
                      () => new DocumentWriteOptions { Compression = 10 }, () => new DocumentWriteOptions { JpegQuality = 0 }, () => new DocumentDrawOptions { Dpi = 0f },
                      () => new FontWriteOptions { CurveTolerance = 0f }, () => new SignatureCheckOptions { MinimumRsaKeyBits = -1 },
                      () => new SignatureCheckOptions { MaxChainLength = 0 }, () => new SignatureCheckOptions { MaxChainLength = 65 },
+                     () => new SignatureCheckOptions { FreshnessGrace = TimeSpan.FromSeconds(-1) }, () => new SignatureCheckOptions { FreshnessGrace = TimeSpan.FromDays(3651) },
+                     () => new SignatureCheckOptions { MaxNameConstraintChecks = 0 },
                  })
         {
             try
@@ -190,6 +213,16 @@ internal abstract partial class Tests
             {
                 // Refused, as it should be.
             }
+        }
+
+        try
+        {
+            _ = new SignatureCheckOptions { InitialPolicies = ["2.999.1.2", "not an identifier"] };
+            Check(false, "a policy that is not an object identifier was taken");
+        }
+        catch (ArgumentException e)
+        {
+            Check(e.Message.Contains("not an identifier", StringComparison.Ordinal), e.Message);
         }
 
         Check(new DocumentDrawOptions { Dpi = 72f }.PixelsPerPoint == 1f && new DocumentDrawOptions { PixelsPerPoint = 2f }.Dpi == 144f, "dots per inch and pixels per point are one setting");
