@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
+using System.Text;
+
 namespace Idrak.Abstraction.Data;
 
 /// <summary>How an annotation behaves (the document's flags).</summary>
@@ -138,11 +141,16 @@ public static class DocumentRedactions
 {
     /// <summary>
     /// An area over every place <paramref name="text"/> stands on <paramref name="page"/> (read with its text, and its
-    /// glyphs for exact places): within each run, matched as <paramref name="comparison"/> says on the run's text; the area
-    /// spans the matched glyphs (their origins and advances) and the run's height. A run whose glyphs are not one a
-    /// character (a ligature) or were not read gets the share of its box its characters take.
+    /// glyphs for exact places), matched as <paramref name="comparison"/> says: within each run on the run's text; then
+    /// along each line, its runs joined in their order along it (a space where the gap between two passes
+    /// <see cref="DocumentOptions.WordGap"/> of their size, runs on one line when their baselines are within
+    /// <see cref="DocumentOptions.LineTolerance"/>; <paramref name="options"/>, else the defaults), so a word split across
+    /// pieces of text (operators, fonts, kerning) is found, with an area over its part in each run. An area spans the matched
+    /// glyphs (their origins and advances) and the run's height; a run whose glyphs are not one a character (a ligature) or
+    /// were not read gets the share of its box its characters take.
     /// </summary>
-    public static IReadOnlyList<DocumentRedaction> Find(DocumentPage page, string text, StringComparison comparison = StringComparison.Ordinal, DocumentColour? fill = null)
+    public static IReadOnlyList<DocumentRedaction> Find(DocumentPage page, string text, StringComparison comparison = StringComparison.Ordinal, DocumentColour? fill = null,
+        DocumentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(page);
         ArgumentException.ThrowIfNullOrEmpty(text);
@@ -166,7 +174,164 @@ public static class DocumentRedactions
             }
         }
 
+        if (page.Runs.Count > 1)
+        {
+            options ??= new DocumentOptions();
+            Across(page.Runs, text, comparison, colour, options.WordGap, options.LineTolerance, areas);
+        }
+
         return areas;
+    }
+
+    // Every place `text` stands across runs: the runs with a place grouped into lines (by the angle their glyphs run at,
+    // then by baseline within the tolerance of the larger size), each line's runs joined in their order along it (a space
+    // where the gap between two passes the word gap), and each match that takes characters of more than one run (or a
+    // space put between two) added as an area over its part in each run. A match within one run is the run's own (Find).
+    private static void Across(IReadOnlyList<DocumentTextRun> runs, string text, StringComparison comparison, DocumentColour colour, float wordGap, float tolerance,
+        List<DocumentRedaction> areas)
+    {
+        int count = runs.Count;
+        var places = ArrayPool<RunPlace>.Shared.Rent(count);
+        try
+        {
+            int placed = 0;
+            for (int i = 0; i < count; i++)
+            {
+                var run = runs[i];
+                if (run.Box.IsEmpty || run.Text.Length == 0)
+                {
+                    continue;
+                }
+
+                // Along the run's glyphs (its glyph map's x axis; upright when it gives none): the angle, the baseline's
+                // offset across it, and where the run starts and ends along it.
+                double dx = 1, dy = 0;
+                if (run.GlyphMatrix is { } m && Math.Abs(m.A) + Math.Abs(m.B) > 1e-6f)
+                {
+                    double length = Math.Sqrt((double)m.A * m.A + (double)m.B * m.B);
+                    (dx, dy) = (m.A / length, m.B / length);
+                }
+
+                var glyphs = run.Glyphs.Span;
+                double ox = glyphs.Length > 0 ? glyphs[0].X : run.Box.X, oy = glyphs.Length > 0 ? glyphs[0].Y : run.Baseline ?? run.Box.Bottom;
+                double from = ox * dx + oy * dy, to = from + run.Box.Width;
+                if (glyphs.Length > 0)
+                {
+                    to = from;
+                    foreach (var g in glyphs)
+                    {
+                        to = Math.Max(to, g.X * dx + g.Y * dy + g.Advance);
+                    }
+                }
+
+                int angle = (int)Math.Round(Math.Atan2(dy, dx) * 1800 / Math.PI);
+                places[placed++] = new RunPlace(angle, -ox * dy + oy * dx, from, to, run.FontSize, run.Order, i);
+            }
+
+            var all = places.AsSpan(0, placed);
+            all.Sort();
+            var joined = new StringBuilder();
+            var owners = new List<(int Run, int At)>();
+            for (int start = 0; start < placed;)
+            {
+                // A line: the runs at its angle whose baselines are within the tolerance of its largest run's.
+                int end = start + 1;
+                double across = all[start].Across, size = all[start].Size;
+                while (end < placed && all[end].Angle == all[start].Angle && Math.Abs(all[end].Across - across) <= tolerance * Math.Max(all[end].Size, size))
+                {
+                    if (all[end].Size > size)
+                    {
+                        (across, size) = (all[end].Across, all[end].Size);
+                    }
+
+                    end++;
+                }
+
+                if (end - start > 1)
+                {
+                    var line = all[start..end];
+                    for (int k = 0; k < line.Length; k++)
+                    {
+                        line[k] = line[k] with { Across = 0 };                // ordered along the line alone
+                    }
+
+                    line.Sort();
+                    Line(runs, line, text, comparison, colour, wordGap, joined, owners, areas);
+                }
+
+                start = end;
+            }
+        }
+        finally
+        {
+            ArrayPool<RunPlace>.Shared.Return(places);
+        }
+    }
+
+    // One line's runs (in their order along it) joined, and the matches across them added.
+    private static void Line(IReadOnlyList<DocumentTextRun> runs, Span<RunPlace> line, string text, StringComparison comparison, DocumentColour colour, float wordGap,
+        StringBuilder joined, List<(int Run, int At)> owners, List<DocumentRedaction> areas)
+    {
+        joined.Clear();
+        owners.Clear();
+        for (int k = 0; k < line.Length; k++)
+        {
+            string own = runs[line[k].Index].Text;
+            if (k > 0 && line[k].From - line[k - 1].To > wordGap * Math.Max(line[k].Size, line[k - 1].Size) && !char.IsWhiteSpace(joined[^1]) && !char.IsWhiteSpace(own[0]))
+            {
+                joined.Append(' ');
+                owners.Add((-1, 0));
+            }
+
+            joined.Append(own);
+            for (int c = 0; c < own.Length; c++)
+            {
+                owners.Add((line[k].Index, c));
+            }
+        }
+
+        string all = joined.ToString();
+        for (int at = all.IndexOf(text, comparison); at >= 0; at = all.IndexOf(text, at + Math.Max(1, text.Length), comparison))
+        {
+            int last = Math.Min(all.Length, at + text.Length) - 1;
+            if (owners[at].Run >= 0 && owners[at].Run == owners[last].Run && last - at == owners[last].At - owners[at].At)
+            {
+                continue;                                                      // within one run: found as the run's own
+            }
+
+            // A part for each run the match takes characters of.
+            for (int c = at; c <= last;)
+            {
+                int run = owners[c].Run, first = c;
+                while (c <= last && owners[c].Run == run)
+                {
+                    c++;
+                }
+
+                if (run >= 0)
+                {
+                    areas.Add(new DocumentRedaction(Span(runs[run], owners[first].At, c - first)) { Fill = colour });
+                }
+            }
+
+            if (at + text.Length >= all.Length)
+            {
+                break;
+            }
+        }
+    }
+
+    /// <summary>A run's place for matching across runs: its angle (tenths of a degree), its baseline across it, its extent along it, its size, its place in the content and its index.</summary>
+    private readonly record struct RunPlace(int Angle, double Across, double From, double To, float Size, int Order, int Index) : IComparable<RunPlace>
+    {
+        public int CompareTo(RunPlace other)
+        {
+            int c = Angle.CompareTo(other.Angle);
+            c = c != 0 ? c : Across.CompareTo(other.Across);
+            c = c != 0 ? c : From.CompareTo(other.From);
+            c = c != 0 ? c : Order.CompareTo(other.Order);
+            return c != 0 ? c : Index.CompareTo(other.Index);
+        }
     }
 
     /// <summary>

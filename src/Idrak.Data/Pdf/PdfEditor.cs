@@ -618,6 +618,7 @@ internal sealed partial class PdfEditor : IDocumentEditor
             }
 
             var source = copier.For(_source);
+            RemoveRedacted(copier);
             var first = new HashSet<(PdfDocument, int)>();
             for (int i = 0; i < _pages.Count; i++)
             {

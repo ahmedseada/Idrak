@@ -220,9 +220,29 @@ internal sealed class PdfEditCopier : IDisposable
         }
     }
 
-    /// <summary>Writes one dictionary entry: the key, a space when the value needs one, the value (as <see cref="Value"/>).</summary>
+    /// <summary>
+    /// Writes one dictionary entry: the key, a space when the value needs one, the value (as <see cref="Value"/>). An entry
+    /// naming an object the source removes (<see cref="Source.Removed"/>) is left out, and a list of such objects (a page's
+    /// annotations, a field's kids, the form's fields, a structure element's kids) is written without them.
+    /// </summary>
     public void Entry(PdfSyntax s, Source source, ReadOnlySpan<byte> key, PdfValue value, int depth = 0)
     {
+        if (source.Removed.Count > 0)
+        {
+            if (Gone(source, value))
+            {
+                return;
+            }
+
+            if (value.Kind == PdfKind.Array && (key.SequenceEqual("Annots"u8) || key.SequenceEqual("Kids"u8) || key.SequenceEqual("Fields"u8) || key.SequenceEqual("K"u8)
+                                                || key.SequenceEqual("CO"u8)))
+            {
+                s.Name(key);
+                List(s, source, value.AsArray!, depth);
+                return;
+            }
+        }
+
         s.Name(key);
         if (StartsRegular(value))
         {
@@ -230,6 +250,40 @@ internal sealed class PdfEditCopier : IDisposable
         }
 
         Value(s, source, value, depth);
+    }
+
+    // Whether a value names an object the source removes: a reference to one, or an object reference (a structure
+    // element's /OBJR) to one.
+    private static bool Gone(Source source, PdfValue value) => value.Kind switch
+    {
+        PdfKind.Reference => source.Removed.Contains(value.AsReference.Number),
+        PdfKind.Dictionary => value.AsDictionary!["Obj"u8] is { IsReference: true } target && source.Removed.Contains(target.AsReference.Number)
+                              && value.AsDictionary["Type"u8].IsName("OBJR"u8),
+        _ => false,
+    };
+
+    // A list written without the items naming removed objects.
+    private void List(PdfSyntax s, Source source, PdfArray array, int depth)
+    {
+        s.Byte((byte)'[');
+        bool regular = false;
+        foreach (var item in array.Items)
+        {
+            if (Gone(source, item))
+            {
+                continue;
+            }
+
+            if (regular && StartsRegular(item))
+            {
+                s.Space();
+            }
+
+            Value(s, source, item, depth);
+            regular = EndsRegular(item);
+        }
+
+        s.Byte((byte)']');
     }
 
     /// <summary>
@@ -316,9 +370,9 @@ internal sealed class PdfEditCopier : IDisposable
             return replaced;
         }
 
-        if (source.Dropped.Contains(number))
+        if (source.Dropped.Contains(number) || source.Removed.Contains(number))
         {
-            return Settle(source, number, Null);                              // an object an edit removes (a flattened field): null where still named
+            return Settle(source, number, Null);                              // an object an edit removes (a flattened field, a redacted annotation): null where still named
         }
 
         PdfValue value;
@@ -705,6 +759,13 @@ internal sealed class PdfEditCopier : IDisposable
 
         /// <summary>Objects an edit removes (by number): null where something still names them.</summary>
         public HashSet<int> Dropped { get; } = [];
+
+        /// <summary>
+        /// Objects removed with every mention of them (by number; a redacted annotation, its popup and its replies): an
+        /// entry naming one is left out, a list of them (/Annots, /Kids, /Fields, /K, /CO) loses the item, any other value
+        /// is null; so a rewrite never reaches one.
+        /// </summary>
+        public HashSet<int> Removed { get; } = [];
     }
 
     // A SHA-256, as a key.

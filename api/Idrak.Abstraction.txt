@@ -1580,7 +1580,7 @@ public sealed record Idrak.Abstraction.Data.DocumentRedactionResult : System.IEq
   public long Pixels { get; init; }
 
 public static class Idrak.Abstraction.Data.DocumentRedactions
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> Find(Idrak.Abstraction.Data.DocumentPage page, string text, System.StringComparison comparison = (System.StringComparison)4, Idrak.Abstraction.Data.DocumentColour? fill = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> Find(Idrak.Abstraction.Data.DocumentPage page, string text, System.StringComparison comparison = (System.StringComparison)4, Idrak.Abstraction.Data.DocumentColour? fill = null, Idrak.Abstraction.Data.DocumentOptions? options = null)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.DocumentRedaction> Marked(Idrak.Abstraction.Data.DocumentPage page)
 
 public enum Idrak.Abstraction.Data.DocumentSaveMode : byte

@@ -186,10 +186,13 @@ editor.RemoveAnnotation(page.Annotations[0]);
 
 Every annotation kind is read (its points, ink strokes, replies, popup and appearance), drawn, added (with an appearance
 made from its properties) and removed; links, bookmarks, named destinations and page labels are read and written.
-**Redaction** removes for real what lies under areas: the glyphs from the text, the paths and the image pixels, and the
-annotations over them; the areas come from a text match (`DocumentRedactions.Find`, on a page read with its glyphs) or
-the file's own redaction marks (`DocumentRedactions.Marked`), and the file is saved as a rewrite, so nothing removed
-survives in an earlier revision:
+**Redaction** removes for real what lies under areas: the glyphs from the text, the paths and the image pixels (an
+image's soft mask kept, redacted under the same areas), the same inside forms, soft masks' groups, tiling patterns' cells
+and Type 3 glyphs, and the annotations over them with their popups and replies (every reference to them left out of the
+file: other pages' lists, form fields, the structure tree, actions); the areas come from a text match
+(`DocumentRedactions.Find`, on a page read with its glyphs: a word split across text operators, fonts or kerning is
+found whole) or the file's own redaction marks (`DocumentRedactions.Marked`), and the file is saved as a rewrite, so
+nothing removed survives in an earlier revision:
 
 ```csharp
 using (var editor = DocumentWriters.Get("pdf").Edit(source, output, new DocumentWriteOptions()))
@@ -324,8 +327,9 @@ settings above recorded, `--save` and `--compare` as `idrak bench`'s (the `idrak
   and images are not kept; a tiling cell's box is not a clip; free text annotations without an appearance, a widget's
   rotation and dashed borders are not drawn.
 - **Forms:** rich text values are read as plain text; a field held inside another object cannot be filled.
-- **Redaction:** a text match finds a word within one run (not one split across text operators); images inside
-  patterns, soft masks and Type 3 glyphs are not redacted, and a redacted image loses its soft mask.
+- **Redaction:** a tiling pattern turned on the page is redacted wherever a copy of its cell lies under an area (an
+  upright one only where no copy shows that part clear of the areas); a Type 3 glyph no longer drawn on a page stays in
+  the page's copy of its font when a form there takes the page's resources as its own.
 - **Writing and editing:** fonts are embedded as TrueType (a subset, or whole), never as OpenType CFF; every page sits
   under one page-tree node; objects an incremental update no longer uses stay in the file.
 - **Signatures:** document timestamps (B-LTA) are not written; a signature's appearance text is set in the standard

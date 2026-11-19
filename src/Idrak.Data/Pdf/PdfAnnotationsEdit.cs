@@ -36,8 +36,8 @@ internal sealed class PdfPageEdits
     /// <summary>The result's object for an annotation another names by its id (its thread, its popup), besides those added here.</summary>
     public Func<string, (int Number, int Generation)?>? Annotations { get; set; }
 
-    /// <summary>Writes an image the redaction made; its number.</summary>
-    public Func<ImageData, int>? Images { get; set; }
+    /// <summary>Writes an image the redaction made (with its mask, or as an image mask); its number.</summary>
+    public Func<PdfRedactedImage, int>? Images { get; set; }
 
     /// <summary>The number an image a new annotation's look names is written under (the editor's own numbering, resolved at save).</summary>
     public Func<int, int> ImageNumber { get; set; } = n => n;
@@ -93,7 +93,7 @@ internal sealed class PdfPageEdits
             Set("Contents"u8, Link(content));
             var own = page.TryGet("Resources"u8, out var resources) ? resources : inherited;
             var dictionary = PdfRedactor.Resources(source.File, source.File.Dictionary(own), redacted.Content, added, Link);
-            Set("Resources"u8, PdfValue.Of(dictionary!));
+            Set("Resources"u8, PdfValue.Of(dictionary));
         }
 
         var drafts = Drafts.ToList();
@@ -265,6 +265,29 @@ internal sealed partial class PdfEditor
     // Whether a page is redacted (a save then is a rewrite).
     private bool Redacting => _pages.Exists(p => p.Edits?.Redacted is not null);
 
+    // Before a rewrite writes anything: the annotations redaction removed, with every reply, popup, emptied field and
+    // structure reference that follows them out (PdfRedactor.Reach), left out of each source document's copy wherever
+    // something names them; the structure elements they leave empty written without their texts.
+    private void RemoveRedacted(PdfEditCopier copier)
+    {
+        foreach (var group in _pages.Where(p => p.Document is not null && p.Edits?.Redacted is not null).GroupBy(p => (object)p.Document!, ReferenceEqualityComparer.Instance))
+        {
+            var document = (PdfDocument)group.Key;
+            var (removed, emptied) = PdfRedactor.Reach(document, group.SelectMany(p => p.Edits!.Redacted!.Objects));
+            if (removed.Count == 0)
+            {
+                continue;
+            }
+
+            var source = copier.For(document);
+            source.Removed.UnionWith(removed);
+            foreach (int number in emptied)
+            {
+                source.Replaced[number] = s => PdfRedactor.Emptied(s, copier, source, number);
+            }
+        }
+    }
+
     // A page's frame for content and annotations over it: its points to its user space, and its size as shown.
     private static (PdfMatrix? Frame, float Width, float Height) PageFrame(PdfEditPage page)
     {
@@ -304,7 +327,20 @@ internal sealed partial class PdfEditor
             edits.Images = image =>
             {
                 int number = writer.Allocate();
-                PdfWriterImages.Write(writer, number, image, DocumentImageEncoding.Flate, _options);
+                if (image.Stencil)
+                {
+                    PdfWriterImages.WriteStencil(writer, number, image.Pixels);
+                    return number;
+                }
+
+                int mask = 0;
+                if (image.Mask is { } grey)
+                {
+                    mask = writer.Allocate();
+                    PdfWriterImages.Write(writer, mask, grey, DocumentImageEncoding.Flate, _options);
+                }
+
+                PdfWriterImages.Write(writer, number, image.Pixels, DocumentImageEncoding.Flate, _options, mask);
                 return number;
             };
             if (page.Document is { } document)

@@ -2020,10 +2020,73 @@ cli: data redact|environment variables|help text`.
   page's images under an area into Flate RGB or grey copies (masks not carried) and keeps fonts' glyph programs (no text
   left in them). (6) New bookmarks and destinations name pages of the document as saved; the editor writes the bookmark
   tree again (source items kept). (7) `--password` is an option of the command, not a variable (D2's decision 2).
-- **Left:** a reply whose parent is removed by redaction can copy the parent back into a rewrite (a reference to it); text
-  matched within one run only (a word split across text operators is not found); images in patterns, soft masks and
-  Type 3 glyphs are not redacted; a redacted image loses its soft mask; free text without an appearance is not drawn
-  (its font is the document's); the builder's copied page's new annotations reach earlier pages only.
+- **Left:** ~~a reply whose parent is removed by redaction can copy the parent back into a rewrite (a reference to it)~~
+  (done); ~~text matched within one run only (a word split across text operators is not found)~~ (done); ~~images in
+  patterns, soft masks and Type 3 glyphs are not redacted~~ (done); ~~a redacted image loses its soft mask~~ (done): see
+  *Redaction completed* below. Still left: free text without an appearance is not drawn (its font is the document's);
+  the builder's copied page's new annotations reach earlier pages only.
+- **Redaction completed, 2026-11-19** (plan 28's complete pass, piece P1; onto `9ef852c`):
+  - **Replies and what names a removed object** (`PdfRedaction.cs`, `PdfEditCopy.cs`, `PdfAnnotationsEdit.cs`): the
+    cause was the rewrite copying whatever the kept objects named (a reply's `/IRT`). A page's removed annotations now
+    take their popups (`/Popup`, a popup's `/Parent`) and replies (`/IRT`, at any depth) with them; when the rewrite
+    starts, `PdfRedactor.Reach` follows them over the whole document (replies and popups on other pages, a form field
+    left with no kid and so up its parents, the structure tree's `/OBJR`s) and the copier's `Source.Removed` leaves out
+    every mention: an entry naming one, an item of `/Annots`, `/Kids`, `/Fields`, `/K` or `/CO` (other pages' lists
+    too), any other value null; a structure element left with no kid is written without its `/Alt`, `/ActualText`, `/E`
+    and `/T`. An outline action's target (`/T`) and the parent fields go with them.
+  - **Text across runs** (`DocumentRedactions.Find`, Idrak.Abstraction): the cause was matching each run's text alone.
+    After the run's own matches (as before, in the same order), each line's runs (grouped by their glyphs' angle and by
+    baseline within `DocumentOptions.LineTolerance`, joined along it with a space where the gap passes
+    `DocumentOptions.WordGap`; a new optional `options` argument, the command's open options passed) are searched as
+    one text, and a match taking characters of more than one run gives an area over its part in each run; case as
+    `comparison` says (`--ignore-case`). The glyphs under them are removed wherever they sit, as any area's.
+  - **Images in patterns, soft masks and Type 3 glyphs** (`PdfRedactionCopies.cs`): the cause was the rewriter seeing
+    only the content's own images and forms. A soft mask set by `gs` whose group lies over an area is set from a copy
+    (`RdGsN`) whose group is redacted where the CTM placed it, the original left out of the resources when no longer set.
+    A tiling pattern a paint reached an area with is redacted in place under its own name (the page's copy, other pages
+    keep theirs): its cell's copies within each paint's box are walked, the parts under an area kept less what a path's
+    box shows clear of every area (text's boxes are only partly painted), so a pixel is overwritten only where no copy
+    shows it, and nothing changes when a whole cell is shown clear; a turned pattern is redacted wherever a copy lies
+    under an area. A Type 3 glyph kept with the text whose drawing (measured from its description, not its font's
+    declared box) reaches an area is shown from a redacted copy in a font of the page's own (`RdFtN`: codes 0, 1, ...,
+    the glyph's width and text in a ToUnicode CMap; the TJ ends, `Tf` to it and back), so its other glyphs stay whole;
+    a glyph no longer drawn on the page (all removed or copied) leaves the page's copy of its font with the resources
+    only it used (unless a form there takes the page's resources). The copies share one name count for their resources.
+  - **An image's soft mask** (`RedactImage`, `PdfWriterImages`): the cause was writing the copy without its mask. The
+    mask (soft, explicit or a colour key, as grey) is kept as an `/SMask`, its pixels under an area made opaque (the fill
+    shows whole); an image mask stays an image mask (`WriteStencil`), its pixels under an area left unpainted (it was
+    written as an opaque grey image before); a pixel under several areas is counted once.
+  - **Samples** (generator, `samples_d10.py`, into `test-output/` only): `redaction-replies`, `redaction-split`,
+    `redaction-nested`, `redaction-masked`, with what must be gone (`removedText`, `removedPieces`, `removedBytes`, the
+    images' `original` hashes) and their expected pixels (`NAME.WHAT.redacted.png`). `check_written.py` now looks for a
+    redacted file's `removedText` in pdfminer.six's and pdfium's text and in every stream qpdf decodes and every string,
+    and counts pdfium's annotations a page (`annotationCounts`).
+  - **Rule 71** (every sample redacted through the command by a box on page 1 and `--text the`, before and after): 121
+    outputs byte-identical; 7 vary run to run either way (the AES-encrypted d2 samples: fresh IVs); 11 changed, each by a
+    gap: d9 `forms-empty`, `forms-filled`, `forms-need-appearances`, `forms-inherited`, `forms-xfa` and d12
+    `changed-allowed`, `changed-not-allowed` (a field whose widget was redacted now leaves `/Fields` with its value),
+    d4 `inline-images` (an image mask stays one), d4 `masks` (masks kept), d7 `vector-fonts` (removed Type 3 glyphs'
+    descriptions leave the page's copy of the font), d7 `vector-transparency` (a soft mask's group redacted). The
+    library's and the command's earlier redaction outputs (`redaction`, `redaction-text-and-box`, `redaction-cli-*`,
+    `pages-500-redacted`) are byte-identical.
+  - **Tests:** `documents pdf: annotations` gains five (replies, split words, nested images, a masked image, nothing
+    left: no removed word, piece, glyph description or image's original data in the bytes, any decoded stream or object,
+    and no image decoding to an original under an area), `cli: data redact` three (replies, split words, images).
+    Run on `9ef852c` (one build; CPU; the filter `documents pdf: annotations|cli: data redact|documents pdf: edit|documents
+    pdf: write|documents pdf: text|documents pdf: images|documents pdf: forms|documents drawers|documents contracts|public
+    API|abstraction inventory|every environment variable read in src|the environment table names real commands|hidden
+    boxing|test runner`): 83 passed, 0 failed. Earlier, on `0598a01` (with the update flags: `api/Idrak.Abstraction.txt`
+    regenerated for `Find`'s new argument): 81 passed, 2 failed, both `redaction-nested`'s pattern: a cell's neighbours
+    that only touched the paint's box counted as copies (now a copy counts by the part of it the paint holds); then the
+    text painted with the same pattern blackened pixels the rectangle shows clear (now the parts under an area less what a
+    path shows clear); then a pixel under two areas was counted twice (now once); each rebuilt once and rerun: passed.
+  - **The checker's verdicts** (`check_written.py --expected auto`): `test-output/documents/redacted` (16 files: the
+    library's and the command's redactions of the five redaction samples, the earlier ones) and `annotated` (3) all pass:
+    qpdf with no problem or warning and no removed word in any decoded stream or string, pdfminer.six and pdfium finding
+    none, pdfium listing 1 and 0 annotations on `redaction-replies`' pages. Its string walk failed on numbers and booleans
+    before, silently (fixed; a qpdf error is now a problem); pdfminer.six's words are compared in any order for a redacted
+    file (the gaps cut lines keep make its layout order their pieces by column); pointed at an unredacted source with a
+    redacted file's JSON, every tool finds the words.
 - **The owner's run** (held with the others until asked):
   ```powershell
   cd D:\Projects\Idrak; git checkout documents; git pull origin documents

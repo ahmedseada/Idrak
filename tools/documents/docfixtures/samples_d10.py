@@ -4,7 +4,9 @@ and without appearance streams, a reply thread and popups; links (URI, explicit 
 destinations through the name tree and the catalog's /Dests); a bookmarks tree with nesting, colours, styles and
 closed items; page labels (roman, decimal, prefixed, restarted, letters, a prefix alone); a tagged file whose structure
 order differs from its content order; and redaction samples with text, paths and an image under the areas, with the
-result of applying them (a sample of its own, drawn and read by the reference tools).
+result of applying them (a sample of its own, drawn and read by the reference tools), and with what a redaction must reach
+besides: a note's replies, popup, fields and the references to them; words split across text operators; images in a
+pattern, a soft mask's group and a Type 3 glyph; an image's soft mask.
 
 An annotation, as `annotations` lists it: `id` (its /NM), `kind` (note, freeText, line, square, circle, polygon,
 polyline, highlight, underline, squiggly, strikeOut, ink, stamp, caret, link, fileAttachment, popup, redaction),
@@ -649,6 +651,290 @@ def redaction_applied(seed):
     return Sample("redaction-applied", "d10", "redaction", D10, desc, data, exp, files, checks=[check_redacted])
 
 
+# -- redaction's reach: replies, words split across operators, images in patterns, masks and glyphs ----------------------
+
+def _mark(doc, page, rect, nm):
+    """A redaction mark over `rect` (user space), filled black when applied."""
+    x0, y0, x1, y1 = [round(v, 4) for v in rect]
+    page.annotations.append(doc.pdf.add({"Type": N("Annot"), "Subtype": N("Redact"), "Rect": [x0, y0, x1, y1], "F": 4,
+                                         "P": page.ref, "NM": String(nm.encode("ascii")), "IC": [0, 0, 0],
+                                         "C": [1, 0, 0]}))
+    return {"id": nm, "page": doc.pages.index(page), "rect": [x0, y0, x1, y1],
+            "box": page.display_box([(x0, y0), (x1, y1)])}
+
+
+def _under(width, height, matrix, area):
+    """The pixels (i, j) of an image of `width` x `height` placed by `matrix` (user space, rows from the top) whose
+    centre falls inside `area` (x0, y0, x1, y1 in user space)."""
+    a, b, c, d, e, f = matrix
+    x0, y0, x1, y1 = area
+    out = set()
+    for j in range(height):
+        for i in range(width):
+            u, v = (i + 0.5) / width, 1 - (j + 0.5) / height
+            x, y = a * u + c * v + e, b * u + d * v + f
+            if x0 < x < x1 and y0 < y < y1:
+                out.add((i, j))
+    return out
+
+
+def _redacted_pixels(img, under, value):
+    """An image's 8-bit pixels (interleaved) with those `under` set to `value` (one level a channel)."""
+    channels, _, data = img.pixels
+    out = bytearray(data)
+    for i, j in under:
+        k = channels * (j * img.width + i)
+        out[k:k + channels] = bytes([value] * channels)
+    return bytes(out)
+
+
+def _image_expectation(name, img, under, value, files):
+    """What an image under an area must decode to once redacted: its pixels, a PNG of them and their SHA-256."""
+    channels, _, _ = img.pixels
+    pixels = _redacted_pixels(img, under, value)
+    files[name] = png_bytes(img.width, img.height, channels, 8, pixels)
+    return {"pixels": name, "sha256": sha256(pixels), "changedPixels": len(under), "original": sha256(img.pixels[2])}
+
+
+def redaction_replies(seed):
+    """A note over a redaction mark with a popup and a chain of replies (one on another page, one there sharing the note
+    in its /Annots), a structure tree naming the note and a field's widget by object references (one written in), an
+    outline item whose action names the note, a named destination, and two form fields whose widgets lie under a second
+    mark (a field that is its widget, and a parent field with one kid): applying the marks removes them all."""
+    doc = Doc("redaction-replies", "1.7", seed)
+    pdf = doc.pdf
+    f = helvetica(doc)
+    p = doc.page(420, 300)
+    c = p.content
+    line = "Supplier: Larkspur Trading"
+    c.emit("/P <</MCID 0>> BDC")
+    _text_line(doc, p, f, 30, 250, line)
+    c.emit("EMC")
+    _text_line(doc, p, f, 30, 225, "Delivery window: next spring")
+    _text_line(doc, p, f, 30, 60, "Notes are kept with the order")
+    a = Annots(doc, True)
+    note_ap = a.ap(16, 16, b"1 0.8 0 rg 0 0 16 16 re f\n")
+    note1, _ = a.add(p, "note", "Text", [272, 246, 288, 262], "note-1",
+                     {"Contents": String(b"Larkspur pricing is final"), "T": String(b"Dana Writer"),
+                      "Name": N("Comment"), "StructParent": 1}, note_ap)
+    a.popup(p, "note-1", [300, 160, 410, 220])
+    note2, _ = a.add(p, "note", "Text", [300, 100, 316, 116], "note-2",
+                     {"Contents": String(b"Agreed with Quillon terms"), "T": String(b"Sam Reviewer"), "IRT": note1,
+                      "RT": N("R"), "Name": N("Comment")}, note_ap)
+    a.add(p, "note", "Text", [320, 100, 336, 116], "note-3",
+          {"Contents": String(b"Quillon contract attached"), "T": String(b"Dana Writer"), "IRT": note2,
+           "Name": N("Comment")}, note_ap)
+    a.add(p, "note", "Text", [380, 40, 396, 56], "note-5",
+          {"Contents": String(b"Delivery confirmed"), "T": String(b"Sam Reviewer"), "Name": N("Comment")}, note_ap)
+    # Two fields under the second mark: one that is its own widget, one a parent with one kid.
+    field_res = {"Font": {"Helv": f.ref}}
+    field1, _ = a.add(p, "widget", "Widget", [30, 150, 200, 170], "field-1",
+                      {"FT": N("Tx"), "T": String(b"supplier"), "V": String(b"Larkspur Trading"),
+                       "DA": String(b"/Helv 10 Tf 0 g"), "StructParent": 2},
+                      a.ap(170, 20, b"BT /Helv 10 Tf 0 g 2 6 Td (Larkspur Trading) Tj ET\n", field_res))
+    parent = pdf.alloc()
+    kid, _ = a.add(p, "widget", "Widget", [30, 120, 200, 140], "field-2", {"Parent": parent},
+                   a.ap(170, 20, b"BT /Helv 10 Tf 0 g 2 6 Td (Quillon desk) Tj ET\n", field_res))
+    pdf.put(parent, {"FT": N("Tx"), "T": String(b"contact"), "V": String(b"Quillon desk"),
+                     "DA": String(b"/Helv 10 Tf 0 g"), "Kids": [kid]})
+    doc.catalog_extra["AcroForm"] = {"Fields": [field1, parent], "DA": String(b"/Helv 10 Tf 0 g"),
+                                     "DR": {"Font": {"Helv": f.ref}}}
+    # A reply on the second page, which also lists the note itself.
+    p2 = doc.page(420, 300)
+    _text_line(doc, p2, f, 30, 250, "Follow-up notes")
+    a.add(p2, "note", "Text", [40, 200, 56, 216], "note-4",
+          {"Contents": String(b"Larkspur follow-up"), "T": String(b"Sam Reviewer"), "IRT": note1, "Name": N("Comment")},
+          note_ap)
+    p2.annotations.append(note1)
+    # The structure: the first line, the note (its own object reference), the field (one written in).
+    root, document = pdf.alloc(), pdf.alloc()
+    para = pdf.add({"Type": N("StructElem"), "S": N("P"), "P": document, "Pg": p.ref, "K": 0})
+    objr = pdf.add({"Type": N("OBJR"), "Obj": note1, "Pg": p.ref})
+    note_elem = pdf.add({"Type": N("StructElem"), "S": N("Annot"), "P": document, "Pg": p.ref,
+                         "Alt": String(b"Larkspur note"), "K": objr})
+    form_elem = pdf.add({"Type": N("StructElem"), "S": N("Form"), "P": document, "Pg": p.ref,
+                         "Alt": String(b"Larkspur supplier field"),
+                         "K": {"Type": N("OBJR"), "Obj": field1, "Pg": p.ref}})
+    pdf.put(document, {"Type": N("StructElem"), "S": N("Document"), "P": root, "K": [para, note_elem, form_elem]})
+    tree = pdf.add({"Nums": [0, [para], 1, note_elem, 2, form_elem]})
+    pdf.put(root, {"Type": N("StructTreeRoot"), "K": document, "ParentTree": tree, "ParentTreeNextKey": 3})
+    doc.catalog_extra["StructTreeRoot"] = root
+    doc.catalog_extra["MarkInfo"] = {"Marked": True}
+    p.extra["StructParents"] = 0
+    # An outline item whose action names the note, and a named destination.
+    outlines, item = pdf.alloc(), pdf.alloc()
+    pdf.put(item, {"Title": String(b"Supplier note"), "Parent": outlines,
+                   "A": {"S": N("Hide"), "T": note1, "H": False}})
+    pdf.put(outlines, {"Type": N("Outlines"), "First": item, "Last": item, "Count": 1})
+    doc.catalog_extra["Outlines"] = outlines
+    doc.catalog_extra["Names"] = {"Dests": pdf.add({"Names": [B(b"supplier"), [p.ref, N("XYZ"), 30, 260, 0]]})}
+    x0, y0, x1, y1 = _word_box(f, line, "Larkspur Trading", 30, 250)
+    marks = [_mark(doc, p, (x0, y0, 292, 264), "redact-1"), _mark(doc, p, (25, 115, 205, 175), "redact-2")]
+    doc.finish()
+    data, w = doc.write("table")
+    desc = ("A note under a redaction mark, with a popup and replies (a chain of two on its page, one on page 2 whose "
+            "/Annots also lists the note), named by the structure tree (an /OBJR of its own) and an outline item's "
+            "action; two fields (one its own widget, one a parent of one kid) under a second mark, the first named by "
+            "the structure tree (an /OBJR written in). Applying the marks removes the note, its popup, every reply, "
+            "both fields and the references to them; note-5 stays.")
+    exp = base_expected(doc, data, "redaction-replies", "redaction", D10, desc, w, objects=False)
+    exp["redaction"] = {
+        "areas": marks,
+        "afterApplying": {
+            "removedText": ["Larkspur", "Quillon"],
+            "removedAnnotations": ["note-1", "note-1-popup", "note-2", "note-3", "note-4", "field-1", "field-2"],
+            "keptAnnotations": ["note-5"], "keptText": ["Supplier:", "Delivery window: next spring", "Follow-up notes"],
+            "annotationCounts": [1, 0]}}
+    return Sample("redaction-replies", "d10", "redaction", D10, desc, data, exp)
+
+
+def redaction_split(seed):
+    """Words split across text operators: two Tj of one font, a font change (Helvetica to Times) inside the word, and
+    two TJ arrays whose first ends in a kerned piece; a search must find each whole word."""
+    doc = Doc("redaction-split", "1.7", seed)
+    helv = helvetica(doc)
+    times = helvetica(doc, "Times-Roman")
+    p = doc.page(420, 300)
+    c = p.content
+    c.BT(); c.Tf(helv, 12); c.Td(30, 250); c.show("Order code Zeph"); c.show("yrine shipped"); c.ET()
+    p.line("Order code Zephyrine shipped")
+    c.BT(); c.Tf(helv, 12); c.Td(30, 225); c.show("Contact Quor"); c.Tf(times, 12); c.show("vath today"); c.ET()
+    p.line("Contact Quorvath today")
+    c.BT(); c.Tf(helv, 12); c.Td(30, 200); c.TJ(["Visit Brin", -20, "dle"]); c.TJ(["wick soon"]); c.ET()
+    p.line("Visit Brindlewick soon")
+    _text_line(doc, p, helv, 30, 175, "Nothing else changes here")
+    doc.finish()
+    data, w = doc.write("table")
+    desc = ("Three words each split across text operators (two Tj of one font; a font change inside the word; two TJ "
+            "arrays, the first kerned), and a line that stays. A text search finds each word whole, with an area over "
+            "its part in each piece; redacting them leaves none of their pieces in the file.")
+    exp = base_expected(doc, data, "redaction-split", "redaction", D10, desc, w, objects=False)
+    exp["redaction"] = {"words": ["Zephyrine", "Quorvath", "Brindlewick"],
+                        "afterApplying": {"removedText": ["Zephyrine", "Quorvath", "Brindlewick"],
+                                          "removedPieces": ["Zeph", "yrine", "Quor", "vath", "Brin", "wick"],
+                                          "keptText": ["Order code", "shipped", "Contact", "today", "Visit", "soon",
+                                                       "Nothing else changes here"]}}
+    return Sample("redaction-split", "d10", "redaction", D10, desc, data, exp)
+
+
+def _bits(rows):
+    """Rows of 0/1 (1 a pixel left unpainted) packed one bit a pixel, rows padded to whole bytes."""
+    out = bytearray()
+    for row in rows:
+        for k in range(0, len(row), 8):
+            byte = 0
+            for b, v in enumerate(row[k:k + 8]):
+                byte |= v << (7 - b)
+            out.append(byte)
+    return bytes(out)
+
+
+def redaction_nested(seed):
+    """Images where a redaction must follow them in: a tiling pattern's one cell, a soft mask's group, and a Type 3
+    glyph that draws an image mask past its advance (and a second glyph wholly under the area)."""
+    from .fonts import Type3
+
+    doc = Doc("redaction-nested", "1.7", seed)
+    pdf = doc.pdf
+    f = helvetica(doc)
+    p = doc.page(420, 300)
+    c = p.content
+    _text_line(doc, p, f, 30, 270, "Images inside a pattern, a soft mask and glyphs")
+    files = {}
+    # A tiling pattern whose one cell (the size of the rectangle it fills) is an image, half under the first area.
+    im1 = Image(doc, 20, 12, 8, "DeviceRGB", 3, pattern(20, 12, 3, 255, 7), label="the pattern's image")
+    cell = b"q 100 0 0 60 0 0 cm /Im1 Do Q\n"
+    pat = pdf.add(Stream({"Type": N("Pattern"), "PatternType": 1, "PaintType": 1, "TilingType": 1,
+                          "BBox": [0, 0, 100, 60], "XStep": 100, "YStep": 60, "Matrix": [1, 0, 0, 1, 30, 160],
+                          "Resources": {"XObject": {"Im1": im1.ref}}, "Filter": N("FlateDecode")}, flate(cell), cell))
+    p.resource("Pattern", "P1", pat)
+    c.emit("/Pattern cs /P1 scn 30 160 100 60 re f")
+    area1 = (80, 150, 140, 230)
+    # A soft mask (luminosity) whose group is an image, a filled rectangle drawn through it, half under the second area.
+    im2 = Image(doc, 20, 12, 8, "DeviceGray", 1, pattern(20, 12, 1, 255, 3), label="the soft mask's image")
+    group = b"q 100 0 0 60 0 0 cm /Im2 Do Q\n"
+    form = pdf.add(Stream({"Type": N("XObject"), "Subtype": N("Form"), "BBox": [0, 0, 100, 60],
+                           "Group": {"S": N("Transparency"), "CS": N("DeviceGray")},
+                           "Resources": {"XObject": {"Im2": im2.ref}}, "Filter": N("FlateDecode")}, flate(group), group))
+    gs = pdf.add({"Type": N("ExtGState"), "SMask": {"Type": N("Mask"), "S": N("Luminosity"), "G": form}})
+    p.resource("ExtGState", "GS1", gs)
+    c.emit("q 1 0 0 1 250 160 cm /GS1 gs 0.1 0.3 0.8 rg 0 0 100 60 re f Q")
+    area2 = (300, 150, 360, 230)
+    # A Type 3 font: A draws an image mask twice its advance wide, B one its own size. One A stands with its drawing's
+    # right part under the third area (its own box clear of it), B wholly under it, and another A clear of it.
+    a_rows = [[(x + y) % 3 == 0 and 1 or 0 for x in range(16)] for y in range(8)]
+    b_rows = [[(x * 5 + y * 3) % 7 < 3 and 1 or 0 for x in range(16)] for y in range(8)]
+    a_data, b_data = _bits(a_rows), _bits(b_rows)
+    for d in (a_data, b_data):
+        assert b"EI" not in d and b"ID" not in d
+    procs = {"A": (1000, b"1000 0 0 -200 2000 800 d1\nq 2000 0 0 1000 0 -200 cm\nBI /W 16 /H 8 /IM true /BPC 1 ID\n"
+                         + a_data + b"\nEI\nQ\n"),
+             "B": (1000, b"1000 0 0 -200 1000 800 d1\nq 1000 0 0 1000 0 -200 cm\nBI /W 16 /H 8 /IM true /BPC 1 ID\n"
+                         + b_data + b"\nEI\nQ\n")}
+    t3 = doc.font(Type3, procs)
+    c.BT(); c.Tf(t3, 40); c.Td(30, 60); c.TJ(["A", -1250, "B"]); c.ET()
+    c.BT(); c.Tf(t3, 40); c.Td(250, 60); c.show("A"); c.ET()
+    p.line("A B A")
+    area3 = (75, 40, 170, 110)
+    marks = [_mark(doc, p, area1, "redact-1"), _mark(doc, p, area2, "redact-2"), _mark(doc, p, area3, "redact-3")]
+    doc.finish()
+    data, w = doc.write("table")
+    # What each image must read as once redacted: the pattern's and the mask's pixels under their areas black; the A
+    # glyph's copy unpainted (255) where its pixels fall in the third area (its drawing at 30..110 across, 52..92 up).
+    image1 = _image_expectation("redaction-nested.pattern.redacted.png", im1, _under(20, 12, (100, 0, 0, 60, 30, 160), area1), 0, files)
+    image2 = _image_expectation("redaction-nested.mask.redacted.png", im2, _under(20, 12, (100, 0, 0, 60, 250, 160), area2), 0, files)
+    glyph_under = _under(16, 8, (80, 0, 0, 40, 30, 52), area3)
+    glyph = [[255 if (i, j) in glyph_under or a_rows[j][i] else 0 for i in range(16)] for j in range(8)]
+    glyph_pixels = bytes(v for row in glyph for v in row)
+    files["redaction-nested.glyph.redacted.png"] = png_bytes(16, 8, 1, 8, glyph_pixels)
+    desc = ("Three areas over images a redaction must follow in: a tiling pattern's one cell (an RGB image) filling a "
+            "rectangle half under the first; a soft mask's group (a grey image) a rectangle is drawn through, half "
+            "under the second; a Type 3 font whose glyph A draws an image mask twice its advance wide (one A with its "
+            "drawing's right part under the third, its own box clear; another clear) and whose glyph B lies wholly "
+            "under the third. The pattern's and the mask's pixels under the areas turn black, the first A is drawn from "
+            "a copy unpainted under the area, B leaves the text and its description the file.")
+    exp = base_expected(doc, data, "redaction-nested", "redaction", D10, desc, w, objects=False)
+    exp["redaction"] = {
+        "areas": marks,
+        "afterApplying": {
+            "removedText": [], "keptText": ["Images inside a pattern, a soft mask and glyphs"],
+            "patternImage": image1, "maskImage": image2,
+            "glyph": {"pixels": "redaction-nested.glyph.redacted.png", "sha256": sha256(glyph_pixels),
+                      "changedPixels": len(glyph_under), "text": "A A"},
+            "removedBytes": [b_data.hex()], "keptBytes": [a_data.hex()]}}
+    return Sample("redaction-nested", "d10", "redaction", D10, desc, data, exp, files)
+
+
+def redaction_masked(seed):
+    """An image with a soft mask, half under a redaction mark: the copy keeps the mask, redacted under the area."""
+    doc = Doc("redaction-masked", "1.7", seed)
+    f = helvetica(doc)
+    p = doc.page(420, 300)
+    _text_line(doc, p, f, 30, 270, "A photo with a soft mask, half under the area")
+    mask = Image(doc, 24, 16, 8, "DeviceGray", 1, [[(x * 10 + y * 7) % 256 for x in range(24)] for y in range(16)],
+                 label="the photo's soft mask")
+    img = Image(doc, 24, 16, 8, "DeviceRGB", 3, pattern(24, 16, 3, 255, 9), label="the photo", smask=mask)
+    matrix = (120, 0, 0, 80, 100, 100)
+    p.content.image("Im1", img, matrix)
+    area = (160, 90, 260, 190)
+    marks = [_mark(doc, p, area, "redact-1")]
+    doc.finish()
+    data, w = doc.write("table")
+    files = {}
+    under = _under(24, 16, matrix, area)
+    desc = ("An RGB image with a grey soft mask, its right half under a redaction mark: once applied, the image is drawn "
+            "from a copy whose pixels under the area are black and whose soft mask is kept, opaque (255) under the "
+            "area and as it was elsewhere.")
+    exp = base_expected(doc, data, "redaction-masked", "redaction", D10, desc, w, objects=False)
+    exp["redaction"] = {
+        "areas": marks,
+        "afterApplying": {
+            "removedText": [], "keptText": ["A photo with a soft mask, half under the area"],
+            "image": _image_expectation("redaction-masked.image.redacted.png", img, under, 0, files),
+            "mask": _image_expectation("redaction-masked.mask.redacted.png", mask, under, 255, files)}}
+    return Sample("redaction-masked", "d10", "redaction", D10, desc, data, exp, files)
+
+
 # -- reference checks ----------------------------------------------------------------------------------------------------
 
 SUBTYPES = {"Text": 1, "Link": 2, "FreeText": 3, "Line": 4, "Square": 5, "Circle": 6, "Polygon": 7, "PolyLine": 8,
@@ -856,5 +1142,6 @@ def check_redacted(path, exp, notes):
 
 def build(seed):
     return [annotations(seed, True), annotations(seed, False), navigation(seed), tagged(seed), redaction(seed),
-            redaction_applied(seed)]
+            redaction_applied(seed), redaction_replies(seed), redaction_split(seed), redaction_nested(seed),
+            redaction_masked(seed)]
 

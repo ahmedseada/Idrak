@@ -35,11 +35,12 @@ internal static class PdfWriterImages
 
     /// <summary>
     /// Writes <paramref name="image"/> as image XObject <paramref name="number"/>; <paramref name="requested"/>
-    /// <see cref="DocumentImageEncoding.Auto"/> takes the options' encoding (measured when that is Auto too). The encoding written.
+    /// <see cref="DocumentImageEncoding.Auto"/> takes the options' encoding (measured when that is Auto too); a
+    /// <paramref name="softMask"/> above 0 names the grey image object it shows through. The encoding written.
     /// </summary>
     /// <exception cref="ArgumentException">The image is neither grey nor RGB.</exception>
     /// <exception cref="NotRegisteredException">JPEG was asked and no image encoder "jpeg" is registered.</exception>
-    public static DocumentImageEncoding Write(PdfFileWriter file, int number, ImageData image, DocumentImageEncoding requested, DocumentWriteOptions options)
+    public static DocumentImageEncoding Write(PdfFileWriter file, int number, ImageData image, DocumentImageEncoding requested, DocumentWriteOptions options, int softMask = 0)
     {
         if (image.Channels is not (1 or 3))
         {
@@ -50,7 +51,7 @@ internal static class PdfWriterImages
         int width = image.Width, height = image.Height, channels = image.Channels;
         if (encoding == DocumentImageEncoding.Jpeg)
         {
-            WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder));
+            WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder), softMask);
             return encoding;
         }
 
@@ -60,13 +61,46 @@ internal static class PdfWriterImages
             bool photographic = measures.Levels > options.LineArtLevels && measures.SmallSteps >= options.SmoothSteps;
             if (photographic && ImageEncoders.Names.Contains(JpegEncoder, StringComparer.OrdinalIgnoreCase))
             {
-                WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder));
+                WriteJpeg(file, number, image, options, ImageEncoders.Get(JpegEncoder), softMask);
                 return DocumentImageEncoding.Jpeg;
             }
         }
 
-        WriteFlate(file, number, image);
+        WriteFlate(file, number, image, softMask);
         return DocumentImageEncoding.Flate;
+    }
+
+    /// <summary>
+    /// Writes <paramref name="image"/> (grey: dark where it paints) as image mask XObject <paramref name="number"/>: one bit
+    /// a pixel, rows padded to whole bytes, 0 where it paints (a level below a half), deflated.
+    /// </summary>
+    public static void WriteStencil(PdfFileWriter file, int number, ImageData image)
+    {
+        int width = image.Width, height = image.Height, row = (width + 7) / 8;
+        var values = image.Pixels;
+        byte[] bits = ArrayPool<byte>.Shared.Rent(checked(row * height));
+        try
+        {
+            bits.AsSpan(0, row * height).Clear();
+            for (int y = 0; y < height; y++)
+            {
+                var line = bits.AsSpan(y * row, row);
+                for (int x = 0; x < width; x++)
+                {
+                    if (values[y * width + x] >= 0.5f)
+                    {
+                        line[x >> 3] |= (byte)(0x80 >> (x & 7));
+                    }
+                }
+            }
+
+            file.BeginStream(number).Raw("/Type/XObject/Subtype/Image/Width "u8).Integer(width).Raw("/Height "u8).Integer(height).Raw("/ImageMask true/BitsPerComponent 1"u8);
+            file.EndStream(bits.AsSpan(0, row * height), deflate: true);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(bits);
+        }
     }
 
     // The rows an image is worked in at a time: four parts a thread of the 64 KiB grains rows are spread in (at least a row).
@@ -300,18 +334,22 @@ internal static class PdfWriterImages
     // A value in [0, 1] as an 8-bit level, rounded (the image encoders' rule).
     private static byte Level(float value) => (byte)Math.Clamp((int)MathF.Round(value * 255f), 0, 255);
 
-    private static void WriteJpeg(PdfFileWriter file, int number, ImageData image, DocumentWriteOptions options, IImageEncoder encoder)
+    private static void WriteJpeg(PdfFileWriter file, int number, ImageData image, DocumentWriteOptions options, IImageEncoder encoder, int softMask)
     {
         byte[] jpeg = encoder.Encode(image, new ImageEncodeOptions { Quality = options.JpegQuality });
-        Header(file, number, image.Width, image.Height, image.Channels).Raw("/Filter/DCTDecode"u8);
+        Header(file, number, image.Width, image.Height, image.Channels, softMask).Raw("/Filter/DCTDecode"u8);
         file.EndStream(jpeg, deflate: false);
     }
 
-    private static PdfSyntax Header(PdfFileWriter file, int number, int width, int height, int channels) =>
-        file.BeginStream(number).Raw("/Type/XObject/Subtype/Image/Width "u8).Integer(width).Raw("/Height "u8).Integer(height)
+    // The image's dictionary as far as its filters: its size, colour space, bits and (above 0) the soft mask it shows through.
+    private static PdfSyntax Header(PdfFileWriter file, int number, int width, int height, int channels, int softMask)
+    {
+        var s = file.BeginStream(number).Raw("/Type/XObject/Subtype/Image/Width "u8).Integer(width).Raw("/Height "u8).Integer(height)
             .Raw(channels == 1 ? "/ColorSpace/DeviceGray"u8 : "/ColorSpace/DeviceRGB"u8).Raw("/BitsPerComponent 8"u8);
+        return softMask > 0 ? s.Raw("/SMask "u8).Reference(softMask) : s;
+    }
 
-    private static void WriteFlate(PdfFileWriter file, int number, ImageData image)
+    private static void WriteFlate(PdfFileWriter file, int number, ImageData image, int softMask)
     {
         int width = image.Width, height = image.Height, channels = image.Channels, row = width * channels;
         if (file.Level == 0)
@@ -321,7 +359,7 @@ internal static class PdfWriterImages
             try
             {
                 Levels(image, levels);
-                Header(file, number, width, height, channels);
+                Header(file, number, width, height, channels, softMask);
                 file.EndStream(levels.AsSpan(0, row * height), deflate: false);
             }
             finally
@@ -372,7 +410,7 @@ internal static class PdfWriterImages
             {
                 stream = ArrayPool<byte>.Shared.Rent(checked(row * height));
                 Levels(image, stream);
-                Header(file, number, width, height, channels);
+                Header(file, number, width, height, channels, softMask);
                 file.EndStream(stream.AsSpan(0, row * height), deflate: true);
                 return;
             }
@@ -395,7 +433,7 @@ internal static class PdfWriterImages
                 });
             }
 
-            Header(file, number, width, height, channels).Raw("/DecodeParms<</Predictor 15/Colors "u8).Integer(channels)
+            Header(file, number, width, height, channels, softMask).Raw("/DecodeParms<</Predictor 15/Colors "u8).Integer(channels)
                 .Raw("/BitsPerComponent 8/Columns "u8).Integer(width).Raw(">>"u8);
             file.EndStream(filteredRows.AsSpan(0, filtered), deflate: true);
         }

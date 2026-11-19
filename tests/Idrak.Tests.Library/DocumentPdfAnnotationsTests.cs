@@ -22,6 +22,11 @@ internal abstract partial class Tests
         ("documents pdf: annotations: a tagged page's text comes in its structure's order through the tagged layout (heading, left column, right column; the page number an artifact, left out), each run's tag its element's; lines stays the default, and a file without tags reads the same through both", PdfAnnotationsTagged),
         ("documents pdf: annotations: every kind created by the builder (an appearance made from its properties), links (a web address, a place), bookmarks and page labels, and annotations added and removed and bookmarks added by the editor (incremental and rewrite), read back as written; kept in test-output/documents/annotated for the reference tools", PdfAnnotationsWritten),
         ("documents pdf: annotations: redaction applied for real: redaction's own marks remove its words from the text, every decoded stream and the file's bytes, the path inside, the crossing path clipped outside the area, the image's pixels as its .redacted.png says, the marks themselves; the page draws as redaction-applied; boxes and text matches too; an incremental save refused", PdfAnnotationsRedaction),
+        ("documents pdf: annotations: redaction removes a note with everything that names it: its popup, its replies (a chain, one on another page whose /Annots also lists the note), the fields whose widgets lie under a mark (a parent left with no kid too), the structure tree's object references and their elements' texts, an outline action's target; another note stays", PdfRedactionReplies),
+        ("documents pdf: annotations: redaction finds a word split across text operators (two Tj, a font change inside it, kerned TJ pieces) as a whole, with case ignored too, an area over its part in each piece, and removes every piece; the rest of the text stays", PdfRedactionSplit),
+        ("documents pdf: annotations: redaction follows images in: a tiling pattern's cell, a soft mask's group and a Type 3 glyph's image mask (the glyph drawn from a copy where its drawing reaches the area, another of it whole, a glyph wholly under the area out of the text and its description out of the file), each as its .redacted.png says", PdfRedactionNested),
+        ("documents pdf: annotations: a redacted image keeps its soft mask, redacted under the same area (opaque there, as it was elsewhere), its pixels as their .redacted.png says", PdfRedactionMasked),
+        ("documents pdf: annotations: nothing redacted is left: for every redaction sample, no removed word, piece of a word, glyph description or image's original data is in the file's bytes, any decoded stream or any object (as text or hex), and no image in it decodes to an original under an area", PdfRedactionNothingLeft),
         ("documents pdf: annotations: annotations draw (their appearances, or their looks from their properties; hidden ones and popups not) and the samples match pdfium's drawing within D7's tolerance", PdfAnnotationsDrawn),
         ("documents pdf: annotations: timings: every annotation of the D10 samples read, and a page redacted, cold and warm", PdfAnnotationsTimings),
     ];
@@ -511,8 +516,9 @@ internal abstract partial class Tests
         }
     }
 
-    // A written file's text, page by page, for the checker.
-    private static string PdfAnnotatedJson(string name, IDocument document)
+    // A written file's text, page by page, for the checker; with `removed`, the words no tool may find in it (its text, any
+    // string, any decoded stream) and, with `annotations`, how many annotations each page holds.
+    private static string PdfAnnotatedJson(string name, IDocument document, IEnumerable<string>? removed = null, IEnumerable<int>? annotations = null)
     {
         var pages = new JsonArray();
         for (int i = 0; i < document.PageCount; i++)
@@ -521,13 +527,64 @@ internal abstract partial class Tests
             pages.Add(new JsonObject { ["index"] = i, ["width"] = page.Width, ["height"] = page.Height, ["text"] = page.Text });
         }
 
-        return new JsonObject { ["schema"] = 1, ["name"] = name, ["file"] = name + ".pdf", ["pages"] = pages }.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n";
+        var json = new JsonObject { ["schema"] = 1, ["name"] = name, ["file"] = name + ".pdf", ["pages"] = pages };
+        if (removed?.ToList() is { Count: > 0 } words)
+        {
+            json["removedText"] = new JsonArray([.. words.Select(w => (JsonNode)w)]);
+        }
+
+        if (annotations?.ToList() is { Count: > 0 } counts)
+        {
+            json["annotationCounts"] = new JsonArray([.. counts.Select(c => (JsonNode)c)]);
+        }
+
+        return json.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n";
     }
 
     private static string PdfRedactedFolder() => Directory.CreateDirectory(RepositoryPath("test-output", "documents", "redacted")).FullName;
 
     // Every decoded stream and every string of a file, for words that must be gone (as text and as the hex of their bytes).
-    private static List<string> PdfLeftovers(byte[] file, IEnumerable<string> words)
+    protected static List<string> PdfLeftovers(byte[] file, IEnumerable<string> words)
+    {
+        var haystacks = PdfHaystacks(file);
+        var found = new List<string>();
+        foreach (string word in words)
+        {
+            byte[] text = Encoding.ASCII.GetBytes(word);
+            byte[] hexUpper = Encoding.ASCII.GetBytes(Convert.ToHexString(text)), hexLower = Encoding.ASCII.GetBytes(Convert.ToHexStringLower(text));
+            foreach (var (where, bytes) in haystacks)
+            {
+                if (bytes.AsSpan().IndexOf(text) >= 0 || bytes.AsSpan().IndexOf(hexUpper) >= 0 || bytes.AsSpan().IndexOf(hexLower) >= 0)
+                {
+                    found.Add($"'{word}' in {where}");
+                }
+            }
+        }
+
+        return found;
+    }
+
+    // Every decoded stream and object of a file, for bytes that must be gone (a glyph's description, an image's data).
+    protected static List<string> PdfLeftoverBytes(byte[] file, IEnumerable<(string Label, byte[] Bytes)> needles)
+    {
+        var haystacks = PdfHaystacks(file);
+        var found = new List<string>();
+        foreach (var (label, needle) in needles)
+        {
+            foreach (var (where, bytes) in haystacks)
+            {
+                if (bytes.AsSpan().IndexOf(needle) >= 0)
+                {
+                    found.Add($"{label} in {where}");
+                }
+            }
+        }
+
+        return found;
+    }
+
+    // A file's bytes, each live object's stream decoded through its filters, and each object as text.
+    private static List<(string Where, byte[] Bytes)> PdfHaystacks(byte[] file)
     {
         using var document = PdfDocument.Open(new MemoryStream(file, writable: false), "leftovers", new DocumentOptions());
         var pdf = document.File;
@@ -551,21 +608,44 @@ internal abstract partial class Tests
             haystacks.Add(($"object {number}", Encoding.Latin1.GetBytes(value.ToString())));
         }
 
-        var found = new List<string>();
-        foreach (string word in words)
+        return haystacks;
+    }
+
+    // Every image object of a file: the SHA-256 of its pixels (8-bit levels, channels interleaved, as the samples' JSON
+    // gives them) and its stream's bytes decoded through its filters.
+    protected static List<(string Pixels, byte[] Data)> PdfImageObjects(byte[] file)
+    {
+        using var document = PdfDocument.Open(new MemoryStream(file, writable: false), "images", new DocumentOptions());
+        var pdf = document.File;
+        var images = new List<(string, byte[])>();
+        foreach (var (number, _, _) in pdf.LiveObjects())
         {
-            byte[] text = Encoding.ASCII.GetBytes(word);
-            byte[] hexUpper = Encoding.ASCII.GetBytes(Convert.ToHexString(text)), hexLower = Encoding.ASCII.GetBytes(Convert.ToHexStringLower(text));
-            foreach (var (where, bytes) in haystacks)
+            if (pdf.Get(number).AsStream is { } stream && pdf.Resolve(stream.Dictionary["Subtype"u8]).IsName("Image"u8)
+                && PdfImage.FromStream(pdf, stream, null, $"object {number}", stencil: false, out _) is { } image)
             {
-                if (bytes.AsSpan().IndexOf(text) >= 0 || bytes.AsSpan().IndexOf(hexUpper) >= 0 || bytes.AsSpan().IndexOf(hexLower) >= 0)
-                {
-                    found.Add($"'{word}' in {where}");
-                }
+                using var decoded = pdf.Decode(stream);
+                images.Add((PdfPixelHash(image.Decode()), decoded.Span.ToArray()));
             }
         }
 
-        return found;
+        return images;
+    }
+
+    // An image's pixels as 8-bit levels, channels interleaved: their SHA-256.
+    protected static string PdfPixelHash(ImageData picture)
+    {
+        int size = picture.Width * picture.Height, channels = picture.Channels;
+        byte[] interleaved = new byte[size * channels];
+        var values = picture.Pixels;
+        for (int p = 0; p < size; p++)
+        {
+            for (int c = 0; c < channels; c++)
+            {
+                interleaved[channels * p + c] = (byte)Math.Round(values[c * size + p] * 255);
+            }
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(interleaved));
     }
 
     private static void PdfAnnotationsRedaction(Device device)
@@ -662,6 +742,249 @@ internal abstract partial class Tests
             Check(!text.Contains("48,000", StringComparison.Ordinal) && text.Contains("Robin Park", StringComparison.Ordinal) && !text.Contains("Account manager", StringComparison.Ordinal)
                   && PdfLeftovers(bytes, ["48,000"]).Count == 0, $"text and box redacted: {text}");
         }
+    }
+
+    private static IEnumerable<string> PdfStrings(JsonNode? node) => node is JsonArray array ? array.Select(v => (string)v!) : [];
+
+    // A redaction sample redacted (by its own marks, or by a search for its words when its JSON lists them) and saved as a
+    // rewrite; kept in test-output/documents/redacted with its text, the words that must be gone and its pages' annotation
+    // counts, for tools/documents/check_written.py, when `keep`.
+    private static (DocumentRedactionResult Result, byte[] Bytes) PdfRedactSample(string name, bool keep = true)
+    {
+        var sample = PdfEditSample(name);
+        var redaction = sample.Expected["redaction"]!.AsObject();
+        DocumentRedactionResult result = null!;
+        byte[] bytes;
+        using (var document = DocumentFormats.Open(sample.Path))
+        {
+            var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs | DocumentParts.Annotations);
+            List<DocumentRedaction> areas = redaction["words"] is JsonArray words ? [.. words.SelectMany(w => DocumentRedactions.Find(page, (string)w!))] : [.. DocumentRedactions.Marked(page)];
+            bytes = PdfEditSave(document, editor => result = editor.Redact(0, areas), DocumentSaveMode.Rewrite);
+        }
+
+        if (keep)
+        {
+            var after = redaction["afterApplying"]!.AsObject();
+            File.WriteAllBytes(Path.Combine(PdfRedactedFolder(), name + ".pdf"), bytes);
+            using var back = DocumentFormats.Open(bytes, name + ".pdf");
+            File.WriteAllText(Path.Combine(PdfRedactedFolder(), name + ".json"),
+                PdfAnnotatedJson(name, back, PdfStrings(after["removedText"]).Concat(PdfStrings(after["removedPieces"])), (after["annotationCounts"] as JsonArray)?.Select(c => c!.GetValue<int>())));
+        }
+
+        return (result, bytes);
+    }
+
+    private static void PdfRedactionReplies(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("redaction-replies");
+        var after = sample.Expected["redaction"]!["afterApplying"]!.AsObject();
+        var words = PdfStrings(after["removedText"]).ToList();
+        var removed = PdfStrings(after["removedAnnotations"]).ToHashSet(StringComparer.Ordinal);
+        Check(PdfLeftovers(File.ReadAllBytes(sample.Path), words).Count > 0, "the sample holds the words before redaction (the search finds them)");
+        using (var source = DocumentFormats.Open(sample.Path))
+        {
+            var before = PdfAnnotationsOf(source).Select(a => a.Id).ToList();
+            Check(removed.All(before.Contains) && source.Fields.Count == 2, $"the sample's annotations ({string.Join(", ", before)}) and fields ({source.Fields.Count})");
+        }
+
+        var (result, bytes) = PdfRedactSample("redaction-replies");
+        Check(result is { Areas: 2, Annotations: 8 } && result.Glyphs == "Larkspur Trading".Length,
+            $"what was removed: {result}; expected the two marks, the note, its popup, its two replies and both widgets on its page, and {"Larkspur Trading".Length} glyphs");
+        var leftovers = PdfLeftovers(bytes, words);
+        Check(leftovers.Count == 0, $"removed words still in the written file: {string.Join("; ", leftovers)}");
+        using var back = DocumentFormats.Open(bytes, "redaction-replies-redacted.pdf");
+        var counts = after["annotationCounts"]!.AsArray().Select(c => c!.GetValue<int>()).ToArray();
+        for (int i = 0; i < back.PageCount; i++)
+        {
+            var annotations = back.ReadPage(i, DocumentParts.Annotations).Annotations;
+            Check(annotations.Count == counts[i] && !annotations.Any(a => a.Id is { } id && removed.Contains(id)), $"page {i + 1}'s annotations: {string.Join(", ", annotations.Select(a => a.Id))}");
+        }
+
+        Check(PdfAnnotationsOf(back).Select(a => a.Id).SequenceEqual(PdfStrings(after["keptAnnotations"])), "note-5 stays");
+        Check(back.Fields.Count == 0, $"the fields whose widgets were redacted are gone: {string.Join(", ", back.Fields.Select(f => f.Name))}");
+        string text = string.Join("\n", Enumerable.Range(0, back.PageCount).Select(i => back.ReadPage(i, DocumentParts.Text).Text));
+        Check(PdfStrings(after["keptText"]).All(t => text.Contains(t, StringComparison.Ordinal)) && !words.Any(w => text.Contains(w, StringComparison.Ordinal)), $"the text: {text}");
+
+        // Nothing in the file names what was removed: no object reference, no hide action's target, no element's
+        // alternate text; one annotation object left (note-5).
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes, writable: false), "redaction-replies-redacted.pdf", new DocumentOptions());
+        var file = pdf.File;
+        var found = new List<string>();
+        int annotationObjects = 0;
+        void Walk(PdfValue value, int number, int depth)
+        {
+            if (value.AsArray is { } array && depth < 32)
+            {
+                foreach (var item in array.Items)
+                {
+                    Walk(item, number, depth + 1);
+                }
+            }
+            else if (value.Kind is PdfKind.Dictionary or PdfKind.Stream && value.AsDictionary is { } d && depth < 32)
+            {
+                if (d["Type"u8].IsName("OBJR"u8) || (d["S"u8].IsName("Hide"u8) && !d["T"u8].IsNull) || d.Contains("Alt"u8))
+                {
+                    found.Add($"object {number}: {d}");
+                }
+
+                for (int k = 0; k < d.Count; k++)
+                {
+                    Walk(d.ValueAt(k), number, depth + 1);
+                }
+            }
+        }
+
+        foreach (var (number, _, _) in file.LiveObjects())
+        {
+            var value = file.Get(number);
+            if (value.AsDictionary is { } annotation && !annotation["Subtype"u8].IsNull && !annotation["Rect"u8].IsNull)
+            {
+                annotationObjects++;
+            }
+
+            Walk(value, number, 0);
+        }
+
+        Check(found.Count == 0 && annotationObjects == 1, $"what still names a removed object ({annotationObjects} annotation objects): {string.Join("; ", found)}");
+    }
+
+    private static void PdfRedactionSplit(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("redaction-split");
+        var redaction = sample.Expected["redaction"]!.AsObject();
+        var after = redaction["afterApplying"]!.AsObject();
+        var words = PdfStrings(redaction["words"]).ToList();
+        var pieces = PdfStrings(after["removedPieces"]).ToList();
+        byte[] source = File.ReadAllBytes(sample.Path);
+        Check(pieces.All(p => PdfLeftovers(source, [p]).Count > 0), "the sample holds each piece before redaction (the search finds them)");
+        using (var document = DocumentFormats.Open(sample.Path))
+        {
+            var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
+            foreach (string word in words)
+            {
+                var found = DocumentRedactions.Find(page, word);
+                var ignoring = DocumentRedactions.Find(page, word.ToUpperInvariant(), StringComparison.OrdinalIgnoreCase);
+                Check(found.Count == 2 && ignoring.Count == 2 && found.Zip(ignoring).All(p => p.First.Box == p.Second.Box) && found[0].Box.Right <= found[1].Box.X + 0.5f,
+                    $"'{word}': {found.Count} areas ({ignoring.Count} with case ignored), its parts in order along the line: {string.Join(", ", found.Select(f => f.Box))}");
+            }
+
+            Check(DocumentRedactions.Find(page, "Zephyrine shipped").Count == 2 && DocumentRedactions.Find(page, "code Zeph").Count == 1 && DocumentRedactions.Find(page, "Zephyrine Quorvath").Count == 0,
+                "a match across a space, one within a piece, none across lines");
+        }
+
+        var (result, bytes) = PdfRedactSample("redaction-split");
+        int glyphs = words.Sum(w => w.Length);
+        Check(result.Areas == 2 * words.Count && result.Glyphs == glyphs && result.Characters == glyphs, $"what was removed: {result}; expected {glyphs} glyphs");
+        var leftovers = PdfLeftovers(bytes, pieces);
+        Check(leftovers.Count == 0, $"pieces of the removed words still in the written file: {string.Join("; ", leftovers)}");
+        using var back = DocumentFormats.Open(bytes, "redaction-split-redacted.pdf");
+        string text = back.ReadPage(0, DocumentParts.Text).Text;
+        Check(!words.Any(w => text.Contains(w, StringComparison.OrdinalIgnoreCase)) && PdfStrings(after["keptText"]).All(t => text.Contains(t, StringComparison.Ordinal)), $"the text: {text}");
+    }
+
+    private static void PdfRedactionNested(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("redaction-nested");
+        var after = sample.Expected["redaction"]!["afterApplying"]!.AsObject();
+        var gone = PdfStrings(after["removedBytes"]).Select(h => ("glyph B's image", Convert.FromHexString(h))).ToList();
+        var kept = PdfStrings(after["keptBytes"]).Select(h => ("glyph A's image", Convert.FromHexString(h))).ToList();
+        byte[] source = File.ReadAllBytes(sample.Path);
+        Check(PdfLeftoverBytes(source, gone).Count > 0, "the sample holds glyph B's image before redaction");
+        var pattern = after["patternImage"]!.AsObject();
+        var mask = after["maskImage"]!.AsObject();
+        var glyph = after["glyph"]!.AsObject();
+        var originals = new[] { (string)pattern["original"]!, (string)mask["original"]! };
+        Check(PdfImageObjects(source).Count(o => originals.Contains(o.Pixels)) == 2, "the sample's pattern and mask images as their JSON says");
+
+        var (result, bytes) = PdfRedactSample("redaction-nested");
+        long pixels = pattern["changedPixels"]!.GetValue<long>() + mask["changedPixels"]!.GetValue<long>() + glyph["changedPixels"]!.GetValue<long>();
+        Check(result is { Areas: 3, Glyphs: 1, PathsClipped: 2, Images: 3, Annotations: 3 } && result.Pixels == pixels,
+            $"what was removed: {result}; expected glyph B, the pattern's and the mask's rectangles clipped, 3 images of {pixels} pixels, the 3 marks");
+        Check(PdfLeftoverBytes(bytes, gone).Count == 0 && PdfLeftoverBytes(bytes, kept).Count > 0, "glyph B's description gone from the file; A's kept for the A drawn whole");
+        Check(!PdfImageObjects(bytes).Any(o => originals.Contains(o.Pixels)), "no image in the file is the pattern's or the mask's as they were");
+        using (var back = DocumentFormats.Open(bytes, "redaction-nested-redacted.pdf"))
+        {
+            var page = back.ReadPage(0, DocumentParts.All);
+            var filled = page.Paths.Where(p => p.FillPattern?.Cell is not null).ToList();
+            Check(filled.Count == 1 && PdfPixelHash(filled[0].FillPattern!.Cell!.Images.Single().Decode()) == (string)pattern["sha256"]!, "the pattern's image as redaction-nested.pattern.redacted.png");
+            Check(page.SoftMasks.Count == 1 && PdfPixelHash(page.SoftMasks[0].Content.Images.Single().Decode()) == (string)mask["sha256"]!, "the soft mask's image as redaction-nested.mask.redacted.png");
+            Check(page.Lines.Any(l => l.Text.Trim() == (string)glyph["text"]!), $"the glyphs' line reads '{glyph["text"]}': {string.Join(" | ", page.Lines.Select(l => l.Text))}");
+        }
+
+        // The first A drawn from its copy (the copies' font's one glyph, its image mask unpainted under the area); the
+        // page's copy of the font without B.
+        using var pdf = PdfDocument.Open(new MemoryStream(bytes, writable: false), "redaction-nested-redacted.pdf", new DocumentOptions());
+        var file = pdf.File;
+        var fonts = file.Dictionary(file.Dictionary(file.Dictionary(pdf.PageObject(0).Node)!["Resources"u8])!["Font"u8])!;
+        string? copied = null;
+        bool withoutB = false;
+        for (int i = 0; i < fonts.Count; i++)
+        {
+            if (file.Dictionary(fonts.ValueAt(i)) is not { } font || file.Dictionary(font["CharProcs"u8]) is not { } procs)
+            {
+                continue;
+            }
+
+            if (procs.Contains("RdGl0"u8) && file.Dictionary(file.Dictionary(font["Resources"u8])!["XObject"u8]) is { Count: 1 } images
+                && file.Resolve(images.ValueAt(0)).AsStream is { } stream && PdfImage.FromStream(file, stream, null, "the glyph's copy", stencil: false, out _) is { } image)
+            {
+                copied = PdfPixelHash(image.Decode());
+            }
+
+            withoutB |= procs.Contains("A"u8) && !procs.Contains("B"u8);
+        }
+
+        Check(copied == (string)glyph["sha256"]! && withoutB, $"the first A's copy as redaction-nested.glyph.redacted.png ({copied}), the font's copy without B ({withoutB})");
+    }
+
+    private static void PdfRedactionMasked(Device device)
+    {
+        CpuOnly(device);
+        var sample = PdfEditSample("redaction-masked");
+        var after = sample.Expected["redaction"]!["afterApplying"]!.AsObject();
+        var image = after["image"]!.AsObject();
+        var mask = after["mask"]!.AsObject();
+        var originals = new[] { (string)image["original"]!, (string)mask["original"]! };
+        Check(PdfImageObjects(File.ReadAllBytes(sample.Path)).Count(o => originals.Contains(o.Pixels)) == 2, "the sample's image and its mask as their JSON says");
+        var (result, bytes) = PdfRedactSample("redaction-masked");
+        Check(result is { Areas: 1, Images: 1, Annotations: 1 } && result.Pixels == image["changedPixels"]!.GetValue<long>(), $"what was removed: {result}");
+        Check(!PdfImageObjects(bytes).Any(o => originals.Contains(o.Pixels)), "no image in the file is the image or its mask as they were");
+        using var back = DocumentFormats.Open(bytes, "redaction-masked-redacted.pdf");
+        var picture = back.ReadPage(0, DocumentParts.Images).Images.Single();
+        Check(PdfPixelHash(picture.Decode()) == (string)image["sha256"]!, "the image as redaction-masked.image.redacted.png");
+        Check(picture.Mask() is { } grey && PdfPixelHash(grey) == (string)mask["sha256"]!, "its soft mask kept, as redaction-masked.mask.redacted.png");
+    }
+
+    private static void PdfRedactionNothingLeft(Device device)
+    {
+        CpuOnly(device);
+        var failures = new List<string>();
+        foreach (string name in new[] { "redaction", "redaction-replies", "redaction-split", "redaction-nested", "redaction-masked" })
+        {
+            var sample = PdfEditSample(name);
+            var after = sample.Expected["redaction"]!["afterApplying"]!.AsObject();
+            var words = PdfStrings(after["removedText"]).Concat(PdfStrings(after["removedPieces"])).ToList();
+            var originals = after.Where(p => p.Value is JsonObject o && o["original"] is not null).Select(p => (string)p.Value!["original"]!).ToHashSet(StringComparer.Ordinal);
+            byte[] source = File.ReadAllBytes(sample.Path);
+            var needles = PdfStrings(after["removedBytes"]).Select(h => ("a glyph's description", Convert.FromHexString(h)))
+                .Concat(PdfImageObjects(source).Where(o => originals.Contains(o.Pixels)).Select(o => ($"an image's data as it was ({o.Data.Length} bytes)", o.Data))).ToList();
+            if (needles.Count != PdfStrings(after["removedBytes"]).Count() + originals.Count || (words.Count > 0 && PdfLeftovers(source, words).Count == 0))
+            {
+                failures.Add($"{name}: the sample does not hold what is looked for ({needles.Count} byte strings, {words.Count} words)");
+                continue;
+            }
+
+            byte[] bytes = PdfRedactSample(name, keep: false).Bytes;
+            failures.AddRange(PdfLeftovers(bytes, words).Select(f => $"{name}: {f}"));
+            failures.AddRange(PdfLeftoverBytes(bytes, needles).Select(f => $"{name}: {f}"));
+            failures.AddRange(PdfImageObjects(bytes).Where(o => originals.Contains(o.Pixels)).Select(_ => $"{name}: an image decodes to one under an area as it was"));
+            Console.WriteLine($"    {name}: {words.Count} words and pieces, {needles.Count} byte strings looked for: {(failures.Count == 0 ? "none left" : "some left")}");
+        }
+
+        Check(failures.Count == 0, $"left in the redacted files:\n      {string.Join("\n      ", failures)}");
     }
 
     // Whether a point is inside a closed path of lines by its fill rule (the even-odd count, or the nonzero winding).

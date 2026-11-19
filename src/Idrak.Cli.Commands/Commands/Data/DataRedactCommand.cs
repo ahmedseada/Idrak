@@ -32,7 +32,8 @@ internal sealed class DataRedactCommand : Command
           -o, --out FILE      the redacted PDF (not the input)
               --boxes FILE    areas as JSON: [{"page": 1, "box": [x, y, width, height]}, ...] in points from the page's
                               top-left corner as shown (a page from 1; "fill": "#rrggbb" or "none" for one area's colour)
-              --text TEXT     every place TEXT stands (again for more); matched within each piece of text the file shows
+              --text TEXT     every place TEXT stands (again for more); matched along each line of the text the file
+                              shows, so a word split across pieces, fonts or kerning is found too
               --ignore-case   match --text without case
               --marked        the file's own redaction marks (each mark's quads, filled in its own colour)
               --fill COLOUR   the areas' colour: black (the default), white, none (left unfilled) or #rrggbb
@@ -105,7 +106,7 @@ internal sealed class DataRedactCommand : Command
                             var read = document.ReadPage(page, parts);
                             foreach (string text in texts)
                             {
-                                found.AddRange(DocumentRedactions.Find(read, text, comparison).Select(a => a with { Fill = fill }));
+                                found.AddRange(DocumentRedactions.Find(read, text, comparison, options: options).Select(a => a with { Fill = fill }));
                             }
 
                             if (marked)

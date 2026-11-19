@@ -1,7 +1,11 @@
 """Checks PDF files Idrak wrote (plan 28, D6 onwards) with the reference tools: qpdf (through pikepdf) opens each file,
 checks its syntax (qpdf --check) and decodes every stream; pdfminer.six reads every page's text; pdfium counts and
 draws the pages and reads their text. Every warning any of them gives is listed. With an expected JSON (the sample
-generator's format, tools/documents/README.md), the page count, page sizes and each page's text are compared too.
+generator's format, tools/documents/README.md), the page count, page sizes and each page's text are compared too; a
+redacted file's JSON may add `removedText` (words no tool may find: not in pdfminer's or pdfium's text, nor in any
+stream qpdf decodes or any string of any object, as text or hex; pdfminer's words are then compared in any order, as the
+gaps cut lines keep make its layout order their pieces by column) and `annotationCounts` (the annotations pdfium lists
+on each page).
 
     python -I tools/documents/check_written.py FILE.pdf [FILE.pdf | DIR ...] -o REPORT.json
     python -I tools/documents/check_written.py test-output/documents/written -o test-output/documents/written.json --expected auto
@@ -58,7 +62,28 @@ class Collector(logging.Handler):
 IMAGE_CODECS = {"/DCTDecode", "/DCT", "/JPXDecode"}
 
 
-def qpdf(path, password):
+def _strings(obj, out, depth=0):
+    """Every string of a pikepdf object, depth first (references are objects of their own: not followed; numbers and
+    booleans come back as Python's own values, with nothing in them)."""
+    import pikepdf
+
+    if depth > 32:
+        return
+    if isinstance(obj, pikepdf.String):
+        out.append(bytes(obj))
+        return
+    if isinstance(obj, pikepdf.Array):
+        items = list(obj)
+    elif isinstance(obj, (pikepdf.Dictionary, pikepdf.Stream)):
+        items = [obj.get(key) for key in obj.keys()]
+    else:
+        return
+    for item in items:
+        if isinstance(item, pikepdf.Object) and not item.is_indirect:
+            _strings(item, out, depth + 1)
+
+
+def qpdf(path, password, removed=()):
     import pikepdf
 
     out = {"opened": False}
@@ -67,8 +92,11 @@ def qpdf(path, password):
             out.update({"opened": True, "pages": len(pdf.pages), "version": pdf.pdf_version,
                         "encrypted": bool(pdf.is_encrypted)})
             out["problems"] = [str(p) for p in pdf.check_pdf_syntax()]
-            errors, streams = [], 0
+            errors, streams, found = [], 0, []
+            needles = [(w, [w.encode("latin-1"), w.encode("latin-1").hex().encode("ascii"),
+                            w.encode("latin-1").hex().upper().encode("ascii")]) for w in removed]
             for obj in pdf.objects:
+                data = []
                 if isinstance(obj, pikepdf.Stream):
                     streams += 1
                     try:
@@ -78,11 +106,17 @@ def qpdf(path, password):
                             # qpdf hands an image codec's data over encoded: decoded as the image it is (Pillow).
                             pikepdf.PdfImage(obj).as_pil_image().load()
                         else:
-                            obj.read_bytes()
+                            data.append(obj.read_bytes())
                     except Exception as e:  # noqa: BLE001 - recorded
                         errors.append(f"{obj.objgen}: {type(e).__name__}: {e}"[:300])
+                if needles and isinstance(obj, (pikepdf.Dictionary, pikepdf.Stream, pikepdf.Array, pikepdf.String)):
+                    _strings(obj, data)
+                    for word, forms in needles:
+                        if any(form in chunk for chunk in data for form in forms):
+                            found.append(f"'{word}' in {obj.objgen}")
             out["streams"] = streams
             out["streamErrors"] = errors
+            out["removedFound"] = found
             out["warnings"] = [str(w) for w in pdf.get_warnings()]
     except Exception as e:  # noqa: BLE001 - recorded
         out["error"] = f"{type(e).__name__}: {e}"[:300]
@@ -118,7 +152,10 @@ def pdfium(path, password, render, dpi):
                 page = doc[i]
                 w, h = page.get_size()
                 tp = page.get_textpage()
-                entry = {"width": round(w, 4), "height": round(h, 4), "text": tp.get_text_range()}
+                import pypdfium2.raw as raw
+
+                entry = {"width": round(w, 4), "height": round(h, 4), "text": tp.get_text_range(),
+                         "annotations": raw.FPDFPage_GetAnnotCount(page)}
                 tp.close()
                 if render:
                     os.makedirs(render, exist_ok=True)
@@ -155,8 +192,27 @@ def compare(exp, q, m, p):
                 diffs.append({"page": k, "size": [page["width"], page["height"]], "pdfium": [g["width"], g["height"]]})
             if norm(g["text"]) != norm(page.get("text")):
                 diffs.append({"page": k, "text": page.get("text"), "pdfium": g["text"]})
-        if m.get("opened") and k < len(m["pages"]) and norm(m["pages"][k]) != norm(page.get("text")):
-            diffs.append({"page": k, "text": page.get("text"), "pdfminer": m["pages"][k]})
+        if m.get("opened") and k < len(m["pages"]):
+            # A redacted file's lines keep gaps where words were cut, which pdfminer.six's layout splits into boxes it
+            # orders by column: its words are compared in any order there.
+            got, want = norm(m["pages"][k]), norm(page.get("text"))
+            if exp.get("removedText"):
+                got, want = sorted(got.split()), sorted(want.split())
+            if got != want:
+                diffs.append({"page": k, "text": page.get("text"), "pdfminer": m["pages"][k]})
+    # A redacted file: no tool finds a removed word; pdfium lists the annotations each page keeps.
+    for word in exp.get("removedText") or []:
+        for k, text in enumerate(m.get("pages") or []):
+            if word in text:
+                diffs.append({"page": k, "removed": word, "pdfminer": "finds it"})
+        for k, page in enumerate(p.get("pages") or []):
+            if word in page["text"]:
+                diffs.append({"page": k, "removed": word, "pdfium": "finds it"})
+    for found in q.get("removedFound") or []:
+        diffs.append({"removed": found, "qpdf": "finds it"})
+    for k, want in enumerate(exp.get("annotationCounts") or []):
+        if p.get("opened") and k < len(p["pages"]) and p["pages"][k]["annotations"] != want:
+            diffs.append({"page": k, "annotations": want, "pdfium": p["pages"][k]["annotations"]})
     return diffs
 
 
@@ -170,22 +226,25 @@ def main():
     start = time.monotonic()
     results = []
     for i, path in enumerate(paths):
-        q = qpdf(path, args.password)
-        m = pdfminer(path, args.password)
-        p = pdfium(path, args.password, args.render, args.dpi)
         exp_path = None
         if args.expected == "auto":
             cand = os.path.splitext(path)[0] + ".json"
             exp_path = cand if os.path.isfile(cand) else None
         elif args.expected:
             exp_path = args.expected
-        diffs = []
+        exp = None
         if exp_path:
             with open(exp_path, encoding="utf-8") as fh:
-                diffs = compare(json.load(fh), q, m, p)
+                exp = json.load(fh)
+        q = qpdf(path, args.password, (exp or {}).get("removedText") or ())
+        m = pdfminer(path, args.password)
+        p = pdfium(path, args.password, args.render, args.dpi)
+        diffs = compare(exp, q, m, p) if exp is not None else []
         problems = []
         if not (q.get("opened") and m.get("opened") and p.get("opened")):
             problems.append("not opened by every tool")
+        if q.get("error"):
+            problems.append(f"qpdf error: {q['error']}")
         for key in ("problems", "streamErrors", "warnings"):
             if q.get(key):
                 problems.append(f"qpdf {key}: {len(q[key])}")
