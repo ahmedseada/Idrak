@@ -14,8 +14,10 @@ namespace Idrak.Cli.Commands.Measure;
 /// document work (<see cref="DocumentBench"/>'s cases) on sets of documents: the sample generator's samples and its large
 /// set by default, or any folders and files. Each case is measured cold (its first run on a set) and warm (the median of
 /// the runs after it) apart: the time, the managed bytes allocated and the process's working set at its highest. The
-/// library's document settings are used as the environment sets them (its <c>IDRAK_DOCUMENT_*</c> variables) and
-/// recorded with the measured limits; <c>--save NAME</c> and <c>--compare NAME</c> work as <c>idrak bench</c>'s do.
+/// library's document settings are used as the environment sets them (its <c>IDRAK_DOCUMENT_*</c> variables), the limits
+/// they leave to the memory measured once when the bench starts and kept for every run, and recorded;
+/// <c>--save NAME</c> and <c>--compare NAME</c> work as <c>idrak bench</c>'s do, and <c>--compare</c> also says when the
+/// saved run read under other limits and whether they explain a changed output.
 /// </summary>
 internal sealed class BenchDocumentsCommand : Command
 {
@@ -61,8 +63,9 @@ internal sealed class BenchDocumentsCommand : Command
         set it also compiles the case's code) and then --repeat times warm, a full collection before each run: the time
         (the median of the warm runs), the managed bytes allocated on every thread and the process's working set at its
         highest (sampled through the run). Writing cases write to a stream that counts, so the writer is measured, not a
-        disk. The library's settings come from their variables (IDRAK_DOCUMENT_*, IDRAK_CPU_THREADS, ...), and the saved
-        results record them with the limits measured from the machine's memory.
+        disk. The library's settings come from their variables (IDRAK_DOCUMENT_*, IDRAK_CPU_THREADS, ...); the limits
+        they leave unset are measured from the machine's memory once, when the bench starts, and every run of every
+        case reads under those same limits (the saved results record them).
 
         Cases (in order): open (files opened, their pages counted); text-lines, text-content (every page's text through
         the lines layout, and with none); text-parallel (text-lines over the CPU threads: the files at once, or a file's
@@ -73,7 +76,8 @@ internal sealed class BenchDocumentsCommand : Command
 
         Sets: samples (test-output/documents/samples, the hostile samples its manifest names left out), large
         (test-output/documents/large: each of its files and folders a set of its own), or any folder or PDF file.
-        A file no format opens (a password, damage) is listed as refused and left out of every run.
+        A file no format opens (a password, damage) is listed as refused and left out of every run. A cap on the files
+        (--draw-files, --short) spreads over every file of the set, refused or not, so every run takes the same files.
 
         Options:
               --cases LIST     the cases, comma-separated, or all (default all; IDRAK_BENCH_DOCUMENTS_CASES)
@@ -93,10 +97,13 @@ internal sealed class BenchDocumentsCommand : Command
               --chain FILE     a certificate between it and the root, embedded in the signature
               --trust FILE     the root check trusts
               --short          a quick check: at most 6 files of each set, 2 pages of each, one warm run, one resolution
-              --hash           hash every run's output (text, pixels, written bytes; SHA-256) into the results, so two
-                               runs or two saved results show the same output (the hashing is inside the runs' time)
+              --hash           hash every run's output (text, pixels, written bytes; SHA-256), file by file, into the
+                               results, so two runs or two saved results show the same output; a case whose runs
+                               differ names each file that differs and its hash in each run (the hashing is inside
+                               the runs' time)
               --save NAME      keep the results as NAME under the cache folder (bench/NAME.json)
-              --compare NAME   show the change against the results saved as NAME (and, hashed, whether outputs changed)
+              --compare NAME   show the change against the results saved as NAME: whether it read under other limits,
+                               and, hashed, which outputs changed, their files, and whether the other limits explain it
 
         Shows its progress: the case and set, the run, how far it is, how fast and the time left.
 
@@ -129,6 +136,9 @@ internal sealed class BenchDocumentsCommand : Command
 
         /// <summary>Whether every run gave the cold run's output (null without hashing).</summary>
         public bool? SameOutput => Cold.Work.Output is null ? null : Warm.All(r => r.Work.Output == Cold.Work.Output);
+
+        /// <summary>The files whose output differs between the runs (hashed runs only; none when every run gave the same).</summary>
+        public List<DocumentBenchDifference> Differing { get; } = DocumentBench.Differences(Cold, Warm);
     }
 
     public override int Run(CommandContext context)
@@ -141,12 +151,11 @@ internal sealed class BenchDocumentsCommand : Command
         var options = Options(context, out var sets, out string? certificateNote);
         string? compareName = context.Option("--compare");
         JsonObject? saved = compareName is null ? null : BenchCommand.LoadSaved(context, compareName);
-        var read = new DocumentOptions();
+        var read = options.Read;
         context.Write(string.Create(CultureInfo.InvariantCulture,
             $"documents on the CPU ({Environment.ProcessorCount} cores, {ComputeResources.MaxCpuThreads} threads): {string.Join(", ", options.Cases)}; "
             + $"cold: a case's first run on a set, warm: the median of {options.Repeats} runs after it"));
-        context.Write(string.Create(CultureInfo.InvariantCulture,
-            $"  limits measured from the memory: a stream {Size(read.MaxStreamBytes)}, a document's cache {Size(read.CacheBytes)}, {read.MaxObjects:N0} objects, nesting {read.MaxDepth}"));
+        context.Write("  limits for every run (measured from the memory once, now, where no variable sets them): " + Limits(read));
         foreach (var set in sets)
         {
             context.Write($"  {set.Name}: {set.Files.Count} files in {set.Root}" + (set.LeftOut > 0 ? $" ({set.LeftOut} hostile samples left out)" : ""));
@@ -205,9 +214,19 @@ internal sealed class BenchDocumentsCommand : Command
                 }
 
                 var done = new Measured(@case, label, set, cold!, warm);
+                foreach (var w in warm)
+                {
+                    w.Work.FileOutputs.Clear();     // compared (done.Differing); the cold run's are the ones recorded
+                }
+
                 measured.Add(done);
                 progress.Erase();
                 context.Write(Line(done));
+                foreach (string line in DifferenceLines(done.Label, set, done.Cold, done.Warm, done.Differing))
+                {
+                    context.Write(line);
+                }
+
                 if (context.Verbose)
                 {
                     foreach (var (file, reason) in done.Cold.Work.Refused)
@@ -228,11 +247,13 @@ internal sealed class BenchDocumentsCommand : Command
                 m.Label, m.Set.Name, Work(m), BenchCommand.Format(m.WarmMs), BenchCommand.Format(m.Cold.Milliseconds), PerUnit(m),
                 $"{Size(m.WarmAllocated)} / {Size(m.Cold.Allocated)}", $"{Size(m.WarmPeak)} / {Size(m.Cold.PeakWorkingSet)}",
             ]));
-        var document = Document(options, sets, measured, results, read);
+        var document = Document(options, sets, measured, results);
         if (saved is not null)
         {
             document["compare"] = BenchCommand.Compare(context, compareName!, saved, [.. results.Select(r => ("", r))], DocumentBench.Method);
-            document["compare"]!["outputs"] = CompareOutputs(context, compareName!, saved, measured);
+            var (limits, sameLimits) = CompareLimits(context, compareName!, saved, read);
+            document["compare"]!["limits"] = limits;
+            document["compare"]!["outputs"] = CompareOutputs(context, compareName!, saved, measured, sameLimits);
         }
 
         if (context.Option("--save") is { } saveName)
@@ -310,6 +331,7 @@ internal sealed class BenchDocumentsCommand : Command
         var (signing, trust, at) = Signing(context, cases, sets, out certificateNote);
         return new DocumentBenchOptions
         {
+            Read = DocumentBench.Pin(new DocumentOptions()),     // the limits measured once: every run reads under the same ones
             Cases = cases,
             Dpis = dpis,
             Repeats = Whole("--repeat", RepeatVariable, 1, quick ? 1 : 3),
@@ -471,7 +493,14 @@ internal sealed class BenchDocumentsCommand : Command
     {
         var cold = m.Cold;
         string refused = cold.Work.Refused.Count > 0 ? $" ({cold.Work.Refused.Count} refused)" : "";
-        string output = m.SameOutput switch { true => ", the same output every run", false => ", OUTPUT DIFFERS BETWEEN RUNS", null => "" };
+        string output = m.SameOutput switch
+        {
+            true => ", the same output every run",
+            false => m.Differing.Count > 0
+                ? string.Create(CultureInfo.InvariantCulture, $", OUTPUT DIFFERS BETWEEN RUNS ({m.Differing.Count:N0} file{(m.Differing.Count == 1 ? "" : "s")}, below)")
+                : ", OUTPUT DIFFERS BETWEEN RUNS (every file the same alone: their order or number)",
+            null => "",
+        };
         return string.Create(CultureInfo.InvariantCulture,
             $"  {m.Label} on {m.Set.Name}: {Work(m)}{refused}; warm {BenchCommand.Format(m.WarmMs)} ms ({PerUnit(m)}), {Size(m.WarmAllocated)} allocated, working set {Size(m.WarmPeak)}; "
             + $"cold {BenchCommand.Format(cold.Milliseconds)} ms ({BenchCommand.Format(cold.JitMilliseconds)} ms compiling {cold.JitMethods:N0} methods), {Size(cold.Allocated)}, {Size(cold.PeakWorkingSet)}{output}");
@@ -526,32 +555,169 @@ internal sealed class BenchDocumentsCommand : Command
         return BenchTiming.Median(list);
     }
 
-    // Whether each hashed case gave the output it gave when saved (rule 71: a change that makes things faster changes no output).
-    private static JsonArray CompareOutputs(CommandContext context, string name, JsonObject saved, List<Measured> measured)
+    // The limits as the results record them (settings.limits) and as a line shows them.
+    private static JsonObject LimitsJson(DocumentOptions read) => new()
+    {
+        ["max_stream_bytes"] = read.MaxStreamBytes,
+        ["max_objects"] = read.MaxObjects,
+        ["max_depth"] = read.MaxDepth,
+        ["cache_bytes"] = read.CacheBytes,
+    };
+
+    private static string Limits(DocumentOptions read) => string.Join(", ", LimitValues(read).Select(l => Limit(l.Key, l.Value)));
+
+    private static (string Key, long Value)[] LimitValues(DocumentOptions read) =>
+        [("max_stream_bytes", read.MaxStreamBytes), ("cache_bytes", read.CacheBytes), ("max_objects", read.MaxObjects), ("max_depth", read.MaxDepth)];
+
+    private static string Limit(string key, long value) => key switch
+    {
+        "max_stream_bytes" => "a stream " + Size(value),
+        "cache_bytes" => "a document's cache " + Size(value),
+        "max_objects" => string.Create(CultureInfo.InvariantCulture, $"{value:N0} objects"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"nesting {value}"),
+    };
+
+    /// <summary>
+    /// The lines that name each file whose output differs between a case's runs (at most 20; the results hold them all),
+    /// with its output in every run (the hash's first 16 digits) or why a run did not read it. Every run reads under the
+    /// same limits and takes the same files, so such a file is a finding to look into, not the bench's noise.
+    /// </summary>
+    internal static List<string> DifferenceLines(string label, DocumentBenchSet set, DocumentBenchRun cold, IReadOnlyList<DocumentBenchRun> warm, IReadOnlyList<DocumentBenchDifference> differing)
+    {
+        const int Shown = 20;
+        var lines = new List<string>();
+        foreach (var difference in differing.Take(Shown))
+        {
+            var runs = new List<string>(difference.Outputs.Count);
+            for (int r = 0; r < difference.Outputs.Count; r++)
+            {
+                string run = r == 0 ? "cold" : string.Create(CultureInfo.InvariantCulture, $"warm {r}");
+                var refused = (r == 0 ? cold : warm[r - 1]).Work.Refused.FirstOrDefault(x => x.File == difference.File);
+                runs.Add(difference.Outputs[r] is { } output ? $"{run} {output[..Math.Min(16, output.Length)]}"
+                    : refused.Reason is { } reason ? $"{run} refused ({reason})"
+                    : $"{run} not read");
+            }
+
+            lines.Add($"    differs in {label}: {set.Relative(difference.File)}: {string.Join(", ", runs)}");
+        }
+
+        if (differing.Count > Shown)
+        {
+            lines.Add(string.Create(CultureInfo.InvariantCulture, $"    and {differing.Count - Shown:N0} more files (each in the results' differing_files)"));
+        }
+
+        return lines;
+    }
+
+    // Whether the saved run read under the limits this one does: a line naming each limit that differs (now and saved),
+    // and the JSON (both sets, the same or not). Null when the saved results record no limits.
+    private static (JsonObject Json, bool? Same) CompareLimits(CommandContext context, string name, JsonObject saved, DocumentOptions read)
+    {
+        if (saved["settings"]?["limits"] is not JsonObject before)
+        {
+            context.Write($"  limits: '{name}' recorded none, so other limits cannot be told from a changed output");
+            return (new JsonObject { ["same"] = null, ["saved"] = null, ["now"] = LimitsJson(read) }, null);
+        }
+
+        var shown = new List<string>();
+        var keys = new JsonArray();
+        foreach (var (key, value) in LimitValues(read))
+        {
+            long? then = before[key] is JsonValue v && v.TryGetValue(out long x) ? x : null;
+            if (then != value)
+            {
+                shown.Add($"{Limit(key, value)} (saved: {(then is { } t ? Limit(key, t) : "none")})");
+                keys.Add(item: key);
+            }
+        }
+
+        if (shown.Count > 0)
+        {
+            context.Write($"  limits: other than '{name}' read under: {string.Join(", ", shown)}; a file near a limit can read otherwise");
+        }
+
+        return (new JsonObject { ["same"] = shown.Count == 0, ["changed"] = keys, ["saved"] = before.DeepClone(), ["now"] = LimitsJson(read) }, shown.Count == 0);
+    }
+
+    // Whether each hashed case gave the output it gave when saved (rule 71: a change that makes things faster changes no
+    // output). A case that did not names the files that changed (each file's output is saved) and, when the saved run read
+    // under other limits, whether they explain it: every changed file met a limit in one of the two runs (refused by one,
+    // or a part left out naming one). A changed case is listed as changed either way: other limits never hide a difference.
+    private static JsonArray CompareOutputs(CommandContext context, string name, JsonObject saved, List<Measured> measured, bool? sameLimits)
     {
         var before = (saved["cases"] as JsonArray ?? []).OfType<JsonObject>()
             .Where(c => (string?)c["output"] is not null)
             .GroupBy(c => $"{(string?)c["label"]} {(string?)c["set"]}")
-            .ToDictionary(g => g.Key, g => (string)g.First()["output"]!);
+            .ToDictionary(g => g.Key, g => g.First());
         var rows = new JsonArray();
         var changed = new List<string>();
+        var details = new List<string>();
         int same = 0;
         foreach (var m in measured.Where(m => m.Cold.Work.Output is not null))
         {
             string key = $"{m.Label} {m.Set.Name}";
-            if (!before.TryGetValue(key, out string? output))
+            if (!before.TryGetValue(key, out var old))
             {
                 continue;
             }
 
-            bool equal = output == m.Cold.Work.Output;
-            same += equal ? 1 : 0;
-            if (!equal)
+            bool equal = (string?)old["output"] == m.Cold.Work.Output;
+            var row = new JsonObject { ["case"] = m.Label, ["set"] = m.Set.Name, ["same"] = equal };
+            rows.Add(item: row);
+            if (equal)
             {
-                changed.Add(key);
+                same++;
+                continue;
             }
 
-            rows.Add(item: new JsonObject { ["case"] = m.Label, ["set"] = m.Set.Name, ["same"] = equal });
+            changed.Add(key);
+            if (old["file_outputs"] is not JsonObject savedFiles)
+            {
+                row["files"] = null;
+                row["limits_explain"] = false;
+                details.Add($"    {key}: '{name}' holds no file's own output, so the files are not named; a change all the same");
+                continue;
+            }
+
+            // The files whose output is not the same (or that one of the two runs did not read), in the order they ran.
+            var files = new List<string>();
+            var now = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (file, output) in m.Cold.Work.FileOutputs)
+            {
+                string relative = m.Set.Relative(file);
+                now.Add(relative);
+                if ((string?)savedFiles[relative] != output)
+                {
+                    files.Add(relative);
+                }
+            }
+
+            files.AddRange(savedFiles.Select(p => p.Key).Where(f => !now.Contains(f)));
+
+            // The files that met a limit in either run: in this case, or refused by one when the set's files were opened
+            // (left out of every case after it).
+            var limited = new HashSet<string>(m.Cold.Work.LimitFiles.Select(m.Set.Relative), StringComparer.Ordinal);
+            limited.UnionWith(m.Set.Refused.Where(p => DocumentBench.NamesLimit(p.Value)).Select(p => m.Set.Relative(p.Key)));
+            limited.UnionWith((old["limit_files"] as JsonArray ?? []).Select(f => (string?)f).OfType<string>());
+            limited.UnionWith((saved["sets"] as JsonArray ?? []).OfType<JsonObject>().Where(set => (string?)set["name"] == m.Set.Name)
+                .SelectMany(set => (set["refused"] as JsonArray ?? []).OfType<JsonObject>())
+                .Where(r => (string?)r["reason"] is { } reason && DocumentBench.NamesLimit(reason))
+                .Select(r => ((string?)r["file"] ?? "").Replace('\\', '/')));
+            bool explained = sameLimits == false && files.Count > 0 && files.All(limited.Contains);
+            row["files"] = new JsonArray([.. files.Select(f => (JsonNode)f)]);
+            row["limits_explain"] = explained;
+            int unexplained = files.Count(f => !limited.Contains(f));
+            string why = sameLimits switch
+            {
+                true => "read under the same limits",
+                false when explained => "the other limits explain it: each of them met a limit in one of the two runs",
+                false => string.Create(CultureInfo.InvariantCulture, $"NOT explained by the other limits: {unexplained:N0} of them met none"),
+                null => "the saved limits unknown",
+            };
+            details.Add(files.Count == 0
+                ? $"    {key}: every file's output the same as saved, their order or number not; {why}"
+                : string.Create(CultureInfo.InvariantCulture,
+                    $"    {key}: {files.Count:N0} file{(files.Count == 1 ? "" : "s")} changed ({string.Join(", ", files.Take(10))}{(files.Count > 10 ? $", and {files.Count - 10:N0} more" : "")}); {why}"));
         }
 
         if (rows.Count > 0)
@@ -559,15 +725,19 @@ internal sealed class BenchDocumentsCommand : Command
             context.Write(changed.Count == 0
                 ? $"  outputs: all {same} hashed cases the same as '{name}'"
                 : $"  outputs: {same} of {rows.Count} hashed cases the same as '{name}'; CHANGED: {string.Join(", ", changed)}");
+            foreach (string line in details)
+            {
+                context.Write(line);
+            }
         }
 
         return rows;
     }
 
-    private static JsonObject Document(DocumentBenchOptions options, List<DocumentBenchSet> sets, List<Measured> measured, List<BenchResult> results, DocumentOptions read)
+    private static JsonObject Document(DocumentBenchOptions options, List<DocumentBenchSet> sets, List<Measured> measured, List<BenchResult> results)
     {
         // The library's document settings as the environment gives them (every variable the table names for this command,
-        // and the CPU's), beside what they come to on this machine.
+        // and the CPU's), beside the limits every run read under (measured once where no variable sets them).
         var ordered = new JsonObject();
         var names = EnvironmentVariables.For("bench documents").Select(v => v.Name).Concat(["IDRAK_CPU_THREADS", "IDRAK_CPU_MEMORY_LIMIT_MB", "IDRAK_FONT_CACHE"]);
         foreach (string name in names.Distinct().Order(StringComparer.Ordinal))
@@ -610,13 +780,7 @@ internal sealed class BenchDocumentsCommand : Command
                 ["processors"] = Environment.ProcessorCount,
                 ["cpu_threads"] = ComputeResources.MaxCpuThreads,
                 ["cpu_memory_limit_bytes"] = ComputeResources.CpuMemoryLimit,
-                ["limits"] = new JsonObject
-                {
-                    ["max_stream_bytes"] = read.MaxStreamBytes,
-                    ["max_objects"] = read.MaxObjects,
-                    ["max_depth"] = read.MaxDepth,
-                    ["cache_bytes"] = read.CacheBytes,
-                },
+                ["limits"] = LimitsJson(options.Read),
                 ["variables"] = ordered,
             },
             ["sets"] = new JsonArray([.. sets.Select(s => (JsonNode)new JsonObject
@@ -627,7 +791,7 @@ internal sealed class BenchDocumentsCommand : Command
                 ["left_out"] = s.LeftOut,
                 ["pages"] = s.Pages.Values.Sum(),
                 ["refused"] = new JsonArray([.. s.Refused.OrderBy(p => p.Key, StringComparer.Ordinal)
-                    .Select(p => (JsonNode)new JsonObject { ["file"] = Path.GetRelativePath(s.Root, p.Key), ["reason"] = p.Value })]),
+                    .Select(p => (JsonNode)new JsonObject { ["file"] = s.Relative(p.Key), ["reason"] = p.Value })]),
             })]),
             ["cases"] = new JsonArray([.. measured.Select(m => (JsonNode)new JsonObject
             {
@@ -642,9 +806,16 @@ internal sealed class BenchDocumentsCommand : Command
                 ["pixels"] = m.Work.Pixels,
                 ["written_bytes"] = m.Work.Written,
                 ["left_out"] = m.Work.LeftOut,
-                ["refused"] = new JsonArray([.. m.Cold.Work.Refused.Select(r => (JsonNode)new JsonObject { ["file"] = Path.GetRelativePath(m.Set.Root, r.File), ["reason"] = r.Reason })]),
+                ["refused"] = new JsonArray([.. m.Cold.Work.Refused.Select(r => (JsonNode)new JsonObject { ["file"] = m.Set.Relative(r.File), ["reason"] = r.Reason })]),
                 ["output"] = m.Cold.Work.Output,
                 ["same_output"] = m.SameOutput,
+                ["file_outputs"] = m.Cold.Work.Output is null ? null : FileOutputs(m),
+                ["limit_files"] = new JsonArray([.. m.Cold.Work.LimitFiles.Select(m.Set.Relative).Order(StringComparer.Ordinal).Select(f => (JsonNode)f)]),
+                ["differing_files"] = m.Differing.Count == 0 ? null : new JsonArray([.. m.Differing.Select(d => (JsonNode)new JsonObject
+                {
+                    ["file"] = m.Set.Relative(d.File),
+                    ["outputs"] = new JsonArray([.. d.Outputs.Select(o => (JsonNode?)o)]),
+                })]),
                 ["cold"] = Run(m.Cold),
                 ["warm"] = new JsonObject
                 {
@@ -657,5 +828,17 @@ internal sealed class BenchDocumentsCommand : Command
             ["results"] = new JsonArray([.. results.Select(r => (JsonNode)BenchCommand.ToJson(r, ""))]),
             ["process_peak_working_set_bytes"] = process.PeakWorkingSet64,
         };
+    }
+
+    // The cold run's output file by file (each file's path under its set's folder), so a comparison can name what changed.
+    private static JsonObject FileOutputs(Measured m)
+    {
+        var files = new JsonObject();
+        foreach (var (file, output) in m.Cold.Work.FileOutputs)
+        {
+            files[m.Set.Relative(file)] = output;
+        }
+
+        return files;
     }
 }

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
@@ -36,12 +37,16 @@ internal sealed class DocumentBenchSet(string name, string root, IReadOnlyList<s
     /// <summary>What the signing case's last run wrote (each file signed), for the checking case.</summary>
     public List<(string File, byte[] Bytes)>? Signed { get; set; }
 
-    /// <summary>The files a case takes: every file not refused, or at most <paramref name="most"/> of them spread evenly over the set (0: all).</summary>
-    public IReadOnlyList<string> Take(int most)
-    {
-        var open = Files.Where(f => !Refused.ContainsKey(f)).ToList();
-        return DocumentBench.Spread(open, most);
-    }
+    /// <summary>
+    /// The files a case takes: at most <paramref name="most"/> of the set's files spread evenly over them (0: all), less
+    /// those refused. The spread is over every file, refused or not, so every run of every case at one cap takes the same
+    /// files, whatever an earlier run found it could not open (a spread over the files still open moved with each refusal,
+    /// and the runs of one case read other files).
+    /// </summary>
+    public IReadOnlyList<string> Take(int most) => [.. DocumentBench.Spread(Files, most).Where(f => !Refused.ContainsKey(f))];
+
+    /// <summary>A file's path under the set's folder, with / between folders (the key of its output in the results, the same on every system).</summary>
+    public string Relative(string file) => Path.GetRelativePath(Root, file).Replace('\\', '/');
 }
 
 /// <summary>What <c>idrak bench documents</c> runs: the cases, the drawing resolutions, the caps and the pieces some cases need.</summary>
@@ -68,8 +73,15 @@ internal sealed record DocumentBenchOptions
     /// <summary>The most pages every case takes of a file (0: all): the short mode's few.</summary>
     public int Pages { get; init; }
 
-    /// <summary>Whether every run's output (text, pixels, written bytes) is hashed (SHA-256), so runs and saved results show the same output.</summary>
+    /// <summary>Whether every run's output (text, pixels, written bytes) is hashed (SHA-256), file by file, so runs and saved results show the same output.</summary>
     public bool Hash { get; init; }
+
+    /// <summary>
+    /// The options every run of every case opens files with: the library's settings as the environment gives them, each
+    /// limit measured from the memory pinned once for the whole bench run (<see cref="DocumentBench.Pin"/>), so no run
+    /// reads under limits another did not.
+    /// </summary>
+    public required DocumentOptions Read { get; init; }
 
     /// <summary>The face text whose font a file does not embed is written in by the vector case, or null (such text is left out).</summary>
     public IFontFace? Font { get; init; }
@@ -87,7 +99,10 @@ internal sealed record DocumentBenchOptions
 /// <summary>One run of a case: the time (refused files' time left out), what it allocated, the process's working set at its highest, the JIT's share, and what it did.</summary>
 internal sealed record DocumentBenchRun(double Milliseconds, long Allocated, long PeakWorkingSet, double JitMilliseconds, long JitMethods, DocumentBenchWork Work);
 
-/// <summary>What one run of a case did: its units (the case's own: files, pages, signatures), the other counts, the bytes written and the output's hash.</summary>
+/// <summary>A file whose output differs between the runs of one case: its output in each run, cold first (null where a run did not read it: refused, or not taken).</summary>
+internal sealed record DocumentBenchDifference(string File, IReadOnlyList<string?> Outputs);
+
+/// <summary>What one run of a case did: its units (the case's own: files, pages, signatures), the other counts, the bytes written and the output's hash, whole and file by file.</summary>
 internal sealed class DocumentBenchWork
 {
     private readonly IncrementalHash? _hash;
@@ -116,10 +131,38 @@ internal sealed class DocumentBenchWork
     /// <summary>The files refused during the run, with why.</summary>
     public List<(string File, string Reason)> Refused { get; } = [];
 
+    /// <summary>Each file's output (its SHA-256, hex) in the order the files went through; hashed runs only. The run's output hashes these in order.</summary>
+    public List<(string File, string Output)> FileOutputs { get; } = [];
+
+    /// <summary>The files that met one of the library's limits in the run: refused by one, or a part of a page left out naming one.</summary>
+    public HashSet<string> LimitFiles { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Whether this file's work met one of the library's limits (a page's issue, or a part's error, naming one).</summary>
+    public bool MetLimit { get; set; }
+
     /// <summary>The output's SHA-256 (hex), once <see cref="Finish"/> ran; null without hashing.</summary>
     public string? Output { get; private set; }
 
     public bool Hashing => _hash is not null;
+
+    /// <summary>Notes a page's or a drawing's issues: one that names a limit marks the work as having met it.</summary>
+    public void Note(IReadOnlyList<DocumentIssue> issues)
+    {
+        foreach (var issue in issues)
+        {
+            MetLimit |= DocumentBench.NamesLimit(issue.Detail);
+        }
+    }
+
+    /// <summary>Notes a file refused during the run (its time left out), with why; one refused by a limit, or after meeting one, also met it.</summary>
+    public void Refuse(string file, string reason, bool metLimit = false)
+    {
+        Refused.Add((file, reason));
+        if (metLimit || DocumentBench.NamesLimit(reason))
+        {
+            LimitFiles.Add(file);
+        }
+    }
 
     public void Add(ReadOnlySpan<byte> bytes) => _hash?.AppendData(bytes);
 
@@ -176,22 +219,30 @@ internal sealed class DocumentBenchWork
         }
     }
 
-    /// <summary>Takes a file's work in (its counts and, hashed, its output's hash).</summary>
-    public void Merge(DocumentBenchWork file)
+    /// <summary>Takes <paramref name="file"/>'s work in (its counts, whether it met a limit and, hashed, its output's hash, kept under its name too).</summary>
+    public void Merge(string file, DocumentBenchWork part)
     {
-        Units += file.Units;
-        Files += file.Files;
-        Pages += file.Pages;
-        Items += file.Items;
-        Pixels += file.Pixels;
-        Written += file.Written;
-        LeftOut += file.LeftOut;
-        if (_hash is not null && file._hash is not null)
+        Units += part.Units;
+        Files += part.Files;
+        Pages += part.Pages;
+        Items += part.Items;
+        Pixels += part.Pixels;
+        Written += part.Written;
+        LeftOut += part.LeftOut;
+        if (part.MetLimit)
         {
-            _hash.AppendData(file._hash.GetHashAndReset());
+            LimitFiles.Add(file);
         }
 
-        file._hash?.Dispose();
+        if (_hash is not null && part._hash is not null)
+        {
+            Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
+            part._hash.GetHashAndReset(digest);
+            _hash.AppendData(digest);
+            FileOutputs.Add((file, Convert.ToHexStringLower(digest)));
+        }
+
+        part._hash?.Dispose();
     }
 
     /// <summary>Ends the run: its output's hash taken (once), the hash released.</summary>
@@ -227,6 +278,62 @@ internal static class DocumentBench
 
     // Parts of a page in their content order.
     private static readonly Comparer<(int Order, int Path, int Run)> ByOrder = Comparer<(int Order, int Path, int Run)>.Create(static (a, b) => a.Order.CompareTo(b.Order));
+
+    // The library's limits as their messages name them ("... the limit MaxStreamBytes (DocumentOptions.MaxStreamBytes, or
+    // IDRAK_DOCUMENT_MAX_STREAM_BYTES)"): a refusal or an issue naming one met that limit.
+    private static readonly SearchValues<string> LimitNames = SearchValues.Create(
+        [$"DocumentOptions.{nameof(DocumentOptions.MaxStreamBytes)}", $"DocumentOptions.{nameof(DocumentOptions.MaxObjects)}", $"DocumentOptions.{nameof(DocumentOptions.MaxDepth)}", $"DocumentOptions.{nameof(DocumentOptions.CacheBytes)}"],
+        StringComparison.Ordinal);
+
+    /// <summary>
+    /// <paramref name="options"/> with each limit measured from the memory (<see cref="DocumentOptions.MaxStreamBytes"/>,
+    /// <see cref="DocumentOptions.MaxObjects"/>, <see cref="DocumentOptions.CacheBytes"/>) resolved once, now: the value its
+    /// option or variable sets, else its share of the memory free at this moment. Every document opened with the result
+    /// reads under the same limits; the options themselves measure again at each open, so a file near a limit (a flate
+    /// bomb, a huge stream) would be refused or read by what the machine had free at that moment.
+    /// </summary>
+    public static DocumentOptions Pin(DocumentOptions options) =>
+        options with { MaxStreamBytes = options.MaxStreamBytes, MaxObjects = options.MaxObjects, CacheBytes = options.CacheBytes };
+
+    /// <summary>Whether <paramref name="text"/> (a refusal's reason, an issue's detail) names one of the library's limits.</summary>
+    public static bool NamesLimit(string text) => text.AsSpan().ContainsAny(LimitNames);
+
+    /// <summary>
+    /// The files whose output differs between the runs of one case (hashed runs only), in the order the runs first met
+    /// them: a file whose hash is not the same in every run, or that one run read and another did not. Empty when every
+    /// run gave the same output file by file.
+    /// </summary>
+    public static List<DocumentBenchDifference> Differences(DocumentBenchRun cold, IReadOnlyList<DocumentBenchRun> warm)
+    {
+        int runs = 1 + warm.Count;
+        var outputs = new Dictionary<string, string?[]>(StringComparer.Ordinal);
+        var order = new List<string>();
+        for (int r = 0; r < runs; r++)
+        {
+            foreach (var (file, output) in (r == 0 ? cold : warm[r - 1]).Work.FileOutputs)
+            {
+                if (!outputs.TryGetValue(file, out var row))
+                {
+                    outputs[file] = row = new string?[runs];
+                    order.Add(file);
+                }
+
+                row[r] = output;
+            }
+        }
+
+        var differing = new List<DocumentBenchDifference>();
+        foreach (string file in order)
+        {
+            var row = outputs[file];
+            if (Array.Exists(row, o => o != row[0]))
+            {
+                differing.Add(new DocumentBenchDifference(file, row));
+            }
+        }
+
+        return differing;
+    }
 
     /// <summary>What each case's unit is.</summary>
     public static string Unit(string @case) => @case switch
@@ -282,7 +389,7 @@ internal static class DocumentBench
     private static DocumentBenchWork Run(string @case, float dpi, DocumentBenchSet set, DocumentBenchOptions options, Action<long> progress)
     {
         var work = new DocumentBenchWork(options.Hash);
-        var read = new DocumentOptions();
+        var read = options.Read;
         switch (@case)
         {
             case "open":
@@ -305,7 +412,9 @@ internal static class DocumentBench
                     w.Files = 1;
                     foreach (int page in PagesOf(document, options.Pages))
                     {
-                        w.Add(document.ReadPage(page, DocumentParts.Text).Text);
+                        var pageText = document.ReadPage(page, DocumentParts.Text);
+                        w.Add(pageText.Text);
+                        w.Note(pageText.Issues);
                         w.Units++;
                         w.Pages++;
                         progress(1);
@@ -322,7 +431,9 @@ internal static class DocumentBench
                     w.Files = 1;
                     foreach (int page in PagesOf(document, options.Pages))
                     {
-                        foreach (var image in document.ReadPage(page, DocumentParts.Images).Images)
+                        var pageImages = document.ReadPage(page, DocumentParts.Images);
+                        w.Note(pageImages.Issues);
+                        foreach (var image in pageImages.Images)
                         {
                             w.Add(image.Decode());
                             w.Items++;
@@ -346,6 +457,7 @@ internal static class DocumentBench
                         var drawing = document.DrawPage(page, draw);
                         w.Add(drawing.Image);
                         w.Items += drawing.Issues.Count;
+                        w.Note(drawing.Issues);
                         w.Units++;
                         w.Pages++;
                         progress(1);
@@ -363,13 +475,15 @@ internal static class DocumentBench
                     {
                         foreach (int page in PagesOf(document, options.Pages))
                         {
+                            var source = document.ReadPage(page, images ? DocumentParts.Images : DocumentParts.Paths | DocumentParts.Text | DocumentParts.Glyphs);
+                            w.Note(source.Issues);
                             if (images)
                             {
-                                WriteImages(document.ReadPage(page, DocumentParts.Images), builder, writing.ImageEncoding, w);
+                                WriteImages(source, builder, writing.ImageEncoding, w);
                             }
                             else
                             {
-                                WriteVector(document.ReadPage(page, DocumentParts.Paths | DocumentParts.Text | DocumentParts.Glyphs), builder, options.Font, w);
+                                WriteVector(source, builder, options.Font, w);
                             }
 
                             w.Units++;
@@ -481,12 +595,12 @@ internal static class DocumentBench
             try
             {
                 each(file, part);
-                work.Merge(part);
+                work.Merge(file, part);
             }
             catch (Exception e) when (e is not OutOfMemoryException)
             {
                 work.ExcludedTicks += Stopwatch.GetTimestamp() - start;
-                work.Refused.Add((file, Reason(e)));
+                work.Refuse(file, Reason(e), part.MetLimit);
                 part.Finish();
             }
         }
@@ -531,6 +645,7 @@ internal static class DocumentBench
         var files = set.Take(options.Files);
         var texts = new string[files.Count][];
         var refused = new string?[files.Count];
+        var limited = new bool[files.Count];     // a page's issue named a limit
         void ReadFile(int f, bool pagesAtOnce)
         {
             try
@@ -538,20 +653,30 @@ internal static class DocumentBench
                 using var document = Open(set, files[f], layout);
                 var pages = PagesOf(document, options.Pages).ToArray();
                 var text = new string[pages.Length];
+                void ReadOne(int p)
+                {
+                    var page = document.ReadPage(pages[p], DocumentParts.Text);
+                    text[p] = page.Text;
+                    foreach (var issue in page.Issues)
+                    {
+                        if (NamesLimit(issue.Detail))
+                        {
+                            Volatile.Write(ref limited[f], true);
+                        }
+                    }
+
+                    progress(1);
+                }
+
                 if (pagesAtOnce)
                 {
-                    Parallel.For(0, pages.Length, ComputeResources.ParallelOptions, p =>
-                    {
-                        text[p] = document.ReadPage(pages[p], DocumentParts.Text).Text;
-                        progress(1);
-                    });
+                    Parallel.For(0, pages.Length, ComputeResources.ParallelOptions, ReadOne);
                 }
                 else
                 {
                     for (int p = 0; p < pages.Length; p++)
                     {
-                        text[p] = document.ReadPage(pages[p], DocumentParts.Text).Text;
-                        progress(1);
+                        ReadOne(p);
                     }
                 }
 
@@ -579,11 +704,11 @@ internal static class DocumentBench
         {
             if (refused[f] is { } reason)
             {
-                work.Refused.Add((files[f], reason));
+                work.Refuse(files[f], reason, limited[f]);
                 continue;
             }
 
-            var part = new DocumentBenchWork(work.Hashing) { Files = 1 };
+            var part = new DocumentBenchWork(work.Hashing) { Files = 1, MetLimit = limited[f] };
             foreach (string text in texts[f])
             {
                 part.Add(text);
@@ -591,7 +716,7 @@ internal static class DocumentBench
                 part.Pages++;
             }
 
-            work.Merge(part);
+            work.Merge(files[f], part);
         }
     }
 
@@ -611,6 +736,7 @@ internal static class DocumentBench
             catch (Exception e) when (e is NotSupportedException or InvalidDataException or ArgumentException)
             {
                 work.LeftOut++;
+                work.MetLimit |= NamesLimit(e.Message);
             }
         }
     }
@@ -739,11 +865,11 @@ internal static class DocumentBench
                 {
                     using var document = DocumentFormats.Open(bytes, Path.GetFileName(file), read);
                     CheckAll(document, check, part, progress);
-                    work.Merge(part);
+                    work.Merge(file, part);
                 }
                 catch (Exception e) when (e is not OutOfMemoryException)
                 {
-                    work.Refused.Add((file, Reason(e)));
+                    work.Refuse(file, Reason(e));
                     part.Finish();
                 }
             }

@@ -601,7 +601,10 @@ timed another way. `idrak bench documents` measures the library's document work 
 layout, text over the cores, images, pages drawn at chosen resolutions, image and vector PDFs written, incremental and
 rewritten saves, forms filled, signing and checking) on the sample generator's sets or any folders of PDF files: each
 case cold and warm apart, with its time, the managed bytes it allocated and the process's working set at its highest,
-the library's `IDRAK_DOCUMENT_*` settings recorded with the limits measured from the machine's memory.
+the library's `IDRAK_DOCUMENT_*` settings recorded with the limits every run read under (measured from the machine's
+memory once, when the bench starts, where no variable sets them). With `--hash` each file's output is hashed: a case
+whose runs differ names its files, and `--compare` says when the saved run read under other limits and whether they
+explain a changed output.
 
 | Command | What it does |
 |---|---|

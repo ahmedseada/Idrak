@@ -46,7 +46,7 @@ internal abstract partial class Tests
     private static readonly JsonSerializerOptions PdfRealJson = new() { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     // The run: the folder's files and what each step found, kept across the group's tests so the summary holds them all.
-    private sealed class PdfRealRun(string key, string folder, string? reference, int warm, bool savePages, bool saveFiles, string output, List<PdfRealFile> files)
+    private sealed class PdfRealRun(string key, string folder, string? reference, int warm, bool savePages, bool saveFiles, string output, List<PdfRealFile> files, DocumentOptions limits)
     {
         private long _written = Stopwatch.GetTimestamp();
 
@@ -70,8 +70,9 @@ internal abstract partial class Tests
 
         public DocumentDrawOptions Draw { get; } = new() { Parts = PdfRealDrawnParts };
 
-        // The limits every file is read within: C8's defaults (those measured from the free memory are measured when read).
-        public DocumentOptions Limits { get; } = new();
+        // The limits every file is read within: C8's defaults, those measured from the free memory measured once when the run
+        // starts (PdfRealLimits), so every file, pass and read-back reads under the same ones and the summary names them.
+        public DocumentOptions Limits { get; } = limits;
 
         // How signatures are checked: nothing trusted (only the certificates an app gives are, plan 28's decision 16) and
         // nothing fetched, so a signature's digest, signature and changes are what the check proves here.
@@ -108,7 +109,7 @@ internal abstract partial class Tests
     // A page as read for writing back: what both written files must read back to.
     private sealed record PdfRealPage(float Width, float Height, int Rotation, string Text, int Runs, int Images);
 
-    private sealed class PdfRealFile(string fullPath, string relative, long bytes, string? password)
+    private sealed class PdfRealFile(string fullPath, string relative, long bytes, string? password, DocumentOptions limits)
     {
         private readonly Dictionary<(int Page, string Kind, string Detail), int> _issues = [];
 
@@ -161,7 +162,8 @@ internal abstract partial class Tests
 
         public JsonObject? Reference { get; set; }
 
-        public DocumentOptions Options(string layout) => new() { Password = Password, Layout = layout };
+        // The run's pinned limits (PdfRealRun.Limits), its password and a layout.
+        public DocumentOptions Options(string layout) => limits with { Password = Password, Layout = layout };
 
         public void Open(int pages, DocumentInfo info)
         {
@@ -328,7 +330,8 @@ internal abstract partial class Tests
                 .OrderBy(p => p.Relative.Replace('\\', '/'), StringComparer.Ordinal)
                 .ToList();
             Check(paths.Count > 0, $"no .pdf file in {folder} or the folders under it");
-            var files = paths.Select(p => new PdfRealFile(p.Full, p.Relative, new FileInfo(p.Full).Length, PdfRealPassword(p.Full))).ToList();
+            var limits = PdfRealLimits();
+            var files = paths.Select(p => new PdfRealFile(p.Full, p.Relative, new FileInfo(p.Full).Length, PdfRealPassword(p.Full), limits)).ToList();
 
             // The run's own outputs start empty (a page or file of an earlier run never mixes in); the summary is replaced.
             string output = RepositoryPath("test-output", "documents", "real");
@@ -341,10 +344,20 @@ internal abstract partial class Tests
                 }
             }
 
-            var run = new PdfRealRun(key, folder, reference, warm, savePages, saveFiles, output, files);
+            var run = new PdfRealRun(key, folder, reference, warm, savePages, saveFiles, output, files, limits);
             s_pdfRealRun = run;
             return run;
         }
+    }
+
+    // C8's default limits with each one measured from the free memory resolved once, now (its variable's value where one is
+    // set): the options measure again at every open, so a file near a limit (a flate bomb, a huge stream) would read or be
+    // refused by what the machine had free at that moment, and a file written back could be read under other limits than
+    // its source.
+    private static DocumentOptions PdfRealLimits()
+    {
+        var defaults = new DocumentOptions();
+        return defaults with { MaxStreamBytes = defaults.MaxStreamBytes, MaxObjects = defaults.MaxObjects, CacheBytes = defaults.CacheBytes };
     }
 
     // The password beside a file (the first line of NAME.password.txt), or null.
@@ -1421,7 +1434,7 @@ internal abstract partial class Tests
 
         var limits = run.Limits;
         Line($"documents real: {run.Files.Count} PDF files in {run.Folder} ({run.Started:u}; {Environment.ProcessorCount} cores, {RuntimeInformation.OSDescription})");
-        Line($"Read within the default limits: streams up to {Sizes(limits.MaxStreamBytes)} decoded, {limits.MaxObjects:N0} objects, nesting {limits.MaxDepth}, a cache of {Sizes(limits.CacheBytes)}.");
+        Line($"Read within the default limits, measured once when the run started: streams up to {Sizes(limits.MaxStreamBytes)} decoded, {limits.MaxObjects:N0} objects, nesting {limits.MaxDepth}, a cache of {Sizes(limits.CacheBytes)}.");
         Line($"Pages drawn at {run.Draw.Dpi:0.#} dpi ({run.Draw.Parts}); fonts for text not embedded: {run.Draw.Fonts ?? "none given (such text is left out and counted)"}.");
         Line($"Times in milliseconds: cold (the file's first pass of the step in this run; the first file's also compiles the code) / warm (the median of {run.Warm} passes), then a page.");
         Line($"Reference text: {run.Reference ?? "none (NAME.reference.txt beside a file only)"}.");

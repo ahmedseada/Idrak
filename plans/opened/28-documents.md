@@ -2592,6 +2592,52 @@ speed and memory first), its results unchanged.
     pdf: annotations|documents workload:|documents contracts|outline tracers:|fonts:|pages:|shapes:|glyph poses:|public
     API|abstraction inventory|hidden boxing|test runner`: 111 passed, 0 failed (one build, no error or warning). No
     public API, inventory or variable changed.
+- **Bench runs comparable, 2026-11-19** (`BenchDocumentsCommand.cs`, `DocumentBench.cs`; `documents real:`'s
+  `DocumentRealTests.cs`; no library change).
+  - **The false alarm's cause:** not the memory. A capped case (draw's 50 files, `--short`'s 6) spread its cap over the
+    files not refused yet, so the refusals one run learned moved the next run's spread. The samples drawn at 150 dpi
+    alone (`--cases draw`): the cold run took 50 files spread over 113 and refused 5 (a password, an unsupported
+    handler), drawing 45; the first warm run spread over the other 108 and refused 5 more (the `-user` encrypted
+    samples), the last drew 49 (89 pages): other files in every run, "OUTPUT DIFFERS BETWEEN RUNS" on every build. With
+    `open` first (the whole bench) the refusals were known before a capped case's cold run, so it showed when a capped
+    case was its set's first.
+  - **The change:** a cap spreads over every file of the set, refused or not, the refused ones then left out, so every
+    run of every case at one cap takes the same files (the samples drawn: 45 files, 85 pages, refused in the cold run
+    alone). The limits measured from the memory (`MaxStreamBytes`, `MaxObjects`, `CacheBytes`) are resolved once when
+    the bench starts (`DocumentBench.Pin`, the variables winning) and every run of every case opens with them; the saved
+    `settings.limits` are those values (they were read again for the record, not the ones used). With `--hash` each
+    file's output is hashed too (`file_outputs`, the cold run's; `limit_files`, those that met a limit: refused by one,
+    or a page's issue naming one): a case whose runs differ names each file and its hash or refusal in every run
+    (`differing_files`; at most 20 lines on screen). `--compare` notes the limits other than the saved ones (each, now
+    and saved), names the files of a changed case and says whether the other limits explain it (every changed file met a
+    limit in one of the two runs, in the case or refused when its set's files were opened); a changed case is listed as
+    changed either way. Results saved before compare as before, their files not named. `documents real:` reads every
+    file, pass and read-back under limits pinned once a run (its write-back check compares two opens), and its summary
+    names them.
+  - **The run** (this container, 4 cores; `--hash`, every case, the samples and the large set, `--save`, then
+    `--compare`): 70 cases, 67 the same output every run and the same as saved; both runs under the same limits (a
+    stream 2.00 GiB, a cache 1.25 GiB, 10,502,019 objects, nesting 64). The samples' draw cases the same every run (150
+    dpi: 85 pages, 45 files, warm 427-433 ms; 300 dpi: 1,315-1,325 ms).
+  - **Found by the files' hashes, left as it is (the owner decides):** `edit-incremental`, `edit-rewrite` and `sign` on
+    the samples differ in every run, in the AES-encrypted samples opened with the empty password alone (6, 7 and 6
+    files: `d2/r4-aes-128-*`, `d2/r5-aes-256-empty`, `d2/r6-aes-256-*`; the RC4 and plain files repeat): each save
+    encrypts with a fresh random IV (ISO 32000-2; D11's decision 1: "an encrypted output is the one output that does not
+    repeat byte for byte"). Not a fault; the bench names them in every run and every comparison. Hashing what such a
+    file reads back to, not its bytes, would make those cases repeat; not done, since it changes what the bench checks.
+  - **Tests** (group `documents bench:`, 2 new, 4 in all): the pinned options measure nothing when a file opens (their
+    text names nothing "measured") and every run reads under the bench's (a 64-byte stream limit pinned there stops
+    `d3/encodings.pdf`'s 205-byte content, naming the limit; the measured one reads it); the saved limits are the
+    variables' (300m, 2,000,000, 0); the samples drawn at 36 dpi (`--cases draw`, the cold run refusing the encrypted
+    files) give the same output every run, file by file; a file whose output differs between runs (made in the test) is
+    named with its case and each run's hash or refusal. `--compare`: a save under a 1 GiB stream limit against 2 GiB
+    notes that limit alone, the outputs the same; a file refused under 64 bytes and read under 1 GiB is a change the
+    other limits explain; a deliberately altered saved output is a change naming its file, under the same limits ("read
+    under the same limits") and under other ones ("NOT explained by the other limits"). The short-mode test also checks
+    every case's files' hashes. **Run:** the filter `documents bench:|documents real:|documents workload:|documents
+    contracts|cli measure:|cli polish:|cli arabic:|public API|abstraction inventory|every environment variable read in
+    src|the environment table names real commands|hidden boxing|test runner`: 53 passed, 0 failed, 3 skipped (`documents
+    real:` without a folder). The build failed once on three nullable errors in the new tests (result tuples starting as
+    `default`), fixed together and rebuilt once: no error or warning. No public API, inventory or variable changed.
 
 ## Plan 38's needs (moved from plan 38, 2026-11-18)
 
