@@ -765,6 +765,225 @@ New findings from this piece:
   ms (`matmul_stored [1x1x151936]`, `after-profile-fix/profile-cpu-q4_0-prompt-*.txt`) against bf16's 8.9–10.6 ms: the
   stored decode path of M0-8, seen on one product.
 
+### The proof on Qwen3-1.7B (M6)
+
+Plan 40's M6: the re-bench's protocol on `Qwen/Qwen3-1.7B` (revision `70d244cc86cc`, M0's pull), `adad` against `name`
+in the same runs, to see whether the winning design holds at products about 4× larger. Measuring only: no code was
+changed. Files: `test-output\adad\m6-proof-1.7b\`, copied (without the `.nettrace` and `.speedscope.json` files) to
+[39-m6-proof-1.7b/](39-m6-proof-1.7b/): the script `m6.sh`, `results.txt`, every bench log, every profile log, every
+trace report, the CUDA tuning folders and CPU tuning files, `tuning-added.txt`, the 0.6B check (`check-0.6b/`) and the
+derived tables with the scripts that made them (`ratios.sh` → `ratios.txt`, `spread.sh` → `spread.txt`,
+`kernel-groups.sh` → `prompt-kernel-groups.txt`, `product-rates.sh` → `product-rates.txt`).
+
+- **Code and CLI**: commit `de1f8a96`, the CLI built from it and installed as "The CLI reinstall" says (at 21:11, before
+  the first bench at 21:12): `idrak 0.4.1-dev.2611191810` (package `0.4.1-dev.2611191811`; the installed assemblies'
+  informational version `0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed`; every CUDA tuning file's
+  `library:` line `0.4.1+de1f8a96...; kernels 29d753baeebe4de8`, the re-bench's kernels hash). Between `cf77ceeb` (the
+  re-bench) and `de1f8a96` nothing under `src/Idrak.Gpu`, the devices or the model changed (`git diff --stat cf77ceeb
+  de1f8a96 -- src`: documents, imaging, help text, member visibility and the profile command), so `adad` and `name` are
+  the re-bench's code. Every run's exit code 0; every bench log ends with its summary lines.
+- **The machine**: no idrak, dotnet-trace or build process ran beside the runs; one idle .NET service of another project
+  (started before the runs) ran throughout. Runs one at a time, in this order (the files' times): CUDA benches 21:12–21:21,
+  CPU benches 21:21–21:27, CUDA `adad` prompt profiles 21:27–21:28, the other profiles 21:33–21:42, traces 21:42–21:43, the
+  0.6B check 21:44–21:45.
+- **Commands** (`m6.sh`, one model run a call; the route set on every run; `out` = `D:/Projects/idrak/test-output/adad/m6-proof-1.7b`):
+  - CUDA, types in the order bf16, f16, int8, q8_0, q4_0, iq4_nl, q4_k, q6_k, iq2_xxs, iq3_xxs, a fresh folder
+    `tuning-cuda-{type}` per type shared by both routes, runs adad fill, name fill, adad warm, name warm:
+    `IDRAK_ROUTES={adad|name} IDRAK_TUNING_CACHE=$out/tuning-cuda-{type} idrak bench Qwen/Qwen3-1.7B -w {type} -d cuda
+    --prompt-tokens 512 --tokens 128 -n 3` → `cuda-{type}-{route}-{fill|warm}.txt`.
+  - CPU, bf16, int8, q8_0, q4_0, q4_k, a fresh `tuning-cpu-{type}.tsv` per type, runs adad, name, adad, name:
+    `IDRAK_ROUTES={adad|name} IDRAK_CPU_TUNING_FILE=$out/tuning-cpu-{type}.tsv idrak bench Qwen/Qwen3-1.7B -w {type} -d cpu
+    --prompt-tokens 128 --tokens 32 -n 2` → `cpu-{type}-{route}-run{1|2}.txt`.
+  - Profiles, on the type's filled folder or file, both routes: CUDA prompt (every type) `idrak profile Qwen/Qwen3-1.7B
+    -w {type} -d cuda --pass prompt --prompt-tokens 512 --top 30`; CUDA decode step (bf16, int8, q4_0, q4_k) `... -d
+    cuda --top 25`; CPU prompt (bf16, q4_0) `... -d cpu --pass prompt --prompt-tokens 128 --top 20` →
+    `profile-{device}-{type}-{route}-{prompt|decode}.txt`; a repeat is `...-rerun.txt` (int8 both routes, q4_0 name,
+    iq3_xxs adad).
+  - Traces (adad: int8, q8_0, q4_k): `IDRAK_ROUTES=adad IDRAK_TUNING_CACHE=$out/tuning-cuda-{type} idrak trace --stacks
+    -o $out/trace-cuda-{type}-adad.nettrace --top 20 -- bench Qwen/Qwen3-1.7B -w {type} -d cuda --prompt-tokens 512
+    --tokens 128 -n 1` → `trace-cuda-{type}-adad.txt`; read again with `idrak trace --read ... --timeline --slices 40
+    --top 5` (q4_k 48) → `-timeline.txt`, `--from S --to S+0.4 --timeline --slices 40 --top 5` → `-timeline-fine.txt`
+    (int8 also 3.55–3.95 s → `-timeline-end.txt`), and `--from S --waits --by-thread --top 15` from the generator's start
+    (int8 3.31 s, q8_0 3.29 s, q4_k 4.07 s) → `-run-window.txt`.
+  - The 0.6B check (the re-bench has no profiles): `Qwen/Qwen3-0.6B`, int8 and q4_0, a fresh folder
+    `check-0.6b/tuning-cuda-{type}` filled by an adad bench then a name bench (`--prompt-tokens 512 --tokens 128 -n 3`),
+    then each route's prompt profile (`--pass prompt --prompt-tokens 512 --top 30`) → `check-0.6b/`. Both types chose the
+    re-bench's prompt lanes (every 512-row entry and both groups equal to `39-rebench/`'s).
+  - `tuning-added.txt`: the lines each profile and trace stored in its tuning file (a copy before, a diff after). No
+    prompt profile, CPU profile or trace stored a line; the decode profiles stored their untimed warm-up's 128-row and
+    window-160 shapes, as in M0. The CUDA adad prompt profiles were made before the diff was added: their folders' last
+    writes are the benches' (21:12–21:20), the profiles ran at 21:27–21:28.
+
+**CUDA, Qwen3-1.7B, 512-token prompt and 128 generated tokens, tok/s, warm runs** (ratio adad/name, beside the 0.6B
+re-bench's; weights and peak in MiB; `results.txt`, `ratios.txt`)
+
+| Type | adad prompt | name prompt | ratio | 0.6B | adad gen | name gen | ratio | 0.6B | adad weights | name weights | adad peak | name peak |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bf16 | 21,204 | 19,184 | 1.105 | 1.092 | 197 | 182 | 1.082 | 1.089 | 3,302 | 3,302 | 3,457 | 3,465 |
+| f16 | 20,963 | 17,710 | 1.184 | 1.324 | 196 | 106 | 1.849 | 1.690 | 3,895 | 7,177 | 4,050 | 7,348 |
+| int8 | 20,410 | 20,749 | 0.984 | 1.041 | 333 | 215 | 1.549 | 1.405 | 2,257 | 2,257 | 2,420 | 2,412 |
+| q8_0 | 18,294 | 17,524 | 1.044 | 1.223 | 290 | 105 | 2.762 | 2.055 | 2,357 | 7,177 | 2,534 | 7,340 |
+| q4_0 | 18,840 | 17,697 | 1.065 | 1.218 | 332 | 105 | 3.162 | 2.258 | 1,537 | 7,177 | 1,714 | 7,348 |
+| iq4_nl | 18,632 | 17,344 | 1.074 | 1.251 | 301 | 105 | 2.867 | 2.119 | 1,537 | 7,177 | 1,714 | 7,348 |
+| q4_k | 17,981 | 17,711 | 1.015 | 1.187 | 263 | 106 | 2.481 | 1.921 | 1,537 | 7,177 | 1,718 | 7,348 |
+| q6_k | 18,092 | 17,593 | 1.028 | 1.142 | 275 | 106 | 2.594 | 1.980 | 1,960 | 7,177 | 2,141 | 7,348 |
+| iq2_xxs | 18,582 | 17,417 | 1.067 | 1.130 | 240 | 105 | 2.286 | 1.865 | 1,037 | 7,177 | 1,214 | 7,348 |
+| iq3_xxs | 17,899 | 17,506 | 1.022 | 1.094 | 218 | 106 | 2.057 | 1.837 | 1,242 | 7,177 | 1,423 | 7,348 |
+
+Fill against warm (`spread.txt`): prompts within 0.8% (adad) and 2.7% (name), generation within 1.0%; adad's fill runs
+peak 192–270 MiB above its warm runs (the measurement's candidates), name's 0–18 MiB. The `name` columns agree with M0
+(prompts within 1.6%, generation within 1 tok/s). f16's adad weights are bf16's plus 593 MiB (151,936 × 2,048 × 2
+bytes): the tied head's stored copy (plan 40's decision 9; +297 MiB at 0.6B); bf16's head stays the named one and holds
+no copy.
+
+**CPU, Qwen3-1.7B, 128-token prompt and 32 generated tokens, tok/s, both runs** (ratio of the two runs' means, beside
+the 0.6B re-bench's; weights equal between the routes; `results.txt`, `ratios.txt`)
+
+| Type | adad prompt (1 / 2) | name prompt (1 / 2) | ratio | 0.6B | adad gen (1 / 2) | name gen (1 / 2) | ratio | 0.6B | weights | adad peak | name peak |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| bf16 | 233 / 248 | 115 / 112 | 2.119 | 1.575 | 19.8 / 19.7 | 15.1 / 15.0 | 1.312 | 1.419 | 3,302 | 3,359 | 3,405 |
+| int8 | 236 / 209 | 117 / 112 | 1.943 | 1.457 | 32.0 / 31.2 | 25.8 / 25.0 | 1.244 | 1.563 | 2,257 | 2,315 | 2,361 |
+| q8_0 | 233 / 274 | 106 / 104 | 2.414 | 3.507 | 26.8 / 27.1 | 3.37 / 3.37 | 7.997 | 6.534 | 2,357 | 2,414 | 2,414 |
+| q4_0 | 233 / 204 | 104 / 98.4 | 2.159 | 3.287 | 20.6 / 21.2 | 3.29 / 3.33 | 6.314 | 4.576 | 1,537 | 1,594 | 1,594 |
+| q4_k | 196 / 219 | 97.4 / 104 | 2.061 | 3.335 | 14.5 / 14.7 | 3.35 / 3.30 | 4.391 | 3.535 | 1,537 | 1,594 | 1,594 |
+
+**Which lanes each type chose** (CUDA: each type's tuning file and the warm logs' "measured lane:" lines; read as in
+"Which lanes each type chose in the re-bench"). Qwen3-1.7B's products (its `config.json`: hidden 2,048, 16 query and 8
+key/value heads of 128, intermediate 6,144, 28 layers, a tied head of 151,936): q 2048→2048, k and v 2048→1024, o
+2048→2048, gate and up 2048→6144, down 6144→2048, the head 2048→151936. q and o now have the same shape, so one entry
+(`2000 512 2048 2048`) serves both: q's runs in its group, o's alone.
+
+Prompt (m = 512), each product's own choice (`StoredMeasured` 2000 for bf16 to iq4_nl, `StoredSuper` 3000 for the
+super-block and grid types), then the groups (9700):
+
+| Type | q, o | k, v | gate, up | down | group q/k/v | group gate/up |
+|---|---|---|---|---|---|---|
+| bf16 | 2 | 2 | 2 | 2 | 1 | 0 |
+| f16 | 2 | 2 | 2 | 2 | 1 | 0 |
+| int8 | 2 | 6 | 6 | 5 | 1 | 1 |
+| q8_0 | 2 | 2 | 2 | 2 | 1 | 0 |
+| q4_0 | 2 | 2 | 2 | 2 | 1 | 0 |
+| iq4_nl | 2 | 2 | 2 | 2 | 1 | 0 |
+| q4_k | 1 | 1 | 1 | 1 | 0 | 0 |
+| q6_k | 1 | 1 | 1 | 1 | 0 | 0 |
+| iq2_xxs | 1 | 1 | 1 | 1 | 1 | 0 |
+| iq3_xxs | 1 | 1 | 1 | 1 | 0 | 0 |
+
+So what ran in the prompt pass (the prompt profiles' kernels tables):
+
+- bf16, f16: q/k/v in the group launch (tensor rows), gate, up, o and down by the native kind (lane 2;
+  `native_mma_{bf16|f16}_r64_s6_n128_x`, 112 calls), x packed for it (`native_pack_x_*`).
+- q8_0, q4_0, iq4_nl, iq2_xxs: the same, and each weight of gate, up, o and down widened to bfloat16 on every call
+  (`native_pack_w_*` or `grid_widen_*`, 112 calls).
+- q4_k, q6_k, iq3_xxs: all seven products by the native kind over rows widened on every call (`StoredSuper` 1:
+  `super_widen_*` or `grid_widen_*`, 196 calls), and `typed_sum_parts` (56 calls).
+- int8: q/k/v and gate/up in group launches (tensor rows over the int8 rows), o by the native kind over its weight packed
+  on every call (`native_pack_w_s8_bf16`), down by the native kind reading the int8 codes raw (lane 5,
+  `native_mma_bf16_r64_s3_n256_x_ri8`), and `typed_sum_parts` (28 calls).
+- At 0.6B (the re-bench; this build's check for int8 and q4_0) bf16, f16, int8, q8_0, q4_0 and iq4_nl ran the tensor
+  rows for every product (the groups included), with no widening; the super-block and grid types ran q/k/v in the group
+  launch (but iq3_xxs: q by the native kind) and the rest by the tensor rows over rows widened for the call
+  (`StoredSuper` 4).
+
+Decode (m = 1): the few-row lane for every product and the head, but bf16's head (named: `5 1 151936 2048 0 = 0`, the warm
+log's "bf16 1x2048->151936: named"); the fused gated pass (`4000 1 6144 2048`) 0 for every type; residual + norm after o
+(`5000 1 2048 2048`) 1 for every type. The native kernel's tile setting (`9000 2048 2048 2048 9`): 4 (3 stages, swizzled)
+in seven folders, 5 (4 stages, swizzled) in bf16 and iq4_nl, 3 (3 stages, not swizzled) in iq2_xxs.
+
+The CPU (each run's own measurement, `cpu-{type}-adad-run{1|2}.txt`):
+
+| Type | Prompt (128 rows), run 1 / run 2 | Decode (1 row), run 1 / run 2 |
+|---|---|---|
+| bf16 | tiles for k/v, q/o, gate/up; down "today's path" / the same | row lane, the head named (8.8 against the generic 30.4 ms) / the same |
+| int8 | "today's path" for k/v, gate/up, down; tiles for q/o / "today's path" for k/v and down; tiles for q/o and gate/up | row lane / row lane, but the head the block route |
+| q8_0 | "today's path" for k/v, gate/up, down; tiles for q/o / tiles for k/v and q/o; the block route for gate/up and down | the block route / the block route |
+| q4_0 | "today's path" for k/v, q/o, down; tiles for gate/up / tiles, but down "today's path" | row lane for k/v and q/o; the block route for gate/up, down and the head / the same |
+| q4_k | "today's path", but gate/up tiles / the same | the block route / the block route |
+
+**CUDA prompt profiles by group** (`prompt-kernel-groups.txt`, ms; "products": every product of the layers with its
+widening, packing and summing; pass: each layer drained; q4_0 name and iq3_xxs adad from their repeats, below)
+
+| Type | adad pass | name pass | adad products | name products | adad widening, x packing, sums | adad head | name head |
+|---|---|---|---|---|---|---|---|
+| bf16 | 25.17 | 27.78 | 20.57 | 21.91 | 0.88 | 0.78 | 0.79 |
+| f16 | 24.88 | 29.46 | 19.97 | 23.99 | 0.78 | 0.77 | 1.54 |
+| int8 (two runs) | 25.71 / 25.74 | 25.35 / 25.40 | 21.59 / 21.77 | 20.99 / 20.77 | 1.34 / 1.46 | 0.39 | 0.40 |
+| q8_0 | 28.39 | 29.36 | 24.52 | 23.89 | 4.49 | 0.43 | 1.54 |
+| q4_0 | 28.56 | 29.39 | 23.97 | 23.78 | 4.00 | 0.34 | 1.54 |
+| iq4_nl | 28.38 | 29.34 | 24.39 | 23.91 | 3.81 | 0.39 | 1.54 |
+| q4_k | 30.00 | 29.30 | 25.87 | 23.85 | 6.17 | 0.46 | 1.54 |
+| q6_k | 29.36 | 29.47 | 26.14 | 23.87 | 6.69 | 0.44 | 1.61 |
+| iq2_xxs | 28.38 | 29.70 | 24.10 | 24.15 | 4.34 | 0.53 | 1.54 |
+| iq3_xxs | 29.23 | 29.44 | 26.33 | 24.12 | 6.66 | 0.65 | 1.54 |
+
+**Findings** (measuring only; none fixed):
+
+- **M6-1. Why adad's prompt lead mostly disappears on Qwen3-1.7B** (`prompt-kernel-groups.txt`, `product-rates.txt`,
+  the prompt profiles, the tuning files, `check-0.6b/`):
+  - At 0.6B the lead on a stored type came from the group launches and the head. q4_0 (this build's check): adad's
+    products 8.60 ms (the gate/up group at 58.2 TFLOP/s, the q/k/v group 53.4, down and o 48.5 and 43.4) against name's
+    10.77 ms of separate float32 launches (k and v at 24.4 TFLOP/s, gate/up 45.2, q 48.8, o 45.4, down 51.2); the head
+    0.19 against 0.79 ms; pass 12.36 against 15.24 ms. int8's two routes ran nearly the same kernels over the int8 rows
+    (adad's tensor rows `gemm_tc_nt_int8w` against name's `gemm_tc_nn_int8w`): pass 11.50 against 11.40 ms.
+  - At 1.7B name's separate launches are fast: its float32 products run at 43–66 TFLOP/s in every float32-held type
+    (q4_0: k/v 44.0, q/o 55.5, down 62.2, gate/up 66.1), each product 2–4× larger than at 0.6B. So the groups gain less:
+    adad's q/k/v group runs at 55–61 TFLOP/s (3.96–4.40 ms) against name's q, k and v in about 4.9 ms (q4_0: half of the
+    q/o kernel's 4.33 ms, the two having one shape, plus k and v's 2.74); and the gate/up group is no longer chosen for
+    any type but int8 (`9700 512 2048 6144 6144 0 0 = 0`).
+  - At 1.7B the measurement chose the native kind for gate, up, o and down of every stored type (`2000 512 ... = 2`,
+    `3000 512 ... = 1`), and for q/k/v too where the group lost (q4_k, q6_k, iq3_xxs). For q8_0, q4_0 and iq4_nl this
+    replaces 0.6B's tensor rows, which decoded the blocks as the tiles load; the super-block and grid types widened their
+    rows for the call at 0.6B too (`StoredSuper` 4). For a stored type the native kind widens the weight to bfloat16 on
+    every call and packs x: 3.8–6.7 ms a pass, 13–23% of it (q4_0: `native_pack_w` 3.19 + `native_pack_x` 0.81 ms; q4_k:
+    `super_widen` 4.46 + `native_pack_x` 1.19 + `typed_sum_parts` 0.53). The native kernel itself runs at 73–77 TFLOP/s,
+    faster than name's float32 kernels, but with the widening adad's products cost as much as name's or more (q4_0 23.97
+    against 23.78 ms; q4_k 25.87 against 23.85; iq2_xxs 24.10 against 24.15). What is left of adad's lead is the head
+    (0.34–0.65 ms against name's float32 head, 1.54–1.61 ms).
+  - Where no weight is widened the lead holds: bf16 (the native kind over its own rows, x packed only: 0.88 ms) 25.17
+    against 27.78 ms a pass (bench 1.105; 0.6B 1.092); f16 24.88 against 29.46 (1.184).
+  - int8: the measurement chose the native kind for o (its weight packed on every call) and for down (the int8 codes read
+    raw). Their kernels beat name's named int8 kernels (o 1.79–1.85 against 2.09–2.11 ms; down 5.01–5.05 against
+    5.29–5.31), but bring 1.34–1.46 ms of packing and summing (`native_pack_w_s8_bf16` 0.37–0.41, `native_pack_x_bf16_p16`
+    0.37–0.39, `native_pack_x_bf16` 0.26, `typed_sum_parts` 0.33–0.40). So adad's int8 pass is 25.71 / 25.74 against
+    25.35 / 25.40 ms in two runs each (bench 0.984).
+  - The host is not where it goes: in each trace's run phase (the generator's start to the end) one thread is busy, 69–73%
+    of it in native code, mostly `CudaBackend.DownloadRange` (waiting for the device); its collections fall in the
+    warm-up's first kernel builds (`PtxKernels`, `CudaBackend.MeasureNative`; `trace-cuda-{int8,q8_0,q4_k}-adad-run-window.txt`,
+    `-timeline-fine.txt`). The profiles' passes match the benches' prompt times (512 tokens over the warm bench's tok/s:
+    int8 25.7 against 25.1 ms; q4_0 28.6 against 27.2). A 2 ms
+    sampling round cannot separate a 25 ms prompt pass from the device waits around it: the traces show no host work
+    there, not the pass itself.
+  - **Not settled**: whether these choices (the native kind with the weight widened on every call, the gate/up group off)
+    are the fastest adad has in the pass: the profiles show only what was chosen. A tuning-entry swap like M2's (for
+    example q4_0's 512-row entries set to 6 and its gate/up group to 1), profiled against the type's own choice, would
+    settle it. Nor why name's separate launches gained with the size (the tiles a launch fills is the first suspect): no
+    kernel's tile count or occupancy was read.
+- **M6-2. Generation: the few-row lanes read the stored rows** (`profile-cuda-{bf16,int8,q4_0,q4_k}-{adad,name}-decode.txt`,
+  a step's median of 5): bf16 5.90 against 6.21 ms; int8 3.87 against 5.37; q4_0 3.88 against 10.41; q4_k 4.57 against
+  10.35. name's float32-held types spend 10.49–10.57 ms of a step's kernels in `gemv_nn_f32` over 7,177 MiB of float32
+  rows; adad's q4_0 step runs `typed_gemv_*` over its 1,537 MiB. int8's q/k/v and gate/up weights take 2.10 ms in adad's
+  `typed_gemv_s8_n4_r1_many` against 3.77 ms in name's `int8_gemv_multi_f32` and `int8_gemv_multi_act_f32` (the gated
+  activation fused in; adad's `gated_act_f32` 0.19 ms beside it). Why the
+  lead grows from 0.6B was not profiled (no decode profile at 0.6B).
+- **M6-3. Two single prompt profiles were outliers**: q4_0 name 36.51 ms (every kernel slower, its head `gemv_nn_f32`
+  3.03 against 1.54 ms; `profile-cuda-q4_0-name-prompt.txt`) and iq3_xxs adad 32.77 ms (norms 1.82 against 1.27 ms,
+  activation 1.55 against 0.99; `profile-cuda-iq3_xxs-adad-prompt.txt`). Their repeats gave 29.39 and 29.23 ms, in line
+  with the other types and the benches (`-rerun.txt`); the int8 repeats agreed within 0.2% (25.71 / 25.74, 25.35 /
+  25.40). The cause was not found (no clock or temperature was read): one profile a type can mislead; the comparisons
+  above use the repeats.
+- **M6-4. The fused gated decode pass is never chosen on 1.7B**: `4000 1 6144 2048` is 0 in all ten folders (the re-bench:
+  1 for bf16, f16, int8, q8_0, q4_k, q6_k, iq2_xxs at 0.6B; this build's 0.6B check stored 0 for int8, the re-bench 1).
+- **M6-5. The native kernel's tile setting is measured once a folder, on one shape, and came out three ways in ten
+  folders** (`9000 2048 2048 2048 9` = 3, 4 or 5; the fill and warm logs of each type print the same setting). Which
+  setting is fastest at each product was not checked.
+- **M6-6. The CPU** (`results.txt`, `profile-cpu-{bf16,q4_0}-{adad,name}-prompt.txt`): adad's prompt lead grew for bf16
+  and int8 (2.12 and 1.94 against 1.58 and 1.46 at 0.6B) and shrank for the stored types (2.06–2.41 against 3.29–3.51);
+  its generation lead grew for the stored types (4.4–8.0 against 3.5–6.5) and shrank for bf16 and int8 (1.31 and 1.24
+  against 1.42 and 1.56). Prompt profiles: bf16 adad 585 ms a pass with 289 MiB allocated against name's 1,068 ms and
+  4,362 MiB (name widens each weight on every call, M0-6); q4_0 654 against 1,259 ms (name's k/v `matmul_stored
+  [1x128x1024]` 250.8 ms, M0-7). The lane choices differ between the two runs of a type (above): M1's subject. The causes
+  of the CPU's moves from 0.6B were not traced.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

@@ -1,0 +1,72 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+Qwen/Qwen3-1.7B on cpu (CPU (24 threads, 8-wide SIMD)), weights q4_0, KV cache float32: one prompt pass of 128 tokens
+pass 653.52 ms (one pass, each after a collection) with each layer drained (652.22 ms in the layers), 290.9 MiB allocated, 0 collections, 11.3 of 24 cores busy on average
+products in Float32, as the network runs them; the layers past the last cached one over the last position only, as generation runs a prompt
+cpu: 1.64 GB in use
+
+Layers of the network:
+Layer      Type          ms      Share  MiB allocated  GCs
+---------  ------------  ------  -----  -------------  ---
+embed      Embedding     0.112   0.0 %  1.00           0
+layers.0   DecoderBlock  21.017  3.2 %  20.78          0
+layers.1   DecoderBlock  22.912  3.5 %  0.21           0
+layers.2   DecoderBlock  21.871  3.4 %  0.19           0
+layers.3   DecoderBlock  22.455  3.4 %  0.21           0
+layers.4   DecoderBlock  24.067  3.7 %  0.19           0
+layers.5   DecoderBlock  22.912  3.5 %  0.18           0
+layers.6   DecoderBlock  23.347  3.6 %  0.20           0
+layers.7   DecoderBlock  24.113  3.7 %  12.72          0
+layers.8   DecoderBlock  23.571  3.6 %  12.75          0
+layers.9   DecoderBlock  22.568  3.5 %  12.71          0
+layers.10  DecoderBlock  22.758  3.5 %  12.75          0
+layers.11  DecoderBlock  22.462  3.4 %  12.72          0
+layers.12  DecoderBlock  23.913  3.7 %  12.74          0
+layers.13  DecoderBlock  23.358  3.6 %  12.71          0
+layers.14  DecoderBlock  23.311  3.6 %  12.75          0
+layers.15  DecoderBlock  23.226  3.6 %  12.75          0
+layers.16  DecoderBlock  23.103  3.5 %  12.71          0
+layers.17  DecoderBlock  23.871  3.7 %  12.73          0
+layers.18  DecoderBlock  23.726  3.6 %  12.73          0
+layers.19  DecoderBlock  23.334  3.6 %  12.73          0
+layers.20  DecoderBlock  23.773  3.6 %  12.75          0
+layers.21  DecoderBlock  23.011  3.5 %  12.72          0
+layers.22  DecoderBlock  23.295  3.6 %  12.71          0
+layers.23  DecoderBlock  23.478  3.6 %  12.76          0
+layers.24  DecoderBlock  22.465  3.4 %  12.74          0
+layers.25  DecoderBlock  22.324  3.4 %  12.72          0
+layers.26  DecoderBlock  22.804  3.5 %  12.72          0
+layers.27  DecoderBlock  22.845  3.5 %  12.76          0
+norm       RMSNorm       0.015   0.0 %  0.02           0
+head       Linear        6.203   1.0 %  0.58           0
+
+Inner layers (by type and depth): 1077.55 ms in 255 calls
+Name                   Calls  ms       Share
+---------------------  -----  -------  ------
+FeedForward (depth 0)  28     450.311  41.8 %
+Linear (depth 1)       84     442.655  41.1 %
+Linear (depth 0)       113    184.108  17.1 %
+Embedding (depth 0)    1      0.266    0.0 %
+RMSNorm (depth 0)      29     0.214    0.0 %
+
+Operations (by name and shape): 672.39 ms in 454 calls
+Name                           Calls  ms       Share
+-----------------------------  -----  -------  ------
+matmul_stored [1x128x6144]     56     294.266  43.8 %
+matmul_stored [1x128x2048]     84     259.232  38.6 %
+matmul_stored [1x128x1024]     56     66.540   9.9 %
+attention_tiled [1x128x2048]   28     14.816   2.2 %
+add_rms_norm [1x128x2048]      56     9.248    1.4 %
+gated_activation [1x128x6144]  28     7.396    1.1 %
+rms_norm_rope [1x128x8x128]    28     7.239    1.1 %
+rms_norm_rope [1x128x16x128]   28     7.203    1.1 %
+matmul_stored [1x1x151936]     1      5.955    0.9 %
+rms_norm_affine [1x128x2048]   1      0.164    0.0 %
+narrow [128]                   1      0.117    0.0 %
+embedding_bf16 [1x128x2048]    1      0.106    0.0 %
+permute [1x8x2x128x128]        28     0.074    0.0 %
+permute [1x8x128x128]          56     0.019    0.0 %
+rms_norm_affine [1x1x2048]     1      0.012    0.0 %
+narrow [1x1x2048]              1      0.004    0.0 %
+
+Kernel times: cpu does not time kernels; the operations above are its finest timing.
+exit 0

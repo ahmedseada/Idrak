@@ -1,0 +1,223 @@
+== profile-cuda-int8-name-prompt (21:33:38): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-bf16-name-prompt (21:33:45): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-f16-name-prompt (21:34:01): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-f16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q8_0-name-prompt (21:34:16): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q8_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_0-name-prompt (21:34:32): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq4_nl-name-prompt (21:34:52): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-iq4_nl/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_k-name-prompt (21:35:09): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q6_k-name-prompt (21:35:26): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q6_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq2_xxs-name-prompt (21:35:50): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-iq2_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq3_xxs-name-prompt (21:36:14): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-iq3_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-q4_0-name-prompt-rerun (21:36:30): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-iq3_xxs-adad-prompt-rerun (21:39:04): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-iq3_xxs/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-int8-adad-prompt-rerun (21:39:15): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-int8-name-prompt-rerun (21:39:21): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== profile-cuda-bf16-adad-decode (21:39:43): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 40 128 1024 2048 0 0 0 = 8
+> PackedSplits 40 128 2048 2048 0 0 0 = 4
+> PackedSplits 40 128 2048 6144 0 0 0 = 8
+> PackedSplits 40 128 6144 2048 0 0 0 = 4
+> PackedSplits 540 128 1024 2048 0 0 0 = 8
+> PackedSplits 540 128 2048 2048 0 0 0 = 4
+> PackedSplits 540 128 2048 6144 0 0 0 = 8
+> PackedSplits 540 128 6144 2048 0 0 0 = 2
+> PackedTile 240 128 1024 2048 0 0 0 = 64
+> PackedTile 240 128 2048 2048 0 0 0 = 64
+> PackedTile 240 128 2048 6144 0 0 0 = 64
+> PackedTile 240 128 6144 2048 0 0 0 = 64
+> PackedTile 1240 128 2048 2048 1024 1024 0 = 64
+> PackedTile 1240 128 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 40 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 40 128 2048 6144 6144 0 0 = 2
+> PackedMultiSplits 540 128 2048 2048 1024 1024 0 = 1
+> PackedMultiSplits 540 128 2048 6144 6144 0 0 = 1
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> ProductRoute 2000 128 1024 2048 5 0 0 = 6
+> ProductRoute 2000 128 2048 2048 5 0 0 = 6
+> ProductRoute 2000 128 2048 6144 5 0 0 = 2
+> ProductRoute 2000 128 6144 2048 5 0 0 = 6
+> ProductRoute 9100 128 1024 2048 9 0 0 = 8
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 6144 9 0 0 = 132
+> ProductRoute 9100 128 6144 2048 9 0 0 = 129
+> ProductRoute 9300 128 1024 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 6144 4 0 0 = 8
+> ProductRoute 9300 128 6144 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile-cuda-int8-adad-decode (21:39:58): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 41 128 1024 2048 0 0 0 = 8
+> PackedSplits 41 128 2048 2048 0 0 0 = 4
+> PackedSplits 41 128 2048 6144 0 0 0 = 8
+> PackedSplits 41 128 6144 2048 0 0 0 = 4
+> PackedSplits 541 128 1024 2048 0 0 0 = 4
+> PackedSplits 541 128 2048 2048 0 0 0 = 4
+> PackedSplits 541 128 2048 6144 0 0 0 = 4
+> PackedSplits 541 128 6144 2048 0 0 0 = 2
+> PackedTile 241 128 1024 2048 0 0 0 = 64
+> PackedTile 241 128 2048 2048 0 0 0 = 64
+> PackedTile 241 128 2048 6144 0 0 0 = 128
+> PackedTile 241 128 6144 2048 0 0 0 = 128
+> PackedTile 1241 128 2048 2048 1024 1024 0 = 64
+> PackedTile 1241 128 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 41 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 41 128 2048 6144 6144 0 0 = 2
+> PackedMultiSplits 541 128 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 541 128 2048 6144 6144 0 0 = 1
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> ProductRoute 2000 128 1024 2048 7 0 0 = 6
+> ProductRoute 2000 128 2048 2048 7 0 0 = 6
+> ProductRoute 2000 128 2048 6144 7 0 0 = 6
+> ProductRoute 2000 128 6144 2048 7 0 0 = 6
+> ProductRoute 9100 128 1024 2048 9 0 0 = 24
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 6144 9 0 0 = 132
+> ProductRoute 9100 128 6144 2048 9 0 0 = 129
+> ProductRoute 9300 128 1024 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 6144 4 0 0 = 8
+> ProductRoute 9300 128 6144 2048 4 0 0 = 8
+> ProductRoute 9400 128 1024 2048 4 0 0 = 8
+> ProductRoute 9400 128 2048 2048 4 0 0 = 8
+> ProductRoute 9400 128 2048 6144 4 0 0 = 8
+> ProductRoute 9400 128 6144 2048 4 0 0 = 2
+> ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile-cuda-q4_0-adad-decode (21:40:07): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 100 128 1024 2048 0 0 0 = 8
+> PackedSplits 100 128 2048 2048 0 0 0 = 4
+> PackedSplits 100 128 2048 6144 0 0 0 = 8
+> PackedSplits 100 128 6144 2048 0 0 0 = 4
+> PackedSplits 600 128 1024 2048 0 0 0 = 8
+> PackedSplits 600 128 2048 2048 0 0 0 = 4
+> PackedSplits 600 128 2048 6144 0 0 0 = 4
+> PackedSplits 600 128 6144 2048 0 0 0 = 2
+> PackedTile 300 128 1024 2048 0 0 0 = 64
+> PackedTile 300 128 2048 2048 0 0 0 = 64
+> PackedTile 300 128 2048 6144 0 0 0 = 128
+> PackedTile 300 128 6144 2048 0 0 0 = 128
+> PackedTile 1300 128 2048 2048 1024 1024 0 = 128
+> PackedTile 1300 128 2048 6144 6144 0 0 = 128
+> PackedMultiSplits 100 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 100 128 2048 6144 6144 0 0 = 2
+> PackedMultiSplits 600 128 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 600 128 2048 6144 6144 0 0 = 1
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 16
+> ProductRoute 2000 128 1024 2048 6 0 0 = 6
+> ProductRoute 2000 128 2048 2048 6 0 0 = 6
+> ProductRoute 2000 128 2048 6144 6 0 0 = 6
+> ProductRoute 2000 128 6144 2048 6 0 0 = 6
+> ProductRoute 9100 128 1024 2048 9 0 0 = 8
+> ProductRoute 9100 128 2048 2048 9 0 0 = 132
+> ProductRoute 9100 128 2048 6144 9 0 0 = 132
+> ProductRoute 9100 128 6144 2048 9 0 0 = 129
+> ProductRoute 9300 128 1024 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 6144 4 0 0 = 8
+> ProductRoute 9300 128 6144 2048 4 0 0 = 8
+> ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile-cuda-q4_k-adad-decode (21:40:17): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 300 128 1024 2048 0 0 0 = 8
+> PackedSplits 300 128 2048 2048 0 0 0 = 8
+> PackedSplits 300 128 2048 6144 0 0 0 = 8
+> PackedSplits 300 128 6144 2048 0 0 0 = 4
+> PackedSplits 800 128 1024 2048 0 0 0 = 8
+> PackedSplits 800 128 2048 2048 0 0 0 = 4
+> PackedSplits 800 128 2048 6144 0 0 0 = 8
+> PackedSplits 800 128 6144 2048 0 0 0 = 4
+> PackedSplits 1300 128 1024 2048 0 0 0 = 8
+> PackedSplits 1300 128 2048 2048 0 0 0 = 4
+> PackedSplits 1300 128 2048 6144 0 0 0 = 8
+> PackedSplits 1300 128 6144 2048 0 0 0 = 4
+> PackedSplits 1800 128 1024 2048 0 0 0 = 8
+> PackedSplits 1800 128 2048 2048 0 0 0 = 4
+> PackedSplits 1800 128 2048 6144 0 0 0 = 8
+> PackedSplits 1800 128 6144 2048 0 0 0 = 2
+> PackedTile 500 128 1024 2048 0 0 0 = 64
+> PackedTile 500 128 2048 2048 0 0 0 = 128
+> PackedTile 500 128 2048 6144 0 0 0 = 128
+> PackedTile 500 128 6144 2048 0 0 0 = 128
+> PackedTile 1500 128 1024 2048 0 0 0 = 64
+> PackedTile 1500 128 2048 2048 0 0 0 = 64
+> PackedTile 1500 128 2048 2048 1024 1024 0 = 128
+> PackedTile 1500 128 2048 6144 0 0 0 = 128
+> PackedTile 1500 128 2048 6144 6144 0 0 = 128
+> PackedTile 1500 128 6144 2048 0 0 0 = 64
+> PackedMultiSplits 300 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 300 128 2048 6144 6144 0 0 = 4
+> PackedMultiSplits 800 128 2048 2048 1024 1024 0 = 2
+> PackedMultiSplits 800 128 2048 6144 6144 0 0 = 4
+> TensorSplits 2 128 2048 2048 2048 0 0 = 4
+> TensorSplits 2 128 2048 6144 2048 0 0 = 8
+> TensorSplits 2 128 6144 2048 6144 0 0 = 2
+> DecodeSplits 2 16 160 128 0 0 0 = 2
+> DecodeMinChunk 2 16 160 128 2 0 0 = 1
+> ProductRoute 3000 128 1024 2048 5 0 0 = 4
+> ProductRoute 3000 128 2048 2048 5 0 0 = 1
+> ProductRoute 3000 128 2048 6144 5 0 0 = 1
+> ProductRoute 3000 128 6144 2048 5 0 0 = 1
+> ProductRoute 9100 128 1024 2048 9 0 0 = 24
+> ProductRoute 9100 128 2048 2048 9 0 0 = 116
+> ProductRoute 9100 128 2048 6144 9 0 0 = 132
+> ProductRoute 9100 128 6144 2048 9 0 0 = 129
+> ProductRoute 9300 128 1024 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 2048 4 0 0 = 8
+> ProductRoute 9300 128 2048 6144 4 0 0 = 8
+> ProductRoute 9300 128 6144 2048 4 0 0 = 8
+> ProductRoute 9700 128 2048 2048 1024 1024 0 = 1
+> ProductRoute 9700 128 2048 6144 6144 0 0 = 1
+> RowThreads 0 128 4096 0 0 0 0 = 64
+== profile-cuda-bf16-name-decode (21:40:25): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-bf16/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 4 128 2048 2048 0 0 0 = 4
+> PackedSplits 4 128 2048 6144 0 0 0 = 8
+> PackedMultiSplits 4 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 4 128 2048 6144 6144 0 0 = 2
+== profile-cuda-int8-name-decode (21:40:28): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> PackedSplits 0 128 2048 2048 0 0 0 = 8
+> PackedSplits 0 128 2048 6144 0 0 0 = 8
+> PackedMultiSplits 0 128 2048 2048 1024 1024 0 = 4
+> PackedMultiSplits 0 128 2048 6144 6144 0 0 = 2
+== profile-cuda-q4_0-name-decode (21:40:50): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 6144 2048 0 0 = 8
+> TensorSplits 0 128 6144 2048 6144 0 0 = 2
+== profile-cuda-q4_k-name-decode (21:41:07): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+> TensorSplits 0 128 2048 2048 2048 0 0 = 4
+> TensorSplits 0 128 2048 6144 2048 0 0 = 8
+> TensorSplits 0 128 6144 2048 6144 0 0 = 2
+== profile-cpu-bf16-adad-prompt (21:41:17): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cpu-bf16.tsv
+  (none)
+== profile-cpu-q4_0-adad-prompt (21:41:32): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cpu-q4_0.tsv
+  (none)
+== profile-cpu-bf16-name-prompt (21:41:42): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cpu-bf16.tsv
+  (none)
+== profile-cpu-q4_0-name-prompt (21:41:54): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cpu-q4_0.tsv
+  (none)
+== trace-cuda-int8-adad (21:42:03): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== trace-cuda-q8_0-adad (21:43:04): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q8_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== trace-cuda-q4_k-adad (21:43:26): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/tuning-cuda-q4_k/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)

@@ -1,0 +1,8 @@
+== 0.6B profile-cuda-int8-adad-prompt (21:44:39): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/check-0.6b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== 0.6B profile-cuda-int8-name-prompt (21:44:44): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/check-0.6b/tuning-cuda-int8/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== 0.6B profile-cuda-q4_0-adad-prompt (21:45:12): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/check-0.6b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)
+== 0.6B profile-cuda-q4_0-name-prompt (21:45:19): lines added or changed in D:/Projects/idrak/test-output/adad/m6-proof-1.7b/check-0.6b/tuning-cuda-q4_0/NVIDIA_GeForce_RTX_5070_Ti_compute_12.0_70_SMs_16302_MiB_power_ac.txt
+  (none)

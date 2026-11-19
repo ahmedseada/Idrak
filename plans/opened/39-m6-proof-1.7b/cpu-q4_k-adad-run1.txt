@@ -1,0 +1,23 @@
+element type: float32 on cpu (picked by auto: cpu computes float32 natively (the CPU's kernels compute float32; 16-bit values are widened to it))
+Qwen/Qwen3-1.7B on cpu (CPU (24 threads, 8-wide SIMD)): 1720.6M parameters, weights q4_k, KV cache float32
+  prompt 128 tokens, 32 generated, 2 run(s) after a warm-up
+  measured lane: cpu: q4_k 128x2048->1024: today's path (widened once, float32 product) (row 1.602 ms, panel 1.811 ms, today's 1.013 ms, block 4.882 ms, tiles 1.161 ms)
+  measured lane: cpu: q4_k 128x2048->2048: today's path (widened once, float32 product) (row 2.658 ms, panel 3.185 ms, today's 1.756 ms, block 9.438 ms, tiles 2.075 ms)
+  measured lane: cpu: q4_k 128x2048->6144: tiles (panels widened in the product) (row 4.48 ms, panel 9.725 ms, today's 4.575 ms, block 7.109 ms, tiles 4.333 ms)
+  measured lane: cpu: q4_k 128x6144->2048: today's path (widened once, float32 product) (row 6.858 ms, panel 11.344 ms, today's 4.927 ms, block 6.502 ms, tiles 8.768 ms)
+  measured lane: cpu: q4_k 1x2048->1024: block route (x as q8_0, s8 dot) (row 0.189 ms, panel 0.447 ms, block 0.117 ms)
+  measured lane: cpu: q4_k 1x2048->151936: block route (x as q8_0, s8 dot) (row 13.113 ms, panel 62.856 ms, block 7.838 ms)
+  measured lane: cpu: q4_k 1x2048->2048: block route (x as q8_0, s8 dot) (row 0.305 ms, panel 0.884 ms, block 0.223 ms)
+  measured lane: cpu: q4_k 1x2048->6144: block route (x as q8_0, s8 dot) (row 0.649 ms, panel 2.698 ms, block 0.396 ms)
+  measured lane: cpu: q4_k 1x6144->2048: block route (x as q8_0, s8 dot) (row 0.642 ms, panel 1.851 ms, block 0.427 ms)
+
+Measurement         Value  Unit      Detail
+------------------  -----  --------  -----------------------------------------------------------------
+prompt              196    tokens/s  128 tokens
+generation          14.5   tokens/s  32 tokens
+prompt GFLOP/s      675    GFLOP/s   2 x parameters per token
+generation GFLOP/s  50.1   GFLOP/s   2 x parameters per token
+weights memory      1537   MiB       on the device after loading
+memory in use       1537   MiB       after the runs
+memory peak         1594   MiB       the most in use on the device since the start
+KV cache            35.0   MiB       a generation's caches at their largest, window 161, grown 0 times

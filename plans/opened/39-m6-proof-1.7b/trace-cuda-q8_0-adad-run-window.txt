@@ -1,0 +1,83 @@
+stacks: 26 threads over 0.69 s (3.29 to 3.98 s); 8,943 samples and 3,074 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.2 ms)
+where the threads' time went (18.0 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       0.9%   0.17     the CPU in .NET code
+outside .NET code       2.8%   0.50     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.01%  0.00     spin-waits: a core burned while waiting
+stopped by the runtime  0.2%   0.03     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 96.1%  17.31    blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.0 threads on average of 24 processors; garbage collections: 2, every thread stopped 0.03 s in all (the longest 15.4 ms)
+methods by their own time (all time; 18.01 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  ----------------------------------------------------------------------
+16,620  92.3%  0.00%         16,620    92.3%  LowLevelLifoSemaphore.WaitForSignal
+693     3.8%   0.00%         693       3.8%   WaitHandle.WaitOneNoCheck
+457     2.5%   100.0%        457       2.5%   CudaBackend.DownloadRange
+25.4    0.1%   100.0%        25.4      0.1%   CudaDriver.cuModuleLoadDataEx
+16.1    0.09%  0.00%         16.9      0.09%  StringBuilder.AppendInterpolatedStringHandler.AppendFormatted
+14.0    0.08%  0.00%         52.3      0.3%   CudaBackend.LoadImage
+8.3     0.05%  0.00%         8.3       0.05%  GC.AllocateUninitializedArray.AllocateNewArrayWorker
+8.0     0.04%  0.00%         9.1       0.05%  Encoding.GetBytes
+5.9     0.03%  66.1%         5.9       0.03%  CudaBackend.Idrak.Abstraction.Devices.IGraphCaptureBackend.ReplayGraph
+5.4     0.03%  0.00%         10.2      0.06%  String.Concat
+3.6     0.02%  80.4%         3.6       0.02%  Buffer.MemmoveInternal
+3.5     0.02%  0.00%         4.1       0.02%  StringBuilder.ToString
+3.5     0.02%  3.5%          33.2      0.2%   CudaBackend.MeasureNative
+3.5     0.02%  0.00%         683       3.8%   TextGenerator.Stream (async)
+3.3     0.02%  0.00%         5.2       0.03%  String.Ctor
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  ------------------------------
+694       3.9%   0.0     Program.<Main>$
+694       3.9%   0.0     CommandLine.Run
+694       3.9%   0.1     CommandLine.RunOn
+694       3.9%   0.1     CommandLine.Dispatch
+694       3.9%   0.9     BenchCommand.Run
+690       3.8%   1.2     BenchCommand.BenchModel
+686       3.8%   1.8     TextGenerator.Generate
+683       3.8%   3.5     TextGenerator.Stream (async)
+458       2.5%   0.3     TokenSampler.Read
+457       2.5%   0.3     Tensor.CopyTo
+457       2.5%   457     CudaBackend.DownloadRange
+437       2.4%   0.5     TextGenerator.Stream.Collect
+190       1.1%   1.0     Sequential.ForwardCached
+184       1.0%   0.9     TextGenerator.Stream.Prefill
+183       1.0%   0.2     Sequential.ForwardCached.Layer
+allocations (77 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB  Share  Type                       Allocated in                     Called from
+---  -----  -------------------------  -------------------------------  ------------------------------
+9.7  12.7%  System.String              CudaBackend.LoadImage            CudaBackend.LoadModule
+8.0  10.4%  System.Char[]              PtxKernels.get_TensorCoreSource  PtxKernels..cctor (lambda)
+7.4  9.6%   System.String              PtxKernels.Module                PtxKernels..cctor (lambda)
+7.3  9.5%   System.String              PtxKernels.get_TensorCoreSource  PtxKernels..cctor (lambda)
+5.1  6.6%   System.Char[]              PtxKernels.TensorCoreGemm        PtxKernels..cctor (lambda)
+5.0  6.5%   System.Byte[]              CudaBackend.LoadImage            CudaBackend.LoadModule
+2.5  3.3%   System.Byte[]              TuningCache.LibraryBuild         CudaBackend.get_TuningIdentity
+1.9  2.4%   System.Char[]              PtxKernels.EmitTensorEpilogue    PtxKernels.TensorCoreGemm
+1.5  2.0%   System.Char[]              PtxBuilder.Finish                PtxKernels.NativeMma
+1.4  1.9%   System.Text.StringBuilder  PtxKernels.TensorCoreGemm        PtxKernels..cctor (lambda)
+1.4  1.8%   System.Int32               PtxKernels.EmitTensorEpilogue    PtxKernels.TensorCoreGemm
+1.2  1.5%   System.Single[]            TokenSampler..ctor               TokenSampler.Create
+1.1  1.5%   System.Text.StringBuilder  PtxKernels.EmitTensorEpilogue    PtxKernels.TensorCoreGemm
+1.1  1.5%   System.String              PtxBuilder.Finish                PtxKernels.NativeMma
+1.0  1.4%   System.Char[]              PtxKernels.EightBitGemm          PtxKernels.BuildEightBit
+threads (the busiest first):
+Thread  Busy ms  Running  Outside  Spinning  Stopped  Waiting  Busiest in
+------  -------  -------  -------  --------  -------  -------  -------------------------
+10444   666      24.1%    71.8%    0.07%     4.0%     0.00%    CudaBackend.DownloadRange
+5364    2.0      0.00%    0.00%    0.3%      0.00%    99.7%    WaitHandle.WaitOneNoCheck
+25084   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+8288    0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+26468   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+20096   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+18368   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+22368   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+18768   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+544     0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+20256   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+28324   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+21108   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+10432   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+22432   0.0      0.00%    0.00%    0.00%     0.00%    100.0%   -
+files: the trace D:\Projects\idrak\test-output\adad\m6-proof-1.7b\trace-cuda-q8_0-adad.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\m6-proof-1.7b\trace-cuda-q8_0-adad.speedscope.json (https://www.speedscope.app)

@@ -1,0 +1,4 @@
+cuda06 int8     adad  fill   prompt    49163  generation     653  weights    887 MiB  peak   1116 MiB  exit 0
+cuda06 int8     name  fill   prompt    48058  generation     445  weights    887 MiB  peak   1050 MiB  exit 0
+cuda06 q4_0     adad  fill   prompt    45181  generation     577  weights    637 MiB  peak    865 MiB  exit 0
+cuda06 q4_0     name  fill   prompt    34460  generation     257  weights   2590 MiB  peak   2715 MiB  exit 0
