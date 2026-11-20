@@ -586,10 +586,17 @@ public sealed class ElementType : IKind
         ToFloat32 = ElementConversions.Int4ToFloat32, FromFloat32 = ElementConversions.Int4FromFloat32,
     };
 
-    /// <summary>2-bit signed integer, four a byte (the first in the low bits).</summary>
+    /// <summary>
+    /// 2-bit signed integer codes (two's complement: −2, −1, 0, 1), four a byte, the first value in the lowest bits, in blocks
+    /// of 32 values, each block one float16 scale (its first 2 bytes) and its 8 bytes of codes: value = code · scale (10
+    /// bytes a block, 2.5 bits a value). A 2-bit code holds no weight's value without a scale: the scale is part of the type.
+    /// </summary>
     public static readonly ElementType Int2 = new()
     {
-        Name = "int2", Summary = "2-bit signed integer in [-2, 1], four a byte, the first value in the lowest bits", BlockBits = 2, IsSigned = true, IsInteger = true, Kernels = [],
+        Name = "int2", Summary = "2-bit signed integer codes (-2..1, two's complement, four a byte, the first in the lowest bits) in blocks of 32, each with one float16 scale: value = code * scale (10 bytes a block)",
+        BlockSize = 32, BlockBits = 80, IsSigned = true, Kernels = [],
+        Scales = new BlockScales("float16", 1, false, "one scale d, then 32 2-bit codes, four a byte"),
+        Scaled = new ScaledBlock(32, 10, 2, SignedCodes: true, CodeBias: 0, new FloatBits(5, 10), ScaleOffset: 0, CodeOffset: 2),
         ToFloat32 = ElementConversions.Int2ToFloat32, FromFloat32 = ElementConversions.Int2FromFloat32,
     };
 
@@ -832,8 +839,9 @@ public sealed record ElementTypeChoice(ElementType Type, bool Picked, string? So
 
 /// <summary>
 /// The element types, by name (ignoring case): the per-element types float32, bfloat16, float16, float8_e4m3,
-/// float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2, which Idrak.Abstraction
-/// registers, and the block formats the packages register (Idrak adds ggml's, from its GGUF types). The short names
+/// float8_e5m2, int64, int32, int8, uint8, int4, bool, int16, uint16, float64, uint32, uint64 and uint2 and the block type
+/// int2 (2-bit codes, 32 a block with a float16 scale), which Idrak.Abstraction registers, and the block formats the
+/// packages register (Idrak adds ggml's, from its GGUF types). The short names
 /// bf16, f16, fp16, half, f32, fp32, f64, fp64, double and fp8 find their types too. A name nobody registered is refused
 /// with "not registered". The type a run computes in on a device comes from a run's option (<c>--dtype</c>), else
 /// <see cref="EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else <see cref="Auto"/> (the default, plan 37 T2), which
@@ -1377,21 +1385,163 @@ internal static class ElementConversions
         }
     }
 
-    public static void Int2ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    // int2's blocks, by its description (ScaledToFloat32).
+    public static void Int2ToFloat32(ReadOnlySpan<byte> source, Span<float> destination) => ScaledToFloat32(ElementType.Int2.Scaled!, source, destination);
+
+    /// <summary>
+    /// Whole blocks of a scaled-block type (<see cref="ScaledBlock"/>) widened by its description alone: each value
+    /// (code's value + bias) · scale, the code's value its table entry or the code (two's complement where signed), read
+    /// through a table of every code byte's values made once a description (<see cref="ScaledPlan"/>).
+    /// </summary>
+    public static void ScaledToFloat32(ScaledBlock block, ReadOnlySpan<byte> source, Span<float> destination)
     {
-        for (int i = 0; i < destination.Length; i++)
+        var plan = ScaledPlan.Of(block);
+        int per = plan.PerByte, codeBytes = block.Values * block.CodeBits / 8;
+        for (int b = 0; b < destination.Length / block.Values; b++)
         {
-            int bits = source[i >> 2] >> ((i & 3) * 2) & 0x3;
-            destination[i] = (bits ^ 2) - 2;                                    // sign-extend 2 bits
+            var bytes = source.Slice(b * block.Bytes, block.Bytes);
+            float scale = plan.Scale(bytes);
+            var into = destination.Slice(b * block.Values, block.Values);
+            var codes = bytes.Slice(block.CodeOffset, codeBytes);
+            for (int i = 0; i < codeBytes; i++)
+            {
+                var values = plan.Values.AsSpan(codes[i] * per, per);
+                for (int j = 0; j < per; j++)
+                {
+                    into[block.NibblesSplit ? i + j * codeBytes : i * per + j] = values[j] * scale;
+                }
+            }
         }
     }
 
+    /// <summary>A scaled-block description read once: each code byte's values before the scale (code's value + bias), the scale's reading.</summary>
+    internal sealed class ScaledPlan
+    {
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ScaledBlock, ScaledPlan> Plans = new();
+
+        private readonly ScaledBlock block;
+
+        private ScaledPlan(ScaledBlock block)
+        {
+            this.block = block;
+            PerByte = 8 / block.CodeBits;
+            int mask = (1 << block.CodeBits) - 1;
+            Values = new float[256 * PerByte];
+            for (int b = 0; b < 256; b++)
+            {
+                for (int j = 0; j < PerByte; j++)
+                {
+                    int code = b >> (j * block.CodeBits) & mask;
+                    int value = block.CodeTable is { } table ? table[code] : block.SignedCodes ? code << (32 - block.CodeBits) >> (32 - block.CodeBits) : code;
+                    Values[b * PerByte + j] = value + block.CodeBias;
+                }
+            }
+        }
+
+        /// <summary>Codes a byte holds (8 / CodeBits).</summary>
+        public int PerByte { get; }
+
+        /// <summary>Byte b's codes' values (before the scale) at [b · PerByte, (b + 1) · PerByte), its lowest bits first.</summary>
+        public float[] Values { get; }
+
+        /// <summary>The plan of <paramref name="block"/> (codes of 1, 2, 4 or 8 bits).</summary>
+        /// <exception cref="NotSupportedException">Codes of another width.</exception>
+        public static ScaledPlan Of(ScaledBlock block) => block.CodeBits is 1 or 2 or 4 or 8
+            ? Plans.GetValue(block, static b => new ScaledPlan(b))
+            : throw new NotSupportedException($"A scaled block's codes of {block.CodeBits} bits are not read by bytes.");
+
+        /// <summary>The block's scale: a float of the description's bits (float16, bfloat16 or float32).</summary>
+        public float Scale(ReadOnlySpan<byte> bytes)
+        {
+            var at = bytes[block.ScaleOffset..];
+            return block.Scale switch
+            {
+                { Exponent: 5, Mantissa: 10 } => (float)System.Buffers.Binary.BinaryPrimitives.ReadHalfLittleEndian(at),
+                { Exponent: 8, Mantissa: 7 } => BitConverter.Int32BitsToSingle(System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(at) << 16),
+                { Exponent: 8, Mantissa: 23 } => System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(at),
+                var other => throw new NotSupportedException($"A scale of {other.Exponent} exponent and {other.Mantissa} mantissa bits is not read here."),
+            };
+        }
+    }
+
+    /// <summary>
+    /// int2's blocks from float32 values: per block of 32, the float16 scale d whose codes clamp(round(x / d), −2, 1) give the
+    /// least squared error among candidates (the codes reach twice as far below zero as above, so d's sign puts the value
+    /// of largest magnitude on −2 or on 1: d = −xmax / t for t in 1.5, 2, 2.5, 3, and d = xmax / t for t in 1, 1.25, 1.5,
+    /// each refined once by least squares over its codes), then the codes rounded again with d as stored. A block of zeros
+    /// has d = 0 and every code 0.
+    /// </summary>
     public static void Int2FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
     {
-        destination[..(int)((source.Length + 3L) / 4)].Clear();
-        for (int i = 0; i < source.Length; i++)
+        ReadOnlySpan<float> below = [1.5f, 2f, 2.5f, 3f], above = [1f, 1.25f, 1.5f];
+        for (int b = 0; b < source.Length / 32; b++)
         {
-            destination[i >> 2] |= (byte)((Saturate(source[i], -2, 1) & 0x3) << ((i & 3) * 2));
+            var x = source.Slice(b * 32, 32);
+            var block = destination.Slice(b * 10, 10);
+            float xmax = 0f;
+            foreach (float v in x)
+            {
+                if (MathF.Abs(v) > MathF.Abs(xmax))
+                {
+                    xmax = v;
+                }
+            }
+
+            float best = 0f;
+            double bestError = double.MaxValue;
+            if (xmax != 0f && float.IsFinite(xmax))
+            {
+                foreach (float t in below)
+                {
+                    Try(x, -xmax / t, ref best, ref bestError);
+                }
+
+                foreach (float t in above)
+                {
+                    Try(x, xmax / t, ref best, ref bestError);
+                }
+            }
+
+            var d = (Half)best;
+            System.Buffers.Binary.BinaryPrimitives.WriteHalfLittleEndian(block, d);
+            float stored = (float)d, inverse = stored != 0f ? 1f / stored : 0f;
+            for (int i = 0; i < 8; i++)
+            {
+                int bits = 0;
+                for (int j = 0; j < 4; j++)
+                {
+                    bits |= (Code(x[4 * i + j] * inverse) & 3) << (2 * j);
+                }
+
+                block[2 + i] = (byte)bits;
+            }
+        }
+
+        static int Code(float t) => float.IsNaN(t) ? 0 : (int)Math.Clamp(MathF.Round(t), -2f, 1f);
+
+        // The squared error of the codes for scale d, and of their least-squares scale; the better kept in (best, error).
+        static void Try(ReadOnlySpan<float> x, float d, ref float best, ref double error)
+        {
+            for (int pass = 0; pass < 2 && d != 0f && float.IsFinite(d); pass++)
+            {
+                double xq = 0, qq = 0, e = 0;
+                float inverse = 1f / d;
+                foreach (float v in x)
+                {
+                    int q = Code(v * inverse);
+                    xq += (double)v * q;
+                    qq += q * q;
+                    double r = v - (double)q * d;
+                    e += r * r;
+                }
+
+                if (e < error)
+                {
+                    (best, error) = (d, e);
+                }
+
+                d = qq > 0 ? (float)(xq / qq) : 0f;
+            }
         }
     }
 

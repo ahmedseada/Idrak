@@ -21,8 +21,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // row lane up to 8 rows and the panel lane above; the measured route the faster of the two at the shape, measured once
 // (Faster). These formats are read where they are stored and never widened under the measured route (IRowFormat, the
 // shared part below): a 4-bit super-block (NibbleFormat: ggml's Q4_K by its description), a 32-value block of 4-bit
-// codes with one float16 scale (ScaledFormat: ggml's q4_0), a 6-bit super-block (SixFormat: ggml's Q6_K) and 64-bit
-// integer codes with a scale an output row (LongFormat: int64), each with its codes decoded in registers inside the dot
+// codes with one float16 scale (ScaledFormat: ggml's q4_0), a 6-bit super-block (SixFormat: ggml's Q6_K), 64-bit
+// integer codes with a scale an output row (LongFormat: int64) and a 32-value block of 2-bit codes with one float16
+// scale (TwoBitFormat: int2), each with its codes decoded in registers inside the dot
 // products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; bfloat16
 // (BFloat16Format), its values made float32 in registers; and float64 (DoubleFormat), its values multiplied as they are
 // in float64 FMAs; the faster lane at each shape.
@@ -305,7 +306,7 @@ internal sealed partial class CpuBackend
 
         var type = weight.ElementType;
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64) under the measured route: only the
+        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64, int2) under the measured route: only the
         // format's lanes, which never widen it, the shape's lane measured once (Chosen).
         if (ProductRoutes.Current == ProductRoute.Measured)
         {
@@ -864,7 +865,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64) sharing x, under the
+    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64, int2) sharing x, under the
     // measured route (the queries, keys and values; the gate and up): in one pass, any rows; offered once such a weight has
     // been multiplied here, so the groups of other types' weights are not asked (their outputs allocated) only to run one
     // by one.
@@ -1407,7 +1408,7 @@ internal sealed partial class CpuBackend
 
     // The CPU multiplies weights of these formats where their rows are stored, writing nothing of a weight anywhere: q4_k's
     // super-blocks (NibbleFormat), q4_0's 32-value blocks (ScaledFormat), q6_k's super-blocks (SixFormat), bfloat16
-    // (BFloat16Format), int64's codes (LongFormat) and float64 (DoubleFormat). A format brings what
+    // (BFloat16Format), int64's codes (LongFormat), float64 (DoubleFormat) and int2's 32-value blocks (TwoBitFormat). A format brings what
     // it alone knows (IRowFormat: its description, its two lanes, what each makes of x first, the rows a group takes, the
     // scratch and the kernels over a tile, IRowKernels); the rest is theirs together: the list of formats (FormatOf), the
     // routed product and its lane measured per shape (RowProduct, ILaneChoice, Chosen), the grouped pass (FormatGrouped),
@@ -1592,6 +1593,12 @@ internal sealed partial class CpuBackend
             return true;
         }
 
+        if (TwoBitFormat.Reads(type, k, out var int2))
+        {
+            use.Use<TwoBitFormat, TwoBitKernels>(int2);
+            return true;
+        }
+
         return false;
     }
 
@@ -1680,10 +1687,10 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>
-    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, q6_k, bfloat16, int64, float64:
+    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, q6_k, bfloat16, int64, float64, int2:
     /// FormatOf) of n rows stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), each output times
     /// its row's scale where <paramref name="scales"/> are given, by the format's first lane or, with
-    /// <paramref name="second"/>, its second (q4_k, q4_0, q6_k and int64: decoded, integer; bfloat16: shifted, paired; float64: decoded, mixed). False
+    /// <paramref name="second"/>, its second (q4_k, q4_0, q6_k, int64 and int2: decoded, integer; bfloat16: shifted, paired; float64: decoded, mixed). False
     /// where no format reads the type, or the second lane does not run on this CPU. For tests: each lane apart from the
     /// measured choice.
     /// </summary>
@@ -2040,9 +2047,12 @@ internal sealed partial class CpuBackend
 
     // The float16 scales of 8 blocks (block l's at `at` + offsets[l]) as float32, exactly (subnormals, infinities and NaNs too).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe Vector256<float> HalfScales(byte* at, Vector256<int> offsets)
+    private static unsafe Vector256<float> HalfScales(byte* at, Vector256<int> offsets) => HalfLanes(Avx2.GatherVector256((int*)at, offsets, 1));
+
+    // The float16 in each lane's low 16 bits as float32, exactly (subnormals, infinities and NaNs too).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<float> HalfLanes(Vector256<int> bits)
     {
-        var bits = Avx2.GatherVector256((int*)at, offsets, 1);
         var magnitude = bits & Vector256.Create(0x7FFF);
         var value = (Vector256.ShiftLeft(magnitude, 13).AsSingle() * Vector256.Create(0x77800000).AsSingle()).AsInt32();   // · 2^112
         var special = Vector256.GreaterThan(magnitude, Vector256.Create(0x7BFF)) & Vector256.Create(0x7F800000);
@@ -3205,6 +3215,490 @@ internal sealed partial class CpuBackend
         public float Single(byte* row, int i) => mixed
             ? (float)WideMixedSum<DoubleLoad>(row, x + (nint)i * k, k)
             : (float)WideSum<DoubleLoad>(row, (double*)x + (nint)i * k, k);
+    }
+
+    // ------------------------------------------------------------------ 32-value blocks of 2-bit codes read where they are stored
+
+    // A scaled block of 32 2-bit codes in value order (four a byte, the first in the lowest bits) with one float16 scale
+    // (TwoBitBlocks: int2's weights by their description, two's complement codes −2..1, or unsigned ones with a bias) takes,
+    // under the measured route, two lanes neither of which writes the weight's values anywhere: the decoded lane makes each
+    // block's values 8 at a time in registers through a table of the block's four values (the codes' values times its
+    // scale: the values the type's conversion gives, bit for bit) and multiplies them with x in float32; the integer lane
+    // rounds x to int8 a block of 32 values and takes the CPU's int8 dot products of x's codes with the stored codes, eight
+    // blocks' code words gathered into eight lanes and each word's four bit pairs a step, the codes' offset added through
+    // x's code sums and the float scales applied eight blocks at a time. The measured route keeps the faster at each shape.
+
+    // int2 as a format read where it is stored (IRowFormat): a 32-value block of 2-bit codes (TwoBitBlocks) by its
+    // description; the decoded lane timed against the integer lane; x rounded to int8 for the integer lane
+    // (RoundTwoBitRows); no scratch (TwoBitKernels: each group of blocks' scales and codes gathered as it is read).
+    private readonly unsafe struct TwoBitFormat : IRowFormat<TwoBitFormat, TwoBitKernels>
+    {
+        private readonly TwoBitBlocks plan;
+
+        private TwoBitFormat(TwoBitBlocks plan) => this.plan = plan;
+
+        public static bool Reads(ElementType type, int k, out TwoBitFormat format)
+        {
+            format = type.Scaled is { } block && k % TwoBitBlocks.Values == 0 && TwoBitBlocks.Of(block) is { } found ? new TwoBitFormat(found) : default;
+            return format.plan is not null;
+        }
+
+        public int First => DecodedLaneId;
+
+        public int Second => IntegerLaneId;
+
+        public bool BothRun => true;
+
+        public int Unmeasured => IntegerLaneId;
+
+        public int GroupBytes => TwoBitGroupBytes;
+
+        // A group of stored rows by 32 rows of x (GroupTile). (Columns over up to 128 rows of x, a group's steps read by all
+        // of them: no faster, 683 tokens a second on prompts either way.)
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => GroupTile(total, rowBytes, TwoBitGroupBytes);
+
+        public int Span(int k) => k;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            if (lane != IntegerLaneId)
+            {
+                return new LaneInput(x, false, null, null);
+            }
+
+            int groups = TwoBitBlocks.Groups(k);
+            var codes = ArrayPool<sbyte>.Shared.Rent(m * groups * TwoBitBlocks.GroupCodes);
+            var scales = ArrayPool<float>.Shared.Rent(m * groups * 16);
+            RoundTwoBitRows(x, codes, scales, m, k, plan.Offset);
+            return new LaneInput(x, false, codes, scales);
+        }
+
+        // The integer lane's steps and scales of a group's stored rows (TwoBitSteps: 72 floats' room a group of 8 blocks), as
+        // floats, which the shared driver does not clear (every one is written before it is read).
+        public (int Floats, int Bytes) Scratch(int k, int group) => (group * TwoBitBlocks.Groups(k) * TwoBitStepFloats, 0);
+
+        public TwoBitKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(lane == IntegerLaneId, plan, k, x, floats);
+    }
+
+    // Stored bytes a group of int2 rows takes with more than one row of x (RowGroups).
+    private const int TwoBitGroupBytes = 16384;
+
+    // Floats of scratch a group of 8 blocks' steps and scales take (TwoBitSteps): 8 steps of 32 bytes, then 8 scales.
+    private const int TwoBitStepFloats = 72;
+
+    // The int2 lanes as RowGroups' kernels. The integer lane: a group's stored rows made into steps once (TwoBitSteps: each
+    // group of 8 blocks' codes gathered and split into its 8 steps, its scales gathered), which every four rows of x then
+    // read; a row read alone gathers each group as it reads it. The decoded lane: nothing to set up.
+    private readonly unsafe struct TwoBitKernels : IRowKernels
+    {
+        private readonly bool integer;
+        private readonly TwoBitBlocks plan;
+        private readonly int k, blocks, groups;
+        private readonly nint xStride, sStride;
+        private readonly float* x, xs, steps;
+        private readonly sbyte* xq;
+
+        public TwoBitKernels(bool integer, TwoBitBlocks plan, int k, LanePointers input, float* steps)
+        {
+            this.integer = integer;
+            this.plan = plan;
+            this.k = k;
+            this.steps = steps;
+            blocks = k / TwoBitBlocks.Values;
+            groups = TwoBitBlocks.Groups(k);
+            xStride = (nint)groups * TwoBitBlocks.GroupCodes;
+            sStride = (nint)groups * 16;
+            x = input.Values;
+            xq = input.Codes;
+            xs = input.Scales;
+        }
+
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+            if (integer)
+            {
+                for (int c = 0; c < count; c++)
+                {
+                    TwoBitSteps(stored + (c0 + c) * rowBytes, plan, blocks, steps + (nint)c * groups * TwoBitStepFloats);
+                }
+            }
+        }
+
+        // All of k a pass (Span: k).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                TwoBitIntegerFour(steps + (nint)c * groups * TwoBitStepFloats, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                TwoBitDecodedFour(row, plan, blocks, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => Single(row, i);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i) => integer
+            ? TwoBitIntegerOne(row, plan, blocks, xq + i * xStride, xs + i * sStride)
+            : TwoBitDecodedOne(row, plan, blocks, x + (nint)i * k);
+    }
+
+    // x rounded to int8 for the 2-bit integer lane, row by row (RoundTwoBitRow), over the threads where x is large.
+    private static void RoundTwoBitRows(float[] x, sbyte[] codes, float[] scales, int m, int k, int offset)
+    {
+        int groups = TwoBitBlocks.Groups(k), rowCodes = groups * TwoBitBlocks.GroupCodes, rowScales = groups * 16;
+        if (m > 1 && (long)m * k >= 1 << 16)
+        {
+            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundTwoBitRow(x.AsSpan(i * k, k), codes.AsSpan(i * rowCodes, rowCodes), scales.AsSpan(i * rowScales, rowScales), offset));
+            return;
+        }
+
+        for (int i = 0; i < m; i++)
+        {
+            RoundTwoBitRow(x.AsSpan(i * k, k), codes.AsSpan(i * rowCodes, rowCodes), scales.AsSpan(i * rowScales, rowScales), offset);
+        }
+    }
+
+    // A row of x rounded to int8 a block of 32 values at a time (the block's scale amax / 127, 0 where every value is 0; its
+    // codes value · 127 / amax rounded to even), laid out a group of 8 blocks at a time in the integer kernels' step order
+    // (step 4h + p, lane l: block l's values 16h + 4j + p for j = 0..3, 32 bytes a step); per group 16 floats: the blocks'
+    // scales at 0-7 and, as int32 bits at 8-15, the codes' offset times each block's code sum. A last group short of 8
+    // blocks is padded with zero codes, scales and sums. The integer lane's product is then the product of x so rounded.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void RoundTwoBitRow(ReadOnlySpan<float> x, Span<sbyte> codes, Span<float> scales, int offset)
+    {
+        Span<sbyte> natural = stackalloc sbyte[TwoBitBlocks.Values];
+        ref float row = ref MemoryMarshal.GetReference(x);
+        int blocks = x.Length / TwoBitBlocks.Values;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            int count = Math.Min(TwoBitBlocks.Group, blocks - g * TwoBitBlocks.Group);
+            var into = scales.Slice(g * 16, 16);
+            var sums = MemoryMarshal.Cast<float, int>(into[8..]);
+            var group = codes.Slice(g * TwoBitBlocks.GroupCodes, TwoBitBlocks.GroupCodes);
+            if (count < TwoBitBlocks.Group)
+            {
+                into.Clear();
+                group.Clear();
+            }
+
+            for (int l = 0; l < count; l++)
+            {
+                ref float v = ref Unsafe.Add(ref row, (g * TwoBitBlocks.Group + l) * TwoBitBlocks.Values);
+                var v0 = Vector256.LoadUnsafe(ref v);
+                var v1 = Vector256.LoadUnsafe(ref v, 8);
+                var v2 = Vector256.LoadUnsafe(ref v, 16);
+                var v3 = Vector256.LoadUnsafe(ref v, 24);
+                var most = Vector256.Max(Vector256.Max(Vector256.Abs(v0), Vector256.Abs(v1)), Vector256.Max(Vector256.Abs(v2), Vector256.Abs(v3)));
+                var top = Vector128.Max(most.GetLower(), most.GetUpper());
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(2, 3, 0, 1)));
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(1, 0, 3, 2)));
+                float amax = top.ToScalar();
+                var inverse = Vector256.Create(amax > 0f ? 127f / amax : 0f);
+                var q0 = Vector256.ConvertToInt32(Vector256.Round(v0 * inverse));
+                var q1 = Vector256.ConvertToInt32(Vector256.Round(v1 * inverse));
+                var q2 = Vector256.ConvertToInt32(Vector256.Round(v2 * inverse));
+                var q3 = Vector256.ConvertToInt32(Vector256.Round(v3 * inverse));
+                Vector256.Narrow(Vector256.Narrow(q0, q1), Vector256.Narrow(q2, q3)).CopyTo(natural);
+                into[l] = amax / 127f;
+                sums[l] = offset * Vector256.Sum((q0 + q1) + (q2 + q3));
+                for (int h = 0; h < 2; h++)
+                {
+                    for (int p = 0; p < 4; p++)
+                    {
+                        int step = (4 * h + p) * 32 + 4 * l;
+                        for (int j = 0; j < 4; j++)
+                        {
+                            group[step + j] = natural[16 * h + 4 * j + p];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The lanes of a group of `count` blocks (all for a whole group of 8): lane l set where l < count.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector256<int> GroupMask(int count) => Vector256.LessThan(Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7), Vector256.Create(count));
+
+    // The dword at `at` + offsets[l] in lane l, for the lanes of `mask` (0 elsewhere, nothing read there).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<int> GroupWords(byte* at, Vector256<int> offsets, Vector256<int> mask) =>
+        Avx2.GatherMaskVector256(Vector256<int>.Zero, (int*)at, offsets, mask, 1);
+
+    // f + a group's sums for a row of x: its 8 steps dotted with x's (32 bytes a step from `x`), each block's sum in its lane
+    // from x's code sum times the codes' offset (`xs` + 8), then times the blocks' scales `dw` and x's (`xs`).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<float> TwoBitGroup(Vector256<float> f, Vector256<byte> s0, Vector256<byte> s1, Vector256<byte> s2, Vector256<byte> s3,
+        Vector256<byte> s4, Vector256<byte> s5, Vector256<byte> s6, Vector256<byte> s7, Vector256<float> dw, sbyte* x, float* xs)
+    {
+        var i = Vector256.Load((int*)(xs + 8));
+        i = DotAt(i, s0, x);
+        i = DotAt(i, s1, x + 32);
+        i = DotAt(i, s2, x + 64);
+        i = DotAt(i, s3, x + 96);
+        i = DotAt(i, s4, x + 128);
+        i = DotAt(i, s5, x + 160);
+        i = DotAt(i, s6, x + 192);
+        i = DotAt(i, s7, x + 224);
+        return Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), dw * Vector256.Load(xs), f);
+    }
+
+    // A stored row of `blocks` 2-bit blocks made into the integer lane's steps: each group of 8 blocks' two code words
+    // gathered into lane l per block (each code's high bit flipped where they are two's complement: code + 2), each word's
+    // four bit pairs a step (32 bytes), the group's 8 steps then its 8 scales (gathered, float16) into `into`,
+    // TwoBitStepFloats a group; a last group short of 8 blocks masked (its missing lanes 0).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void TwoBitSteps(byte* row, TwoBitBlocks plan, int blocks, float* into)
+    {
+        var low = Vector256.Create(0x03030303u);
+        var flip = Vector256.Create(plan.Flip);
+        var offsets = plan.Offsets;
+        nint bytes = plan.Bytes;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            var mask = GroupMask(blocks - g * TwoBitBlocks.Group);
+            byte* group = row + g * TwoBitBlocks.Group * bytes;
+            var c0 = GroupWords(group + plan.CodeOffset, offsets, mask).AsUInt32() ^ flip;
+            var c1 = GroupWords(group + plan.CodeOffset + 4, offsets, mask).AsUInt32() ^ flip;
+            byte* at = (byte*)(into + g * TwoBitStepFloats);
+            (c0 & low).Store((uint*)at);
+            (Vector256.ShiftRightLogical(c0, 2) & low).Store((uint*)(at + 32));
+            (Vector256.ShiftRightLogical(c0, 4) & low).Store((uint*)(at + 64));
+            (Vector256.ShiftRightLogical(c0, 6) & low).Store((uint*)(at + 96));
+            (c1 & low).Store((uint*)(at + 128));
+            (Vector256.ShiftRightLogical(c1, 2) & low).Store((uint*)(at + 160));
+            (Vector256.ShiftRightLogical(c1, 4) & low).Store((uint*)(at + 192));
+            (Vector256.ShiftRightLogical(c1, 6) & low).Store((uint*)(at + 224));
+            HalfLanes(GroupWords(group + plan.ScaleOffset, offsets, mask)).Store((float*)(at + 256));
+        }
+    }
+
+    // Four rows of x (codes from `x`, a row every `xStride`; scales and code sums from `xs`, a row every `sStride`) by one
+    // stored row made into steps (TwoBitSteps, `groups` groups of 8 blocks from `steps`): each step loaded once and dotted
+    // with each row's; a block's sum (its codes' offset times x's code sum to start) in its lane; then the blocks' scales
+    // times x's, 8 blocks at a time.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void TwoBitIntegerFour(float* steps, int groups, sbyte* x, float* xs, nint xStride, nint sStride,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = (byte*)(steps + g * TwoBitStepFloats);
+            sbyte* xg = x + g * TwoBitBlocks.GroupCodes;
+            float* sg = xs + g * 16;
+            var i0 = Vector256.Load((int*)(sg + 8));
+            var i1 = Vector256.Load((int*)(sg + sStride + 8));
+            var i2 = Vector256.Load((int*)(sg + 2 * sStride + 8));
+            var i3 = Vector256.Load((int*)(sg + 3 * sStride + 8));
+            for (int s = 0; s < 8; s++)
+            {
+                var step = Vector256.Load(at + 32 * s);
+                i0 = DotAt(i0, step, xg + 32 * s);
+                i1 = DotAt(i1, step, xg + xStride + 32 * s);
+                i2 = DotAt(i2, step, xg + 2 * xStride + 32 * s);
+                i3 = DotAt(i3, step, xg + 3 * xStride + 32 * s);
+            }
+
+            var dw = Vector256.Load((float*)(at + 256));
+            f0 = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i0), dw * Vector256.Load(sg), f0);
+            f1 = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i1), dw * Vector256.Load(sg + sStride), f1);
+            f2 = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i2), dw * Vector256.Load(sg + 2 * sStride), f2);
+            f3 = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i3), dw * Vector256.Load(sg + 3 * sStride), f3);
+        }
+
+        y0 = Vector256.Sum(f0);
+        y1 = Vector256.Sum(f1);
+        y2 = Vector256.Sum(f2);
+        y3 = Vector256.Sum(f3);
+    }
+
+    // TwoBitIntegerFour for one row of x.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float TwoBitIntegerOne(byte* row, TwoBitBlocks plan, int blocks, sbyte* x, float* xs)
+    {
+        var low = Vector256.Create(0x03030303u);
+        var flip = Vector256.Create(plan.Flip);
+        var offsets = plan.Offsets;
+        nint bytes = plan.Bytes;
+        Vector256<float> f = default;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            var mask = GroupMask(blocks - g * TwoBitBlocks.Group);
+            byte* group = row + g * TwoBitBlocks.Group * bytes;
+            var c0 = GroupWords(group + plan.CodeOffset, offsets, mask).AsUInt32() ^ flip;
+            var c1 = GroupWords(group + plan.CodeOffset + 4, offsets, mask).AsUInt32() ^ flip;
+            f = TwoBitGroup(f, (c0 & low).AsByte(), (Vector256.ShiftRightLogical(c0, 2) & low).AsByte(), (Vector256.ShiftRightLogical(c0, 4) & low).AsByte(),
+                (Vector256.ShiftRightLogical(c0, 6) & low).AsByte(), (c1 & low).AsByte(), (Vector256.ShiftRightLogical(c1, 2) & low).AsByte(),
+                (Vector256.ShiftRightLogical(c1, 4) & low).AsByte(), (Vector256.ShiftRightLogical(c1, 6) & low).AsByte(),
+                HalfLanes(GroupWords(group + plan.ScaleOffset, offsets, mask)), x + g * TwoBitBlocks.GroupCodes, xs + g * 16);
+        }
+
+        return Vector256.Sum(f);
+    }
+
+    // Four rows of x (float32, k a row, from `x`) by one stored row of `blocks` 2-bit blocks: each group's 8 scales gathered
+    // (float16), then each block's codes 8 at a time made float32 in registers through the block's table of its four values
+    // times its scale (a 32-bit word of 16 codes shifted by each value's 2-bit place, the table lane picked by the low 3
+    // bits: the table repeats every 4), each multiplied with the four rows; alternate vectors in their own sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void TwoBitDecodedFour(byte* row, TwoBitBlocks plan, int blocks, float* x, int k, out float y0, out float y1, out float y2, out float y3)
+    {
+        var first = Vector256.Create(0u, 2, 4, 6, 8, 10, 12, 14);
+        var second = Vector256.Create(16u, 18, 20, 22, 24, 26, 28, 30);
+        var values = plan.Table;
+        var offsets = plan.Offsets;
+        nint bytes = plan.Bytes, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            int count = Math.Min(TwoBitBlocks.Group, blocks - g * TwoBitBlocks.Group);
+            byte* group = row + g * TwoBitBlocks.Group * bytes;
+            var dw = HalfLanes(GroupWords(group + plan.ScaleOffset, offsets, GroupMask(count)));
+            for (int l = 0; l < count; l++)
+            {
+                var table = values * Avx2.PermuteVar8x32(dw, Vector256.Create(l));
+                byte* codes = group + l * bytes + plan.CodeOffset;
+                var lo = Vector256.Create(*(uint*)codes);
+                var hi = Vector256.Create(*(uint*)(codes + 4));
+                var w0 = Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(lo, first).AsInt32());
+                var w1 = Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(lo, second).AsInt32());
+                var w2 = Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(hi, first).AsInt32());
+                var w3 = Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(hi, second).AsInt32());
+                float* xb = x + (g * TwoBitBlocks.Group + l) * TwoBitBlocks.Values;
+                a0 = Fma.MultiplyAdd(w0, Vector256.Load(xb), a0);
+                b0 = Fma.MultiplyAdd(w1, Vector256.Load(xb + 8), b0);
+                a0 = Fma.MultiplyAdd(w2, Vector256.Load(xb + 16), a0);
+                b0 = Fma.MultiplyAdd(w3, Vector256.Load(xb + 24), b0);
+                a1 = Fma.MultiplyAdd(w0, Vector256.Load(xb + r1), a1);
+                b1 = Fma.MultiplyAdd(w1, Vector256.Load(xb + r1 + 8), b1);
+                a1 = Fma.MultiplyAdd(w2, Vector256.Load(xb + r1 + 16), a1);
+                b1 = Fma.MultiplyAdd(w3, Vector256.Load(xb + r1 + 24), b1);
+                a2 = Fma.MultiplyAdd(w0, Vector256.Load(xb + r2), a2);
+                b2 = Fma.MultiplyAdd(w1, Vector256.Load(xb + r2 + 8), b2);
+                a2 = Fma.MultiplyAdd(w2, Vector256.Load(xb + r2 + 16), a2);
+                b2 = Fma.MultiplyAdd(w3, Vector256.Load(xb + r2 + 24), b2);
+                a3 = Fma.MultiplyAdd(w0, Vector256.Load(xb + r3), a3);
+                b3 = Fma.MultiplyAdd(w1, Vector256.Load(xb + r3 + 8), b3);
+                a3 = Fma.MultiplyAdd(w2, Vector256.Load(xb + r3 + 16), a3);
+                b3 = Fma.MultiplyAdd(w3, Vector256.Load(xb + r3 + 24), b3);
+            }
+        }
+
+        y0 = Vector256.Sum(a0 + b0);
+        y1 = Vector256.Sum(a1 + b1);
+        y2 = Vector256.Sum(a2 + b2);
+        y3 = Vector256.Sum(a3 + b3);
+    }
+
+    // TwoBitDecodedFour for one row of x, each of a block's four vectors in its own sum.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float TwoBitDecodedOne(byte* row, TwoBitBlocks plan, int blocks, float* x)
+    {
+        var first = Vector256.Create(0u, 2, 4, 6, 8, 10, 12, 14);
+        var second = Vector256.Create(16u, 18, 20, 22, 24, 26, 28, 30);
+        var values = plan.Table;
+        var offsets = plan.Offsets;
+        nint bytes = plan.Bytes;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            int count = Math.Min(TwoBitBlocks.Group, blocks - g * TwoBitBlocks.Group);
+            byte* group = row + g * TwoBitBlocks.Group * bytes;
+            var dw = HalfLanes(GroupWords(group + plan.ScaleOffset, offsets, GroupMask(count)));
+            for (int l = 0; l < count; l++)
+            {
+                var table = values * Avx2.PermuteVar8x32(dw, Vector256.Create(l));
+                byte* codes = group + l * bytes + plan.CodeOffset;
+                var lo = Vector256.Create(*(uint*)codes);
+                var hi = Vector256.Create(*(uint*)(codes + 4));
+                float* xb = x + (g * TwoBitBlocks.Group + l) * TwoBitBlocks.Values;
+                a0 = Fma.MultiplyAdd(Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(lo, first).AsInt32()), Vector256.Load(xb), a0);
+                a1 = Fma.MultiplyAdd(Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(lo, second).AsInt32()), Vector256.Load(xb + 8), a1);
+                a2 = Fma.MultiplyAdd(Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(hi, first).AsInt32()), Vector256.Load(xb + 16), a2);
+                a3 = Fma.MultiplyAdd(Avx2.PermuteVar8x32(table, Avx2.ShiftRightLogicalVariable(hi, second).AsInt32()), Vector256.Load(xb + 24), a3);
+            }
+        }
+
+        return Vector256.Sum((a0 + a1) + (a2 + a3));
+    }
+
+    /// <summary>
+    /// A scaled-block format the 2-bit lanes read where it is stored, by its description alone (never its name): 32 values a
+    /// block, 2-bit codes in value order (four a byte, the first in the lowest bits), two's complement or unsigned with a
+    /// bias, no code table, one float16 scale a block (int2). Null for any other description, or where AVX2 and FMA do not
+    /// run.
+    /// </summary>
+    private sealed class TwoBitBlocks
+    {
+        /// <summary>Values a block holds.</summary>
+        public const int Values = 32;
+
+        /// <summary>Blocks the kernels take at a time (a lane each).</summary>
+        public const int Group = 8;
+
+        /// <summary>x's int8 codes a group takes in the integer lane (8 steps of 32).</summary>
+        public const int GroupCodes = Group * Values;
+
+        private static readonly ConditionalWeakTable<ScaledBlock, object> Plans = new();
+
+        private TwoBitBlocks(ScaledBlock b)
+        {
+            Bytes = b.Bytes;
+            CodeOffset = b.CodeOffset;
+            ScaleOffset = b.ScaleOffset;
+            Flip = b.SignedCodes ? 0xAAAAAAAAu : 0u;
+            Offset = b.SignedCodes ? b.CodeBias - 2 : b.CodeBias;
+            Offsets = Vector256.Create(0, Bytes, 2 * Bytes, 3 * Bytes, 4 * Bytes, 5 * Bytes, 6 * Bytes, 7 * Bytes);
+            Span<float> table = stackalloc float[8];
+            for (int u = 0; u < 8; u++)
+            {
+                int code = u & 3;
+                table[u] = (b.SignedCodes ? (code ^ 2) - 2 : code) + b.CodeBias;
+            }
+
+            Table = Vector256.Create<float>(table);
+        }
+
+        /// <summary>Bytes a block takes.</summary>
+        public int Bytes { get; }
+
+        /// <summary>The first code byte in a block.</summary>
+        public int CodeOffset { get; }
+
+        /// <summary>The scale's first byte in a block.</summary>
+        public int ScaleOffset { get; }
+
+        /// <summary>XORed into a word of codes for the integer lane: each code's high bit flipped where they are two's complement (code + 2), else nothing.</summary>
+        public uint Flip { get; }
+
+        /// <summary>Added to a code so flipped to give its value before the scale.</summary>
+        public int Offset { get; }
+
+        /// <summary>Block l's first byte from a group's, in lane l.</summary>
+        public Vector256<int> Offsets { get; }
+
+        /// <summary>The value (before the scale) of the code in a lane index's low two bits, lanes 4-7 repeating 0-3.</summary>
+        public Vector256<float> Table { get; }
+
+        /// <summary>Groups of 8 blocks a row of <paramref name="k"/> values takes (the last may be short).</summary>
+        public static int Groups(int k) => (k / Values + Group - 1) / Group;
+
+        /// <summary>The plan for <paramref name="block"/>, or null where the lanes do not read it.</summary>
+        public static TwoBitBlocks? Of(ScaledBlock block) => Plans.GetValue(block, static b => (object?)Make(b) ?? b) as TwoBitBlocks;
+
+        private static TwoBitBlocks? Make(ScaledBlock b)
+        {
+            bool reads = Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian
+                && b is { Values: Values, CodeBits: 2, NibblesSplit: false, CodeTable: null, Scale: { Exponent: 5, Mantissa: 10 }, CodeBias: >= -64 and <= 64 }
+                && b.CodeOffset >= 0 && b.CodeOffset + 8 <= b.Bytes && b.ScaleOffset >= 0 && b.ScaleOffset + 4 <= b.Bytes;
+            return reads ? new TwoBitBlocks(b) : null;
+        }
     }
 
     /// <summary>

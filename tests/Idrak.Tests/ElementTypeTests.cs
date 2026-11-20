@@ -17,7 +17,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] ElementTypesGroup =
     [
         ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
-        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
+        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4, int16, uint16 and float64; int2's blocks of 2-bit codes and a float16 scale as code · scale, its error no worse than plain rounding), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); float32 to and from bfloat16 and float16 on the device equal the CPU's bit for bit (NaN payloads, ties, subnormals, every 16-bit code); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, decodes as its GGUF type does, and encodes (q4_0's values back within half a step)", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
@@ -87,7 +87,6 @@ internal abstract partial class DesktopTests : Tests
             (ElementType.Int8, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -128f, 127f)),
             (ElementType.UInt8, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), 0f, 255f)),
             (ElementType.Int4, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -8f, 7f)),
-            (ElementType.Int2, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -2f, 1f)),
             (ElementType.Bool, x => x != 0f && !float.IsNaN(x) ? 1f : 0f),
             (ElementType.Int16, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -32768f, 32767f)),
             (ElementType.UInt16, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), 0f, 65535f)),
@@ -112,6 +111,35 @@ internal abstract partial class DesktopTests : Tests
             Check(t.ElementType == type && t.Size == values.Length && stored.AsSpan().SequenceEqual(bytes)
                   && read.Select(BitConverter.SingleToInt32Bits).SequenceEqual(back.Select(BitConverter.SingleToInt32Bits)),
                 $"{type} on {device}: a tensor's bytes and values as stored");
+        }
+
+        // int2: blocks of 32 2-bit codes with a float16 scale d. Each value comes back as code · d (code −2..1, d the block's
+        // first two bytes), the squared error no worse than rounding with d = −xmax / 2 (the first candidate), zeros as zeros;
+        // a tensor's bytes and values as stored.
+        {
+            var random = new Random(29);
+            float[] blocks = [.. Enumerable.Range(0, 64).Select(i => i < 32 ? random.NextSingle() * 2 - 1 : 0f)];
+            var bytes = new byte[ElementType.Int2.ByteCount(blocks.Length)];
+            ElementType.Int2.Encode(blocks, bytes);
+            var back = new float[blocks.Length];
+            ElementType.Int2.Decode(bytes, back);
+            Check(bytes.Length == 20 && ElementType.Int2 is { BlockSize: 32, BlockBits: 80, IsBlock: true, Scaled.CodeBits: 2 }, $"int2: {bytes.Length} bytes for 64 values");
+            float d = (float)System.Buffers.Binary.BinaryPrimitives.ReadHalfLittleEndian(bytes);
+            float xmax = blocks.Take(32).MaxBy(MathF.Abs), plain = -xmax / 2f;
+            double error = 0, rounded = 0;
+            for (int i = 0; i < 32; i++)
+            {
+                int bits = bytes[2 + i / 4] >> (2 * (i % 4)) & 3, code = bits >= 2 ? bits - 4 : bits;
+                Check(back[i] == code * d, $"int2: value {i} came back {back[i]}, not code {code} · {d}");
+                error += Math.Pow(blocks[i] - back[i], 2);
+                rounded += Math.Pow(blocks[i] - Math.Clamp(MathF.Round(blocks[i] / plain), -2f, 1f) * plain, 2);
+            }
+
+            Check(error <= rounded * 1.01 + 1e-6, $"int2: squared error {error} past plain rounding's {rounded}");
+            Check(back.Skip(32).All(v => v == 0f), "int2: a block of zeros came back as zeros");
+            using var t = Tensor.FromBytes(bytes, ElementType.Int2, [blocks.Length], device);
+            Check(t.ToBytes().AsSpan().SequenceEqual(bytes) && t.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(back.Select(BitConverter.SingleToInt32Bits)),
+                $"int2 on {device}: a tensor's bytes and values as stored");
         }
 
         // fp8: every code widens and comes back as itself (NaN codes as the format's NaN), and known values have their codes.
