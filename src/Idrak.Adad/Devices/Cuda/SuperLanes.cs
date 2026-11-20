@@ -246,6 +246,29 @@ internal abstract class SuperLane(CudaDevice device, Tuner tuner) : IProductLane
     /// <summary>Where the product kernel writes: y unsplit, else the partials.</summary>
     protected static ulong Output(int variant, in ProductOperands op, in LaneScratch scratch) => SplitsOf(variant) > 1 ? scratch.Parts.Pointer : op.Y;
 
+    private DeviceBuffer _counters;
+    private long _counterSlots;
+
+    /// <summary>
+    /// The tiles' counters of a fused split sum (A and B): one a tile of the grid, kept zero between calls (each tile's
+    /// last block sets its counter back), grown (and zeroed once) when a grid needs more.
+    /// </summary>
+    protected ulong Counters(int variant, int m, int n, int kp)
+    {
+        var (gx, gy, _, _) = Grid(variant, m, n, kp);
+        long slots = (long)gx * gy;
+        if (slots > _counterSlots)
+        {
+            Device.Synchronize();
+            Device.Release(_counters);
+            _counters = Device.Allocate(slots * 4);
+            Device.Fill(_counters, 0, slots);
+            _counterSlots = slots;
+        }
+
+        return _counters.Pointer;
+    }
+
     /// <summary>The partials of a split variant (none unsplit).</summary>
     protected DeviceBuffer PartsFor(int variant, int m, int n) => SplitsOf(variant) > 1 ? Device.Allocate((long)SplitsOf(variant) * m * n * 4) : DeviceBuffer.None;
 }
@@ -384,13 +407,13 @@ internal sealed class DecodeLane(CudaDevice device, Tuner tuner) : SuperLane(dev
         var cfg = Configs[Accepted[shape].Index];
         int blocks = 2048 / BlockValues(cfg);
         Device.Launch(Accepted[shape].Kernel, (uint)(2048 / cfg.Bn), 2048 / 128, 1, SuperMmaKernels.Threads,
-            [a.Pointer, b.Pointer, c.Pointer, 2048, 2048, 2048, 2048, (ulong)blocks, (ulong)(2048 / Description.Values * Description.Bytes)]);
+            [a.Pointer, b.Pointer, c.Pointer, 2048, 2048, 2048, 2048, (ulong)blocks, (ulong)(2048 / Description.Values * Description.Bytes), c.Pointer, 0UL]);
     }
 
     public override LaneScratch Rent(int variant, in ProductOperands op) =>
         new(Device.Allocate((long)op.M * NativePadded(op.K) * 2), DeviceBuffer.None, PartsFor(variant, op.M, op.N));
 
-    public override int PieceCount(int variant) => SplitsOf(variant) > 1 ? 3 : 2;
+    public override int PieceCount(int variant) => 2;                              // the split sum is in the kernel
 
     public override void Launch(int piece, int variant, in ProductOperands op, in LaneScratch scratch)
     {
@@ -404,10 +427,8 @@ internal sealed class DecodeLane(CudaDevice device, Tuner tuner) : SuperLane(dev
             case 1:
                 var (gx, gy, gz, per) = Grid(variant, m, n, k);
                 ulong wrow = (ulong)(k / Description.Values * Description.Bytes);
-                Device.Launch(KernelOf(variant), gx, gy, gz, SuperMmaKernels.Threads, [scratch.A.Pointer, op.W, Output(variant, op, scratch), (ulong)m, (ulong)n, (ulong)k, (ulong)kp, per, wrow]);
-                break;
-            default:
-                LaunchSum(scratch.Parts.Pointer, op.Y, m, n, SplitsOf(variant));
+                Device.Launch(KernelOf(variant), gx, gy, gz, SuperMmaKernels.Threads,
+                    [scratch.A.Pointer, op.W, Output(variant, op, scratch), (ulong)m, (ulong)n, (ulong)k, (ulong)kp, per, wrow, op.Y, Counters(variant, m, n, k)]);
                 break;
         }
     }
@@ -418,8 +439,7 @@ internal sealed class DecodeLane(CudaDevice device, Tuner tuner) : SuperLane(dev
         return piece switch
         {
             0 => new(_pack.Name, (long)m * k * 4 + (long)m * kp * 2, 0),
-            1 => new(KernelOf(variant).Name, 0, 2.0 * m * n * k),
-            _ => SumInfo(m, n, SplitsOf(variant)),
+            _ => new(KernelOf(variant).Name, 0, 2.0 * m * n * k),
         };
     }
 }
@@ -463,13 +483,13 @@ internal sealed class Int8Lane(CudaDevice device, Tuner tuner) : SuperLane(devic
         var cfg = Configs[Accepted[shape].Index];
         int blocks = 2048 / BlockValues(cfg);
         Device.Launch(Accepted[shape].Kernel, (uint)(2048 / cfg.Bn), 2048 / 128, 1, SuperMmaKernels.Threads,
-            [a.Pointer, a.Pointer + 2048UL * 2048, b.Pointer, c.Pointer, 2048, 2048, 2048, (ulong)blocks, (ulong)(2048 / Description.Values * Description.Bytes)]);
+            [a.Pointer, a.Pointer + 2048UL * 2048, b.Pointer, c.Pointer, 2048, 2048, 2048, (ulong)blocks, (ulong)(2048 / Description.Values * Description.Bytes), c.Pointer, 0UL]);
     }
 
     public override LaneScratch Rent(int variant, in ProductOperands op) =>
         new(Device.Allocate((long)op.M * op.K), Device.Allocate((long)op.M * (op.K / 32) * 8), PartsFor(variant, op.M, op.N));
 
-    public override int PieceCount(int variant) => SplitsOf(variant) > 1 ? 3 : 2;
+    public override int PieceCount(int variant) => 2;                              // the split sum is in the kernel
 
     public override void Launch(int piece, int variant, in ProductOperands op, in LaneScratch scratch)
     {
@@ -483,10 +503,8 @@ internal sealed class Int8Lane(CudaDevice device, Tuner tuner) : SuperLane(devic
             case 1:
                 var (gx, gy, gz, per) = Grid(variant, m, n, k);
                 ulong wrow = (ulong)(k / Description.Values * Description.Bytes);
-                Device.Launch(KernelOf(variant), gx, gy, gz, SuperMmaKernels.Threads, [scratch.A.Pointer, scratch.B.Pointer, op.W, Output(variant, op, scratch), (ulong)m, (ulong)n, (ulong)k, per, wrow]);
-                break;
-            default:
-                LaunchSum(scratch.Parts.Pointer, op.Y, m, n, SplitsOf(variant));
+                Device.Launch(KernelOf(variant), gx, gy, gz, SuperMmaKernels.Threads,
+                    [scratch.A.Pointer, scratch.B.Pointer, op.W, Output(variant, op, scratch), (ulong)m, (ulong)n, (ulong)k, per, wrow, op.Y, Counters(variant, m, n, k)]);
                 break;
         }
     }
@@ -497,8 +515,7 @@ internal sealed class Int8Lane(CudaDevice device, Tuner tuner) : SuperLane(devic
         return piece switch
         {
             0 => new(_quantize.Name, (long)m * k * 4 + (long)m * k + (long)m * (k / 32) * 8, 0),
-            1 => new(KernelOf(variant).Name, 0, 2.0 * m * n * k),
-            _ => SumInfo(m, n, SplitsOf(variant)),
+            _ => new(KernelOf(variant).Name, 0, 2.0 * m * n * k),
         };
     }
 }

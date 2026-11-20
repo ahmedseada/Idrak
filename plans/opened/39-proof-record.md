@@ -1798,7 +1798,7 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
 **Commits and cycles (running list)**:
 
 1. `796dddbe` Adad, piece 1: the package, the three lanes, the tests, the reference harness, the kernel bench; cycle 1.
-2. This commit. **Fix 1 (A's decode)**, from cycle 1's SASS (A 8.36–11.59 instructions a HMMA against the native
+2. `ab06bd70` **Fix 1 (A's decode)**, from cycle 1's SASS (A 8.36–11.59 instructions a HMMA against the native
    kernel's 1.83–2.53). Where the description makes scale · code exact in float32 (`ExactScaledCodes`: float16 d's 11
    significant bits, the 6-bit scales, the 4-bit codes, 21 ≤ 24; q4_k qualifies), the widening's `mul.rn` then
    `sub.rn` is one `fma.rn(scale, code, −min)`, bit for bit; each code becomes a float in one `bfe` + `cvt` (`ptxas`:
@@ -1808,6 +1808,23 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
    `fix1/compare-cycle1.txt`): A −0.4 to −1.6% at m ≥ 512 (outside both runs' spreads at 14 of its 56 rows, every one
    faster), m = 128 within the spread; B and the control unchanged. A is not limited by its instruction issue (at the
    native kernel's HMMA rate it issues about 15% of its slots).
+3. This commit. **Fix 2 (A and B: the k split's ordered sum in the kernel)**, from cycle 1's kernel trace (the device
+   idle 1.1–4.9 µs between a lane's kernels; a split product's sum one more launch). Each split writes its part;
+   after a release fence each block counts itself on its tile's counter; the tile's last block (acquire fence) adds
+   the parts in split order (`typed_sum_parts`' order, bit for bit) into y and sets the counter back to 0. No sum launch
+   for A and B; the control keeps its copied sum kernel.
+   - First form (`fix2/`, not committed): each thread a value at a time through a chain of dependent loads. Slower at
+     every split shape (`fix2/compare-fix1.txt`: +7% to +126%; Qwen q at m = 128, B 25.1 → 43.1 µs): the tile's last
+     block paid the L2's latency a load in series.
+   - Committed form (`fix2b/`): rows of n divisible by 4 in groups of 4 columns, two groups at a time, every split's
+     16-byte load issued before the ordered adds; a value at a time otherwise. Tests: 9 of 9 (`tests-5.txt`; A the
+     control's output bit for bit at every split, B its model's). Bench (`fix2b/compare-fix1.txt`): B faster outside
+     both runs' spreads at 25 of its 56 rows (−3% to −29%; Qwen k and v at m = 128: 29.3 → 23.1 and 31.2 → 22.2 µs),
+     slower at 5 (+1.1% to +2.8%); A faster at 6 (−4.5% to −20%), slower at 6 (+0.7% to +15%; the 15% Llama v at
+     m = 128, inside fix 1's 10.9% spread of that row); the control unchanged. Part of B's gain is the compiler's: with
+     the new tail its 256-column shapes spill 60–116 bytes a thread instead of 124–176 (`fix2b/compiled.txt`,
+     `fix2b/sass-mix.txt`), and B's measurement now picks them at m ≥ 2048 (e.g. Qwen down at m = 4096 1019.4 →
+     967.6 µs).
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

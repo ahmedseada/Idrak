@@ -17,7 +17,8 @@ namespace Idrak.Adad.Devices.Cuda;
 //   B (Int8Mma): x rounded once per call to int8 blocks of 32 with their scales and block sums (QuantizeX), W's 4-bit codes
 //     widened to int8 in registers (eight a 32-bit operation pair), int8 tensor cores (mma m16n8k32 s8.s8.s32) giving one
 //     int32 sum per 32-value sub-block, then sums += (d·sc·xs)·isum − (dmin·m)·xsum in float32.
-// In both, a sub-block's scale d·(sc + bias) and minimum dmin·m are unpacked once per sub-block a block (not per value): the
+// In both, a split k's parts are added in split order by each tile's last block (no sum launch), and a sub-block's scale
+// d·(sc + bias) and minimum dmin·m are unpacked once per sub-block a block (not per value): the
 // thread that staged a row's header computes them for the stage's sub-blocks into the stage's scale area, after its own
 // copies land and before the barrier that hands the stage to the warps.
 internal static class SuperMmaKernels
@@ -168,7 +169,9 @@ internal static class SuperMmaKernels
 
         string pa = Param64("p_a"), pxs = int8 ? Param64("p_xs") : "", pb = Param64("p_b"), pc = Param64("p_c");
         string m = Param32("p_m"), n = Param32("p_n"), kp = Param32("p_kp"), ld = int8 ? kp : Param32("p_ld");
-        string kblocks = Param32("p_kblocks"), wrow = Param32("p_wrow");
+        string kblocks = Param32("p_kblocks"), wrow = Param32("p_wrow"), py = Param64("p_y"), pcounts = Param64("p_counts");
+        string pcBase = b.RD();
+        b.L($"mov.u64 {pcBase}, {pc};");
         string split = b.R(), kb0 = b.R(), partOff = b.RD(), mn = b.R();
         b.L($"mov.u32 {split}, %ctaid.z;");
         b.L($"mul.lo.u32 {kb0}, {split}, {kblocks};");
@@ -872,10 +875,158 @@ internal static class SuperMmaKernels
         b.L($"mad.lo.u32 {cBase}, {wnR}, {wn}, {col0};");
         b.L($"mad.lo.u32 {cBase}, {l3}, 2, {cBase};");
         StoreC(b, c, nt, rBase, cBase, m, n, pc);
+
+        // A split k: the tile's last block to finish adds the parts in split order into y (as the splits' sum kernel adds
+        // them: part 0, + part 1, + ...), so no sum launch follows. Each block's stores are released before it counts
+        // itself on its tile's counter; the last one acquires them, sums, and sets the counter back to 0 for the next call.
+        string nz = b.R(), pOne = b.P(), pNotFirst = b.P(), flag = b.R(), pSkip = b.P();
+        b.L($"mov.u32 {nz}, %nctaid.z;");
+        b.L($"setp.eq.u32 {pOne}, {nz}, 1;");
+        b.L($"@{pOne} bra ALLDONE;");
+        b.L("fence.acq_rel.gpu;");
+        b.L("bar.sync 0;");
+        b.L($"setp.ne.u32 {pNotFirst}, {tid}, 0;");
+        b.L($"@{pNotFirst} bra COUNTED;");
+        {
+            string gx = b.R(), tile = b.R(), off = b.RD(), at = b.RD(), old = b.R(), last = b.R(), pLast = b.P();
+            b.L($"mov.u32 {gx}, %nctaid.x;");
+            b.L($"mad.lo.u32 {tile}, {by}, {gx}, {bx};");
+            b.L($"mul.wide.u32 {off}, {tile}, 4;");
+            b.L($"add.u64 {at}, {pcounts}, {off};");
+            b.L($"atom.global.add.u32 {old}, [{at}], 1;");
+            b.L($"sub.u32 {last}, {nz}, 1;");
+            b.L($"setp.eq.u32 {pLast}, {old}, {last};");
+            b.L($"selp.u32 {flag}, 1, 0, {pLast};");
+            b.L($"st.shared.u32 [{smem}], {flag};");
+            b.L($"@{pLast} st.global.u32 [{at}], 0;");
+        }
+
+        b.Label("COUNTED");
+        b.L("bar.sync 0;");
+        b.L($"ld.shared.u32 {flag}, [{smem}];");
+        b.L($"setp.eq.u32 {pSkip}, {flag}, 0;");
+        b.L($"@{pSkip} bra ALLDONE;");
+        b.L("fence.acq_rel.gpu;");
+        {
+            // Rows of n divisible by 4: the tile in groups of 4 columns, g = tid, tid + 256, ... (row row0 + g / (BN / 4)),
+            // two groups at a time, every split's 16-byte load of both issued before the adds (all in flight together),
+            // then part 0 + part 1 + ... in order. Otherwise a value at a time.
+            string nMod = b.R(), pVector = b.P(), partStride = b.RD();
+            b.L($"mul.wide.u32 {partStride}, {mn}, 4;");
+            b.L($"and.b32 {nMod}, {n}, 3;");
+            b.L($"setp.eq.u32 {pVector}, {nMod}, 0;");
+            b.L($"@!{pVector} bra SUMSCALAR;");
+            int groupsPerRow = bn / 4, sumGroups = BM * groupsPerRow;
+            string g = b.R(), pEnd = b.P();
+            b.L($"mov.u32 {g}, {tid};");
+            b.Label("SUMVECTOR");
+            b.L($"setp.ge.u32 {pEnd}, {g}, {sumGroups};");
+            b.L($"@{pEnd} bra ALLDONE;");
+            var addr = new string[2];
+            var ok = new string[2];
+            var parts = new string[2, 8, 4];
+            for (int h = 0; h < 2; h++)
+            {
+                string gg = b.R(), row = b.R(), col = b.R(), idx = b.RD(), at = b.RD();
+                ok[h] = b.P();
+                addr[h] = b.RD();
+                b.L($"add.u32 {gg}, {g}, {h * Threads};");
+                b.L($"shr.u32 {row}, {gg}, {SuperKernels.Log2(groupsPerRow)};");
+                b.L($"add.u32 {row}, {row}, {row0};");
+                b.L($"and.b32 {col}, {gg}, {groupsPerRow - 1};");
+                b.L($"shl.b32 {col}, {col}, 2;");
+                b.L($"add.u32 {col}, {col}, {col0};");
+                b.L($"setp.lt.u32 {ok[h]}, {row}, {m};");
+                b.L($"setp.lt.and.u32 {ok[h]}, {col}, {n}, {ok[h]};");
+                b.L($"setp.lt.and.u32 {ok[h]}, {gg}, {sumGroups}, {ok[h]};");
+                b.L($"mul.wide.u32 {idx}, {row}, {n};");
+                b.L($"cvt.u64.u32 {at}, {col};");
+                b.L($"add.u64 {idx}, {idx}, {at};");
+                b.L($"shl.b64 {addr[h]}, {idx}, 2;");
+            }
+
+            for (int h = 0; h < 2; h++)
+            {
+                string at = b.RD();
+                b.L($"add.u64 {at}, {pcBase}, {addr[h]};");
+                for (int zz = 0; zz < 8; zz++)
+                {
+                    string pz = b.P();
+                    for (int q = 0; q < 4; q++)
+                    {
+                        parts[h, zz, q] = b.F();
+                    }
+
+                    b.L($"setp.lt.and.u32 {pz}, {zz}, {nz}, {ok[h]};");
+                    b.L($"@{pz} ld.global.cg.v4.f32 {{{parts[h, zz, 0]}, {parts[h, zz, 1]}, {parts[h, zz, 2]}, {parts[h, zz, 3]}}}, [{at}];");
+                    if (zz < 7)
+                    {
+                        b.L($"add.u64 {at}, {at}, {partStride};");
+                    }
+                }
+            }
+
+            for (int h = 0; h < 2; h++)
+            {
+                for (int zz = 1; zz < 8; zz++)
+                {
+                    string pz = b.P();
+                    b.L($"setp.lt.u32 {pz}, {zz}, {nz};");
+                    for (int q = 0; q < 4; q++)
+                    {
+                        b.L($"@{pz} add.rn.f32 {parts[h, 0, q]}, {parts[h, 0, q]}, {parts[h, zz, q]};");
+                    }
+                }
+
+                string at = b.RD();
+                b.L($"add.u64 {at}, {py}, {addr[h]};");
+                b.L($"@{ok[h]} st.global.v4.f32 [{at}], {{{parts[h, 0, 0]}, {parts[h, 0, 1]}, {parts[h, 0, 2]}, {parts[h, 0, 3]}}};");
+            }
+
+            b.L($"add.u32 {g}, {g}, {2 * Threads};");
+            b.L("bra SUMVECTOR;");
+
+            // A value at a time (n not divisible by 4): e = tid, tid + 256, ...: row row0 + e / BN, column col0 + e % BN.
+            b.Label("SUMSCALAR");
+            string e = b.R(), pDone = b.P(), srow = b.R(), scol = b.R(), pIn = b.P(), sidx = b.RD(), sat = b.RD(), sum = b.F(), part = b.F(), z = b.R(), pz2 = b.P();
+            b.L($"mov.u32 {e}, {tid};");
+            b.Label("SUMLOOP");
+            b.L($"setp.ge.u32 {pDone}, {e}, {BM * bn};");
+            b.L($"@{pDone} bra ALLDONE;");
+            b.L($"shr.u32 {srow}, {e}, {SuperKernels.Log2(bn)};");
+            b.L($"add.u32 {srow}, {srow}, {row0};");
+            b.L($"and.b32 {scol}, {e}, {bn - 1};");
+            b.L($"add.u32 {scol}, {scol}, {col0};");
+            b.L($"setp.lt.u32 {pIn}, {srow}, {m};");
+            b.L($"setp.lt.and.u32 {pIn}, {scol}, {n}, {pIn};");
+            b.L($"add.u32 {e}, {e}, {Threads};");
+            b.L($"@!{pIn} bra SUMLOOP;");
+            b.L($"mul.wide.u32 {sidx}, {srow}, {n};");
+            b.L($"cvt.u64.u32 {sat}, {scol};");
+            b.L($"add.u64 {sidx}, {sidx}, {sat};");
+            b.L($"shl.b64 {sidx}, {sidx}, 2;");
+            b.L($"add.u64 {sat}, {pcBase}, {sidx};");
+            b.L($"ld.global.cg.f32 {sum}, [{sat}];");
+            b.L($"mov.u32 {z}, 1;");
+            b.Label("PARTLOOP");
+            b.L($"setp.ge.u32 {pz2}, {z}, {nz};");
+            b.L($"@{pz2} bra PARTDONE;");
+            b.L($"add.u64 {sat}, {sat}, {partStride};");
+            b.L($"ld.global.cg.f32 {part}, [{sat}];");
+            b.L($"add.rn.f32 {sum}, {sum}, {part};");
+            b.L($"add.u32 {z}, {z}, 1;");
+            b.L("bra PARTLOOP;");
+            b.Label("PARTDONE");
+            b.L($"add.u64 {sat}, {py}, {sidx};");
+            b.L($"st.global.f32 [{sat}], {sum};");
+            b.L("bra SUMLOOP;");
+        }
+
+        b.Label("ALLDONE");
         b.L("ret;");
         string parameters = int8
-            ? ".param .u64 p_a, .param .u64 p_xs, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_kblocks, .param .u32 p_wrow"
-            : ".param .u64 p_a, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_ld, .param .u32 p_kblocks, .param .u32 p_wrow";
+            ? ".param .u64 p_a, .param .u64 p_xs, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_kblocks, .param .u32 p_wrow, .param .u64 p_y, .param .u64 p_counts"
+            : ".param .u64 p_a, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_ld, .param .u32 p_kblocks, .param .u32 p_wrow, .param .u64 p_y, .param .u64 p_counts";
         return b.Finish(NativeHeader + SuperKernels.SuperPiecesDeclaration(s), entry, parameters, totalShared);
     }
 
