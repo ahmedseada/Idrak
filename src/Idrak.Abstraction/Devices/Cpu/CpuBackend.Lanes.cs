@@ -306,12 +306,21 @@ internal sealed partial class CpuBackend
         bool measured = ProductRoutes.Current == ProductRoute.Measured;
         var nibbles = measured && type.Super is { } super ? NibbleBlocks.Of(super) : null;
         var scaled = measured && type.Scaled is { } block && k % ScaledNibbles.Values == 0 ? ScaledNibbles.Of(block) : null;
+        bool bfloat16 = measured && ReadsBFloat16Rows(type);
         int chosen = ProductRoutes.Current == ProductRoute.Generic
             ? m <= Int8DirectRows ? RowLaneId : PanelLaneId
             : StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k), out int known) ? known
             : nibbles is not null ? MeasureNibbleLanes(nibbles, lane, xv, yv, m, n, k)
             : scaled is not null ? MeasureScaledLanes(scaled, lane, xv, yv, m, n, k)
+            : bfloat16 ? MeasureBFloat16Lanes(lane, xv, yv, m, n, k)
             : MeasureStoredLanes(widening, lane, x, y, m, n, k);
+        if (chosen is PairedLaneId or ShiftedLaneId)
+        {
+            BFloat16Product(chosen, lane, xv, yv, m, n, k);
+            s_nibblesMultiplied = true;
+            return true;
+        }
+
         if (chosen is DecodedLaneId or IntegerLaneId)
         {
             if (scaled is not null)
@@ -332,12 +341,16 @@ internal sealed partial class CpuBackend
 
     // The stored products' lanes: each output's row widened once (decoding-sized), a panel of rows widened and multiplied
     // transposed, the whole weight widened once and the float32 product (today's prompt path: ExpandedLane), the tiles; and
-    // a 4-bit super-block's two lanes over its stored codes (NibbleBlocks), decoded in registers or by int8 dot products.
-    private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5;
+    // a 4-bit weight's two lanes over its stored codes (NibbleBlocks, ScaledNibbles), decoded in registers or by int8 dot
+    // products; a bfloat16 weight's two lanes over its stored values, made float32 in registers in even and odd pairs or by a shift.
+    private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5,
+        PairedLaneId = 6, ShiftedLaneId = 7;
 
     private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)",
         "tiles (panels widened in the product)", "decoded lane (codes decoded in registers, float32 dot products)",
-        "integer lane (x rounded to int8 a block of 32, int8 dot products over the stored codes)"];
+        "integer lane (x rounded to int8 a block of 32, int8 dot products over the stored codes)",
+        "paired lane (bfloat16 made float32 in registers in even and odd pairs, by a shift and a mask, x reordered to match)",
+        "shifted lane (bfloat16 made float32 in registers by a widening load and a shift)"];
 
     // Each shape's measured lane.
     private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K), int> StoredLanes = new();
@@ -740,19 +753,26 @@ internal sealed partial class CpuBackend
     // Whether the integer lane runs here: the CPU has int8 dot products (x86's AVX2, with AVX-VNNI's where reported).
     private static bool IntegerDots => Avx2.IsSupported && Fma.IsSupported;
 
-    // The shape's faster nibble lane, measured once on the real operands (Faster); without measuring (CpuTuning.Autotune
-    // off) the integer lane where the CPU has int8 dot products, else the decoded lane.
+    // The shape's faster nibble lane (MeasureTwo); the decoded lane alone where the CPU has no int8 dot products.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static int MeasureNibbleLanes(NibbleBlocks blocks, StoredLane lane, float[] x, float[] y, int m, int n, int k)
+    private static int MeasureNibbleLanes(NibbleBlocks blocks, StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
+        IntegerDots
+            ? MeasureTwo(lane, m, n, k, DecodedLaneId, IntegerLaneId, IntegerLaneId, id => NibbleProduct(id == IntegerLaneId, blocks, lane, x, y, m, n, k))
+            : StoredLanes[(lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k)] = DecodedLaneId;
+
+    // The shape's faster of two lanes, measured once on the real operands (Faster: each run writes all of y, which the
+    // caller writes again), kept for the shape; without measuring (CpuTuning.Autotune off), `fallback`.
+    private static int MeasureTwo(StoredLane lane, int m, int n, int k, int first, int second, int fallback, Action<int> run)
     {
         var key = (lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k);
-        int best = IntegerDots ? IntegerLaneId : DecodedLaneId;
-        if (CpuTuning.Autotune && IntegerDots)
+        int best = fallback;
+        if (CpuTuning.Autotune)
         {
-            var (decoded, integer) = Faster.Time(() => NibbleProduct(false, blocks, lane, x, y, m, n, k), () => NibbleProduct(true, blocks, lane, x, y, m, n, k));
-            best = integer < decoded ? IntegerLaneId : DecodedLaneId;
+            var (a, b) = Faster.Time(() => run(first), () => run(second));
+            best = b < a ? second : first;
             ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lane.Type.Name} {m}x{k}->{n}"),
-                string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{LaneNames[best]} (decoded {decoded:0.###} ms, integer {integer:0.###} ms)"));
+                string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{LaneNames[best]} ({LaneNames[first].Split(' ')[0]} {a:0.###} ms, {LaneNames[second].Split(' ')[0]} {b:0.###} ms)"));
         }
 
         StoredLanes[key] = best;
@@ -818,26 +838,27 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Products of 4-bit super-block weights, or of 32-value blocks of 4-bit codes, sharing x, under the measured route (the
-    // queries, keys and values; the gate and up): in one pass where all are one such type, any rows; offered once such a
-    // weight has been multiplied here, so the groups of other types' weights are not asked (their outputs allocated) only
-    // to run one by one.
+    // Products of 4-bit super-block weights, of 32-value blocks of 4-bit codes, or of bfloat16 weights, sharing x, under the
+    // measured route (the queries, keys and values; the gate and up): in one pass where all are one such type, any rows;
+    // offered once such a weight has been multiplied here, so the groups of other types' weights are not asked (their
+    // outputs allocated) only to run one by one.
     public override bool StoredMatMulManyAvailable(int m) => ProductRoutes.Current == ProductRoute.Measured && s_nibblesMultiplied;
 
-    // Whether a 4-bit weight has been multiplied by its lanes over the stored codes in this process.
+    // Whether a weight has been multiplied by lanes over its stored values (4-bit codes, bfloat16) in this process.
     private static volatile bool s_nibblesMultiplied;
 
-    // 2 or 3 such products in one pass (NibbleMany, ScaledMany): x rounded once where an integer lane runs, the weights'
-    // columns spread over the threads as one range, each column by its own product's measured lane (measured here first
-    // where it has not been), so each output is its own product's, bit for bit. False for any other weights: the callers
-    // then run them one by one.
+    // 2 or 3 such products in one pass (NibbleMany, ScaledMany, BFloat16Many): x prepared once (rounded where an integer
+    // lane runs, reordered where the paired lane runs), the weights' columns spread over the threads as one range,
+    // each column by its own product's measured lane (measured here first where it has not been), so each output is its
+    // own product's, bit for bit. False for any other weights: the callers then run them one by one.
     public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
     {
         var type = products.Length > 0 ? products[0].Values.ElementType : null;
         var blocks = type?.Super is { } super ? NibbleBlocks.Of(super) : null;
         var scaled = blocks is null && type?.Scaled is { } block ? ScaledNibbles.Of(block) : null;
+        bool bfloat16 = type is not null && ReadsBFloat16Rows(type);
         if (ProductRoutes.Current != ProductRoute.Measured || products.Length is < 2 or > 3 || m <= 0 || k <= 0 || type is null
-            || blocks is null && scaled is null || k % (blocks is not null ? NibbleBlocks.Values : ScaledNibbles.Values) != 0)
+            || blocks is null && scaled is null && !bfloat16 || blocks is not null && k % NibbleBlocks.Values != 0 || scaled is not null && k % ScaledNibbles.Values != 0)
         {
             return false;
         }
@@ -860,47 +881,53 @@ internal sealed partial class CpuBackend
             float[] yv = D(output);
             int chosen = StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k), out int known) ? known
                 : blocks is not null ? MeasureNibbleLanes(blocks, lane, xv, yv, m, n, k)
-                : MeasureScaledLanes(scaled!, lane, xv, yv, m, n, k);
-            if (chosen is not (DecodedLaneId or IntegerLaneId))
+                : scaled is not null ? MeasureScaledLanes(scaled, lane, xv, yv, m, n, k)
+                : MeasureBFloat16Lanes(lane, xv, yv, m, n, k);
+            if (chosen is not (DecodedLaneId or IntegerLaneId or PairedLaneId or ShiftedLaneId))
             {
                 return false;
             }
 
-            parts[j] = new NibblePart(lane, yv, n, chosen == IntegerLaneId);
+            parts[j] = new RowPart(lane, yv, n, chosen);
         }
 
+        var all = ((ReadOnlySpan<RowPart>)parts)[..products.Length];
         if (blocks is not null)
         {
-            NibbleMany(blocks, ((ReadOnlySpan<NibblePart>)parts)[..products.Length], xv, m, k);
+            NibbleMany(blocks, all, xv, m, k);
+        }
+        else if (scaled is not null)
+        {
+            ScaledMany(scaled, all, xv, m, k);
         }
         else
         {
-            ScaledMany(scaled!, ((ReadOnlySpan<NibblePart>)parts)[..products.Length], xv, m, k);
+            BFloat16Many(all, xv, m, k);
         }
 
         s_nibblesMultiplied = true;
         return true;
     }
 
-    // One product of a grouped pass: its weight, output, columns and lane.
-    private readonly record struct NibblePart(StoredLane Lane, float[] Y, int N, bool Integer);
+    // One product of a pass over stored rows: its weight, output, columns and lane.
+    private readonly record struct RowPart(StoredLane Lane, float[] Y, int N, int LaneId);
 
     // Up to three parts, on the stack.
     [InlineArray(3)]
     private struct ThreeParts
     {
-        private NibblePart _part;
+        private RowPart _part;
     }
 
     // The products of `parts` in one range of columns over the threads (NibbleProduct's, their columns one after another).
-    private static void NibbleMany(NibbleBlocks blocks, ReadOnlySpan<NibblePart> parts, float[] x, int m, int k)
+    private static void NibbleMany(NibbleBlocks blocks, ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
     {
         int superBlocks = k / NibbleBlocks.Values, total = 0;
         bool integer = false;
         foreach (var part in parts)
         {
             total += part.N;
-            integer |= part.Integer;
+            integer |= part.LaneId == IntegerLaneId;
         }
 
         sbyte[]? codes = null;
@@ -935,7 +962,7 @@ internal sealed partial class CpuBackend
 
     // A grouped pass's chunks of columns (CpuRanges): the parts' columns one after another, a chunk split where it crosses
     // from one part to the next.
-    private readonly struct NibbleManyRange(NibbleBlocks blocks, float[] x, sbyte[]? xq, float[]? xs, int m, int k, NibblePart p0, NibblePart p1, NibblePart p2) : IRangeBody
+    private readonly struct NibbleManyRange(NibbleBlocks blocks, float[] x, sbyte[]? xq, float[]? xs, int m, int k, RowPart p0, RowPart p1, RowPart p2) : IRangeBody
     {
         public void Run(int first, int last)
         {
@@ -947,12 +974,12 @@ internal sealed partial class CpuBackend
             }
         }
 
-        private void Part(int first, int last, int start, NibblePart part)
+        private void Part(int first, int last, int start, RowPart part)
         {
             int a = Math.Max(first, start), b = Math.Min(last, start + part.N);
             if (a < b)
             {
-                NibbleColumns(part.Integer, blocks, part.Lane, x, xq, xs, part.Y, m, part.N, k, a - start, b - start);
+                NibbleColumns(part.LaneId == IntegerLaneId, blocks, part.Lane, x, xq, xs, part.Y, m, part.N, k, a - start, b - start);
             }
         }
     }
@@ -1396,52 +1423,28 @@ internal sealed partial class CpuBackend
     // code bytes transposed by words in registers so each block's sum lands in its own lane, the code bias added through
     // x's code sums and the float scales applied eight blocks at a time. The measured route keeps the faster at each shape.
 
-    // The shape's faster lane over 32-value nibble blocks, measured once on the real operands (Faster); without measuring
-    // (CpuTuning.Autotune off) the integer lane.
+    // The shape's faster lane over 32-value nibble blocks (MeasureTwo); without measuring, the integer lane.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static int MeasureScaledLanes(ScaledNibbles plan, StoredLane lane, float[] x, float[] y, int m, int n, int k)
-    {
-        var key = (lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k);
-        int best = IntegerLaneId;
-        if (CpuTuning.Autotune)
-        {
-            var (decoded, integer) = Faster.Time(() => ScaledProduct(false, plan, lane, x, y, m, n, k), () => ScaledProduct(true, plan, lane, x, y, m, n, k));
-            best = integer < decoded ? IntegerLaneId : DecodedLaneId;
-            ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lane.Type.Name} {m}x{k}->{n}"),
-                string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{LaneNames[best]} (decoded {decoded:0.###} ms, integer {integer:0.###} ms)"));
-        }
-
-        StoredLanes[key] = best;
-        return best;
-    }
+    private static int MeasureScaledLanes(ScaledNibbles plan, StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
+        MeasureTwo(lane, m, n, k, DecodedLaneId, IntegerLaneId, IntegerLaneId, id => ScaledProduct(id == IntegerLaneId, plan, lane, x, y, m, n, k));
 
     // The product by one lane over 32-value nibble blocks (ScaledMany with one part).
     private static void ScaledProduct(bool integer, ScaledNibbles plan, StoredLane lane, float[] x, float[] y, int m, int n, int k)
     {
         var parts = new ThreeParts();
-        parts[0] = new NibblePart(lane, y, n, integer);
-        ScaledMany(plan, ((ReadOnlySpan<NibblePart>)parts)[..1], x, m, k);
+        parts[0] = new RowPart(lane, y, n, integer ? IntegerLaneId : DecodedLaneId);
+        ScaledMany(plan, ((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
     }
 
-    // Stored bytes a tile of the 32-value nibble lanes takes: with one row of x, columns of about this many bytes (small
-    // enough that the last tiles keep every thread busy to the end); with more, a group of rows of this many bytes, the
-    // rows the kernels' loop keeps in the cache while it passes the rows of x over them.
-    private const int ScaledTileBytes = 16384;
-
-    // Rows of x a tile of the 32-value nibble lanes takes (more rows: the tiles split x's rows as well as the columns).
-    private const int ScaledTileRows = 32;
-
-    // The products of `parts` (1 to 3 weights of one type sharing x) in one range over the threads: x rounded once where an
-    // integer lane runs (RoundScaledRows), then tiles of columns and rows of x (ScaledColumns), each part's tiles one after
-    // another; each output its own product's, whichever thread runs it.
-    private static void ScaledMany(ScaledNibbles plan, ReadOnlySpan<NibblePart> parts, float[] x, int m, int k)
+    // The products of `parts` (1 to 3 weights of one type sharing x): x rounded once where an integer lane runs
+    // (RoundScaledRows), then their tiles over the threads (RowTiles, ScaledColumns).
+    private static void ScaledMany(ScaledNibbles plan, ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
     {
-        int groups = ScaledNibbles.Groups(k), total = 0;
+        int groups = ScaledNibbles.Groups(k);
         bool integer = false;
         foreach (var part in parts)
         {
-            total += part.N;
-            integer |= part.Integer;
+            integer |= part.LaneId == IntegerLaneId;
         }
 
         sbyte[]? codes = null;
@@ -1455,19 +1458,7 @@ internal sealed partial class CpuBackend
                 RoundScaledRows(x, codes, scales, m, k, plan.Bias);
             }
 
-            // One row of x: columns in whole cache lines of y (16 floats), so tiles on other threads do not write into the same
-            // lines as each output is written. More rows: a group of stored rows a tile.
-            int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
-            long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
-            long wanted = m == 1 ? (Math.Max(ScaledTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + 15) / 16 * 16 : ScaledTileBytes / rowBytes;
-            int columns = (int)Math.Clamp(wanted, 1, total);
-            int rows = m == 1 ? 1 : ScaledTileRows, rowBlocks = (m + rows - 1) / rows;
-            int t1 = (parts[0].N + columns - 1) / columns * rowBlocks;
-            int t2 = parts.Length > 1 ? t1 + (parts[1].N + columns - 1) / columns * rowBlocks : t1;
-            int tiles = parts.Length > 2 ? t2 + (parts[2].N + columns - 1) / columns * rowBlocks : t2;
-            var body = new ScaledManyRange(plan, x, codes, scales, m, k, columns, rows, rowBlocks, t1, t2,
-                parts[0], parts.Length > 1 ? parts[1] : default, parts.Length > 2 ? parts[2] : default);
-            CpuRanges.Run(tiles, 1, tiles, threads, ref body);                         // `body` is this frame's, on the stack
+            RowTiles(parts, m, ScaledGroupBytes, new ScaledTile(plan, x, codes, scales, k));
         }
         finally
         {
@@ -1483,10 +1474,219 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // The tiles of ScaledMany (CpuRanges, one a chunk): tile t of part p (its tiles from t_p) is its column block
-    // t / rowBlocks and its block of rows of x t mod rowBlocks.
-    private readonly struct ScaledManyRange(ScaledNibbles plan, float[] x, sbyte[]? xq, float[]? xs, int m, int k, int columns, int rows, int rowBlocks,
-        int t1, int t2, NibblePart p0, NibblePart p1, NibblePart p2) : IRangeBody
+    // Stored bytes a group of rows of the lanes over 32-value nibble blocks takes with more than one row of x (RowGroups).
+    private const int ScaledGroupBytes = 16384;
+
+    // A tile of a product over 32-value nibble blocks.
+    private readonly struct ScaledTile(ScaledNibbles plan, float[] x, sbyte[]? xq, float[]? xs, int k) : IRowTile
+    {
+        public void Run(in RowPart part, int j0, int j1, int i0, int i1) =>
+            ScaledColumns(part.LaneId == IntegerLaneId, plan, part.Lane, x, xq, xs, part.Y, part.N, k, j0, j1, i0, i1);
+    }
+
+    // Columns [j0, j1) of y for rows [i0, i1) of x by a lane over 32-value nibble blocks (RowGroups with ScaledKernels): the
+    // scratch its kernels take, pinned with the operands for the tile.
+    private static unsafe void ScaledColumns(bool integer, ScaledNibbles plan, StoredLane lane, float[] x, sbyte[]? xq, float[]? xs, float[] y, int n, int k,
+        int j0, int j1, int i0, int i1)
+    {
+        int blocks = k / ScaledNibbles.Values, groupBytes = ScaledNibbles.Group * plan.Bytes;
+        bool many = i1 - i0 > 1, uneven = blocks % ScaledNibbles.Group != 0;
+        int group = RowGroup((nint)lane.RowBytes, j1 - j0, ScaledGroupBytes);
+        float[]? tableArray = many ? ArrayPool<float>.Shared.Rent(group * ScaledNibbles.Groups(k) * ScaledNibbles.Group) : null;
+        byte[]? tailArray = many && uneven ? ArrayPool<byte>.Shared.Rent(group * groupBytes) : null;
+        byte* tail = stackalloc byte[groupBytes];
+        new Span<byte>(tail, groupBytes).Clear();
+        try
+        {
+            fixed (float* words = lane.Words)
+            fixed (float* xf = x)
+            fixed (sbyte* xc = xq)
+            fixed (float* xsc = xs)
+            fixed (float* table = tableArray)
+            fixed (byte* tails = tailArray)
+            {
+                if (tails is not null)
+                {
+                    new Span<byte>(tails, group * groupBytes).Clear();
+                }
+
+                var kernels = new ScaledKernels(integer, plan, k, xf, xc, xsc, table, tails, tail);
+                RowGroups(ref kernels, (byte*)words, (nint)lane.RowBytes, k, k, ScaledGroupBytes, lane.RowScales, y, n, j0, j1, i0, i1);
+            }
+        }
+        finally
+        {
+            if (tableArray is not null)
+            {
+                ArrayPool<float>.Shared.Return(tableArray);
+            }
+
+            if (tailArray is not null)
+            {
+                ArrayPool<byte>.Shared.Return(tailArray);
+            }
+        }
+    }
+
+    // The lanes over 32-value nibble blocks as RowGroups' kernels (the integer lane's or the decoded lane's). A group of
+    // stored rows: their blocks' scales decoded once into `table` (the scales alone, 8 floats a group of 8 blocks), and a
+    // row's last blocks short of a group of 8 copied as stored (their bytes, not their values) into a group padded with
+    // zero blocks (`tails`, one a row of the group; `tail` for a row read alone), so the kernels read whole groups.
+    private readonly unsafe struct ScaledKernels : IRowKernels
+    {
+        private readonly bool integer;
+        private readonly ScaledNibbles plan;
+        private readonly int k, blocks, groups, full, groupBytes, rowTable, tailBytes;
+        private readonly nint xStride, sStride;
+        private readonly float* x, xs, table;
+        private readonly sbyte* xq;
+        private readonly byte* tails, tail;
+
+        public ScaledKernels(bool integer, ScaledNibbles plan, int k, float* x, sbyte* xq, float* xs, float* table, byte* tails, byte* tail)
+        {
+            this.integer = integer;
+            this.plan = plan;
+            this.k = k;
+            this.x = x;
+            this.xq = xq;
+            this.xs = xs;
+            this.table = table;
+            this.tails = tails;
+            this.tail = tail;
+            blocks = k / ScaledNibbles.Values;
+            groups = ScaledNibbles.Groups(k);
+            full = blocks / ScaledNibbles.Group;
+            groupBytes = ScaledNibbles.Group * plan.Bytes;
+            rowTable = groups * ScaledNibbles.Group;
+            tailBytes = (blocks - full * ScaledNibbles.Group) * plan.Bytes;
+            xStride = (nint)groups * ScaledNibbles.GroupCodes;
+            sStride = (nint)groups * 16;
+        }
+
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+            var offsets = plan.Offsets;
+            nint scaleOffset = plan.ScaleOffset;
+            for (int c = 0; c < count; c++)
+            {
+                byte* row = stored + (c0 + c) * rowBytes, own = tails + c * groupBytes;
+                if (tailBytes > 0)
+                {
+                    new ReadOnlySpan<byte>(row + full * groupBytes, tailBytes).CopyTo(new Span<byte>(own, tailBytes));
+                }
+
+                for (int g = 0; g < groups; g++)
+                {
+                    HalfScales((g < full ? row + g * groupBytes : own) + scaleOffset, offsets).Store(table + c * rowTable + g * ScaledNibbles.Group);
+                }
+            }
+        }
+
+        // All of k a pass (a span of k: ScaledColumns passes k).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                ScaledIntegerFour(row, tails + c * groupBytes, groups, full, plan, table + c * rowTable, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                ScaledDecodedFour(row, tails + c * groupBytes, blocks, plan, table + c * rowTable, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => integer
+            ? ScaledIntegerOne(row, tails + c * groupBytes, groups, full, plan, xq + i * xStride, xs + i * sStride)
+            : ScaledDecodedOne(row, tails + c * groupBytes, blocks, plan, x + (nint)i * k);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i)
+        {
+            if (tailBytes > 0)
+            {
+                new ReadOnlySpan<byte>(row + full * groupBytes, tailBytes).CopyTo(new Span<byte>(tail, tailBytes));
+            }
+
+            return integer
+                ? ScaledIntegerOne(row, tail, groups, full, plan, xq + i * xStride, xs + i * sStride)
+                : ScaledDecodedOne(row, tail, blocks, plan, x + (nint)i * k);
+        }
+    }
+
+    // ------------------------------------------------------------------ products over stored rows read in place (shared)
+
+    // The lanes that read a weight's rows where they are stored and write nothing of the weight anywhere (32-value nibble
+    // blocks', bfloat16's) share their tiles (RowTiles), their loop over a tile (RowGroups) and their measuring (MeasureTwo):
+    // a type brings its kernels (IRowKernels) and what its lanes make of x first.
+
+    // Stored bytes a tile takes with one row of x: columns of about this many bytes (small enough that the last tiles keep
+    // every thread busy to the end). With more rows a tile is a group of stored rows of a type's own bytes (`groupBytes`:
+    // the rows a tile's loop keeps in the cache while it passes the rows of x over them).
+    private const int RowTileBytes = 16384;
+
+    // Rows of x a tile takes (more rows: the tiles split x's rows as well as the columns).
+    private const int RowTileRows = 32;
+
+    // The most stored rows a group of a tile's loop takes (its four rows' partial sums on the stack).
+    private const int MostGroupRows = 64;
+
+    // The stored rows a group of a tile's loop takes: those within `groupBytes`, at least one, at most MostGroupRows.
+    private static int RowGroup(nint rowBytes, int columns, int groupBytes) =>
+        (int)Math.Clamp(groupBytes / Math.Max(1, rowBytes), 1, Math.Clamp(columns, 1, MostGroupRows));
+
+    /// <summary>A tile of a product over stored rows: columns [j0, j1) of a part's y for rows [i0, i1) of x.</summary>
+    private interface IRowTile
+    {
+        void Run(in RowPart part, int j0, int j1, int i0, int i1);
+    }
+
+    /// <summary>A lane's kernels over a weight's rows read where they are stored (RowGroups').</summary>
+    private unsafe interface IRowKernels
+    {
+        /// <summary>Before stored rows [c0, c0 + count) are multiplied by more than one row of x.</summary>
+        void Group(byte* stored, nint rowBytes, int c0, int count);
+
+        /// <summary>Rows i..i + 3 of x by the group's stored row c (at <paramref name="row"/>), over values [p0, p1) of k.</summary>
+        void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3);
+
+        /// <summary>Row i of x by the group's stored row c.</summary>
+        float One(byte* row, int c, int i);
+
+        /// <summary>Row i of x by a stored row read alone (one row of x: each stored row read once, no group).</summary>
+        float Single(byte* row, int i);
+    }
+
+    // The tiles of `parts` (1 to 3 weights of one type sharing x) in one range over the threads (CpuRanges, a tile a chunk):
+    // columns and rows of x, each part's tiles after the other's; each output its own product's, whichever thread runs it.
+    // One row of x: columns in whole cache lines of y (16 floats), so tiles on other threads do not write into the same lines
+    // as each output is written. More rows: a group of stored rows a tile (`groupBytes`).
+    private static void RowTiles<TT>(ReadOnlySpan<RowPart> parts, int m, int groupBytes, TT tile) where TT : struct, IRowTile
+    {
+        int total = 0;
+        foreach (var part in parts)
+        {
+            total += part.N;
+        }
+
+        int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
+        long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
+        long wanted = m == 1 ? (Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + 15) / 16 * 16 : RowGroup((nint)rowBytes, total, groupBytes);
+        int columns = (int)Math.Clamp(wanted, 1, total);
+        int rows = m == 1 ? 1 : RowTileRows, rowBlocks = (m + rows - 1) / rows;
+        int t1 = (parts[0].N + columns - 1) / columns * rowBlocks;
+        int t2 = parts.Length > 1 ? t1 + (parts[1].N + columns - 1) / columns * rowBlocks : t1;
+        int tiles = parts.Length > 2 ? t2 + (parts[2].N + columns - 1) / columns * rowBlocks : t2;
+        var body = new RowTileRange<TT>(tile, m, columns, rows, rowBlocks, t1, t2,
+            parts[0], parts.Length > 1 ? parts[1] : default, parts.Length > 2 ? parts[2] : default);
+        CpuRanges.Run(tiles, 1, tiles, threads, ref body);                             // `body` is this frame's, on the stack
+    }
+
+    // RowTiles' range: tile t of part p (its tiles from t_p) is its column block t / rowBlocks and its block of rows of x
+    // t mod rowBlocks.
+    private readonly struct RowTileRange<TT>(TT tile, int m, int columns, int rows, int rowBlocks, int t1, int t2, RowPart p0, RowPart p1, RowPart p2) : IRangeBody
+        where TT : struct, IRowTile
     {
         public void Run(int first, int last)
         {
@@ -1494,128 +1694,90 @@ internal sealed partial class CpuBackend
             {
                 var (part, local) = t < t1 ? (p0, t) : t < t2 ? (p1, t - t1) : (p2, t - t2);
                 int j0 = local / rowBlocks * columns, i0 = local % rowBlocks * rows;
-                ScaledColumns(part.Integer, plan, part.Lane, x, xq, xs, part.Y, m, part.N, k, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows));
+                tile.Run(part, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows));
             }
         }
     }
 
-    // Columns [j0, j1) of y for rows [i0, i1) of x. One row of x: each stored row read once, in order, its scales decoded as
-    // its codes are read. More: a group of stored rows (within ScaledTileBytes) at a time, their blocks' scales decoded once
-    // into a table (the scales alone, 8 floats a group of 8 blocks), then four rows of x at a time against each of the
-    // group's rows (the four rows of x stay in the cache across the group, the group's stored rows across the rows of x),
-    // the rows left over one at a time. A row's last blocks short of a group of 8 are copied as stored (their bytes, not
-    // their values) into a group padded with zero blocks, so the kernels read whole groups.
-    private static unsafe void ScaledColumns(bool integer, ScaledNibbles plan, StoredLane lane, float[] x, sbyte[]? xq, float[]? xs, float[] y, int m, int n, int k,
+    // Columns [j0, j1) of y (n a row) for rows [i0, i1) of x (k a row) by `kernels` over the stored rows at `stored`. One row
+    // of x: each stored row read once, in order. More: a group of stored rows (RowGroup, `groupBytes`) at a time, set up once
+    // (IRowKernels.Group), then four rows of x at a time against each of the group's rows, the rows left over one at a time.
+    // The four rows of x pass over the group's rows `span` values of k at a time (all of k where span ≥ k), so that much of
+    // them stays in the cache across the group, and the group's stored rows across the rows of x; a span's partial sums are
+    // added in order. Each output times its row's scale where the weight has them.
+    private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float[]? scales, float[] y, int n,
         int j0, int j1, int i0, int i1)
+        where TK : struct, IRowKernels
     {
-        int blocks = k / ScaledNibbles.Values, groups = ScaledNibbles.Groups(k), full = blocks / ScaledNibbles.Group;
-        int groupBytes = ScaledNibbles.Group * plan.Bytes, tailBytes = (blocks - full * ScaledNibbles.Group) * plan.Bytes;
-        nint rowBytes = (nint)lane.RowBytes, scaleOffset = plan.ScaleOffset;
-        nint xStride = (nint)groups * ScaledNibbles.GroupCodes, sStride = (nint)groups * 16;
-        var scales = lane.RowScales;
-        fixed (float* words = lane.Words)
-        fixed (float* xf = x)
-        fixed (sbyte* xc = xq)
-        fixed (float* xsc = xs)
+        if (i1 - i0 == 1)
         {
-            byte* stored = (byte*)words;
-            if (i1 - i0 == 1)
+            for (int c = j0; c < j1; c++)
             {
-                byte* tail = stackalloc byte[groupBytes];
-                new Span<byte>(tail, groupBytes).Clear();
-                for (int c = j0; c < j1; c++)
-                {
-                    byte* row = stored + c * rowBytes;
-                    if (tailBytes > 0)
-                    {
-                        new ReadOnlySpan<byte>(row + full * groupBytes, tailBytes).CopyTo(new Span<byte>(tail, tailBytes));
-                    }
-
-                    float sum = integer
-                        ? ScaledIntegerOne(row, tail, groups, full, plan, xc + i0 * xStride, xsc + i0 * sStride)
-                        : ScaledDecodedOne(row, tail, blocks, plan, xf + (nint)i0 * k);
-                    y[i0 * n + c] = scales is null ? sum : sum * scales[c];
-                }
-
-                return;
+                float sum = kernels.Single(stored + c * rowBytes, i0);
+                y[i0 * n + c] = scales is null ? sum : sum * scales[c];
             }
 
-            int group = (int)Math.Clamp(ScaledTileBytes / rowBytes, 1, j1 - j0), rowTable = groups * ScaledNibbles.Group;
-            float[] tableArray = ArrayPool<float>.Shared.Rent(group * rowTable);
-            byte[]? tailArray = tailBytes > 0 ? ArrayPool<byte>.Shared.Rent(group * groupBytes) : null;
-            try
+            return;
+        }
+
+        int group = RowGroup(rowBytes, j1 - j0, groupBytes);
+        float* sums = stackalloc float[4 * MostGroupRows];
+        for (int c0 = j0; c0 < j1; c0 += group)
+        {
+            int count = Math.Min(group, j1 - c0);
+            kernels.Group(stored, rowBytes, c0, count);
+            int i = i0;
+            for (; i + 4 <= i1; i += 4)
             {
-                fixed (float* table = tableArray)
-                fixed (byte* tails = tailArray)
+                if (span >= k)
                 {
-                    if (tails is not null)
+                    // One pass over k: each output written as its four rows are done.
+                    for (int c = 0; c < count; c++)
                     {
-                        new Span<byte>(tails, group * groupBytes).Clear();
+                        kernels.Four(stored + (c0 + c) * rowBytes, c, i, 0, k, out float s0, out float s1, out float s2, out float s3);
+                        float scale = scales is null ? 1f : scales[c0 + c];
+                        int at = i * n + c0 + c;
+                        y[at] = scales is null ? s0 : s0 * scale;
+                        y[at + n] = scales is null ? s1 : s1 * scale;
+                        y[at + 2 * n] = scales is null ? s2 : s2 * scale;
+                        y[at + 3 * n] = scales is null ? s3 : s3 * scale;
                     }
 
-                    var offsets = plan.Offsets;
-                    for (int c0 = j0; c0 < j1; c0 += group)
+                    continue;
+                }
+
+                // Passes over k a span at a time: each span's partial sums added in order, the outputs written at the end.
+                new Span<float>(sums, 4 * count).Clear();
+                for (int p0 = 0; p0 < k; p0 += span)
+                {
+                    int p1 = Math.Min(k, p0 + span);
+                    for (int c = 0; c < count; c++)
                     {
-                        int count = Math.Min(group, j1 - c0);
-                        for (int c = 0; c < count; c++)
-                        {
-                            byte* row = stored + (c0 + c) * rowBytes, tail = tails + c * groupBytes;
-                            if (tailBytes > 0)
-                            {
-                                new ReadOnlySpan<byte>(row + full * groupBytes, tailBytes).CopyTo(new Span<byte>(tail, tailBytes));
-                            }
-
-                            for (int g = 0; g < groups; g++)
-                            {
-                                HalfScales((g < full ? row + g * groupBytes : tail) + scaleOffset, offsets).Store(table + c * rowTable + g * ScaledNibbles.Group);
-                            }
-                        }
-
-                        int i = i0;
-                        for (; i + 4 <= i1; i += 4)
-                        {
-                            for (int c = 0; c < count; c++)
-                            {
-                                byte* row = stored + (c0 + c) * rowBytes, tail = tails + c * groupBytes;
-                                float s0, s1, s2, s3;
-                                if (integer)
-                                {
-                                    ScaledIntegerFour(row, tail, groups, full, plan, table + c * rowTable, xc + i * xStride, xsc + i * sStride, xStride, sStride, out s0, out s1, out s2, out s3);
-                                }
-                                else
-                                {
-                                    ScaledDecodedFour(row, tail, blocks, plan, table + c * rowTable, xf + (nint)i * k, k, out s0, out s1, out s2, out s3);
-                                }
-
-                                float scale = scales is null ? 1f : scales[c0 + c];
-                                int at = i * n + c0 + c;
-                                y[at] = scales is null ? s0 : s0 * scale;
-                                y[at + n] = scales is null ? s1 : s1 * scale;
-                                y[at + 2 * n] = scales is null ? s2 : s2 * scale;
-                                y[at + 3 * n] = scales is null ? s3 : s3 * scale;
-                            }
-                        }
-
-                        for (; i < i1; i++)
-                        {
-                            for (int c = 0; c < count; c++)
-                            {
-                                byte* row = stored + (c0 + c) * rowBytes, tail = tails + c * groupBytes;
-                                float sum = integer
-                                    ? ScaledIntegerOne(row, tail, groups, full, plan, xc + i * xStride, xsc + i * sStride)
-                                    : ScaledDecodedOne(row, tail, blocks, plan, xf + (nint)i * k);
-                                y[i * n + c0 + c] = scales is null ? sum : sum * scales[c0 + c];
-                            }
-                        }
+                        kernels.Four(stored + (c0 + c) * rowBytes, c, i, p0, p1, out float s0, out float s1, out float s2, out float s3);
+                        sums[4 * c] += s0;
+                        sums[4 * c + 1] += s1;
+                        sums[4 * c + 2] += s2;
+                        sums[4 * c + 3] += s3;
                     }
                 }
-            }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(tableArray);
-                if (tailArray is not null)
+
+                for (int c = 0; c < count; c++)
                 {
-                    ArrayPool<byte>.Shared.Return(tailArray);
+                    float scale = scales is null ? 1f : scales[c0 + c];
+                    int at = i * n + c0 + c;
+                    y[at] = scales is null ? sums[4 * c] : sums[4 * c] * scale;
+                    y[at + n] = scales is null ? sums[4 * c + 1] : sums[4 * c + 1] * scale;
+                    y[at + 2 * n] = scales is null ? sums[4 * c + 2] : sums[4 * c + 2] * scale;
+                    y[at + 3 * n] = scales is null ? sums[4 * c + 3] : sums[4 * c + 3] * scale;
+                }
+            }
+
+            for (; i < i1; i++)
+            {
+                for (int c = 0; c < count; c++)
+                {
+                    float sum = kernels.One(stored + (c0 + c) * rowBytes, c, i);
+                    y[i * n + c0 + c] = scales is null ? sum : sum * scales[c0 + c];
                 }
             }
         }
@@ -1994,6 +2156,325 @@ internal sealed partial class CpuBackend
                 && b.CodeOffset >= 0 && b.CodeOffset + Values / 2 <= b.Bytes && b.ScaleOffset >= 0 && b.ScaleOffset + 4 <= b.Bytes;
             return reads ? new ScaledNibbles(b) : null;
         }
+    }
+
+    // ------------------------------------------------------------------ bfloat16 rows read where they are stored
+
+    // A bfloat16 weight (by its description: a 16-bit float of 8 exponent and 7 mantissa bits, float32's high half) takes,
+    // under the measured route, two lanes over its stored rows (RowGroups' kernels), neither of which writes the weight's
+    // values anywhere: each value made float32 in registers as the dot products read it (its bits in a float's high half:
+    // exactly its value), then float32 FMAs with x. The paired lane makes two vectors of each 32-byte load, one of its even
+    // values (each 32-bit pair shifted up by 16 bits) and one of its odd values (each pair's low half masked off), x
+    // reordered once a call to match; the shifted lane widens 8 values at a time by a widening load and a shift, x as it
+    // is. The measured route keeps the faster at each shape.
+
+    // Whether a type is one the bfloat16 lanes read (by its description), and the CPU runs them.
+    private static bool ReadsBFloat16Rows(ElementType type) =>
+        WideningOf(type) == Widening.HighHalf && Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian;
+
+    // The shape's faster bfloat16 lane (MeasureTwo); without measuring, the shifted lane.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int MeasureBFloat16Lanes(StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
+        MeasureTwo(lane, m, n, k, ShiftedLaneId, PairedLaneId, PairedLaneId, id => BFloat16Product(id, lane, x, y, m, n, k));
+
+    /// <summary>
+    /// y [m, n] = x [m, k] · Wᵀ for W a bfloat16 weight of n rows of k values stored as <paramref name="words"/> (its bytes,
+    /// <paramref name="length"/> words), by the lane asked (<paramref name="paired"/>, else shifted). False where the
+    /// type is not one the lanes read. For tests: each lane apart from the measured choice.
+    /// </summary>
+    internal static bool BFloat16RowLane(bool paired, ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k)
+    {
+        if (!ReadsBFloat16Rows(type))
+        {
+            return false;
+        }
+
+        BFloat16Product(paired ? PairedLaneId : ShiftedLaneId, new StoredLane(type, null, words, length, null, k, type.ByteCount(k)), x, y, m, n, k);
+        return true;
+    }
+
+    // The product by one bfloat16 lane (BFloat16Many with one part).
+    private static void BFloat16Product(int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
+    {
+        var parts = new ThreeParts();
+        parts[0] = new RowPart(lane, y, n, laneId);
+        BFloat16Many(((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
+    }
+
+    // The products of `parts` (1 to 3 bfloat16 weights sharing x): x reordered once where the paired lane runs
+    // (PairRows), then their tiles over the threads (RowTiles, BFloat16Columns).
+    private static void BFloat16Many(ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
+    {
+        bool paired = false;
+        foreach (var part in parts)
+        {
+            paired |= part.LaneId == PairedLaneId;
+        }
+
+        float[]? reordered = null;
+        try
+        {
+            if (paired)
+            {
+                reordered = ArrayPool<float>.Shared.Rent(m * k);
+                PairRows(x, reordered, m, k);
+            }
+
+            RowTiles(parts, m, BFloat16GroupBytes, new BFloat16Tile(x, reordered, k));
+        }
+        finally
+        {
+            if (reordered is not null)
+            {
+                ArrayPool<float>.Shared.Return(reordered);
+            }
+        }
+    }
+
+    // A tile of a bfloat16 product.
+    private readonly struct BFloat16Tile(float[] x, float[]? reordered, int k) : IRowTile
+    {
+        public void Run(in RowPart part, int j0, int j1, int i0, int i1)
+        {
+            bool paired = part.LaneId == PairedLaneId;
+            BFloat16Columns(paired, part.Lane, paired ? reordered! : x, part.Y, part.N, k, j0, j1, i0, i1);
+        }
+    }
+
+    // Columns [j0, j1) of y for rows [i0, i1) of x by a bfloat16 lane (RowGroups with BFloat16Kernels), the operands pinned
+    // for the tile.
+    private static unsafe void BFloat16Columns(bool paired, StoredLane lane, float[] x, float[] y, int n, int k, int j0, int j1, int i0, int i1)
+    {
+        fixed (float* words = lane.Words)
+        fixed (float* xf = x)
+        {
+            var kernels = new BFloat16Kernels(paired, xf, k);
+            RowGroups(ref kernels, (byte*)words, (nint)lane.RowBytes, k, BFloat16Span, BFloat16GroupBytes, lane.RowScales, y, n, j0, j1, i0, i1);
+        }
+    }
+
+    // Stored bytes a group of bfloat16 rows takes with more than one row of x (RowGroups): float32 rows of x take 4 bytes a
+    // value against the rows' 2, so the group is larger than a 4-bit weight's for the rows of x to be read as few times.
+    private const int BFloat16GroupBytes = 65536;
+
+    // Values of k four rows of x pass over a group's bfloat16 rows at a time (RowGroups): 32 KB of x, which stays in a core's
+    // L1 across the group.
+    private const int BFloat16Span = 2048;
+
+    // The bfloat16 lanes as RowGroups' kernels: nothing to set up for a group of rows.
+    private readonly unsafe struct BFloat16Kernels(bool paired, float* x, int k) : IRowKernels
+    {
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (paired)
+            {
+                PairedFour((ushort*)row + p0, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                ShiftedFour((ushort*)row + p0, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => Single(row, i);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i) => paired
+            ? PairedOne((ushort*)row, x + (nint)i * k, k)
+            : ShiftedOne((ushort*)row, x + (nint)i * k, k);
+    }
+
+    // x for the paired lane, row by row (PairRow), over the threads where x is large.
+    private static void PairRows(float[] x, float[] into, int m, int k)
+    {
+        if (m > 1 && (long)m * k >= 1 << 16)
+        {
+            Parallel.For(0, m, ComputeResources.ParallelOptions, i => PairRow(x.AsSpan(i * k, k), into.AsSpan(i * k, k)));
+            return;
+        }
+
+        for (int i = 0; i < m; i++)
+        {
+            PairRow(x.AsSpan(i * k, k), into.AsSpan(i * k, k));
+        }
+    }
+
+    // A row of x for the paired lane: each whole group of 16 values in the order the lane makes of 16 stored values (the even
+    // ones 0, 2, .. 14, then the odd ones 1, 3, .. 15), the rest as they are.
+    private static void PairRow(ReadOnlySpan<float> x, Span<float> into)
+    {
+        ref float from = ref MemoryMarshal.GetReference(x);
+        ref float to = ref MemoryMarshal.GetReference(into);
+        int p = 0;
+        for (; p + 16 <= x.Length; p += 16)
+        {
+            var a = Vector256.LoadUnsafe(ref from, (nuint)p);
+            var b = Vector256.LoadUnsafe(ref from, (nuint)p + 8);
+            Avx2.Permute4x64(Avx.Shuffle(a, b, 0x88).AsDouble(), 0xD8).AsSingle().StoreUnsafe(ref to, (nuint)p);
+            Avx2.Permute4x64(Avx.Shuffle(a, b, 0xDD).AsDouble(), 0xD8).AsSingle().StoreUnsafe(ref to, (nuint)p + 8);
+        }
+
+        x[p..].CopyTo(into[p..]);
+    }
+
+    // Values the one-row bfloat16 kernels ask the cache for ahead of the line they read (1 KB: past a row's end, into the next
+    // row of the tile, where the hardware's prefetchers stop at a page's edge). A prefetch never faults, past the weight too.
+    private const int BFloat16Ahead = 512;
+
+    // A stored bfloat16's value: its bits in a float32's high half.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float BFloat16Value(ushort bits) => BitConverter.Int32BitsToSingle(bits << 16);
+
+    // Four rows of x (reordered by PairRow, `stride` apart, from `x`) by `count` values of a stored bfloat16 row (at
+    // `row`; `count` a multiple of 16 but at a row's end): each 16 values loaded at once and made two float32 vectors, the
+    // even values by a shift of each 32-bit pair and the odd ones by a mask, each multiplied with the four rows' matching 8;
+    // the halves in their own sums, the last count mod 16 one at a time.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void PairedFour(ushort* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    {
+        var high = Vector256.Create(0xFFFF0000u);
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            var v = Vector256.Load((uint*)(row + p));
+            var lo = Vector256.ShiftLeft(v, 16).AsSingle();
+            var hi = (v & high).AsSingle();
+            float* xp = x + p;
+            a0 = Fma.MultiplyAdd(lo, Vector256.Load(xp), a0);
+            b0 = Fma.MultiplyAdd(hi, Vector256.Load(xp + 8), b0);
+            a1 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r1), a1);
+            b1 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r1 + 8), b1);
+            a2 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r2), a2);
+            b2 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r2 + 8), b2);
+            a3 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r3), a3);
+            b3 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r3 + 8), b3);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = BFloat16Value(row[p]);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = Vector256.Sum(a0 + b0) + t0;
+        y1 = Vector256.Sum(a1 + b1) + t1;
+        y2 = Vector256.Sum(a2 + b2) + t2;
+        y3 = Vector256.Sum(a3 + b3) + t3;
+    }
+
+    // PairedFour for one row of x, 32 values a step in four sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float PairedOne(ushort* row, float* x, int k)
+    {
+        var high = Vector256.Create(0xFFFF0000u);
+        Vector256<float> a = default, b = default, c = default, d = default;
+        int p = 0;
+        for (; p + 32 <= k; p += 32)
+        {
+            Sse.Prefetch0(row + p + BFloat16Ahead);
+            var v = Vector256.Load((uint*)(row + p));
+            var u = Vector256.Load((uint*)(row + p + 16));
+            a = Fma.MultiplyAdd(Vector256.ShiftLeft(v, 16).AsSingle(), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd((v & high).AsSingle(), Vector256.Load(x + p + 8), b);
+            c = Fma.MultiplyAdd(Vector256.ShiftLeft(u, 16).AsSingle(), Vector256.Load(x + p + 16), c);
+            d = Fma.MultiplyAdd((u & high).AsSingle(), Vector256.Load(x + p + 24), d);
+        }
+
+        for (; p + 16 <= k; p += 16)
+        {
+            var v = Vector256.Load((uint*)(row + p));
+            a = Fma.MultiplyAdd(Vector256.ShiftLeft(v, 16).AsSingle(), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd((v & high).AsSingle(), Vector256.Load(x + p + 8), b);
+        }
+
+        float t = 0f;
+        for (; p < k; p++)
+        {
+            t = MathF.FusedMultiplyAdd(BFloat16Value(row[p]), x[p], t);
+        }
+
+        return Vector256.Sum((a + b) + (c + d)) + t;
+    }
+
+    // Four rows of x (as they are, `stride` apart, from `x`) by `count` values of a stored bfloat16 row (at `row`): 8 values
+    // at a time widened by a widening load and shifted to a float32's high half, each multiplied with the four rows'
+    // matching 8; two sums a row, the last count mod 16 one at a time.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ShiftedFour(ushort* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            var lo = Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p), 16).AsSingle();
+            var hi = Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p + 8), 16).AsSingle();
+            float* xp = x + p;
+            a0 = Fma.MultiplyAdd(lo, Vector256.Load(xp), a0);
+            b0 = Fma.MultiplyAdd(hi, Vector256.Load(xp + 8), b0);
+            a1 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r1), a1);
+            b1 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r1 + 8), b1);
+            a2 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r2), a2);
+            b2 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r2 + 8), b2);
+            a3 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r3), a3);
+            b3 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r3 + 8), b3);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = BFloat16Value(row[p]);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = Vector256.Sum(a0 + b0) + t0;
+        y1 = Vector256.Sum(a1 + b1) + t1;
+        y2 = Vector256.Sum(a2 + b2) + t2;
+        y3 = Vector256.Sum(a3 + b3) + t3;
+    }
+
+    // ShiftedFour for one row of x, 32 values a step in four sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float ShiftedOne(ushort* row, float* x, int k)
+    {
+        Vector256<float> a = default, b = default, c = default, d = default;
+        int p = 0;
+        for (; p + 32 <= k; p += 32)
+        {
+            Sse.Prefetch0(row + p + BFloat16Ahead);
+            a = Fma.MultiplyAdd(Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p), 16).AsSingle(), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd(Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p + 8), 16).AsSingle(), Vector256.Load(x + p + 8), b);
+            c = Fma.MultiplyAdd(Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p + 16), 16).AsSingle(), Vector256.Load(x + p + 16), c);
+            d = Fma.MultiplyAdd(Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p + 24), 16).AsSingle(), Vector256.Load(x + p + 24), d);
+        }
+
+        for (; p + 8 <= k; p += 8)
+        {
+            a = Fma.MultiplyAdd(Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32(row + p), 16).AsSingle(), Vector256.Load(x + p), a);
+        }
+
+        float t = 0f;
+        for (; p < k; p++)
+        {
+            t = MathF.FusedMultiplyAdd(BFloat16Value(row[p]), x[p], t);
+        }
+
+        return Vector256.Sum((a + b) + (c + d)) + t;
     }
 
     /// <summary>

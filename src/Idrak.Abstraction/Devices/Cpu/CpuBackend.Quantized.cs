@@ -190,8 +190,8 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Today's bfloat16 product (ProductRoute.Name, the named lane of the others): more rows than the few-row limit expand the
-    // weights whole and take the float32 product; fewer read them in place.
+    // Today's bfloat16 product (ProductRoute.Name): more rows than the few-row limit expand the weights whole and take the
+    // float32 product; fewer read them in place (BFloat16InRegisters).
     private void BFloat16Direct(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
         if (m > CpuTuning.FewRows)                                       // the CPU's few-row limit (BackendCapabilities.FewRows)
@@ -210,14 +210,27 @@ internal sealed partial class CpuBackend
             return;
         }
 
-        // Few rows (decoding): each worker widens one bfloat16 weight row of its column block at a time and adds it to every
-        // input row, reading the 2-byte weights once instead of writing and reading a float32 copy of the whole matrix.
+        BFloat16InRegisters(!Vector.IsHardwareAccelerated || CpuTuning.StreamingFewRows, x, packed, y, m, n, k);
+    }
+
+    // The bfloat16 product reading the weights in place, for any rows: each worker widens one bfloat16 weight row of its
+    // column block at a time in registers and adds it to every input row (`streaming`), or keeps a panel of rows' sums in
+    // registers (the tiled kernel), reading the 2-byte weights once instead of writing and reading a float32 copy of the
+    // matrix. A column block's sums of every row stay within a core's L2 where the rows are many.
+    private void BFloat16InRegisters(bool streaming, Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
         float[] xv = D(x), yv = D(y);
         int stride = (n + 1) / 2 * 2;
         int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism);
         int blockSize = Math.Max(Int8MinBlock, (n / (2 * threads) + Int8MinBlock - 1) / Int8MinBlock * Int8MinBlock);
+        if (m > CpuTuning.FewRows)
+        {
+            int fit = (int)Math.Max(1, Math.Max(1L << 18, CpuInfo.Current.L2) / 2 / (sizeof(float) * (long)m) / Int8MinBlock) * Int8MinBlock;
+            blockSize = Math.Min(blockSize, fit);
+        }
+
         int blocks = (n + blockSize - 1) / blockSize;
-        if (Vector.IsHardwareAccelerated && !CpuTuning.StreamingFewRows)
+        if (!streaming)
         {
             BFloat16FewRowsTiled(D(packed), xv, yv, m, n, k, stride, blockSize, blocks);
             return;
