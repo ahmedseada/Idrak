@@ -1665,6 +1665,140 @@ not its gaps.
   It writes 2,688 and 5,376 MiB of bfloat16 rows a pass.
 - **M11-6. Device memory**: adad's peak above its weights is 10–25 MiB above name's, its weights 19% to 21% of name's.
 
+### Adad piece 1: q4_k's prompt product, A and B
+
+Plan 40's decision 23: the prompt product y = x · Wᵀ for q4_k weights, in Adad's own package, as one default (the
+control) with the overrides A and B chosen per shape by measurement, and Adad's own kernel bench; then cycles (kernel
+bench, kernel profile, host trace; fix) until settled. Outputs: `test-output\adad\piece1-q4k\`; the text ones copied to
+[40-piece1-q4k/](40-piece1-q4k/) (`evidence.sh`; no `.nettrace`, `.speedscope.json`, `.nsys-rep`, `.sqlite`, PTX or
+cubins). Device: the RTX 5070 Ti (compute 12.0, 70 SMs, 48 MiB L2, 101,376 bytes of shared memory a block), CUDA
+13030.
+
+**The package** (Adad's own solution `Idrak.Adad.slnx`; each project's `Directory.Build.props` stops MSBuild's search,
+so no Idrak props, usings or packaging reach it; no Idrak project referenced):
+
+- `src/Idrak.Adad/`:
+  - `Types/SuperBlock.cs`: the super-block description (copied), its CPU decoder, its canonical code, FNV-1a hash and
+    stable id (`Id` = hash & 0x7FFFFFFF, made once a description).
+  - `Types/SuperBlocks.cs`: q4_k's description as data and its encoder (copied with piece 3's place table and scalar
+    codes; not the eight-lane codes).
+  - `Devices/Cuda/`: `CudaDriver.cs` (the binding, the calls used), `CudaDevice.cs` (primary context, one stream, the
+    size-keyed pool, module loading with the compiler's log and each kernel's registers and spills, launches with their
+    arguments on the stack, event timing), `PtxBuilder.cs` (copied), `NativeKernels.cs` (the native kernel's packed-rows
+    mode, its 9 shapes, the x pack, the splits' sum, copied), `SuperKernels.cs` (the description's bfloat16 widening,
+    copied), `SuperMmaKernels.cs` (A, B and B's x rounding, new), `SuperLanes.cs` (the three lanes), `SuperProduct.cs`
+    (the product: lanes prepared once a description, the measured choices keyed by the description's id).
+  - `Measure/`: `TuneTiming.cs` (the proof's paired timing, margin and warm-up, copied; the size class), `Tuner.cs` (the
+    measurement on a device: warm, or cold after a read of twice the L2).
+  - `Abstractions/IProductLane.cs`: the lane contract, kept minimal for N0.
+- `src/Idrak.Adad.Host/` (`adad`): `kernels` (the kernel bench), `profile` (each lane's stored variant once a shape, for
+  a profiler), `ptx` (every lane's modules as files).
+- `tests/Idrak.Adad.Tests/`: a console runner (no packages), groups `types`, `ptx`, `control`, `a`, `b`, `measure`.
+
+**The lanes** (each matched by the description's fields; a shape the driver refuses is no candidate):
+
+- **Control** (the default): x packed into bfloat16 rows (`native_pack_x_bf16`), W widened into bfloat16 rows
+  (`super_widen_k256x144_ccb20da7_bf16`), the native kernel (its 9 shapes, the device's shape measured on a 2048³
+  product, then shape and split per product shape), the splits summed in order (`typed_sum_parts`).
+- **A** (`super_mma_bf16_…`): the native kernel's machinery with W's stored bytes staged as they are (each row's
+  16-byte header and the 32 code bytes of the 64-value group a stage reads, `cp.async`); the thread that staged a row's
+  header unpacks its sub-blocks' scale and minimum once a stage (the widening's float32 steps) after its own copies
+  land; each fragment's four values decoded in registers before the multiply with the widening's float32 steps and one
+  `cvt.rn.bf16x2`. 10 shapes (32- or 64-value stages).
+- **B** (`super_mma_s8_…`): x rounded once a call into int8 blocks of 32 with a pair (d, d·Σq) a block
+  (`quantize_x_s8_32`); W's code bytes by `ldmatrix`, their nibbles as int8 in registers (an `and`, or a shift and an
+  `and`, per four codes); `mma.sync.m16n8k32.s32.s8.s8.s32` per 32-value sub-block into fresh int32 sums, then
+  C = fma(d·sc·xs, isum, C), C = fma(−dmin·m, xsum, C) in float32. 8 shapes (64- or 128-value stages).
+- Every lane's k split: 1, 2, 4 or 8 while each split keeps two blocks (the proof's rule) **and every split starts
+  inside k** (see finding P1-2); A and B also clamp a split's blocks at zero.
+
+**The tests** (`tests-2.txt`; all on CUDA except `types` and `ptx`; every comparison bit for bit unless said):
+
+| Group | What it checks | Result |
+|---|---|---|
+| types | q4_k's encoder over the seeded rows (48 × 2048, 8 × 6144) hashes to the source's recorded `d4163333…` | pass |
+| types | q4_k's decoder over those blocks and over random valid blocks gives the source's floats (`087db33f…`, `d30c6095…`) | pass |
+| types | the description's id is FNV-1a over its code masked to 0x7FFFFFFF; its kernels' name part is the source's `k256x144_ccb20da7` | pass |
+| ptx | the control's kernel texts (line ends as LF) are the source's: the 9 native shapes, the x pack, q4_k's widening module, the sum | pass (13 checks) |
+| control | the control at the 9 test shapes gives the source's output: its first shape unsplit (`IDRAK_AUTOTUNE=0`), and the source's own measured shape and split (splits 1, 2 and 8) | pass (37) |
+| a | A at every shape and split it offers (342 variants over the 9 shapes) gives the control's output at the same splits | pass (413) |
+| b | B's x rounding against its CPU model | pass (19) |
+| b | B (260 variants) against its CPU model; and against the float reference (double sums over the decoded weight) within the stated bound Σ\|w\|·\|x − x̂\| + Σ\|x̂\|·2⁻²³(\|d·sc·c\| + \|dmin·m\|) + (k/32 + 4)·2⁻²³·Σ(\|d·sc·xs·isum\| + \|dmin·m·xsum\|) | pass; the largest error 0.388 of the bound, 2.47·10⁻³ of Σ\|x·w\| |
+| measure | the measured choice is a candidate, kept for the next call, stored with the description's id and m's class, read back | pass |
+
+The source's values come from a reference harness that loads the Idrak build at run time (`reference/`, its outputs
+`reference-*.txt`). The 9 test shapes are the two models' real products at m = 128 and 512 and three edges (37 × 70 × 256,
+200 × 300 × 768, 128 × 3072 × 8192); the large ones' models are checked on 8 rows each.
+
+**The cycles.** A cycle: the kernel bench (`piece1.sh bench N`: both models' seven products, m = 128, 512, 2048, 4096,
+every lane at its measured shape and split, 9 warm samples of about 1 ms and 9 cold runs, each kernel alone warm and
+cold), the kernel profile (`piece1.sh profile N`, below), the host trace (`piece1.sh trace N`: `dotnet-trace` of a bench
+run, both models at m = 512, read with `idrak trace --read`). Comparisons between cycles: `compare.sh`.
+
+- **The kernel profile's tools.** Nsight Compute cannot read this machine's counters (`ERR_NVGPUCTRPERM`,
+  `cycle1/ncu-launches.txt`: the counters need a permission the owner grants; no setting was changed). The profile is
+  therefore: Nsight Systems' CUDA trace of `adad profile --repeat 3` (each kernel's device time, the device's idle time
+  between a lane's kernels, a run's span: `kernel-trace.txt`), and each kernel's SASS from the toolkit's `ptxas`
+  (sm_120) and `cuobjdump` (registers, spills, the main loop's instructions per matrix-unit instruction by opcode:
+  `sass-mix.txt`); the driver's own compile reports each loaded kernel's registers and spills (`compiled.txt`).
+
+**Cycle 1** (the piece as first built; `cycle1/`; the bench re-run with the final method after the first run,
+`cycle1/bench-method-1/`, which timed each kernel only warm in 0.2 ms samples):
+
+- *Bench* (`cycle1/kernels.txt`): B is the measured choice at all 56 product rows. Warm µs at each lane's own measured
+  shape and split:
+
+| Model, m | q (control / A / B) | k | gate | down |
+|---|---|---|---|---|
+| Qwen3-1.7B, 128 | 44.2 / 31.3 / 24.8 | 30.1 / 26.6 / 26.9 | 83.4 / 69.8 / 44.6 | 77.2 / 61.5 / 41.8 |
+| Qwen3-1.7B, 512 | 71.7 / 72.1 / 45.9 | 48.1 / 47.5 / 34.6 | 195.6 / 200.9 / 123.0 | 203.3 / 199.6 / 118.7 |
+| Qwen3-1.7B, 2048 | 238.7 / 270.5 / 164.5 | 124.1 / 141.4 / 88.3 | 643.9 / 732.8 / 443.3 | 715.6 / 828.4 / 507.2 |
+| Qwen3-1.7B, 4096 | 478.6 / 562.1 / 346.6 | 269.0 / 307.9 / 200.0 | 1233.7 / 1467.3 / 879.1 | 1410.2 / 1668.7 / 1018.6 |
+| Llama 3B, 128 | 70.1 / 59.4 / 42.6 | 41.7 / 29.9 / 23.7 | 164.5 / 103.0 / 63.7 | 181.9 / 117.8 / 79.0 |
+| Llama 3B, 512 | 170.2 / 167.8 / 109.0 | 65.3 / 64.8 / 45.6 | 393.5 / 389.9 / 231.2 | 431.6 / 416.6 / 255.6 |
+| Llama 3B, 2048 | 523.2 / 608.9 / 370.2 | 190.7 / 209.2 / 127.2 | 1367.6 / 1479.0 / 878.1 | 1395.4 / 1602.5 / 960.5 |
+| Llama 3B, 4096 | 991.7 / 1146.9 / 691.0 | 399.3 / 463.4 / 294.9 | 2502.9 / 2940.0 / 1736.3 | 2619.7 / 3017.1 / 1812.7 |
+
+- *The copied parts against the proof* (S3 check): the control's native kernel runs 75.0–81.2 TFLOP/s at m = 512 on
+  Qwen3-1.7B (the proof's native kernel: 73–77 in its passes); the widening, timed alone cold, runs 849–851 GB/s where
+  its 64 MiB of reads and writes exceed the L2 (Llama 3B's gate, up, down; M11's in-pass rate 819–822 GB/s). At Qwen's
+  32 MiB it reads 1188–1208 GB/s cold and 1327–1356 warm: its bfloat16 writes stay in the 48 MiB L2 when the kernel is
+  timed alone. Nothing is off: no S3.
+- *Kernel profile* (`cycle1/kernel-trace.txt`, `sass-mix.txt`, `compiled.txt`; the profile ran on the first run's
+  choices, `profile-choices.txt`):
+  - On the device, A's kernel is 18–20% slower than the native kernel at m = 512 (64.6 against 54.5 µs for q, 193.2
+    against 161.1 gate, 186.9 against 155.4 down); B's is 28–30% faster (39.0, 116.2, 109.4).
+  - Main loop SASS: the native kernel 1.83–2.53 instructions a HMMA; A 8.36–11.59 (per 64 HMMA: FADD 128, PRMT 88,
+    FMUL 68, LDS 36, F2FP 32: the decode's magic-number subtraction and minimum, the multiply by the scale, the code
+    bytes' loads); B 22.6–25.6 an IMMA (per 32 IMMA: FFMA 256, FMUL 132, I2FP 132: four float operations a C value a
+    sub-block). B's 256-column shapes spill (124–168 bytes a thread); none of A's or the native kernel's do.
+  - Between a lane's kernels the device idles 1.1–4.9 µs a launch (control q at m = 128: 11.6, 4.9, 2.3 µs; its span
+    50.1 µs over 31 µs of kernels); the x pack takes 1.0 µs and the sum 2.5 µs on the device at m = 128, where timed
+    alone back to back they read 6–7 µs (the host's launches, not the kernels).
+- *Host trace* (`cycle1/trace.txt`, `trace-focus-*.txt`): the host waits on the timing events 84% of the run; 3.8 µs of
+  host time a launch (472 ms over 123,045 launches), so 8–15 µs a product call (2–4 launches) against at least 25 µs of
+  device time a product; no allocation on any call path (the 200 MiB allocated are the bench's random data and the
+  one-time kernel generation and loading); 14 collections, 1.1 ms the longest. The bench's direct measure (from the
+  corrected method): 5.91 µs a launch (median of 20 batches of 500 empty launches; 5.11–10.97).
+- *What cycle 1 shows to fix*: A's decode (its instruction count a HMMA), the device's idle time between a lane's
+  kernels where k is split (A and B: their separate sum launch).
+
+**Findings so far**:
+
+- **P1-1. The kernel profiler's counters are not readable on this machine** (`ERR_NVGPUCTRPERM`); the cycles' kernel
+  profile is Nsight Systems' trace and the compiled SASS.
+- **P1-2. Idrak's native split rule admits splits that start past k.** `NativeSplits` keeps s splits when blocks ≥ 2s;
+  with per = ⌈blocks / s⌉ a split z starts at z · per blocks, and `blocks − kb0` is an unsigned subtraction: with 20
+  blocks and 8 splits (k = 1280 with 64-value blocks), splits 7 starts at block 21, the subtraction wraps, and the
+  kernel reads three blocks past the row. No product of the two models has such a k (their k are multiples of 1024).
+  Found by reading the code; Adad's rule adds "every split starts inside k".
+- **P1-3. B is faster than the control at every measured shape** (cycle 1: 1.31–1.71× at m ≥ 512, 1.12–2.58× at
+  m = 128); A is faster than the control at m = 128 (1.13–1.60×) and 0.84–1.04× of its speed at m ≥ 512.
+
+**Commits and cycles (running list)**:
+
+1. This commit (Adad, piece 1): the package, the three lanes, the tests, the reference harness, the kernel bench; cycle 1.
+
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
 - Round 13's CUDA table (`results-dec-warm.txt`, made by a build before `cf77ceeb`; q6_k and iq3_xxs from

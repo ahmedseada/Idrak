@@ -1,0 +1,4 @@
+build: D:\Projects\idrak\test-output\worktrees\adad\src\Idrak.Cli\bin\Release\net10.0\Idrak.Gpu.dll 0.4.1-dev.2611191810+de1f8a96e66d9b2d98860553311a470cf69243ed
+encode q4_k seeded d416333347a37c3868f90949f929b55aa5fbea706cfa92bb7b698bcc12a7c190
+decode q4_k seeded 087db33f3e105839b71b8af6642f6719aa798667daad7028db70f3df3c2d4963
+decode q4_k random d30c60952f1ea0596962a9f0df01b40aaadee7a43dc9253a6b34b275246f6799

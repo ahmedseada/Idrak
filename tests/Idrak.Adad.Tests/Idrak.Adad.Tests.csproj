@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Adad's tests: a console runner (no test framework packages), groups chosen by a filter. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Adad.Tests</RootNamespace>
+    <AssemblyName>Idrak.Adad.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak.Adad\Idrak.Adad.csproj" />
+  </ItemGroup>
+
+</Project>

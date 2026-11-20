@@ -1,0 +1,3 @@
+Generating SQLite file D:/Projects/idrak/test-output/adad/piece1-q4k/cycle1/nsys.sqlite from D:/Projects/idrak/test-output/adad/piece1-q4k/cycle1/nsys.nsys-rep
+Processing [D:/Projects/idrak/test-output/adad/piece1-q4k/cycle1/nsys.sqlite] with [C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.1.3\target-windows-x64\reports\cuda_gpu_trace.py] to [D:/Projects/idrak/test-output/adad/piece1-q4k/cycle1/nsys_cuda_gpu_trace.csv]... PROCESSED
+
