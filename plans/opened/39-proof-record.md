@@ -1845,7 +1845,7 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
    m = 512 and 2048 (gate at m = 512: 180.8 against 161.6 µs; at m = 2048: 619.0 against 588.8); B's kernel 112 TOPS at
    Qwen gate m = 512 (115.3 µs), with one block an SM: its registers (233–241 a thread) leave no room for two. Host
    trace as before; 5.72 µs a launch.
-7. This commit. **Fix 4 (A and B: 64-column shapes)**, from cycle 3: A (64, 3, 64, swizzled) and (128, 2, 64,
+7. `232c6dea` **Fix 4 (A and B: 64-column shapes)**, from cycle 3: A (64, 3, 64, swizzled) and (128, 2, 64,
    swizzled), 80 registers; B (64, 3, 64, swizzled) at 43,008 bytes, first 138 registers (one block an SM: no gain,
    `fix4/`), then with `.maxntid 256, 1, 1` and `.minnctapersm 2` (`PtxBuilder.Finish` takes optional directives, none
    by default: the copied kernels' text unchanged, the PTX test passes) 128 registers and 8 bytes spilled
@@ -1853,6 +1853,82 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
    (`fix4b/compare-cycle3.txt`): A faster outside both runs' spreads at 4 rows (−2.4% to −7.6%), slower at 1 (+2.3%,
    Llama q at m = 2048); B faster at 3 (−3.4% to −4.7%, all m = 128), slower at 1 (+4.3%, Qwen down at m = 512, where
    its measured shape moved); B's measurement picks the 64-column shape at 10 of 56 rows. The control unchanged.
+8. **Cycle 4** (`cycle4/`, fix 4's code): within both runs' spreads of fix 4's run at all but 2 rows
+   (`cycle4/compare-fix4b.txt`). What it shows: B's 256-column shapes, which B's measurement picks at m ≥ 2048 (28 of 56
+   rows), spill 60–116 bytes a thread (`cycle4/sass-mix.txt`: 255 registers). Two attempts, neither kept:
+   - **Fix 5** (`fix5/`): the sub-block step in groups of four tiles (each group's column pairs, sums and folds before
+     the next). Tests 9 of 9 (`tests-9.txt`). B slower outside both spreads at 20 of 56 rows (+2.2% to +5.7%), faster at
+     3; the spills grew to 88 bytes (`fix5/compiled.txt`, `fix5/compare-cycle4.txt`).
+   - **Fix 5b** (`fix5b/`): the order kept, each tile's column pair loaded as its fold needs it. Tests 9 of 9
+     (`tests-10.txt`). Spills 56 bytes at r64, 152 at r128 (`fix5b/compiled.txt`); B faster at 2 rows, slower at 3
+     (+2.4% to +2.5%) (`fix5b/compare-cycle4.txt`).
+   Fix 4's code restored and rebuilt before cycle 5.
+9. **Cycle 5** (`cycle5/`, fix 4's code): within both runs' spreads of cycle 4 at all but 4 rows
+   (`cycle5/compare-cycle4.txt`: Qwen gate at m = 128 +2.0% to +2.6% in all three lanes, Llama v at m = 128 −22% for
+   B). Profile and trace as cycle 4's (the same SASS and compile reports); nothing found to fix beyond cycle 4's spills.
+   The measured choice moved at one shape: Qwen's k and v (k = 2048, n = 1024) at m = 128, B in cycle 4, A in cycle 5.
+10. **Cycle 6** (`cycle6/`, fix 4's code): within both runs' spreads of cycle 5 at all but 1 to 2 rows a lane
+    (`cycle6/compare-cycle5.txt`; Llama v at m = 128 for B and Qwen k at m = 128 for the control, at a shape where the
+    runs' spreads are 16–30%). Profile and trace as cycle 5's (`sass-mix.txt` and `compiled.txt` identical); nothing
+    found to fix. The choice at Qwen's k and v at m = 128 moved back to B. 5.74 and 6.03 µs a launch (cycles 5, 6).
+11. This commit: the record's closing entries and cycles 4–6's evidence.
+
+**Where it stands** (after cycle 6; `cycle6/kernels.txt`). Warm µs at each lane's own measured shape and split,
+control / A / B; B the measured choice at every row but Qwen's k and v at m = 128 (B in cycles 4 and 6, A in 5):
+
+| Model, m | q | k | gate | down |
+|---|---|---|---|---|
+| Qwen3-1.7B, 128 | 42.2 / 28.8 / 24.3 | 44.3 / 26.3 / 26.3 | 83.7 / 63.4 / 44.6 | 80.3 / 62.9 / 43.3 |
+| Qwen3-1.7B, 512 | 72.1 / 72.1 / 45.9 | 53.2 / 46.7 / 33.8 | 196.2 / 188.3 / 123.2 | 206.1 / 195.9 / 118.2 |
+| Qwen3-1.7B, 2048 | 238.2 / 247.2 / 156.7 | 123.6 / 133.1 / 84.4 | 658.8 / 657.0 / 447.1 | 720.2 / 750.1 / 480.8 |
+| Qwen3-1.7B, 4096 | 480.4 / 507.8 / 338.2 | 270.9 / 289.7 / 195.4 | 1241.2 / 1301.8 / 845.5 | 1432.8 / 1459.3 / 972.8 |
+| Llama 3B, 128 | 73.5 / 53.2 / 39.2 | 40.6 / 29.0 / 24.6 | 164.6 / 104.1 / 64.5 | 182.1 / 110.9 / 77.9 |
+| Llama 3B, 512 | 168.0 / 150.4 / 103.6 | 65.5 / 62.5 / 43.2 | 393.7 / 358.4 / 219.0 | 444.9 / 385.5 / 260.2 |
+| Llama 3B, 2048 | 531.2 / 542.6 / 358.0 | 194.0 / 198.3 / 121.0 | 1362.9 / 1315.0 / 884.1 | 1405.6 / 1347.6 / 910.1 |
+| Llama 3B, 4096 | 987.4 / 1035.1 / 704.4 | 400.9 / 434.2 / 286.5 | 2501.6 / 2580.5 / 1650.0 | 2608.2 / 2750.1 / 1830.9 |
+
+- B against the control: 1.39–1.80× at m ≥ 512, 1.32–2.55× at m = 128 (cycle 1: 1.31–1.71× and 1.12–2.58×). A against
+  the control: 0.92–1.15× at m ≥ 512, 1.28–1.68× at m = 128 (cycle 1: 0.84–1.04× and 1.13–1.60×).
+- Cycle 1 to cycle 6 (`cycle6/compare-cycle1.txt`): A faster outside both runs' spreads at 37 of 56 rows (mean −7.7%),
+  slower at none; B faster at 28, slower at 4 (mean −3.0%); the control (unchanged code) faster at 1, slower at 8 (mean
+  +1.1%, the runs' own variation).
+- The kernels now: A's main loop 8.98 instructions a HMMA at its most chosen shape (r128 s2 n128, 127 registers, two
+  blocks an SM); B's 25.59 an IMMA at r64 s3 n128 (241 registers, one block an SM), its 256-column shapes spilling
+  60–116 bytes.
+
+**Settled?** Cycles 5 and 6 found nothing outside the run-to-run spread to fix in the control, A or B, and the measured
+choice held between them at 30 of the 31 distinct shapes. At the 31st (Qwen's k and v, m = 128) it alternates (B, A,
+B in cycles 4–6): A and B tie within their runs' spreads there (warm 21.8–26.3 against 20.8–26.3 µs; spreads up to
+28%), both beat the control by more than the 3% margin, and the copied choice rule (`TuneTiming.Choose`) then takes
+the faster of the run. On the device the two are as close (Nsight Systems spans: A 17.9–20.6 µs, B 18.5–18.9 when its
+gap is not an outlier), and B's own measured shape there moves too (64 columns at 11.0 µs of kernel in cycle 4, 128 at
+15.4 in cycles 5 and 6): each run is two launches of about 5.8 µs of host time against 12–17 µs of kernels, so the warm
+timings that choose are close to the host's launch rate. Holding that choice would take a change to the copied
+measurement (its rule or its timings): stop point S2.
+
+**Findings** (adding to P1-1 to P1-3):
+
+- **P1-4. A matches the control bit for bit at every shape and split it offers** (478 variants over the 9 test shapes,
+  `tests-8.txt`), with the multiply's inputs decoded in registers from the stored blocks; and the copied control matches
+  the source bit for bit (its first shape and the source's own measured shapes and splits).
+- **P1-5. A's speed was set by its waiting, not its instruction count**: removing a fifth of its decode instructions
+  (fix 1) gained 0.4–1.6%; two blocks an SM (fix 3) gained 5.3–12.7%.
+- **P1-6. B's float steps bound its kernel**: four float32 operations a C value a 32-value sub-block (the formula's
+  multiply, conversion and two fused adds) are 16 of its 25.6 instructions an IMMA; its registers hold it to one block
+  an SM; it runs about 112 TOPS on Qwen's gate at m = 512.
+- **P1-7. At m = 128 the products are near the host's launch rate**: 5.66–6.03 µs of host time a launch (cycles 2–6),
+  1.5–2.5 µs of device idle between a lane's two kernels, runs' spreads of 8–30% at the small shapes.
+- **P1-8. The kernel bench's device pool held 4,348 MiB at most** (`cycle6/kernels.txt`): the size-keyed pool keeps a
+  free block of every size it has served, and the bench serves 32 shapes' sizes; no product call allocates from the
+  driver after its first.
+
+**Stop points hit**: S2 (above: holding the choice at Qwen's k and v at m = 128). P1-1 (the profiler's counters) is
+the owner's permission, not a stop point; P1-2 (the split rule) is reported, Adad's own rule is the tighter one.
+
+**Not done**: Adad does not run the model yet, so the full pass's bench, profile, trace and perplexity (B rounds x to
+int8; M10 measured lane 3's rounding, not B's) wait for it. Nothing measured on the CPU device, nor the other weight
+types. The control's 9 copied shapes and its separate sum kernel were not changed (decision 4). No Nsight Compute
+counters (P1-1).
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

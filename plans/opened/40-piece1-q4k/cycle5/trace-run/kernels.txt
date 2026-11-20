@@ -1,0 +1,80 @@
+adad kernels: the prompt product y = x · Wᵀ for a super-block weight, every lane at its measured shape and split
+device: NVIDIA GeForce RTX 5070 Ti; compute 12.0; 70 SMs; 16302 MiB; L2 49152 KiB; shared a block 101376 B
+driver: CUDA 13030
+adad: 1.0.0+232c6deaaaca947fce75d2c34b2b7c83d60b70de (2026-11-20 01:29:14 UTC)
+type: q4_k (description id 1286737319, 256x144b0f5m10s0n2v32q0False|16,4,64;4.0.6,;5.0.6,;6.0.6,;7.0.6,;12.0.4,4.6.2,;13.0.4,5.6.2,;14.0.4,6.6.2,;15.0.4,7.6.2,;8.0.6,;9.0.6,;10.0.6,;11.0.6,;12.4.4,8.6.2,;13.4.4,9.6.2,;14.4.4,10.6.2,;15.4.4,11.6.2,)
+samples a timing: 5 (warm: back-to-back runs, about 1 ms, at most 256, a sample; cold: one run after a read of twice the L2 cache); the lanes in turns; each kernel alone, warm and cold
+lane control: ready
+lane A: ready
+lane B: ready
+host: 5.70 µs a launch (median of 20 batches of 500 empty launches; 5.33-11.44)
+
+## qwen3-1.7b, m = 512
+| product | k | n | lane | shape, splits | warm µs (min-max) | spread | TFLOP/s | cold µs | kernels (warm / cold µs; GB/s or TFLOP/s warm / cold) |
+|---|---|---|---|---|---|---|---|---|---|
+| q | 2048 | 2048 | control | r64 s6 n128 x, 1 | 74.5 (72.6-74.6) | 2.7% | 57.6 | 76.2 | native_pack_x_bf16 7.8 / 8.5 (802 GB/s / 742 GB/s); super_widen_k256x144_ccb20da7_bf16 11.6 / 12.4 (927 GB/s / 870 GB/s); native_mma_bf16_r64_s6_n128_x 57.6 / 57.4 (74.6 TFLOP/s / 74.8 TFLOP/s) |
+| q | 2048 | 2048 | A | r128 s4 n128 x, 1 | 73.6 (72.4-73.7) | 1.7% | 58.3 | 76.0 | native_pack_x_bf16 7.7 / 8.2 (821 GB/s / 771 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s4_n128_x 67.9 / 67.6 (63.2 TFLOP/s / 63.5 TFLOP/s) |
+| q | 2048 | 2048 | B (chosen) | r64 s3 n128 x, 1 | 47.5 (47.5-47.6) | 0.3% | 90.4 | 49.4 | quantize_x_s8_32 7.8 / 8.3 (709 GB/s / 662 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 42.1 / 42.9 (102.1 TFLOP/s / 100.0 TFLOP/s) |
+| k | 2048 | 1024 | control | r64 s6 n128 x, 2 | 50.9 (47.3-53.1) | 11.4% | 42.2 | 51.0 | native_pack_x_bf16 8.5 / 8.1 (741 GB/s / 774 GB/s); super_widen_k256x144_ccb20da7_bf16 10.3 / 8.0 (522 GB/s / 669 GB/s); native_mma_bf16_r64_s6_n128_x 32.4 / 33.0 (66.3 TFLOP/s / 65.0 TFLOP/s); typed_sum_parts 8.5 / 8.2 (744 GB/s / 771 GB/s) |
+| k | 2048 | 1024 | A | r128 s3 n128 x, 2 | 46.6 (45.3-47.7) | 5.1% | 46.0 | 49.4 | native_pack_x_bf16 7.3 / 8.6 (867 GB/s / 731 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s3_n128_x 41.0 / 41.0 (52.3 TFLOP/s / 52.3 TFLOP/s) |
+| k | 2048 | 1024 | B (chosen) | r64 s3 n128 x, 2 | 33.6 (32.1-33.6) | 4.4% | 63.9 | 34.9 | quantize_x_s8_32 7.2 / 8.1 (764 GB/s / 677 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 28.2 / 28.8 (76.1 TFLOP/s / 74.6 TFLOP/s) |
+| v | 2048 | 1024 | control | r64 s6 n128 x, 2 | 47.6 (47.4-51.0) | 7.6% | 45.1 | 51.2 | native_pack_x_bf16 9.2 / 8.2 (681 GB/s / 768 GB/s); super_widen_k256x144_ccb20da7_bf16 11.1 / 8.2 (482 GB/s / 659 GB/s); native_mma_bf16_r64_s6_n128_x 32.5 / 33.0 (66.1 TFLOP/s / 65.1 TFLOP/s); typed_sum_parts 8.3 / 8.1 (755 GB/s / 774 GB/s) |
+| v | 2048 | 1024 | A | r128 s3 n128 x, 2 | 45.3 (44.9-46.6) | 3.6% | 47.4 | 51.4 | native_pack_x_bf16 7.8 / 8.5 (809 GB/s / 742 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s3_n128_x 41.1 / 41.5 (52.2 TFLOP/s / 51.7 TFLOP/s) |
+| v | 2048 | 1024 | B (chosen) | r64 s3 n128 x, 2 | 32.3 (31.9-32.9) | 3.2% | 66.6 | 36.7 | quantize_x_s8_32 8.1 / 8.2 (678 GB/s / 675 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 28.2 / 28.8 (76.1 TFLOP/s / 74.5 TFLOP/s) |
+| o | 2048 | 2048 | control | r64 s6 n128 x, 1 | 72.0 (71.8-72.2) | 0.4% | 59.6 | 76.4 | native_pack_x_bf16 8.4 / 8.6 (752 GB/s / 728 GB/s); super_widen_k256x144_ccb20da7_bf16 12.5 / 12.2 (861 GB/s / 884 GB/s); native_mma_bf16_r64_s6_n128_x 57.8 / 57.4 (74.4 TFLOP/s / 74.8 TFLOP/s) |
+| o | 2048 | 2048 | A | r128 s4 n128 x, 1 | 72.0 (71.9-72.2) | 0.4% | 59.6 | 76.1 | native_pack_x_bf16 7.8 / 8.4 (807 GB/s / 748 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s4_n128_x 68.1 / 67.8 (63.1 TFLOP/s / 63.3 TFLOP/s) |
+| o | 2048 | 2048 | B (chosen) | r64 s3 n128 x, 1 | 45.6 (45.5-46.0) | 1.1% | 94.2 | 49.5 | quantize_x_s8_32 7.0 / 8.7 (782 GB/s / 635 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 41.6 / 41.5 (103.4 TFLOP/s / 103.6 TFLOP/s) |
+| gate | 2048 | 6144 | control | r64 s6 n128 x, 1 | 197.0 (195.0-197.2) | 1.2% | 65.4 | 198.7 | native_pack_x_bf16 8.6 / 8.2 (729 GB/s / 771 GB/s); super_widen_k256x144_ccb20da7_bf16 24.2 / 27.1 (1331 GB/s / 1191 GB/s); native_mma_bf16_r64_s6_n128_x 166.2 / 167.6 (77.5 TFLOP/s / 76.9 TFLOP/s) |
+| gate | 2048 | 6144 | A | r128 s2 n128 x, 1 | 189.9 (188.7-191.5) | 1.5% | 67.8 | 196.7 | native_pack_x_bf16 8.9 / 7.9 (705 GB/s / 793 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 184.3 / 190.5 (69.9 TFLOP/s / 67.6 TFLOP/s) |
+| gate | 2048 | 6144 | B (chosen) | r64 s3 n128 x, 1 | 122.1 (122.0-122.5) | 0.4% | 105.6 | 127.0 | quantize_x_s8_32 8.7 / 8.1 (631 GB/s / 680 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 117.4 / 120.9 (109.7 TFLOP/s / 106.6 TFLOP/s) |
+| up | 2048 | 6144 | control | r64 s6 n128 x, 1 | 197.1 (196.9-197.4) | 0.3% | 65.4 | 198.7 | native_pack_x_bf16 7.6 / 8.8 (829 GB/s / 712 GB/s); super_widen_k256x144_ccb20da7_bf16 24.0 / 26.8 (1343 GB/s / 1205 GB/s); native_mma_bf16_r64_s6_n128_x 165.7 / 168.1 (77.7 TFLOP/s / 76.7 TFLOP/s) |
+| up | 2048 | 6144 | A | r128 s2 n128 x, 1 | 188.2 (187.6-189.0) | 0.7% | 68.5 | 196.7 | native_pack_x_bf16 7.2 / 8.5 (874 GB/s / 742 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 184.0 / 192.5 (70.0 TFLOP/s / 66.9 TFLOP/s) |
+| up | 2048 | 6144 | B (chosen) | r64 s3 n128 x, 1 | 122.1 (121.5-122.3) | 0.6% | 105.5 | 127.1 | quantize_x_s8_32 7.5 / 8.3 (735 GB/s / 667 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 117.3 / 120.5 (109.8 TFLOP/s / 106.9 TFLOP/s) |
+| down | 6144 | 2048 | control | r64 s6 n128 x, 1 | 200.1 (198.6-200.7) | 1.1% | 64.4 | 202.7 | native_pack_x_bf16 10.8 / 18.8 (1746 GB/s / 1005 GB/s); super_widen_k256x144_ccb20da7_bf16 24.2 / 26.6 (1333 GB/s / 1211 GB/s); native_mma_bf16_r64_s6_n128_x 159.1 / 160.6 (81.0 TFLOP/s / 80.2 TFLOP/s) |
+| down | 6144 | 2048 | A | r128 s2 n128 x, 2 | 195.8 (193.7-197.4) | 1.9% | 65.8 | 211.2 | native_pack_x_bf16 9.7 / 18.5 (1949 GB/s / 1019 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 185.8 / 194.6 (69.4 TFLOP/s / 66.2 TFLOP/s) |
+| down | 6144 | 2048 | B (chosen) | r64 s3 n128 x, 1 | 118.8 (118.6-119.2) | 0.5% | 108.4 | 130.9 | quantize_x_s8_32 7.5 / 18.4 (2206 GB/s / 899 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 111.2 / 112.7 (115.9 TFLOP/s / 114.3 TFLOP/s) |
+
+## llama-3.2-3b, m = 512
+| product | k | n | lane | shape, splits | warm µs (min-max) | spread | TFLOP/s | cold µs | kernels (warm / cold µs; GB/s or TFLOP/s warm / cold) |
+|---|---|---|---|---|---|---|---|---|---|
+| q | 3072 | 3072 | control | r64 s6 n128 x, 2 | 168.0 (167.1-168.2) | 0.7% | 57.5 | 168.1 | native_pack_x_bf16 8.8 / 10.3 (1072 GB/s / 913 GB/s); super_widen_k256x144_ccb20da7_bf16 20.0 / 20.9 (1212 GB/s / 1156 GB/s); native_mma_bf16_r64_s6_n128_x 127.7 / 128.7 (75.7 TFLOP/s / 75.1 TFLOP/s); typed_sum_parts 12.7 / 20.2 (1484 GB/s / 936 GB/s) |
+| q | 3072 | 3072 | A | r128 s2 n128 x, 2 | 150.4 (150.0-151.0) | 0.7% | 64.2 | 160.1 | native_pack_x_bf16 8.6 / 10.0 (1102 GB/s / 939 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 145.0 / 151.4 (66.7 TFLOP/s / 63.8 TFLOP/s) |
+| q | 3072 | 3072 | B (chosen) | r64 s3 n64 x, 1 | 104.3 (103.9-104.4) | 0.4% | 92.6 | 108.9 | quantize_x_s8_32 9.1 / 10.7 (907 GB/s / 773 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n64_x 97.5 / 100.3 (99.1 TFLOP/s / 96.4 TFLOP/s) |
+| k | 3072 | 1024 | control | r64 s6 n128 x, 2 | 63.9 (62.9-65.3) | 3.8% | 50.4 | 69.3 | native_pack_x_bf16 7.7 / 10.3 (1220 GB/s / 913 GB/s); super_widen_k256x144_ccb20da7_bf16 11.0 / 9.0 (731 GB/s / 896 GB/s); native_mma_bf16_r64_s6_n128_x 44.8 / 45.2 (71.9 TFLOP/s / 71.3 TFLOP/s); typed_sum_parts 9.2 / 8.1 (687 GB/s / 774 GB/s) |
+| k | 3072 | 1024 | A | r128 s3 n128 x, 2 | 61.3 (61.1-62.1) | 1.5% | 52.6 | 65.6 | native_pack_x_bf16 7.9 / 10.6 (1202 GB/s / 894 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s3_n128_x 56.0 / 57.1 (57.5 TFLOP/s / 56.5 TFLOP/s) |
+| k | 3072 | 1024 | B (chosen) | r64 s3 n128 x, 2 | 42.5 (42.5-42.6) | 0.3% | 75.8 | 47.2 | quantize_x_s8_32 7.9 / 10.6 (1046 GB/s / 777 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 36.5 / 37.0 (88.2 TFLOP/s / 87.0 TFLOP/s) |
+| v | 3072 | 1024 | control | r64 s6 n128 x, 2 | 65.8 (65.4-69.5) | 6.2% | 48.9 | 71.6 | native_pack_x_bf16 8.7 / 10.6 (1084 GB/s / 894 GB/s); super_widen_k256x144_ccb20da7_bf16 10.9 / 10.3 (738 GB/s / 780 GB/s); native_mma_bf16_r64_s6_n128_x 44.6 / 45.6 (72.1 TFLOP/s / 70.6 TFLOP/s); typed_sum_parts 8.0 / 8.2 (785 GB/s / 768 GB/s) |
+| v | 3072 | 1024 | A | r128 s3 n128 x, 2 | 62.2 (62.1-62.5) | 0.7% | 51.8 | 69.1 | native_pack_x_bf16 8.1 / 10.6 (1162 GB/s / 891 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s3_n128_x 56.3 / 55.7 (57.2 TFLOP/s / 57.8 TFLOP/s) |
+| v | 3072 | 1024 | B (chosen) | r64 s3 n128 x, 2 | 42.9 (42.8-43.3) | 1.0% | 75.0 | 48.7 | quantize_x_s8_32 8.7 / 9.9 (953 GB/s / 835 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n128_x 37.0 / 36.8 (87.1 TFLOP/s / 87.6 TFLOP/s) |
+| o | 3072 | 3072 | control | r64 s6 n128 x, 2 | 166.4 (165.6-167.6) | 1.2% | 58.1 | 168.1 | native_pack_x_bf16 8.5 / 10.4 (1105 GB/s / 910 GB/s); super_widen_k256x144_ccb20da7_bf16 18.6 / 22.6 (1301 GB/s / 1072 GB/s); native_mma_bf16_r64_s6_n128_x 127.5 / 127.6 (75.8 TFLOP/s / 75.7 TFLOP/s); typed_sum_parts 12.5 / 20.7 (1511 GB/s / 910 GB/s) |
+| o | 3072 | 3072 | A | r128 s2 n128 x, 2 | 150.1 (149.2-150.7) | 1.0% | 64.4 | 157.9 | native_pack_x_bf16 9.2 / 10.3 (1021 GB/s / 919 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 144.6 / 151.3 (66.8 TFLOP/s / 63.9 TFLOP/s) |
+| o | 3072 | 3072 | B (chosen) | r64 s3 n64 x, 1 | 102.9 (102.4-103.2) | 0.8% | 93.9 | 110.8 | quantize_x_s8_32 9.2 / 10.2 (900 GB/s / 806 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n64_x 97.4 / 100.0 (99.2 TFLOP/s / 96.6 TFLOP/s) |
+| gate | 3072 | 8192 | control | r64 s3 n256 x, 1 | 389.7 (388.3-391.8) | 0.9% | 66.1 | 388.2 | native_pack_x_bf16 7.8 / 10.8 (1212 GB/s / 873 GB/s); super_widen_k256x144_ccb20da7_bf16 90.3 / 75.8 (715 GB/s / 850 GB/s); native_mma_bf16_r64_s3_n256_x 313.2 / 311.5 (82.3 TFLOP/s / 82.7 TFLOP/s) |
+| gate | 3072 | 8192 | A | r128 s2 n128 x, 1 | 358.2 (354.1-359.4) | 1.5% | 71.9 | 367.1 | native_pack_x_bf16 8.9 / 10.5 (1064 GB/s / 902 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 349.1 / 358.7 (73.8 TFLOP/s / 71.9 TFLOP/s) |
+| gate | 3072 | 8192 | B (chosen) | r64 s3 n256 x, 1 | 218.8 (218.5-219.6) | 0.5% | 117.8 | 227.4 | quantize_x_s8_32 9.1 / 10.8 (905 GB/s / 768 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n256_x 214.2 / 217.4 (120.3 TFLOP/s / 118.5 TFLOP/s) |
+| up | 3072 | 8192 | control | r64 s3 n256 x, 1 | 389.2 (388.7-391.3) | 0.7% | 66.2 | 387.0 | native_pack_x_bf16 7.4 / 10.2 (1276 GB/s / 924 GB/s); super_widen_k256x144_ccb20da7_bf16 90.3 / 75.8 (714 GB/s / 851 GB/s); native_mma_bf16_r64_s3_n256_x 312.8 / 312.7 (82.4 TFLOP/s / 82.4 TFLOP/s) |
+| up | 3072 | 8192 | A | r128 s2 n128 x, 1 | 357.1 (352.9-358.7) | 1.6% | 72.2 | 366.6 | native_pack_x_bf16 9.1 / 10.6 (1036 GB/s / 894 GB/s); super_mma_bf16_k256x144_ccb20da7_r128_s2_n128_x 349.3 / 360.0 (73.8 TFLOP/s / 71.6 TFLOP/s) |
+| up | 3072 | 8192 | B (chosen) | r64 s3 n256 x, 1 | 218.8 (218.1-218.8) | 0.4% | 117.8 | 227.5 | quantize_x_s8_32 9.3 / 10.5 (886 GB/s / 789 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n256_x 214.2 / 217.5 (120.3 TFLOP/s / 118.5 TFLOP/s) |
+| down | 8192 | 3072 | control | r64 s3 n256 x, 4 | 443.5 (442.7-446.4) | 0.8% | 58.1 | 434.0 | native_pack_x_bf16 9.9 / 24.5 (2531 GB/s / 1027 GB/s); super_widen_k256x144_ccb20da7_bf16 90.7 / 75.8 (711 GB/s / 851 GB/s); native_mma_bf16_r64_s3_n256_x 316.1 / 315.5 (81.5 TFLOP/s / 81.7 TFLOP/s); typed_sum_parts 14.0 / 35.2 (2245 GB/s / 893 GB/s) |
+| down | 8192 | 3072 | A | r64 s3 n128 x, 8 | 382.7 (382.0-383.3) | 0.3% | 67.3 | 379.1 | native_pack_x_bf16 11.3 / 24.6 (2222 GB/s / 1021 GB/s); super_mma_bf16_k256x144_ccb20da7_r64_s3_n128_x 357.7 / 356.4 (72.0 TFLOP/s / 72.3 TFLOP/s) |
+| down | 8192 | 3072 | B (chosen) | r64 s3 n256 x, 4 | 258.8 (258.2-259.0) | 0.3% | 99.6 | 258.0 | quantize_x_s8_32 10.5 / 24.4 (2105 GB/s / 901 GB/s); super_mma_s8_k256x144_ccb20da7_r64_s3_n256_x 232.4 / 235.4 (110.9 TFLOP/s / 109.5 TFLOP/s) |
+
+## The measured choice per shape (warm µs at each lane's own measured shape and split)
+| model | product | k | n | m | control µs | A µs | B µs | measured choice | lane variants (shape, splits) |
+|---|---|---|---|---|---|---|---|---|---|
+| qwen3-1.7b | q | 2048 | 2048 | 512 | 74.5 | 73.6 | 47.5 | B | control r64 s6 n128 x, 1; A r128 s4 n128 x, 1; B r64 s3 n128 x, 1 |
+| qwen3-1.7b | k | 2048 | 1024 | 512 | 50.9 | 46.6 | 33.6 | B | control r64 s6 n128 x, 2; A r128 s3 n128 x, 2; B r64 s3 n128 x, 2 |
+| qwen3-1.7b | v | 2048 | 1024 | 512 | 47.6 | 45.3 | 32.3 | B | control r64 s6 n128 x, 2; A r128 s3 n128 x, 2; B r64 s3 n128 x, 2 |
+| qwen3-1.7b | o | 2048 | 2048 | 512 | 72.0 | 72.0 | 45.6 | B | control r64 s6 n128 x, 1; A r128 s4 n128 x, 1; B r64 s3 n128 x, 1 |
+| qwen3-1.7b | gate | 2048 | 6144 | 512 | 197.0 | 189.9 | 122.1 | B | control r64 s6 n128 x, 1; A r128 s2 n128 x, 1; B r64 s3 n128 x, 1 |
+| qwen3-1.7b | up | 2048 | 6144 | 512 | 197.1 | 188.2 | 122.1 | B | control r64 s6 n128 x, 1; A r128 s2 n128 x, 1; B r64 s3 n128 x, 1 |
+| qwen3-1.7b | down | 6144 | 2048 | 512 | 200.1 | 195.8 | 118.8 | B | control r64 s6 n128 x, 1; A r128 s2 n128 x, 2; B r64 s3 n128 x, 1 |
+| llama-3.2-3b | q | 3072 | 3072 | 512 | 168.0 | 150.4 | 104.3 | B | control r64 s6 n128 x, 2; A r128 s2 n128 x, 2; B r64 s3 n64 x, 1 |
+| llama-3.2-3b | k | 3072 | 1024 | 512 | 63.9 | 61.3 | 42.5 | B | control r64 s6 n128 x, 2; A r128 s3 n128 x, 2; B r64 s3 n128 x, 2 |
+| llama-3.2-3b | v | 3072 | 1024 | 512 | 65.8 | 62.2 | 42.9 | B | control r64 s6 n128 x, 2; A r128 s3 n128 x, 2; B r64 s3 n128 x, 2 |
+| llama-3.2-3b | o | 3072 | 3072 | 512 | 166.4 | 150.1 | 102.9 | B | control r64 s6 n128 x, 2; A r128 s2 n128 x, 2; B r64 s3 n64 x, 1 |
+| llama-3.2-3b | gate | 3072 | 8192 | 512 | 389.7 | 358.2 | 218.8 | B | control r64 s3 n256 x, 1; A r128 s2 n128 x, 1; B r64 s3 n256 x, 1 |
+| llama-3.2-3b | up | 3072 | 8192 | 512 | 389.2 | 357.1 | 218.8 | B | control r64 s3 n256 x, 1; A r128 s2 n128 x, 1; B r64 s3 n256 x, 1 |
+| llama-3.2-3b | down | 8192 | 3072 | 512 | 443.5 | 382.7 | 258.8 | B | control r64 s3 n256 x, 4; A r64 s3 n128 x, 8; B r64 s3 n256 x, 4 |
+
+device memory: the pool held 724 MiB at most (43 driver allocations); launches 152270; 9 s

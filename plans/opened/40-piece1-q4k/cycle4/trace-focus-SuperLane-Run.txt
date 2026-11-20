@@ -1,0 +1,104 @@
+stacks: 1 threads over 8.72 s (0.01 to 8.73 s); 4,394 samples and 336 other events with stacks; a sampling round every 2.0 ms (the slowest tenth 2.0 ms)
+where the threads' time went (8.7 s of thread time):
+Kind                    Share  Seconds  What it is
+----------------------  -----  -------  -----------------------------------------------------------------------
+running .NET code       12.9%  1.12     the CPU in .NET code
+outside .NET code       87.1%  7.59     native calls (drivers, the system) and the runtime (compiling, loading)
+spinning                0.01%  0.00     spin-waits: a core burned while waiting
+stopped by the runtime  0.04%  0.00     garbage collections: every thread stopped, or waiting at a GC poll
+waiting                 0.00%  0.00     blocked: locks, events, sleeps, I/O, idle thread pools
+busy: 1.0 threads on average of 24 processors; garbage collections: 14, every thread stopped 0.00 s in all (the longest 1.1 ms)
+methods by their own time (busy time: running, outside .NET code, spinning; 8.72 s):
+Own ms  Own    Outside .NET  Total ms  Total  Method
+------  -----  ------------  --------  -----  ----------------------------------------------------
+7,422   85.2%  97.3%         7,422     85.2%  CudaDevice.TimeEnd
+598     6.9%   24.8%         598       6.9%   CudaDevice.Launch
+154     1.8%   0.00%         154       1.8%   Random.CompatSeedImpl.NextBytes
+139     1.6%   0.00%         149       1.7%   Program.RandomRows
+71.8    0.8%   100.0%        71.8      0.8%   CudaDriver.cuDevicePrimaryCtxRetain
+56.6    0.6%   100.0%        56.6      0.6%   CudaDevice.Synchronize
+35.5    0.4%   5.7%          5,250     60.2%  Tuner.Measure (lambda)
+19.7    0.2%   19.2%         32.7      0.4%   CudaDevice.LoadModule
+19.3    0.2%   10.3%         19.3      0.2%   CudaDevice.TimeStart
+18.7    0.2%   10.7%         179       2.1%   Program.RandomBlocks
+18.0    0.2%   100.0%        91.8      1.1%   CudaDevice.TryOpen
+13.0    0.1%   0.00%         13.0      0.1%   Encoding.GetBytes
+12.0    0.1%   100.0%        16.0      0.2%   CudaDevice.Dispose
+11.9    0.1%   17.5%         8,586     98.5%  Program.Kernels
+9.7     0.1%   0.00%         9.7       0.1%   Random.CompatSeedImpl.NextDouble
+5.6     0.06%  0.00%         5.6       0.06%  Random.CompatSeedImpl.NextSingle
+5.5     0.06%  100.0%        10.3      0.1%   SuperMmaKernels.DecodeModule
+5.2     0.06%  0.00%         5.2       0.06%  GC.AllocateUninitializedArray.AllocateNewArrayWorker
+5.2     0.06%  0.00%         6,165     70.7%  SuperProduct.VariantOf
+4.1     0.05%  0.00%         4.1       0.05%  Interop.Kernel32.GetCurrentProcessorNumberEx
+methods by their total time (with what they call; the program's own methods: --all-frames for the .NET libraries' too):
+Total ms  Total  Own ms  Method
+--------  -----  ------  ----------------------------
+8,699     99.8%  2.0     Program.Main
+8,586     98.5%  11.9    Program.Kernels
+7,422     85.2%  7,422   CudaDevice.TimeEnd
+6,859     78.7%  1.5     Tuner.Measure
+6,611     75.9%  0.0     SuperProduct.Run
+6,611     75.9%  0.0     SuperProduct.Choose
+6,183     70.9%  0.0     SuperProduct.Choose (lambda)
+6,165     70.7%  5.2     SuperProduct.VariantOf
+5,250     60.2%  0.0     TuneTiming.Choose
+5,250     60.2%  35.5    Tuner.Measure (lambda)
+1,757     20.2%  3.5     Tuner.TimeRuns
+1,658     19.0%  0.0     TuneTiming.Warm
+1,272     14.6%  0.0     Tuner.Measure (lambda)
+1,244     14.3%  2.0     Program.BenchShape
+1,225     14.1%  0.0     SuperProduct.RunLane
+598       6.9%   598     CudaDevice.Launch
+386       4.4%   4.0     Program.BenchShape (lambda)
+311       3.6%   0.0     SuperProduct.Prepare
+311       3.6%   0.0     SuperProduct.Lane
+311       3.6%   2.8     SuperLane.Prepare
+allocations (205 MiB reported, a report each ~100 KB; by type and the program's code that made them):
+MiB   Share  Type                       Allocated in              Called from
+----  -----  -------------------------  ------------------------  -----------------------------------
+88.0  42.9%  System.Single[]            Program.RandomRows        Program.Kernels
+81.0  39.5%  System.Byte[]              Program.RandomBlocks      Program.Kernels
+7.3   3.5%   System.Byte[]              CudaDevice.LoadModule     SuperLane.Prepare
+4.7   2.3%   System.String              CudaDevice.LoadModule     SuperLane.Prepare
+4.2   2.1%   System.Char[]              PtxBuilder.Finish         SuperMmaKernels.Generate
+4.0   1.9%   System.String              PtxBuilder.Finish         SuperMmaKernels.Generate
+2.5   1.2%   System.Char[]              PtxBuilder.L              NativeKernels.StoreC
+1.2   0.6%   System.Char[]              PtxBuilder.Finish         NativeKernels.NativeMma
+1.1   0.6%   System.Char[]              PtxBuilder.L              SuperMmaKernels.Generate.Compute
+1.1   0.5%   System.String              NativeKernels.StoreC      SuperMmaKernels.Generate
+0.8   0.4%   System.String              PtxBuilder.Finish         NativeKernels.NativeMma
+0.7   0.3%   System.Text.StringBuilder  PtxBuilder.L              SuperMmaKernels.Generate
+0.6   0.3%   System.Text.StringBuilder  PtxBuilder.L              SuperMmaKernels.Generate.DecodeTile
+0.6   0.3%   System.String              SuperMmaKernels.Generate  SuperMmaKernels.DecodeModule
+0.6   0.3%   System.String              NativeKernels.StoreC      NativeKernels.NativeMma
+0.4   0.2%   System.Text.StringBuilder  PtxBuilder.L              NativeKernels.NativeMma.Compute
+0.4   0.2%   System.Text.StringBuilder  PtxBuilder.L              NativeKernels.StoreC
+0.3   0.2%   System.Char[]              PtxBuilder.L              SuperMmaKernels.Generate.DecodeTile
+0.3   0.2%   System.Text.StringBuilder  PtxBuilder.L              SuperMmaKernels.Generate.Compute
+0.3   0.1%   System.String              PtxBuilder.R              SuperMmaKernels.Generate.Assemble
+focus "SuperLane.Run": 69.5 ms, 0.8% of the counted time, through 1 matching methods
+  matching methods:
+ms    Share   Method
+----  ------  -------------
+69.5  100.0%  SuperLane.Run
+  called from:
+ms    Share  Method
+----  -----  -------------------------------
+55.6  80.0%  SuperProduct.VariantOf (lambda)
+8.0   11.6%  SuperProduct.RunLane
+5.9   8.5%   Program.BenchShape (lambda)
+  calls (its callees, with what they call):
+ms    Share  Method
+----  -----  ------------------
+23.5  33.9%  Int8Lane.Launch
+22.1  31.8%  ControlLane.Launch
+21.8  31.4%  DecodeLane.Launch
+2.0   2.9%   ControlLane.Rent
+  time inside it by the method running (own time):
+ms    Share  Method
+----  -----  ----------------------
+62.0  89.2%  CudaDevice.Launch
+5.5   7.9%   CudaDevice.Synchronize
+2.0   2.9%   CudaDriver.cuMemAlloc
+files: the trace D:\Projects\idrak\test-output\adad\piece1-q4k\cycle4\trace.nettrace; its stacks for a viewer D:\Projects\idrak\test-output\adad\piece1-q4k\cycle4\trace.speedscope.json (https://www.speedscope.app)
