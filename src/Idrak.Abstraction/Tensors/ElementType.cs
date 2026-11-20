@@ -545,10 +545,14 @@ public sealed class ElementType : IKind
         ToFloat32 = ElementConversions.E5M2ToFloat32, FromFloat32 = ElementConversions.E5M2FromFloat32,
     };
 
-    /// <summary>64-bit signed integer (indices past 2³¹, read through int32 kernels by a counted conversion).</summary>
+    /// <summary>
+    /// 64-bit signed integer: two's complement, little-endian, one a value (ids and indices; as weights, codes of its full
+    /// range with one float32 scale an output row, s = max |w| / (2⁶³ − 1), each value code · s).
+    /// </summary>
     public static readonly ElementType Int64 = new()
     {
-        Name = "int64", Summary = "64-bit signed integer (indices; read by the index kernels through an int32 conversion)", BlockBits = 64, IsSigned = true, IsInteger = true, Kernels = [],
+        Name = "int64", Summary = "64-bit signed integer: two's complement, little-endian (ids and indices; as weights, codes of its full range with one float32 scale an output row)",
+        BlockBits = 64, IsSigned = true, IsInteger = true, Kernels = [],
         ToFloat32 = ElementConversions.Int64ToFloat32, FromFloat32 = ElementConversions.Int64FromFloat32,
     };
 

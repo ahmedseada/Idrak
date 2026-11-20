@@ -74,15 +74,32 @@ public sealed class StoredWeight : PackedWeight, IRecordable
     /// the host's (<see cref="IHostStorage"/>: the CPU), else into one host buffer uploaded once, so the bytes are never
     /// made twice. Null, having kept nothing, when <paramref name="fill"/> says it cannot.
     /// </summary>
-    /// <exception cref="ArgumentException">The type has no conversion to float32, a row is not whole blocks or bytes, the scales do not fit.</exception>
-    public static StoredWeight? FromFill(ElementType type, int rows, int columns, StoredScaling? scaling, Device device, StoredFill fill)
+    /// <exception cref="ArgumentException">The type has no conversion to float32, a row is not whole blocks or bytes, the scales do not fit, or the bytes pass a span's 2 GB.</exception>
+    public static unsafe StoredWeight? FromFill(ElementType type, int rows, int columns, StoredScaling? scaling, Device device, StoredFill fill)
+    {
+        ArgumentNullException.ThrowIfNull(fill);
+        return FromFillAt(type, rows, columns, scaling, device, (stored, bytes) => fill(new Span<byte>(stored, bytes <= int.MaxValue ? (int)bytes
+            : throw new ArgumentException($"[{columns}, {rows}] {type?.Name} values take {bytes} bytes: past what a span of bytes holds (fill them through FromFillAt)."))));
+    }
+
+    /// <summary>Writes a weight's stored bytes in place from <paramref name="stored"/> (true), or says it cannot (false: nothing is made).</summary>
+    /// <param name="stored">The first of the <paramref name="bytes"/> bytes <see cref="FromStored"/> takes, to fill (past 2 GB too).</param>
+    /// <param name="bytes">How many.</param>
+    internal unsafe delegate bool StoredFillAt(byte* stored, long bytes);
+
+    /// <summary>
+    /// <see cref="FromFill"/> whose <paramref name="fill"/> writes the stored bytes through a pointer, so a weight past a
+    /// span's 2 GB (an 8-byte type's head: 151,936 × 2,048 values take 2.5 GB) is made in the host's memory as any other; a
+    /// device whose memory is not the host's still takes one host buffer of a span's size.
+    /// </summary>
+    internal static unsafe StoredWeight? FromFillAt(ElementType type, int rows, int columns, StoredScaling? scaling, Device device, StoredFillAt fill)
     {
         ArgumentNullException.ThrowIfNull(type);
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(fill);
         CheckRows(type, rows);
         var layout = CheckScaling(scaling, rows, columns);
-        int bytes = checked((int)type.ByteCount((long)rows * columns));
+        long bytes = type.ByteCount((long)rows * columns);
         Tensor? values = null;
         try
         {
@@ -91,19 +108,27 @@ public sealed class StoredWeight : PackedWeight, IRecordable
             bool filled;
             if (storage is IHostStorage host)
             {
-                var target = MemoryMarshal.AsBytes(host.HostMemory);
-                target[bytes..].Clear();                                           // the last word's padding
-                filled = fill(target[..bytes]);
+                var memory = host.HostMemory;
+                fixed (float* words = memory)
+                {
+                    byte* target = (byte*)words;
+                    new Span<byte>(target + bytes, (int)((long)memory.Length * sizeof(float) - bytes)).Clear();   // the last word's padding
+                    filled = fill(target, bytes);
+                }
             }
             else
             {
-                int words = storage.Length * sizeof(float);
+                int words = checked(storage.Length * sizeof(float));
                 byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1, words));
                 try
                 {
                     var target = buffer.AsSpan(0, words);
-                    target[bytes..].Clear();
-                    filled = fill(target[..bytes]);
+                    target[(int)bytes..].Clear();
+                    fixed (byte* at = target)
+                    {
+                        filled = fill(at, bytes);
+                    }
+
                     if (filled)
                     {
                         values.Backend.Upload(MemoryMarshal.Cast<byte, float>(target), storage);

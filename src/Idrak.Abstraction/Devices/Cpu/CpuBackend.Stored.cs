@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Idrak.Abstraction.Generation;
 
@@ -170,6 +171,13 @@ internal sealed partial class CpuBackend
         }
     }
 
+    // `count` bytes from byte `start` of the first `length` words of `words`: a stored weight's bytes past 2 GB too (an 8-byte
+    // type's head takes 2.5 GB), where a span over all of them would not fit.
+    internal static ReadOnlySpan<byte> StoredSpan(float[] words, int length, long start, int count) =>
+        start >= 0 && count >= 0 && start + count <= (long)length * sizeof(float)
+            ? MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AddByteOffset(ref Unsafe.As<float, byte>(ref MemoryMarshal.GetArrayDataReference(words)), (nint)start), count)
+            : throw new ArgumentOutOfRangeException(nameof(start), $"Bytes [{start}, {start + count}) are past the {(long)length * sizeof(float)} stored.");
+
     // The outputs a tile covers: its widened rows and panel within a core's L2 (measured, CpuInfo), at least a few vectors'
     // worth, and small enough that the tiles keep every thread busy. Only the scratch and the speed depend on it.
     private static int StoredTile(int n, int k)
@@ -253,8 +261,7 @@ internal abstract class StoredRows(ElementType elementType, float[]? scaleValues
     private sealed class Bytes(ElementType type, float[] words, int length, float[]? scales, float[]? zeros, StoredScales layout, int k)
         : StoredRows(type, scales, zeros, layout, k)
     {
-        private protected override ReadOnlySpan<byte> StoredBytes(long start, int count) =>
-            MemoryMarshal.AsBytes(words.AsSpan(0, length)).Slice(checked((int)start), count);
+        private protected override ReadOnlySpan<byte> StoredBytes(long start, int count) => CpuBackend.StoredSpan(words, length, start, count);
 
         private protected override bool InPlace => false;
     }
