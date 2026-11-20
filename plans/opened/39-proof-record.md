@@ -1808,7 +1808,7 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
    `fix1/compare-cycle1.txt`): A −0.4 to −1.6% at m ≥ 512 (outside both runs' spreads at 14 of its 56 rows, every one
    faster), m = 128 within the spread; B and the control unchanged. A is not limited by its instruction issue (at the
    native kernel's HMMA rate it issues about 15% of its slots).
-3. This commit. **Fix 2 (A and B: the k split's ordered sum in the kernel)**, from cycle 1's kernel trace (the device
+3. `560472ae` **Fix 2 (A and B: the k split's ordered sum in the kernel)**, from cycle 1's kernel trace (the device
    idle 1.1–4.9 µs between a lane's kernels; a split product's sum one more launch). Each split writes its part;
    after a release fence each block counts itself on its tile's counter; the tile's last block (acquire fence) adds
    the parts in split order (`typed_sum_parts`' order, bit for bit) into y and sets the counter back to 0. No sum launch
@@ -1825,6 +1825,21 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
      the new tail its 256-column shapes spill 60–116 bytes a thread instead of 124–176 (`fix2b/compiled.txt`,
      `fix2b/sass-mix.txt`), and B's measurement now picks them at m ≥ 2048 (e.g. Qwen down at m = 4096 1019.4 →
      967.6 µs).
+4. **Cycle 2** (`cycle2/`, the code of fix 2): the bench against fix 2b's run of the same code agrees within both runs'
+   spreads at all but 1 to 2 rows a lane (`cycle2/compare-fix2b.txt`: the run-to-run spread). Kernel trace
+   (`cycle2/kernel-trace.txt`): A and B now 2 kernels a product with one 1.5–2.5 µs gap; A's kernel still 19–20%
+   slower than the native kernel at m = 512 (65.2 against 54.6 µs q, 193.5 against 161.9 gate, 186.9 against 155.5
+   down). By the SASS count A issues about 15% of its slots at the native kernel's HMMA rate: it waits, with one block
+   (8 warps) an SM, as every A shape took more than half of an SM's shared memory while its registers (125–128 a
+   thread) allow two. Host trace (`cycle2/trace.txt`): as cycle 1 (one thread busy, waiting on the timing events; 14
+   collections from the bench's data; no allocation on a call path); 5.66 µs a launch (the bench's direct measure).
+5. This commit. **Fix 3 (A: two blocks an SM)**, from cycle 2: A's shapes (64, 3, 128, swizzled) at 46,080 bytes and
+   (128, 2, 128, swizzled) at 49,152 bytes, 123 and 127 registers (`fix3/compiled.txt`), so two blocks fit an SM.
+   Tests: 9 of 9 (`tests-6.txt`; 410 A variants the control's output bit for bit). Bench (`fix3/compare-cycle2.txt`):
+   A faster outside both runs' spreads at 37 of its 56 rows (−5.3% to −12.7%; Qwen gate at m = 2048 737.1 → 655.8 µs,
+   down at m = 4096 1660.9 → 1449.6), slower at none; A's measurement picks (128, 2, 128, swizzled) at 27 of 56 rows.
+   A against the control: 1.17–1.66× at m = 128, 0.92–1.14× at m ≥ 512 (before: 0.84–1.04×). B and the control
+   unchanged. (The control's 9 copied shapes all take more than half of an SM's shared memory: one block an SM.)
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

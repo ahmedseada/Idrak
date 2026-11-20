@@ -59,11 +59,15 @@ internal static class SuperMmaKernels
     /// <summary>B's further condition: the codes are the unsigned 4-bit fields as they are (no bias), which int8 holds exactly.</summary>
     internal static bool FitsInt8(SuperBlock s) => Fits(s) && s.CodeBias == 0;
 
-    /// <summary>A's shapes (bytes of x's bfloat16 row a stage: 64 or 128, i.e. 32 or 64 values; stages; columns; swizzle).</summary>
+    /// <summary>
+    /// A's shapes (bytes of x's bfloat16 row a stage: 64 or 128, i.e. 32 or 64 values; stages; columns; swizzle). The last
+    /// two take at most half of an SM's shared memory with A's registers (at most 128 a thread), so two blocks fit an SM.
+    /// </summary>
     internal static readonly NativeMmaConfig[] DecodeConfigs =
     [
         new(64, 3, 128, false), new(64, 4, 128, false), new(128, 2, 128, false), new(64, 3, 256, false), new(64, 3, 256, true),
         new(64, 4, 256, true), new(128, 2, 256, true), new(128, 3, 128, true), new(64, 6, 128, true), new(128, 4, 128, true),
+        new(64, 3, 128, true), new(128, 2, 128, true),
     ];
 
     /// <summary>B's shapes (bytes of x's int8 row a stage = its values: 64 or 128; stages; columns; swizzle).</summary>
