@@ -250,9 +250,7 @@ internal abstract partial class DesktopTests : Tests
                     {
                         var y = new float[m * n];
                         bool integer = second && !bfloat16;
-                        bool ran = bfloat16
-                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.BFloat16RowLane(second, type, words, storage.Length, x, y, m, n, k)
-                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.NibbleLane(integer, type, words, storage.Length, x, y, m, n, k);
+                        bool ran = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(second, type, words, storage.Length, x, y, m, n, k);
                         if (!ran)
                         {
                             Check(integer, $"the {(bfloat16 ? "bfloat16" : "decoded")} lane does not read {type.Name} ({weight.Description})");

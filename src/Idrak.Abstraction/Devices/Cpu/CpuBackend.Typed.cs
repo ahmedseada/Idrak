@@ -57,9 +57,9 @@ internal sealed partial class CpuBackend
         }
 
         // The measured route: only the kernels that read the bfloat16 values in registers (no float32 copy of the weights,
-        // whole or a tile), at any rows: register-tiled or streaming, the faster at the shape.
-        bool tiled = NamedLane("bfloat16 in registers", m, n, k) ?? MeasureBFloat16(x, packed, y, m, n, k);
-        BFloat16InRegisters(!tiled, x, packed, y, m, n, k);
+        // whole or a tile), at any rows: the tiled or the streaming lane, the faster at the shape (Chosen).
+        int lane = Chosen(new PackedBFloat16Choice(this, x, packed, y, m, n, k), m, n, k);
+        BFloat16InRegisters(lane == StreamingLaneId, x, packed, y, m, n, k);
     }
 
     // Today's route of an int8 product for any row count, as the tensor's product runs it on this device: few rows by the
@@ -224,45 +224,65 @@ internal sealed partial class CpuBackend
             () => Int8Named(x, q, scales, y, m, n, k),
             () => TypedInputsMajor(ElementType.Int8, x, q, scales, y, m, n, k, stride));
 
-    // The bfloat16 kernels reading the weights in registers: register-tiled (true) or streaming, measured.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private bool MeasureBFloat16(Storage x, Storage packed, Storage y, int m, int n, int k) =>
-        MeasureLane(LaneKey("bfloat16 in registers", m, n, k), m, n, k,
-            () => BFloat16InRegisters(false, x, packed, y, m, n, k),
-            () => BFloat16InRegisters(true, x, packed, y, m, n, k), "tiled", "streaming");
+    // The packed bfloat16 product (a tied head's [k, n] layout) as a choice of lanes (ILaneChoice, Chosen): its two kernels
+    // reading the values in registers, the register-tiled timed briefly against the streaming (a product of many rows takes
+    // a large part of a second: TimeBrief's fixed rounds rather than Faster's until they settle).
+    private readonly struct PackedBFloat16Choice(CpuBackend backend, Storage x, Storage packed, Storage y, int m, int n, int k) : ILaneChoice
+    {
+        public string Name => "bfloat16 in registers";
 
-    // Times both lanes on the real operands (each writes all of y, which the caller writes again): one run of each first
-    // (compiling and warming them), then rounds of one run each in turn, each lane's median; the second (`generic`) is taken
-    // only when clearly faster (3%), the first (`named`) otherwise and with IDRAK_AUTOTUNE=0. Kept for the process.
-    private static bool MeasureLane((string Type, int Rows, int N, int K) key, int m, int n, int k, Action named, Action generic,
-        string first = "named", string second = "generic")
+        public int First => TiledLaneId;
+
+        public int Second => StreamingLaneId;
+
+        public bool BothRun => true;
+
+        public int Unmeasured => TiledLaneId;
+
+        public bool Brief => true;
+
+        public void Run(int lane) => backend.BFloat16InRegisters(lane == StreamingLaneId, x, packed, y, m, n, k);
+    }
+
+    // Times both lanes on the real operands (each writes all of y, which the caller writes again: TimeBrief); the generic
+    // product is taken only when clearly faster (3%), the named kernel otherwise and with IDRAK_AUTOTUNE=0. Kept for the
+    // process.
+    private static bool MeasureLane((string Type, int Rows, int N, int K) key, int m, int n, int k, Action named, Action generic)
     {
         bool keepNamed = true;
         if (CpuTuning.Autotune)
         {
-            named();
-            generic();
-            const int Rounds = 7;
-            Span<double> a = stackalloc double[Rounds], b = stackalloc double[Rounds];
-            for (int r = 0; r < Rounds; r++)
-            {
-                long t0 = Stopwatch.GetTimestamp();
-                named();
-                long t1 = Stopwatch.GetTimestamp();
-                generic();
-                long t2 = Stopwatch.GetTimestamp();
-                (a[r], b[r]) = (t1 - t0, t2 - t1);
-            }
-
-            a.Sort();
-            b.Sort();
-            keepNamed = !(b[Rounds / 2] < 0.97 * a[Rounds / 2]);
+            var (a, b) = TimeBrief(named, generic);
+            keepNamed = !(b < 0.97 * a);
             ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{key.Type} {m}x{k}->{n}"),
                 string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"{(keepNamed ? first : second)} ({first} {a[Rounds / 2] * 1e3 / Stopwatch.Frequency:0.###} ms, {second} {b[Rounds / 2] * 1e3 / Stopwatch.Frequency:0.###} ms)"));
+                    $"{(keepNamed ? "named" : "generic")} (named {a:0.###} ms, generic {b:0.###} ms)"));
         }
 
         s_lanes[key] = keepNamed;
         return keepNamed;
+    }
+
+    // Two lanes timed on the real operands in a fixed number of rounds: one run of each first (compiling and warming them),
+    // then rounds of one run each in turn; each lane's median, in ms.
+    private static (double First, double Second) TimeBrief(Action first, Action second)
+    {
+        first();
+        second();
+        const int Rounds = 7;
+        Span<double> a = stackalloc double[Rounds], b = stackalloc double[Rounds];
+        for (int r = 0; r < Rounds; r++)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            first();
+            long t1 = Stopwatch.GetTimestamp();
+            second();
+            long t2 = Stopwatch.GetTimestamp();
+            (a[r], b[r]) = (t1 - t0, t2 - t1);
+        }
+
+        a.Sort();
+        b.Sort();
+        return (a[Rounds / 2] * 1e3 / Stopwatch.Frequency, b[Rounds / 2] * 1e3 / Stopwatch.Frequency);
     }
 }

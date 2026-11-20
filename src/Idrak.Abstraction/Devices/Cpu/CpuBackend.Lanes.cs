@@ -19,10 +19,11 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // and dotted with every row of x (decoding-sized products), and the panel lane, a tile of rows widened into a [columns, k]
 // panel and multiplied by the float32 product reading it transposed (prompt-sized products). The generic route takes the
 // row lane up to 8 rows and the panel lane above; the measured route the faster of the two at the shape, measured once
-// (Faster). A 4-bit super-block (NibbleBlocks: ggml's Q4_K by its description) takes, under the measured route, only its
-// two lanes that never widen it: its codes decoded in registers inside the dot products, or int8 dot products over the
-// stored codes with x rounded to int8 a block of 32 values; the faster at the shape. A 32-value block of 4-bit codes with
-// one float16 scale (ScaledNibbles: ggml's q4_0 by its description) takes two such lanes of its own.
+// (Faster). Three formats are read where they are stored and never widened under the measured route (IRowFormat, the
+// shared part below): a 4-bit super-block (NibbleFormat: ggml's Q4_K by its description) and a 32-value block of 4-bit
+// codes with one float16 scale (ScaledFormat: ggml's q4_0), each with its codes decoded in registers inside the dot
+// products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; and bfloat16
+// (BFloat16Format), its values made float32 in registers; the faster lane at each shape.
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -299,58 +300,43 @@ internal sealed partial class CpuBackend
 
         var type = weight.ElementType;
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-        float[] xv = D(x), yv = D(y);
+        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, bfloat16) under the measured route: only the
+        // format's lanes, which never widen it, the shape's lane measured once (Chosen).
+        if (ProductRoutes.Current == ProductRoute.Measured)
+        {
+            var routed = new RoutedUse(lane, D(x), D(y), m, n, k);
+            if (FormatOf(type, k, ref routed))
+            {
+                s_formatsMultiplied = true;
+                return true;
+            }
+        }
+
         var widening = WideningOf(type);
-        // A 4-bit super-block or a 32-value block of 4-bit codes under the measured route: only the lanes over the stored
-        // codes, which never widen the weight (NibbleBlocks, ScaledNibbles).
-        bool measured = ProductRoutes.Current == ProductRoute.Measured;
-        var nibbles = measured && type.Super is { } super ? NibbleBlocks.Of(super) : null;
-        var scaled = measured && type.Scaled is { } block && k % ScaledNibbles.Values == 0 ? ScaledNibbles.Of(block) : null;
-        bool bfloat16 = measured && ReadsBFloat16Rows(type);
         int chosen = ProductRoutes.Current == ProductRoute.Generic
             ? m <= Int8DirectRows ? RowLaneId : PanelLaneId
             : StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k), out int known) ? known
-            : nibbles is not null ? MeasureNibbleLanes(nibbles, lane, xv, yv, m, n, k)
-            : scaled is not null ? MeasureScaledLanes(scaled, lane, xv, yv, m, n, k)
-            : bfloat16 ? MeasureBFloat16Lanes(lane, xv, yv, m, n, k)
             : MeasureStoredLanes(widening, lane, x, y, m, n, k);
-        if (chosen is PairedLaneId or ShiftedLaneId)
-        {
-            BFloat16Product(chosen, lane, xv, yv, m, n, k);
-            s_nibblesMultiplied = true;
-            return true;
-        }
-
-        if (chosen is DecodedLaneId or IntegerLaneId)
-        {
-            if (scaled is not null)
-            {
-                ScaledProduct(chosen == IntegerLaneId, scaled, lane, xv, yv, m, n, k);
-                s_nibblesMultiplied = true;
-                return true;
-            }
-
-            NibbleProduct(chosen == IntegerLaneId, nibbles ?? NibbleBlocks.Of(type.Super!)!, lane, xv, yv, m, n, k);
-            s_nibblesMultiplied = true;
-            return true;
-        }
-
         RunLane(chosen, widening, lane, x, y, m, n, k);
         return true;
     }
 
     // The stored products' lanes: each output's row widened once (decoding-sized), a panel of rows widened and multiplied
     // transposed, the whole weight widened once and the float32 product (today's prompt path: ExpandedLane), the tiles; and
-    // a 4-bit weight's two lanes over its stored codes (NibbleBlocks, ScaledNibbles), decoded in registers or by int8 dot
-    // products; a bfloat16 weight's two lanes over its stored values, made float32 in registers in even and odd pairs or by a shift.
+    // a 4-bit weight's two lanes over its stored codes (NibbleFormat, ScaledFormat), decoded in registers or by int8 dot
+    // products; a bfloat16 weight's two lanes over its stored values, made float32 in registers in even and odd pairs or by
+    // a shift (BFloat16Format); the packed bfloat16 product's two kernels reading its values in registers (the tiled and the
+    // streaming, CpuBackend.Typed.cs).
     private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5,
-        PairedLaneId = 6, ShiftedLaneId = 7;
+        PairedLaneId = 6, ShiftedLaneId = 7, TiledLaneId = 8, StreamingLaneId = 9;
 
     private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)",
         "tiles (panels widened in the product)", "decoded lane (codes decoded in registers, float32 dot products)",
         "integer lane (x rounded to int8 a block of 32, int8 dot products over the stored codes)",
         "paired lane (bfloat16 made float32 in registers in even and odd pairs, by a shift and a mask, x reordered to match)",
-        "shifted lane (bfloat16 made float32 in registers by a widening load and a shift)"];
+        "shifted lane (bfloat16 made float32 in registers by a widening load and a shift)",
+        "tiled lane (bfloat16 read in place in registers, a panel of rows' sums kept in registers)",
+        "streaming lane (bfloat16 read in place in registers, each weight row added to every row's sums)"];
 
     // Each shape's measured lane.
     private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K), int> StoredLanes = new();
@@ -753,159 +739,169 @@ internal sealed partial class CpuBackend
     // Whether the integer lane runs here: the CPU has int8 dot products (x86's AVX2, with AVX-VNNI's where reported).
     private static bool IntegerDots => Avx2.IsSupported && Fma.IsSupported;
 
-    // The shape's faster nibble lane (MeasureTwo); the decoded lane alone where the CPU has no int8 dot products.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static int MeasureNibbleLanes(NibbleBlocks blocks, StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
-        IntegerDots
-            ? MeasureTwo(lane, m, n, k, DecodedLaneId, IntegerLaneId, IntegerLaneId, id => NibbleProduct(id == IntegerLaneId, blocks, lane, x, y, m, n, k))
-            : StoredLanes[(lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k)] = DecodedLaneId;
-
-    // The shape's faster of two lanes, measured once on the real operands (Faster: each run writes all of y, which the
-    // caller writes again), kept for the shape; without measuring (CpuTuning.Autotune off), `fallback`.
-    private static int MeasureTwo(StoredLane lane, int m, int n, int k, int first, int second, int fallback, Action<int> run)
+    // q4_k as a format read where it is stored (IRowFormat): a 4-bit super-block (NibbleBlocks) by its description; the
+    // decoded lane timed against the integer lane (the decoded alone where the CPU has no int8 dot products); x rounded to
+    // int8 for the integer lane (RoundRows); a group's scales decoded into a table for its kernels (NibbleKernels).
+    private readonly unsafe struct NibbleFormat : IRowFormat<NibbleFormat, NibbleKernels>
     {
-        var key = (lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k);
-        int best = fallback;
-        if (CpuTuning.Autotune)
+        private readonly NibbleBlocks blocks;
+
+        private NibbleFormat(NibbleBlocks blocks) => this.blocks = blocks;
+
+        public static bool Reads(ElementType type, int k, out NibbleFormat format)
         {
-            var (a, b) = Faster.Time(() => run(first), () => run(second));
-            best = b < a ? second : first;
-            ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lane.Type.Name} {m}x{k}->{n}"),
-                string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"{LaneNames[best]} ({LaneNames[first].Split(' ')[0]} {a:0.###} ms, {LaneNames[second].Split(' ')[0]} {b:0.###} ms)"));
+            format = type.Super is { } super && k % NibbleBlocks.Values == 0 && NibbleBlocks.Of(super) is { } plan ? new NibbleFormat(plan) : default;
+            return format.blocks is not null;
         }
 
-        StoredLanes[key] = best;
-        return best;
+        public int First => DecodedLaneId;
+
+        public int Second => IntegerLaneId;
+
+        public bool BothRun => IntegerDots;
+
+        public int Unmeasured => IntegerLaneId;
+
+        public int GroupBytes => NibbleGroupBytes;
+
+        // Columns over every row of x, a quarter of a thread's share: each stored row's scales decoded once a product.
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => ((total + 4 * threads - 1) / (4 * threads), m);
+
+        public int Span(int k) => k;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            if (lane != IntegerLaneId)
+            {
+                return new LaneInput(x, false, null, null);
+            }
+
+            var codes = ArrayPool<sbyte>.Shared.Rent(m * k);
+            var scales = ArrayPool<float>.Shared.Rent(m * (k / NibbleBlocks.Values) * 16);
+            RoundRows(x, codes, scales, m, k);
+            return new LaneInput(x, false, codes, scales);
+        }
+
+        // A group's scales' table; a row read alone takes one only where its scales do not decode in vector lanes.
+        public (int Floats, int Bytes) Scratch(int k, int group) =>
+            (group > 0 || !blocks.InLanes ? Math.Max(group, 1) * (k / NibbleBlocks.Values) * 16 : 0, 0);
+
+        public NibbleKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(lane == IntegerLaneId, blocks, k, x, floats);
     }
 
-    /// <summary>
-    /// y [m, n] = x [m, k] · Wᵀ for W a 4-bit super-block weight (NibbleBlocks) or a weight of 32-value blocks of 4-bit
-    /// codes (ScaledNibbles) of n rows stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), by
-    /// the lane asked (<paramref name="integer"/>: x rounded to int8 a block of 32 values; else decoded in registers).
-    /// False where the type's description is not one the lanes read, or the integer lane is asked of a CPU without int8
-    /// dot products. For tests: each lane apart from the measured choice.
-    /// </summary>
-    internal static bool NibbleLane(bool integer, ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k)
+    // Stored bytes a group of q4_k rows takes with more than one row of x (RowGroups): the rows whose scales' table fills
+    // 32 KB (16 floats a super-block of 144 bytes).
+    private const int NibbleGroupBytes = 73728;
+
+    // q4_k's lanes as RowGroups' kernels: a group's scales decoded once into `table` (NibbleBlocks.Scales, 16 floats a
+    // super-block); a row read alone decodes each block's scales as its codes are read (NibbleBlocks.Block, no table) where
+    // they decode in vector lanes, else into the table first.
+    private readonly unsafe struct NibbleKernels : IRowKernels
     {
-        if (type.Scaled is { } block && k % ScaledNibbles.Values == 0 && ScaledNibbles.Of(block) is { } plan)
+        private readonly bool integer;
+        private readonly NibbleBlocks blocks;
+        private readonly int k, superBlocks, rowTable, codeOffset, blockBytes;
+        private readonly float* x, xs, table;
+        private readonly sbyte* xq;
+
+        public NibbleKernels(bool integer, NibbleBlocks blocks, int k, LanePointers input, float* table)
         {
-            ScaledProduct(integer, plan, new StoredLane(type, block, words, length, null, k, type.ByteCount(k)), x, y, m, n, k);
-            return true;
+            this.integer = integer;
+            this.blocks = blocks;
+            this.k = k;
+            this.table = table;
+            superBlocks = k / NibbleBlocks.Values;
+            rowTable = superBlocks * 16;
+            codeOffset = blocks.CodeOffset;
+            blockBytes = blocks.Bytes;
+            x = input.Values;
+            xq = input.Codes;
+            xs = input.Scales;
         }
 
-        if (type.Super is not { } super || NibbleBlocks.Of(super) is not { } blocks || integer && !IntegerDots || k % super.Values != 0)
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
         {
-            return false;
+            for (int c = 0; c < count; c++)
+            {
+                blocks.Scales(new ReadOnlySpan<byte>(stored + (c0 + c) * rowBytes, (int)rowBytes), superBlocks, new Span<float>(table + c * rowTable, rowTable));
+            }
         }
 
-        NibbleProduct(integer, blocks, new StoredLane(type, null, words, length, null, k, type.ByteCount(k)), x, y, m, n, k);
-        return true;
-    }
-
-    // The product by one nibble lane: the integer lane's x rounded first (RoundRows), then the outputs' columns in chunks
-    // spread over the threads (NibbleColumns), each chunk every row of x.
-    private static void NibbleProduct(bool integer, NibbleBlocks blocks, StoredLane lane, float[] x, float[] y, int m, int n, int k)
-    {
-        int superBlocks = k / NibbleBlocks.Values;
-        sbyte[]? codes = null;
-        float[]? scales = null;
-        try
+        // All of k a pass (Span: k).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
             if (integer)
             {
-                codes = ArrayPool<sbyte>.Shared.Rent(m * k);
-                scales = ArrayPool<float>.Shared.Rent(m * superBlocks * 16);
-                RoundRows(x, codes, scales, m, k);
+                IntegerFour(ref *(row + codeOffset), blockBytes, superBlocks, ref *(table + c * rowTable), ref *(xq + (nint)i * k), ref *(xs + (nint)i * rowTable), k,
+                    out y0, out y1, out y2, out y3);
             }
-
-            int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
-            int chunk = Math.Max(1, (n + 4 * threads - 1) / (4 * threads)), tasks = (n + chunk - 1) / chunk;
-            var body = new NibbleRange(integer, blocks, lane, x, codes, scales, y, m, n, k);
-            CpuRanges.Run(tasks, chunk, n, threads, ref body);                         // `body` is this frame's, on the stack
+            else
+            {
+                DecodedFour(ref *(row + codeOffset), blockBytes, superBlocks, ref *(table + c * rowTable), ref *(x + (nint)i * k), k, out y0, out y1, out y2, out y3);
+            }
         }
-        finally
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => integer
+            ? IntegerOne(ref *row, codeOffset, blockBytes, superBlocks, ref *(table + c * rowTable), null, ref *(xq + (nint)i * k), ref *(xs + (nint)i * rowTable))
+            : DecodedOne(ref *row, codeOffset, blockBytes, superBlocks, ref *(table + c * rowTable), null, ref *(x + (nint)i * k));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i)
         {
-            if (codes is not null)
+            if (!blocks.InLanes)
             {
-                ArrayPool<sbyte>.Shared.Return(codes);
+                blocks.Scales(new ReadOnlySpan<byte>(row, superBlocks * blockBytes), superBlocks, new Span<float>(table, rowTable));
+                return One(row, 0, i);
             }
 
-            if (scales is not null)
-            {
-                ArrayPool<float>.Shared.Return(scales);
-            }
+            return integer
+                ? IntegerOne(ref *row, codeOffset, blockBytes, superBlocks, ref Unsafe.NullRef<float>(), blocks, ref *(xq + (nint)i * k), ref *(xs + (nint)i * rowTable))
+                : DecodedOne(ref *row, codeOffset, blockBytes, superBlocks, ref Unsafe.NullRef<float>(), blocks, ref *(x + (nint)i * k));
         }
     }
 
-    // Products of 4-bit super-block weights, of 32-value blocks of 4-bit codes, or of bfloat16 weights, sharing x, under the
-    // measured route (the queries, keys and values; the gate and up): in one pass where all are one such type, any rows;
-    // offered once such a weight has been multiplied here, so the groups of other types' weights are not asked (their
-    // outputs allocated) only to run one by one.
-    public override bool StoredMatMulManyAvailable(int m) => ProductRoutes.Current == ProductRoute.Measured && s_nibblesMultiplied;
+    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, bfloat16) sharing x, under the
+    // measured route (the queries, keys and values; the gate and up): in one pass, any rows; offered once such a weight has
+    // been multiplied here, so the groups of other types' weights are not asked (their outputs allocated) only to run one
+    // by one.
+    public override bool StoredMatMulManyAvailable(int m) => ProductRoutes.Current == ProductRoute.Measured && s_formatsMultiplied;
 
-    // Whether a weight has been multiplied by lanes over its stored values (4-bit codes, bfloat16) in this process.
-    private static volatile bool s_nibblesMultiplied;
+    // Whether a weight in a format read where it is stored has been multiplied in this process.
+    private static volatile bool s_formatsMultiplied;
 
-    // 2 or 3 such products in one pass (NibbleMany, ScaledMany, BFloat16Many): x prepared once (rounded where an integer
-    // lane runs, reordered where the paired lane runs), the weights' columns spread over the threads as one range,
-    // each column by its own product's measured lane (measured here first where it has not been), so each output is its
-    // own product's, bit for bit. False for any other weights: the callers then run them one by one.
+    // 2 or 3 such products in one pass (FormatGrouped): each by its own lane for the shape (measured first where it has not
+    // been), x prepared once for each lane they take, the weights' columns spread over the threads as one range, so each
+    // output is its own product's, bit for bit. False for any other weights: the callers then run them one by one.
     public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
     {
         var type = products.Length > 0 ? products[0].Values.ElementType : null;
-        var blocks = type?.Super is { } super ? NibbleBlocks.Of(super) : null;
-        var scaled = blocks is null && type?.Scaled is { } block ? ScaledNibbles.Of(block) : null;
-        bool bfloat16 = type is not null && ReadsBFloat16Rows(type);
-        if (ProductRoutes.Current != ProductRoute.Measured || products.Length is < 2 or > 3 || m <= 0 || k <= 0 || type is null
-            || blocks is null && scaled is null && !bfloat16 || blocks is not null && k % NibbleBlocks.Values != 0 || scaled is not null && k % ScaledNibbles.Values != 0)
+        if (ProductRoutes.Current != ProductRoute.Measured || products.Length is < 2 or > 3 || m <= 0 || k <= 0 || type is null)
         {
             return false;
         }
 
-        foreach (var (values, scales, output, n) in products)
+        var group = new ThreeProducts();
+        for (int j = 0; j < products.Length; j++)
         {
+            var (values, scales, output, n) = products[j];
             if (values is not CpuStorage || !ReferenceEquals(values.ElementType, type) || n <= 0 || values.ElementCount < (long)n * k
                 || scales is not null and not CpuStorage || scales is not null && scales.Length < n || output is not CpuStorage)
             {
                 return false;
             }
+
+            group[j] = products[j];
         }
 
-        float[] xv = D(x);
-        var parts = new ThreeParts();
-        for (int j = 0; j < products.Length; j++)
+        var use = new GroupedUse(type, D(x), m, k, group, products.Length);
+        if (!FormatOf(type, k, ref use))
         {
-            var (values, scales, output, n) = products[j];
-            var lane = new StoredLane(type, null, D(values), values.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-            float[] yv = D(output);
-            int chosen = StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k), out int known) ? known
-                : blocks is not null ? MeasureNibbleLanes(blocks, lane, xv, yv, m, n, k)
-                : scaled is not null ? MeasureScaledLanes(scaled, lane, xv, yv, m, n, k)
-                : MeasureBFloat16Lanes(lane, xv, yv, m, n, k);
-            if (chosen is not (DecodedLaneId or IntegerLaneId or PairedLaneId or ShiftedLaneId))
-            {
-                return false;
-            }
-
-            parts[j] = new RowPart(lane, yv, n, chosen);
+            return false;
         }
 
-        var all = ((ReadOnlySpan<RowPart>)parts)[..products.Length];
-        if (blocks is not null)
-        {
-            NibbleMany(blocks, all, xv, m, k);
-        }
-        else if (scaled is not null)
-        {
-            ScaledMany(scaled, all, xv, m, k);
-        }
-        else
-        {
-            BFloat16Many(all, xv, m, k);
-        }
-
-        s_nibblesMultiplied = true;
+        s_formatsMultiplied = true;
         return true;
     }
 
@@ -917,165 +913,6 @@ internal sealed partial class CpuBackend
     private struct ThreeParts
     {
         private RowPart _part;
-    }
-
-    // The products of `parts` in one range of columns over the threads (NibbleProduct's, their columns one after another).
-    private static void NibbleMany(NibbleBlocks blocks, ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
-    {
-        int superBlocks = k / NibbleBlocks.Values, total = 0;
-        bool integer = false;
-        foreach (var part in parts)
-        {
-            total += part.N;
-            integer |= part.LaneId == IntegerLaneId;
-        }
-
-        sbyte[]? codes = null;
-        float[]? scales = null;
-        try
-        {
-            if (integer)
-            {
-                codes = ArrayPool<sbyte>.Shared.Rent(m * k);
-                scales = ArrayPool<float>.Shared.Rent(m * superBlocks * 16);
-                RoundRows(x, codes, scales, m, k);
-            }
-
-            int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
-            int chunk = Math.Max(1, (total + 4 * threads - 1) / (4 * threads)), tasks = (total + chunk - 1) / chunk;
-            var body = new NibbleManyRange(blocks, x, codes, scales, m, k, parts[0], parts[1], parts.Length > 2 ? parts[2] : default);
-            CpuRanges.Run(tasks, chunk, total, threads, ref body);                     // `body` is this frame's, on the stack
-        }
-        finally
-        {
-            if (codes is not null)
-            {
-                ArrayPool<sbyte>.Shared.Return(codes);
-            }
-
-            if (scales is not null)
-            {
-                ArrayPool<float>.Shared.Return(scales);
-            }
-        }
-    }
-
-    // A grouped pass's chunks of columns (CpuRanges): the parts' columns one after another, a chunk split where it crosses
-    // from one part to the next.
-    private readonly struct NibbleManyRange(NibbleBlocks blocks, float[] x, sbyte[]? xq, float[]? xs, int m, int k, RowPart p0, RowPart p1, RowPart p2) : IRangeBody
-    {
-        public void Run(int first, int last)
-        {
-            Part(first, last, 0, p0);
-            Part(first, last, p0.N, p1);
-            if (p2.Lane is not null)
-            {
-                Part(first, last, p0.N + p1.N, p2);
-            }
-        }
-
-        private void Part(int first, int last, int start, RowPart part)
-        {
-            int a = Math.Max(first, start), b = Math.Min(last, start + part.N);
-            if (a < b)
-            {
-                NibbleColumns(part.LaneId == IntegerLaneId, blocks, part.Lane, x, xq, xs, part.Y, m, part.N, k, a - start, b - start);
-            }
-        }
-    }
-
-    // The nibble lanes' chunks of columns as a range body (CpuRanges: all helpers queued at once, no allocation a call).
-    private readonly struct NibbleRange(bool integer, NibbleBlocks blocks, StoredLane lane, float[] x, sbyte[]? xq, float[]? xs, float[] y, int m, int n, int k) : IRangeBody
-    {
-        public void Run(int first, int last) => NibbleColumns(integer, blocks, lane, x, xq, xs, y, m, n, k, first, last);
-    }
-
-    // Columns [j0, j1) of y for every row of x. One row of x: each stored row read once, in order, each block's scales decoded
-    // as its codes are dotted (NibbleBlocks.Block). More: the columns' scales decoded a group of rows at a time (a table of
-    // at most 32 KB, NibbleBlocks.Scales), then four rows of x at a time against each of the group's weight rows (the four
-    // rows of x stay in the cache across the group, the group's stored rows across the rows of x), the rows left over one at
-    // a time.
-    private static void NibbleColumns(bool integer, NibbleBlocks blocks, StoredLane lane, float[] x, sbyte[]? xq, float[]? xs, float[] y, int m, int n, int k, int j0, int j1)
-    {
-        int superBlocks = k / NibbleBlocks.Values, rowTable = superBlocks * 16;
-        if (m == 1 && blocks.InLanes)
-        {
-            ref byte first = ref MemoryMarshal.GetReference(MemoryMarshal.AsBytes(lane.Words.AsSpan(0, lane.Length)));
-            for (int c = j0; c < j1; c++)
-            {
-                ref byte row = ref Unsafe.Add(ref first, (nint)(c * lane.RowBytes));
-                float sum = integer
-                    ? IntegerOne(ref row, blocks.CodeOffset, blocks.Bytes, superBlocks, ref Unsafe.NullRef<float>(), blocks, ref MemoryMarshal.GetArrayDataReference(xq!), ref MemoryMarshal.GetArrayDataReference(xs!))
-                    : DecodedOne(ref row, blocks.CodeOffset, blocks.Bytes, superBlocks, ref Unsafe.NullRef<float>(), blocks, ref MemoryMarshal.GetArrayDataReference(x));
-                y[c] = lane.RowScales is { } rs ? sum * rs[c] : sum;
-            }
-
-            return;
-        }
-
-        int group = Math.Clamp(8192 / rowTable, 1, j1 - j0);
-        float[] table = ArrayPool<float>.Shared.Rent(group * rowTable);
-        try
-        {
-            var bytes = MemoryMarshal.AsBytes(lane.Words.AsSpan(0, lane.Length));
-            ref byte stored = ref MemoryMarshal.GetReference(bytes);
-            ref float scaleTable = ref MemoryMarshal.GetArrayDataReference(table);
-            ref float xf = ref MemoryMarshal.GetArrayDataReference(x);
-            ref sbyte xc = ref xq is null ? ref Unsafe.NullRef<sbyte>() : ref MemoryMarshal.GetArrayDataReference(xq);
-            ref float xsc = ref xs is null ? ref Unsafe.NullRef<float>() : ref MemoryMarshal.GetArrayDataReference(xs);
-            int bytesPerBlock = blocks.Bytes, codeOffset = blocks.CodeOffset;
-            for (int c0 = j0; c0 < j1; c0 += group)
-            {
-                int count = Math.Min(group, j1 - c0);
-                for (int c = 0; c < count; c++)
-                {
-                    blocks.Scales(bytes.Slice(checked((int)((c0 + c) * lane.RowBytes)), (int)lane.RowBytes), superBlocks, table.AsSpan(c * rowTable, rowTable));
-                }
-
-                int i = 0;
-                for (; i + 4 <= m; i += 4)
-                {
-                    for (int c = 0; c < count; c++)
-                    {
-                        ref byte codes = ref Unsafe.Add(ref stored, (nint)((c0 + c) * lane.RowBytes) + codeOffset);
-                        ref float rowScales = ref Unsafe.Add(ref scaleTable, c * rowTable);
-                        float s0, s1, s2, s3;
-                        if (integer)
-                        {
-                            IntegerFour(ref codes, bytesPerBlock, superBlocks, ref rowScales, ref Unsafe.Add(ref xc, (nint)i * k), ref Unsafe.Add(ref xsc, (nint)i * rowTable), k, out s0, out s1, out s2, out s3);
-                        }
-                        else
-                        {
-                            DecodedFour(ref codes, bytesPerBlock, superBlocks, ref rowScales, ref Unsafe.Add(ref xf, (nint)i * k), k, out s0, out s1, out s2, out s3);
-                        }
-
-                        float scale = lane.RowScales is { } rs ? rs[c0 + c] : 1f;
-                        int at = i * n + c0 + c;
-                        y[at] = lane.RowScales is null ? s0 : s0 * scale;
-                        y[at + n] = lane.RowScales is null ? s1 : s1 * scale;
-                        y[at + 2 * n] = lane.RowScales is null ? s2 : s2 * scale;
-                        y[at + 3 * n] = lane.RowScales is null ? s3 : s3 * scale;
-                    }
-                }
-
-                for (; i < m; i++)
-                {
-                    for (int c = 0; c < count; c++)
-                    {
-                        ref byte row = ref Unsafe.Add(ref stored, (nint)((c0 + c) * lane.RowBytes));
-                        ref float rowScales = ref Unsafe.Add(ref scaleTable, c * rowTable);
-                        float sum = integer
-                            ? IntegerOne(ref row, codeOffset, bytesPerBlock, superBlocks, ref rowScales, null, ref Unsafe.Add(ref xc, (nint)i * k), ref Unsafe.Add(ref xsc, (nint)i * rowTable))
-                            : DecodedOne(ref row, codeOffset, bytesPerBlock, superBlocks, ref rowScales, null, ref Unsafe.Add(ref xf, (nint)i * k));
-                        y[i * n + c0 + c] = lane.RowScales is { } rs ? sum * rs[c0 + c] : sum;
-                    }
-                }
-            }
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(table);
-        }
     }
 
     // ---- the integer lane
@@ -1423,110 +1260,59 @@ internal sealed partial class CpuBackend
     // code bytes transposed by words in registers so each block's sum lands in its own lane, the code bias added through
     // x's code sums and the float scales applied eight blocks at a time. The measured route keeps the faster at each shape.
 
-    // The shape's faster lane over 32-value nibble blocks (MeasureTwo); without measuring, the integer lane.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static int MeasureScaledLanes(ScaledNibbles plan, StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
-        MeasureTwo(lane, m, n, k, DecodedLaneId, IntegerLaneId, IntegerLaneId, id => ScaledProduct(id == IntegerLaneId, plan, lane, x, y, m, n, k));
-
-    // The product by one lane over 32-value nibble blocks (ScaledMany with one part).
-    private static void ScaledProduct(bool integer, ScaledNibbles plan, StoredLane lane, float[] x, float[] y, int m, int n, int k)
+    // q4_0 as a format read where it is stored (IRowFormat): a 32-value block of 4-bit codes (ScaledNibbles) by its
+    // description; the decoded lane timed against the integer lane; x rounded to int8 for the integer lane
+    // (RoundScaledRows); a group's scales' table and its rows' short last groups as scratch for its kernels (ScaledKernels:
+    // `bytes` holds the group of a row read alone, then a group a row of the group).
+    private readonly unsafe struct ScaledFormat : IRowFormat<ScaledFormat, ScaledKernels>
     {
-        var parts = new ThreeParts();
-        parts[0] = new RowPart(lane, y, n, integer ? IntegerLaneId : DecodedLaneId);
-        ScaledMany(plan, ((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
+        private readonly ScaledNibbles plan;
+
+        private ScaledFormat(ScaledNibbles plan) => this.plan = plan;
+
+        public static bool Reads(ElementType type, int k, out ScaledFormat format)
+        {
+            format = type.Scaled is { } block && k % ScaledNibbles.Values == 0 && ScaledNibbles.Of(block) is { } found ? new ScaledFormat(found) : default;
+            return format.plan is not null;
+        }
+
+        public int First => DecodedLaneId;
+
+        public int Second => IntegerLaneId;
+
+        public bool BothRun => true;
+
+        public int Unmeasured => IntegerLaneId;
+
+        public int GroupBytes => ScaledGroupBytes;
+
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => GroupTile(total, rowBytes, ScaledGroupBytes);
+
+        public int Span(int k) => k;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            if (lane != IntegerLaneId)
+            {
+                return new LaneInput(x, false, null, null);
+            }
+
+            int groups = ScaledNibbles.Groups(k);
+            var codes = ArrayPool<sbyte>.Shared.Rent(m * groups * ScaledNibbles.GroupCodes);
+            var scales = ArrayPool<float>.Shared.Rent(m * groups * 16);
+            RoundScaledRows(x, codes, scales, m, k, plan.Bias);
+            return new LaneInput(x, false, codes, scales);
+        }
+
+        public (int Floats, int Bytes) Scratch(int k, int group) =>
+            (group * ScaledNibbles.Groups(k) * ScaledNibbles.Group, (group + 1) * ScaledNibbles.Group * plan.Bytes);
+
+        public ScaledKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) =>
+            new(lane == IntegerLaneId, plan, k, x.Values, x.Codes, x.Scales, floats, bytes + ScaledNibbles.Group * plan.Bytes, bytes);
     }
 
-    // The products of `parts` (1 to 3 weights of one type sharing x): x rounded once where an integer lane runs
-    // (RoundScaledRows), then their tiles over the threads (RowTiles, ScaledColumns).
-    private static void ScaledMany(ScaledNibbles plan, ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
-    {
-        int groups = ScaledNibbles.Groups(k);
-        bool integer = false;
-        foreach (var part in parts)
-        {
-            integer |= part.LaneId == IntegerLaneId;
-        }
-
-        sbyte[]? codes = null;
-        float[]? scales = null;
-        try
-        {
-            if (integer)
-            {
-                codes = ArrayPool<sbyte>.Shared.Rent(m * groups * ScaledNibbles.GroupCodes);
-                scales = ArrayPool<float>.Shared.Rent(m * groups * 16);
-                RoundScaledRows(x, codes, scales, m, k, plan.Bias);
-            }
-
-            RowTiles(parts, m, ScaledGroupBytes, new ScaledTile(plan, x, codes, scales, k));
-        }
-        finally
-        {
-            if (codes is not null)
-            {
-                ArrayPool<sbyte>.Shared.Return(codes);
-            }
-
-            if (scales is not null)
-            {
-                ArrayPool<float>.Shared.Return(scales);
-            }
-        }
-    }
-
-    // Stored bytes a group of rows of the lanes over 32-value nibble blocks takes with more than one row of x (RowGroups).
+    // Stored bytes a group of q4_0 rows takes with more than one row of x (RowGroups).
     private const int ScaledGroupBytes = 16384;
-
-    // A tile of a product over 32-value nibble blocks.
-    private readonly struct ScaledTile(ScaledNibbles plan, float[] x, sbyte[]? xq, float[]? xs, int k) : IRowTile
-    {
-        public void Run(in RowPart part, int j0, int j1, int i0, int i1) =>
-            ScaledColumns(part.LaneId == IntegerLaneId, plan, part.Lane, x, xq, xs, part.Y, part.N, k, j0, j1, i0, i1);
-    }
-
-    // Columns [j0, j1) of y for rows [i0, i1) of x by a lane over 32-value nibble blocks (RowGroups with ScaledKernels): the
-    // scratch its kernels take, pinned with the operands for the tile.
-    private static unsafe void ScaledColumns(bool integer, ScaledNibbles plan, StoredLane lane, float[] x, sbyte[]? xq, float[]? xs, float[] y, int n, int k,
-        int j0, int j1, int i0, int i1)
-    {
-        int blocks = k / ScaledNibbles.Values, groupBytes = ScaledNibbles.Group * plan.Bytes;
-        bool many = i1 - i0 > 1, uneven = blocks % ScaledNibbles.Group != 0;
-        int group = RowGroup((nint)lane.RowBytes, j1 - j0, ScaledGroupBytes);
-        float[]? tableArray = many ? ArrayPool<float>.Shared.Rent(group * ScaledNibbles.Groups(k) * ScaledNibbles.Group) : null;
-        byte[]? tailArray = many && uneven ? ArrayPool<byte>.Shared.Rent(group * groupBytes) : null;
-        byte* tail = stackalloc byte[groupBytes];
-        new Span<byte>(tail, groupBytes).Clear();
-        try
-        {
-            fixed (float* words = lane.Words)
-            fixed (float* xf = x)
-            fixed (sbyte* xc = xq)
-            fixed (float* xsc = xs)
-            fixed (float* table = tableArray)
-            fixed (byte* tails = tailArray)
-            {
-                if (tails is not null)
-                {
-                    new Span<byte>(tails, group * groupBytes).Clear();
-                }
-
-                var kernels = new ScaledKernels(integer, plan, k, xf, xc, xsc, table, tails, tail);
-                RowGroups(ref kernels, (byte*)words, (nint)lane.RowBytes, k, k, ScaledGroupBytes, lane.RowScales, y, n, j0, j1, i0, i1);
-            }
-        }
-        finally
-        {
-            if (tableArray is not null)
-            {
-                ArrayPool<float>.Shared.Return(tableArray);
-            }
-
-            if (tailArray is not null)
-            {
-                ArrayPool<byte>.Shared.Return(tailArray);
-            }
-        }
-    }
 
     // The lanes over 32-value nibble blocks as RowGroups' kernels (the integer lane's or the decoded lane's). A group of
     // stored rows: their blocks' scales decoded once into `table` (the scales alone, 8 floats a group of 8 blocks), and a
@@ -1582,7 +1368,7 @@ internal sealed partial class CpuBackend
             }
         }
 
-        // All of k a pass (a span of k: ScaledColumns passes k).
+        // All of k a pass (Span: k).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
@@ -1615,31 +1401,90 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // ------------------------------------------------------------------ products over stored rows read in place (shared)
+    // ------------------------------------------------------------------ weights read where they are stored: the shared part
 
-    // The lanes that read a weight's rows where they are stored and write nothing of the weight anywhere (32-value nibble
-    // blocks', bfloat16's) share their tiles (RowTiles), their loop over a tile (RowGroups) and their measuring (MeasureTwo):
-    // a type brings its kernels (IRowKernels) and what its lanes make of x first.
+    // The CPU multiplies weights of three formats where their rows are stored, writing nothing of a weight anywhere: q4_k's
+    // super-blocks (NibbleFormat), q4_0's 32-value blocks (ScaledFormat) and bfloat16 (BFloat16Format). A format brings what
+    // it alone knows (IRowFormat: its description, its two lanes, what each makes of x first, the rows a group takes, the
+    // scratch and the kernels over a tile, IRowKernels); the rest is theirs together: the list of formats (FormatOf), the
+    // routed product and its lane measured per shape (RowProduct, ILaneChoice, Chosen), the grouped pass (FormatGrouped),
+    // the tiles over the threads (RowTiles) and the loop over a tile (RowGroups). The packed bfloat16 product (a tied head)
+    // takes the same measured choice of lanes (ILaneChoice, CpuBackend.Typed.cs).
 
-    // Stored bytes a tile takes with one row of x: columns of about this many bytes (small enough that the last tiles keep
-    // every thread busy to the end). With more rows a tile is a group of stored rows of a type's own bytes (`groupBytes`:
-    // the rows a tile's loop keeps in the cache while it passes the rows of x over them).
-    private const int RowTileBytes = 16384;
-
-    // Rows of x a tile takes (more rows: the tiles split x's rows as well as the columns).
-    private const int RowTileRows = 32;
-
-    // The most stored rows a group of a tile's loop takes (its four rows' partial sums on the stack).
-    private const int MostGroupRows = 64;
-
-    // The stored rows a group of a tile's loop takes: those within `groupBytes`, at least one, at most MostGroupRows.
-    private static int RowGroup(nint rowBytes, int columns, int groupBytes) =>
-        (int)Math.Clamp(groupBytes / Math.Max(1, rowBytes), 1, Math.Clamp(columns, 1, MostGroupRows));
-
-    /// <summary>A tile of a product over stored rows: columns [j0, j1) of a part's y for rows [i0, i1) of x.</summary>
-    private interface IRowTile
+    /// <summary>
+    /// A product with two candidate lanes, timed on the real operands once per shape and the faster kept for the shape
+    /// (Chosen): a weight format's product over its stored rows (RowProduct), the packed bfloat16 product.
+    /// </summary>
+    private interface ILaneChoice
     {
-        void Run(in RowPart part, int j0, int j1, int i0, int i1);
+        /// <summary>The name the shape's choice is kept under (with the rows' class, n and k).</summary>
+        string Name { get; }
+
+        /// <summary>The lane timed first.</summary>
+        int First { get; }
+
+        /// <summary>The lane timed against it.</summary>
+        int Second { get; }
+
+        /// <summary>Whether the second lane runs on this CPU (else the first, unmeasured).</summary>
+        bool BothRun { get; }
+
+        /// <summary>The lane without measuring (CpuTuning.Autotune off).</summary>
+        int Unmeasured { get; }
+
+        /// <summary>
+        /// Whether the lanes are timed briefly (TimeBrief: fixed rounds, medians, the second kept only when 3% faster) rather
+        /// than until their times settle (Faster: the faster kept).
+        /// </summary>
+        bool Brief { get; }
+
+        /// <summary>The product by <paramref name="lane"/>: all of y written.</summary>
+        void Run(int lane);
+    }
+
+    /// <summary>
+    /// A weight format the CPU multiplies where its rows (k values each, a stored row's bytes apart) are stored: read by its
+    /// description alone; two lanes, the faster measured per shape; what each lane makes of x first; the stored rows a
+    /// group of a tile takes, the values of k a pass takes and the scratch its kernels take; its kernels over a tile.
+    /// </summary>
+    private unsafe interface IRowFormat<TFormat, TKernels> where TFormat : struct, IRowFormat<TFormat, TKernels> where TKernels : struct, IRowKernels
+    {
+        /// <summary>The format of <paramref name="type"/>'s rows of <paramref name="k"/> values; false where its description is not one the format reads (or the CPU cannot run it).</summary>
+        static abstract bool Reads(ElementType type, int k, out TFormat format);
+
+        /// <summary>The lane timed first.</summary>
+        int First { get; }
+
+        /// <summary>The lane timed against it.</summary>
+        int Second { get; }
+
+        /// <summary>Whether the second lane runs on this CPU (else the first, unmeasured).</summary>
+        bool BothRun { get; }
+
+        /// <summary>The lane without measuring.</summary>
+        int Unmeasured { get; }
+
+        /// <summary>Stored bytes a group of a tile takes with more than one row of x (RowGroups).</summary>
+        int GroupBytes { get; }
+
+        /// <summary>
+        /// The columns and the rows of x a tile takes with more than one row of x (RowTiles), of <paramref name="total"/>
+        /// columns and <paramref name="m"/> rows over <paramref name="threads"/> threads, the stored rows
+        /// <paramref name="rowBytes"/> apart.
+        /// </summary>
+        (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes);
+
+        /// <summary>Values of k four rows of x pass over a group at a time (k or more: all of k in one pass).</summary>
+        int Span(int k);
+
+        /// <summary>x as <paramref name="lane"/> reads it: x itself, or what the lane makes of it first (pooled; LaneInput.Release).</summary>
+        LaneInput Prepare(int lane, float[] x, int m, int k);
+
+        /// <summary>The floats and bytes of scratch a tile's kernels take, for a group of <paramref name="group"/> stored rows (0: rows read alone).</summary>
+        (int Floats, int Bytes) Scratch(int k, int group);
+
+        /// <summary>The kernels of <paramref name="lane"/> for a tile: x and the scratch (its bytes cleared) pinned.</summary>
+        TKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes);
     }
 
     /// <summary>A lane's kernels over a weight's rows read where they are stored (RowGroups').</summary>
@@ -1658,11 +1503,257 @@ internal sealed partial class CpuBackend
         float Single(byte* row, int i);
     }
 
-    // The tiles of `parts` (1 to 3 weights of one type sharing x) in one range over the threads (CpuRanges, a tile a chunk):
-    // columns and rows of x, each part's tiles after the other's; each output its own product's, whichever thread runs it.
-    // One row of x: columns in whole cache lines of y (16 floats), so tiles on other threads do not write into the same lines
-    // as each output is written. More rows: a group of stored rows a tile (`groupBytes`).
-    private static void RowTiles<TT>(ReadOnlySpan<RowPart> parts, int m, int groupBytes, TT tile) where TT : struct, IRowTile
+    /// <summary>What to do with the format of a weight once FormatOf finds it, generic over the format (its code compiled for it).</summary>
+    private interface IFormatUse
+    {
+        void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels;
+    }
+
+    /// <summary>x as a lane reads it: x itself, or what the lane made of it first (int8 codes and their scales; values reordered).</summary>
+    private readonly record struct LaneInput(float[] Values, bool Owned, sbyte[]? Codes, float[]? Scales)
+    {
+        /// <summary>The pooled buffers back to the pool.</summary>
+        public void Release()
+        {
+            if (Owned)
+            {
+                ArrayPool<float>.Shared.Return(Values);
+            }
+
+            if (Codes is not null)
+            {
+                ArrayPool<sbyte>.Shared.Return(Codes);
+            }
+
+            if (Scales is not null)
+            {
+                ArrayPool<float>.Shared.Return(Scales);
+            }
+        }
+    }
+
+    /// <summary>A lane's x, pinned for a tile (LaneInput's arrays).</summary>
+    private readonly unsafe struct LanePointers
+    {
+        public LanePointers(float* values, sbyte* codes, float* scales)
+        {
+            Values = values;
+            Codes = codes;
+            Scales = scales;
+        }
+
+        public float* Values { get; }
+
+        public sbyte* Codes { get; }
+
+        public float* Scales { get; }
+    }
+
+    // The formats read where they are stored, in one place: the one that reads `type`'s rows of k values, given to `use`;
+    // false for any other type.
+    private static bool FormatOf<TU>(ElementType type, int k, ref TU use) where TU : struct, IFormatUse
+    {
+        if (NibbleFormat.Reads(type, k, out var q4k))
+        {
+            use.Use<NibbleFormat, NibbleKernels>(q4k);
+            return true;
+        }
+
+        if (ScaledFormat.Reads(type, k, out var q40))
+        {
+            use.Use<ScaledFormat, ScaledKernels>(q40);
+            return true;
+        }
+
+        if (BFloat16Format.Reads(type, k, out var bf16))
+        {
+            use.Use<BFloat16Format, BFloat16Kernels>(bf16);
+            return true;
+        }
+
+        return false;
+    }
+
+    // The shape's lane of `product`: kept from its measuring, or measured now (Measure).
+    private static int Chosen<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice =>
+        StoredLanes.TryGetValue((product.Name, LaneKey(product.Name, m, n, k).Rows, n, k), out int known) ? known : Measure(product, m, n, k);
+
+    // The faster of the product's two lanes, timed once on the real operands (each run writes all of y, which the caller
+    // writes again: Faster until the times settle, or TimeBrief's fixed rounds with the second kept only when 3% faster)
+    // and kept for the shape; the first alone where the second does not run here; without measuring (CpuTuning.Autotune
+    // off), its unmeasured lane.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int Measure<TC>(TC product, int m, int n, int k) where TC : struct, ILaneChoice
+    {
+        int first = product.First, second = product.Second, best = product.BothRun ? product.Unmeasured : first;
+        if (product.BothRun && CpuTuning.Autotune)
+        {
+            var (a, b) = product.Brief
+                ? TimeBrief(() => product.Run(first), () => product.Run(second))
+                : Faster.Time(() => product.Run(first), () => product.Run(second));
+            best = b < (product.Brief ? 0.97 * a : a) ? second : first;
+            ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{product.Name} {m}x{k}->{n}"),
+                string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{LaneNames[best]} ({LaneNames[first].Split(' ')[0]} {a:0.###} ms, {LaneNames[second].Split(' ')[0]} {b:0.###} ms)"));
+        }
+
+        StoredLanes[(product.Name, LaneKey(product.Name, m, n, k).Rows, n, k)] = best;
+        return best;
+    }
+
+    // A weight in a format as a choice of lanes (Chosen): its product by either lane.
+    private readonly struct RowProduct<TF, TK>(TF format, StoredLane lane, float[] x, float[] y, int m, int n, int k) : ILaneChoice
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        public string Name => lane.Type.Name;
+
+        public int First => format.First;
+
+        public int Second => format.Second;
+
+        public bool BothRun => format.BothRun;
+
+        public int Unmeasured => format.Unmeasured;
+
+        public bool Brief => false;
+
+        public void Run(int laneId) => FormatProduct<TF, TK>(format, laneId, lane, x, y, m, n, k);
+    }
+
+    // The routed product of a weight in its format (StoredRouted): the shape's lane (Chosen), then the product by it.
+    private readonly struct RoutedUse(StoredLane lane, float[] x, float[] y, int m, int n, int k) : IFormatUse
+    {
+        public void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels =>
+            FormatProduct<TF, TK>(format, Chosen(new RowProduct<TF, TK>(format, lane, x, y, m, n, k), m, n, k), lane, x, y, m, n, k);
+    }
+
+    // Up to three products of a grouped pass, on the stack.
+    [InlineArray(3)]
+    private struct ThreeProducts
+    {
+        private (Storage Values, Storage? Scales, Storage Output, int Columns) _product;
+    }
+
+    // The grouped pass of weights in one format (FormatGrouped).
+    private readonly struct GroupedUse(ElementType type, float[] x, int m, int k, ThreeProducts products, int count) : IFormatUse
+    {
+        public void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels =>
+            FormatGrouped<TF, TK>(format, type, x, m, k, products, count);
+    }
+
+    // One lane of a weight in its format, apart from the measured choice (StoredRowLane, for tests).
+    private struct LaneUse(bool second, StoredLane lane, float[] x, float[] y, int m, int n, int k) : IFormatUse
+    {
+        public bool Ran;
+
+        public void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+        {
+            if (second && !format.BothRun)
+            {
+                return;
+            }
+
+            FormatProduct<TF, TK>(format, second ? format.Second : format.First, lane, x, y, m, n, k);
+            Ran = true;
+        }
+    }
+
+    /// <summary>
+    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, bfloat16: FormatOf) of n rows
+    /// stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), by the format's first lane or, with
+    /// <paramref name="second"/>, its second (q4_k and q4_0: decoded, integer; bfloat16: shifted, paired). False where no
+    /// format reads the type, or the second lane does not run on this CPU. For tests: each lane apart from the measured choice.
+    /// </summary>
+    internal static bool StoredRowLane(bool second, ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k)
+    {
+        var use = new LaneUse(second, new StoredLane(type, type.Scaled, words, length, null, k, type.ByteCount(k)), x, y, m, n, k);
+        return FormatOf(type, k, ref use) && use.Ran;
+    }
+
+    // The product by one lane (FormatMany with one part).
+    private static void FormatProduct<TF, TK>(TF format, int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        var parts = new ThreeParts();
+        parts[0] = new RowPart(lane, y, n, laneId);
+        FormatMany<TF, TK>(format, ((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
+    }
+
+    // 2 or 3 weights of one format sharing x: each by its own lane for the shape (measured here first where it has not
+    // been), then one pass (FormatMany), so each output is its own product's, bit for bit.
+    private static void FormatGrouped<TF, TK>(TF format, ElementType type, float[] x, int m, int k, ThreeProducts products, int count)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        var parts = new ThreeParts();
+        for (int j = 0; j < count; j++)
+        {
+            var (values, scales, output, n) = products[j];
+            var lane = new StoredLane(type, type.Scaled, D(values), values.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
+            float[] y = D(output);
+            parts[j] = new RowPart(lane, y, n, Chosen(new RowProduct<TF, TK>(format, lane, x, y, m, n, k), m, n, k));
+        }
+
+        FormatMany<TF, TK>(format, ((ReadOnlySpan<RowPart>)parts)[..count], x, m, k);
+    }
+
+    // The products of `parts` (1 to 3 weights of one format sharing x): x prepared once for each lane they take, then their
+    // tiles over the threads (RowTiles, FormatColumns).
+    private static void FormatMany<TF, TK>(TF format, ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        bool first = false, second = false;
+        foreach (var part in parts)
+        {
+            first |= part.LaneId == format.First;
+            second |= part.LaneId != format.First;
+        }
+
+        LaneInput a = default, b = default;
+        try
+        {
+            if (first)
+            {
+                a = format.Prepare(format.First, x, m, k);
+            }
+
+            if (second)
+            {
+                b = format.Prepare(format.Second, x, m, k);
+            }
+
+            RowTiles<TF, TK>(format, parts, a, b, m, k);
+        }
+        finally
+        {
+            a.Release();
+            b.Release();
+        }
+    }
+
+    // Stored bytes a tile takes with one row of x: columns of about this many bytes (small enough that the last tiles keep
+    // every thread busy to the end). With more rows a tile is a group of stored rows of a format's own bytes
+    // (IRowFormat.GroupBytes: the rows a tile's loop keeps in the cache while it passes the rows of x over them).
+    private const int RowTileBytes = 16384;
+
+    // Rows of x a tile of a group of stored rows takes (GroupTile: the tiles split x's rows as well as the columns).
+    private const int RowTileRows = 32;
+
+    // A tile of a group of stored rows (`groupBytes`) by RowTileRows rows of x: q4_0's and bfloat16's with more than one row.
+    private static (int Columns, int Rows) GroupTile(int total, nint rowBytes, int groupBytes) => (RowGroup(rowBytes, total, groupBytes), RowTileRows);
+
+    // The most stored rows a group of a tile's loop takes (its four rows' partial sums on the stack).
+    private const int MostGroupRows = 64;
+
+    // The stored rows a group of a tile's loop takes: those within `groupBytes`, at least one, at most MostGroupRows.
+    private static int RowGroup(nint rowBytes, int columns, int groupBytes) =>
+        (int)Math.Clamp(groupBytes / Math.Max(1, rowBytes), 1, Math.Clamp(columns, 1, MostGroupRows));
+
+    // The tiles of `parts` in one range over the threads (CpuRanges, a tile a chunk): columns and rows of x, each part's
+    // tiles after the other's; each output its own product's, whichever thread runs it. One row of x: columns in whole cache
+    // lines of y (16 floats), so tiles on other threads do not write into the same lines as each output is written. More
+    // rows: the format's tile (IRowFormat.Tile).
+    private static void RowTiles<TF, TK>(TF format, ReadOnlySpan<RowPart> parts, LaneInput first, LaneInput second, int m, int k)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
         int total = 0;
         foreach (var part in parts)
@@ -1672,29 +1763,77 @@ internal sealed partial class CpuBackend
 
         int threads = Math.Max(1, ComputeResources.MaxCpuThreads);
         long rowBytes = Math.Max(1, parts[0].Lane.RowBytes);
-        long wanted = m == 1 ? (Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + 15) / 16 * 16 : RowGroup((nint)rowBytes, total, groupBytes);
+        var (wanted, rows) = m == 1
+            ? ((Math.Max(RowTileBytes / rowBytes, (total + 64L * threads - 1) / (64L * threads)) + 15) / 16 * 16, 1)
+            : format.Tile(total, m, threads, (nint)rowBytes);
         int columns = (int)Math.Clamp(wanted, 1, total);
-        int rows = m == 1 ? 1 : RowTileRows, rowBlocks = (m + rows - 1) / rows;
+        rows = Math.Clamp(rows, 1, m);
+        int rowBlocks = (m + rows - 1) / rows;
         int t1 = (parts[0].N + columns - 1) / columns * rowBlocks;
         int t2 = parts.Length > 1 ? t1 + (parts[1].N + columns - 1) / columns * rowBlocks : t1;
         int tiles = parts.Length > 2 ? t2 + (parts[2].N + columns - 1) / columns * rowBlocks : t2;
-        var body = new RowTileRange<TT>(tile, m, columns, rows, rowBlocks, t1, t2,
+        var body = new RowTileRange<TF, TK>(format, first, second, m, k, columns, rows, rowBlocks, t1, t2,
             parts[0], parts.Length > 1 ? parts[1] : default, parts.Length > 2 ? parts[2] : default);
         CpuRanges.Run(tiles, 1, tiles, threads, ref body);                             // `body` is this frame's, on the stack
     }
 
     // RowTiles' range: tile t of part p (its tiles from t_p) is its column block t / rowBlocks and its block of rows of x
-    // t mod rowBlocks.
-    private readonly struct RowTileRange<TT>(TT tile, int m, int columns, int rows, int rowBlocks, int t1, int t2, RowPart p0, RowPart p1, RowPart p2) : IRangeBody
-        where TT : struct, IRowTile
+    // t mod rowBlocks, by the part's lane and that lane's x.
+    private readonly struct RowTileRange<TF, TK>(TF format, LaneInput first, LaneInput second, int m, int k, int columns, int rows, int rowBlocks, int t1, int t2,
+        RowPart p0, RowPart p1, RowPart p2) : IRangeBody
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
-        public void Run(int first, int last)
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public void Run(int from, int to)
         {
-            for (int t = first; t < last; t++)
+            for (int t = from; t < to; t++)
             {
                 var (part, local) = t < t1 ? (p0, t) : t < t2 ? (p1, t - t1) : (p2, t - t2);
                 int j0 = local / rowBlocks * columns, i0 = local % rowBlocks * rows;
-                tile.Run(part, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows));
+                FormatColumns<TF, TK>(format, part, part.LaneId == format.First ? first : second, k, j0, Math.Min(part.N, j0 + columns), i0, Math.Min(m, i0 + rows));
+            }
+        }
+    }
+
+    // Columns [j0, j1) of a part's y for rows [i0, i1) of x by the part's lane (RowGroups with the format's kernels): the
+    // scratch the kernels take (its bytes cleared), pinned with the operands for the tile.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void FormatColumns<TF, TK>(TF format, in RowPart part, LaneInput input, int k, int j0, int j1, int i0, int i1)
+        where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+    {
+        var lane = part.Lane;
+        nint rowBytes = (nint)lane.RowBytes;
+        var (floats, bytes) = format.Scratch(k, i1 - i0 > 1 ? RowGroup(rowBytes, j1 - j0, format.GroupBytes) : 0);
+        float[]? floatArray = floats > 0 ? ArrayPool<float>.Shared.Rent(floats) : null;
+        byte[]? byteArray = bytes > 0 ? ArrayPool<byte>.Shared.Rent(bytes) : null;
+        try
+        {
+            fixed (float* words = lane.Words)
+            fixed (float* xv = input.Values)
+            fixed (sbyte* xc = input.Codes)
+            fixed (float* xs = input.Scales)
+            fixed (float* scratch = floatArray)
+            fixed (byte* scratchBytes = byteArray)
+            {
+                if (scratchBytes is not null)
+                {
+                    new Span<byte>(scratchBytes, bytes).Clear();
+                }
+
+                var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc, xs), scratch, scratchBytes);
+                RowGroups(ref kernels, (byte*)words, rowBytes, k, format.Span(k), format.GroupBytes, lane.RowScales, part.Y, part.N, j0, j1, i0, i1);
+            }
+        }
+        finally
+        {
+            if (floatArray is not null)
+            {
+                ArrayPool<float>.Shared.Return(floatArray);
+            }
+
+            if (byteArray is not null)
+            {
+                ArrayPool<byte>.Shared.Return(byteArray);
             }
         }
     }
@@ -1704,7 +1843,10 @@ internal sealed partial class CpuBackend
     // (IRowKernels.Group), then four rows of x at a time against each of the group's rows, the rows left over one at a time.
     // The four rows of x pass over the group's rows `span` values of k at a time (all of k where span ≥ k), so that much of
     // them stays in the cache across the group, and the group's stored rows across the rows of x; a span's partial sums are
-    // added in order. Each output times its row's scale where the weight has them.
+    // added in order. Each output times its row's scale where the weight has them. Compiled optimized from its first call,
+    // as FormatColumns and RowTileRange.Run are: a format's kernels inline into it only when it is optimized, and the
+    // first passes of a run would otherwise call them through unoptimized code.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe void RowGroups<TK>(ref TK kernels, byte* stored, nint rowBytes, int k, int span, int groupBytes, float[]? scales, float[] y, int n,
         int j0, int j1, int i0, int i1)
         where TK : struct, IRowKernels
@@ -2172,85 +2314,46 @@ internal sealed partial class CpuBackend
     private static bool ReadsBFloat16Rows(ElementType type) =>
         WideningOf(type) == Widening.HighHalf && Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian;
 
-    // The shape's faster bfloat16 lane (MeasureTwo); without measuring, the shifted lane.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static int MeasureBFloat16Lanes(StoredLane lane, float[] x, float[] y, int m, int n, int k) =>
-        MeasureTwo(lane, m, n, k, ShiftedLaneId, PairedLaneId, PairedLaneId, id => BFloat16Product(id, lane, x, y, m, n, k));
-
-    /// <summary>
-    /// y [m, n] = x [m, k] · Wᵀ for W a bfloat16 weight of n rows of k values stored as <paramref name="words"/> (its bytes,
-    /// <paramref name="length"/> words), by the lane asked (<paramref name="paired"/>, else shifted). False where the
-    /// type is not one the lanes read. For tests: each lane apart from the measured choice.
-    /// </summary>
-    internal static bool BFloat16RowLane(bool paired, ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k)
+    // bfloat16 as a format read where it is stored (IRowFormat): by its description (ReadsBFloat16Rows); the shifted lane
+    // timed against the paired lane; x reordered for the paired lane (PairRows); a group of 64 KB of stored rows, passes
+    // over k of BFloat16Span values; no scratch (BFloat16Kernels).
+    private readonly unsafe struct BFloat16Format : IRowFormat<BFloat16Format, BFloat16Kernels>
     {
-        if (!ReadsBFloat16Rows(type))
+        public static bool Reads(ElementType type, int k, out BFloat16Format format)
         {
-            return false;
+            format = default;
+            return ReadsBFloat16Rows(type);
         }
 
-        BFloat16Product(paired ? PairedLaneId : ShiftedLaneId, new StoredLane(type, null, words, length, null, k, type.ByteCount(k)), x, y, m, n, k);
-        return true;
-    }
+        public int First => ShiftedLaneId;
 
-    // The product by one bfloat16 lane (BFloat16Many with one part).
-    private static void BFloat16Product(int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
-    {
-        var parts = new ThreeParts();
-        parts[0] = new RowPart(lane, y, n, laneId);
-        BFloat16Many(((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
-    }
+        public int Second => PairedLaneId;
 
-    // The products of `parts` (1 to 3 bfloat16 weights sharing x): x reordered once where the paired lane runs
-    // (PairRows), then their tiles over the threads (RowTiles, BFloat16Columns).
-    private static void BFloat16Many(ReadOnlySpan<RowPart> parts, float[] x, int m, int k)
-    {
-        bool paired = false;
-        foreach (var part in parts)
+        public bool BothRun => true;
+
+        public int Unmeasured => ShiftedLaneId;
+
+        public int GroupBytes => BFloat16GroupBytes;
+
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => GroupTile(total, rowBytes, BFloat16GroupBytes);
+
+        public int Span(int k) => BFloat16Span;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
         {
-            paired |= part.LaneId == PairedLaneId;
-        }
-
-        float[]? reordered = null;
-        try
-        {
-            if (paired)
+            if (lane != PairedLaneId)
             {
-                reordered = ArrayPool<float>.Shared.Rent(m * k);
-                PairRows(x, reordered, m, k);
+                return new LaneInput(x, false, null, null);
             }
 
-            RowTiles(parts, m, BFloat16GroupBytes, new BFloat16Tile(x, reordered, k));
+            var reordered = ArrayPool<float>.Shared.Rent(m * k);
+            PairRows(x, reordered, m, k);
+            return new LaneInput(reordered, true, null, null);
         }
-        finally
-        {
-            if (reordered is not null)
-            {
-                ArrayPool<float>.Shared.Return(reordered);
-            }
-        }
-    }
 
-    // A tile of a bfloat16 product.
-    private readonly struct BFloat16Tile(float[] x, float[]? reordered, int k) : IRowTile
-    {
-        public void Run(in RowPart part, int j0, int j1, int i0, int i1)
-        {
-            bool paired = part.LaneId == PairedLaneId;
-            BFloat16Columns(paired, part.Lane, paired ? reordered! : x, part.Y, part.N, k, j0, j1, i0, i1);
-        }
-    }
+        public (int Floats, int Bytes) Scratch(int k, int group) => (0, 0);
 
-    // Columns [j0, j1) of y for rows [i0, i1) of x by a bfloat16 lane (RowGroups with BFloat16Kernels), the operands pinned
-    // for the tile.
-    private static unsafe void BFloat16Columns(bool paired, StoredLane lane, float[] x, float[] y, int n, int k, int j0, int j1, int i0, int i1)
-    {
-        fixed (float* words = lane.Words)
-        fixed (float* xf = x)
-        {
-            var kernels = new BFloat16Kernels(paired, xf, k);
-            RowGroups(ref kernels, (byte*)words, (nint)lane.RowBytes, k, BFloat16Span, BFloat16GroupBytes, lane.RowScales, y, n, j0, j1, i0, i1);
-        }
+        public BFloat16Kernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(lane == PairedLaneId, x.Values, k);
     }
 
     // Stored bytes a group of bfloat16 rows takes with more than one row of x (RowGroups): float32 rows of x take 4 bytes a
