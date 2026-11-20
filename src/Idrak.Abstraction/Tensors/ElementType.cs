@@ -56,7 +56,11 @@ public readonly record struct FloatBits(int Exponent, int Mantissa)
 /// <paramref name="NibblesSplit"/>, ggml's order (byte i holds value i in its low half and value i + Values / 2 in its
 /// high half, as q4_0 stores them), and value i = (code i + <paramref name="CodeBias"/>) · scale, the code read as two's
 /// complement when <paramref name="SignedCodes"/>; with a <paramref name="CodeTable"/> (ggml's IQ4_NL: a non-linear grid)
-/// the code first stands for its entry of the table, value i = (table[code i] + <paramref name="CodeBias"/>) · scale. A kernel that widens values from this description alone needs nothing
+/// the code first stands for its entry of the table, value i = (table[code i] + <paramref name="CodeBias"/>) · scale. With a
+/// <paramref name="CodeType"/> each code is one value of that element type (OCP's fp4 E2M1: MXFP4's elements), and with a
+/// <paramref name="ScaleType"/> the scale is one value of that type stored at <paramref name="ScaleOffset"/> (OCP's E8M0),
+/// so a block of any element type sharing a scale of any type is described the same way: value i = (the code's value +
+/// <paramref name="CodeBias"/>) · scale. A kernel that widens values from this description alone needs nothing
 /// named after the format. A format whose scales are not one plain float per block (the k-quants' scaled sub-blocks), or
 /// that adds a minimum or high bits (q4_1, q5_x), declares none.
 /// </summary>
@@ -70,8 +74,10 @@ public readonly record struct FloatBits(int Exponent, int Mantissa)
 /// <param name="CodeOffset">The first code's byte in the block.</param>
 /// <param name="NibblesSplit">4-bit codes in ggml's order: byte i holds value i (low half) and value i + Values / 2 (high half).</param>
 /// <param name="CodeTable">The integer each code stands for (2^CodeBits entries), or null: the code itself.</param>
+/// <param name="CodeType">The element type each code is one value of (its <paramref name="CodeBits"/> bits), or null: an integer code (or its table entry).</param>
+/// <param name="ScaleType">The element type the scale is one value of (from <paramref name="ScaleOffset"/>), or null: a float of <paramref name="Scale"/>'s bits.</param>
 public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool SignedCodes, int CodeBias, FloatBits Scale, int ScaleOffset, int CodeOffset, bool NibblesSplit = false,
-    IReadOnlyList<int>? CodeTable = null);
+    IReadOnlyList<int>? CodeTable = null, ElementType? CodeType = null, ElementType? ScaleType = null);
 
 /// <summary>
 /// A bit plane of a super-block's codes (<see cref="SuperBlock"/>): fields of <paramref name="Bits"/> bits from byte
@@ -653,6 +659,43 @@ public sealed class ElementType : IKind
         ToFloat32 = ElementConversions.UInt2ToFloat32, FromFloat32 = ElementConversions.UInt2FromFloat32,
     };
 
+    /// <summary>
+    /// fp4 E2M1 (OCP Microscaling Formats v1.0's element): one sign bit, 2 exponent bits biased by 1, one mantissa bit: ±0,
+    /// 0.5, 1, 1.5, 2, 3, 4, 6 (the exponent 0 a subnormal), no infinity or NaN; two a byte, the first value in the low half.
+    /// </summary>
+    public static readonly ElementType Float4E2M1 = new()
+    {
+        Name = "float4_e2m1", Summary = "4-bit float E2M1 (OCP): 1 sign, 2 exponent bits (bias 1), 1 mantissa bit: ±0, 0.5, 1, 1.5, 2, 3, 4, 6, no infinity or NaN; two a byte, the first in the low half",
+        BlockBits = 4, IsFloat = true, IsSigned = true, Kernels = [],
+        ToFloat32 = ElementConversions.E2M1ToFloat32, FromFloat32 = ElementConversions.E2M1FromFloat32,
+    };
+
+    /// <summary>
+    /// E8M0 (OCP Microscaling Formats v1.0's scale): 8 exponent bits biased by 127, no sign, no mantissa: 2^(e − 127), the
+    /// all-ones code NaN; one a byte.
+    /// </summary>
+    public static readonly ElementType Float8E8M0 = new()
+    {
+        Name = "float8_e8m0", Summary = "8-bit power of two E8M0 (OCP's microscaling scale): 8 exponent bits biased by 127, no sign, no mantissa: 2^(e - 127); 0xFF is NaN",
+        BlockBits = 8, IsFloat = true, Kernels = [],
+        ToFloat32 = ElementConversions.E8M0ToFloat32, FromFloat32 = ElementConversions.E8M0FromFloat32,
+    };
+
+    /// <summary>
+    /// MXFP4 (OCP Microscaling Formats v1.0): blocks of 32 fp4 E2M1 values (<see cref="Float4E2M1"/>) sharing one E8M0 scale
+    /// (<see cref="Float8E8M0"/>), value = element · 2^(e − 127); a block as GGUF lays it out: the scale byte, then 16 bytes
+    /// holding value i in byte i's low half and value i + 16 in its high half (17 bytes, 4.25 bits a value).
+    /// </summary>
+    public static readonly ElementType MXFP4 = new()
+    {
+        Name = "mxfp4", Summary = "MXFP4 (OCP): blocks of 32 fp4 E2M1 values sharing one E8M0 scale, value = element * 2^(e - 127); the scale byte, then value i in byte i's low half and i + 16 in its high half (17 bytes a block)",
+        BlockSize = 32, BlockBits = 136, IsFloat = true, IsSigned = true, Kernels = [],
+        Scales = new BlockScales("float8_e8m0", 1, false, "one shared power of two (E8M0), then 32 fp4 (E2M1) values"),
+        Scaled = new ScaledBlock(32, 17, 4, SignedCodes: false, CodeBias: 0, new FloatBits(8, 0), ScaleOffset: 0, CodeOffset: 1, NibblesSplit: true,
+            CodeType: Float4E2M1, ScaleType: Float8E8M0),
+        ToFloat32 = ElementConversions.MxFp4ToFloat32, FromFloat32 = ElementConversions.MxFp4FromFloat32,
+    };
+
     /// <inheritdoc />
     public required string Name { get; init; }
 
@@ -839,9 +882,10 @@ public sealed record ElementTypeChoice(ElementType Type, bool Picked, string? So
 
 /// <summary>
 /// The element types, by name (ignoring case): the per-element types float32, bfloat16, float16, float8_e4m3,
-/// float8_e5m2, int64, int32, int8, uint8, int4, bool, int16, uint16, float64, uint32, uint64 and uint2 and the block type
-/// int2 (2-bit codes, 32 a block with a float16 scale), which Idrak.Abstraction registers, and the block formats the
-/// packages register (Idrak adds ggml's, from its GGUF types). The short names
+/// float8_e5m2, int64, int32, int8, uint8, int4, bool, int16, uint16, float64, uint32, uint64, uint2, float4_e2m1 and
+/// float8_e8m0, and the block types int2 (2-bit codes, 32 a block with a float16 scale) and mxfp4 (OCP's: 32 E2M1 values
+/// sharing an E8M0 scale), which Idrak.Abstraction registers, and the block formats the packages register (Idrak adds
+/// ggml's, from its GGUF types, but those the library defines itself). The short names
 /// bf16, f16, fp16, half, f32, fp32, f64, fp64, double and fp8 find their types too. A name nobody registered is refused
 /// with "not registered". The type a run computes in on a device comes from a run's option (<c>--dtype</c>), else
 /// <see cref="EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else <see cref="Auto"/> (the default, plan 37 T2), which
@@ -878,7 +922,8 @@ public static class ElementTypes
     {
         foreach (var type in (ReadOnlySpan<ElementType>)[ElementType.Float32, ElementType.BFloat16, ElementType.Float16, ElementType.Float8E4M3, ElementType.Float8E5M2,
                      ElementType.Int64, ElementType.Int32, ElementType.Int8, ElementType.UInt8, ElementType.Int4, ElementType.Int2, ElementType.Bool,
-                     ElementType.Int16, ElementType.UInt16, ElementType.Float64, ElementType.UInt32, ElementType.UInt64, ElementType.UInt2])
+                     ElementType.Int16, ElementType.UInt16, ElementType.Float64, ElementType.UInt32, ElementType.UInt64, ElementType.UInt2,
+                     ElementType.Float4E2M1, ElementType.Float8E8M0, ElementType.MXFP4])
         {
             Table.RegisterDefault(type);
         }
@@ -1390,8 +1435,9 @@ internal static class ElementConversions
 
     /// <summary>
     /// Whole blocks of a scaled-block type (<see cref="ScaledBlock"/>) widened by its description alone: each value
-    /// (code's value + bias) · scale, the code's value its table entry or the code (two's complement where signed), read
-    /// through a table of every code byte's values made once a description (<see cref="ScaledPlan"/>).
+    /// (code's value + bias) · scale, the code's value its code type's value, its table entry or the code (two's complement
+    /// where signed), the scale its scale type's value or a float of the description's bits, read through a table of every
+    /// code byte's values made once a description (<see cref="ScaledPlan"/>).
     /// </summary>
     public static void ScaledToFloat32(ScaledBlock block, ReadOnlySpan<byte> source, Span<float> destination)
     {
@@ -1426,14 +1472,27 @@ internal static class ElementConversions
             this.block = block;
             PerByte = 8 / block.CodeBits;
             int mask = (1 << block.CodeBits) - 1;
+            Span<float> codeValues = stackalloc float[mask + 1];
+            Span<byte> one = stackalloc byte[1];
+            for (int code = 0; code <= mask; code++)
+            {
+                if (block.CodeType is { } type)
+                {
+                    one[0] = (byte)code;                                    // the code as the type's one value, in its lowest bits
+                    type.Decode(one, codeValues.Slice(code, 1));
+                }
+                else
+                {
+                    codeValues[code] = block.CodeTable is { } table ? table[code] : block.SignedCodes ? code << (32 - block.CodeBits) >> (32 - block.CodeBits) : code;
+                }
+            }
+
             Values = new float[256 * PerByte];
             for (int b = 0; b < 256; b++)
             {
                 for (int j = 0; j < PerByte; j++)
                 {
-                    int code = b >> (j * block.CodeBits) & mask;
-                    int value = block.CodeTable is { } table ? table[code] : block.SignedCodes ? code << (32 - block.CodeBits) >> (32 - block.CodeBits) : code;
-                    Values[b * PerByte + j] = value + block.CodeBias;
+                    Values[b * PerByte + j] = codeValues[b >> (j * block.CodeBits) & mask] + block.CodeBias;
                 }
             }
         }
@@ -1450,10 +1509,17 @@ internal static class ElementConversions
             ? Plans.GetValue(block, static b => new ScaledPlan(b))
             : throw new NotSupportedException($"A scaled block's codes of {block.CodeBits} bits are not read by bytes.");
 
-        /// <summary>The block's scale: a float of the description's bits (float16, bfloat16 or float32).</summary>
+        /// <summary>The block's scale: its scale type's value, else a float of the description's bits (float16, bfloat16 or float32).</summary>
         public float Scale(ReadOnlySpan<byte> bytes)
         {
             var at = bytes[block.ScaleOffset..];
+            if (block.ScaleType is { } type)
+            {
+                Span<float> value = stackalloc float[1];
+                type.Decode(at[..(int)type.ByteCount(1)], value);
+                return value[0];
+            }
+
             return block.Scale switch
             {
                 { Exponent: 5, Mantissa: 10 } => (float)System.Buffers.Binary.BinaryPrimitives.ReadHalfLittleEndian(at),
@@ -1541,6 +1607,106 @@ internal static class ElementConversions
                 }
 
                 d = qq > 0 ? (float)(xq / qq) : 0f;
+            }
+        }
+    }
+
+    // fp4 E2M1's 16 codes' values: the sign in bit 3, then 2 exponent bits and one mantissa bit (exponent 0: 0 or 0.5).
+    private static readonly float[] E2M1 = [0f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 6f, -0f, -0.5f, -1f, -1.5f, -2f, -3f, -4f, -6f];
+
+    // Two a byte, the first in the low half.
+    public static void E2M1ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = E2M1[source[i >> 1] >> ((i & 1) * 4) & 0xF];
+        }
+    }
+
+    // Rounded to the nearest value (ties to the even code: mantissa 0), saturated to ±6; NaN gives 0 (E2M1 has none).
+    public static void E2M1FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        destination[..(int)((source.Length + 1L) / 2)].Clear();
+        for (int i = 0; i < source.Length; i++)
+        {
+            destination[i >> 1] |= (byte)(E2M1Code(source[i]) << ((i & 1) * 4));
+        }
+    }
+
+    // The E2M1 code nearest x (ties to the even code), saturated to ±6, NaN as +0.
+    private static int E2M1Code(float x)
+    {
+        if (float.IsNaN(x))
+        {
+            return 0;
+        }
+
+        float a = MathF.Abs(x);
+        int code = 7;
+        for (int c = 0; c < 7; c++)
+        {
+            float mid = (E2M1[c] + E2M1[c + 1]) / 2f;
+            if (a < mid || a == mid && (c & 1) == 0)
+            {
+                code = c;
+                break;
+            }
+        }
+
+        return code | (float.IsNegative(x) ? 8 : 0);
+    }
+
+    // E8M0: 2^(e - 127); 0 is 2^-127 (a float32 subnormal, exact), 0xFF NaN.
+    public static void E8M0ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        for (int i = 0; i < destination.Length; i++)
+        {
+            int e = source[i];
+            destination[i] = e == 255 ? float.NaN : e == 0 ? BitConverter.UInt32BitsToSingle(0x00400000u) : BitConverter.UInt32BitsToSingle((uint)e << 23);
+        }
+    }
+
+    // The power of two at or below |x| (floor(log2 |x|)), clamped to [2^-127, 2^127]; NaN and the infinities as NaN (0xFF),
+    // 0 and below as the smallest (2^-127: E8M0 has no zero).
+    public static void E8M0FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        for (int i = 0; i < source.Length; i++)
+        {
+            float x = source[i];
+            destination[i] = (byte)(!float.IsFinite(x) ? 255 : x <= 0f ? 0 : Math.Clamp(MathF.ILogB(x) + 127, 0, 254));
+        }
+    }
+
+    // MXFP4's blocks, by their description (ScaledToFloat32: each E2M1 code's value times the E8M0 scale).
+    public static void MxFp4ToFloat32(ReadOnlySpan<byte> source, Span<float> destination) => ScaledToFloat32(ElementType.MXFP4.Scaled!, source, destination);
+
+    /// <summary>
+    /// MXFP4's blocks from float32 values, as OCP's conversion makes them: per block of 32, the shared exponent
+    /// floor(log2(max |v|)) − 2 (E2M1's largest exponent), clamped to E8M0's range (a block of zeros: 2^-127), and each value
+    /// over 2^exponent rounded to the nearest E2M1 value (ties to even), saturated to ±6; the scale byte, then value i in
+    /// byte i's low half and value i + 16 in its high half.
+    /// </summary>
+    public static void MxFp4FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        for (int b = 0; b < source.Length / 32; b++)
+        {
+            var values = source.Slice(b * 32, 32);
+            var block = destination.Slice(b * 17, 17);
+            float amax = 0f;
+            foreach (float v in values)
+            {
+                if (float.IsFinite(v))
+                {
+                    amax = MathF.Max(amax, MathF.Abs(v));
+                }
+            }
+
+            int shared = amax > 0f ? Math.Clamp(MathF.ILogB(amax) - 2, -127, 127) : -127;
+            block[0] = (byte)(shared + 127);
+            float inverse = MathF.ScaleB(1f, -shared);
+            for (int j = 0; j < 16; j++)
+            {
+                block[1 + j] = (byte)(E2M1Code(values[j] * inverse) | E2M1Code(values[16 + j] * inverse) << 4);
             }
         }
     }

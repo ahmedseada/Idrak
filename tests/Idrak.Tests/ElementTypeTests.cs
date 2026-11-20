@@ -16,8 +16,8 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ElementTypesGroup =
     [
-        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64 and uint2 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
-        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4, int16, uint16 and float64; int2's blocks of 2-bit codes and a float16 scale as code · scale, its error no worse than plain rounding), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
+        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16, float64, uint32, uint64, uint2, float4_e2m1, float8_e8m0 and mxfp4 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak (MXFP4 the library's own), an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
+        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4, int16, uint16 and float64; int2's blocks of 2-bit codes and a float16 scale as code · scale, its error no worse than plain rounding; every fp4 E2M1 and E8M0 code both ways, MXFP4's blocks as GGUF's MXFP4 dequantizer reads the same bytes and encoded within half a step at their shared exponent), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); float32 to and from bfloat16 and float16 on the device equal the CPU's bit for bit (NaN payloads, ties, subnormals, every 16-bit code); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, decodes as its GGUF type does, and encodes (q4_0's values back within half a step)", ElementTypeBlockFormats),
         ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the PTX targets its kernels declare, as the device's reported capability reaches them; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
@@ -39,15 +39,17 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool", "int16", "uint16", "float64", "uint32", "uint64", "uint2"];
+        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool", "int16", "uint16", "float64", "uint32", "uint64", "uint2",
+            "float4_e2m1", "float8_e8m0", "mxfp4"];
         Check(ElementTypes.Names.Take(builtIns.Length).SequenceEqual(builtIns), $"the built-ins in order: {string.Join(", ", ElementTypes.Names)}");
         Check(ReferenceEquals(ElementTypes.Get("INT32"), ElementType.Int32) && ReferenceEquals(ElementTypes.Find("BFloat16"), ElementType.BFloat16)
               && ElementTypes.Origin("int32") == Overrides.Library, "found by name, ignoring case; the library's");
         Check(ElementTypes.Find("bf16") == ElementType.BFloat16 && ElementTypes.Get("F16") == ElementType.Float16 && ElementTypes.Find("fp32") == ElementType.Float32
               && ElementTypes.Find(" double ") == ElementType.Float64 && ElementTypes.Find("fp8") == ElementType.Float8E4M3 && ElementTypes.Find("half") == ElementType.Float16
               && ElementTypes.Find("bf17") is null, "the short names find their types");
-        Check(ElementTypes.Find("q4_k") is { BlockSize: 256 } && ElementTypes.Find("iq2_xxs") is { IsBlock: true } && ElementTypes.Find("mxfp4") is { IsFloat: true },
-            $"ggml's block formats registered by Idrak: {string.Join(", ", ElementTypes.Names.Skip(builtIns.Length))}");
+        Check(ElementTypes.Find("q4_k") is { BlockSize: 256 } && ElementTypes.Find("iq2_xxs") is { IsBlock: true } && ElementTypes.Find("mxfp4") is { IsFloat: true }
+              && ReferenceEquals(ElementTypes.Find("mxfp4"), ElementType.MXFP4) && ElementTypes.Origin("mxfp4") == Overrides.Library,
+            $"ggml's block formats registered by Idrak, MXFP4 the library's own: {string.Join(", ", ElementTypes.Names.Skip(builtIns.Length))}");
         try
         {
             ElementTypes.Get("float7");
@@ -140,6 +142,59 @@ internal abstract partial class DesktopTests : Tests
             using var t = Tensor.FromBytes(bytes, ElementType.Int2, [blocks.Length], device);
             Check(t.ToBytes().AsSpan().SequenceEqual(bytes) && t.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(back.Select(BitConverter.SingleToInt32Bits)),
                 $"int2 on {device}: a tensor's bytes and values as stored");
+        }
+
+        // OCP's microscaling types: every fp4 E2M1 and E8M0 code widens to its value and comes back as itself (E2M1's -0 as
+        // its own code; E8M0's NaN code as NaN); MXFP4's blocks widen to element · 2^(e - 127), the values GGUF's MXFP4
+        // dequantizer gives for the same bytes (one layout), and values encode to the nearest the block's shared exponent
+        // allows (each within half a step of E2M1 at its scale, the largest saturating at 6).
+        {
+            var codes = Enumerable.Range(0, 16).Select(c => (byte)(c | c << 4)).ToArray();
+            var e2m1 = new float[32];
+            ElementType.Float4E2M1.Decode(codes, e2m1);
+            var again = new byte[16];
+            ElementType.Float4E2M1.Encode(e2m1, again);
+            float[] magnitudes = [0f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 6f];
+            Check(again.SequenceEqual(codes) && Enumerable.Range(0, 16).All(c => e2m1[2 * c] == (c < 8 ? 1 : -1) * magnitudes[c & 7] && e2m1[2 * c + 1] == e2m1[2 * c]),
+                $"float4_e2m1: the 16 codes' values {string.Join(", ", e2m1.Where((_, i) => i % 2 == 0))} and back");
+            var exponents = Enumerable.Range(0, 256).Select(e => (byte)e).ToArray();
+            var e8m0 = new float[256];
+            ElementType.Float8E8M0.Decode(exponents, e8m0);
+            var back8 = new byte[256];
+            ElementType.Float8E8M0.Encode(e8m0, back8);
+            Check(Enumerable.Range(0, 255).All(e => e8m0[e] == MathF.ScaleB(1f, e - 127) && back8[e] == e) && float.IsNaN(e8m0[255]) && back8[255] == 255,
+                "float8_e8m0: every code 2^(e - 127), 0xFF NaN, and back");
+
+            var random = new Random(31);
+            var blocks = new byte[17 * 8];
+            random.NextBytes(blocks);
+            for (int b = 0; b < 8; b++)
+            {
+                blocks[17 * b] = (byte)random.Next(100, 150);                  // a scale of 2^-27 .. 2^22, not NaN
+            }
+
+            var ours = new float[32 * 8];
+            ElementType.MXFP4.Decode(blocks, ours);
+            var ggml = new float[32 * 8];
+            Idrak.Models.Abstractions.GgufTypes.Get(39).Dequantize(blocks, ggml);
+            Check(ours.Select(BitConverter.SingleToInt32Bits).SequenceEqual(ggml.Select(BitConverter.SingleToInt32Bits)),
+                "mxfp4: blocks widen to the values GGUF's MXFP4 dequantizer gives for the same bytes");
+            float[] mx = [.. Enumerable.Range(0, 64).Select(i => (random.NextSingle() * 2 - 1) * (i < 32 ? 3f : 0.01f))];
+            var encoded = new byte[ElementType.MXFP4.ByteCount(mx.Length)];
+            ElementType.MXFP4.Encode(mx, encoded);
+            var decoded = new float[mx.Length];
+            ElementType.MXFP4.Decode(encoded, decoded);
+            for (int b = 0; b < 2; b++)
+            {
+                float amax = mx.Skip(32 * b).Take(32).Max(MathF.Abs), unit = MathF.ScaleB(1f, MathF.ILogB(amax) - 2);
+                Check(encoded[17 * b] == MathF.ILogB(amax) - 2 + 127, $"mxfp4: block {b}'s shared exponent {encoded[17 * b]} for the largest {amax}");
+                for (int i = 32 * b; i < 32 * b + 32; i++)
+                {
+                    float t = MathF.Abs(mx[i]) / unit, step = t < 2f ? 0.5f : t < 4f ? 1f : 2f;
+                    Check(MathF.Abs(mx[i] - decoded[i]) <= (t > 6f ? MathF.Abs(mx[i]) - 6f * unit : step / 2f * unit) * 1.0001f,
+                        $"mxfp4: value {mx[i]} came back {decoded[i]} (unit {unit})");
+                }
+            }
         }
 
         // fp8: every code widens and comes back as itself (NaN codes as the format's NaN), and known values have their codes.

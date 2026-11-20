@@ -7,10 +7,11 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 // ggml's block formats as element types (plan 37, T0): each block type of the GGUF types (GgufTypes) registered in
-// ElementTypes under its lower-case name (q4_0, q4_k, iq2_xxs, mxfp4, ...), its bits a value from its block, its scales
+// ElementTypes under its lower-case name (q4_0, q4_k, iq2_xxs, ...), its bits a value from its block, its scales
 // where its layout has a plain description, and its widening to float32 through the GGUF type's own dequantizer (read at
 // each call, so an app's type registered over the library's is the one used). Per-element GGUF types (F32, F16, BF16)
-// are the built-in types already.
+// are the built-in types already, and a block type the library defines itself (MXFP4: OCP's, laid out as GGUF lays it)
+// is the library's, which reads a GGUF file's blocks of it as they are.
 internal static class GgufElementTypes
 {
     // The scales of the formats whose layout is a plain per-block (or per-sub-block) scale, as ggml lays them out.
@@ -26,7 +27,6 @@ internal static class GgufElementTypes
         ["Q4_K"] = new("6-bit codes of float16 super-scales", 8, true, "8 sub-blocks of 32, each a 6-bit scale and minimum, scaled by d and dmin"),
         ["Q5_K"] = new("6-bit codes of float16 super-scales", 8, true, "8 sub-blocks of 32, each a 6-bit scale and minimum, scaled by d and dmin"),
         ["Q6_K"] = new("8-bit codes of a float16 super-scale", 16, false, "16 sub-blocks of 16, each an 8-bit scale, scaled by d"),
-        ["MXFP4"] = new("8-bit exponent (E8M0)", 1, false, "one shared power of two, then 32 FP4 (E2M1) values"),
     };
 
     // The formats whose blocks are codes times one float16 scale (ScaledBlock): a kernel widens them from this description
@@ -476,6 +476,11 @@ internal static class GgufElementTypes
             if (GgufTypes.Find(id) is not { BlockValues: > 1 } type)
             {
                 continue;                                                   // F32, F16, BF16: the built-in types
+            }
+
+            if (ElementTypes.Default(type.Name.ToLowerInvariant()) is not null)
+            {
+                continue;                                                   // MXFP4: the library's (OCP's, in GGUF's block layout)
             }
 
             int typeId = id;

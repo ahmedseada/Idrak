@@ -25,8 +25,9 @@ internal sealed record TypedDecode(char Kind, int Bits, bool Signed, FloatBits F
     {
         if (type.Scaled is { } block)
         {
-            bool codes = block.CodeBits == 8 && block.CodeTable is null
-                || block.CodeBits == 4 && block.NibblesSplit && (block.CodeTable is null || block.CodeTable is { Count: 16 } grid && grid.All(e => e is >= -128 and <= 127));
+            // Integer codes and a float scale only: codes or a scale of another element type (MXFP4's E2M1 and E8M0) are not read here.
+            bool codes = block is { CodeType: null, ScaleType: null } && (block.CodeBits == 8 && block.CodeTable is null
+                || block.CodeBits == 4 && block.NibblesSplit && (block.CodeTable is null || block.CodeTable is { Count: 16 } grid && grid.All(e => e is >= -128 and <= 127)));
             bool fits = block.Values == PtxKernels.TypedTileDepth && codes && block.Scale.Bits == 16 && block.Scale.Exponent <= 8
                         && block.Bytes % 2 == 0 && block.CodeOffset % 2 == 0 && block.ScaleOffset % 2 == 0
                         && block.CodeOffset + block.Values * block.CodeBits / 8 <= block.Bytes && block.ScaleOffset + 2 <= block.Bytes;

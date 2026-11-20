@@ -4995,15 +4995,18 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
   public static readonly Idrak.Abstraction.ElementType Bool
   public static readonly Idrak.Abstraction.ElementType Float16
   public static readonly Idrak.Abstraction.ElementType Float32
+  public static readonly Idrak.Abstraction.ElementType Float4E2M1
   public static readonly Idrak.Abstraction.ElementType Float64
   public static readonly Idrak.Abstraction.ElementType Float8E4M3
   public static readonly Idrak.Abstraction.ElementType Float8E5M2
+  public static readonly Idrak.Abstraction.ElementType Float8E8M0
   public static readonly Idrak.Abstraction.ElementType Int16
   public static readonly Idrak.Abstraction.ElementType Int2
   public static readonly Idrak.Abstraction.ElementType Int32
   public static readonly Idrak.Abstraction.ElementType Int4
   public static readonly Idrak.Abstraction.ElementType Int64
   public static readonly Idrak.Abstraction.ElementType Int8
+  public static readonly Idrak.Abstraction.ElementType MXFP4
   public static readonly Idrak.Abstraction.ElementType UInt16
   public static readonly Idrak.Abstraction.ElementType UInt2
   public static readonly Idrak.Abstraction.ElementType UInt32
@@ -8402,8 +8405,10 @@ public readonly record struct Idrak.Abstraction.ScalePiece : System.IEquatable<I
   public int Shift { get; init; }
 
 public sealed record Idrak.Abstraction.ScaledBlock : System.IEquatable<Idrak.Abstraction.ScaledBlock>
+  public Idrak.Abstraction.ElementType? CodeType { get; init; }
+  public Idrak.Abstraction.ElementType? ScaleType { get; init; }
   public Idrak.Abstraction.FloatBits Scale { get; init; }
-  public ScaledBlock(int Values, int Bytes, int CodeBits, bool SignedCodes, int CodeBias, Idrak.Abstraction.FloatBits Scale, int ScaleOffset, int CodeOffset, bool NibblesSplit = false, System.Collections.Generic.IReadOnlyList<int>? CodeTable = null)
+  public ScaledBlock(int Values, int Bytes, int CodeBits, bool SignedCodes, int CodeBias, Idrak.Abstraction.FloatBits Scale, int ScaleOffset, int CodeOffset, bool NibblesSplit = false, System.Collections.Generic.IReadOnlyList<int>? CodeTable = null, Idrak.Abstraction.ElementType? CodeType = null, Idrak.Abstraction.ElementType? ScaleType = null)
   public System.Collections.Generic.IReadOnlyList<int>? CodeTable { get; init; }
   public bool NibblesSplit { get; init; }
   public bool SignedCodes { get; init; }
