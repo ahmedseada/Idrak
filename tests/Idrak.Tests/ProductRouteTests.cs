@@ -12,20 +12,20 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ProductRouteGroup =
     [
-        ("product routes: bfloat16, float16, int8, q8_0, q4_0, iq4_nl (a code table), int64 (codes with a scale an output row), float64, int2 (2-bit codes, 32 a block with a float16 scale) and mxfp4 (OCP: E2M1 values sharing an E8M0 scale) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms)", ProductRoutesNear),
+        ("product routes: bfloat16, float16, int8, q8_0, q4_0, iq4_nl (a code table), int64 (codes with a scale an output row), float64, int2 (2-bit codes, 32 a block with a float16 scale) and mxfp4 (OCP: E2M1 values sharing an E8M0 scale) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes, the measured route with the described lane and the written kernels, the described lane alone and the written kernels alone (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesNear),
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
-        ("product routes: the CPU's two lanes over q4_k's, q4_0's, mxfp4's, q6_k's, int64's and int2's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values (int64: over its eight byte planes), its two over bfloat16's stored values (made float32 in registers in even and odd pairs or by a shift) and its two over float64's (float64 FMAs, x widened once or in registers), each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; q4_0 rows of 3, 8 and 10 blocks: a last group of 8 short; q6_k rows of 1 and 3 super-blocks; int64 rows of 100, 256 and 544 values, with a scale an output row; float64 rows of 100, 256 and 2600 values: passes over k in spans; int2 and mxfp4 rows of 3, 8 and 10 blocks: a last group of 8 short; bfloat16 rows of 100, 256, 520 and 4200 values: passes over k in spans; the packed bfloat16 product under the measured route, 1, 3, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x)", ProductRoutesNibbleLanes),
+        ("product routes: the CPU's two lanes over q4_k's, q4_0's, mxfp4's, q6_k's, int64's and int2's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values (int64: over its eight byte planes), its two over bfloat16's stored values (made float32 in registers in even and odd pairs or by a shift) and its two over float64's (float64 FMAs, x widened once or in registers), each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; q4_0 rows of 3, 8 and 10 blocks: a last group of 8 short; q6_k rows of 1 and 3 super-blocks; int64 rows of 100, 256 and 544 values, with a scale an output row; float64 rows of 100, 256 and 2600 values: passes over k in spans; int2 and mxfp4 rows of 3, 8 and 10 blocks: a last group of 8 short; bfloat16 rows of 100, 256, 520 and 4200 values: passes over k in spans; the packed bfloat16 product under the measured route, 1, 3, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x); the described lane alone (any type read from its description, none of the written kernels) over each of them too, each type's description decoding its stored bytes to its own conversion's values, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers)", ProductRoutesNibbleLanes),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
-        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
+        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once, with the described lane and the written kernels measured and with the described lane alone) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
         ("product routes: the fused epilogues of stored weights (CUDA, few rows): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
-        ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and refuses anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
+        ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and IDRAK_ROUTE_LANES all, described and written (any case, blank is all), each refusing anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
     ];
 
     private static readonly string[] RouteFormats = ["bfloat16", "float16", "int8", "q8_0", "q4_0", "iq4_nl"];
@@ -131,12 +131,28 @@ internal abstract partial class DesktopTests : Tests
         return weight.MatMul(input).ToArray();
     }
 
+    // Runs `body` with `lanes` the measured route's candidates, then puts the process's back.
+    private static void UnderLanes(RouteLanes lanes, Action body)
+    {
+        var before = ProductRoutes.Lanes;
+        ProductRoutes.Lanes = lanes;
+        try
+        {
+            body();
+        }
+        finally
+        {
+            ProductRoutes.Lanes = before;
+        }
+    }
+
     private static void ProductRoutesNear(Device device)
     {
         var random = new Random(37);
-        foreach (var route in new[] { ProductRoute.Name, ProductRoute.Generic, ProductRoute.Measured })
+        foreach (var (route, lanes) in new[] { (ProductRoute.Name, RouteLanes.All), (ProductRoute.Generic, RouteLanes.All), (ProductRoute.Measured, RouteLanes.All),
+            (ProductRoute.Measured, RouteLanes.Described), (ProductRoute.Measured, RouteLanes.Written) })
         {
-            UnderRoute(route, () =>
+            UnderLanes(lanes, () => UnderRoute(route, () =>
             {
                 foreach (var (k, n) in RouteShapes)
                 {
@@ -155,8 +171,11 @@ internal abstract partial class DesktopTests : Tests
                             w = expanded.ToArray();
                         }
 
-                        // The CPU's integer lane (q4_k, q4_0, q6_k and int64 under the measured route) multiplies x rounded to int8 a block of 32 values.
-                        bool roundsX = route == ProductRoute.Measured && device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend && format is "q4_k" or "q4_0" or "q6_k" or "int64" or "int2" or "mxfp4";
+                        // The CPU's integer lanes under the measured route (the written ones of q4_k, q4_0, q6_k, int64, int2 and mxfp4; the
+                        // described lane's where the type's values are whole multiples of a unit) multiply x rounded to int8 a block of 32 values.
+                        bool cpu = device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend;
+                        bool roundsX = route == ProductRoute.Measured && cpu && (format is "q4_k" or "q4_0" or "q6_k" or "int64" or "int2" or "mxfp4"
+                            || lanes != RouteLanes.Written && ElementTypes.Find(format) is { } described && Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(described, k) == "integer");
                         foreach (int m in RouteRows)
                         {
                             var x = RouteValues(random, (long)m * k);
@@ -182,7 +201,7 @@ internal abstract partial class DesktopTests : Tests
                                     double error = Math.Abs(y[i * n + j] - sum);
                                     if (!(error <= bound))
                                     {
-                                        Check(false, $"{device}, route {route}, {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} "
+                                        Check(false, $"{device}, route {route} (lanes {lanes}), {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} "
                                             + $"(error {error:E2} past the bound {bound:E2}; the weights are {weight.Description})");
                                     }
                                 }
@@ -190,7 +209,7 @@ internal abstract partial class DesktopTests : Tests
                         }
                     }
                 }
-            });
+            }));
         }
     }
 
@@ -250,23 +269,29 @@ internal abstract partial class DesktopTests : Tests
                 var storage = weight.StoredValues.Storage;
                 var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(storage);
                 var rowScales = weight.Scales is { } held ? Idrak.Abstraction.Devices.Cpu.CpuBackend.D(held.Storage) : null;   // int64: one an output row
+                DescribedDecodes(type, words, k, n);
+                string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
+                Check(arithmetic is not null, $"the described lane does not read {type.Name} ({weight.Description}; its description {type.Description})");
                 foreach (int m in new[] { 1, 3, 4, 5, 9, 70 })
                 {
                     var x = RouteValues(random, (long)m * k);
                     // q4_k, q4_0, q6_k and int64: the decoded and the integer lane; bfloat16: the shifted and the paired lane;
-                    // float64: the decoded and the mixed lane (x widened once, or in registers).
-                    foreach (bool second in new[] { false, true })
+                    // float64: the decoded and the mixed lane (x widened once, or in registers); then the described lane alone.
+                    foreach (int which in new[] { 0, 1, 2 })
                     {
+                        bool second = which == 1, described = which == 2;
                         var y = new float[m * n];
-                        bool integer = second && !bfloat16 && !float64;
-                        bool ran = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(second, type, words, storage.Length, x, y, m, n, k, rowScales);
+                        bool integer = described ? arithmetic == "integer" : second && !bfloat16 && !float64;
+                        bool ran = described
+                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, storage.Length, x, y, m, n, k, rowScales)
+                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(second, type, words, storage.Length, x, y, m, n, k, rowScales);
                         if (!ran)
                         {
-                            Check(integer, $"the {(bfloat16 ? "bfloat16" : float64 && second ? "mixed" : "decoded")} lane does not read {type.Name} ({weight.Description})");
+                            Check(integer && !described, $"the {(described ? "described" : bfloat16 ? "bfloat16" : float64 && second ? "mixed" : "decoded")} lane does not read {type.Name} ({weight.Description})");
                             continue;
                         }
 
-                        string lane = bfloat16 ? second ? "paired" : "shifted" : float64 && second ? "mixed" : integer ? "integer" : "decoded";
+                        string lane = described ? $"described ({arithmetic})" : bfloat16 ? second ? "paired" : "shifted" : float64 && second ? "mixed" : integer ? "integer" : "decoded";
                         for (int i = 0; i < m; i++)
                         {
                             var steps = integer ? HalfSteps(x, i, k) : null;
@@ -296,6 +321,7 @@ internal abstract partial class DesktopTests : Tests
             }
         });
         Check(runs > 0, "no lane over stored values ran");
+        DescribedOnly(random);
 
         // The packed bfloat16 product (a tied head's [k, n] layout) under the measured route: only the kernels reading the
         // weights in registers, at few rows and many, within float32's bound of the product of the weights' values.
@@ -337,6 +363,134 @@ internal abstract partial class DesktopTests : Tests
                 }
             }
         }
+    }
+
+    // A type's description read alone (TypeDescription.Decode) gives the values its own conversion gives (ElementType.Decode)
+    // for the stored bytes of n rows of k values: the same, or within one float32 rounding (a 64-bit code rounds to float32
+    // at once one way, through float64 the other; a super-block's factors multiply in another order).
+    private static void DescribedDecodes(ElementType type, float[] words, int k, int n)
+    {
+        var d = type.Description;
+        Check(d is not null, $"{type.Name} has no description");
+        if (d is null)
+        {
+            return;
+        }
+
+        var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan())[..(int)type.ByteCount((long)k * n)];
+        float[] own = new float[k * n], described = new float[k * n];
+        type.Decode(bytes, own);
+        d.Decode(bytes, described);
+        for (int i = 0; i < own.Length; i++)
+        {
+            float a = own[i], b = described[i];
+            if (!(a == b || float.IsNaN(a) && float.IsNaN(b) || Math.Abs(a - b) <= Math.Abs(a) * Math.Pow(2, -22)))
+            {
+                Check(false, $"{type.Name}: value {i} is {a:R} by its conversion, {b:R} by its description ({d})");
+                return;
+            }
+        }
+    }
+
+    // Types made of a description alone (registered nowhere, no conversion and no kernel of their own): a 3-bit code in a
+    // 2-bit and a 1-bit plane with an E8M0 scale; a table of 16 fractions with a bfloat16 scale a 64 values; a 6-bit fp E2M3
+    // in a 4-bit and a 2-bit plane with an E8M0 scale; 16-bit integers with a code offset of 0.5 and without; 32-bit
+    // integers. The described lane multiplies each from its description (random codes, finite scales), within float32's
+    // bound of the product of the values the description gives (and of x's rounding where its arithmetic is integer).
+    private static void DescribedOnly(Random random)
+    {
+        var e8m0 = ElementType.Float8E8M0.Description!.Code;
+        double[] fractions = [-1, -0.6962, -0.5251, -0.3949, -0.2844, -0.1848, -0.0911, 0, 0.0796, 0.1609, 0.2461, 0.3379, 0.4407, 0.5626, 0.7230, 1];
+        var made = new (string Name, TypeDescription D, int K)[]
+        {
+            ("3-bit codes in two planes, offset -4, an E8M0 scale a 32 values",
+                new TypeDescription(32, 13, NumberType.Integer(3, false), [new CodePlane(1, 2, 4), new CodePlane(9, 1, 8)], -4, [new BlockScale(e8m0, 32, 0)]), 96),
+            ("a table of 16 fractions, two a byte, a bfloat16 scale a 64 values",
+                new TypeDescription(64, 34, NumberType.Entries(4, fractions), [new CodePlane(2, 4, 2)], Scales: [new BlockScale(NumberType.Floating(8, 7), 64, 0)]), 192),
+            ("fp6 E2M3 in a 4-bit and a 2-bit plane, an E8M0 scale a 32 values",
+                new TypeDescription(32, 25, NumberType.Floating(2, 3, bias: 1, specials: FloatSpecials.None), [new CodePlane(1, 4, 32), new CodePlane(17, 2, 32)],
+                    Scales: [new BlockScale(e8m0, 32, 0)]), 320),
+            ("16-bit integers plus 0.5", new TypeDescription(1, 2, NumberType.Integer(16, true), [new CodePlane(0, 16, 1)], 0.5), 100),
+            ("16-bit integers", new TypeDescription(1, 2, NumberType.Integer(16, true), [new CodePlane(0, 16, 1)]), 100),
+            ("32-bit integers", new TypeDescription(1, 4, NumberType.Integer(32, true), [new CodePlane(0, 32, 1)]), 100),
+        };
+
+        int n = 37, ran = 0;
+        foreach (var (name, d, k) in made)
+        {
+            Check(d.Valid, $"{name}: the description does not hold together ({d})");
+            var type = new ElementType { Name = $"described: {name}", Summary = name, BlockSize = d.Values, BlockBits = d.Bytes * 8, Description = d };
+            int rowBytes = k / d.Values * d.Bytes;
+            var bytes = new byte[n * rowBytes];
+            random.NextBytes(bytes);
+            for (int block = 0; block < bytes.Length / d.Bytes; block++)
+            {
+                foreach (var scale in d.Scales ?? [])
+                {
+                    int at = block * d.Bytes + scale.Offset;
+                    if (scale.Type.Bits == 8)
+                    {
+                        bytes[at] = (byte)random.Next(120, 131);                     // E8M0: 2^-7 to 2^3
+                    }
+                    else
+                    {
+                        ushort bits = (ushort)(BitConverter.SingleToInt32Bits(0.5f + 1.5f * random.NextSingle()) >> 16);   // bfloat16 in [0.5, 2)
+                        bytes[at] = (byte)bits;
+                        bytes[at + 1] = (byte)(bits >> 8);
+                    }
+                }
+            }
+
+            var words = new float[(bytes.Length + 3) / 4];
+            Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+            var w = new float[n * k];
+            d.Decode(bytes, w);                                                            // row j's value r at j · k + r
+            string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
+            Check(arithmetic is not null, $"the described lane does not read {name} ({d})");
+            foreach (int m in new[] { 1, 4, 5, 9 })
+            {
+                var x = RouteValues(random, (long)m * k);
+                var y = new float[m * n];
+                if (!Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, words.Length, x, y, m, n, k))
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < m; i++)
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        double sum = 0, magnitude = 0, rounding = 0;
+                        for (int r = 0; r < k; r++)
+                        {
+                            double term = (double)x[i * k + r] * w[j * k + r];
+                            sum += term;
+                            magnitude += Math.Abs(term);
+                            if (arithmetic == "integer")
+                            {
+                                double most = 0;
+                                for (int v = r / 32 * 32; v < Math.Min(k, r / 32 * 32 + 32); v++)
+                                {
+                                    most = Math.Max(most, Math.Abs(x[i * k + v]));
+                                }
+
+                                rounding += Math.Abs(w[j * k + r]) * most / 127 * 0.5001;
+                            }
+                        }
+
+                        double bound = k * Math.Pow(2, -23) * (magnitude + rounding) + rounding + 1e-30, error = Math.Abs(y[i * n + j] - sum);
+                        if (!(error <= bound))
+                        {
+                            Check(false, $"the described lane ({arithmetic}), {name} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} (error {error:E2} past the bound {bound:E2})");
+                        }
+                    }
+                }
+
+                ran++;
+            }
+        }
+
+        Check(ran == made.Length * 4, $"the described lane ran {ran} of {made.Length * 4} products of types made of a description alone");
     }
 
     private static void ProductRoutesStoredLayout(Device device)
@@ -814,6 +968,16 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var random = new Random(73);
+        foreach (var lanes in cpu ? new[] { RouteLanes.All, RouteLanes.Described } : [RouteLanes.All])
+        {
+            UnderLanes(lanes, () => ProductRoutesManyUnder(device, cpu, random));
+        }
+    }
+
+    // ProductRoutesMany under the process's lanes (the CPU's: the described lane and the written kernels measured, or the
+    // described lane alone).
+    private static void ProductRoutesManyUnder(Device device, bool cpu, Random random)
+    {
         UnderRoute(ProductRoute.Measured, () =>
         {
             int k = 256;
@@ -1227,6 +1391,21 @@ internal abstract partial class DesktopTests : Tests
 
         Check(refused is not null && refused.Contains(ProductRoutes.EnvironmentVariable, StringComparison.Ordinal) && refused.Contains("fast", StringComparison.Ordinal),
             $"an unknown route is refused naming the variable and the value: {refused}");
+        Check(ProductRoutes.ParseLanes(null) == RouteLanes.All && ProductRoutes.ParseLanes(" ") == RouteLanes.All && ProductRoutes.ParseLanes("ALL") == RouteLanes.All
+            && ProductRoutes.ParseLanes("Described") == RouteLanes.Described && ProductRoutes.ParseLanes("written") == RouteLanes.Written,
+            "IDRAK_ROUTE_LANES reads all (or blank), described and written in any case");
+        string? refusedLanes = null;
+        try
+        {
+            ProductRoutes.ParseLanes("fast");
+        }
+        catch (InvalidOperationException e)
+        {
+            refusedLanes = e.Message;
+        }
+
+        Check(refusedLanes is not null && refusedLanes.Contains(ProductRoutes.LanesVariable, StringComparison.Ordinal) && refusedLanes.Contains("fast", StringComparison.Ordinal),
+            $"unknown lanes are refused naming the variable and the value: {refusedLanes}");
 
         if (Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is { } autotune && autotune.Trim() is "0" or "false" or "off" or "no")
         {

@@ -26,7 +26,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // 32-value block of 2-bit codes with one float16 scale (TwoBitFormat: int2), each with its codes decoded in registers
 // inside the dot products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; bfloat16
 // (BFloat16Format), its values made float32 in registers; and float64 (DoubleFormat), its values multiplied as they are
-// in float64 FMAs; the faster lane at each shape.
+// in float64 FMAs; the faster lane at each shape. Under the measured route the described lane (DescribedFormat, at the
+// end) reads any type from its description alone (ElementType.Description) and is the first candidate; the formats above
+// are candidates beside it, kept at a shape where they measure faster (ProductRoutes.Lanes: all, described, written).
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -306,16 +308,13 @@ internal sealed partial class CpuBackend
 
         var type = weight.ElementType;
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, mxfp4, q6_k, bfloat16, int64, float64, int2) under the measured route: only the
-        // format's lanes, which never widen it, the shape's lane measured once (Chosen).
-        if (ProductRoutes.Current == ProductRoute.Measured)
+        // A weight the described lane reads (any type with a description it takes) or a written format reads (FormatOf: q4_k,
+        // q4_0, mxfp4, q6_k, bfloat16, int64, float64, int2) under the measured route: only those lanes, which never widen
+        // it, the shape's lane among them measured once (Chosen; ProductRoutes.Lanes says which are candidates).
+        if (ProductRoutes.Current == ProductRoute.Measured && CandidatesOf(type, k, new RoutedUse(lane, D(x), D(y), m, n, k)))
         {
-            var routed = new RoutedUse(lane, D(x), D(y), m, n, k);
-            if (FormatOf(type, k, ref routed))
-            {
-                s_formatsMultiplied = true;
-                return true;
-            }
+            s_formatsMultiplied = true;
+            return true;
         }
 
         var widening = WideningOf(type);
@@ -334,7 +333,7 @@ internal sealed partial class CpuBackend
     // a shift (BFloat16Format); the packed bfloat16 product's two kernels reading its values in registers (the tiled and the
     // streaming, CpuBackend.Typed.cs).
     private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5,
-        PairedLaneId = 6, ShiftedLaneId = 7, TiledLaneId = 8, StreamingLaneId = 9, MixedLaneId = 10;
+        PairedLaneId = 6, ShiftedLaneId = 7, TiledLaneId = 8, StreamingLaneId = 9, MixedLaneId = 10, DescribedLaneId = 11;
 
     private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)",
         "tiles (panels widened in the product)", "decoded lane (stored values decoded in registers inside the dot products)",
@@ -343,7 +342,8 @@ internal sealed partial class CpuBackend
         "shifted lane (bfloat16 made float32 in registers by a widening load and a shift)",
         "tiled lane (bfloat16 read in place in registers, a panel of rows' sums kept in registers)",
         "streaming lane (bfloat16 read in place in registers, each weight row added to every row's sums)",
-        "mixed lane (x widened to float64 in registers as it is read, float64 FMAs over the stored values)"];
+        "mixed lane (x widened to float64 in registers as it is read, float64 FMAs over the stored values)",
+        "described lane (any type read from its description alone, its values decoded in registers inside the dot products)"];
 
     // Each shape's measured lane.
     private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K), int> StoredLanes = new();
@@ -898,8 +898,7 @@ internal sealed partial class CpuBackend
             group[j] = products[j];
         }
 
-        var use = new GroupedUse(type, D(x), m, k, group, products.Length);
-        if (!FormatOf(type, k, ref use))
+        if (!CandidatesOf(type, k, new GroupedUse(type, D(x), m, k, group, products.Length)))
         {
             return false;
         }
@@ -1436,22 +1435,20 @@ internal sealed partial class CpuBackend
     // takes the same measured choice of lanes (ILaneChoice, CpuBackend.Typed.cs).
 
     /// <summary>
-    /// A product with two candidate lanes, timed on the real operands once per shape and the faster kept for the shape
-    /// (Chosen): a weight format's product over its stored rows (RowProduct), the packed bfloat16 product.
+    /// A product with candidate lanes (up to three), timed on the real operands once per shape and the fastest kept for the
+    /// shape (Chosen): a weight's product over its stored rows by the described lane and its written format's lanes
+    /// (LaneCandidates), the packed bfloat16 product.
     /// </summary>
     private interface ILaneChoice
     {
         /// <summary>The name the shape's choice is kept under (with the rows' class, n and k).</summary>
         string Name { get; }
 
-        /// <summary>The lane timed first.</summary>
-        int First { get; }
+        /// <summary>The candidates that run on this CPU (1 to 3).</summary>
+        int Count { get; }
 
-        /// <summary>The lane timed against it.</summary>
-        int Second { get; }
-
-        /// <summary>Whether the second lane runs on this CPU (else the first, unmeasured).</summary>
-        bool BothRun { get; }
+        /// <summary>Candidate <paramref name="index"/>'s lane, the first the one the others are timed against.</summary>
+        int Candidate(int index);
 
         /// <summary>The lane without measuring (CpuTuning.Autotune off).</summary>
         int Unmeasured { get; }
@@ -1626,53 +1623,139 @@ internal sealed partial class CpuBackend
     private static int Chosen<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice =>
         StoredLanes.TryGetValue((product.Name, LaneKey(product.Name, m, n, k).Rows, n, k), out int known) ? known : Measure(product, m, n, k);
 
-    // The faster of the product's two lanes, timed once on the real operands (each run writes all of y, which the caller
-    // writes again: Faster until the times settle, or TimeBrief's fixed rounds with the second kept only when 3% faster)
-    // and kept for the shape; the first alone where the second does not run here; without measuring (CpuTuning.Autotune
-    // off), its unmeasured lane.
+    // The fastest of the product's candidates, timed once on the real operands, each against the fastest so far (each run
+    // writes all of y, which the caller writes again: Faster until the times settle, or TimeBrief's fixed rounds with a
+    // challenger kept only when 3% faster) and kept for the shape; a lone candidate unmeasured (recorded as the only one);
+    // without measuring (CpuTuning.Autotune off), the product's unmeasured lane.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int Measure<TC>(TC product, int m, int n, int k) where TC : struct, ILaneChoice
     {
-        int first = product.First, second = product.Second, best = product.BothRun ? product.Unmeasured : first;
-        if (product.BothRun && CpuTuning.Autotune)
+        int count = Math.Clamp(product.Count, 1, 3), best = count > 1 ? product.Unmeasured : product.Candidate(0);
+        if (count == 1)
         {
-            var (a, b) = product.Brief
-                ? TimeBrief(() => product.Run(first), () => product.Run(second))
-                : Faster.Time(() => product.Run(first), () => product.Run(second));
-            best = b < (product.Brief ? 0.97 * a : a) ? second : first;
+            ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{product.Name} {m}x{k}->{n}"), $"{LaneNames[best]} (the only candidate)");
+        }
+        else if (CpuTuning.Autotune)
+        {
+            var times = new double[count];
+            int at = 0;
+            best = product.Candidate(0);
+            for (int c = 1; c < count; c++)
+            {
+                int holder = best, challenger = product.Candidate(c);
+                var (a, b) = product.Brief
+                    ? TimeBrief(() => product.Run(holder), () => product.Run(challenger))
+                    : Faster.Time(() => product.Run(holder), () => product.Run(challenger));
+                times[at] = a;
+                times[c] = b;
+                if (b < (product.Brief ? 0.97 * a : a))
+                {
+                    (best, at) = (challenger, c);
+                }
+            }
+
             ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{product.Name} {m}x{k}->{n}"),
                 string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                    $"{LaneNames[best]} ({LaneNames[first].Split(' ')[0]} {a:0.###} ms, {LaneNames[second].Split(' ')[0]} {b:0.###} ms)"));
+                    $"{LaneNames[best]} ({string.Join(", ", Enumerable.Range(0, count).Select(i => $"{LaneNames[product.Candidate(i)].Split(' ')[0]} {times[i]:0.###} ms"))})"));
         }
 
         StoredLanes[(product.Name, LaneKey(product.Name, m, n, k).Rows, n, k)] = best;
         return best;
     }
 
-    // A weight in a format as a choice of lanes (Chosen): its product by either lane.
-    private readonly struct RowProduct<TF, TK>(TF format, StoredLane lane, float[] x, float[] y, int m, int n, int k) : ILaneChoice
+    // A weight's candidates as a choice of lanes (Chosen): the described lane where it reads the weight's type and the
+    // setting takes it (first: the others are timed against it), then the written format's lanes where one reads the type
+    // and the setting takes them; its product by any of them.
+    private readonly struct LaneCandidates<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed,
+        StoredLane lane, float[] x, float[] y, int m, int n, int k) : ILaneChoice
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
-        public string Name => lane.Type.Name;
+        public string Name => lane.Type.Name + ProductRoutes.Lanes switch
+        {
+            RouteLanes.Described => " (described lane)",
+            RouteLanes.Written => " (written kernels)",
+            _ => "",
+        };
 
-        public int First => format.First;
+        public int Count => (hasDescribed ? 1 : 0) + (hasWritten ? written.BothRun ? 2 : 1 : 0);
 
-        public int Second => format.Second;
+        public int Candidate(int index)
+        {
+            if (hasDescribed)
+            {
+                if (index == 0)
+                {
+                    return DescribedLaneId;
+                }
 
-        public bool BothRun => format.BothRun;
+                index--;
+            }
 
-        public int Unmeasured => format.Unmeasured;
+            return index == 0 ? written.First : written.Second;
+        }
+
+        public int Unmeasured => hasDescribed ? DescribedLaneId : written.BothRun ? written.Unmeasured : written.First;
 
         public bool Brief => false;
 
-        public void Run(int laneId) => FormatProduct<TF, TK>(format, laneId, lane, x, y, m, n, k);
+        public void Run(int laneId)
+        {
+            if (laneId == DescribedLaneId)
+            {
+                FormatProduct<DescribedFormat, DescribedKernels>(described, laneId, lane, x, y, m, n, k);
+                return;
+            }
+
+            FormatProduct<TF, TK>(written, laneId, lane, x, y, m, n, k);
+        }
     }
 
-    // The routed product of a weight in its format (StoredRouted): the shape's lane (Chosen), then the product by it.
-    private readonly struct RoutedUse(StoredLane lane, float[] x, float[] y, int m, int n, int k) : IFormatUse
+    /// <summary>What to do with a weight's candidates once CandidatesOf finds them, generic over the written format (its code compiled for it).</summary>
+    private interface ICandidateUse
+    {
+        void Use<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels;
+    }
+
+    // A written format found by FormatOf, handed on with the described lane's candidacy.
+    private readonly struct WithDescribed<TU>(TU use, DescribedFormat described, bool hasDescribed) : IFormatUse where TU : struct, ICandidateUse
     {
         public void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels =>
-            FormatProduct<TF, TK>(format, Chosen(new RowProduct<TF, TK>(format, lane, x, y, m, n, k), m, n, k), lane, x, y, m, n, k);
+            use.Use<TF, TK>(format, true, described, hasDescribed);
+    }
+
+    // Under the measured route, the candidates of `type`'s rows of k values given to `use` (ProductRoutes.Lanes): the
+    // described lane where it reads the type (but with "written"), a written format where one reads the type (but with
+    // "described" where the described lane reads it); false where neither does.
+    private static bool CandidatesOf<TU>(ElementType type, int k, TU use) where TU : struct, ICandidateUse
+    {
+        var lanes = ProductRoutes.Lanes;
+        bool hasDescribed = DescribedFormat.Reads(type, k, out var described) && lanes != RouteLanes.Written;
+        if (!(hasDescribed && lanes == RouteLanes.Described))
+        {
+            var written = new WithDescribed<TU>(use, described, hasDescribed);
+            if (FormatOf(type, k, ref written))
+            {
+                return true;
+            }
+        }
+
+        if (!hasDescribed)
+        {
+            return false;
+        }
+
+        use.Use<DescribedFormat, DescribedKernels>(described, false, described, true);
+        return true;
+    }
+
+    // The routed product of a weight (StoredRouted): the shape's lane among its candidates (Chosen), then the product by it.
+    private readonly struct RoutedUse(StoredLane lane, float[] x, float[] y, int m, int n, int k) : ICandidateUse
+    {
+        public void Use<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
+        {
+            var candidates = new LaneCandidates<TF, TK>(written, hasWritten, described, hasDescribed, lane, x, y, m, n, k);
+            candidates.Run(Chosen(candidates, m, n, k));
+        }
     }
 
     // Up to three products of a grouped pass, on the stack.
@@ -1682,11 +1765,11 @@ internal sealed partial class CpuBackend
         private (Storage Values, Storage? Scales, Storage Output, int Columns) _product;
     }
 
-    // The grouped pass of weights in one format (FormatGrouped).
-    private readonly struct GroupedUse(ElementType type, float[] x, int m, int k, ThreeProducts products, int count) : IFormatUse
+    // The grouped pass of weights of one type (FormatGrouped).
+    private readonly struct GroupedUse(ElementType type, float[] x, int m, int k, ThreeProducts products, int count) : ICandidateUse
     {
-        public void Use<TF, TK>(TF format) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels =>
-            FormatGrouped<TF, TK>(format, type, x, m, k, products, count);
+        public void Use<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed) where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels =>
+            FormatGrouped<TF, TK>(written, hasWritten, described, hasDescribed, type, x, m, k, products, count);
     }
 
     // One lane of a weight in its format, apart from the measured choice (StoredRowLane, for tests).
@@ -1720,6 +1803,26 @@ internal sealed partial class CpuBackend
         return FormatOf(type, k, ref use) && use.Ran;
     }
 
+    /// <summary>
+    /// y [m, n] = x [m, k] · Wᵀ by the described lane alone (any type read from its description, ElementType.Description;
+    /// none of the written formats' kernels), W's n rows stored as <paramref name="words"/>, each output times its row's
+    /// scale where <paramref name="scales"/> are given. False where the described lane does not read the type here. For
+    /// tests, apart from the measured choice.
+    /// </summary>
+    internal static bool DescribedRowLane(ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k, float[]? scales = null)
+    {
+        if (!DescribedFormat.Reads(type, k, out var described))
+        {
+            return false;
+        }
+
+        FormatProduct<DescribedFormat, DescribedKernels>(described, DescribedLaneId, new StoredLane(type, type.Scaled, words, length, scales, k, type.ByteCount(k)), x, y, m, n, k);
+        return true;
+    }
+
+    /// <summary>The arithmetic the described lane takes for <paramref name="type"/>'s rows of <paramref name="k"/> values ("integer", "float32", "float64"), or null where it does not read the type here. For tests.</summary>
+    internal static string? DescribedArithmetic(ElementType type, int k) => DescribedFormat.Reads(type, k, out var described) ? described.Arithmetic : null;
+
     // The product by one lane (FormatMany with one part).
     private static void FormatProduct<TF, TK>(TF format, int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
@@ -1729,21 +1832,40 @@ internal sealed partial class CpuBackend
         FormatMany<TF, TK>(format, ((ReadOnlySpan<RowPart>)parts)[..1], x, m, k);
     }
 
-    // 2 or 3 weights of one format sharing x: each by its own lane for the shape (measured here first where it has not
-    // been), then one pass (FormatMany), so each output is its own product's, bit for bit.
-    private static void FormatGrouped<TF, TK>(TF format, ElementType type, float[] x, int m, int k, ThreeProducts products, int count)
+    // 2 or 3 weights of one type sharing x: each by its own lane for the shape among its candidates (measured here first
+    // where it has not been), then one pass for those the described lane takes and one for those a written format's lanes
+    // take (FormatMany), so each output is its own product's, bit for bit.
+    private static void FormatGrouped<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed, ElementType type, float[] x, int m, int k,
+        ThreeProducts products, int count)
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
-        var parts = new ThreeParts();
+        ThreeParts byDescribed = new(), byWritten = new();
+        int a = 0, b = 0;
         for (int j = 0; j < count; j++)
         {
             var (values, scales, output, n) = products[j];
             var lane = new StoredLane(type, type.Scaled, D(values), values.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
             float[] y = D(output);
-            parts[j] = new RowPart(lane, y, n, Chosen(new RowProduct<TF, TK>(format, lane, x, y, m, n, k), m, n, k));
+            int chosen = Chosen(new LaneCandidates<TF, TK>(written, hasWritten, described, hasDescribed, lane, x, y, m, n, k), m, n, k);
+            if (chosen == DescribedLaneId)
+            {
+                byDescribed[a++] = new RowPart(lane, y, n, chosen);
+            }
+            else
+            {
+                byWritten[b++] = new RowPart(lane, y, n, chosen);
+            }
         }
 
-        FormatMany<TF, TK>(format, ((ReadOnlySpan<RowPart>)parts)[..count], x, m, k);
+        if (a > 0)
+        {
+            FormatMany<DescribedFormat, DescribedKernels>(described, ((ReadOnlySpan<RowPart>)byDescribed)[..a], x, m, k);
+        }
+
+        if (b > 0)
+        {
+            FormatMany<TF, TK>(written, ((ReadOnlySpan<RowPart>)byWritten)[..b], x, m, k);
+        }
     }
 
     // The products of `parts` (1 to 3 weights of one format sharing x): x prepared once for each lane they take, then their
@@ -4562,5 +4684,2764 @@ internal sealed partial class CpuBackend
             (d * Avx.ConvertToVector256Single(low + bias)).Store(into);
             (d * Avx.ConvertToVector256Single(high + bias)).Store(into + 8);
         }
+    }
+
+    // ------------------------------------------------------------------ the described lane: any type from its description
+
+    // One lane for every type (DescribedFormat), reading nothing but the type's description (ElementType.Description: a
+    // block's values and bytes; each value's code from its bit planes, an integer, a float of its bits or a table's entry; a
+    // code offset; the scales and minimums covering it, each a number of its own type), compiled once a description into a
+    // plan (DescribedPlan) of what the description implies, never the type's name and no code of a type's own. The plan
+    // takes the arithmetic the values allow, and the lane decodes them in registers inside the dot products, writing no
+    // weight's value anywhere, whole or a panel:
+    // - integer: codes of at most 8 bits whose numbers are whole multiples of one unit spanning at most 255 units (127 without
+    //   AVX-VNNI), or whole numbers of 2, 4 or 8 bytes (each byte a plane of its own, AVX-VNNI): x rounded to int8 a block of
+    //   32 values, each code made an unsigned byte in registers (its plane's bits shifted and masked, then its number less
+    //   the least: as it is, its sign bit flipped or by a byte shuffle), 8 chunks' codes transposed into the int8 dot
+    //   products' lanes (or, a chunk's codes 16 bytes or fewer, gathered straight into them: GatheredSteps), the least added
+    //   back through x's code sums; the scales and minimums of the 8 chunks gathered and read by their number types at once
+    //   (an integer, a table of an 8-bit type's numbers, a 16-bit float by its bits); where every span's codes load alike,
+    //   the load and the map are the kernels' type parameters (UniformOne, UniformRowSteps); a wide integer's byte planes
+    //   are made by its plane count's own step (IStepLoad.Plane);
+    // - float32: values a float32 holds (16-bit floats by their bits, 16-bit integers, float32, codes of up to 8 bits
+    //   through a table of their numbers times their scales), float32 FMAs with x;
+    // - float64: 64-bit floats as stored, 32- and 64-bit integers made float64 in registers, FMAs with x in float64 (no
+    //   narrowing of a 64-bit value to float32).
+    // The written formats (FormatOf) stay as candidates: the measured route times them against the described lane at each
+    // shape (RouteLanes.All) and keeps the faster; RouteLanes.Described takes the described lane alone.
+
+    // How the described lane computes, by what the type's values allow (DescribedPlan.Make).
+    private enum DescribedMode : byte
+    {
+        Integer,
+        Single,
+        Double,
+    }
+
+    // How the integer lane makes a code an unsigned byte: as it is, its sign bit flipped, through a 16-entry byte shuffle, or
+    // through a 256-entry table a byte at a time.
+    private enum CodeMap : byte
+    {
+        Same,
+        Flip,
+        Shuffle,
+        Table,
+    }
+
+    // How a block's scale or minimum reads (DescribedPlan.Factor): an integer (unsigned, two's complement), through a table
+    // of its numbers (8 bits or fewer), a 16-bit float by its bits, a float32 as it is, or one lane at a time by its type.
+    private enum FactorRead : byte
+    {
+        Unsigned,
+        Signed,
+        Table,
+        Half,
+        Single,
+        Scalar,
+    }
+
+    // How the float lanes make a stored value: a 16-bit float by its bits, a 16-bit integer, a float32 as it is, codes of up
+    // to 8 bits through a table of their numbers (float32); a float64 as it is, a 64-bit or 32-bit integer (float64).
+    private enum WideRead : byte
+    {
+        Half,
+        Short,
+        Single,
+        Codes,
+        Double,
+        Long,
+        Int,
+    }
+
+    /// <summary>
+    /// What the described lane makes of a type's description (<see cref="TypeDescription"/>), once a description: the
+    /// arithmetic its values allow; the layout's period (whole blocks, spans of 32 values and groups of 8 chunks); for codes
+    /// of at most 8 bits, each span's runs of bytes a plane's fields fill (one load, a shift and a mask a plane) and the
+    /// order they give the span's values; how a code becomes the integer lane's byte; each value of the period's place in
+    /// x's layout; for each scale and minimum, the 8 lanes' bytes, shifts and masks at each group of the period and how its
+    /// number reads. Null where the CPU cannot run it (AVX2 and FMA) or the description is one the lane cannot read in
+    /// registers (codes wider than 8 bits that are not one plane of whole bytes a value).
+    /// </summary>
+    private sealed unsafe class DescribedPlan
+    {
+        private static readonly ConditionalWeakTable<TypeDescription, object> Plans = new();
+
+        // The pinned arrays the kernels read through pointers, kept alive with the plan.
+        private readonly List<Array> held = [];
+
+        private DescribedPlan(TypeDescription d)
+        {
+            D = d;
+            Values = d.Values;
+            Bytes = d.Bytes;
+        }
+
+        public TypeDescription D { get; }
+
+        /// <summary>Values a block holds.</summary>
+        public int Values { get; }
+
+        /// <summary>Bytes a block takes.</summary>
+        public int Bytes { get; }
+
+        public DescribedMode Mode { get; private set; }
+
+        /// <summary>The float lanes' reading of a value.</summary>
+        public WideRead Wide { get; private set; }
+
+        /// <summary>Values and bytes of the layout's period: whole blocks, spans of 32 values and groups.</summary>
+        public int Period { get; private set; }
+
+        public int PeriodBytes { get; private set; }
+
+        /// <summary>Byte planes of a code in the integer lane: 1, or a wide integer's bytes (2, 4, 8).</summary>
+        public int P { get; private set; } = 1;
+
+        /// <summary>Values a chunk takes (one scale and one lane of the dot products).</summary>
+        public int C { get; private set; } = 32;
+
+        /// <summary>Chunks a group takes (8 / P).</summary>
+        public int Cg { get; private set; } = 8;
+
+        /// <summary>The integer lane's steps a group takes (C / 4).</summary>
+        public int T { get; private set; } = 8;
+
+        /// <summary>Values a group takes (Cg · C).</summary>
+        public int GroupValues { get; private set; } = 256;
+
+        /// <summary>Groups a period takes.</summary>
+        public int GroupsPerPeriod { get; private set; }
+
+        /// <summary>The integer lane's codes are its numbers over this.</summary>
+        public float Unit { get; private set; } = 1f;
+
+        /// <summary>Whether the type has minimums (a float added a chunk: x's sums times them).</summary>
+        public bool Mins { get; private set; }
+
+        /// <summary>The floats of x's lane data a group takes in the integer lane: scales, code-sum starts, then (minimums) sums.</summary>
+        public int LaneFloats { get; private set; }
+
+        /// <summary>A wide integer's top byte plane's lanes (all bits set), where its code-sum start goes.</summary>
+        public Vector256<int> TopLanes { get; private set; }
+
+        /// <summary>One scale of one piece and no bias or minimums, read as a 16-bit float by its bits (1) or through its table (2); else 0.</summary>
+        private int OneScale => oneScale;
+
+        private int oneScale;
+
+        // OneScale: a 16-bit float scale's reading as vectors, the unit folded in; a table scale's numbers times the unit.
+        private HalfVectors oneHalf;
+        private float* oneTable;
+
+        /// <summary>Bytes a group's made steps take in the integer lane: its steps, its scales, then (minimums) its minimums.</summary>
+        public int GroupStepBytes { get; private set; }
+
+        /// <summary>Each lane's weight in the final sum (2^(8p) for byte plane p), or null: every lane 1.</summary>
+        public Vector256<float>? LaneWeights { get; private set; }
+
+        /// <summary>Code planes (codes of at most 8 bits).</summary>
+        public int Planes { get; private set; }
+
+        public CodeMap Map { get; private set; }
+
+        public Vector256<byte> Flip { get; private set; }
+
+        public Vector256<byte> Shuffle { get; private set; }
+
+        /// <summary>The bytes the top byte plane of a signed wide integer is flipped by (0x80 in its lanes).</summary>
+        public Vector256<byte> TopFlip { get; private set; }
+
+        /// <summary>
+        /// Where every span's codes are one plane loaded the same way (1, 2, 4 or 8 runs) and mapped by a flip or a 16-entry
+        /// shuffle or not at all: the runs (the kernels then take that load and that map as type parameters); else 0.
+        /// </summary>
+        public int UniformRuns { get; private set; }
+
+        /// <summary>Each span's run's first byte (UniformRuns).</summary>
+        public int* RunOffsets => runOffset;
+
+        /// <summary>Each span's run's shifts (UniformRuns).</summary>
+        public Vector256<ulong>* RunShifts => runShift;
+
+        /// <summary>The one plane's mask (UniformRuns).</summary>
+        public Vector256<byte> PlaneMask0 { get; private set; }
+
+        /// <summary>The map's vector: the flip, or the shuffle's table (UniformRuns).</summary>
+        public Vector256<byte> MapVector { get; private set; }
+
+        /// <summary>
+        /// Whether a group's steps are gathered (UniformRuns of 2 or more, chunks of 32: each chunk's run is 16 bytes or fewer,
+        /// so dword d of the 8 chunks' runs is one gather, and each run's shift of it a step: step q · (n / 4) + d), rather than
+        /// loaded a chunk at a time and transposed.
+        /// </summary>
+        public bool Gathered { get; private set; }
+
+        /// <summary>Gathered with flipped codes: each byte's fields' top bits, XORed into the gathered words (the steps then mapped as they are).</summary>
+        public Vector256<uint> WordFlip { get; private set; }
+
+        /// <summary>Gathered: per group of the period, the 8 chunks' runs' first bytes, a lane each.</summary>
+        public Vector256<int>* GatherOffsets { get; private set; }
+
+        /// <summary>Gathered: per group of the period and run, the 8 chunks' shifts of that run, a lane each.</summary>
+        public Vector256<uint>* GatherShifts { get; private set; }
+
+        /// <summary>
+        /// Per span of the period, the two byte shuffles that put a block of 32 of x's codes (value order) in the span's order
+        /// (from its low 16 values, from its high 16: OrderShuffles[2r], [2r + 1]), or null where every span is in value order.
+        /// </summary>
+        public Vector256<byte>* OrderShuffles { get; private set; }
+
+        // The shuffles of OrderShuffles, once Order is known.
+        private void Shuffles()
+        {
+            if (Identity)
+            {
+                return;
+            }
+
+            int spans = Period / 32;
+            OrderShuffles = Pin<Vector256<byte>>(2 * spans);
+            Span<byte> low = stackalloc byte[32], high = stackalloc byte[32];
+            for (int r = 0; r < spans; r++)
+            {
+                for (int t = 0; t < 32; t++)
+                {
+                    int from = Order[32 * r + t] - 32 * r;
+                    low[t] = from < 16 ? (byte)from : (byte)0x80;
+                    high[t] = from >= 16 ? (byte)(from - 16) : (byte)0x80;
+                }
+
+                OrderShuffles[2 * r] = Vector256.Create<byte>(low);
+                OrderShuffles[2 * r + 1] = Vector256.Create<byte>(high);
+            }
+        }
+
+        /// <summary>Each byte plane's least, added through x's code sums (plane 0: the code offset; the top: −128 where signed).</summary>
+        public int* PlaneLeast { get; private set; }
+
+        /// <summary>Each value of the period's byte in x's integer layout.</summary>
+        public int* XPlace { get; private set; }
+
+        /// <summary>Each value of the period's chunk.</summary>
+        public int* ChunkOf { get; private set; }
+
+        /// <summary>Position t of span r's value (32r + t: the order its codes are made in).</summary>
+        public int* Order { get; private set; }
+
+        /// <summary>Whether every span's order is value order (the float lanes read x as it is).</summary>
+        public bool Identity { get; private set; }
+
+        /// <summary>The float lanes' table of each code's number (2^bits floats: the number plus the code offset).</summary>
+        public float* CodeValues { get; private set; }
+
+        /// <summary>The 16-bit float reading: its sign shift, magnitude mask, mantissa shift, the power of two it is times, and where its specials start (0: none).</summary>
+        public (int SignShift, int Magnitude, int Shift, float Times, int Special) Half16 { get; private set; }
+
+        /// <summary>Added to a wide value's number (the code offset).</summary>
+        public double Offset { get; private set; }
+
+        /// <summary>Whether a wide integer is signed.</summary>
+        public bool Signed { get; private set; }
+
+        // Codes of at most 8 bits: per span of the period and plane, the run's first byte, how many runs (1, 2, 4, 8; 0: read
+        // one value at a time) and their shifts (per 64-bit lane, or per 32-bit lane for 8 runs); per plane its mask and low bit.
+        private int* runOffset;
+        private byte* runKind;
+        private Vector256<ulong>* runShift;
+        private Vector256<byte>* planeMask;
+        private int* planeLow;
+        private byte* byteTable;
+
+        // Scales then minimums: count, scales' count, pieces at most; per factor its reading, bits, bias, pieces and table;
+        // per group of the period, factor and piece, the lanes' offsets, shifts, masks and lefts; per group, factor and lane
+        // the block and index (one lane at a time).
+        private int factors, scaleFactors, pieces;
+        private FactorRead[] reads = [];
+        private int[] factorBits = [], factorPieces = [];
+        private float[] factorBias = [];
+        private float*[] factorTables = null!;
+        private (int SignShift, int Magnitude, int Shift, float Times, int Special)[] factorHalves = [];
+        private Vector256<int>* fOffset;
+        private Vector256<int>* fShift;
+        private Vector256<int>* fMask;
+        private Vector256<int>* fLeft;
+        private int[] scalarBlock = [], scalarIndex = [];
+
+        /// <summary>The plan of <paramref name="d"/>, or null where the lane does not read it here.</summary>
+        public static DescribedPlan? Of(TypeDescription d) => Plans.GetValue(d, static x => (object?)Make(x) ?? x) as DescribedPlan;
+
+        /// <summary>Groups a row of <paramref name="k"/> values takes (the last may be short).</summary>
+        public int Groups(int k) => (k + GroupValues - 1) / GroupValues;
+
+        // A pinned array of n T's, held by the plan.
+        private T* Pin<T>(int n) where T : unmanaged
+        {
+            var array = GC.AllocateArray<T>(Math.Max(1, n), pinned: true);
+            held.Add(array);
+            return (T*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(array));
+        }
+
+        private static DescribedPlan? Make(TypeDescription d)
+        {
+            if (!(Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian && d.Valid))
+            {
+                return null;
+            }
+
+            var plan = new DescribedPlan(d);
+            if (!(plan.Wide64() || plan.Narrow()))
+            {
+                return null;
+            }
+
+            plan.Finish();
+            return plan;
+        }
+
+        // A code of one plane of 2, 4 or 8 whole bytes a value, no scales: the integer lane over its byte planes where the CPU
+        // has AVX-VNNI and the code is an integer, else a float lane.
+        private bool Wide64()
+        {
+            var d = D;
+            if (d is not { Values: 1, Planes: [{ Offset: 0, Group: 1, Bits: 16 or 32 or 64 } plane], Scales: null or [], Mins: null or [] } || d.Bytes != plane.Bits / 8)
+            {
+                return false;
+            }
+
+            var code = d.Code;
+            int bytes = plane.Bits / 8;
+            Offset = d.CodeOffset;
+            Signed = code.Signed;
+            Period = 32;
+            PeriodBytes = 32 * bytes;
+            if (code.Kind == NumberKind.Integer && AvxVnni.IsSupported && d.CodeOffset == 0)
+            {
+                Mode = DescribedMode.Integer;
+                P = bytes;
+                C = 32;
+                Cg = 8 / P;
+                T = 8;
+                GroupValues = 32 * Cg;
+                Period = GroupValues;
+                PeriodBytes = GroupValues * bytes;
+                PlaneLeast = Pin<int>(P);
+                PlaneLeast[P - 1] = code.Signed ? -128 : 0;
+                Span<float> weights = stackalloc float[8];
+                Span<byte> flip = stackalloc byte[32];
+                Span<int> top = stackalloc int[8];
+                for (int l = 0; l < 8; l++)
+                {
+                    weights[l] = MathF.ScaleB(1f, 8 * (l % P));
+                    top[l] = l % P == P - 1 ? -1 : 0;
+                    if (code.Signed && l % P == P - 1)
+                    {
+                        flip[4 * l] = flip[4 * l + 1] = flip[4 * l + 2] = flip[4 * l + 3] = 0x80;
+                    }
+                }
+
+                LaneWeights = Vector256.Create<float>(weights);
+                TopFlip = Vector256.Create<byte>(flip);
+                TopLanes = Vector256.Create<int>(top);
+                Identity = true;
+                Places();
+                return true;
+            }
+
+            switch (code.Kind, plane.Bits)
+            {
+                case (NumberKind.Float, 16) when HalfOf(code) is { } half:
+                    Mode = DescribedMode.Single;
+                    Wide = WideRead.Half;
+                    Half16 = half;
+                    return true;
+                case (NumberKind.Integer, 16):
+                    Mode = DescribedMode.Single;
+                    Wide = WideRead.Short;
+                    return true;
+                case (NumberKind.Float, 32) when code is { Exponent: 8, Mantissa: 23, ExponentBias: 127, Signed: true, Specials: FloatSpecials.Ieee, Subnormals: true }:
+                    Mode = DescribedMode.Single;
+                    Wide = WideRead.Single;
+                    return true;
+                case (NumberKind.Float, 64) when code is { Exponent: 11, Mantissa: 52, ExponentBias: 1023, Signed: true, Specials: FloatSpecials.Ieee, Subnormals: true }:
+                    Mode = DescribedMode.Double;
+                    Wide = WideRead.Double;
+                    return true;
+                case (NumberKind.Integer, 64) when code.Signed:
+                    Mode = DescribedMode.Double;
+                    Wide = WideRead.Long;
+                    return true;
+                case (NumberKind.Integer, 32) when code.Signed:
+                    Mode = DescribedMode.Double;
+                    Wide = WideRead.Int;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // A 16-bit float read by its bits (a float32's exponent range or less, subnormals, IEEE's or no specials): the sign's
+        // shift to bit 31, the magnitude's mask, the shift putting its exponent at float32's, the power of two that rebiases it
+        // (1: none), and the magnitude its specials start at (0: none: they come through as they are, or there are none).
+        private static (int SignShift, int Magnitude, int Shift, float Times, int Special)? HalfOf(NumberType t)
+        {
+            if (t is not { Kind: NumberKind.Float, Bits: 16, Subnormals: true, Specials: FloatSpecials.Ieee or FloatSpecials.None } || t.Exponent > 8
+                || t.ExponentBias is <= 0 or >= 254 || t.Exponent == 8 && t.ExponentBias != 127)
+            {
+                return null;
+            }
+
+            int magnitude = t.Signed ? 0x7FFF : 0xFFFF;
+            int special = t.Exponent < 8 && t.Specials == FloatSpecials.Ieee ? ((1 << t.Exponent) - 1) << t.Mantissa : 0;
+            return (t.Signed ? 16 : 0, magnitude, 23 - t.Mantissa, MathF.ScaleB(1f, 127 - t.ExponentBias), special);
+        }
+
+        // Codes of at most 8 bits, from planes of 1, 2, 4 or 8 bits: each span's runs and order, the chunk (one scale a lane)
+        // the factors allow, the integer lane where the codes' numbers are whole multiples of a unit within a byte's span, else
+        // the float32 lane through a table of the codes' numbers.
+        private bool Narrow()
+        {
+            var d = D;
+            if (d.Code.Bits > 8 || d.Planes.Any(p => p.Bits is not (1 or 2 or 4 or 8)))
+            {
+                return false;
+            }
+
+            var all = (d.Scales ?? []).Concat(d.Mins ?? []).ToList();
+            int chunk = all.All(f => f.Values % 32 == 0) ? 32 : all.All(f => f.Values % 16 == 0) ? 16 : all.All(f => f.Values % 8 == 0) ? 8 : 0;
+            if (chunk == 0)
+            {
+                return false;
+            }
+
+            // The codes' numbers, and the unit that makes them whole within a byte's span.
+            int count = 1 << d.Code.Bits;
+            var numbers = new double[count];
+            for (int c = 0; c < count; c++)
+            {
+                numbers[c] = d.Code.Value((ulong)c) + d.CodeOffset;
+            }
+
+            int unitShift = -1, least = 0, span = AvxVnni.IsSupported ? 255 : 127;
+            for (int s = 0; s <= 7 && unitShift < 0 && chunk >= 16 && numbers.All(double.IsFinite); s++)
+            {
+                var scaled = numbers.Select(n => Math.ScaleB(n, s)).ToArray();
+                if (scaled.All(v => v == Math.Round(v)) && scaled.Max() - scaled.Min() <= span)
+                {
+                    unitShift = s;
+                    least = (int)scaled.Min();
+                }
+            }
+
+            Mode = unitShift >= 0 ? DescribedMode.Integer : DescribedMode.Single;
+            Wide = WideRead.Codes;
+            C = chunk;
+            Cg = 8;
+            T = chunk / 4;
+            GroupValues = 8 * chunk;
+            Period = Lcm(Lcm(d.Values, 32), GroupValues);
+            PeriodBytes = Period / d.Values * d.Bytes;
+            Planes = d.Planes.Count;
+            if (!Spans() || !Places() || !Factors(all, d.Scales?.Count ?? 0))
+            {
+                return false;
+            }
+
+            Mins = d.Mins is { Count: > 0 };
+            CodeValues = Pin<float>(count);
+            for (int c = 0; c < count; c++)
+            {
+                CodeValues[c] = (float)numbers[c];
+            }
+
+            if (Mode == DescribedMode.Integer)
+            {
+                Unit = MathF.ScaleB(1f, -unitShift);
+                PlaneLeast = Pin<int>(1);
+                PlaneLeast[0] = least;
+                var unsigned = new byte[count];
+                for (int c = 0; c < count; c++)
+                {
+                    unsigned[c] = (byte)(Math.ScaleB(numbers[c], unitShift) - least);
+                }
+
+                bool same = Enumerable.Range(0, count).All(c => unsigned[c] == c);
+                bool flip = Enumerable.Range(0, count).All(c => unsigned[c] == (c ^ count / 2));
+                if (same)
+                {
+                    Map = CodeMap.Same;
+                }
+                else if (flip)
+                {
+                    Map = CodeMap.Flip;
+                    Flip = Vector256.Create((byte)(count / 2));
+                }
+                else if (count <= 16)
+                {
+                    Map = CodeMap.Shuffle;
+                    Span<byte> table = stackalloc byte[32];
+                    for (int i = 0; i < 32; i++)
+                    {
+                        table[i] = unsigned[i % 16 % count];
+                    }
+
+                    Shuffle = Vector256.Create<byte>(table);
+                }
+                else
+                {
+                    Map = CodeMap.Table;
+                    byteTable = Pin<byte>(256);
+                    for (int i = 0; i < 256; i++)
+                    {
+                        byteTable[i] = unsigned[i % count];
+                    }
+                }
+
+                int spans = Period / 32;
+                if (Planes == 1 && Map != CodeMap.Table && Enumerable.Range(0, spans).All(r => runKind[r] == runKind[0]) && runKind[0] != 0)
+                {
+                    UniformRuns = runKind[0];
+                }
+
+                if (UniformRuns >= 2 && C == 32)
+                {
+                    // Chunk l of group g is span 8g + l: its run's first byte, and each run q's shift (a 64-bit lane's, or
+                    // a 32-bit lane's for 8 runs).
+                    int runs = UniformRuns, groups = Period / GroupValues;
+                    GatherOffsets = Pin<Vector256<int>>(groups);
+                    GatherShifts = Pin<Vector256<uint>>(groups * runs);
+                    Span<int> lanes = stackalloc int[8];
+                    for (int g = 0; g < groups; g++)
+                    {
+                        for (int l = 0; l < 8; l++)
+                        {
+                            lanes[l] = runOffset[8 * g + l];
+                        }
+
+                        GatherOffsets[g] = Vector256.Create<int>(lanes);
+                        for (int q = 0; q < runs; q++)
+                        {
+                            for (int l = 0; l < 8; l++)
+                            {
+                                var shift = runShift[8 * g + l];
+                                lanes[l] = runs == 8 ? (int)shift.AsUInt32().GetElement(q) : (int)shift.GetElement(4 * q / runs);
+                            }
+
+                            GatherShifts[g * runs + q] = Vector256.Create<int>(lanes).AsUInt32();
+                        }
+                    }
+
+                    Gathered = true;
+                    if (Map == CodeMap.Flip)
+                    {
+                        // Each field's top bit flipped in the gathered words at once (every run's shift of the flip),
+                        // rather than in each step.
+                        int fieldTops = 0;
+                        var first = runShift[0];
+                        for (int q = 0; q < runs; q++)
+                        {
+                            fieldTops |= (count / 2) << (runs == 8 ? (int)first.AsUInt32().GetElement(q) : (int)first.GetElement(4 * q / runs));
+                        }
+
+                        WordFlip = Vector256.Create((uint)(fieldTops * 0x01010101));
+                        // Every span's runs at the same shifts, or the steps are loaded and transposed (their map then a step at a time).
+                        Gathered = Enumerable.Range(0, spans).All(r => runShift[r].Equals(first));
+                    }
+                }
+            }
+
+            Ready();
+            return true;
+        }
+
+        // The one-scale read's vectors and table, once the unit is known (OneScale).
+        private void Ready()
+        {
+            if (oneScale == 1)
+            {
+                oneHalf = new HalfVectors(factorHalves[0], Unit);
+            }
+            else if (oneScale == 2)
+            {
+                oneTable = Pin<float>(256);
+                for (int c = 0; c < 256; c++)
+                {
+                    oneTable[c] = factorTables[0][c] * Unit;
+                }
+            }
+        }
+
+        // What the kernels read of the plan on every row, stored once it is made.
+        private void Finish()
+        {
+            GroupsPerPeriod = Period / GroupValues;
+            LaneFloats = P > 1 ? 2 * Cg : Mins ? 24 : 16;
+            GroupStepBytes = P > 1 ? T * 32 : T * 32 + (Mins ? 64 : 32);
+            PlaneMask0 = planeMask == null ? default : planeMask[0];
+            MapVector = Map == CodeMap.Flip ? Flip : Shuffle;
+        }
+
+        private static int Lcm(int a, int b) => a / Gcd(a, b) * b;
+
+        private static int Gcd(int a, int b) => b == 0 ? a : Gcd(b, a % b);
+
+        // Each span of the period: per plane the bytes its 32 values' fields lie in, as runs of n bytes at one shift each
+        // (n · runs = 32, every run over the same bytes): one load, a shift a run and a mask make the span's codes, in the
+        // order the runs give; a span whose planes do not fall so (or give other orders) is read one value at a time, in value
+        // order.
+        private bool Spans()
+        {
+            var d = D;
+            int spans = Period / 32;
+            runOffset = Pin<int>(spans * Planes);
+            runKind = Pin<byte>(spans * Planes);
+            runShift = Pin<Vector256<ulong>>(spans * Planes);
+            planeMask = Pin<Vector256<byte>>(Planes);
+            planeLow = Pin<int>(Planes);
+            Order = Pin<int>(Period);
+            int low = 0;
+            for (int p = 0; p < Planes; p++)
+            {
+                planeMask[p] = Vector256.Create((byte)((1 << d.Planes[p].Bits) - 1));
+                planeLow[p] = low;
+                low += d.Planes[p].Bits;
+            }
+
+            Span<int> at = stackalloc int[32];
+            Span<int> shift = stackalloc int[32];
+            Span<int> mine = stackalloc int[32];
+            Span<int> order = stackalloc int[32];
+            Span<int> shifts = stackalloc int[8];
+            for (int r = 0; r < spans; r++)
+            {
+                bool vector = true;
+                for (int p = 0; p < Planes && vector; p++)
+                {
+                    var plane = d.Planes[p];
+                    int first = int.MaxValue, runs = 0;
+                    for (int t = 0; t < 32; t++)
+                    {
+                        int v = 32 * r + t;
+                        var (b, s) = plane.Place(v % d.Values);
+                        at[t] = v / d.Values * d.Bytes + b;
+                        shift[t] = s;
+                        first = Math.Min(first, at[t]);
+                        if (shifts[..runs].IndexOf(s) < 0)
+                        {
+                            if (runs == 8)
+                            {
+                                vector = false;
+                                break;
+                            }
+
+                            shifts[runs++] = s;
+                        }
+                    }
+
+                    if (!vector || runs is not (1 or 2 or 4 or 8))
+                    {
+                        vector = false;
+                        break;
+                    }
+
+                    shifts[..runs].Sort();
+                    int n = 32 / runs;
+                    mine.Fill(-1);
+                    for (int t = 0; t < 32 && vector; t++)
+                    {
+                        int q = shifts[..runs].IndexOf(shift[t]), b = at[t] - first;
+                        vector = b < n && mine[q * n + b] < 0;
+                        if (vector)
+                        {
+                            mine[q * n + b] = 32 * r + t;
+                        }
+                    }
+
+                    if (!vector || p > 0 && !mine.SequenceEqual(order))
+                    {
+                        vector = false;
+                        break;
+                    }
+
+                    mine.CopyTo(order);
+                    int i = r * Planes + p;
+                    runOffset[i] = first;
+                    runKind[i] = (byte)runs;
+                    // 8 runs: a shift a 32-bit lane; fewer: a shift a 64-bit lane, run q's in lanes [4q / runs, 4(q + 1) / runs).
+                    runShift[i] = runs == 8
+                        ? Vector256.Create(shifts[0], shifts[1], shifts[2], shifts[3], shifts[4], shifts[5], shifts[6], shifts[7]).AsUInt64()
+                        : Vector256.Create((ulong)shifts[0], (ulong)shifts[runs / 4], (ulong)shifts[2 * runs / 4], (ulong)shifts[3 * runs / 4]);
+                }
+
+                for (int t = 0; t < 32; t++)
+                {
+                    Order[32 * r + t] = vector ? order[t] : 32 * r + t;
+                }
+
+                if (!vector)
+                {
+                    for (int p = 0; p < Planes; p++)
+                    {
+                        runKind[r * Planes + p] = 0;
+                    }
+                }
+            }
+
+            Identity = Enumerable.Range(0, Period).All(v => Order[v] == v);
+            Shuffles();
+            return true;
+        }
+
+        // Each value of the period's place in x's integer layout (group g's bytes from g · GroupValues: step s, lane l = j · P
+        // + p, 4 bytes of chunk j's positions 4s..4s + 3 in its span's order) and its chunk; false where a chunk's values do
+        // not share every scale (the order mixes them).
+        private bool Places()
+        {
+            XPlace = Pin<int>(Period);
+            ChunkOf = Pin<int>(Period);
+            if (Order == null)
+            {
+                Order = Pin<int>(Period);
+                for (int v = 0; v < Period; v++)
+                {
+                    Order[v] = v;
+                }
+            }
+
+            for (int position = 0; position < Period; position++)
+            {
+                int v = Order[position], c = position / C, inChunk = position % C;
+                int g = c / Cg, j = c % Cg;
+                XPlace[v] = g * GroupValues + inChunk / 4 * 4 * Cg + 4 * j + inChunk % 4;
+                ChunkOf[v] = c;
+            }
+
+            foreach (var f in (D.Scales ?? []).Concat(D.Mins ?? []))
+            {
+                for (int c = 0; c < Period / C; c++)
+                {
+                    int v0 = Order[c * C];
+                    for (int t = 1; t < C; t++)
+                    {
+                        int v = Order[c * C + t];
+                        if (v / D.Values != v0 / D.Values || v % D.Values / f.Values != v0 % D.Values / f.Values)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        // Each scale and minimum: how it reads, and at each group of the period the 8 lanes' dwords (from the period's first
+        // byte, kept within the period), the shift and mask of its bits (each piece's), and where a piece's bits go.
+        private bool Factors(List<BlockScale> all, int scales)
+        {
+            factors = all.Count;
+            scaleFactors = scales;
+            pieces = Math.Max(1, all.Count == 0 ? 1 : all.Max(f => f.Pieces is { } p ? p.Max(x => x.Count) : 1));
+            int groups = Period / GroupValues;
+            reads = new FactorRead[factors];
+            factorBits = new int[factors];
+            factorPieces = new int[factors];
+            factorBias = new float[factors];
+            factorTables = new float*[factors];
+            factorHalves = new (int, int, int, float, int)[factors];
+            fOffset = Pin<Vector256<int>>(groups * factors * pieces);
+            fShift = Pin<Vector256<int>>(groups * factors * pieces);
+            fMask = Pin<Vector256<int>>(groups * factors * pieces);
+            fLeft = Pin<Vector256<int>>(groups * factors * pieces);
+            scalarBlock = new int[groups * factors * 8];
+            scalarIndex = new int[groups * factors * 8];
+            Span<int> offsets = stackalloc int[8], shifts = stackalloc int[8], masks = stackalloc int[8], lefts = stackalloc int[8];
+            for (int f = 0; f < factors; f++)
+            {
+                var factor = all[f];
+                var type = factor.Type;
+                factorBits[f] = factor.Pieces is { } given ? given[0].Sum(x => x.Bits) : type.Bits;
+                factorPieces[f] = factor.Pieces is { } listed ? listed.Max(x => x.Count) : 1;
+                factorBias[f] = (float)factor.Bias;
+                if (type.Kind == NumberKind.Integer && factorBits[f] <= 24)
+                {
+                    reads[f] = type.Signed ? FactorRead.Signed : FactorRead.Unsigned;
+                }
+                else if (factorBits[f] <= 8)
+                {
+                    reads[f] = FactorRead.Table;
+                    var table = Pin<float>(256);
+                    for (int c = 0; c < 256; c++)
+                    {
+                        table[c] = (float)(type.Value((ulong)c) + factor.Bias);
+                    }
+
+                    factorTables[f] = table;
+                }
+                else if (HalfOf(type) is { } half && factor.Pieces is null)
+                {
+                    reads[f] = FactorRead.Half;
+                    factorHalves[f] = half;
+                }
+                else if (type is { Kind: NumberKind.Float, Bits: 32, Exponent: 8, Mantissa: 23, ExponentBias: 127, Signed: true, Specials: FloatSpecials.Ieee } && factor.Pieces is null)
+                {
+                    reads[f] = FactorRead.Single;
+                }
+                else
+                {
+                    reads[f] = FactorRead.Scalar;
+                }
+
+                for (int g = 0; g < groups; g++)
+                {
+                    for (int q = 0; q < pieces; q++)
+                    {
+                        for (int l = 0; l < 8; l++)
+                        {
+                            int c = g * Cg + l / P, v0 = Order[c * C], block = v0 / D.Values, index = v0 % D.Values / factor.Values;
+                            int start = block * D.Bytes, bit, bits, left = 0;
+                            scalarBlock[(g * factors + f) * 8 + l] = start;
+                            scalarIndex[(g * factors + f) * 8 + l] = index;
+                            if (factor.Pieces is { } p)
+                            {
+                                var own = p[index];
+                                if (q >= own.Count)
+                                {
+                                    (offsets[l], shifts[l], masks[l], lefts[l]) = (start, 0, 0, 0);
+                                    continue;
+                                }
+
+                                for (int e = 0; e < q; e++)
+                                {
+                                    left += own[e].Bits;
+                                }
+
+                                bit = 8 * own[q].Offset + own[q].Shift;
+                                bits = own[q].Bits;
+                            }
+                            else if (q > 0)
+                            {
+                                (offsets[l], shifts[l], masks[l], lefts[l]) = (start, 0, 0, 0);
+                                continue;
+                            }
+                            else
+                            {
+                                bit = 8 * factor.Offset + index * type.Bits;
+                                bits = type.Bits;
+                            }
+
+                            int dword = start + bit / 8, s = bit % 8;
+                            int kept = Math.Max(0, Math.Min(dword, PeriodBytes - 4));
+                            s += 8 * (dword - kept);
+                            if (s + bits > 32 && reads[f] != FactorRead.Scalar)
+                            {
+                                reads[f] = FactorRead.Scalar;
+                            }
+
+                            (offsets[l], shifts[l], masks[l], lefts[l]) = (kept, Math.Min(s, 31), bits >= 32 ? -1 : (1 << bits) - 1, left);
+                        }
+
+                        int i = (g * factors + f) * pieces + q;
+                        fOffset[i] = Vector256.Create<int>(offsets);
+                        fShift[i] = Vector256.Create<int>(shifts);
+                        fMask[i] = Vector256.Create<int>(masks);
+                        fLeft[i] = Vector256.Create<int>(lefts);
+                    }
+                }
+            }
+
+            if (factors == 1 && scaleFactors == 1 && factorPieces[0] == 1 && factorBias[0] == 0f)
+            {
+                oneScale = reads[0] switch
+                {
+                    FactorRead.Half => 1,
+                    FactorRead.Table => 2,
+                    _ => 0,
+                };
+            }
+
+            return PeriodBytes >= 4 || factors == 0;
+        }
+
+        /// <summary>
+        /// The codes of span <paramref name="span"/> of the period at <paramref name="period"/> (its first byte), 32 bytes in the
+        /// span's order: each plane's run loaded once, shifted (a run each) and masked, the planes joined (the first the lowest
+        /// bits); a span not in runs one value at a time.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<byte> Raw(byte* period, int span)
+        {
+            Vector256<byte> code = default;
+            int at = span * Planes;
+            for (int p = 0; p < Planes; p++, at++)
+            {
+                byte* from = period + runOffset[at];
+                Vector256<byte> v;
+                switch (runKind[at])
+                {
+                    case 1:
+                        v = Avx2.ShiftRightLogicalVariable(Vector256.Load(from).AsUInt64(), runShift[at]).AsByte();
+                        break;
+                    case 2:
+                        v = Avx2.ShiftRightLogicalVariable(Avx2.BroadcastVector128ToVector256(from).AsUInt64(), runShift[at]).AsByte();
+                        break;
+                    case 4:
+                        v = Avx2.ShiftRightLogicalVariable(Vector256.Create(*(ulong*)from), runShift[at]).AsByte();
+                        break;
+                    case 8:
+                        v = Avx2.ShiftRightLogicalVariable(Vector256.Create(*(uint*)from), runShift[at].AsUInt32()).AsByte();
+                        break;
+                    default:
+                        return OneByOne(period, span);
+                }
+
+                code |= Vector256.ShiftLeft((v & planeMask[p]).AsUInt16(), planeLow[p]).AsByte();
+            }
+
+            return code;
+        }
+
+        // A span's codes one value at a time, in value order, by the description (a layout the runs do not take).
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> OneByOne(byte* period, int span)
+        {
+            Span<byte> codes = stackalloc byte[32];
+            for (int t = 0; t < 32; t++)
+            {
+                int v = 32 * span + t;
+                codes[t] = (byte)D.CodeBits(new ReadOnlySpan<byte>(period + v / Values * Bytes, Bytes), v % Values);
+            }
+
+            return Vector256.Create<byte>(codes);
+        }
+
+        /// <summary>The integer lane's bytes of span <paramref name="span"/>'s codes: each its number in units less the least.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<byte> Codes(byte* period, int span)
+        {
+            var code = Raw(period, span);
+            return Map switch
+            {
+                CodeMap.Flip => code ^ Flip,
+                CodeMap.Shuffle => Avx2.Shuffle(Shuffle, code),
+                CodeMap.Table => Through(code),
+                _ => code,
+            };
+        }
+
+        // Each byte through the 256-entry table (codes of 5 to 8 bits whose numbers are not their bits).
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> Through(Vector256<byte> code)
+        {
+            Span<byte> bytes = stackalloc byte[32];
+            code.CopyTo(bytes);
+            for (int i = 0; i < 32; i++)
+            {
+                bytes[i] = byteTable[bytes[i]];
+            }
+
+            return Vector256.Create<byte>(bytes);
+        }
+
+        /// <summary>
+        /// Group <paramref name="gp"/> of the period at <paramref name="period"/> as the integer lane's steps (codes of at most 8
+        /// bits: a wide integer's are made by IStepLoad.Plane): lane l of step s holds 4 bytes of chunk l, its positions
+        /// 4s..4s + 3 in its span's order. T = 4: s4..s7 are not written.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Steps(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
+            out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7)
+        {
+            int span = gp * (GroupValues / 32);
+            if (C == 32)
+            {
+                Transpose8(Codes(period, span), Codes(period, span + 1), Codes(period, span + 2), Codes(period, span + 3), Codes(period, span + 4),
+                    Codes(period, span + 5), Codes(period, span + 6), Codes(period, span + 7), out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                return;
+            }
+
+            Transpose4(Codes(period, span), Codes(period, span + 1), Codes(period, span + 2), Codes(period, span + 3), out s0, out s1, out s2, out s3);
+            s4 = s5 = s6 = s7 = default;
+        }
+
+        /// <summary>
+        /// The scales (each lane's product of the scales covering its chunk, times the unit) and minimums (their product, less
+        /// where they are subtracted) of group <paramref name="gp"/> of the period at <paramref name="period"/>, read for the 8
+        /// lanes at once; lanes from <paramref name="valid"/> on 0.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Factor(byte* period, int gp, int valid, out Vector256<float> scale, out Vector256<float> min)
+        {
+            if (OneScale != 0)
+            {
+                // One scale: its field gathered and read with the unit folded in (a 16-bit float's constants as vectors made
+                // once a plan, or a table of its numbers times the unit), no loop over factors.
+                var bits = Avx2.ShiftRightLogicalVariable(Avx2.GatherVector256((int*)period, fOffset[gp], 1).AsUInt32(), fShift[gp].AsUInt32()).AsInt32();
+                var one = OneScale == 1 ? oneHalf.Of(bits) : Avx2.GatherVector256(oneTable, bits & fMask[gp], 4);
+                scale = valid < 8 ? one & GroupMask(valid).AsSingle() : one;
+                min = default;
+                return;
+            }
+
+            var s = Vector256.Create(1f);
+            var product = s;
+            for (int f = 0; f < factors; f++)
+            {
+                var v = Read(period, gp, f);
+                if (f < scaleFactors)
+                {
+                    s = f == 0 ? v : s * v;
+                }
+                else
+                {
+                    product = f == scaleFactors ? v : product * v;
+                }
+            }
+
+            if (Unit != 1f)
+            {
+                s *= Vector256.Create(Unit);
+            }
+
+            var mn = !Mins ? Vector256<float>.Zero : D.MinsAdded ? product : -product;
+            if (valid < 8)
+            {
+                var keep = GroupMask(valid).AsSingle();
+                s &= keep;
+                mn &= keep;
+            }
+
+            scale = s;
+            min = mn;
+        }
+
+        // Factor f's numbers for group gp's 8 lanes: its bits gathered (a dword a lane, each piece's shifted, masked and put
+        // in place), then read by its type.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<float> Read(byte* period, int gp, int f)
+        {
+            int at = (gp * factors + f) * pieces;
+            var bits = Avx2.ShiftRightLogicalVariable(Avx2.GatherVector256((int*)period, fOffset[at], 1).AsUInt32(), fShift[at].AsUInt32()).AsInt32() & fMask[at];
+            for (int q = 1; q < factorPieces[f]; q++)
+            {
+                var word = Avx2.GatherVector256((int*)period, fOffset[at + q], 1);
+                bits |= Avx2.ShiftLeftLogicalVariable((Avx2.ShiftRightLogicalVariable(word.AsUInt32(), fShift[at + q].AsUInt32()).AsInt32() & fMask[at + q]).AsUInt32(),
+                    fLeft[at + q].AsUInt32()).AsInt32();
+            }
+
+            float bias = factorBias[f];
+            switch (reads[f])
+            {
+                case FactorRead.Unsigned:
+                    return Avx.ConvertToVector256Single(bits) + Vector256.Create(bias);
+                case FactorRead.Signed:
+                    int up = 32 - factorBits[f];
+                    return Avx.ConvertToVector256Single(Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(bits, up), up)) + Vector256.Create(bias);
+                case FactorRead.Table:
+                    return Avx2.GatherVector256(factorTables[f], bits, 4);
+                case FactorRead.Half:
+                    return HalfBits(bits, factorHalves[f]) + Vector256.Create(bias);
+                case FactorRead.Single:
+                    return bits.AsSingle() + Vector256.Create(bias);
+                default:
+                    return ReadOneByOne(period, gp, f);
+            }
+        }
+
+        // Factor f's numbers one lane at a time, by its type (a layout or a number the gathers do not take).
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<float> ReadOneByOne(byte* period, int gp, int f)
+        {
+            var factor = f < scaleFactors ? D.Scales![f] : D.Mins![f - scaleFactors];
+            Span<float> values = stackalloc float[8];
+            for (int l = 0; l < 8; l++)
+            {
+                int i = (gp * factors + f) * 8 + l;
+                values[l] = (float)factor.Value(new ReadOnlySpan<byte>(period + scalarBlock[i], Bytes), scalarIndex[i]);
+            }
+
+            return Vector256.Create<float>(values);
+        }
+
+        /// <summary>16-bit floats (each lane's low 16 bits) as float32 by their bits (HalfOf): exactly, specials too.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<float> HalfBits(Vector256<int> bits, (int SignShift, int Magnitude, int Shift, float Times, int Special) h)
+        {
+            var magnitude = bits & Vector256.Create(h.Magnitude);
+            var value = Vector256.ShiftLeft(magnitude, h.Shift).AsSingle();
+            if (h.Times != 1f)
+            {
+                value *= Vector256.Create(h.Times);
+            }
+
+            var result = value.AsInt32();
+            if (h.Special != 0)
+            {
+                result |= Vector256.GreaterThanOrEqual(magnitude, Vector256.Create(h.Special)) & Vector256.Create(0x7F800000);
+            }
+
+            if (h.SignShift != 0)
+            {
+                result |= Vector256.ShiftLeft(bits & Vector256.Create(0x8000), h.SignShift);
+            }
+
+            return result.AsSingle();
+        }
+    }
+
+    // Steps of the described lane's integer arithmetic a group of stored rows makes at most with more than one row of x (its
+    // rows' steps, scales and minimums stay in a core's L2 while four rows of x pass over them; int2's prompt measured 634
+    // tokens a second with 32 KB, 660 with 64 KB, 682 with 128 KB, 673 with 256 KB).
+    private const int DescribedStepBytes = 131072;
+
+    // Rows of x a tile takes at most where x is int8 codes or the stored values are 4 or more bytes each (each stored row
+    // read from memory, and made into steps, once a prompt of that many rows); the float32 lane's 16-bit values take a group
+    // of stored rows by RowTileRows rows.
+    private const int DescribedTileRows = 128;
+
+    // Stored bytes a group of a heavy type's rows (4 or more bytes a value) takes: the float64 lane's (its tile's x passes once
+    // a group, 4 rows of x in L1 a span of k), the integer lane's over byte planes.
+    private const int DescribedDoubleGroupBytes = 1 << 20, DescribedPlaneGroupBytes = 65536;
+
+    // Stored bytes a group of 16-bit (or float32) rows takes in the float32 lane, and values of k four rows of x pass over it
+    // at a time (32 KB of x stays in L1); the float64 lane's pass (four rows of x as float64, 16 KB).
+    private const int DescribedSingleGroupBytes = 65536, DescribedSingleSpan = 2048, DescribedDoubleSpan = 512;
+
+    /// <summary>
+    /// The described lane as a format read where it is stored (IRowFormat): one lane (DescribedLaneId) over any type with a
+    /// description the plan reads (DescribedPlan), x rounded to int8 in the plan's layout (integer), as it is or in the
+    /// spans' order (float32), or widened to float64 (float64). Its tiles are columns over up to DescribedTileRows rows of
+    /// x, but the float32 lane's over 16-bit values (a group of stored rows by RowTileRows rows).
+    /// </summary>
+    private readonly unsafe struct DescribedFormat : IRowFormat<DescribedFormat, DescribedKernels>
+    {
+        private readonly DescribedPlan plan;
+        private readonly int k;
+
+        private DescribedFormat(DescribedPlan plan, int k)
+        {
+            this.plan = plan;
+            this.k = k;
+        }
+
+        public static bool Reads(ElementType type, int k, out DescribedFormat format)
+        {
+            format = type.Description is { } d && k > 0 && k % d.Values == 0 && type.ByteCount(k) == (long)k / d.Values * d.Bytes && DescribedPlan.Of(d) is { } plan
+                ? new DescribedFormat(plan, k) : default;
+            return format.plan is not null;
+        }
+
+        public int First => DescribedLaneId;
+
+        public int Second => DescribedLaneId;
+
+        public bool BothRun => false;
+
+        public int Unmeasured => DescribedLaneId;
+
+        /// <summary>The arithmetic the plan took: "integer", "float32" or "float64".</summary>
+        public string Arithmetic => plan.Mode switch
+        {
+            DescribedMode.Integer => "integer",
+            DescribedMode.Single => "float32",
+            _ => "float64",
+        };
+
+        private bool Heavy => plan.Bytes >= 4 * plan.Values;
+
+        private long RowBytes => (long)k / plan.Values * plan.Bytes;
+
+        public int GroupBytes => plan.Mode switch
+        {
+            DescribedMode.Integer when plan.P > 1 => DescribedPlaneGroupBytes,
+            DescribedMode.Integer => (int)Math.Min(int.MaxValue, RowBytes * Math.Max(1, DescribedStepBytes / Math.Max(1, plan.Groups(k) * plan.GroupStepBytes))),
+            DescribedMode.Double => DescribedDoubleGroupBytes,
+            _ => plan.Wide == WideRead.Codes ? ScaledGroupBytes : DescribedSingleGroupBytes,
+        };
+
+        // Integer arithmetic and codes: columns over up to DescribedTileRows rows of x, a quarter of a thread's share, so each
+        // stored row is read (and made into steps) once a prompt of that many rows. (Groups of stored rows by 32 rows of x read
+        // each row four times a 128-row prompt: q4_k's prompt 611 tokens a second under the full measured choice against 634
+        // by its written kernels, though the lane measured faster at each shape on one weight held in the cache.)
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => Heavy
+            ? ((total + 8 * threads - 1) / (8 * threads), Math.Min(m, DescribedTileRows))
+            : plan.Mode == DescribedMode.Integer || plan.Wide == WideRead.Codes
+                ? ((total + 4 * threads - 1) / (4 * threads), Math.Min(m, DescribedTileRows))
+                : GroupTile(total, rowBytes, GroupBytes);
+
+        public int Span(int k) => plan.Mode == DescribedMode.Double ? DescribedDoubleSpan : plan.Mode == DescribedMode.Single && plan.Wide != WideRead.Codes ? DescribedSingleSpan : k;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            switch (plan.Mode)
+            {
+                case DescribedMode.Integer:
+                    int groups = plan.Groups(k);
+                    var codes = ArrayPool<sbyte>.Shared.Rent(m * groups * plan.GroupValues);
+                    var lanes = ArrayPool<float>.Shared.Rent(m * groups * plan.LaneFloats);
+                    RoundDescribedRows(plan, x, codes, lanes, m, k);
+                    return new LaneInput(x, false, codes, lanes);
+                case DescribedMode.Double:
+                    var wide = ArrayPool<float>.Shared.Rent(2 * m * k);
+                    WidenRows(x, wide, m, k);
+                    return new LaneInput(wide, true, null, null);
+                default:
+                    if (plan.Wide != WideRead.Codes)
+                    {
+                        return new LaneInput(x, false, null, null);
+                    }
+
+                    int padded = plan.Groups(k) * plan.GroupValues;
+                    var ordered = ArrayPool<float>.Shared.Rent(m * padded);
+                    OrderDescribedRows(plan, x, ordered, m, k, padded);
+                    return new LaneInput(ordered, true, null, null);
+            }
+        }
+
+        // The integer lane's made steps of a group's rows, as floats (every byte written before it is read); a row's last
+        // period where it is short of one, copied into zeros (its bytes cleared).
+        public (int Floats, int Bytes) Scratch(int k, int group) => plan.Mode switch
+        {
+            DescribedMode.Integer => (group * plan.Groups(k) * plan.GroupStepBytes / sizeof(float), plan.PeriodBytes),
+            DescribedMode.Single when plan.Wide == WideRead.Codes => (0, plan.PeriodBytes),
+            _ => (0, 0),
+        };
+
+        public DescribedKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(plan, k, x, (byte*)floats, bytes);
+    }
+
+    // The described lane as RowGroups' kernels. Integer: a group's stored rows made into steps, scales and minimums once
+    // (DescribedRowSteps), which every four rows of x then read; a row read alone makes them in registers as it reads them.
+    // Float32 and float64: each value made in registers as the dot products read it, nothing to set up.
+    private readonly unsafe struct DescribedKernels : IRowKernels
+    {
+        private readonly DescribedPlan plan;
+        private readonly int k, groups, full, tailBytes, rowSteps, chunks;
+        private readonly nint xRow, lRow;
+        private readonly float* x, lanes;
+        private readonly sbyte* xq;
+        private readonly byte* steps, tail;
+
+        public DescribedKernels(DescribedPlan plan, int k, LanePointers input, byte* steps, byte* tail)
+        {
+            this.plan = plan;
+            this.k = k;
+            this.steps = steps;
+            this.tail = tail;
+            x = input.Values;
+            xq = input.Codes;
+            lanes = input.Scales;
+            groups = plan.Groups(k);
+            full = k / plan.Period;
+            tailBytes = (int)((long)k / plan.Values * plan.Bytes - (long)full * plan.PeriodBytes);
+            rowSteps = groups * plan.GroupStepBytes;
+            chunks = (k + plan.C - 1) / plan.C;
+            // x's row: the integer layout's whole groups, or (float32 codes) the spans' order in whole groups.
+            xRow = (nint)groups * plan.GroupValues;
+            lRow = (nint)groups * plan.LaneFloats;
+        }
+
+        // A row's last period copied (its bytes, as stored) into the zeros of `tail`, where the row is short of whole periods.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private void Tail(byte* row)
+        {
+            if (tailBytes > 0)
+            {
+                new ReadOnlySpan<byte>(row + (nint)full * plan.PeriodBytes, tailBytes).CopyTo(new Span<byte>(tail, tailBytes));
+            }
+        }
+
+        // Compiled optimized from its first call, so the shape's lane is measured on the code it then runs.
+        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+            if (plan.Mode != DescribedMode.Integer)
+            {
+                return;
+            }
+
+            for (int c = 0; c < count; c++)
+            {
+                byte* row = stored + (c0 + c) * rowBytes;
+                Tail(row);
+                RowStepsOf(plan, row, tail, full, groups, chunks, steps + (nint)c * rowSteps);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            switch (plan.Mode)
+            {
+                case DescribedMode.Integer:
+                    DescribedIntegerFour(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow, xRow, lRow, out y0, out y1, out y2, out y3);
+                    return;
+                case DescribedMode.Double:
+                    DescribedDoubleFour(plan, row + (nint)p0 * plan.Bytes, (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    return;
+                default:
+                    if (plan.Wide == WideRead.Codes)
+                    {
+                        Tail(row);
+                        DescribedCodesFour(plan, row, tail, full, groups, chunks, x + i * xRow, xRow, out y0, out y1, out y2, out y3);
+                        return;
+                    }
+
+                    DescribedSingleFour(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    return;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* row, int c, int i) => plan.Mode == DescribedMode.Integer
+            ? DescribedIntegerSteps(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow)
+            : Single(row, i);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float Single(byte* row, int i)
+        {
+            switch (plan.Mode)
+            {
+                case DescribedMode.Integer:
+                    Tail(row);
+                    return DescribedIntegerOne(plan, row, tail, full, groups, chunks, xq + i * xRow, lanes + i * lRow);
+                case DescribedMode.Double:
+                    return DescribedDoubleOne(plan, row, (double*)x + (nint)i * k, k);
+                default:
+                    if (plan.Wide == WideRead.Codes)
+                    {
+                        Tail(row);
+                        return DescribedCodesOne(plan, row, tail, full, groups, chunks, x + i * xRow);
+                    }
+
+                    return DescribedSingleOne(plan, row, x + (nint)i * k, k);
+            }
+        }
+    }
+
+    // x rounded to int8 for the described lane's integer arithmetic, row by row (RoundDescribedRow), over the threads where
+    // x is large.
+    private static void RoundDescribedRows(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int m, int k)
+    {
+        int groups = plan.Groups(k), xRow = groups * plan.GroupValues, lRow = groups * plan.LaneFloats;
+        if (m > 1 && (long)m * k >= 1 << 16)
+        {
+            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundDescribedRow(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow)));
+            return;
+        }
+
+        for (int i = 0; i < m; i++)
+        {
+            RoundDescribedRow(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow));
+        }
+    }
+
+    // A row of x rounded to int8 a block of 32 values at a time (the block's scale amax / 127, 0 where every value is 0; its
+    // codes value · 127 / amax rounded to even), laid out as the plan's steps are (XPlace): each block put in its span's
+    // order by two byte shuffles (OrderShuffles; none where spans are in value order), a group's blocks transposed as the
+    // stored codes are (one chunk a lane of each step; a wide integer's chunks 4 bytes each of a step's 4 · Cg); per group
+    // LaneFloats floats: each lane's block scale, as int32 bits its plane's least times its chunk's code sum, and (minimums)
+    // its block scale times its chunk's code sum (in plane 0's lanes). Blocks past k are zero codes, scales and sums. The
+    // integer lane's product is then the product of x so rounded.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void RoundDescribedRow(DescribedPlan plan, ReadOnlySpan<float> x, Span<sbyte> codes, Span<float> lanes)
+    {
+        int k = x.Length, groups = plan.Groups(k), spansPerPeriod = plan.Period / 32, spans = plan.GroupValues / 32, p = plan.P, laneFloats = plan.LaneFloats;
+        bool half = plan.C == 16, mins = plan.Mins;
+        int* least = plan.PlaneLeast;
+        Vector256<byte>* order = plan.OrderShuffles;
+        Span<float> block = stackalloc float[32];
+        Span<float> scales = stackalloc float[8];
+        Span<int> sums = stackalloc int[16];
+        Vector256<byte>* made = stackalloc Vector256<byte>[8];
+        var flip = Vector256.Create((byte)0x80);
+        ref sbyte into = ref MemoryMarshal.GetReference(codes);
+        for (int g = 0; g < groups; g++)
+        {
+            for (int q = 0; q < spans; q++)
+            {
+                int from = g * plan.GroupValues + 32 * q, count = Math.Clamp(k - from, 0, 32);
+                if (count == 0)
+                {
+                    made[q] = default;
+                    scales[q] = 0f;
+                    sums[2 * q] = sums[2 * q + 1] = 0;
+                    continue;
+                }
+
+                scoped ReadOnlySpan<float> values = x.Slice(from, count);
+                if (count < 32)
+                {
+                    block.Clear();
+                    values.CopyTo(block);
+                    values = block;
+                }
+
+                ref float v = ref MemoryMarshal.GetReference(values);
+                var v0 = Vector256.LoadUnsafe(ref v);
+                var v1 = Vector256.LoadUnsafe(ref v, 8);
+                var v2 = Vector256.LoadUnsafe(ref v, 16);
+                var v3 = Vector256.LoadUnsafe(ref v, 24);
+                var most = Vector256.Max(Vector256.Max(Vector256.Abs(v0), Vector256.Abs(v1)), Vector256.Max(Vector256.Abs(v2), Vector256.Abs(v3)));
+                var top = Vector128.Max(most.GetLower(), most.GetUpper());
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(2, 3, 0, 1)));
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(1, 0, 3, 2)));
+                float amax = top.ToScalar();
+                var inverse = Vector256.Create(amax > 0f ? 127f / amax : 0f);
+                var rounded = Vector256.Narrow(
+                    Vector256.Narrow(Vector256.ConvertToInt32(Vector256.Round(v0 * inverse)), Vector256.ConvertToInt32(Vector256.Round(v1 * inverse))),
+                    Vector256.Narrow(Vector256.ConvertToInt32(Vector256.Round(v2 * inverse)), Vector256.ConvertToInt32(Vector256.Round(v3 * inverse)))).AsByte();
+                if (order != null)
+                {
+                    int r = from / 32 % spansPerPeriod;
+                    rounded = Avx2.Shuffle(Avx2.Permute4x64(rounded.AsUInt64(), 0x44).AsByte(), order[2 * r])
+                        | Avx2.Shuffle(Avx2.Permute4x64(rounded.AsUInt64(), 0xEE).AsByte(), order[2 * r + 1]);
+                }
+
+                made[q] = rounded;
+                scales[q] = amax / 127f;
+                var eights = Avx2.SumAbsoluteDifferences(rounded ^ flip, Vector256<byte>.Zero).AsUInt64();   // (code + 128) a byte, 8 bytes a lane
+                sums[2 * q] = (int)(eights.GetElement(0) + eights.GetElement(1)) - 16 * 128;
+                sums[2 * q + 1] = (int)(eights.GetElement(2) + eights.GetElement(3)) - 16 * 128;
+            }
+
+            byte* to = (byte*)Unsafe.AsPointer(ref Unsafe.Add(ref into, g * plan.GroupValues));
+            switch (p)
+            {
+                case 1 when !half:
+                    Transpose8(made[0], made[1], made[2], made[3], made[4], made[5], made[6], made[7], out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+                    s0.Store(to);
+                    s1.Store(to + 32);
+                    s2.Store(to + 64);
+                    s3.Store(to + 96);
+                    s4.Store(to + 128);
+                    s5.Store(to + 160);
+                    s6.Store(to + 192);
+                    s7.Store(to + 224);
+                    break;
+                case 1:
+                    Transpose4(made[0], made[1], made[2], made[3], out var h0, out var h1, out var h2, out var h3);
+                    h0.Store(to);
+                    h1.Store(to + 32);
+                    h2.Store(to + 64);
+                    h3.Store(to + 96);
+                    break;
+                case 8:
+                    made[0].Store(to);
+                    break;
+                case 4:
+                    var lo = Avx2.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32());
+                    var hi = Avx2.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32());
+                    Avx2.Permute2x128(lo, hi, 0x20).AsByte().Store(to);
+                    Avx2.Permute2x128(lo, hi, 0x31).AsByte().Store(to + 32);
+                    break;
+                default:
+                    var t0 = Avx2.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32());
+                    var t1 = Avx2.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32());
+                    var t2 = Avx2.UnpackLow(made[2].AsUInt32(), made[3].AsUInt32());
+                    var t3 = Avx2.UnpackHigh(made[2].AsUInt32(), made[3].AsUInt32());
+                    var u0 = Avx2.UnpackLow(t0.AsUInt64(), t2.AsUInt64());
+                    var u1 = Avx2.UnpackHigh(t0.AsUInt64(), t2.AsUInt64());
+                    var u2 = Avx2.UnpackLow(t1.AsUInt64(), t3.AsUInt64());
+                    var u3 = Avx2.UnpackHigh(t1.AsUInt64(), t3.AsUInt64());
+                    Avx2.Permute2x128(u0, u1, 0x20).AsByte().Store(to);
+                    Avx2.Permute2x128(u2, u3, 0x20).AsByte().Store(to + 32);
+                    Avx2.Permute2x128(u0, u1, 0x31).AsByte().Store(to + 64);
+                    Avx2.Permute2x128(u2, u3, 0x31).AsByte().Store(to + 96);
+                    break;
+            }
+
+            var own = lanes.Slice(g * laneFloats, laneFloats);
+            if (p > 1)
+            {
+                // A wide integer's chunks: each its block scale, then its top plane's least times its code sum (spread to the
+                // chunk's lanes as x's codes are: IStepLoad).
+                var tops = MemoryMarshal.Cast<float, int>(own[plan.Cg..]);
+                for (int j = 0; j < plan.Cg; j++)
+                {
+                    own[j] = scales[j];
+                    tops[j] = least[p - 1] * (sums[2 * j] + sums[2 * j + 1]);
+                }
+
+                continue;
+            }
+
+            var starts = MemoryMarshal.Cast<float, int>(own.Slice(8, 8));
+            for (int l = 0; l < 8; l++)
+            {
+                int j = l / p, plane = l % p;
+                float xs = half ? scales[j / 2] : scales[j];
+                int sum = half ? sums[j] : sums[2 * j] + sums[2 * j + 1];
+                own[l] = xs;
+                starts[l] = least[plane] * sum;
+                if (mins)
+                {
+                    own[16 + l] = plane == 0 ? xs * sum : 0f;
+                }
+            }
+        }
+    }
+
+    // x in the spans' order for the float32 lane over codes (OrderDescribedRow), row by row, each `padded` (whole groups).
+    private static void OrderDescribedRows(DescribedPlan plan, float[] x, float[] into, int m, int k, int padded)
+    {
+        for (int i = 0; i < m; i++)
+        {
+            OrderDescribedRow(plan, x.AsSpan(i * k, k), into.AsSpan(i * padded, padded));
+        }
+    }
+
+    // A row of x in the order each span's codes are made (DescribedPlan.Order: position t of a period takes the value at
+    // Order[t]), whole groups: the positions of values past the row 0.
+    private static unsafe void OrderDescribedRow(DescribedPlan plan, ReadOnlySpan<float> x, Span<float> into)
+    {
+        int period = plan.Period;
+        int* order = plan.Order;
+        for (int at = 0; at < into.Length; at++)
+        {
+            int inPeriod = at % period, v = at - inPeriod + order[inPeriod];
+            into[at] = v < x.Length ? x[v] : 0f;
+        }
+    }
+
+    // A stored row's integer steps, scales and minimums (DescribedPlan.Steps and Factor), a group after another, into `into`
+    // (GroupStepBytes a group); its last period from `tail` where it is short.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedRowSteps(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+    {
+        int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+            byte* to = into + (nint)g * stepBytes;
+            plan.Steps(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+            s0.Store(to);
+            s1.Store(to + 32);
+            s2.Store(to + 64);
+            s3.Store(to + 96);
+            if (t == 8)
+            {
+                s4.Store(to + 128);
+                s5.Store(to + 160);
+                s6.Store(to + 192);
+                s7.Store(to + 224);
+            }
+
+            plan.Factor(at, gp, Math.Min(plan.Cg, chunks - g * plan.Cg) * plan.P, out var scale, out var min);
+            scale.Store((float*)(to + 32 * t));
+            if (plan.Mins)
+            {
+                min.Store((float*)(to + 32 * t + 32));
+            }
+        }
+    }
+
+    /// <summary>
+    /// How the integer lane loads a step of x's codes (P = 1, 8 chunks' 4 bytes; P = 2, 4 chunks' each in 2 lanes; P = 4, 2
+    /// chunks' each in 4; P = 8, one chunk's in all 8), and, for a wide integer (P > 1), makes step s of a group of its
+    /// stored codes (chunk j's from `at` + 32 · P · j): lane j · P + p byte p of chunk j's codes 4s..4s + 3.
+    /// </summary>
+    private unsafe interface IStepLoad
+    {
+        static abstract Vector256<sbyte> Load(sbyte* at);
+
+        static abstract Vector256<byte> Plane(byte* at, int s);
+    }
+
+    private unsafe struct EightChunks : IStepLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<sbyte> Load(sbyte* at) => Vector256.Load(at);
+
+        public static Vector256<byte> Plane(byte* at, int s) => throw new NotSupportedException("Codes of at most 8 bits have one byte plane.");
+    }
+
+    private unsafe struct FourChunks : IStepLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<sbyte> Load(sbyte* at) => Avx2.PermuteVar8x32(Avx2.BroadcastVector128ToVector256((int*)at), Vector256.Create(0, 0, 1, 1, 2, 2, 3, 3)).AsSByte();
+
+        // 16-bit codes: 4 chunks' 4 codes (8 bytes each, 64 bytes apart), each 128-bit half's two chunks transposed.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Plane(byte* at, int s) => Avx2.Shuffle(Vector256.Create(*(ulong*)(at + 8 * s), *(ulong*)(at + 64 + 8 * s), *(ulong*)(at + 128 + 8 * s),
+            *(ulong*)(at + 192 + 8 * s)).AsByte(), Vector256.Create((byte)0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15, 0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15));
+    }
+
+    private unsafe struct TwoChunks : IStepLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<sbyte> Load(sbyte* at) => Avx2.PermuteVar8x32(Vector256.CreateScalarUnsafe(*(long*)at).AsInt32(), Vector256.Create(0, 0, 0, 0, 1, 1, 1, 1)).AsSByte();
+
+        // 32-bit codes: 2 chunks' 4 codes (16 bytes each, 128 bytes apart), each 128-bit half's 4 × 4 bytes transposed.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Plane(byte* at, int s) => Avx2.Shuffle(Vector256.Create(Vector128.Load(at + 16 * s), Vector128.Load(at + 128 + 16 * s)),
+            Vector256.Create((byte)0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15));
+    }
+
+    private unsafe struct OneChunk : IStepLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<sbyte> Load(sbyte* at) => Vector256.Create(*(int*)at).AsSByte();
+
+        // 64-bit codes: one chunk's 4 codes (32 bytes), their low dwords then their high ones, each half's 4 × 4 bytes transposed.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Plane(byte* at, int s) => Avx2.Shuffle(Avx2.PermuteVar8x32(Vector256.Load((int*)(at + 32 * s)), Vector256.Create(0, 2, 4, 6, 1, 3, 5, 7)).AsByte(),
+            Vector256.Create((byte)0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15));
+    }
+
+    // A wide integer's (P > 1) stored row made into the integer lane's steps (8 a group, 32 bytes each, no scales: x's block
+    // scales and the planes' weights apply), its last period from `tail`; TX makes each step.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void WideRowSteps<TX>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, byte* into) where TX : struct, IStepLoad
+    {
+        int periodBytes = plan.PeriodBytes;
+        var flip = plan.TopFlip;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = g < full ? row + (nint)g * periodBytes : tail;
+            byte* to = into + (nint)g * 256;
+            (TX.Plane(at, 0) ^ flip).Store(to);
+            (TX.Plane(at, 1) ^ flip).Store(to + 32);
+            (TX.Plane(at, 2) ^ flip).Store(to + 64);
+            (TX.Plane(at, 3) ^ flip).Store(to + 96);
+            (TX.Plane(at, 4) ^ flip).Store(to + 128);
+            (TX.Plane(at, 5) ^ flip).Store(to + 160);
+            (TX.Plane(at, 6) ^ flip).Store(to + 192);
+            (TX.Plane(at, 7) ^ flip).Store(to + 224);
+        }
+    }
+
+    // f + a wide integer's group's sums for a row of x: its 8 steps dotted with x's (TX), each lane from x's start (the top
+    // plane's least times the chunk's code sum), then times x's block scales (both spread to the chunks' lanes by TX).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe Vector256<float> WideRow<TX>(Vector256<float> f, Vector256<byte> s0, Vector256<byte> s1, Vector256<byte> s2, Vector256<byte> s3,
+        Vector256<byte> s4, Vector256<byte> s5, Vector256<byte> s6, Vector256<byte> s7, sbyte* x, int xStep, float* lanes, int cg, Vector256<int> top)
+        where TX : struct, IStepLoad
+    {
+        var i = TX.Load((sbyte*)(lanes + cg)).AsInt32() & top;
+        i = StepDot(i, s0, TX.Load(x));
+        i = StepDot(i, s1, TX.Load(x + xStep));
+        i = StepDot(i, s2, TX.Load(x + 2 * xStep));
+        i = StepDot(i, s3, TX.Load(x + 3 * xStep));
+        i = StepDot(i, s4, TX.Load(x + 4 * xStep));
+        i = StepDot(i, s5, TX.Load(x + 5 * xStep));
+        i = StepDot(i, s6, TX.Load(x + 6 * xStep));
+        i = StepDot(i, s7, TX.Load(x + 7 * xStep));
+        return Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), TX.Load((sbyte*)lanes).AsSingle(), f);
+    }
+
+    // A wide integer's one row of x by one stored row read alone: each group's 8 steps made in registers (TX.Plane) as they
+    // are dotted with x.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float WideMadeOne<TX>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, sbyte* x, float* lanes) where TX : struct, IStepLoad
+    {
+        int periodBytes = plan.PeriodBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
+        var flip = plan.TopFlip;
+        var top = plan.TopLanes;
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = g < full ? row + (nint)g * periodBytes : tail;
+            f = WideRow<TX>(f, TX.Plane(at, 0) ^ flip, TX.Plane(at, 1) ^ flip, TX.Plane(at, 2) ^ flip, TX.Plane(at, 3) ^ flip, TX.Plane(at, 4) ^ flip,
+                TX.Plane(at, 5) ^ flip, TX.Plane(at, 6) ^ flip, TX.Plane(at, 7) ^ flip, x + (nint)g * groupValues, xStep, lanes + (nint)g * laneFloats, cg, top);
+        }
+
+        return Vector256.Sum(f * plan.LaneWeights!.Value);
+    }
+
+    // A wide integer's one row of x by a stored row made into steps (WideRowSteps).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float WideStepsOne<TX>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes) where TX : struct, IStepLoad
+    {
+        int groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
+        var top = plan.TopLanes;
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * 256;
+            f = WideRow<TX>(f, Vector256.Load(at), Vector256.Load(at + 32), Vector256.Load(at + 64), Vector256.Load(at + 96), Vector256.Load(at + 128),
+                Vector256.Load(at + 160), Vector256.Load(at + 192), Vector256.Load(at + 224), x + (nint)g * groupValues, xStep, lanes + (nint)g * laneFloats, cg, top);
+        }
+
+        return Vector256.Sum(f * plan.LaneWeights!.Value);
+    }
+
+    // sum + the dot products of a step's unsigned bytes with x's signed codes, 4 a 32-bit lane (AVX-VNNI; else AVX2's
+    // multiply-adds, which the plan takes only where the bytes span at most 127).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static Vector256<int> StepDot(Vector256<int> sum, Vector256<byte> step, Vector256<sbyte> x) => AvxVnni.IsSupported
+        ? AvxVnni.MultiplyWideningAndAdd(sum, step, x)
+        : sum + Avx2.MultiplyAddAdjacent(Avx2.MultiplyAddAdjacent(step, x), Vector256.Create((short)1));
+
+    // The described integer lane, four rows of x by one stored row made into steps (DescribedRowSteps), dispatched on the
+    // step's x load (the plan's byte planes).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedIntegerFour(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        switch (plan.P)
+        {
+            case 1:
+                ChunkStepsFour(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                break;
+            case 2:
+                StepsFour<FourChunks>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                break;
+            case 4:
+                StepsFour<TwoChunks>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                break;
+            default:
+                StepsFour<OneChunk>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                break;
+        }
+    }
+
+    // Four rows of x (codes from `x`, a row every `xRow`; lane data from `lanes`, a row every `lRow`) by one stored row's steps
+    // of a wide integer (P > 1, `groups` groups of GroupStepBytes, no scales): each step loaded once and dotted with each
+    // row's step of x, a lane's sum from x's start (the top plane's least times its chunk's code sum); then times x's block
+    // scales (spread to the chunks' lanes as x's codes are), and the lanes weighted by their planes at the end.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void StepsFour<TX>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+        out float y0, out float y1, out float y2, out float y3) where TX : struct, IStepLoad
+    {
+        int groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
+        var top = plan.TopLanes;
+        Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * 256;
+            var s0 = Vector256.Load(at);
+            var s1 = Vector256.Load(at + 32);
+            var s2 = Vector256.Load(at + 64);
+            var s3 = Vector256.Load(at + 96);
+            var s4 = Vector256.Load(at + 128);
+            var s5 = Vector256.Load(at + 160);
+            var s6 = Vector256.Load(at + 192);
+            var s7 = Vector256.Load(at + 224);
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            f0 = WideRow<TX>(f0, s0, s1, s2, s3, s4, s5, s6, s7, xg, xStep, lg, cg, top);
+            f1 = WideRow<TX>(f1, s0, s1, s2, s3, s4, s5, s6, s7, xg + xRow, xStep, lg + lRow, cg, top);
+            f2 = WideRow<TX>(f2, s0, s1, s2, s3, s4, s5, s6, s7, xg + 2 * xRow, xStep, lg + 2 * lRow, cg, top);
+            f3 = WideRow<TX>(f3, s0, s1, s2, s3, s4, s5, s6, s7, xg + 3 * xRow, xStep, lg + 3 * lRow, cg, top);
+        }
+
+        var w = plan.LaneWeights!.Value;
+        y0 = Vector256.Sum(f0 * w);
+        y1 = Vector256.Sum(f1 * w);
+        y2 = Vector256.Sum(f2 * w);
+        y3 = Vector256.Sum(f3 * w);
+    }
+
+    // StepsFour for codes of at most 8 bits (P = 1: a chunk a lane, x's steps 32 bytes): a group's steps (8, or 4 for chunks
+    // of 16) loaded once and held while each of the four rows of x is dotted with them in turn.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ChunkStepsFour(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        int t = plan.T, stepBytes = plan.GroupStepBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats;
+        bool mins = plan.Mins, eight = t == 8;
+        Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * stepBytes;
+            var s0 = Vector256.Load(at);
+            var s1 = Vector256.Load(at + 32);
+            var s2 = Vector256.Load(at + 64);
+            var s3 = Vector256.Load(at + 96);
+            Vector256<byte> s4 = default, s5 = default, s6 = default, s7 = default;
+            if (eight)
+            {
+                s4 = Vector256.Load(at + 128);
+                s5 = Vector256.Load(at + 160);
+                s6 = Vector256.Load(at + 192);
+                s7 = Vector256.Load(at + 224);
+            }
+
+            var scale = Vector256.Load((float*)(at + 32 * t));
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            f0 = ChunkRow(f0, eight, s0, s1, s2, s3, s4, s5, s6, s7, scale, xg, lg);
+            f1 = ChunkRow(f1, eight, s0, s1, s2, s3, s4, s5, s6, s7, scale, xg + xRow, lg + lRow);
+            f2 = ChunkRow(f2, eight, s0, s1, s2, s3, s4, s5, s6, s7, scale, xg + 2 * xRow, lg + 2 * lRow);
+            f3 = ChunkRow(f3, eight, s0, s1, s2, s3, s4, s5, s6, s7, scale, xg + 3 * xRow, lg + 3 * lRow);
+            if (mins)
+            {
+                var min = Vector256.Load((float*)(at + 32 * t + 32));
+                f0 = Fma.MultiplyAdd(min, Vector256.Load(lg + 16), f0);
+                f1 = Fma.MultiplyAdd(min, Vector256.Load(lg + lRow + 16), f1);
+                f2 = Fma.MultiplyAdd(min, Vector256.Load(lg + 2 * lRow + 16), f2);
+                f3 = Fma.MultiplyAdd(min, Vector256.Load(lg + 3 * lRow + 16), f3);
+            }
+        }
+
+        y0 = Vector256.Sum(f0);
+        y1 = Vector256.Sum(f1);
+        y2 = Vector256.Sum(f2);
+        y3 = Vector256.Sum(f3);
+    }
+
+    // f + a group's sums for a row of x: its steps dotted with x's (32 bytes a step from `x`), each lane's sum from x's start
+    // (`lanes` + 8), then times the lanes' scales and x's (`lanes`).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe Vector256<float> ChunkRow(Vector256<float> f, bool eight, Vector256<byte> s0, Vector256<byte> s1, Vector256<byte> s2, Vector256<byte> s3,
+        Vector256<byte> s4, Vector256<byte> s5, Vector256<byte> s6, Vector256<byte> s7, Vector256<float> scale, sbyte* x, float* lanes)
+    {
+        var i = Vector256.Load((int*)(lanes + 8));
+        i = StepDot(i, s0, Vector256.Load(x));
+        i = StepDot(i, s1, Vector256.Load(x + 32));
+        i = StepDot(i, s2, Vector256.Load(x + 64));
+        i = StepDot(i, s3, Vector256.Load(x + 96));
+        if (eight)
+        {
+            i = StepDot(i, s4, Vector256.Load(x + 128));
+            i = StepDot(i, s5, Vector256.Load(x + 160));
+            i = StepDot(i, s6, Vector256.Load(x + 192));
+            i = StepDot(i, s7, Vector256.Load(x + 224));
+        }
+
+        return Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), scale * Vector256.Load(lanes), f);
+    }
+
+    // StepsFour for one row of x (the rows of a group left over after its fours).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float DescribedIntegerSteps(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes) => plan.P switch
+    {
+        1 => StepsOne<EightChunks>(plan, steps, groups, x, lanes),
+        2 => WideStepsOne<FourChunks>(plan, steps, groups, x, lanes),
+        4 => WideStepsOne<TwoChunks>(plan, steps, groups, x, lanes),
+        _ => WideStepsOne<OneChunk>(plan, steps, groups, x, lanes),
+    };
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float StepsOne<TX>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes) where TX : struct, IStepLoad
+    {
+        int t = plan.T, stepBytes = plan.GroupStepBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg;
+        bool mins = plan.Mins;
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * stepBytes;
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            var xs = Vector256.Load(lg);
+            var i = Vector256.Load((int*)(lg + 8));
+            for (int s = 0; s < t; s++)
+            {
+                i = StepDot(i, Vector256.Load(at + 32 * s), TX.Load(xg + s * xStep));
+            }
+
+            f = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), Vector256.Load((float*)(at + 32 * t)) * xs, f);
+            if (mins)
+            {
+                f = Fma.MultiplyAdd(Vector256.Load((float*)(at + 32 * t + 32)), Vector256.Load(lg + 16), f);
+            }
+        }
+
+        return Vector256.Sum(plan.LaneWeights is { } w ? f * w : f);
+    }
+
+    // The described integer lane for one row of x read alone (one row of x, or a tile's one row): each group's steps,
+    // scales and minimums made in registers from the stored row (its last period from `tail`) as they are dotted with x;
+    // a plan whose spans are one plane loaded the same way takes its load and map as type parameters (UniformOne).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float DescribedIntegerOne(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+    {
+        if (plan.P == 1 && plan.UniformRuns != 0)
+        {
+            return plan.UniformRuns switch
+            {
+                1 => UniformOneBy<OneRun>(plan, row, tail, full, groups, chunks, x, lanes),
+                2 => UniformOneBy<TwoRuns>(plan, row, tail, full, groups, chunks, x, lanes),
+                4 => UniformOneBy<FourRuns>(plan, row, tail, full, groups, chunks, x, lanes),
+                _ => UniformOneBy<EightRuns>(plan, row, tail, full, groups, chunks, x, lanes),
+            };
+        }
+
+        return plan.P switch
+        {
+            1 => MadeOne<EightChunks>(plan, row, tail, full, groups, chunks, x, lanes),
+            2 => WideMadeOne<FourChunks>(plan, row, tail, full, groups, x, lanes),
+            4 => WideMadeOne<TwoChunks>(plan, row, tail, full, groups, x, lanes),
+            _ => WideMadeOne<OneChunk>(plan, row, tail, full, groups, x, lanes),
+        };
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float UniformOneBy<TR>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes) where TR : struct, IRunLoad =>
+        plan.Map switch
+        {
+            CodeMap.Same => UniformOne<TR, SameCodes>(plan, row, tail, full, groups, chunks, x, lanes),
+            CodeMap.Flip => UniformOne<TR, FlippedCodes>(plan, row, tail, full, groups, chunks, x, lanes),
+            _ => UniformOne<TR, ShuffledCodes>(plan, row, tail, full, groups, chunks, x, lanes),
+        };
+
+    // A stored row's integer steps (DescribedRowSteps), by the plan's uniform load and map as type parameters where it has them.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void RowStepsOf(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+    {
+        switch (plan.P)
+        {
+            case 2:
+                WideRowSteps<FourChunks>(plan, row, tail, full, groups, into);
+                return;
+            case 4:
+                WideRowSteps<TwoChunks>(plan, row, tail, full, groups, into);
+                return;
+            case 8:
+                WideRowSteps<OneChunk>(plan, row, tail, full, groups, into);
+                return;
+        }
+
+        if (plan.UniformRuns == 0)
+        {
+            DescribedRowSteps(plan, row, tail, full, groups, chunks, into);
+            return;
+        }
+
+        switch (plan.UniformRuns)
+        {
+            case 1:
+                RowStepsBy<OneRun>(plan, row, tail, full, groups, chunks, into);
+                break;
+            case 2:
+                RowStepsBy<TwoRuns>(plan, row, tail, full, groups, chunks, into);
+                break;
+            case 4:
+                RowStepsBy<FourRuns>(plan, row, tail, full, groups, chunks, into);
+                break;
+            default:
+                RowStepsBy<EightRuns>(plan, row, tail, full, groups, chunks, into);
+                break;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void RowStepsBy<TR>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into) where TR : struct, IRunLoad
+    {
+        switch (plan.Map)
+        {
+            case CodeMap.Same:
+                UniformRowSteps<TR, SameCodes>(plan, row, tail, full, groups, chunks, into);
+                break;
+            case CodeMap.Flip:
+                UniformRowSteps<TR, FlippedCodes>(plan, row, tail, full, groups, chunks, into);
+                break;
+            default:
+                UniformRowSteps<TR, ShuffledCodes>(plan, row, tail, full, groups, chunks, into);
+                break;
+        }
+    }
+
+    /// <summary>How the described lane loads a span's run of its one code plane and shifts it (every span the same: DescribedPlan.UniformRuns).</summary>
+    private unsafe interface IRunLoad
+    {
+        static abstract Vector256<byte> Load(byte* at, Vector256<ulong> shift);
+    }
+
+    // One run: 32 bytes at one shift.
+    private unsafe struct OneRun : IRunLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Load(byte* at, Vector256<ulong> shift) => Avx2.ShiftRightLogicalVariable(Vector256.Load(at).AsUInt64(), shift).AsByte();
+    }
+
+    // Two runs: 16 bytes at two shifts (a 128-bit half each).
+    private unsafe struct TwoRuns : IRunLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Load(byte* at, Vector256<ulong> shift) => Avx2.ShiftRightLogicalVariable(Avx2.BroadcastVector128ToVector256(at).AsUInt64(), shift).AsByte();
+    }
+
+    // Four runs: 8 bytes at four shifts (a 64-bit lane each).
+    private unsafe struct FourRuns : IRunLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Load(byte* at, Vector256<ulong> shift) => Avx2.ShiftRightLogicalVariable(Vector256.Create(*(ulong*)at), shift).AsByte();
+    }
+
+    // Eight runs: 4 bytes at eight shifts (a 32-bit lane each).
+    private unsafe struct EightRuns : IRunLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Load(byte* at, Vector256<ulong> shift) => Avx2.ShiftRightLogicalVariable(Vector256.Create(*(uint*)at), shift.AsUInt32()).AsByte();
+    }
+
+    /// <summary>How the integer lane makes a code its byte (DescribedPlan.Map): as it is, flipped, or by a 16-entry byte shuffle.</summary>
+    private interface ICodeMap
+    {
+        static abstract Vector256<byte> Map(Vector256<byte> code, Vector256<byte> table);
+    }
+
+    private struct SameCodes : ICodeMap
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Map(Vector256<byte> code, Vector256<byte> table) => code;
+    }
+
+    private struct FlippedCodes : ICodeMap
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Map(Vector256<byte> code, Vector256<byte> table) => code ^ table;
+    }
+
+    private struct ShuffledCodes : ICodeMap
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector256<byte> Map(Vector256<byte> code, Vector256<byte> table) => Avx2.Shuffle(table, code);
+    }
+
+    // Span s's codes (of the period at `at`) as the integer lane's bytes, by TR and TM.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe Vector256<byte> SpanCodes<TR, TM>(byte* at, int* offsets, Vector256<ulong>* shifts, int s, Vector256<byte> mask, Vector256<byte> table)
+        where TR : struct, IRunLoad where TM : struct, ICodeMap => TM.Map(TR.Load(at + offsets[s], shifts[s]) & mask, table);
+
+    // Group gp of the period at `at` as the integer lane's steps (DescribedPlan.Steps, a plan with uniform runs): 8 spans
+    // transposed (chunks of 32), or 4 (chunks of 16: s4..s7 not written).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void UniformSteps<TR, TM>(byte* at, int gp, int* offsets, Vector256<ulong>* shifts, Vector256<byte> mask, Vector256<byte> table, bool c32,
+        out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3, out Vector256<byte> s4, out Vector256<byte> s5,
+        out Vector256<byte> s6, out Vector256<byte> s7) where TR : struct, IRunLoad where TM : struct, ICodeMap
+    {
+        if (c32)
+        {
+            int s = 8 * gp;
+            Transpose8(SpanCodes<TR, TM>(at, offsets, shifts, s, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, s + 1, mask, table),
+                SpanCodes<TR, TM>(at, offsets, shifts, s + 2, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, s + 3, mask, table),
+                SpanCodes<TR, TM>(at, offsets, shifts, s + 4, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, s + 5, mask, table),
+                SpanCodes<TR, TM>(at, offsets, shifts, s + 6, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, s + 7, mask, table),
+                out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+            return;
+        }
+
+        int r = 4 * gp;
+        Transpose4(SpanCodes<TR, TM>(at, offsets, shifts, r, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, r + 1, mask, table),
+            SpanCodes<TR, TM>(at, offsets, shifts, r + 2, mask, table), SpanCodes<TR, TM>(at, offsets, shifts, r + 3, mask, table), out s0, out s1, out s2, out s3);
+        s4 = s5 = s6 = s7 = default;
+    }
+
+    // Group gp's steps gathered (DescribedPlan.Gathered): dword d of the 8 chunks' runs (each its own first byte, a lane
+    // each) in one gather, each run q's shifts of it masked and mapped: step q · D + d, D = 8 / runs (the positions 4s..4s + 3
+    // of each chunk in its span's order, as the transposed loads give them).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void GatheredSteps<TM>(byte* at, Vector256<int> offsets, int* spanOffsets, Vector256<uint>* shifts, int runs, Vector256<uint> flip, Vector256<byte> mask, Vector256<byte> table,
+        out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3, out Vector256<byte> s4, out Vector256<byte> s5,
+        out Vector256<byte> s6, out Vector256<byte> s7) where TM : struct, ICodeMap
+    {
+        switch (runs)
+        {
+            case 8:
+                var g = Avx2.GatherVector256((int*)at, offsets, 1).AsUInt32() ^ flip;
+                s0 = GatheredStep<TM>(g, shifts[0], mask, table);
+                s1 = GatheredStep<TM>(g, shifts[1], mask, table);
+                s2 = GatheredStep<TM>(g, shifts[2], mask, table);
+                s3 = GatheredStep<TM>(g, shifts[3], mask, table);
+                s4 = GatheredStep<TM>(g, shifts[4], mask, table);
+                s5 = GatheredStep<TM>(g, shifts[5], mask, table);
+                s6 = GatheredStep<TM>(g, shifts[6], mask, table);
+                s7 = GatheredStep<TM>(g, shifts[7], mask, table);
+                return;
+            case 4:
+                var a0 = Avx2.GatherVector256((int*)at, offsets, 1).AsUInt32() ^ flip;
+                var a1 = Avx2.GatherVector256((int*)(at + 4), offsets, 1).AsUInt32() ^ flip;
+                s0 = GatheredStep<TM>(a0, shifts[0], mask, table);
+                s1 = GatheredStep<TM>(a1, shifts[0], mask, table);
+                s2 = GatheredStep<TM>(a0, shifts[1], mask, table);
+                s3 = GatheredStep<TM>(a1, shifts[1], mask, table);
+                s4 = GatheredStep<TM>(a0, shifts[2], mask, table);
+                s5 = GatheredStep<TM>(a1, shifts[2], mask, table);
+                s6 = GatheredStep<TM>(a0, shifts[3], mask, table);
+                s7 = GatheredStep<TM>(a1, shifts[3], mask, table);
+                return;
+            default:
+                // Two runs of 16 bytes: the 8 chunks' runs loaded (chunk l and l + 4 a vector) and their dwords transposed by
+                // unpacks (8 loads and 8 unpacks: fewer than 4 gathers), dword d of every chunk in b_d.
+                var r0 = Vector256.Create(Vector128.Load(at + spanOffsets[0]), Vector128.Load(at + spanOffsets[4])).AsUInt32();
+                var r1 = Vector256.Create(Vector128.Load(at + spanOffsets[1]), Vector128.Load(at + spanOffsets[5])).AsUInt32();
+                var r2 = Vector256.Create(Vector128.Load(at + spanOffsets[2]), Vector128.Load(at + spanOffsets[6])).AsUInt32();
+                var r3 = Vector256.Create(Vector128.Load(at + spanOffsets[3]), Vector128.Load(at + spanOffsets[7])).AsUInt32();
+                var w0 = Avx2.UnpackLow(r0, r1).AsUInt64();
+                var w1 = Avx2.UnpackHigh(r0, r1).AsUInt64();
+                var w2 = Avx2.UnpackLow(r2, r3).AsUInt64();
+                var w3 = Avx2.UnpackHigh(r2, r3).AsUInt64();
+                var b0 = Avx2.UnpackLow(w0, w2).AsUInt32() ^ flip;
+                var b1 = Avx2.UnpackHigh(w0, w2).AsUInt32() ^ flip;
+                var b2 = Avx2.UnpackLow(w1, w3).AsUInt32() ^ flip;
+                var b3 = Avx2.UnpackHigh(w1, w3).AsUInt32() ^ flip;
+                s0 = GatheredStep<TM>(b0, shifts[0], mask, table);
+                s1 = GatheredStep<TM>(b1, shifts[0], mask, table);
+                s2 = GatheredStep<TM>(b2, shifts[0], mask, table);
+                s3 = GatheredStep<TM>(b3, shifts[0], mask, table);
+                s4 = GatheredStep<TM>(b0, shifts[1], mask, table);
+                s5 = GatheredStep<TM>(b1, shifts[1], mask, table);
+                s6 = GatheredStep<TM>(b2, shifts[1], mask, table);
+                s7 = GatheredStep<TM>(b3, shifts[1], mask, table);
+                return;
+        }
+    }
+
+    // A gathered dword vector at one run's shifts, masked and mapped: a step.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static Vector256<byte> GatheredStep<TM>(Vector256<uint> words, Vector256<uint> shift, Vector256<byte> mask, Vector256<byte> table) where TM : struct, ICodeMap =>
+        TM.Map(Avx2.ShiftRightLogicalVariable(words, shift).AsByte() & mask, table);
+
+    // MadeOne for a plan with uniform runs (P = 1), its load and map as type parameters.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float UniformOne<TR, TM>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes)
+        where TR : struct, IRunLoad where TM : struct, ICodeMap
+    {
+        int gpp = plan.GroupsPerPeriod, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
+        bool mins = plan.Mins, c32 = plan.C == 32;
+        int* offsets = plan.RunOffsets;
+        Vector256<ulong>* shifts = plan.RunShifts;
+        var mask = plan.PlaneMask0;
+        var table = plan.MapVector;
+        bool gathered = plan.Gathered;
+        int runs = plan.UniformRuns;
+        Vector256<int>* gatherOffsets = plan.GatherOffsets;
+        Vector256<uint>* gatherShifts = plan.GatherShifts;
+        var wordFlip = plan.WordFlip;
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * periodBytes : tail;
+            Vector256<byte> s0, s1, s2, s3, s4, s5, s6, s7;
+            if (gathered)
+            {
+                if (typeof(TM) == typeof(FlippedCodes))
+                {
+                    GatheredSteps<SameCodes>(at, gatherOffsets[gp], offsets + 8 * gp, gatherShifts + gp * runs, runs, wordFlip, mask, table, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                }
+                else
+                {
+                    GatheredSteps<TM>(at, gatherOffsets[gp], offsets + 8 * gp, gatherShifts + gp * runs, runs, default, mask, table, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                }
+            }
+            else
+            {
+                UniformSteps<TR, TM>(at, gp, offsets, shifts, mask, table, c32, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+            }
+
+            plan.Factor(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            var i = Vector256.Load((int*)(lg + 8));
+            i = StepDot(i, s0, Vector256.Load(xg));
+            i = StepDot(i, s1, Vector256.Load(xg + 32));
+            i = StepDot(i, s2, Vector256.Load(xg + 64));
+            i = StepDot(i, s3, Vector256.Load(xg + 96));
+            if (c32)
+            {
+                i = StepDot(i, s4, Vector256.Load(xg + 128));
+                i = StepDot(i, s5, Vector256.Load(xg + 160));
+                i = StepDot(i, s6, Vector256.Load(xg + 192));
+                i = StepDot(i, s7, Vector256.Load(xg + 224));
+            }
+
+            f = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), scale * Vector256.Load(lg), f);
+            if (mins)
+            {
+                f = Fma.MultiplyAdd(min, Vector256.Load(lg + 16), f);
+            }
+        }
+
+        return Vector256.Sum(f);
+    }
+
+    // DescribedRowSteps for a plan with uniform runs (P = 1), its load and map as type parameters.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void UniformRowSteps<TR, TM>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into)
+        where TR : struct, IRunLoad where TM : struct, ICodeMap
+    {
+        int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes, periodBytes = plan.PeriodBytes;
+        bool mins = plan.Mins, c32 = t == 8;
+        int* offsets = plan.RunOffsets;
+        Vector256<ulong>* shifts = plan.RunShifts;
+        var mask = plan.PlaneMask0;
+        var table = plan.MapVector;
+        bool gathered = plan.Gathered;
+        int runs = plan.UniformRuns;
+        Vector256<int>* gatherOffsets = plan.GatherOffsets;
+        Vector256<uint>* gatherShifts = plan.GatherShifts;
+        var wordFlip = plan.WordFlip;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * periodBytes : tail;
+            byte* to = into + (nint)g * stepBytes;
+            Vector256<byte> s0, s1, s2, s3, s4, s5, s6, s7;
+            if (gathered)
+            {
+                if (typeof(TM) == typeof(FlippedCodes))
+                {
+                    GatheredSteps<SameCodes>(at, gatherOffsets[gp], offsets + 8 * gp, gatherShifts + gp * runs, runs, wordFlip, mask, table, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                }
+                else
+                {
+                    GatheredSteps<TM>(at, gatherOffsets[gp], offsets + 8 * gp, gatherShifts + gp * runs, runs, default, mask, table, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                }
+            }
+            else
+            {
+                UniformSteps<TR, TM>(at, gp, offsets, shifts, mask, table, c32, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+            }
+
+            s0.Store(to);
+            s1.Store(to + 32);
+            s2.Store(to + 64);
+            s3.Store(to + 96);
+            if (c32)
+            {
+                s4.Store(to + 128);
+                s5.Store(to + 160);
+                s6.Store(to + 192);
+                s7.Store(to + 224);
+            }
+
+            plan.Factor(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            scale.Store((float*)(to + 32 * t));
+            if (mins)
+            {
+                min.Store((float*)(to + 32 * t + 32));
+            }
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float MadeOne<TX>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes) where TX : struct, IStepLoad
+    {
+        int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg, cg = plan.Cg, p = plan.P;
+        bool mins = plan.Mins;
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+            plan.Steps(at, gp, out var s0, out var s1, out var s2, out var s3, out var s4, out var s5, out var s6, out var s7);
+            plan.Factor(at, gp, Math.Min(cg, chunks - g * cg) * p, out var scale, out var min);
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            var xs = Vector256.Load(lg);
+            var i = Vector256.Load((int*)(lg + 8));
+            i = StepDot(i, s0, TX.Load(xg));
+            i = StepDot(i, s1, TX.Load(xg + xStep));
+            i = StepDot(i, s2, TX.Load(xg + 2 * xStep));
+            i = StepDot(i, s3, TX.Load(xg + 3 * xStep));
+            if (t == 8)
+            {
+                i = StepDot(i, s4, TX.Load(xg + 4 * xStep));
+                i = StepDot(i, s5, TX.Load(xg + 5 * xStep));
+                i = StepDot(i, s6, TX.Load(xg + 6 * xStep));
+                i = StepDot(i, s7, TX.Load(xg + 7 * xStep));
+            }
+
+            f = Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), scale * xs, f);
+            if (mins)
+            {
+                f = Fma.MultiplyAdd(min, Vector256.Load(lg + 16), f);
+            }
+        }
+
+        return Vector256.Sum(plan.LaneWeights is { } w ? f * w : f);
+    }
+
+    /// <summary>How the float32 lane makes 8 stored values of 2 or 4 bytes each float32 in registers (and one, for a row's tail).</summary>
+    private unsafe interface ISingleRead
+    {
+        Vector256<float> Eight(byte* at);
+
+        float One(byte* at);
+    }
+
+    // A 16-bit float with float32's exponent bits and bias (bfloat16's description): float32's high half, by a shift.
+    private readonly unsafe struct HighHalfRead : ISingleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Eight(byte* at) => Avx2.ShiftLeftLogical(Avx2.ConvertToVector256Int32((ushort*)at), 16).AsSingle();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* at) => BitConverter.Int32BitsToSingle(*(ushort*)at << 16);
+    }
+
+    // Any other 16-bit float by its bits (DescribedPlan.HalfBits).
+    private readonly unsafe struct HalfRead((int SignShift, int Magnitude, int Shift, float Times, int Special) h) : ISingleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Eight(byte* at) => DescribedPlan.HalfBits(Avx2.ConvertToVector256Int32((ushort*)at), h);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* at) => DescribedPlan.HalfBits(Vector256.Create((int)*(ushort*)at), h).ToScalar();
+    }
+
+    // A 16-bit integer (two's complement where signed).
+    private readonly unsafe struct ShortRead(bool signed) : ISingleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Eight(byte* at) =>
+            Avx.ConvertToVector256Single(signed ? Avx2.ConvertToVector256Int32((short*)at) : Avx2.ConvertToVector256Int32((ushort*)at));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* at) => signed ? *(short*)at : *(ushort*)at;
+    }
+
+    // float32 as stored.
+    private readonly unsafe struct SingleRead : ISingleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Eight(byte* at) => Vector256.Load((float*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* at) => *(float*)at;
+    }
+
+    // A read plus the code offset (a description with one; one without takes the read alone).
+    private readonly unsafe struct SingleOffset<TR>(TR read, float offset) : ISingleRead where TR : struct, ISingleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Eight(byte* at) => read.Eight(at) + Vector256.Create(offset);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public float One(byte* at) => read.One(at) + offset;
+    }
+
+    /// <summary>How the float64 lane makes 4 stored values float64 in registers (and one, for a row's tail).</summary>
+    private unsafe interface IDoubleRead
+    {
+        Vector256<double> Four(byte* at);
+
+        double One(byte* at);
+    }
+
+    // float64 as stored.
+    private readonly unsafe struct DoubleRead : IDoubleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<double> Four(byte* at) => Vector256.Load((double*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public double One(byte* at) => *(double*)at;
+    }
+
+    // A 64-bit two's complement integer, rounded once to float64 (LongsToDoubles).
+    private readonly unsafe struct LongRead : IDoubleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<double> Four(byte* at) => LongsToDoubles((long*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public double One(byte* at) => *(long*)at;
+    }
+
+    // A 32-bit two's complement integer, exactly.
+    private readonly unsafe struct IntRead : IDoubleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<double> Four(byte* at) => Avx.ConvertToVector256Double(Vector128.Load((int*)at));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public double One(byte* at) => *(int*)at;
+    }
+
+    // A read plus the code offset.
+    private readonly unsafe struct DoubleOffset<TR>(TR read, double offset) : IDoubleRead where TR : struct, IDoubleRead
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<double> Four(byte* at) => read.Four(at) + Vector256.Create(offset);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public double One(byte* at) => read.One(at) + offset;
+    }
+
+    // The described float64 lane: four rows of x (float64, `stride` apart) by `count` stored values, dispatched on how a value
+    // reads (and whether the description adds a code offset).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedDoubleFour(DescribedPlan plan, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    {
+        switch (plan.Wide)
+        {
+            case WideRead.Long:
+                DoubleFourBy(new LongRead(), 8, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            case WideRead.Int:
+                DoubleFourBy(new IntRead(), 4, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            default:
+                DoubleFourBy(new DoubleRead(), 8, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DoubleFourBy<TR>(TR read, int bytes, double offset, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, IDoubleRead
+    {
+        if (offset == 0)
+        {
+            DoubleFour(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            return;
+        }
+
+        DoubleFour(new DoubleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float DescribedDoubleOne(DescribedPlan plan, byte* row, double* x, int k) => plan.Wide switch
+    {
+        WideRead.Long => (float)DoubleOneBy(new LongRead(), 8, plan.Offset, row, x, k),
+        WideRead.Int => (float)DoubleOneBy(new IntRead(), 4, plan.Offset, row, x, k),
+        _ => (float)DoubleOneBy(new DoubleRead(), 8, plan.Offset, row, x, k),
+    };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe double DoubleOneBy<TR>(TR read, int bytes, double offset, byte* row, double* x, int k) where TR : struct, IDoubleRead =>
+        offset == 0 ? DoubleOne(read, bytes, row, x, k) : DoubleOne(new DoubleOffset<TR>(read, offset), bytes, row, x, k);
+
+    // Four rows of x (float64, `stride` apart: widened once a call) by `count` values of `bytes` bytes each: 8 values a step
+    // made float64 in registers (TR), each multiplied with the four rows' matching values in float64 FMAs; two sums a row,
+    // the last count mod 8 one at a time; each output its float64 sum rounded to float32 once. (x read as float32 and
+    // widened in registers instead measured slower: 171 tokens a second on Qwen3-1.7B's prompts against 177.)
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DoubleFour<TR>(TR read, int bytes, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, IDoubleRead
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector256<double> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        int p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            var w0 = read.Four(row + (nint)p * bytes);
+            var w1 = read.Four(row + (nint)(p + 4) * bytes);
+            double* xp = x + p;
+            a0 = Fma.MultiplyAdd(w0, Vector256.Load(xp), a0);
+            b0 = Fma.MultiplyAdd(w1, Vector256.Load(xp + 4), b0);
+            a1 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r1), a1);
+            b1 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r1 + 4), b1);
+            a2 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r2), a2);
+            b2 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r2 + 4), b2);
+            a3 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r3), a3);
+            b3 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r3 + 4), b3);
+        }
+
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (; p < count; p++)
+        {
+            double w = read.One(row + (nint)p * bytes);
+            t0 = Math.FusedMultiplyAdd(w, x[p], t0);
+            t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = Math.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = (float)(Vector256.Sum(a0 + b0) + t0);
+        y1 = (float)(Vector256.Sum(a1 + b1) + t1);
+        y2 = (float)(Vector256.Sum(a2 + b2) + t2);
+        y3 = (float)(Vector256.Sum(a3 + b3) + t3);
+    }
+
+    // DoubleFour for one row of x, 16 values a step in four sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe double DoubleOne<TR>(TR read, int bytes, byte* row, double* x, int k) where TR : struct, IDoubleRead
+    {
+        Vector256<double> a = default, b = default, c = default, d = default;
+        int p = 0;
+        for (; p + 16 <= k; p += 16)
+        {
+            byte* at = row + (nint)p * bytes;
+            a = Fma.MultiplyAdd(read.Four(at), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd(read.Four(at + 4 * bytes), Vector256.Load(x + p + 4), b);
+            c = Fma.MultiplyAdd(read.Four(at + 8 * bytes), Vector256.Load(x + p + 8), c);
+            d = Fma.MultiplyAdd(read.Four(at + 12 * bytes), Vector256.Load(x + p + 12), d);
+        }
+
+        for (; p + 4 <= k; p += 4)
+        {
+            a = Fma.MultiplyAdd(read.Four(row + (nint)p * bytes), Vector256.Load(x + p), a);
+        }
+
+        double t = 0;
+        for (; p < k; p++)
+        {
+            t = Math.FusedMultiplyAdd(read.One(row + (nint)p * bytes), x[p], t);
+        }
+
+        return Vector256.Sum((a + b) + (c + d)) + t;
+    }
+
+    // The described float32 lane over values of 2 or 4 bytes: four rows of x by `count` values of a stored row, dispatched on
+    // how a value reads (and whether the description adds a code offset).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedSingleFour(DescribedPlan plan, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    {
+        float offset = (float)plan.D.CodeOffset;
+        switch (plan.Wide)
+        {
+            case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
+                SingleFourBy(new HighHalfRead(), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            case WideRead.Half:
+                SingleFourBy(new HalfRead(plan.Half16), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            case WideRead.Short:
+                SingleFourBy(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+            default:
+                SingleFourBy(new SingleRead(), 4, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                break;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleFourBy<TR>(TR read, int bytes, float offset, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, ISingleRead
+    {
+        if (offset == 0f)
+        {
+            SingleFour(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            return;
+        }
+
+        SingleFour(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float DescribedSingleOne(DescribedPlan plan, byte* row, float* x, int k)
+    {
+        float offset = (float)plan.D.CodeOffset;
+        return plan.Wide switch
+        {
+            WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 } => SingleOneBy(new HighHalfRead(), 2, offset, row, x, k),
+            WideRead.Half => SingleOneBy(new HalfRead(plan.Half16), 2, offset, row, x, k),
+            WideRead.Short => SingleOneBy(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, k),
+            _ => SingleOneBy(new SingleRead(), 4, offset, row, x, k),
+        };
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float SingleOneBy<TR>(TR read, int bytes, float offset, byte* row, float* x, int k) where TR : struct, ISingleRead =>
+        offset == 0f ? SingleOne(read, bytes, row, x, k) : SingleOne(new SingleOffset<TR>(read, offset), bytes, row, x, k);
+
+    // Four rows of x (`stride` apart) by `count` values of `bytes` bytes each: 16 values a step made float32 in registers
+    // (TR), each multiplied with the four rows' matching values; two sums a row, the last count mod 16 one at a time.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleFour<TR>(TR read, int bytes, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, ISingleRead
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            var lo = read.Eight(row + (nint)p * bytes);
+            var hi = read.Eight(row + (nint)(p + 8) * bytes);
+            float* xp = x + p;
+            a0 = Fma.MultiplyAdd(lo, Vector256.Load(xp), a0);
+            b0 = Fma.MultiplyAdd(hi, Vector256.Load(xp + 8), b0);
+            a1 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r1), a1);
+            b1 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r1 + 8), b1);
+            a2 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r2), a2);
+            b2 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r2 + 8), b2);
+            a3 = Fma.MultiplyAdd(lo, Vector256.Load(xp + r3), a3);
+            b3 = Fma.MultiplyAdd(hi, Vector256.Load(xp + r3 + 8), b3);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = read.One(row + (nint)p * bytes);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = Vector256.Sum(a0 + b0) + t0;
+        y1 = Vector256.Sum(a1 + b1) + t1;
+        y2 = Vector256.Sum(a2 + b2) + t2;
+        y3 = Vector256.Sum(a3 + b3) + t3;
+    }
+
+    // SingleFour for one row of x, 32 values a step in four sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float SingleOne<TR>(TR read, int bytes, byte* row, float* x, int k) where TR : struct, ISingleRead
+    {
+        Vector256<float> a = default, b = default, c = default, d = default;
+        int p = 0;
+        for (; p + 32 <= k; p += 32)
+        {
+            byte* at = row + (nint)p * bytes;
+            a = Fma.MultiplyAdd(read.Eight(at), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd(read.Eight(at + 8 * bytes), Vector256.Load(x + p + 8), b);
+            c = Fma.MultiplyAdd(read.Eight(at + 16 * bytes), Vector256.Load(x + p + 16), c);
+            d = Fma.MultiplyAdd(read.Eight(at + 24 * bytes), Vector256.Load(x + p + 24), d);
+        }
+
+        for (; p + 8 <= k; p += 8)
+        {
+            a = Fma.MultiplyAdd(read.Eight(row + (nint)p * bytes), Vector256.Load(x + p), a);
+        }
+
+        float t = 0f;
+        for (; p < k; p++)
+        {
+            t = MathF.FusedMultiplyAdd(read.One(row + (nint)p * bytes), x[p], t);
+        }
+
+        return Vector256.Sum((a + b) + (c + d)) + t;
+    }
+
+    // The described float32 lane over codes of up to 8 bits (no integer arithmetic for their numbers): four rows of x (in
+    // the spans' order) by one stored row, each group's scales and minimums read at once (DescribedPlan.Factor), each span's
+    // codes made (DescribedPlan.Raw) and 8 at a time looked up in the table of their numbers, times their chunk's scale less
+    // its minimum, each multiplied with the four rows; the row's last period from `tail`.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedCodesFour(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, float* x, nint stride,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
+        float* table = plan.CodeValues;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+            plan.Factor(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            for (int s = 0; s < spans; s++)
+            {
+                var codes = plan.Raw(at, gp * spans + s);
+                for (int e = 0; e < 4; e++)
+                {
+                    var lane = Vector256.Create((32 * s + 8 * e) / c);
+                    var w = Fma.MultiplyAdd(Avx2.GatherVector256(table, Avx2.ConvertToVector256Int32(EightAt(codes, e)), 4),
+                        Avx2.PermuteVar8x32(scale, lane), Avx2.PermuteVar8x32(min, lane));
+                    float* xp = x + (nint)g * plan.GroupValues + 32 * s + 8 * e;
+                    a0 = Fma.MultiplyAdd(w, Vector256.Load(xp), a0);
+                    a1 = Fma.MultiplyAdd(w, Vector256.Load(xp + stride), a1);
+                    a2 = Fma.MultiplyAdd(w, Vector256.Load(xp + 2 * stride), a2);
+                    a3 = Fma.MultiplyAdd(w, Vector256.Load(xp + 3 * stride), a3);
+                }
+            }
+        }
+
+        y0 = Vector256.Sum(a0);
+        y1 = Vector256.Sum(a1);
+        y2 = Vector256.Sum(a2);
+        y3 = Vector256.Sum(a3);
+    }
+
+    // DescribedCodesFour for one row of x.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float DescribedCodesOne(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, float* x)
+    {
+        int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
+        float* table = plan.CodeValues;
+        Vector256<float> a = default, b = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+            plan.Factor(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            for (int s = 0; s < spans; s++)
+            {
+                var codes = plan.Raw(at, gp * spans + s);
+                float* xp = x + (nint)g * plan.GroupValues + 32 * s;
+                for (int e = 0; e < 4; e += 2)
+                {
+                    var lane = Vector256.Create((32 * s + 8 * e) / c);
+                    var next = Vector256.Create((32 * s + 8 * e + 8) / c);
+                    a = Fma.MultiplyAdd(Fma.MultiplyAdd(Avx2.GatherVector256(table, Avx2.ConvertToVector256Int32(EightAt(codes, e)), 4),
+                        Avx2.PermuteVar8x32(scale, lane), Avx2.PermuteVar8x32(min, lane)), Vector256.Load(xp + 8 * e), a);
+                    b = Fma.MultiplyAdd(Fma.MultiplyAdd(Avx2.GatherVector256(table, Avx2.ConvertToVector256Int32(EightAt(codes, e + 1)), 4),
+                        Avx2.PermuteVar8x32(scale, next), Avx2.PermuteVar8x32(min, next)), Vector256.Load(xp + 8 * e + 8), b);
+                }
+            }
+        }
+
+        return Vector256.Sum(a + b);
+    }
+
+    // Bytes 8e..8e + 7 of a span's codes, in the low 8 bytes.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static Vector128<byte> EightAt(Vector256<byte> codes, int e) => e switch
+    {
+        0 => codes.GetLower(),
+        1 => Sse2.ShiftRightLogical128BitLane(codes.GetLower(), 8),
+        2 => codes.GetUpper(),
+        _ => Sse2.ShiftRightLogical128BitLane(codes.GetUpper(), 8),
+    };
+
+    /// <summary>
+    /// A 16-bit float's reading by its bits (DescribedPlan.HalfOf) as vectors made once, a factor (a power of two: the
+    /// integer lane's unit) folded in: the magnitude masked and shifted to float32's place, times the power of two that
+    /// rebiases it and the factor, its specials' exponent set (none: never), its sign moved to bit 31 (none: masked off).
+    /// </summary>
+    private readonly struct HalfVectors((int SignShift, int Magnitude, int Shift, float Times, int Special) h, float factor)
+    {
+        private readonly Vector256<int> magnitude = Vector256.Create(h.Magnitude), special = Vector256.Create(h.Special == 0 ? int.MaxValue : h.Special),
+            sign = Vector256.Create(h.SignShift == 0 ? 0 : 0x8000);
+        private readonly Vector256<float> times = Vector256.Create(h.Times * factor);
+        private readonly int shift = h.Shift;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<float> Of(Vector256<int> bits)
+        {
+            var m = bits & magnitude;
+            var value = (Vector256.ShiftLeft(m, shift).AsSingle() * times).AsInt32();
+            value |= Vector256.GreaterThanOrEqual(m, special) & Vector256.Create(0x7F800000);
+            return (value | Vector256.ShiftLeft(bits & sign, 16)).AsSingle();
+        }
+    }
+
+    // 8 chunks' 32 bytes (a chunk a vector) as the integer lane's 8 steps: step s holds dword s of each chunk, in lane order.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static void Transpose8(Vector256<byte> r0, Vector256<byte> r1, Vector256<byte> r2, Vector256<byte> r3, Vector256<byte> r4, Vector256<byte> r5,
+        Vector256<byte> r6, Vector256<byte> r7, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
+        out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7)
+    {
+        var t0 = Avx2.UnpackLow(r0.AsUInt32(), r1.AsUInt32());
+        var t1 = Avx2.UnpackHigh(r0.AsUInt32(), r1.AsUInt32());
+        var t2 = Avx2.UnpackLow(r2.AsUInt32(), r3.AsUInt32());
+        var t3 = Avx2.UnpackHigh(r2.AsUInt32(), r3.AsUInt32());
+        var t4 = Avx2.UnpackLow(r4.AsUInt32(), r5.AsUInt32());
+        var t5 = Avx2.UnpackHigh(r4.AsUInt32(), r5.AsUInt32());
+        var t6 = Avx2.UnpackLow(r6.AsUInt32(), r7.AsUInt32());
+        var t7 = Avx2.UnpackHigh(r6.AsUInt32(), r7.AsUInt32());
+        var u0 = Avx2.UnpackLow(t0.AsUInt64(), t2.AsUInt64());
+        var u1 = Avx2.UnpackHigh(t0.AsUInt64(), t2.AsUInt64());
+        var u2 = Avx2.UnpackLow(t1.AsUInt64(), t3.AsUInt64());
+        var u3 = Avx2.UnpackHigh(t1.AsUInt64(), t3.AsUInt64());
+        var u4 = Avx2.UnpackLow(t4.AsUInt64(), t6.AsUInt64());
+        var u5 = Avx2.UnpackHigh(t4.AsUInt64(), t6.AsUInt64());
+        var u6 = Avx2.UnpackLow(t5.AsUInt64(), t7.AsUInt64());
+        var u7 = Avx2.UnpackHigh(t5.AsUInt64(), t7.AsUInt64());
+        s0 = Avx2.Permute2x128(u0, u4, 0x20).AsByte();
+        s4 = Avx2.Permute2x128(u0, u4, 0x31).AsByte();
+        s1 = Avx2.Permute2x128(u1, u5, 0x20).AsByte();
+        s5 = Avx2.Permute2x128(u1, u5, 0x31).AsByte();
+        s2 = Avx2.Permute2x128(u2, u6, 0x20).AsByte();
+        s6 = Avx2.Permute2x128(u2, u6, 0x31).AsByte();
+        s3 = Avx2.Permute2x128(u3, u7, 0x20).AsByte();
+        s7 = Avx2.Permute2x128(u3, u7, 0x31).AsByte();
+    }
+
+    // 4 spans of two 16-value chunks each (chunk 2q in span q's low half, 2q + 1 in its high half) as the integer lane's 4
+    // steps: step s holds dword s of each of the 8 chunks, in lane order.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static void Transpose4(Vector256<byte> r0, Vector256<byte> r1, Vector256<byte> r2, Vector256<byte> r3,
+        out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3)
+    {
+        var pairs = Vector256.Create(0, 4, 1, 5, 2, 6, 3, 7);
+        var w0 = Avx2.PermuteVar8x32(r0.AsInt32(), pairs).AsUInt64();
+        var w1 = Avx2.PermuteVar8x32(r1.AsInt32(), pairs).AsUInt64();
+        var w2 = Avx2.PermuteVar8x32(r2.AsInt32(), pairs).AsUInt64();
+        var w3 = Avx2.PermuteVar8x32(r3.AsInt32(), pairs).AsUInt64();
+        var a = Avx2.UnpackLow(w0, w1);
+        var b = Avx2.UnpackHigh(w0, w1);
+        var c = Avx2.UnpackLow(w2, w3);
+        var d = Avx2.UnpackHigh(w2, w3);
+        s0 = Avx2.Permute2x128(a, c, 0x20).AsByte();
+        s2 = Avx2.Permute2x128(a, c, 0x31).AsByte();
+        s1 = Avx2.Permute2x128(b, d, 0x20).AsByte();
+        s3 = Avx2.Permute2x128(b, d, 0x31).AsByte();
     }
 }

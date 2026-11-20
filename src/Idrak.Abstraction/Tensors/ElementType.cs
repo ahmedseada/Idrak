@@ -498,6 +498,286 @@ public sealed record SuperBlock(int Values, int Bytes, IReadOnlyList<CodePlane> 
     }
 }
 
+/// <summary>What a field of bits is as a number (<see cref="NumberType"/>).</summary>
+public enum NumberKind
+{
+    /// <summary>A whole number: its bits, two's complement when signed.</summary>
+    Integer,
+
+    /// <summary>A float: a sign bit when signed (the highest), then the exponent's bits, then the mantissa's.</summary>
+    Float,
+
+    /// <summary>A code standing for its entry of a table.</summary>
+    Table,
+}
+
+/// <summary>Which codes of a float are not finite values (<see cref="NumberType"/>).</summary>
+public enum FloatSpecials
+{
+    /// <summary>IEEE 754's: the largest exponent is an infinity (mantissa 0) or a NaN (any other mantissa).</summary>
+    Ieee,
+
+    /// <summary>Only the code with every exponent and mantissa bit set is a NaN; no infinity (fp8 E4M3fn, E8M0).</summary>
+    AllOnesNaN,
+
+    /// <summary>None: every code is a finite value (fp4 E2M1).</summary>
+    None,
+}
+
+/// <summary>
+/// How a field of <paramref name="Bits"/> bits reads as a number: a whole number (two's complement when
+/// <paramref name="Signed"/>); a float of a sign bit (when <paramref name="Signed"/>, the highest), <paramref name="Exponent"/>
+/// exponent bits biased by <paramref name="ExponentBias"/> and <paramref name="Mantissa"/> mantissa bits, the exponent 0 a
+/// subnormal (or, without <paramref name="Subnormals"/>, the implicit 1 kept: E8M0's 2^-127), its codes past the finite
+/// ones by <paramref name="Specials"/>; or a code standing for its entry of <paramref name="Table"/> (2^Bits entries).
+/// A value's code and a block's scales are each one of these (<see cref="TypeDescription"/>).
+/// </summary>
+/// <param name="Bits">Bits the field takes (1 to 64).</param>
+/// <param name="Kind">Integer, float or a table's entry.</param>
+/// <param name="Signed">Whether it has a sign (two's complement for an integer, a sign bit for a float).</param>
+/// <param name="Exponent">A float's exponent bits.</param>
+/// <param name="Mantissa">A float's mantissa bits.</param>
+/// <param name="ExponentBias">Subtracted from a float's exponent.</param>
+/// <param name="Subnormals">Whether a float's exponent 0 is a subnormal (else 2^(−bias) · (1 + mantissa)).</param>
+/// <param name="Specials">A float's codes that are not finite.</param>
+/// <param name="Table">Each code's value (2^Bits entries), for a table's codes.</param>
+public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true,
+    FloatSpecials Specials = FloatSpecials.Ieee, IReadOnlyList<double>? Table = null)
+{
+    /// <summary>A whole number of <paramref name="bits"/> bits (two's complement when <paramref name="signed"/>).</summary>
+    public static NumberType Integer(int bits, bool signed) => new(bits, NumberKind.Integer, signed);
+
+    /// <summary>A float of a sign bit (when <paramref name="signed"/>), <paramref name="exponent"/> and <paramref name="mantissa"/> bits, the bias 2^(exponent − 1) − 1 unless given.</summary>
+    public static NumberType Floating(int exponent, int mantissa, bool signed = true, int? bias = null, bool subnormals = true, FloatSpecials specials = FloatSpecials.Ieee) =>
+        new((signed ? 1 : 0) + exponent + mantissa, NumberKind.Float, signed, exponent, mantissa, bias ?? (1 << (exponent - 1)) - 1, subnormals, specials);
+
+    /// <summary>Codes of <paramref name="bits"/> bits, each standing for its entry of <paramref name="table"/>.</summary>
+    public static NumberType Entries(int bits, IReadOnlyList<double> table) => new(bits, NumberKind.Table, false, Table: table);
+
+    /// <summary>Whether the description holds together: the bits add up, a table has an entry a code.</summary>
+    public bool Valid => Bits is >= 1 and <= 64 && Kind switch
+    {
+        NumberKind.Integer => true,
+        NumberKind.Float => Exponent >= 1 && Mantissa >= 0 && (Signed ? 1 : 0) + Exponent + Mantissa == Bits && Exponent <= 15,
+        _ => Bits <= 16 && Table is { } t && t.Count == 1 << Bits,
+    };
+
+    /// <summary>The number the field's <paramref name="bits"/> (its lowest Bits bits) stand for.</summary>
+    public double Value(ulong bits)
+    {
+        bits = Bits == 64 ? bits : bits & ((1UL << Bits) - 1);
+        switch (Kind)
+        {
+            case NumberKind.Integer:
+                return Signed && Bits < 64 ? (long)(bits << (64 - Bits)) >> (64 - Bits) : Signed ? (long)bits : (double)bits;
+            case NumberKind.Table:
+                return Table![(int)bits];
+        }
+
+        bool negative = Signed && (bits >> (Bits - 1) & 1) != 0;
+        ulong magnitude = Signed ? bits & ((1UL << (Bits - 1)) - 1) : bits;
+        long e = (long)(magnitude >> Mantissa), top = (1L << Exponent) - 1;
+        ulong m = magnitude & ((1UL << Mantissa) - 1);
+        double value;
+        if (Specials == FloatSpecials.Ieee && e == top)
+        {
+            value = m == 0 ? double.PositiveInfinity : double.NaN;
+        }
+        else if (Specials == FloatSpecials.AllOnesNaN && magnitude == (Signed ? (1UL << (Bits - 1)) - 1 : Bits == 64 ? ulong.MaxValue : (1UL << Bits) - 1))
+        {
+            value = double.NaN;
+        }
+        else if (e == 0 && Subnormals)
+        {
+            value = Math.ScaleB(m, 1 - ExponentBias - Mantissa);
+        }
+        else
+        {
+            value = Math.ScaleB((double)((1UL << Mantissa) | m), (int)e - ExponentBias - Mantissa);
+        }
+
+        return negative ? -value : value;
+    }
+}
+
+/// <summary>
+/// A block's scale or minimum (<see cref="TypeDescription"/>): a number of <paramref name="Type"/> for each
+/// <paramref name="Values"/> values of the block; scale i at bits [8 · <paramref name="Offset"/> + i · Type.Bits, + Type.Bits)
+/// of the block (little-endian), or, with <paramref name="Pieces"/>, assembled from Pieces[i] (its low bits first); plus
+/// <paramref name="Bias"/>.
+/// </summary>
+/// <param name="Type">The number each is.</param>
+/// <param name="Values">Values one covers (a block's, or a sub-block's).</param>
+/// <param name="Offset">The first one's first byte in the block.</param>
+/// <param name="Pieces">Each one's bits as pieces, or null: one after another from <paramref name="Offset"/>.</param>
+/// <param name="Bias">Added to each one's number.</param>
+public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOnlyList<IReadOnlyList<ScalePiece>>? Pieces = null, double Bias = 0)
+{
+    /// <summary>The bits of scale <paramref name="index"/> of <paramref name="block"/>.</summary>
+    public ulong Bits(ReadOnlySpan<byte> block, int index)
+    {
+        if (Pieces is { } pieces)
+        {
+            ulong value = 0;
+            int at = 0;
+            var own = pieces[index];
+            for (int i = 0; i < own.Count; i++)
+            {
+                var piece = own[i];
+                value |= (ulong)(block[piece.Offset] >> piece.Shift & ((1 << piece.Bits) - 1)) << at;
+                at += piece.Bits;
+            }
+
+            return value;
+        }
+
+        return TypeDescription.Field(block, 8L * Offset + (long)index * Type.Bits, Type.Bits);
+    }
+
+    /// <summary>The number of scale <paramref name="index"/> of <paramref name="block"/>, its bias added.</summary>
+    public double Value(ReadOnlySpan<byte> block, int index) => Type.Value(Bits(block, index)) + Bias;
+}
+
+/// <summary>
+/// How a type's values read from their bits, whatever the type: blocks of <paramref name="Values"/> values in
+/// <paramref name="Bytes"/> bytes; value v's code is the fields of <paramref name="Planes"/> at its place in the block (the
+/// first plane the lowest bits), read as a number of <paramref name="Code"/>'s kind; value v = (that number +
+/// <paramref name="CodeOffset"/>) · the product of the <paramref name="Scales"/> covering v, less the product of the
+/// <paramref name="Mins"/> covering v (added where <paramref name="MinsAdded"/>). A per-element type is a block of one value
+/// (or of the values a byte holds). A kernel that reads this alone multiplies any type described so, with no code of its
+/// own (the CPU's described lane).
+/// </summary>
+/// <param name="Values">Values a block holds.</param>
+/// <param name="Bytes">Bytes a block takes.</param>
+/// <param name="Code">What a value's code is as a number: its bits, integer or float with its bits, or a table.</param>
+/// <param name="Planes">Where a code's bits lie in a block, the lowest first (one plane for most types).</param>
+/// <param name="CodeOffset">Added to a code's number before the scales.</param>
+/// <param name="Scales">Multiplied with a value's number, or null: none.</param>
+/// <param name="Mins">Their product taken from (or added to) a value, or null: none.</param>
+/// <param name="MinsAdded">Whether the minimums' product is added rather than subtracted.</param>
+public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
+    IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false)
+{
+    /// <summary>Whether the description holds together: the planes' bits make the code's, each plane's fields within a block, the scales cover whole values.</summary>
+    public bool Valid => Values >= 1 && Bytes >= 1 && Code.Valid && Planes.Count >= 1 && Planes.Sum(p => p.Bits) == Code.Bits
+        && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
+            && Enumerable.Range(0, Values).All(v => p.Place(v).Byte + Math.Max(1, p.Bits / 8) <= Bytes))
+        && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && Values % s.Values == 0
+            && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes));
+
+    /// <summary>Bits [<paramref name="bit"/>, + <paramref name="bits"/>) of <paramref name="bytes"/>, little-endian (at most 64).</summary>
+    public static ulong Field(ReadOnlySpan<byte> bytes, long bit, int bits)
+    {
+        ulong value = 0;
+        for (int i = 0; i < bits; i++)
+        {
+            long at = bit + i;
+            value |= (ulong)(bytes[(int)(at >> 3)] >> (int)(at & 7) & 1) << i;
+        }
+
+        return value;
+    }
+
+    /// <summary>Value <paramref name="v"/>'s code bits in <paramref name="block"/>, its planes' fields joined (the first the lowest bits).</summary>
+    public ulong CodeBits(ReadOnlySpan<byte> block, int v)
+    {
+        ulong code = 0;
+        int low = 0;
+        for (int p = 0; p < Planes.Count; p++)
+        {
+            var plane = Planes[p];
+            var (at, shift) = plane.Place(v);
+            code |= Field(block, 8L * at + shift, plane.Bits) << low;
+            low += plane.Bits;
+        }
+
+        return code;
+    }
+
+    /// <summary>Value <paramref name="v"/> of <paramref name="block"/>, by the description alone (in float64; the reference a kernel's values are checked against).</summary>
+    public double ValueOf(ReadOnlySpan<byte> block, int v)
+    {
+        double value = Code.Value(CodeBits(block, v)) + CodeOffset;
+        foreach (var scale in Scales ?? [])
+        {
+            value *= scale.Value(block, v % Values / scale.Values);
+        }
+
+        if (Mins is { Count: > 0 } mins)
+        {
+            double min = 1;
+            foreach (var m in mins)
+            {
+                min *= m.Value(block, v % Values / m.Values);
+            }
+
+            value = MinsAdded ? value + min : value - min;
+        }
+
+        return value;
+    }
+
+    /// <summary>The values of whole blocks of <paramref name="source"/> into <paramref name="destination"/>, by the description alone.</summary>
+    public void Decode(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = (float)ValueOf(source.Slice(i / Values * Bytes, Bytes), i % Values);
+        }
+    }
+
+    /// <summary>
+    /// The description older entries imply (<see cref="ElementType.Float"/>, the integer bits, <see cref="ElementType.Scaled"/>,
+    /// <see cref="ElementType.Super"/>), or null where they say nothing a value reads from (a vector codebook, a truth value).
+    /// </summary>
+    internal static TypeDescription? Of(ElementType type)
+    {
+        if (type.Super is { } s)
+        {
+            int subBits = s.SubScales[0].Sum(p => p.Bits);
+            var half = NumberType.Floating(s.Scale.Exponent, s.Scale.Mantissa);
+            var scales = new List<BlockScale> { new(half, s.Values, s.ScaleOffset), new(NumberType.Integer(subBits, s.SubScalesSigned), s.SubValues, 0, s.SubScales, s.SubScaleBias) };
+            var mins = s.MinOffset >= 0 && s.SubMins is { } subMins
+                ? new List<BlockScale> { new(half, s.Values, s.MinOffset), new(NumberType.Integer(subMins[0].Sum(p => p.Bits), false), s.SubValues, 0, subMins) }
+                : null;
+            return Checked(new TypeDescription(s.Values, s.Bytes, NumberType.Integer(s.Planes.Sum(p => p.Bits), false), s.Planes, s.CodeBias, scales, mins));
+        }
+
+        if (type.Scaled is { } b)
+        {
+            var code = b.CodeType is { } codeType ? codeType.Description?.Code
+                : b.CodeTable is { } table ? NumberType.Entries(b.CodeBits, [.. table.Select(e => (double)e)])
+                : NumberType.Integer(b.CodeBits, b.SignedCodes);
+            var scale = b.ScaleType is { } scaleType ? scaleType.Description?.Code : NumberType.Floating(b.Scale.Exponent, b.Scale.Mantissa);
+            if (code is null || scale is null || b.CodeBits is not (1 or 2 or 4 or 8) || b.NibblesSplit && b.CodeBits != 4)
+            {
+                return null;
+            }
+
+            var plane = b.NibblesSplit ? new CodePlane(b.CodeOffset, 4, b.Values) : new CodePlane(b.CodeOffset, b.CodeBits, 8 / b.CodeBits);
+            return Checked(new TypeDescription(b.Values, b.Bytes, code with { Bits = b.CodeBits }, [plane], b.CodeBias, [new BlockScale(scale, b.Values, b.ScaleOffset)]));
+        }
+
+        if (type.BlockSize != 1 || type.Scales is not null || type.Grid is not null)
+        {
+            return null;
+        }
+
+        var number = type.Float is { } f && f.Bits == type.BlockBits ? NumberType.Floating(f.Exponent, f.Mantissa)
+            : type.IsInteger ? NumberType.Integer(type.BlockBits, type.IsSigned) : null;
+        if (number is null || type.BlockBits is not (1 or 2 or 4) && type.BlockBits % 8 != 0)
+        {
+            return null;
+        }
+
+        return type.BlockBits >= 8
+            ? Checked(new TypeDescription(1, type.BlockBits / 8, number, [new CodePlane(0, type.BlockBits, 1)]))
+            : Checked(new TypeDescription(8 / type.BlockBits, 1, number, [new CodePlane(0, type.BlockBits, 8 / type.BlockBits)]));
+
+        static TypeDescription? Checked(TypeDescription d) => d.Valid ? d : null;
+    }
+}
+
 /// <summary>
 /// An element type (plan 37, T0): how a tensor's values are stored, as data a registry holds (<see cref="ElementTypes"/>),
 /// never a C# type parameter. A per-element type (float32, bfloat16, int32, int4, ...) has a block of one value; a block
@@ -540,6 +820,7 @@ public sealed class ElementType : IKind
     {
         Name = "float8_e4m3", Summary = "8-bit float E4M3fn: 4 exponent bits, 3 mantissa bits, no infinity, ±448 at most (an overflow gives NaN)", BlockBits = 8,
         IsFloat = true, IsSigned = true, Kernels = [],
+        Description = new TypeDescription(1, 1, NumberType.Floating(4, 3, specials: FloatSpecials.AllOnesNaN), [new CodePlane(0, 8, 1)]),
         ToFloat32 = ElementConversions.E4M3ToFloat32, FromFloat32 = ElementConversions.E4M3FromFloat32,
     };
 
@@ -559,6 +840,7 @@ public sealed class ElementType : IKind
     {
         Name = "int64", Summary = "64-bit signed integer: two's complement, little-endian (ids and indices; as weights, codes of its full range with one float32 scale an output row)",
         BlockBits = 64, IsSigned = true, IsInteger = true, Kernels = [],
+        Description = new TypeDescription(1, 8, NumberType.Integer(64, signed: true), [new CodePlane(0, 64, 1)]),
         ToFloat32 = ElementConversions.Int64ToFloat32, FromFloat32 = ElementConversions.Int64FromFloat32,
     };
 
@@ -603,6 +885,8 @@ public sealed class ElementType : IKind
         BlockSize = 32, BlockBits = 80, IsSigned = true, Kernels = [],
         Scales = new BlockScales("float16", 1, false, "one scale d, then 32 2-bit codes, four a byte"),
         Scaled = new ScaledBlock(32, 10, 2, SignedCodes: true, CodeBias: 0, new FloatBits(5, 10), ScaleOffset: 0, CodeOffset: 2),
+        Description = new TypeDescription(32, 10, NumberType.Integer(2, signed: true), [new CodePlane(2, 2, 4)],
+            Scales: [new BlockScale(NumberType.Floating(5, 10), 32, 0)]),
         ToFloat32 = ElementConversions.Int2ToFloat32, FromFloat32 = ElementConversions.Int2FromFloat32,
     };
 
@@ -635,6 +919,7 @@ public sealed class ElementType : IKind
     {
         Name = "float64", Summary = "64-bit IEEE 754 float (binary64): 1 sign, 11 exponent and 52 mantissa bits, little-endian (as weights, each value as it is, no scales)",
         BlockBits = 64, IsFloat = true, IsSigned = true, Kernels = [], Float = new FloatBits(11, 52),
+        Description = new TypeDescription(1, 8, NumberType.Floating(11, 52), [new CodePlane(0, 64, 1)]),
         ToFloat32 = ElementConversions.Float64ToFloat32, FromFloat32 = ElementConversions.Float64FromFloat32,
     };
 
@@ -667,6 +952,7 @@ public sealed class ElementType : IKind
     {
         Name = "float4_e2m1", Summary = "4-bit float E2M1 (OCP): 1 sign, 2 exponent bits (bias 1), 1 mantissa bit: ±0, 0.5, 1, 1.5, 2, 3, 4, 6, no infinity or NaN; two a byte, the first in the low half",
         BlockBits = 4, IsFloat = true, IsSigned = true, Kernels = [],
+        Description = new TypeDescription(2, 1, NumberType.Floating(2, 1, bias: 1, specials: FloatSpecials.None), [new CodePlane(0, 4, 2)]),
         ToFloat32 = ElementConversions.E2M1ToFloat32, FromFloat32 = ElementConversions.E2M1FromFloat32,
     };
 
@@ -678,6 +964,7 @@ public sealed class ElementType : IKind
     {
         Name = "float8_e8m0", Summary = "8-bit power of two E8M0 (OCP's microscaling scale): 8 exponent bits biased by 127, no sign, no mantissa: 2^(e - 127); 0xFF is NaN",
         BlockBits = 8, IsFloat = true, Kernels = [],
+        Description = new TypeDescription(1, 1, NumberType.Floating(8, 0, signed: false, bias: 127, subnormals: false, specials: FloatSpecials.AllOnesNaN), [new CodePlane(0, 8, 1)]),
         ToFloat32 = ElementConversions.E8M0ToFloat32, FromFloat32 = ElementConversions.E8M0FromFloat32,
     };
 
@@ -693,6 +980,7 @@ public sealed class ElementType : IKind
         Scales = new BlockScales("float8_e8m0", 1, false, "one shared power of two (E8M0), then 32 fp4 (E2M1) values"),
         Scaled = new ScaledBlock(32, 17, 4, SignedCodes: false, CodeBias: 0, new FloatBits(8, 0), ScaleOffset: 0, CodeOffset: 1, NibblesSplit: true,
             CodeType: Float4E2M1, ScaleType: Float8E8M0),
+        Description = new TypeDescription(32, 17, Float4E2M1.Description!.Code, [new CodePlane(1, 4, 32)], Scales: [new BlockScale(Float8E8M0.Description!.Code, 32, 0)]),
         ToFloat32 = ElementConversions.MxFp4ToFloat32, FromFloat32 = ElementConversions.MxFp4FromFloat32,
     };
 
@@ -773,6 +1061,34 @@ public sealed class ElementType : IKind
     /// to widen it without naming the format.
     /// </summary>
     public GridBlock? Grid { get; init; }
+
+    /// <summary>
+    /// How the type's values read from their bits (<see cref="TypeDescription"/>): what the CPU's described lane reads to
+    /// multiply the type where it is stored, with no code of the type's own. A type that gives none has the one its older
+    /// entries imply (<see cref="Float"/>, the integer bits, <see cref="Scaled"/>, <see cref="Super"/>), or null where they
+    /// say nothing a value reads from (a vector codebook, a truth value).
+    /// </summary>
+    public TypeDescription? Description
+    {
+        get
+        {
+            if (!_described)
+            {
+                field ??= TypeDescription.Of(this);
+                _described = true;
+            }
+
+            return field;
+        }
+
+        init
+        {
+            field = value is null || value.Valid ? value : throw new ArgumentException($"The description of {Name} does not hold together: {value}.", nameof(Description));
+            _described = true;
+        }
+    }
+
+    private bool _described;
 
     /// <summary>
     /// The operations that read or write the type natively, by name (<c>Operation.Name</c>; "*" for every one): any other

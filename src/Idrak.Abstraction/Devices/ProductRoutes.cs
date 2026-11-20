@@ -25,6 +25,23 @@ public enum ProductRoute
 }
 
 /// <summary>
+/// The lanes a product of weights read where they are stored may take under <see cref="ProductRoute.Measured"/>
+/// (<see cref="ProductRoutes.Lanes"/>): the described lane (one lane that reads any type from its description,
+/// <see cref="ElementType.Description"/>), the kernels written for a type, or both, the faster at each shape measured once.
+/// </summary>
+public enum RouteLanes
+{
+    /// <summary>The described lane and the written kernels as candidates, the faster at each shape measured once.</summary>
+    All,
+
+    /// <summary>The described lane alone (a type it does not read takes the written kernels).</summary>
+    Described,
+
+    /// <summary>The written kernels alone, the described lane not a candidate.</summary>
+    Written,
+}
+
+/// <summary>
 /// The route products of typed weights take (<see cref="ProductRoute"/>): <see cref="EnvironmentVariable"/> chooses it for
 /// the process (read once, before the first product), <see cref="Current"/> sets it in code. Under
 /// <see cref="ProductRoute.Measured"/> each device records what it chose for each shape (<see cref="Choices"/>), so a
@@ -64,6 +81,39 @@ public static class ProductRoutes
         "generic" => ProductRoute.Generic,
         "measured" => ProductRoute.Measured,
         _ => throw new InvalidOperationException($"{EnvironmentVariable} is '{text}': name, generic or measured."),
+    };
+
+    /// <summary>The variable that chooses the lanes under the measured route: "all" (the default), "described" or "written".</summary>
+    public const string LanesVariable = "IDRAK_ROUTE_LANES";
+
+    private static int s_lanes = -1;
+
+    /// <summary>The lanes products may take under <see cref="ProductRoute.Measured"/>: <see cref="LanesVariable"/> until set here.</summary>
+    /// <exception cref="InvalidOperationException">The variable holds none of the choices' names.</exception>
+    public static RouteLanes Lanes
+    {
+        get
+        {
+            int lanes = Volatile.Read(ref s_lanes);
+            if (lanes < 0)
+            {
+                lanes = (int)ParseLanes(Environment.GetEnvironmentVariable(LanesVariable));
+                Volatile.Write(ref s_lanes, lanes);
+            }
+
+            return (RouteLanes)lanes;
+        }
+        set => Volatile.Write(ref s_lanes, (int)value);
+    }
+
+    /// <summary>The lanes <paramref name="text"/> names: "all" (or nothing), "described" or "written", ignoring case.</summary>
+    /// <exception cref="InvalidOperationException">It names none of them.</exception>
+    public static RouteLanes ParseLanes(string? text) => text?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "all" => RouteLanes.All,
+        "described" => RouteLanes.Described,
+        "written" => RouteLanes.Written,
+        _ => throw new InvalidOperationException($"{LanesVariable} is '{text}': all, described or written."),
     };
 
     /// <summary>What each device chose under <see cref="ProductRoute.Measured"/>: "device: product" to the kernel's lane.</summary>

@@ -231,11 +231,9 @@ internal sealed partial class CpuBackend
     {
         public string Name => "bfloat16 in registers";
 
-        public int First => TiledLaneId;
+        public int Count => 2;
 
-        public int Second => StreamingLaneId;
-
-        public bool BothRun => true;
+        public int Candidate(int index) => index == 0 ? TiledLaneId : StreamingLaneId;
 
         public int Unmeasured => TiledLaneId;
 

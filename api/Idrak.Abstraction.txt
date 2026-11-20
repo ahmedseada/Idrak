@@ -44,6 +44,16 @@ public readonly struct Idrak.Abstraction.Autograd.NoGradScope : System.IDisposab
 public static class Idrak.Abstraction.BackgroundStream
   public static System.Collections.Generic.IAsyncEnumerable<T> Run<T>(System.Func<System.Threading.CancellationToken, System.Collections.Generic.IEnumerable<T>> source, System.Threading.CancellationToken cancellationToken)
 
+public sealed record Idrak.Abstraction.BlockScale : System.IEquatable<Idrak.Abstraction.BlockScale>
+  public BlockScale(Idrak.Abstraction.NumberType Type, int Values, int Offset, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ScalePiece>>? Pieces = null, double Bias = 0)
+  public Idrak.Abstraction.NumberType Type { get; init; }
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ScalePiece>>? Pieces { get; init; }
+  public double Bias { get; init; }
+  public double Value(System.ReadOnlySpan<byte> block, int index)
+  public int Offset { get; init; }
+  public int Values { get; init; }
+  public ulong Bits(System.ReadOnlySpan<byte> block, int index)
+
 public sealed record Idrak.Abstraction.BlockScales : System.IEquatable<Idrak.Abstraction.BlockScales>
   public BlockScales(string Type, int PerBlock, bool ZeroPoints, string? Layout = null)
   public bool ZeroPoints { get; init; }
@@ -4015,11 +4025,19 @@ public enum Idrak.Abstraction.Devices.ProductRoute : int
 
 public static class Idrak.Abstraction.Devices.ProductRoutes
   public const string EnvironmentVariable = "IDRAK_ROUTES"
+  public const string LanesVariable = "IDRAK_ROUTE_LANES"
   public static Idrak.Abstraction.Devices.ProductRoute Current { get; set; }
   public static Idrak.Abstraction.Devices.ProductRoute Parse(string? text)
+  public static Idrak.Abstraction.Devices.RouteLanes Lanes { get; set; }
+  public static Idrak.Abstraction.Devices.RouteLanes ParseLanes(string? text)
   public static System.Collections.Generic.IReadOnlyDictionary<string, string> Choices { get; }
   public static void Chose(string device, string product, string lane)
   public static void ForgetChoices()
+
+public enum Idrak.Abstraction.Devices.RouteLanes : int
+  All = 0
+  Described = 1
+  Written = 2
 
 public sealed record Idrak.Abstraction.Devices.SeparateBackendOptions : System.IEquatable<Idrak.Abstraction.Devices.SeparateBackendOptions>
   public SeparateBackendOptions(string Name, long? MemoryLimit, bool? Offload = null)
@@ -4975,6 +4993,7 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
   public Idrak.Abstraction.GridBlock? Grid { get; init; }
   public Idrak.Abstraction.ScaledBlock? Scaled { get; init; }
   public Idrak.Abstraction.SuperBlock? Super { get; init; }
+  public Idrak.Abstraction.TypeDescription? Description { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Kernels { get; init; }
   public System.Int128 MaxValue { get; }
   public System.Int128 MinValue { get; }
@@ -5078,6 +5097,11 @@ public readonly record struct Idrak.Abstraction.FloatBits : System.IEquatable<Id
   public int Bits { get; }
   public int Exponent { get; init; }
   public int Mantissa { get; init; }
+
+public enum Idrak.Abstraction.FloatSpecials : int
+  AllOnesNaN = 1
+  Ieee = 0
+  None = 2
 
 public static class Idrak.Abstraction.Formats.CheckpointFormats
   public static Idrak.Abstraction.Formats.ICheckpointFormat For(string path)
@@ -7139,6 +7163,28 @@ public sealed class Idrak.Abstraction.NotRegisteredException : System.NotSupport
   public string Name { get; }
   public string Registry { get; }
 
+public enum Idrak.Abstraction.NumberKind : int
+  Float = 1
+  Integer = 0
+  Table = 2
+
+public sealed record Idrak.Abstraction.NumberType : System.IEquatable<Idrak.Abstraction.NumberType>
+  public Idrak.Abstraction.FloatSpecials Specials { get; init; }
+  public Idrak.Abstraction.NumberKind Kind { get; init; }
+  public NumberType(int Bits, Idrak.Abstraction.NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true, Idrak.Abstraction.FloatSpecials Specials = (Idrak.Abstraction.FloatSpecials)0, System.Collections.Generic.IReadOnlyList<double>? Table = null)
+  public System.Collections.Generic.IReadOnlyList<double>? Table { get; init; }
+  public bool Signed { get; init; }
+  public bool Subnormals { get; init; }
+  public bool Valid { get; }
+  public double Value(ulong bits)
+  public int Bits { get; init; }
+  public int Exponent { get; init; }
+  public int ExponentBias { get; init; }
+  public int Mantissa { get; init; }
+  public static Idrak.Abstraction.NumberType Entries(int bits, System.Collections.Generic.IReadOnlyList<double> table)
+  public static Idrak.Abstraction.NumberType Floating(int exponent, int mantissa, bool signed = true, int? bias = null, bool subnormals = true, Idrak.Abstraction.FloatSpecials specials = (Idrak.Abstraction.FloatSpecials)0)
+  public static Idrak.Abstraction.NumberType Integer(int bits, bool signed)
+
 public readonly record struct Idrak.Abstraction.Operations.KernelChoice : System.IEquatable<Idrak.Abstraction.Operations.KernelChoice>
   public Idrak.Abstraction.Operations.KernelSource Source { get; init; }
   public Idrak.Abstraction.Operations.Operation Operation { get; init; }
@@ -9101,6 +9147,22 @@ public sealed class Idrak.Abstraction.Training.Sgd : Idrak.Abstraction.Training.
 
 public sealed class Idrak.Abstraction.Training.StepDecay : Idrak.Abstraction.Training.LearningRateScheduler
   public StepDecay(Idrak.Abstraction.Training.IOptimizer optimizer, int stepSize, float gamma = 0.1f)
+
+public sealed record Idrak.Abstraction.TypeDescription : System.IEquatable<Idrak.Abstraction.TypeDescription>
+  public Idrak.Abstraction.NumberType Code { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes { get; init; }
+  public TypeDescription(int Values, int Bytes, Idrak.Abstraction.NumberType Code, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes, double CodeOffset = 0, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins = null, bool MinsAdded = false)
+  public bool MinsAdded { get; init; }
+  public bool Valid { get; }
+  public double CodeOffset { get; init; }
+  public double ValueOf(System.ReadOnlySpan<byte> block, int v)
+  public int Bytes { get; init; }
+  public int Values { get; init; }
+  public static ulong Field(System.ReadOnlySpan<byte> bytes, long bit, int bits)
+  public ulong CodeBits(System.ReadOnlySpan<byte> block, int v)
+  public void Decode(System.ReadOnlySpan<byte> source, System.Span<float> destination)
 
 public static class Idrak.Abstraction.TypePromotions
   public const string Standard = "standard"
