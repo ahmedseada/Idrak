@@ -19,11 +19,12 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // and dotted with every row of x (decoding-sized products), and the panel lane, a tile of rows widened into a [columns, k]
 // panel and multiplied by the float32 product reading it transposed (prompt-sized products). The generic route takes the
 // row lane up to 8 rows and the panel lane above; the measured route the faster of the two at the shape, measured once
-// (Faster). Three formats are read where they are stored and never widened under the measured route (IRowFormat, the
-// shared part below): a 4-bit super-block (NibbleFormat: ggml's Q4_K by its description) and a 32-value block of 4-bit
-// codes with one float16 scale (ScaledFormat: ggml's q4_0), each with its codes decoded in registers inside the dot
-// products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; and bfloat16
-// (BFloat16Format), its values made float32 in registers; the faster lane at each shape.
+// (Faster). Four formats are read where they are stored and never widened under the measured route (IRowFormat, the
+// shared part below): a 4-bit super-block (NibbleFormat: ggml's Q4_K by its description), a 32-value block of 4-bit
+// codes with one float16 scale (ScaledFormat: ggml's q4_0) and a 6-bit super-block (SixFormat: ggml's Q6_K), each with
+// its codes decoded in registers inside the dot products or int8 dot products over the stored codes with x rounded to
+// int8 a block of 32 values; and bfloat16 (BFloat16Format), its values made float32 in registers; the faster lane at
+// each shape.
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -300,7 +301,7 @@ internal sealed partial class CpuBackend
 
         var type = weight.ElementType;
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, bfloat16) under the measured route: only the
+        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16) under the measured route: only the
         // format's lanes, which never widen it, the shape's lane measured once (Chosen).
         if (ProductRoutes.Current == ProductRoute.Measured)
         {
@@ -323,8 +324,8 @@ internal sealed partial class CpuBackend
 
     // The stored products' lanes: each output's row widened once (decoding-sized), a panel of rows widened and multiplied
     // transposed, the whole weight widened once and the float32 product (today's prompt path: ExpandedLane), the tiles; and
-    // a 4-bit weight's two lanes over its stored codes (NibbleFormat, ScaledFormat), decoded in registers or by int8 dot
-    // products; a bfloat16 weight's two lanes over its stored values, made float32 in registers in even and odd pairs or by
+    // a 4-bit or 6-bit weight's two lanes over its stored codes (NibbleFormat, ScaledFormat, SixFormat), decoded in registers
+    // or by int8 dot products; a bfloat16 weight's two lanes over its stored values, made float32 in registers in even and odd pairs or by
     // a shift (BFloat16Format); the packed bfloat16 product's two kernels reading its values in registers (the tiled and the
     // streaming, CpuBackend.Typed.cs).
     private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5,
@@ -862,7 +863,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, bfloat16) sharing x, under the
+    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16) sharing x, under the
     // measured route (the queries, keys and values; the gate and up): in one pass, any rows; offered once such a weight has
     // been multiplied here, so the groups of other types' weights are not asked (their outputs allocated) only to run one
     // by one.
@@ -1403,8 +1404,9 @@ internal sealed partial class CpuBackend
 
     // ------------------------------------------------------------------ weights read where they are stored: the shared part
 
-    // The CPU multiplies weights of three formats where their rows are stored, writing nothing of a weight anywhere: q4_k's
-    // super-blocks (NibbleFormat), q4_0's 32-value blocks (ScaledFormat) and bfloat16 (BFloat16Format). A format brings what
+    // The CPU multiplies weights of four formats where their rows are stored, writing nothing of a weight anywhere: q4_k's
+    // super-blocks (NibbleFormat), q4_0's 32-value blocks (ScaledFormat), q6_k's super-blocks (SixFormat) and bfloat16
+    // (BFloat16Format). A format brings what
     // it alone knows (IRowFormat: its description, its two lanes, what each makes of x first, the rows a group takes, the
     // scratch and the kernels over a tile, IRowKernels); the rest is theirs together: the list of formats (FormatOf), the
     // routed product and its lane measured per shape (RowProduct, ILaneChoice, Chosen), the grouped pass (FormatGrouped),
@@ -1565,6 +1567,12 @@ internal sealed partial class CpuBackend
             return true;
         }
 
+        if (SixFormat.Reads(type, k, out var q6k))
+        {
+            use.Use<SixFormat, SixKernels>(q6k);
+            return true;
+        }
+
         if (BFloat16Format.Reads(type, k, out var bf16))
         {
             use.Use<BFloat16Format, BFloat16Kernels>(bf16);
@@ -1659,9 +1667,9 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>
-    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, bfloat16: FormatOf) of n rows
-    /// stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), by the format's first lane or, with
-    /// <paramref name="second"/>, its second (q4_k and q4_0: decoded, integer; bfloat16: shifted, paired). False where no
+    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, q6_k, bfloat16: FormatOf) of n
+    /// rows stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), by the format's first lane or, with
+    /// <paramref name="second"/>, its second (q4_k, q4_0 and q6_k: decoded, integer; bfloat16: shifted, paired). False where no
     /// format reads the type, or the second lane does not run on this CPU. For tests: each lane apart from the measured choice.
     /// </summary>
     internal static bool StoredRowLane(bool second, ElementType type, float[] words, int length, float[] x, float[] y, int m, int n, int k)
@@ -2784,6 +2792,503 @@ internal sealed partial class CpuBackend
 
             int width = bits[field];
             return signed ? value << (32 - width) >> (32 - width) : value;
+        }
+    }
+
+    // ------------------------------------------------------------------ 6-bit super-blocks read where they are stored
+
+    // A super-block of 6-bit codes (SixBlocks: q6_k by its description) takes, under the measured route, two lanes neither
+    // of which writes the weight's values anywhere, whole or a panel: the decoded lane joins each value's two code planes in
+    // registers as its dot products read them ((code + bias) · scale: the values SuperBlock.Decode gives, bit for bit) and
+    // multiplies them with x in float32; the integer lane rounds x to int8 a block of 32 values (one scale a block) and
+    // takes the CPU's int8 dot products of those with the joined codes, a half block's four 32-byte code vectors transposed
+    // by words so each sub-block's sum lands in its own lane, the code bias added through x's code sums and the float scales
+    // applied a half block at a time. The measured route keeps the faster at each shape.
+
+    // q6_k as a format read where it is stored (IRowFormat): a 6-bit super-block (SixBlocks) by its description; the decoded
+    // lane timed against the integer lane (the decoded alone where the CPU has no int8 dot products); x rounded to int8 for
+    // the integer lane (RoundSixRows); a group's scales decoded into a table for its kernels (SixKernels).
+    private readonly unsafe struct SixFormat : IRowFormat<SixFormat, SixKernels>
+    {
+        private readonly SixBlocks blocks;
+
+        private SixFormat(SixBlocks blocks) => this.blocks = blocks;
+
+        public static bool Reads(ElementType type, int k, out SixFormat format)
+        {
+            format = type.Super is { } super && k % SixBlocks.Values == 0 && SixBlocks.Of(super) is { } plan ? new SixFormat(plan) : default;
+            return format.blocks is not null;
+        }
+
+        public int First => DecodedLaneId;
+
+        public int Second => IntegerLaneId;
+
+        public bool BothRun => IntegerDots;
+
+        public int Unmeasured => IntegerLaneId;
+
+        public int GroupBytes => SixGroupBytes;
+
+        // Columns over every row of x, an eighth of a thread's share (measured 2-3% faster on prompts than a quarter, and than
+        // a twelfth or a sixteenth): each stored row's scales decoded once a product.
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => ((total + 8 * threads - 1) / (8 * threads), m);
+
+        public int Span(int k) => k;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            if (lane != IntegerLaneId)
+            {
+                return new LaneInput(x, false, null, null);
+            }
+
+            var codes = ArrayPool<sbyte>.Shared.Rent(m * k);
+            var scales = ArrayPool<float>.Shared.Rent(m * (k / SixBlocks.Half) * 16);
+            RoundSixRows(x, codes, scales, m, k, blocks.CodeBias);
+            return new LaneInput(x, false, codes, scales);
+        }
+
+        // A group's scales' table; a row read alone decodes each block's scales as it reads the block (no table).
+        public (int Floats, int Bytes) Scratch(int k, int group) => (group * (k / SixBlocks.Values) * 16, 0);
+
+        public SixKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(lane == IntegerLaneId, blocks, k, x, floats);
+    }
+
+    // Stored bytes a group of q6_k rows takes with more than one row of x (RowGroups): the rows whose scales' table fills
+    // 32 KB (16 floats a super-block of 210 bytes).
+    private const int SixGroupBytes = 107520;
+
+    // Bytes a row read alone asks the cache for ahead of the block it reads (SixAhead: measured 1 KB best of 512 B to 2 KB,
+    // into L1 as fast as into L2 and faster than past the caches). A prefetch never faults, past the weight too.
+    private const int SixAheadBytes = 1024;
+
+    // q6_k's lanes as RowGroups' kernels: a group's scales decoded once into `table` (SixBlocks.Scales, 16 floats a
+    // super-block); a row read alone decodes each block's scales as its codes are read (no table).
+    private readonly unsafe struct SixKernels : IRowKernels
+    {
+        private readonly bool integer;
+        private readonly SixBlocks blocks;
+        private readonly int k, superBlocks, rowTable, xsRow;
+        private readonly float* x, xs, table;
+        private readonly sbyte* xq;
+
+        public SixKernels(bool integer, SixBlocks blocks, int k, LanePointers input, float* table)
+        {
+            this.integer = integer;
+            this.blocks = blocks;
+            this.k = k;
+            this.table = table;
+            superBlocks = k / SixBlocks.Values;
+            rowTable = superBlocks * 16;
+            xsRow = k / SixBlocks.Half * 16;
+            x = input.Values;
+            xq = input.Codes;
+            xs = input.Scales;
+        }
+
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+            for (int c = 0; c < count; c++)
+            {
+                byte* row = stored + (c0 + c) * rowBytes;
+                for (int b = 0; b < superBlocks; b++)
+                {
+                    blocks.Scales(row + b * blocks.Bytes, table + c * rowTable + b * 16);
+                }
+            }
+        }
+
+        // All of k a pass (Span: k).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                SixIntegerFour(row, blocks, superBlocks, table + c * rowTable, xq + (nint)i * k, xs + (nint)i * xsRow, k, xsRow, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                SixDecodedFour(row, blocks, superBlocks, table + c * rowTable, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => integer
+            ? SixIntegerOne(row, blocks, superBlocks, table + c * rowTable, xq + (nint)i * k, xs + (nint)i * xsRow)
+            : SixDecodedOne(row, blocks, superBlocks, table + c * rowTable, x + (nint)i * k);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i) => integer
+            ? SixIntegerOne(row, blocks, superBlocks, null, xq + (nint)i * k, xs + (nint)i * xsRow)
+            : SixDecodedOne(row, blocks, superBlocks, null, x + (nint)i * k);
+    }
+
+    // x rounded to int8 for the 6-bit integer lane, row by row (RoundSixRow), over the threads where x is large.
+    private static void RoundSixRows(float[] x, sbyte[] codes, float[] scales, int m, int k, int bias)
+    {
+        int table = k / SixBlocks.Half * 16;
+        if (m > 1 && (long)m * k >= 1 << 16)
+        {
+            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundSixRow(x.AsSpan(i * k, k), codes.AsSpan(i * k, k), scales.AsSpan(i * table, table), bias));
+            return;
+        }
+
+        for (int i = 0; i < m; i++)
+        {
+            RoundSixRow(x.AsSpan(i * k, k), codes.AsSpan(i * k, k), scales.AsSpan(i * table, table), bias);
+        }
+    }
+
+    // A row of x rounded to int8 a block of 32 values at a time: the block's scale amax / 127 (0 where every value is 0), its
+    // codes value · 127 / amax rounded to even; laid out a half super-block (128 values) at a time in the kernels' step order
+    // (step s, lane l: the half's values 32 (l mod 4) + 16 (l / 4) + 4s .. + 3, 32 bytes a step); per half 16 floats: at l
+    // lane l's block scale, at 8 + l (as int32 bits) the code bias times the codes' sum over lane l's 16 values. The
+    // integer lane's product is then the product of x so rounded.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void RoundSixRow(ReadOnlySpan<float> x, Span<sbyte> codes, Span<float> scales, int bias)
+    {
+        Span<int> natural = stackalloc int[8];
+        ref float row = ref MemoryMarshal.GetReference(x);
+        var words = MemoryMarshal.Cast<sbyte, int>(codes);
+        for (int half = 0; half < x.Length / SixBlocks.Half; half++)
+        {
+            var into = scales.Slice(half * 16, 16);
+            var sums = MemoryMarshal.Cast<float, int>(into[8..]);
+            for (int g = 0; g < 4; g++)
+            {
+                ref float v = ref Unsafe.Add(ref row, half * SixBlocks.Half + g * 32);
+                var v0 = Vector256.LoadUnsafe(ref v);
+                var v1 = Vector256.LoadUnsafe(ref v, 8);
+                var v2 = Vector256.LoadUnsafe(ref v, 16);
+                var v3 = Vector256.LoadUnsafe(ref v, 24);
+                var most = Vector256.Max(Vector256.Max(Vector256.Abs(v0), Vector256.Abs(v1)), Vector256.Max(Vector256.Abs(v2), Vector256.Abs(v3)));
+                var top = Vector128.Max(most.GetLower(), most.GetUpper());
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(2, 3, 0, 1)));
+                top = Vector128.Max(top, Vector128.Shuffle(top, Vector128.Create(1, 0, 3, 2)));
+                float amax = top.ToScalar();
+                var inverse = Vector256.Create(amax > 0f ? 127f / amax : 0f);
+                var q0 = Vector256.ConvertToInt32(Vector256.Round(v0 * inverse));
+                var q1 = Vector256.ConvertToInt32(Vector256.Round(v1 * inverse));
+                var q2 = Vector256.ConvertToInt32(Vector256.Round(v2 * inverse));
+                var q3 = Vector256.ConvertToInt32(Vector256.Round(v3 * inverse));
+                Vector256.Narrow(Vector256.Narrow(q0, q1), Vector256.Narrow(q2, q3)).AsInt32().CopyTo(natural);
+
+                // Block g's values 0-15 are lane g's, 16-31 lane g + 4's; its word w goes to step w mod 4.
+                into[g] = into[g + 4] = amax / 127f;
+                sums[g] = bias * Vector256.Sum(q0 + q1);
+                sums[g + 4] = bias * Vector256.Sum(q2 + q3);
+                for (int w = 0; w < 8; w++)
+                {
+                    words[half * 32 + 8 * (w % 4) + g + 4 * (w / 4)] = natural[w];
+                }
+            }
+        }
+    }
+
+    // A half block's codes (its 64 low-plane bytes from `low`, 32 high-plane bytes from `high`) joined to 6-bit codes as four
+    // 32-byte vectors of the half's values 0-31, 32-63, 64-95 and 96-127 in order, then transposed by words in each 128-bit
+    // half: step s's lane l holds four codes of sub-block (0, 2, 4, 6, 1, 3, 5, 7)[l] (values 32 (l mod 4) + 16 (l / 4) + 4s
+    // .. + 3), as RoundSixRow lays out x.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void SixSteps(byte* low, byte* high, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3)
+    {
+        var nibble = Vector256.Create((byte)15);
+        var top = Vector256.Create((byte)48);
+        var a = Vector256.Load(low);
+        var b = Vector256.Load(low + 32);
+        var h = Vector256.Load(high).AsUInt16();
+        var c0 = (a & nibble) | (Vector256.ShiftLeft(h, 4).AsByte() & top);
+        var c1 = (b & nibble) | (Vector256.ShiftLeft(h, 2).AsByte() & top);
+        var c2 = (Vector256.ShiftRightLogical(a.AsUInt16(), 4).AsByte() & nibble) | (h.AsByte() & top);
+        var c3 = (Vector256.ShiftRightLogical(b.AsUInt16(), 4).AsByte() & nibble) | (Vector256.ShiftRightLogical(h, 2).AsByte() & top);
+        var u0 = Avx2.UnpackLow(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        var u1 = Avx2.UnpackHigh(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        var u2 = Avx2.UnpackLow(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        var u3 = Avx2.UnpackHigh(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        s0 = Avx2.UnpackLow(u0, u2).AsByte();
+        s1 = Avx2.UnpackHigh(u0, u2).AsByte();
+        s2 = Avx2.UnpackLow(u1, u3).AsByte();
+        s3 = Avx2.UnpackHigh(u1, u3).AsByte();
+    }
+
+    // f + a half block's sums for a row of x: its four steps of codes dotted with x's (32 bytes a step from `x`), each
+    // sub-block's sum in its lane from the code bias times x's code sum (`xs` + 8), then times the sub-blocks' scales `w` and
+    // x's block scales (`xs`).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector256<float> SixHalf(Vector256<float> f, Vector256<byte> t0, Vector256<byte> t1, Vector256<byte> t2, Vector256<byte> t3, Vector256<float> w,
+        sbyte* x, float* xs)
+    {
+        var i = Vector256.Load((int*)(xs + 8));
+        i = DotAt(i, t0, x);
+        i = DotAt(i, t1, x + 32);
+        i = DotAt(i, t2, x + 64);
+        i = DotAt(i, t3, x + 96);
+        return Fma.MultiplyAdd(Avx.ConvertToVector256Single(i), w * Vector256.Load(xs), f);
+    }
+
+    // Four rows of x (int8 codes from `x`, k a row; their scales and code sums from `xs`, `xsRow` a row) by one stored row of
+    // `blocks` super-blocks (from `row`; their scales from `table`, 16 a block in lane order): each half block's codes joined
+    // and transposed once (SixSteps), then dotted with each row's.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SixIntegerFour(byte* row, SixBlocks plan, int blocks, float* table, sbyte* x, float* xs, int k, int xsRow,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        nint s1 = xsRow, s2 = 2 * (nint)xsRow, s3 = 3 * (nint)xsRow;
+        Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            for (int h = 0; h < 2; h++)
+            {
+                SixSteps(block + lowOffset + 64 * h, block + highOffset + 32 * h, out var t0, out var t1, out var t2, out var t3);
+                var w = Vector256.Load(table + b * 16 + 8 * h);
+                sbyte* xh = x + b * SixBlocks.Values + SixBlocks.Half * h;
+                float* sh = xs + (2 * b + h) * 16;
+                f0 = SixHalf(f0, t0, t1, t2, t3, w, xh, sh);
+                f1 = SixHalf(f1, t0, t1, t2, t3, w, xh + r1, sh + s1);
+                f2 = SixHalf(f2, t0, t1, t2, t3, w, xh + r2, sh + s2);
+                f3 = SixHalf(f3, t0, t1, t2, t3, w, xh + r3, sh + s3);
+            }
+        }
+
+        y0 = Vector256.Sum(f0);
+        y1 = Vector256.Sum(f1);
+        y2 = Vector256.Sum(f2);
+        y3 = Vector256.Sum(f3);
+    }
+
+    // The 256 bytes SixAheadBytes past a block asked into the cache (a row read alone streams from memory: measured 7% more
+    // tokens a second decoding).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void SixAhead(byte* block)
+    {
+        byte* ahead = block + SixAheadBytes;
+        Sse.Prefetch0(ahead);
+        Sse.Prefetch0(ahead + 64);
+        Sse.Prefetch0(ahead + 128);
+        Sse.Prefetch0(ahead + 192);
+    }
+
+    // SixIntegerFour for one row of x; each block's scales from `table`, or, where it is null (a row read alone), decoded
+    // from the block as it is read (SixBlocks.Scales: no table), the bytes ahead asked into the cache (SixAhead).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float SixIntegerOne(byte* row, SixBlocks plan, int blocks, float* table, sbyte* x, float* xs)
+    {
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset;
+        float* own = stackalloc float[16];
+        Vector256<float> f = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            float* scales = table + b * 16;
+            if (table is null)
+            {
+                SixAhead(block);
+                plan.Scales(block, own);
+                scales = own;
+            }
+
+            for (int h = 0; h < 2; h++)
+            {
+                SixSteps(block + lowOffset + 64 * h, block + highOffset + 32 * h, out var t0, out var t1, out var t2, out var t3);
+                f = SixHalf(f, t0, t1, t2, t3, Vector256.Load(scales + 8 * h), x + b * SixBlocks.Values + SixBlocks.Half * h, xs + (2 * b + h) * 16);
+            }
+        }
+
+        return Vector256.Sum(f);
+    }
+
+    // ---- the decoded lane
+
+    // 8 values of each of a half block's four runs of 32 (values 32t + p .. + 7 for run t; the low plane's bytes at `low` + p
+    // and + 32 + p, the high plane's at `high` + p) joined in registers to code + bias, as floats (exact).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void SixRuns(byte* low, byte* high, int p, Vector256<int> bias, out Vector256<float> w0, out Vector256<float> w1, out Vector256<float> w2, out Vector256<float> w3)
+    {
+        var nibble = Vector256.Create(15);
+        var top = Vector256.Create(48);
+        var a = Avx2.ConvertToVector256Int32(low + p);
+        var b = Avx2.ConvertToVector256Int32(low + 32 + p);
+        var h = Avx2.ConvertToVector256Int32(high + p);
+        w0 = Avx.ConvertToVector256Single(((a & nibble) | (Vector256.ShiftLeft(h, 4) & top)) + bias);
+        w1 = Avx.ConvertToVector256Single(((b & nibble) | (Vector256.ShiftLeft(h, 2) & top)) + bias);
+        w2 = Avx.ConvertToVector256Single((Vector256.ShiftRightLogical(a, 4) | (h & top)) + bias);
+        w3 = Avx.ConvertToVector256Single((Vector256.ShiftRightLogical(b, 4) | (Vector256.ShiftRightLogical(h, 2) & top)) + bias);
+    }
+
+    // Four rows of x (float32, k a row, from `x`) by one stored row of `blocks` super-blocks (from `row`; their scales from
+    // `table`, 16 a block in lane order): 8 values of each of a half block's four runs at a time (SixRuns), each times its
+    // sub-block's scale (2t + p / 16, in lane 4 (p / 16) + t of the half: SuperBlock.Decode's values, the code and bias
+    // summed as integers, then one product) and multiplied with the four rows; the even and odd runs in their own sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SixDecodedFour(byte* row, SixBlocks plan, int blocks, float* table, float* x, int k,
+        out float y0, out float y1, out float y2, out float y3)
+    {
+        var bias = Vector256.Create(plan.CodeBias);
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            for (int h = 0; h < 2; h++)
+            {
+                byte* low = block + lowOffset + 64 * h, high = block + highOffset + 32 * h;
+                float* scales = table + b * 16 + 8 * h, xh = x + b * SixBlocks.Values + SixBlocks.Half * h;
+                for (int p = 0; p < 32; p += 8)
+                {
+                    SixRuns(low, high, p, bias, out var w0, out var w1, out var w2, out var w3);
+                    float* s = scales + 4 * (p >> 4);
+                    w0 *= Vector256.Create(s[0]);
+                    w1 *= Vector256.Create(s[1]);
+                    w2 *= Vector256.Create(s[2]);
+                    w3 *= Vector256.Create(s[3]);
+                    float* xp = xh + p;
+                    a0 = Fma.MultiplyAdd(w0, Vector256.Load(xp), a0);
+                    b0 = Fma.MultiplyAdd(w1, Vector256.Load(xp + 32), b0);
+                    a0 = Fma.MultiplyAdd(w2, Vector256.Load(xp + 64), a0);
+                    b0 = Fma.MultiplyAdd(w3, Vector256.Load(xp + 96), b0);
+                    a1 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r1), a1);
+                    b1 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r1 + 32), b1);
+                    a1 = Fma.MultiplyAdd(w2, Vector256.Load(xp + r1 + 64), a1);
+                    b1 = Fma.MultiplyAdd(w3, Vector256.Load(xp + r1 + 96), b1);
+                    a2 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r2), a2);
+                    b2 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r2 + 32), b2);
+                    a2 = Fma.MultiplyAdd(w2, Vector256.Load(xp + r2 + 64), a2);
+                    b2 = Fma.MultiplyAdd(w3, Vector256.Load(xp + r2 + 96), b2);
+                    a3 = Fma.MultiplyAdd(w0, Vector256.Load(xp + r3), a3);
+                    b3 = Fma.MultiplyAdd(w1, Vector256.Load(xp + r3 + 32), b3);
+                    a3 = Fma.MultiplyAdd(w2, Vector256.Load(xp + r3 + 64), a3);
+                    b3 = Fma.MultiplyAdd(w3, Vector256.Load(xp + r3 + 96), b3);
+                }
+            }
+        }
+
+        y0 = Vector256.Sum(a0 + b0);
+        y1 = Vector256.Sum(a1 + b1);
+        y2 = Vector256.Sum(a2 + b2);
+        y3 = Vector256.Sum(a3 + b3);
+    }
+
+    // SixDecodedFour for one row of x, each run in its own sum; the scales as SixIntegerOne takes them.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float SixDecodedOne(byte* row, SixBlocks plan, int blocks, float* table, float* x)
+    {
+        var bias = Vector256.Create(plan.CodeBias);
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset;
+        float* own = stackalloc float[16];
+        Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            float* scales = table + b * 16;
+            if (table is null)
+            {
+                SixAhead(block);
+                plan.Scales(block, own);
+                scales = own;
+            }
+
+            for (int h = 0; h < 2; h++)
+            {
+                byte* low = block + lowOffset + 64 * h, high = block + highOffset + 32 * h;
+                float* sh = scales + 8 * h, xh = x + b * SixBlocks.Values + SixBlocks.Half * h;
+                for (int p = 0; p < 32; p += 8)
+                {
+                    SixRuns(low, high, p, bias, out var w0, out var w1, out var w2, out var w3);
+                    float* s = sh + 4 * (p >> 4);
+                    float* xp = xh + p;
+                    a0 = Fma.MultiplyAdd(w0 * Vector256.Create(s[0]), Vector256.Load(xp), a0);
+                    a1 = Fma.MultiplyAdd(w1 * Vector256.Create(s[1]), Vector256.Load(xp + 32), a1);
+                    a2 = Fma.MultiplyAdd(w2 * Vector256.Create(s[2]), Vector256.Load(xp + 64), a2);
+                    a3 = Fma.MultiplyAdd(w3 * Vector256.Create(s[3]), Vector256.Load(xp + 96), a3);
+                }
+            }
+        }
+
+        return Vector256.Sum((a0 + a1) + (a2 + a3));
+    }
+
+    /// <summary>
+    /// A super-block format the 6-bit lanes read where it is stored, by its description alone (never its name): 256 values a
+    /// block in two groups of 128, each value's code from a plane of 4 bits and one of 2 bits (a group's 64 low-plane bytes
+    /// hold its values 0-63 in their low halves and 64-127 in their high halves; its 32 high-plane bytes values 0-31, 32-63,
+    /// 64-95 and 96-127 in their bit pairs from the lowest), a code bias, sub-blocks of 16 values each with an 8-bit scale in
+    /// 16 consecutive bytes, no minimums, the super-scale float16 or bfloat16 (ggml's Q6_K). Null for any other description,
+    /// or where AVX2 and FMA do not run.
+    /// </summary>
+    private sealed unsafe class SixBlocks
+    {
+        /// <summary>Values a block holds.</summary>
+        public const int Values = 256;
+
+        /// <summary>Values a group of the code planes holds (the kernels' half block).</summary>
+        public const int Half = 128;
+
+        private static readonly ConditionalWeakTable<SuperBlock, object> Plans = new();
+
+        private readonly int scaleBytes, superScale, subScaleBias;
+        private readonly bool signed, bfloat16;
+
+        private SixBlocks(SuperBlock s)
+        {
+            Bytes = s.Bytes;
+            LowOffset = s.Planes[0].Offset;
+            HighOffset = s.Planes[1].Offset;
+            CodeBias = s.CodeBias;
+            scaleBytes = s.SubScales[0][0].Offset;
+            superScale = s.ScaleOffset;
+            subScaleBias = s.SubScaleBias;
+            signed = s.SubScalesSigned;
+            bfloat16 = s.Scale.Exponent == 8;
+        }
+
+        /// <summary>Bytes a block takes.</summary>
+        public int Bytes { get; }
+
+        /// <summary>The low (4-bit) plane's first byte in a block.</summary>
+        public int LowOffset { get; }
+
+        /// <summary>The high (2-bit) plane's first byte in a block.</summary>
+        public int HighOffset { get; }
+
+        /// <summary>Added to each code before the scale.</summary>
+        public int CodeBias { get; }
+
+        /// <summary>The plan for <paramref name="super"/>, or null where the lanes do not read it.</summary>
+        public static SixBlocks? Of(SuperBlock super) => Plans.GetValue(super, static s => (object?)Make(s) ?? s) as SixBlocks;
+
+        private static SixBlocks? Make(SuperBlock s)
+        {
+            bool reads = Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian
+                && s is { Values: Values, SubValues: 16, SubMins: null, CodeBias: >= -128 and <= 127, SubScaleBias: >= -65536 and <= 65536, SubScales.Count: 16,
+                    Planes: [{ Bits: 4, Group: Half } low, { Bits: 2, Group: Half } high] }
+                && s.Scale is { Exponent: 5, Mantissa: 10 } or { Exponent: 8, Mantissa: 7 }
+                && low.Offset >= 0 && low.Offset + 128 <= s.Bytes && high.Offset >= 0 && high.Offset + 64 <= s.Bytes
+                && s.ScaleOffset >= 0 && s.ScaleOffset + 2 <= s.Bytes
+                && s.SubScales[0] is [{ Shift: 0, Bits: 8 } first] && first.Offset >= 0 && first.Offset + 16 <= s.Bytes
+                && Enumerable.Range(0, 16).All(j => s.SubScales[j] is [{ Shift: 0, Bits: 8 } piece] && piece.Offset == first.Offset + j);
+            return reads ? new SixBlocks(s) : null;
+        }
+
+        /// <summary>
+        /// One block's 16 sub-block scales d · (scale_j + bias) (the factors <see cref="SuperBlock.Decode"/> takes, bit for
+        /// bit) into <paramref name="into"/>, in lane order: half h's at 8h, lane l the scale of sub-block 8h + (0, 2, 4, 6,
+        /// 1, 3, 5, 7)[l].
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Scales(byte* block, float* into)
+        {
+            var bytes = Ssse3.Shuffle(Vector128.Load(block + scaleBytes), Vector128.Create((byte)0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15));
+            var upper = Sse2.ShiftRightLogical128BitLane(bytes, 8);
+            var low = signed ? Avx2.ConvertToVector256Int32(bytes.AsSByte()) : Avx2.ConvertToVector256Int32(bytes);
+            var high = signed ? Avx2.ConvertToVector256Int32(upper.AsSByte()) : Avx2.ConvertToVector256Int32(upper);
+            ushort bits = *(ushort*)(block + superScale);
+            var d = Vector256.Create(bfloat16 ? BitConverter.Int32BitsToSingle(bits << 16) : (float)BitConverter.UInt16BitsToHalf(bits));
+            var bias = Vector256.Create(subScaleBias);
+            (d * Avx.ConvertToVector256Single(low + bias)).Store(into);
+            (d * Avx.ConvertToVector256Single(high + bias)).Store(into + 8);
         }
     }
 }
