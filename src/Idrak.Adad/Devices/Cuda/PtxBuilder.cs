@@ -48,8 +48,12 @@ internal sealed class PtxBuilder(string prefix = "")
     /// <summary>Declarations of the kernel's own beyond the builder's registers (an epilogue's), emitted with them.</summary>
     public void Declare(string line) => _declarations.Append("    ").Append(line).Append('\n');
 
-    /// <summary>The module: <paramref name="header"/>, the entry with its parameters and registers, shared memory (static up to 48 KiB, else the module's dynamic block).</summary>
-    public string Finish(string header, string entry, string parameters, int sharedBytes = 0)
+    /// <summary>
+    /// The module: <paramref name="header"/>, the entry with its parameters and registers, shared memory (static up to 48
+    /// KiB, else the module's dynamic block); <paramref name="directives"/> (Adad's: performance directives such as
+    /// .minnctapersm) after the parameters, none by default (the copied kernels' text unchanged).
+    /// </summary>
+    public string Finish(string header, string entry, string parameters, int sharedBytes = 0, string directives = "")
     {
         var sb = new StringBuilder(header);
         if (sharedBytes > 48 * 1024)
@@ -57,7 +61,7 @@ internal sealed class PtxBuilder(string prefix = "")
             sb.Append(".extern .shared .align 16 .b8 smem[];\n");
         }
 
-        sb.Append(".visible .entry ").Append(entry).Append('(').Append(parameters).Append(")\n{\n");
+        sb.Append(".visible .entry ").Append(entry).Append('(').Append(parameters).Append(')').Append(directives).Append("\n{\n");
         sb.Append(CultureInfo.InvariantCulture, $"    .reg .pred %p<{Math.Max(1, _p)}>;\n    .reg .b32 %r<{Math.Max(1, _r)}>;\n    .reg .b64 %rd<{Math.Max(1, _rd)}>;\n");
         sb.Append(CultureInfo.InvariantCulture, $"    .reg .f32 %f<{Math.Max(1, _f)}>;\n");
         if (_h > 0)

@@ -1,0 +1,12 @@
+
+Provider Name                           Keywords            Level               Enabled By
+Microsoft-DotNETCore-SampleProfiler     0x0000000000000000  Informational(4)    --providers
+Microsoft-Windows-DotNETRuntime         0x0000000000000001  Verbose(5)          --providers
+
+Launching: dotnet D:/Projects/idrak/test-output/worktrees/adad/src/Idrak.Adad.Host/bin/Release/net10.0/adad.dll kernels --m 512 --samples 5 --out D:/Projects/idrak/test-output/adad/piece1-q4k/cycle3/trace-run 
+Process        : C:\Program Files\dotnet\dotnet.exe
+Output File    : D:\Projects\idrak\test-output\adad\piece1-q4k\cycle3\trace.nettrace
+
+
+Trace completed.
+Process exited with code '0'.

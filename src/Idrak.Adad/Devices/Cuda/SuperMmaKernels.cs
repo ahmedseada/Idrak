@@ -61,20 +61,23 @@ internal static class SuperMmaKernels
 
     /// <summary>
     /// A's shapes (bytes of x's bfloat16 row a stage: 64 or 128, i.e. 32 or 64 values; stages; columns; swizzle). The last
-    /// two take at most half of an SM's shared memory with A's registers (at most 128 a thread), so two blocks fit an SM.
+    /// four take at most half of an SM's shared memory with A's registers (at most 128 a thread), so two blocks fit an SM.
     /// </summary>
     internal static readonly NativeMmaConfig[] DecodeConfigs =
     [
         new(64, 3, 128, false), new(64, 4, 128, false), new(128, 2, 128, false), new(64, 3, 256, false), new(64, 3, 256, true),
         new(64, 4, 256, true), new(128, 2, 256, true), new(128, 3, 128, true), new(64, 6, 128, true), new(128, 4, 128, true),
-        new(64, 3, 128, true), new(128, 2, 128, true),
+        new(64, 3, 128, true), new(128, 2, 128, true), new(64, 3, 64, true), new(128, 2, 64, true),
     ];
 
-    /// <summary>B's shapes (bytes of x's int8 row a stage = its values: 64 or 128; stages; columns; swizzle).</summary>
+    /// <summary>
+    /// B's shapes (bytes of x's int8 row a stage = its values: 64 or 128; stages; columns; swizzle). The 64-column one takes
+    /// less than half of an SM's shared memory (two blocks fit an SM where its registers allow).
+    /// </summary>
     internal static readonly NativeMmaConfig[] Int8Configs =
     [
         new(64, 3, 128, true), new(64, 4, 128, true), new(64, 5, 128, true), new(64, 4, 128, false), new(64, 2, 256, true),
-        new(64, 3, 256, true), new(128, 2, 128, true), new(128, 2, 256, true),
+        new(64, 3, 256, true), new(128, 2, 128, true), new(128, 2, 256, true), new(64, 3, 64, true),
     ];
 
     /// <summary>Values of k a stage of A takes (x's bfloat16 row bytes / 2).</summary>
@@ -139,11 +142,11 @@ internal static class SuperMmaKernels
         int stageValues = int8 ? Int8StageValues(cfg) : DecodeStageValues(cfg), blockShift = SuperKernels.Log2(stageValues);
         int subs = stageValues / 32, groups = Math.Max(1, stageValues / 64), codeChunks = 2 * groups;
         int stride = rowBytes + (swizzle ? 0 : 16), wStride = layout.WStride, stageBytes = layout.StageBytes, totalShared = stages * stageBytes;
-        int chunks = rowBytes / 16, copiesA = BM * chunks / Threads, codeCopies = bn * codeChunks / Threads;
+        int chunks = rowBytes / 16, copiesA = BM * chunks / Threads, codeTotal = bn * codeChunks, codeCopies = (codeTotal + Threads - 1) / Threads;
         int ksteps = int8 ? subs : rowBytes / 32;                          // k32 steps (B) or k16 steps (A) a stage
         int pieces = SuperKernels.SuperPieces(s);
         bool exact = ExactScaledCodes(s);
-        if (chunks is not (4 or 8) || bn * codeChunks % Threads != 0 || bn > Threads)
+        if (chunks is not (4 or 8) || bn > Threads || bn < 64)
         {
             throw new NotSupportedException($"shape {cfg}");
         }
@@ -302,10 +305,18 @@ internal static class SuperMmaKernels
         var cg = new string[codeCopies];
         var cs = new string[codeCopies];
         var csz = new string[codeCopies];
+        var cp = new string[codeCopies];
         for (int j = 0; j < codeCopies; j++)
         {
             string chunk = b.R(), row = b.R(), part = b.R(), gRow = b.R(), p = b.P(), rowSel = b.R(), t64 = b.RD();
             b.L($"add.u32 {chunk}, {tid}, {j * Threads};");
+            if (codeTotal % Threads != 0)
+            {
+                // Fewer code chunks than threads (64 columns): a chunk past the stage's is not copied at all.
+                cp[j] = b.P();
+                b.L($"setp.lt.u32 {cp[j]}, {chunk}, {codeTotal};");
+            }
+
             b.L($"shr.u32 {row}, {chunk}, {SuperKernels.Log2(codeChunks)};");
             b.L($"and.b32 {part}, {chunk}, {codeChunks - 1};");
             b.L($"add.u32 {gRow}, {col0}, {row};");
@@ -385,7 +396,7 @@ internal static class SuperMmaKernels
                 string src = b.RD(), dst = b.R();
                 b.L($"add.u64 {src}, {cg[j]}, {codeOff};");
                 b.L($"add.u32 {dst}, {cs[j]}, {stageOff};");
-                b.L($"cp.async.cg.shared.global [{dst}], [{src}], 16, {csz[j]};");
+                b.L($"{(cp[j] is null ? "" : $"@{cp[j]} ")}cp.async.cg.shared.global [{dst}], [{src}], 16, {csz[j]};");
             }
 
             b.Label(label);
@@ -1031,7 +1042,10 @@ internal static class SuperMmaKernels
         string parameters = int8
             ? ".param .u64 p_a, .param .u64 p_xs, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_kblocks, .param .u32 p_wrow, .param .u64 p_y, .param .u64 p_counts"
             : ".param .u64 p_a, .param .u64 p_b, .param .u64 p_c, .param .u32 p_m, .param .u32 p_n, .param .u32 p_kp, .param .u32 p_ld, .param .u32 p_kblocks, .param .u32 p_wrow, .param .u64 p_y, .param .u64 p_counts";
-        return b.Finish(NativeHeader + SuperKernels.SuperPiecesDeclaration(s), entry, parameters, totalShared);
+        // B's 64-column shape asks the compiler for two blocks an SM (its registers held to what two blocks of 256 threads
+        // leave each thread); the other shapes take what they need.
+        string directives = int8 && bn == 64 ? "\n.maxntid 256, 1, 1\n.minnctapersm 2" : "";
+        return b.Finish(NativeHeader + SuperKernels.SuperPiecesDeclaration(s), entry, parameters, totalShared, directives);
     }
 
     // ------------------------------------------------------------------ B's x, rounded once per call

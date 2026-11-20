@@ -1833,13 +1833,26 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
    (8 warps) an SM, as every A shape took more than half of an SM's shared memory while its registers (125–128 a
    thread) allow two. Host trace (`cycle2/trace.txt`): as cycle 1 (one thread busy, waiting on the timing events; 14
    collections from the bench's data; no allocation on a call path); 5.66 µs a launch (the bench's direct measure).
-5. This commit. **Fix 3 (A: two blocks an SM)**, from cycle 2: A's shapes (64, 3, 128, swizzled) at 46,080 bytes and
+5. `c2716a89` **Fix 3 (A: two blocks an SM)**, from cycle 2: A's shapes (64, 3, 128, swizzled) at 46,080 bytes and
    (128, 2, 128, swizzled) at 49,152 bytes, 123 and 127 registers (`fix3/compiled.txt`), so two blocks fit an SM.
    Tests: 9 of 9 (`tests-6.txt`; 410 A variants the control's output bit for bit). Bench (`fix3/compare-cycle2.txt`):
    A faster outside both runs' spreads at 37 of its 56 rows (−5.3% to −12.7%; Qwen gate at m = 2048 737.1 → 655.8 µs,
    down at m = 4096 1660.9 → 1449.6), slower at none; A's measurement picks (128, 2, 128, swizzled) at 27 of 56 rows.
    A against the control: 1.17–1.66× at m = 128, 0.92–1.14× at m ≥ 512 (before: 0.84–1.04×). B and the control
    unchanged. (The control's 9 copied shapes all take more than half of an SM's shared memory: one block an SM.)
+6. **Cycle 3** (`cycle3/`, fix 3's code): against fix 3's run of the same code, within both runs' spreads at all but 0
+   to 2 rows a lane (`cycle3/compare-fix3.txt`). Kernel trace: A's kernel now 0.94–1.12× the native kernel's time at
+   m = 512 and 2048 (gate at m = 512: 180.8 against 161.6 µs; at m = 2048: 619.0 against 588.8); B's kernel 112 TOPS at
+   Qwen gate m = 512 (115.3 µs), with one block an SM: its registers (233–241 a thread) leave no room for two. Host
+   trace as before; 5.72 µs a launch.
+7. This commit. **Fix 4 (A and B: 64-column shapes)**, from cycle 3: A (64, 3, 64, swizzled) and (128, 2, 64,
+   swizzled), 80 registers; B (64, 3, 64, swizzled) at 43,008 bytes, first 138 registers (one block an SM: no gain,
+   `fix4/`), then with `.maxntid 256, 1, 1` and `.minnctapersm 2` (`PtxBuilder.Finish` takes optional directives, none
+   by default: the copied kernels' text unchanged, the PTX test passes) 128 registers and 8 bytes spilled
+   (`fix4b/compiled.txt`). Tests: 9 of 9 (`tests-8.txt`; 478 A variants, 293 B variants). Bench against cycle 3
+   (`fix4b/compare-cycle3.txt`): A faster outside both runs' spreads at 4 rows (−2.4% to −7.6%), slower at 1 (+2.3%,
+   Llama q at m = 2048); B faster at 3 (−3.4% to −4.7%, all m = 128), slower at 1 (+4.3%, Qwen down at m = 512, where
+   its measured shape moved); B's measurement picks the 64-column shape at 10 of 56 rows. The control unchanged.
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 
