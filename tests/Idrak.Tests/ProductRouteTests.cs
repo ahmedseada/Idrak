@@ -14,12 +14,13 @@ internal abstract partial class DesktopTests : Tests
     [
         ("product routes: bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (a code table) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms)", ProductRoutesNear),
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
+        ("product routes: the CPU's two lanes over q4_k's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values, each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x)", ProductRoutesNibbleLanes),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
-        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
+        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K; the CPU's grouped pass over Q4_K's stored codes, x rounded once) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
         ("product routes: the fused epilogues of stored weights (CUDA, few rows): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
@@ -149,6 +150,8 @@ internal abstract partial class DesktopTests : Tests
                             w = expanded.ToArray();
                         }
 
+                        // The CPU's integer lane (q4_k under the measured route) multiplies x rounded to int8 a block of 32 values.
+                        bool roundsX = route == ProductRoute.Measured && device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend && format == "q4_k";
                         foreach (int m in RouteRows)
                         {
                             var x = RouteValues(random, (long)m * k);
@@ -156,18 +159,21 @@ internal abstract partial class DesktopTests : Tests
 
                             for (int i = 0; i < m; i++)
                             {
+                                var steps = roundsX ? HalfSteps(x, i, k) : null;
                                 for (int j = 0; j < n; j++)
                                 {
-                                    double sum = 0, magnitude = 0;
+                                    double sum = 0, magnitude = 0, rounding = 0;
                                     for (int r = 0; r < k; r++)
                                     {
                                         double term = (double)x[i * k + r] * w[r * n + j];
                                         sum += term;
                                         magnitude += Math.Abs(term);
+                                        rounding += steps is null ? 0 : Math.Abs(w[r * n + j]) * steps[r];
                                     }
 
-                                    // A float32 sum of k terms is within k · 2^-24 of their magnitude; twice that, and a tiny absolute floor.
-                                    double bound = k * Math.Pow(2, -23) * magnitude + 1e-30;
+                                    // A float32 sum of k terms is within k · 2^-24 of their magnitude; twice that, and a tiny absolute floor;
+                                    // x rounded, each value within its half step, adds Σ |w| · half step (and the terms grow by as much).
+                                    double bound = k * Math.Pow(2, -23) * (magnitude + rounding) + rounding + 1e-30;
                                     double error = Math.Abs(y[i * n + j] - sum);
                                     if (!(error <= bound))
                                     {
@@ -181,6 +187,100 @@ internal abstract partial class DesktopTests : Tests
                 }
             });
         }
+    }
+
+    // Half the step of x's rounding to int8 a block of 32 values (the block's largest magnitude / 127, halved, with a margin
+    // for the float32 arithmetic of the rounding) at each value of row i: how far the integer lane moves each value of x.
+    private static double[] HalfSteps(float[] x, int i, int k)
+    {
+        var steps = new double[k];
+        for (int b = 0; b < k / 32; b++)
+        {
+            double most = 0;
+            for (int v = 0; v < 32; v++)
+            {
+                most = Math.Max(most, Math.Abs(x[i * k + b * 32 + v]));
+            }
+
+            for (int v = 0; v < 32; v++)
+            {
+                steps[b * 32 + v] = most / 127 * 0.5001;
+            }
+        }
+
+        return steps;
+    }
+
+    // Each of the CPU's lanes over a 4-bit super-block's stored codes (q4_k), run directly: the decoded lane (codes decoded in
+    // registers) within float32's bound of the product of the weights' values, the integer lane (x rounded to int8 a block
+    // of 32 values) within that and its rounding of x.
+    private static void ProductRoutesNibbleLanes(Device device)
+    {
+        if (device.Backend is not Idrak.Abstraction.Devices.Cpu.CpuBackend)
+        {
+            Skip($"the nibble lanes are the CPU's (not {device})");
+            return;
+        }
+
+        var random = new Random(83);
+        var type = ElementTypes.Find("q4_k") ?? throw new InvalidOperationException("q4_k is not registered");
+        int ran = 0;
+        UnderRoute(ProductRoute.Measured, () =>
+        {
+            foreach (var (k, n) in new[] { (256, 37), (512, 130) })
+            {
+                var values = RouteValues(random, (long)k * n);
+                using var weight = (StoredWeight)PackedWeightFormats.Pack("q4_k", values, k, n, device);
+                float[] w;
+                using (var expanded = weight.Dequantize())
+                {
+                    w = expanded.ToArray();
+                }
+
+                var storage = weight.StoredValues.Storage;
+                var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(storage);
+                foreach (int m in new[] { 1, 3, 4, 5, 9, 70 })
+                {
+                    var x = RouteValues(random, (long)m * k);
+                    foreach (bool integer in new[] { false, true })
+                    {
+                        var y = new float[m * n];
+                        if (!Idrak.Abstraction.Devices.Cpu.CpuBackend.NibbleLane(integer, type, words, storage.Length, x, y, m, n, k))
+                        {
+                            Check(integer, $"the decoded lane does not read {type.Name} ({weight.Description})");
+                            continue;
+                        }
+
+                        string lane = integer ? "integer" : "decoded";
+                        for (int i = 0; i < m; i++)
+                        {
+                            var steps = integer ? HalfSteps(x, i, k) : null;
+                            for (int j = 0; j < n; j++)
+                            {
+                                double sum = 0, magnitude = 0, rounding = 0;
+                                for (int r = 0; r < k; r++)
+                                {
+                                    double term = (double)x[i * k + r] * w[r * n + j];
+                                    sum += term;
+                                    magnitude += Math.Abs(term);
+                                    rounding += steps is null ? 0 : Math.Abs(w[r * n + j]) * steps[r];
+                                }
+
+                                double bound = k * Math.Pow(2, -23) * (magnitude + rounding) + rounding + 1e-30;
+                                double error = Math.Abs(y[i * n + j] - sum);
+                                if (!(error <= bound))
+                                {
+                                    Check(false, $"the {lane} lane, q4_k [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} (error {error:E2} past the bound {bound:E2})");
+                                }
+                            }
+                        }
+
+                        ran++;
+                    }
+                }
+            }
+        });
+        Check(ran > 0, "no nibble lane ran");
     }
 
     private static void ProductRoutesStoredLayout(Device device)
@@ -510,7 +610,7 @@ internal abstract partial class DesktopTests : Tests
     {
         if (device.Backend is not Idrak.Gpu.Cuda.CudaBackend cuda)
         {
-            Skip($"the k-quants' generated lanes are CUDA's (not {device}); the CPU widens them by SuperBlock.Decode in every lane");
+            Skip($"the k-quants' generated lanes are CUDA's (not {device}); the CPU's q4_k lanes over the stored codes have their own test");
             return;
         }
 
@@ -649,9 +749,11 @@ internal abstract partial class DesktopTests : Tests
 
     private static void ProductRoutesMany(Device device)
     {
-        if (device.Backend is not Idrak.Gpu.Cuda.CudaBackend)
+        // The CPU groups q4_k's products (its lanes over the stored codes); CUDA every type here.
+        bool cpu = device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend;
+        if (device.Backend is not Idrak.Gpu.Cuda.CudaBackend && !cpu)
         {
-            Skip($"the grouped few-row kernels are CUDA's (not {device})");
+            Skip($"the grouped kernels are CUDA's and the CPU's (not {device})");
             return;
         }
 
@@ -659,7 +761,7 @@ internal abstract partial class DesktopTests : Tests
         UnderRoute(ProductRoute.Measured, () =>
         {
             int k = 256;
-            foreach (string format in new[] { "bfloat16", "int8", "q8_0", "q4_0", "iq4_nl", "q4_k" })
+            foreach (string format in cpu ? new[] { "q4_k" } : new[] { "bfloat16", "int8", "q8_0", "q4_0", "iq4_nl", "q4_k" })
             {
                 var weights = new[] { 70, 37, 129 }.Select(n => (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, device)).ToArray();
                 try
