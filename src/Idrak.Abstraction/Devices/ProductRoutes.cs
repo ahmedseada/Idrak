@@ -6,13 +6,11 @@ using System.Collections.Concurrent;
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
-/// How a product of weights stored in a type other than float32 picks its kernel (the experiment of Adad's design, branch
-/// <c>migration</c>): <see cref="Name"/>, today's routes, one kernel per format by the format's name (bfloat16, int8 and the
+/// How a product of weights stored in a type other than float32 picks its kernel: <see cref="Name"/>, today's routes, one kernel per format by the format's name (bfloat16, int8 and the
 /// stored formats each their own operations and kernels); <see cref="Generic"/>, one product per device that widens any type
 /// from its description (<see cref="ElementType.Float"/>, the integer bits, <see cref="ElementType.Scaled"/>), with no
 /// kernel of a type's own; <see cref="Measured"/>, the device's capability, then the description, then a measurement at the
-/// shape against the generic product, kept per shape: a named kernel is taken only where it measured faster; <see cref="Adad"/>,
-/// the measured route with Adad's block route among its lanes (x quantized into the weights' 8-bit blocks, integer dots).
+/// shape against the generic product, kept per shape: a named kernel is taken only where it measured faster.
 /// </summary>
 public enum ProductRoute
 {
@@ -24,14 +22,6 @@ public enum ProductRoute
 
     /// <summary>The faster of the generic product and the format's own kernel, measured once per shape.</summary>
     Measured,
-
-    /// <summary>
-    /// The measured route plus Adad's block route (Adad's BlockProducts and MatMulBlocks): for weights in 32-value blocks of
-    /// 8-bit codes and a float16 scale (q8_0), x is quantized into the same blocks and each block's 32 products summed as
-    /// integers (CUDA: dp4a, s8 tensor cores; the CPU: its s8 dot instruction), the block scales applied in float32. It
-    /// changes the product (x loses precision as q8_0 does); it is taken where it measures faster.
-    /// </summary>
-    Adad,
 }
 
 /// <summary>
@@ -42,7 +32,7 @@ public enum ProductRoute
 /// </summary>
 public static class ProductRoutes
 {
-    /// <summary>The variable that chooses the route: "name" (the default), "generic", "measured" or "adad".</summary>
+    /// <summary>The variable that chooses the route: "name" (the default), "generic" or "measured".</summary>
     public const string EnvironmentVariable = "IDRAK_ROUTES";
 
     private static int s_route = -1;
@@ -66,15 +56,14 @@ public static class ProductRoutes
         set => Volatile.Write(ref s_route, (int)value);
     }
 
-    /// <summary>The route <paramref name="text"/> names: "name" (or nothing), "generic", "measured" or "adad", ignoring case.</summary>
+    /// <summary>The route <paramref name="text"/> names: "name" (or nothing), "generic" or "measured", ignoring case.</summary>
     /// <exception cref="InvalidOperationException">It names none of them.</exception>
     public static ProductRoute Parse(string? text) => text?.Trim().ToLowerInvariant() switch
     {
         null or "" or "name" => ProductRoute.Name,
         "generic" => ProductRoute.Generic,
         "measured" => ProductRoute.Measured,
-        "adad" => ProductRoute.Adad,
-        _ => throw new InvalidOperationException($"{EnvironmentVariable} is '{text}': name, generic, measured or adad."),
+        _ => throw new InvalidOperationException($"{EnvironmentVariable} is '{text}': name, generic or measured."),
     };
 
     /// <summary>What each device chose under <see cref="ProductRoute.Measured"/>: "device: product" to the kernel's lane.</summary>

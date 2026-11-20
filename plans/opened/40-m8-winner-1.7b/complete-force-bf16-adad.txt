@@ -1,1 +1,0 @@
- implement a new feature that allows users to search for a specific service in the UI, and to see a list of all the services that are currently running. This will help users find the right service quickly, and it will also help the support

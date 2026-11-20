@@ -11,14 +11,14 @@ using System.Runtime.Intrinsics;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
-// The experiment's CPU lanes for weights stored in the file's layout (ProductRoutes; Adad's design): y = x · W for W
+// The experiment's CPU lanes for weights stored in the file's layout (ProductRoutes): y = x · W for W
 // stored as n rows of k values of any type, its description choosing how a row widens (IRowWiden: a float's bits, an
 // integer's, a scaled block's codes; any other type through its own conversion), with a scale per row or none. Two lanes,
 // each written once for every type (the JIT compiles one copy per widening): the row lane, each output's row widened once
 // and dotted with every row of x (decoding-sized products), and the panel lane, a tile of rows widened into a [columns, k]
 // panel and multiplied by the float32 product reading it transposed (prompt-sized products). The generic route takes the
 // row lane up to 8 rows and the panel lane above; the measured route the faster of the two at the shape, measured once
-// (Faster, Adad's measurement).
+// (Faster).
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -247,7 +247,7 @@ internal sealed partial class CpuBackend
         Grid,
     }
 
-    // The widening a type's description gives (Adad's rule: the description, never the name).
+    // The widening a type's description gives (the description, never the name).
     private static Widening WideningOf(ElementType type)
     {
         if (type.Super is not null)
@@ -282,7 +282,7 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>
-    /// The routed product of a stored weight (ProductRoutes generic, measured or adad): a scale per row or none, no zero points,
+    /// The routed product of a stored weight (ProductRoutes generic or measured): a scale per row or none, no zero points,
     /// in the CPU's own memory. False when the weight is not such a one (the stored product then runs as today).
     /// </summary>
     private bool StoredRouted(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
@@ -297,40 +297,37 @@ internal sealed partial class CpuBackend
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
         float[] xv = D(x), yv = D(y);
         var widening = WideningOf(type);
-        bool adad = ProductRoutes.Current == ProductRoute.Adad;
         int chosen = ProductRoutes.Current == ProductRoute.Generic
             ? m <= Int8DirectRows ? RowLaneId : PanelLaneId
-            : StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k, adad), out int known) ? known
-            : MeasureStoredLanes(adad && (BlockLane(type, lane.RowScales, k) || SuperBlockLane(type, lane.RowScales, k) || GridBlockLane(type, lane.RowScales, k)),
-                widening, lane, x, y, m, n, k);
+            : StoredLanes.TryGetValue((type.Name, LaneKey(type.Name, m, n, k).Rows, n, k), out int known) ? known
+            : MeasureStoredLanes(widening, lane, x, y, m, n, k);
         RunLane(chosen, widening, lane, x, y, m, n, k);
         return true;
     }
 
     // The stored products' lanes: each output's row widened once (decoding-sized), a panel of rows widened and multiplied
-    // transposed, the whole weight widened once and the float32 product (today's prompt path: ExpandedLane), Adad's block
-    // route (CpuBackend.Blocks.cs, the adad route only).
-    private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, BlockLaneId = 3, TilesLaneId = 4;
+    // transposed, the whole weight widened once and the float32 product (today's prompt path: ExpandedLane), the tiles.
+    private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3;
 
-    private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)", "block route (x as q8_0, s8 dot)",
+    private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)",
         "tiles (panels widened in the product)"];
 
-    // Each shape's measured lane (the adad route apart: it has one more).
-    private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K, bool Adad), int> StoredLanes = new();
+    // Each shape's measured lane.
+    private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K), int> StoredLanes = new();
 
     // The shape's fastest lane, measured once on the real operands (Faster, a lane against the best so far); without
     // measuring (CpuTuning.Autotune off), the row lane up to 8 rows and today's path above.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private int MeasureStoredLanes(bool blocks, Widening widening, StoredLane lane, Storage x, Storage y, int m, int n, int k)
+    private int MeasureStoredLanes(Widening widening, StoredLane lane, Storage x, Storage y, int m, int n, int k)
     {
-        var key = (lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k, ProductRoutes.Current == ProductRoute.Adad);
+        var key = (lane.Type.Name, LaneKey(lane.Type.Name, m, n, k).Rows, n, k);
         int best = m <= Int8DirectRows ? RowLaneId : ExpandedLaneId;
         if (CpuTuning.Autotune)
         {
             // Today's path (the weights widened whole, then the float32 product) only above the few-row sizes: with few rows it
             // widens every row as the row lane does and copies them too, and its copy of the weights (k · n float32: an output
             // head's is hundreds of MiB) would be the run's memory peak.
-            int[] candidates = [RowLaneId, PanelLaneId, .. m > Int8DirectRows ? new[] { ExpandedLaneId } : [], .. blocks ? new[] { BlockLaneId } : [],
+            int[] candidates = [RowLaneId, PanelLaneId, .. m > Int8DirectRows ? new[] { ExpandedLaneId } : [],
                 .. CpuMatMul.TakesPanels(m, n, k) ? new[] { TilesLaneId } : []];
             var times = new double[candidates.Length];
             best = candidates[0];
@@ -369,19 +366,7 @@ internal sealed partial class CpuBackend
                 RunTiles(widening, lane, D(x), D(y), m, n, k);
                 break;
             default:
-                if (lane.Type.Grid is not null)
-                {
-                    RunGridBlocks(lane, D(x), D(y), m, n, k);
-                }
-                else if (lane.Type.Super is not null)
-                {
-                    RunSuperBlocks(lane, D(x), D(y), m, n, k);
-                }
-                else
-                {
-                    RunBlocks(lane, D(x), D(y), m, n, k);
-                }
-
+                RunStoredLane(false, widening, lane, D(x), D(y), m, n, k);
                 break;
         }
     }

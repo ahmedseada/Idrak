@@ -306,7 +306,7 @@ public static class PackedWeightFormats
             throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
         }
 
-        // The generic and measured routes (ProductRoutes) keep int8 and bfloat16 weights as Adad keeps every weight: stored
+        // The generic and measured routes (ProductRoutes) keep int8 and bfloat16 weights stored
         // in the file's layout, a row of codes an output, their products by the device's lanes for the type's description.
         if (ProductRoutes.Current != ProductRoute.Name && (ReferenceEquals(format, BuiltIn[PackedFormat.Int8]) || ReferenceEquals(format, BuiltIn[PackedFormat.BFloat16])))
         {

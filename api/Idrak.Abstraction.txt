@@ -4009,7 +4009,6 @@ public static class Idrak.Abstraction.Devices.PowerSource
   public static string Current { get; }
 
 public enum Idrak.Abstraction.Devices.ProductRoute : int
-  Adad = 3
   Generic = 1
   Measured = 2
   Name = 0

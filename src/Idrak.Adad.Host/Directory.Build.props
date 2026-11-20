@@ -1,3 +1,0 @@
-<Project>
-  <Import Project="$(MSBuildThisFileDirectory)../Idrak.Adad/Directory.Build.props" />
-</Project>

@@ -129,7 +129,7 @@ internal sealed unsafe partial class CudaBackend
         return shared.Permuted;
     }
 
-    // The fused epilogues are candidates, not defaults (Adad's rule): each shape measures, once and on the real operands,
+    // The fused epilogues are candidates, not defaults: each shape measures, once and on the real operands,
     // the fused pass against the products followed by the pass of its own (GatedActivation, AddRmsNormAffine), and the
     // fused one runs only where it is clearly faster (Tune's fallback is the composition). A number for each type, for the keys.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> EpilogueIds = new(StringComparer.Ordinal);

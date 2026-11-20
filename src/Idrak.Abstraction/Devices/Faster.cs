@@ -6,7 +6,7 @@ using System.Diagnostics;
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
-/// Adad's one way of measuring a choice between two paths that give the same result (its Measure.Faster): each path warmed
+/// One way of measuring a choice between two paths that give the same result: each path warmed
 /// once; a round times a path over enough calls to fill about 2 ms (the count from the warm call); the paths timed in
 /// alternating rounds, each one's minimum per call kept; at least three rounds, and on until neither minimum has improved
 /// by more than 2 % and the runtime has compiled nothing for three rounds in a row, at most 24 rounds.

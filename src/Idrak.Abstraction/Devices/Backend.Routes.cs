@@ -3,7 +3,7 @@
 
 namespace Idrak.Abstraction.Devices;
 
-// The experiment of Adad's design (ProductRoutes): the passes a device may fuse over weights stored in their file's layout
+// The product routes (ProductRoutes): the passes a device may fuse over weights stored in their file's layout
 // (StoredWeight), outside the generated operations.
 public abstract partial class Backend
 {

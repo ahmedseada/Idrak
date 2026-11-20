@@ -7,7 +7,7 @@ using System.Text;
 namespace Idrak.Gpu.Cuda;
 
 /// <summary>
-/// What the generic products widen a weight type from (the experiment of Adad's design, <see cref="ProductRoutes"/>): the
+/// What the generic products widen a weight type from (<see cref="ProductRoutes"/>): the
 /// type's own description, never its name: a float's bits (<see cref="ElementType.Float"/>), an integer's bits and sign,
 /// or a block of codes and one scale (<see cref="ElementType.Scaled"/>). Null for a type these kernels cannot widen: per
 /// value 8, 16 or 32 bits; a block of 32 values whose codes are 8 bits, with a 16-bit float scale, every part on an even
@@ -1106,7 +1106,7 @@ internal static partial class PtxKernels
         return ([TypedMmaName(d)], sb.ToString());
     }
 
-    // The matrix-unit lane (Adad's matrix units, chosen by the type's description): y [m, n] = x [m, k] · W for W
+    // The matrix-unit lane (chosen by the type's description): y [m, n] = x [m, k] · W for W
     // outputs-major (n rows of k values), k a multiple of 32. A block of 128 threads (4 warps, 2 × 2) computes 64 × 64
     // outputs, each warp 32 × 32 as 2 × 4 tiles of mma.sync m16n8k16 (bfloat16 operands, float32 sums), k in steps of 32:
     // x's tile rounded to bfloat16 pairs, W's tile widened from the description into bfloat16 pairs (8-bit codes and

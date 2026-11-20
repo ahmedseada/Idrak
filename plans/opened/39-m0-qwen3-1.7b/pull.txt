@@ -1,1 +1,0 @@
-Pulled Qwen/Qwen3-1.7B (70d244cc86cc): 9 of 9 files downloaded (3.80 GB in 86.1 s), 3.80 GB in C:\Users\LEGION\.cache\idrak\downloads\huggingface\models\Qwen\Qwen3-1.7B\70d244cc86cc

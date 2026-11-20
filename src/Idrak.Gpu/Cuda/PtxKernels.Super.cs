@@ -15,6 +15,41 @@ namespace Idrak.Gpu.Cuda;
 // each step as the CPU's description decoder rounds it (SuperBlock.Decode).
 internal static partial class PtxKernels
 {
+    // A kernel parameter loaded into a new 64-bit register.
+    private static string Param64(PtxBuilder b, string name)
+    {
+        string r = b.RD();
+        b.L($"ld.param.u64 {r}, [{name}];");
+        return r;
+    }
+
+    // A kernel parameter loaded into a new 32-bit register.
+    private static string Param32(PtxBuilder b, string name)
+    {
+        string r = b.R();
+        b.L($"ld.param.u32 {r}, [{name}];");
+        return r;
+    }
+
+    // A 4-bit code in `reg` as its entry of a 16-entry int8 table, sign-extended (two byte selections, the half by bit 3).
+    internal static void TableLookup(PtxBuilder b, IReadOnlyList<int> table, string reg)
+    {
+        var words = TableWords(table).Select(_ => b.R()).ToArray();
+        var values = TableWords(table);
+        for (int i = 0; i < 4; i++)
+        {
+            b.L(string.Create(CultureInfo.InvariantCulture, $"mov.b32 {words[i]}, {values[i].Word};"));
+        }
+
+        string sel = b.R(), lo = b.R(), hi = b.R(), p = b.P();
+        b.L($"and.b32 {sel}, {reg}, 7;");
+        b.L($"prmt.b32 {lo}, {words[0]}, {words[1]}, {sel};");
+        b.L($"prmt.b32 {hi}, {words[2]}, {words[3]}, {sel};");
+        b.L($"setp.ge.u32 {p}, {reg}, 8;");
+        b.L($"selp.b32 {reg}, {hi}, {lo}, {p};");
+        b.L($"bfe.s32 {reg}, {reg}, 0, 8;");
+    }
+
     // A description's name part: a stable hash of its canonical text (the same description, the same kernels).
     internal static string SuperCode(SuperBlock s)
     {

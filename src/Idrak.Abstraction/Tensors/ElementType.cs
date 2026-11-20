@@ -31,7 +31,7 @@ public delegate void ElementEncoder(ReadOnlySpan<float> source, Span<byte> desti
 public sealed record BlockScales(string Type, int PerBlock, bool ZeroPoints, string? Layout = null);
 
 /// <summary>
-/// How a float type's bits read (Adad's description): one sign bit, <paramref name="Exponent"/> exponent bits biased by
+/// How a float type's bits read: one sign bit, <paramref name="Exponent"/> exponent bits biased by
 /// 2^(Exponent − 1) − 1, then <paramref name="Mantissa"/> mantissa bits, the sign the highest; the largest exponent is an
 /// infinity (mantissa 0) or a NaN, the smallest a zero or a subnormal, as IEEE 754's formats are. A kernel that widens
 /// values from this description alone needs nothing named after the type. A float whose special values differ (E4M3fn:
@@ -49,7 +49,7 @@ public readonly record struct FloatBits(int Exponent, int Mantissa)
 }
 
 /// <summary>
-/// How a block format whose values are integer codes times one scale per block reads (Adad's description): each block of
+/// How a block format whose values are integer codes times one scale per block reads: each block of
 /// <paramref name="Values"/> values takes <paramref name="Bytes"/> bytes, its scale a float of <paramref name="Scale"/>'s
 /// bits at byte <paramref name="ScaleOffset"/>, its codes <paramref name="CodeBits"/> bits each from byte
 /// <paramref name="CodeOffset"/> in value order (the first in the lowest bits), or, 4-bit codes with
@@ -102,7 +102,7 @@ public sealed record CodePlane(int Offset, int Bits, int Group)
 public readonly record struct ScalePiece(int Offset, int Shift, int Bits);
 
 /// <summary>
-/// How a grid-codebook format reads (ggml's IQ2_XXS, IQ3_XXS; Adad's description extended): each block of
+/// How a grid-codebook format reads (ggml's IQ2_XXS, IQ3_XXS): each block of
 /// <paramref name="Values"/> values takes <paramref name="Bytes"/> bytes; value v is (scale_j · magnitude) · sign, with
 /// j = v / <paramref name="SubValues"/> its sub-block, scale_j = (d · (s_j + <paramref name="SubScaleOffset"/>)) ·
 /// <paramref name="SubScaleFactor"/> (d the float of <paramref name="Scale"/>'s bits at <paramref name="ScaleOffset"/>,
@@ -311,7 +311,7 @@ public sealed record GridBlock(int Values, int Bytes, FloatBits Scale, int Scale
 }
 
 /// <summary>
-/// How a super-block format reads (ggml's k-quants, Adad's description extended): each block of <paramref name="Values"/>
+/// How a super-block format reads (ggml's k-quants): each block of <paramref name="Values"/>
 /// values takes <paramref name="Bytes"/> bytes; a value's code is the fields of <paramref name="Planes"/> at its place (the
 /// first plane the lowest bits); value v of sub-block j = v / <paramref name="SubValues"/> is
 /// (d · (scale_j + <paramref name="SubScaleBias"/>)) · (code + <paramref name="CodeBias"/>) − dmin · min_j, d the float of

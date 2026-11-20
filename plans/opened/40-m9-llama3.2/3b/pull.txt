@@ -1,2 +1,0 @@
-Pulled meta-llama/Llama-3.2-3B-Instruct (0cb88a4f764b): 8 of 8 files downloaded (5.99 GB in 146.1 s), 5.99 GB in C:\Users\LEGION\.cache\idrak\downloads\huggingface\models\meta-llama\Llama-3.2-3B-Instruct\0cb88a4f764b
-exit 0

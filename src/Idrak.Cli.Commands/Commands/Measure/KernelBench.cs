@@ -236,7 +236,7 @@ internal static class KernelBench
         string.Create(CultureInfo.InvariantCulture, $"{weight.Bytes / 1048576.0:F2} MiB of weights, {weight.Description}");
 
     // What the measured route chose for the row (ProductRoutes), or nothing under the other routes.
-    private static string Chosen() => ProductRoutes.Current is not (ProductRoute.Measured or ProductRoute.Adad) || ProductRoutes.Choices.Count == 0
+    private static string Chosen() => ProductRoutes.Current != ProductRoute.Measured || ProductRoutes.Choices.Count == 0
         ? ""
         : "; measured: " + string.Join(", ", ProductRoutes.Choices.Select(c => $"{c.Key} {c.Value}"));
 

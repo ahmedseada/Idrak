@@ -1,3 +1,0 @@
-element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float16, float8_e4m3, float32 natively (compute capability 12.0: the bfloat16 and float16 tensor-core kernels (PTX sm_80) load, the fp8 ones (PTX sm_89) load))
-Qwen/Qwen3-1.7B on cuda:0, weights bf16: perplexity 24.142
-6643 tokens scored in 13 window(s) of up to 512 · mean negative log-likelihood 3.1839 · 0.7 s

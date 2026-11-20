@@ -1,6 +1,0 @@
-ptxas info    : 0 bytes gmem
-ptxas info    : Compiling entry function 'native_mma_bf16_r64_s4_n256_x' for 'sm_120'
-ptxas info    : Function properties for native_mma_bf16_r64_s4_n256_x
-    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
-ptxas info    : Used 194 registers, used 1 barriers
-ptxas info    : Compile time = 0.000 ms

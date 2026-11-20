@@ -1,1 +1,0 @@
- move the entire platform to a cloud provider, which will allow us to scale more easily and reduce our energy consumption. This will require a lot of work, but the team is excited about the opportunity to make a big change and to work together

@@ -5,27 +5,26 @@ using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
-// The experiment of Adad's design (ProductRoutes, IDRAK_ROUTES): products of bfloat16, int8 and q8_0 weights by today's
+// The product routes (ProductRoutes, IDRAK_ROUTES): products of bfloat16, int8 and q8_0 weights by today's
 // kernels (name), by the lanes over weights stored in the file's layout with no fast path (generic), and by the faster
 // lane per shape, the matrix units among them (measured); every route gives the product of the weights' values.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ProductRouteGroup =
     [
-        ("product routes: bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (a code table) weights give the product of their values (as ggml decodes them) under the name, generic, measured and adad routes (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms, and under adad for int8, q8_0, q4_0 and iq4_nl also within x's rounding to q8_0's codes)", ProductRoutesNear),
-        ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept as Adad keeps them, stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
+        ("product routes: bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (a code table) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms)", ProductRoutesNear),
+        ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
-        ("product routes: the block route (adad) gives the product of x quantized to q8_0 (Adad's encoder) and the weights' values on the CPU (with its s8 dot lane) and CUDA, for int8 (a scale a row), q8_0, q4_0 and iq4_nl weights, and on the CPU Q4_K and Q6_K (scaled sub-blocks and minimums) and IQ2_XXS and IQ3_XXS (grid codebooks) (1, 3, 8, 9, 70 and 130 rows; within float32's bound for k terms)", ProductRoutesBlocks),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
         ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
         ("product routes: the fused epilogues of stored weights (CUDA, few rows): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
-        ("product routes: a bfloat16 checkpoint loaded under the adad route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
+        ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
-        ("product routes: IDRAK_ROUTES reads name, generic, measured and adad (any case, blank is name) and refuses anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
+        ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and refuses anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
     ];
 
     private static readonly string[] RouteFormats = ["bfloat16", "float16", "int8", "q8_0", "q4_0", "iq4_nl"];
@@ -36,22 +35,19 @@ internal abstract partial class DesktopTests : Tests
     // The grid-codebook formats packed at load here (IQ: blocks of 256, only widths in whole blocks).
     private static readonly string[] GridFormats = ["iq2_xxs", "iq3_xxs"];
 
-    // The formats the block route (adad) takes: codes within int8 with a scale a block or a row.
-    private static readonly string[] BlockFormats = ["int8", "q8_0", "q4_0", "iq4_nl"];
-
     // (k, n): k whole blocks of 32 (q8_0), n not a multiple of 4 or 2 so the packed rows' padding is crossed.
     private static readonly (int K, int N)[] RouteShapes = [(96, 70), (256, 37), (288, 129)];
 
     private static readonly int[] RouteRows = [1, 3, 8, 9, 70];
 
     // Runs `body` under `route`, then puts the process's route back.
-    // A checkpoint's weights packed from its rows (IWeightSource.ReadOutputRows, ReadOutputBFloat16: the load as Adad
-    // converts) against the same checkpoint read only as float32 values (the load before), under the adad route.
+    // A checkpoint's weights packed from its rows (IWeightSource.ReadOutputRows, ReadOutputBFloat16) against the
+    // same checkpoint read only as float32 values (the load before), under the measured route.
     private static void ProductRoutesCheckpointRows(Device device)
     {
         var architecture = PretrainedArchitectures.Get("Qwen3ForCausalLM");
         int runs = 0;
-        UnderRoute(ProductRoute.Adad, () =>
+        UnderRoute(ProductRoute.Measured, () =>
         {
             foreach (bool tied in new[] { true, false })
             {
@@ -132,7 +128,7 @@ internal abstract partial class DesktopTests : Tests
     private static void ProductRoutesNear(Device device)
     {
         var random = new Random(37);
-        foreach (var route in new[] { ProductRoute.Name, ProductRoute.Generic, ProductRoute.Measured, ProductRoute.Adad })
+        foreach (var route in new[] { ProductRoute.Name, ProductRoute.Generic, ProductRoute.Measured })
         {
             UnderRoute(route, () =>
             {
@@ -158,27 +154,20 @@ internal abstract partial class DesktopTests : Tests
                             var x = RouteValues(random, (long)m * k);
                             var y = RouteProduct(weight, x, m, device);
 
-                            // Under adad a q8_0 product may take the block route, x rounded to q8_0's codes: each term off by
-                            // at most |w| times that value's rounding.
-                            float[]? quantized = route == ProductRoute.Adad && (BlockFormats.Contains(format) || SuperFormats.Contains(format) || GridFormats.Contains(format)) ? QuantizedQ8(x, m, k) : null;
                             for (int i = 0; i < m; i++)
                             {
                                 for (int j = 0; j < n; j++)
                                 {
-                                    double sum = 0, magnitude = 0, rounding = 0;
+                                    double sum = 0, magnitude = 0;
                                     for (int r = 0; r < k; r++)
                                     {
                                         double term = (double)x[i * k + r] * w[r * n + j];
                                         sum += term;
                                         magnitude += Math.Abs(term);
-                                        if (quantized is not null)
-                                        {
-                                            rounding += Math.Abs((double)w[r * n + j]) * Math.Abs((double)quantized[i * k + r] - x[i * k + r]);
-                                        }
                                     }
 
                                     // A float32 sum of k terms is within k · 2^-24 of their magnitude; twice that, and a tiny absolute floor.
-                                    double bound = k * Math.Pow(2, -23) * (magnitude + rounding) + rounding + 1e-30;
+                                    double bound = k * Math.Pow(2, -23) * magnitude + 1e-30;
                                     double error = Math.Abs(y[i * n + j] - sum);
                                     if (!(error <= bound))
                                     {
@@ -455,119 +444,6 @@ internal abstract partial class DesktopTests : Tests
                 }
             });
         }
-    }
-
-    // x [m, k] rounded as Adad's q8_0 encoder rounds it (the block route's x): each block of 32 its largest |x| / 127 as
-    // float16, each value the nearest code (ties to even, within ±127) times that scale.
-    private static float[] QuantizedQ8(float[] x, int m, int k)
-    {
-        var q = new float[(long)m * k];
-        for (int b = 0; b < m * k / 32; b++)
-        {
-            float amax = 0;
-            for (int i = 0; i < 32; i++)
-            {
-                amax = Math.Max(amax, Math.Abs(x[b * 32 + i]));
-            }
-
-            float d = (float)(Half)(amax / 127f), id = d == 0 ? 0 : 1f / d;
-            for (int i = 0; i < 32; i++)
-            {
-                q[b * 32 + i] = Math.Clamp(MathF.Round(x[b * 32 + i] * id), -127, 127) * d;
-            }
-        }
-
-        return q;
-    }
-
-    private static void ProductRoutesBlocks(Device device)
-    {
-        Func<StoredWeight, Tensor, Tensor, int, int, int, bool> run;
-        if (device.Backend is Idrak.Gpu.Cuda.CudaBackend cuda)
-        {
-            run = (w, x, y, m, n, k) => cuda.StoredBlocks(w.Type, x.Storage, w.StoredValues.Storage, w.Scales?.Storage, y.Storage, m, n, k);
-        }
-        else if (device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend cpu)
-        {
-            if (!Idrak.Abstraction.Devices.Cpu.CpuBackend.S8DotLane)
-            {
-                Skip("the CPU's block route needs its s8 dot lane (AVX-VNNI-INT8 or ARM's dot product); this CPU has neither");
-                return;
-            }
-
-            run = (w, x, y, m, n, k) => cpu.StoredBlocks(w.Type, x.Storage, w.StoredValues.Storage, w.Scales?.Storage, y.Storage, m, n, k);
-        }
-        else
-        {
-            Skip($"the block route is the CPU's and CUDA's (not {device})");
-            return;
-        }
-
-        var random = new Random(59);
-        int ran = 0;
-        UnderRoute(ProductRoute.Adad, () =>
-        {
-            // The k-quants' and grid codebooks' block route is the CPU's (CUDA's lanes for them widen their descriptions instead).
-            var formats = device.IsGpu ? BlockFormats : [.. BlockFormats, .. SuperFormats, .. GridFormats];
-            foreach (var (format, (k, n)) in formats.SelectMany(f => new[] { (96, 70), (256, 130), (288, 37) }.Select(shape => (f, shape))))
-            {
-                if (k % (ElementTypes.Find(format)?.BlockSize ?? 1) != 0)
-                {
-                    continue;                                           // a super-block format needs whole blocks of k
-                }
-
-                var values = RouteValues(random, (long)k * n);
-                using var weight = (StoredWeight)PackedWeightFormats.Pack(format, values, k, n, device);
-                float[] w;
-                using (var expanded = weight.Dequantize())
-                {
-                    w = expanded.ToArray();
-                }
-
-                foreach (int m in new[] { 1, 3, 8, 9, 70, 130 })
-                {
-                    var x = RouteValues(random, (long)m * k);
-                    var q = QuantizedQ8(x, m, k);
-                    float[] y;
-                    using (var scope = new TensorScope())
-                    {
-                        var input = Tensor.From(x, [m, k], device);
-                        var output = Tensor.Empty([m, n], device);
-                        if (!run(weight, input, output, m, n, k))
-                        {
-                            Skip($"{device}: the block route does not take {format} here ({(device.Backend as Idrak.Gpu.Cuda.CudaBackend)?.TypedUnavailableReason})");
-                            return;
-                        }
-
-                        y = output.ToArray();
-                        ran++;
-                    }
-
-                    for (int i = 0; i < m; i++)
-                    {
-                        for (int j = 0; j < n; j++)
-                        {
-                            double sum = 0, magnitude = 0;
-                            for (int r = 0; r < k; r++)
-                            {
-                                double term = (double)q[i * k + r] * w[r * n + j];
-                                sum += term;
-                                magnitude += Math.Abs(term);
-                            }
-
-                            double bound = k * Math.Pow(2, -23) * magnitude + 1e-30;
-                            double error = Math.Abs(y[i * n + j] - sum);
-                            if (!(error <= bound))
-                            {
-                                Check(false, $"{device}: the block route, {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of x as q8_0 and the weights {sum} "
-                                    + $"(error {error:E2} past {bound:E2})");
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        Check(ran > 0, $"{device}: the block route ran no product");
     }
 
     private static void ProductRoutesSuperDecode(Device device)
@@ -1179,8 +1055,8 @@ internal abstract partial class DesktopTests : Tests
     {
         Check(ProductRoutes.Parse(null) == ProductRoute.Name && ProductRoutes.Parse(" ") == ProductRoute.Name && ProductRoutes.Parse("NAME") == ProductRoute.Name,
             "blank and 'name' are the named route");
-        Check(ProductRoutes.Parse("Generic") == ProductRoute.Generic && ProductRoutes.Parse("measured") == ProductRoute.Measured && ProductRoutes.Parse("ADAD") == ProductRoute.Adad,
-            "generic, measured and adad are read in any case");
+        Check(ProductRoutes.Parse("Generic") == ProductRoute.Generic && ProductRoutes.Parse("measured") == ProductRoute.Measured,
+            "generic and measured are read in any case");
         string? refused = null;
         try
         {

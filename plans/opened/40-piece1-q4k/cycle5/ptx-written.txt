@@ -1,1 +1,0 @@
-32 modules written to D:/Projects/idrak/test-output/adad/piece1-q4k/cycle5/ptx

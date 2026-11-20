@@ -1,5 +1,0 @@
-Collecting data...
-Generating 'C:\Users\LEGION\AppData\Local\Temp\nsys-report-1611.qdstrm'
-[1/1] [0%                          ] nsys.nsys-rep[1/1] [0%                          ] nsys.nsys-rep[1/1] [===========50%              ] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep[1/1] [========================100%] nsys.nsys-rep
-Generated:
-	D:/Projects/idrak/test-output/adad/piece1-q4k/cycle5/nsys.nsys-rep

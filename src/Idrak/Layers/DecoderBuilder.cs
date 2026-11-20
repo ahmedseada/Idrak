@@ -129,7 +129,7 @@ public static class DecoderBuilder
 
                 if (routed is not null)
                 {
-                    // As Adad converts (each type through its own lane, one rounding, never a float32 matrix): a bfloat16
+                    // Each type through its own lane, one rounding, never a float32 matrix: a bfloat16
                     // checkpoint's bits kept as they are, else a block of the file's rows at a time encoded.
                     if (routed == "bfloat16" && weights is not null && tiedTable is null && weights.ReadOutputBFloat16($"{name}.weight", shape, [])
                         && Idrak.Abstraction.Generation.StoredWeight.FromFill(Idrak.Abstraction.ElementType.BFloat16, inputs, outputs, null, device,

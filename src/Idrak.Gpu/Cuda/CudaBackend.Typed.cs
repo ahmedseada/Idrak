@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Gpu.Cuda;
 
-// The experiment of Adad's design on CUDA (ProductRoutes): products of int8 and bfloat16 weights by their own kernels
+// The product routes on CUDA (ProductRoutes): products of int8 and bfloat16 weights by their own kernels
 // (ProductRoute.Name, today), by one generic product per weight description (ProductRoute.Generic: PtxKernels.Typed.cs,
 // widening any type from its description inside the kernel), or by the faster of the two, measured once per shape
 // (ProductRoute.Measured: Tune, the named kernel unless the generic one is clearly faster). Weights kept as stored (q8_0
@@ -241,13 +241,12 @@ internal sealed unsafe partial class CudaBackend
     private void RunTypedMma(TypedDecode d, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k) =>
         Launch(TypedMma(d)!.Value, (uint)((n + 63) / 64), (uint)((m + 63) / 64), 128, 1, P(x), P(w), rowScales is null ? 0UL : P(rowScales), P(y), U(m), U(n), U(k));
 
-    // The measured route's product of stored weights: of the lanes the device and the type's description allow (Adad's
-    // rule: the device accepts the instruction, the description fits it), whichever measures fastest at the shape on the real
-    // operands (Tune: the f32 tile or the few-row lane unless another is clearly faster), once: the f32 tile or the few-row
-    // lane (0), the simple matrix-unit kernel (1, TypedMma), the native bfloat16 kind (2, the operands packed into the kind's
-    // rows, then the shape-measured kernel: NativeMma), and under the adad route Adad's block route (3, x quantized into
-    // q8_0's blocks, integer dots: PtxKernels.Blocks.cs) for weights in q8_0's blocks. Each shape's lane recorded
-    // (ProductRoutes.Chose).
+    // The measured route's product of stored weights: of the lanes the device and the type's description allow (the device
+    // accepts the instruction, the description fits it), whichever measures fastest at the shape on the real operands (Tune:
+    // the f32 tile or the few-row lane unless another is clearly faster), once: the f32 tile or the few-row lane (0), the
+    // simple matrix-unit kernel (1, TypedMma), the native bfloat16 kind (2, the operands packed into the kind's rows, then the
+    // shape-measured kernel: NativeMma), the native kind decoding in the kernel (4), reading int8 codes raw (5) and the
+    // tensor rows (6). Each shape's lane recorded (ProductRoutes.Chose).
     private bool StoredMeasured(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
     {
         if (DecodeOf(weight.ElementType) is not { } d)
@@ -255,7 +254,7 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        bool few = m <= PtxKernels.TypedGemvRows[^1], adad = ProductRoutes.Current == ProductRoute.Adad;
+        bool few = m <= PtxKernels.TypedGemvRows[^1];
         Span<int> candidates = stackalloc int[7];
         int count = 0;
         candidates[count++] = 0;
@@ -266,11 +265,6 @@ internal sealed unsafe partial class CudaBackend
             {
                 candidates[count++] = 2;
             }
-        }
-
-        if (adad && BlockLane(weight.ElementType, scales, k))
-        {
-            candidates[count++] = 3;
         }
 
         if (NativeDirectLane(weight.ElementType, scales, m, k))
@@ -291,7 +285,7 @@ internal sealed unsafe partial class CudaBackend
         int lane = 0;
         if (count > 1)
         {
-            var key = new TuneKey(TuneOp.ProductRoute, (adad ? 2000 : 1000) + TypedIds.GetOrAdd(d, static _ => TypedIds.Count), few ? m : TuneSizes.Class(m), n, k, count);
+            var key = new TuneKey(TuneOp.ProductRoute, 1000 + TypedIds.GetOrAdd(d, static _ => TypedIds.Count), few ? m : TuneSizes.Class(m), n, k, count);
             if (!TryTuned(key, candidates[..count], 0, out lane))
             {
                 lane = MeasureStoredRoute(key, candidates[..count].ToArray(), d, x, weight, scales, y, m, n, k);
@@ -303,17 +297,16 @@ internal sealed unsafe partial class CudaBackend
             return false;
         }
 
-        if (_storedSaid.TryAdd((d, few ? m : TuneSizes.Class(m), n, k, BFloat16Products, adad), 0))
+        if (_storedSaid.TryAdd((d, few ? m : TuneSizes.Class(m), n, k, BFloat16Products), 0))
         {
             SayStored(weight.ElementType, m, n, k, lane switch
             {
                 6 => "tensor rows (today's tensor-core kernel over the rows as stored, or widened to bfloat16 rows; k split in the kernel)",
                 5 => "native bfloat16 kind (int8 codes read raw, no packing pass)",
                 4 => "native bfloat16 kind (decoded in the kernel)",
-                3 => few ? "block route (x as q8_0, integer dots)" : "block route (x as q8_0, s8 tensor cores)",
                 2 => "native bfloat16 kind (packed)",
                 1 => "matrix units (simple kernel)",
-                _ when few => count > 1 ? "few-row lane (block route slower)" : "few-row lane",
+                _ when few => "few-row lane",
                 _ => count > 1 ? "f32 tile" : "f32 tile (the only lane)",
             });
         }
@@ -322,7 +315,7 @@ internal sealed unsafe partial class CudaBackend
     }
 
     // One lane of a stored product (0 the f32 tile or the few-row lane, 1 the simple matrix-unit kernel, 2 the native kind,
-    // 3 the block route, 4 the native kind decoding in the kernel, 5 the native kind reading int8 codes raw, 6 the tensor
+    // 4 the native kind decoding in the kernel, 5 the native kind reading int8 codes raw, 6 the tensor
     // rows: today's tensor-core kernel over the rows as stored, CudaBackend.TensorRows.cs).
     private bool RunStoredLane(int lane, TypedDecode d, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
     {
@@ -332,8 +325,6 @@ internal sealed unsafe partial class CudaBackend
                 RunTypedMma(d, x, weight, scales, y, m, n, k);
                 return true;
             case 2 when RunNative(d, x, weight, scales, y, m, n, k):
-                return true;
-            case 3 when RunBlocks(x, weight, scales, y, m, n, k):
                 return true;
             case 4 when RunNativeDirect(x, weight, scales, y, m, n, k):
                 return true;
@@ -346,98 +337,7 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    private readonly ConcurrentDictionary<(TypedDecode, int, int, int, bool, bool), byte> _storedSaid = new();
-
-    // ------------------------------------------------------------------ Adad's block route (ProductRoute.Adad)
-
-    // Each layout's block kernels (PtxKernels.BlockModule), loaded on first use: null where the device is below the s8
-    // tensor instruction's target or its driver refuses the module (TypedUnavailableReason says why).
-    private readonly ConcurrentDictionary<string, (IntPtr Quantize, IntPtr Gemv, IntPtr Tile)?> _blocks = new();
-
-    private (IntPtr Quantize, IntPtr Gemv, IntPtr Tile)? Blocks(PtxKernels.BlockLayout layout) =>
-        _blocks.TryGetValue(layout.Code, out var known) ? known : LoadBlocks(layout);
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private (IntPtr Quantize, IntPtr Gemv, IntPtr Tile)? LoadBlocks(PtxKernels.BlockLayout layout)
-    {
-        lock (_typedLock)
-        {
-            if (_blocks.TryGetValue(layout.Code, out var known))
-            {
-                return known;
-            }
-
-            (IntPtr, IntPtr, IntPtr)? kernels = null;
-            var names = PtxKernels.BlockNames(layout);
-            if (BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
-            {
-                TypedUnavailableReason = below;
-            }
-            else if (LoadDynamicModule($"blocks_{layout.Code}", names, PtxKernels.BlockModule(layout), static _ => 0, out string? reason) is { } loaded)
-            {
-                kernels = (loaded[names[0]], loaded[names[1]], loaded[names[2]]);
-            }
-            else
-            {
-                TypedUnavailableReason = reason;
-            }
-
-            _blocks[layout.Code] = kernels;
-            return kernels;
-        }
-    }
-
-    // Whether the block route can take this product: the weights' description gives a block layout (codes within int8,
-    // their scale in the block or a scale a row), k whole blocks, and the device runs the layout's kernels.
-    private bool BlockLane(ElementType type, Storage? scales, int k) =>
-        k % PtxKernels.Q8Values == 0 && PtxKernels.BlockLayout.Of(type, scales is not null) is { } layout && Blocks(layout) is not null;
-
-    // Adad's block route: x [m, k] quantized into q8_0's blocks, then y [m, n] = x · Wᵀ over W's rows of its layout (n rows
-    // of k): up to 8 rows a pass a row of x (a thread a row of W), more by the s8 tensor tile.
-    private bool RunBlocks(Storage x, Storage w, Storage? scales, Storage y, int m, int n, int k)
-    {
-        if (k % PtxKernels.Q8Values != 0 || PtxKernels.BlockLayout.Of(w.ElementType, scales is not null) is not { } layout || Blocks(layout) is not { } blocks)
-        {
-            return false;
-        }
-
-        if (m == 0 || n == 0)
-        {
-            return true;
-        }
-
-        int kBlocks = k / PtxKernels.Q8Values;
-        long rowBytes = (long)kBlocks * PtxKernels.Q8Bytes;
-        ulong s = scales is null ? 0UL : P(scales);
-        var q = Allocate((int)((m * rowBytes + 3) / 4), zeroed: false);
-        try
-        {
-            int values = m * k;
-            Launch(blocks.Quantize, (uint)((values + 255) / 256), 1, 256, 1, P(x), P(q), U(values));
-            if (m <= PtxKernels.TypedGemvRows[^1])
-            {
-                for (int i = 0; i < m; i++)
-                {
-                    Launch(blocks.Gemv, (uint)((n + 255) / 256), 1, 256, 1, P(w), P(q) + (ulong)(i * rowBytes), P(y) + (ulong)((long)i * n * 4), U(n), U(kBlocks), s);
-                }
-            }
-            else
-            {
-                Launch(blocks.Tile, (uint)((n + PtxKernels.BlocksTile - 1) / PtxKernels.BlocksTile), (uint)((m + PtxKernels.BlocksTile - 1) / PtxKernels.BlocksTile),
-                    PtxKernels.BlocksThreads, 1, P(q), P(w), P(y), U(m), U(n), U(kBlocks), s);
-            }
-
-            return true;
-        }
-        finally
-        {
-            q.Release();
-        }
-    }
-
-    /// <summary>Tests: the block route run directly (false when the weights' description gives no block layout).</summary>
-    internal bool StoredBlocks(ElementType type, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) =>
-        PtxKernels.BlockLayout.Of(type, scales is not null) is not null && RunBlocks(x, weight, scales, y, m, n, k);
+    private readonly ConcurrentDictionary<(TypedDecode, int, int, int, bool), byte> _storedSaid = new();
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     // Timed warm: these lanes read contiguous rows, and warm repeats chose the lanes that were faster in the passes (cold
@@ -445,7 +345,7 @@ internal sealed unsafe partial class CudaBackend
     private int MeasureStoredRoute(TuneKey key, int[] candidates, TypedDecode d, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) =>
         Tune(key, candidates, 0, c => RunStoredLane(c, d, x, weight, scales, y, m, n, k));
 
-    // ------------------------------------------------------------------ the native bfloat16 kind (Adad's packed tensor kernel)
+    // ------------------------------------------------------------------ the native bfloat16 kind (the packed tensor kernel)
 
     // A kind's chosen shape, whether it was measured, and every shape the driver accepted (the per-product-shape choice
     // measures among them and the k splits), each by the kind's place in NativeKind.All.
@@ -457,7 +357,7 @@ internal sealed unsafe partial class CudaBackend
     private static int NativeKey(PtxKernels.NativeKind kind, int variant) => variant + 50 * kind.Index;
 
     /// <summary>
-    /// The device's native bfloat16 tensor kernel (Adad's MmaShape): of NativeMmaConfigs, those whose shared memory the
+    /// The device's native bfloat16 tensor kernel: of NativeMmaConfigs, those whose shared memory the
     /// device allows and whose PTX its driver accepts (the kind native here), the one that runs a 2048³ product fastest,
     /// measured once (Tune, kept in the tuning cache); null when the driver accepts none.
     /// </summary>
@@ -714,7 +614,7 @@ internal sealed unsafe partial class CudaBackend
         }
 
         if (ProductRoutes.Current != ProductRoute.Name && zeros is null && perRow
-            && (ProductRoutes.Current is ProductRoute.Measured or ProductRoute.Adad ? StoredMeasured(x, weight, scales, y, m, n, k) : TypedOutputsMajor(weight.ElementType, x, weight, scales, y, m, n, k)))
+            && (ProductRoutes.Current == ProductRoute.Measured ? StoredMeasured(x, weight, scales, y, m, n, k) : TypedOutputsMajor(weight.ElementType, x, weight, scales, y, m, n, k)))
         {
             return;
         }

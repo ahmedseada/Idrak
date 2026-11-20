@@ -10,7 +10,7 @@ using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
-// The experiment of Adad's design on the CPU (ProductRoutes): the products of int8 and bfloat16 weights by their own
+// The product routes on the CPU (ProductRoutes): the products of int8 and bfloat16 weights by their own
 // kernels (ProductRoute.Name, today), by one generic product that widens any type a tile at a time (ProductRoute.Generic),
 // or by the faster of the two, measured once per shape (ProductRoute.Measured). Weights kept as stored (q8_0 and the other
 // block formats) already take the generic product here (StoredMatMul, CpuBackend.Stored.cs) under every route.

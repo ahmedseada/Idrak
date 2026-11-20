@@ -6,7 +6,7 @@ using System.Text;
 
 namespace Idrak.Gpu.Cuda;
 
-/// <summary>A kernel's text with numbered registers (ported from Adad's PtxBuilder): each R / RD / F / P a new register, declared in Finish.</summary>
+/// <summary>A kernel's text with numbered registers : each R / RD / F / P a new register, declared in Finish.</summary>
 internal sealed class PtxBuilder(string prefix = "")
 {
     private readonly StringBuilder _body = new();
@@ -76,16 +76,15 @@ internal sealed class PtxBuilder(string prefix = "")
     }
 }
 
-// The experiment's native matrix-unit lane (Adad's design, ported from Adad's Ptx.GemmMma): a device's tensor kind (bfloat16:
+// The native matrix-unit lane: a device's tensor kind (bfloat16:
 // mma.sync m16n8k16, float32 sums) runs one kernel, C = A · Bᵀ over operands packed in the kind's rows (k padded to whole
 // blocks of 128), whatever type they came from: a type reaches it by packing its values into the kind (NativePackX,
 // NativePackW: each value widened from the type's description). The kernel's shape (bytes of a row a stage, stages, columns
-// a block, swizzled chunks or padded rows) is chosen per device by measurement among NativeMmaConfigs, as Adad's MmaShape
-// does; the device has the kind natively when its driver accepts the kernel.
+// a block, swizzled chunks or padded rows) is chosen per device by measurement among NativeMmaConfigs; the device has the kind natively when its driver accepts the kernel.
 internal static partial class PtxKernels
 {
     /// <summary>
-    /// A tensor kind, as data (Adad's Ptx.Kind table): its name, operand bits, the float bits its values hold (exponent,
+    /// A tensor kind, as data: its name, operand bits, the float bits its values hold (exponent,
     /// mantissa), the instruction and the values of k one instruction takes. A weight is multiplied in the kind its own
     /// description matches (<see cref="For"/>): float16 weights in float16, bfloat16 in bfloat16, as they are.
     /// </summary>
@@ -114,10 +113,10 @@ internal static partial class PtxKernels
         public static NativeKind For(TypedDecode d) => All.FirstOrDefault(k => k.Holds(d)) ?? BF16;
     }
 
-    /// <summary>A shape of the native kernel (Adad's MmaConfig): bytes of a row a stage, pipeline stages, columns a block, swizzled chunks.</summary>
+    /// <summary>A shape of the native kernel: bytes of a row a stage, pipeline stages, columns a block, swizzled chunks.</summary>
     internal readonly record struct NativeMmaConfig(int RowBytes, int Stages, int Bn, bool Swizzle);
 
-    /// <summary>The shapes a device measures (Adad's).</summary>
+    /// <summary>The shapes a device measures.</summary>
     internal static readonly NativeMmaConfig[] NativeMmaConfigs =
     [
         new(64, 3, 128, false), new(64, 4, 128, false), new(128, 2, 128, false), new(64, 3, 256, false),
@@ -158,7 +157,7 @@ internal static partial class PtxKernels
     /// of C a block of 8 warps (2 × 4; each 64 × BN/4 as 4 × BN/32 m16n8 tiles); k walks in blocks of RowBytes a row through
     /// a ring of shared-memory stages filled by asynchronous copies (the blocks ahead land while this one computes);
     /// fragments from shared memory by ldmatrix, the next k-step's loaded while this step's instructions run. Rows past m
-    /// or n copy zeros; their C is not stored. (Adad's Ptx.GemmMma, its packed-rows path.)
+    /// or n copy zeros; their C is not stored.
     /// </summary>
     /// <summary>
     /// The direct native kernel's operands (widened inside the product, no packing pass): x as float32, converted to the

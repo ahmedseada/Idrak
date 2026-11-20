@@ -6,8 +6,8 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Gpu.Cuda;
 
-// The experiment's products of super-block weights on CUDA (ElementType.Super: ggml's k-quants, under the generic, measured
-// and adad routes), every kernel generated from the description (PtxKernels.Super.cs): up to 8 rows the few-row kernel;
+// The experiment's products of super-block weights on CUDA (ElementType.Super: ggml's k-quants, under the generic and measured
+// routes), every kernel generated from the description (PtxKernels.Super.cs): up to 8 rows the few-row kernel;
 // more, the weights widened to float32 and the float32 product, or in a bfloat16 run widened to bfloat16 rows and the
 // native kind's kernel (NativeMma), whichever measures faster at the shape (Tune: the float32 one unless the native kind is
 // clearly faster), once; the generic route takes the float32 one.

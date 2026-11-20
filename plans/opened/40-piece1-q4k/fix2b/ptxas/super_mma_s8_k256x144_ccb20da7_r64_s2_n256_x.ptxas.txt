@@ -1,6 +1,0 @@
-ptxas info    : 0 bytes gmem
-ptxas info    : Compiling entry function 'super_mma_s8_k256x144_ccb20da7_r64_s2_n256_x' for 'sm_120'
-ptxas info    : Function properties for super_mma_s8_k256x144_ccb20da7_r64_s2_n256_x
-    64 bytes stack frame, 60 bytes spill stores, 60 bytes spill loads
-ptxas info    : Used 255 registers, used 1 barriers, 64 bytes cumulative stack size
-ptxas info    : Compile time = 0.000 ms

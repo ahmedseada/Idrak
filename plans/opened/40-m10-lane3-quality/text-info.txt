@@ -1,4 +1,0 @@
-text.txt: docs/optimization.md of the repository at commit e6dc787b (the C# performance rules: technology English with a few C# code examples), 27225 bytes, 447 lines
-sha256 72873d2f0554a2cb678a2e81c8a7826c00863c4ceac6f16230d3158793f27f86
-tokens (idrak tokenize --count): Qwen/Qwen3-1.7B 7341, meta-llama/Llama-3.2-3B-Instruct 6988
-settings for every perplexity run: --window 512 --max-tokens 6656 (13 windows of exactly 512 tokens: every window's layers run at m = 512), -d cuda

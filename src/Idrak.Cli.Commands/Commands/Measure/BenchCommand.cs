@@ -327,7 +327,7 @@ internal sealed class BenchCommand : Command
         }
 
         progress.Clear();
-        if (ProductRoutes.Current is ProductRoute.Measured or ProductRoute.Adad)
+        if (ProductRoutes.Current == ProductRoute.Measured)
         {
             foreach (var (product, lane) in ProductRoutes.Choices.OrderBy(c => c.Key, StringComparer.Ordinal))
             {
