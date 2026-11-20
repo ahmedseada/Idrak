@@ -614,11 +614,14 @@ public sealed class ElementType : IKind
         ToFloat32 = ElementConversions.UInt16ToFloat32, FromFloat32 = ElementConversions.UInt16FromFloat32,
     };
 
-    /// <summary>64-bit IEEE float (plan 37, T2): values kept for checks against a reference; storage and conversions only.</summary>
+    /// <summary>
+    /// 64-bit IEEE 754 float (binary64): one sign bit, 11 exponent bits biased by 1023, 52 mantissa bits, little-endian, one
+    /// a value, no scales (as weights, each value stored as it is: a float32 or bfloat16 checkpoint's values exactly).
+    /// </summary>
     public static readonly ElementType Float64 = new()
     {
-        Name = "float64", Summary = "64-bit IEEE float (values kept for checks against a reference; storage and conversions only, narrowed to float32 rounded to nearest)",
-        BlockBits = 64, IsFloat = true, IsSigned = true, Kernels = [],
+        Name = "float64", Summary = "64-bit IEEE 754 float (binary64): 1 sign, 11 exponent and 52 mantissa bits, little-endian (as weights, each value as it is, no scales)",
+        BlockBits = 64, IsFloat = true, IsSigned = true, Kernels = [], Float = new FloatBits(11, 52),
         ToFloat32 = ElementConversions.Float64ToFloat32, FromFloat32 = ElementConversions.Float64FromFloat32,
     };
 

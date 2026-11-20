@@ -23,8 +23,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // shared part below): a 4-bit super-block (NibbleFormat: ggml's Q4_K by its description), a 32-value block of 4-bit
 // codes with one float16 scale (ScaledFormat: ggml's q4_0), a 6-bit super-block (SixFormat: ggml's Q6_K) and 64-bit
 // integer codes with a scale an output row (LongFormat: int64), each with its codes decoded in registers inside the dot
-// products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; and bfloat16
-// (BFloat16Format), its values made float32 in registers; the faster lane at each shape.
+// products or int8 dot products over the stored codes with x rounded to int8 a block of 32 values; bfloat16
+// (BFloat16Format), its values made float32 in registers; and float64 (DoubleFormat), its values multiplied as they are
+// in float64 FMAs; the faster lane at each shape.
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -304,7 +305,7 @@ internal sealed partial class CpuBackend
 
         var type = weight.ElementType;
         var lane = new StoredLane(type, type.Scaled, D(weight), weight.Length, scales is null ? null : D(scales), k, type.ByteCount(k));
-        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64) under the measured route: only the
+        // A weight in a format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64) under the measured route: only the
         // format's lanes, which never widen it, the shape's lane measured once (Chosen).
         if (ProductRoutes.Current == ProductRoute.Measured)
         {
@@ -332,7 +333,7 @@ internal sealed partial class CpuBackend
     // a shift (BFloat16Format); the packed bfloat16 product's two kernels reading its values in registers (the tiled and the
     // streaming, CpuBackend.Typed.cs).
     private const int RowLaneId = 0, PanelLaneId = 1, ExpandedLaneId = 2, TilesLaneId = 3, DecodedLaneId = 4, IntegerLaneId = 5,
-        PairedLaneId = 6, ShiftedLaneId = 7, TiledLaneId = 8, StreamingLaneId = 9;
+        PairedLaneId = 6, ShiftedLaneId = 7, TiledLaneId = 8, StreamingLaneId = 9, MixedLaneId = 10;
 
     private static readonly string[] LaneNames = ["row lane", "panel lane", "today's path (widened once, float32 product)",
         "tiles (panels widened in the product)", "decoded lane (stored values decoded in registers inside the dot products)",
@@ -340,7 +341,8 @@ internal sealed partial class CpuBackend
         "paired lane (bfloat16 made float32 in registers in even and odd pairs, by a shift and a mask, x reordered to match)",
         "shifted lane (bfloat16 made float32 in registers by a widening load and a shift)",
         "tiled lane (bfloat16 read in place in registers, a panel of rows' sums kept in registers)",
-        "streaming lane (bfloat16 read in place in registers, each weight row added to every row's sums)"];
+        "streaming lane (bfloat16 read in place in registers, each weight row added to every row's sums)",
+        "mixed lane (x widened to float64 in registers as it is read, float64 FMAs over the stored values)"];
 
     // Each shape's measured lane.
     private static readonly ConcurrentDictionary<(string Type, int Rows, int N, int K), int> StoredLanes = new();
@@ -862,7 +864,7 @@ internal sealed partial class CpuBackend
         }
     }
 
-    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64) sharing x, under the
+    // Products of weights in one format read where it is stored (FormatOf: q4_k, q4_0, q6_k, bfloat16, int64, float64) sharing x, under the
     // measured route (the queries, keys and values; the gate and up): in one pass, any rows; offered once such a weight has
     // been multiplied here, so the groups of other types' weights are not asked (their outputs allocated) only to run one
     // by one.
@@ -1405,7 +1407,7 @@ internal sealed partial class CpuBackend
 
     // The CPU multiplies weights of these formats where their rows are stored, writing nothing of a weight anywhere: q4_k's
     // super-blocks (NibbleFormat), q4_0's 32-value blocks (ScaledFormat), q6_k's super-blocks (SixFormat), bfloat16
-    // (BFloat16Format) and int64's codes (LongFormat). A format brings what
+    // (BFloat16Format), int64's codes (LongFormat) and float64 (DoubleFormat). A format brings what
     // it alone knows (IRowFormat: its description, its two lanes, what each makes of x first, the rows a group takes, the
     // scratch and the kernels over a tile, IRowKernels); the rest is theirs together: the list of formats (FormatOf), the
     // routed product and its lane measured per shape (RowProduct, ILaneChoice, Chosen), the grouped pass (FormatGrouped),
@@ -1584,6 +1586,12 @@ internal sealed partial class CpuBackend
             return true;
         }
 
+        if (DoubleFormat.Reads(type, k, out var float64))
+        {
+            use.Use<DoubleFormat, DoubleKernels>(float64);
+            return true;
+        }
+
         return false;
     }
 
@@ -1672,10 +1680,10 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>
-    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, q6_k, bfloat16, int64:
+    /// y [m, n] = x [m, k] · Wᵀ for W a weight in a format read where it is stored (q4_k, q4_0, q6_k, bfloat16, int64, float64:
     /// FormatOf) of n rows stored as <paramref name="words"/> (its bytes, <paramref name="length"/> words), each output times
     /// its row's scale where <paramref name="scales"/> are given, by the format's first lane or, with
-    /// <paramref name="second"/>, its second (q4_k, q4_0, q6_k and int64: decoded, integer; bfloat16: shifted, paired). False
+    /// <paramref name="second"/>, its second (q4_k, q4_0, q6_k and int64: decoded, integer; bfloat16: shifted, paired; float64: decoded, mixed). False
     /// where no format reads the type, or the second lane does not run on this CPU. For tests: each lane apart from the
     /// measured choice.
     /// </summary>
@@ -2719,7 +2727,7 @@ internal sealed partial class CpuBackend
             }
             else
             {
-                LongDecodedFour((long*)row + p0, (double*)input.Values + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                WideFour<LongLoad>(row + (nint)p0 * sizeof(long), (double*)input.Values + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -2729,7 +2737,7 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public float Single(byte* row, int i) => integer
             ? LongIntegerOne((long*)row, input.Codes + (nint)i * k, input.Scales + i * table, k)
-            : LongDecodedOne((long*)row, (double*)input.Values + (nint)i * k, k);
+            : (float)WideSum<LongLoad>(row, (double*)input.Values + (nint)i * k, k);
     }
 
     // x as float64 for the decoded lane (each value exactly), row by row, over the threads where x is large; `into` holds
@@ -2834,19 +2842,49 @@ internal sealed partial class CpuBackend
         return (high.AsDouble() - Vector256.Create(442726361368656609280.0)) + low;
     }
 
-    // Four rows of x (float64, `stride` apart, from `x`) by `count` int64 codes of a stored row (at `row`): 8 codes at a time
-    // made float64 in registers (LongsToDoubles), each multiplied with the four rows' matching values in float64 FMAs; two
-    // sums a row, the last count mod 8 one at a time; each output its float64 sum rounded to float32 once.
+    /// <summary>How a stored 64-bit value is made float64 in registers (the decoded lanes of int64's and float64's weights).</summary>
+    private unsafe interface IWideLoad
+    {
+        /// <summary>The four values from <paramref name="at"/> as float64.</summary>
+        static abstract Vector256<double> Four(byte* at);
+
+        /// <summary>The value at <paramref name="at"/> as float64.</summary>
+        static abstract double One(byte* at);
+    }
+
+    // int64 codes: LongsToDoubles (one rounding of 64 bits to 53).
+    private unsafe struct LongLoad : IWideLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Four(byte* at) => LongsToDoubles((long*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static double One(byte* at) => *(long*)at;
+    }
+
+    // float64 values: as stored.
+    private unsafe struct DoubleLoad : IWideLoad
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Four(byte* at) => Vector256.Load((double*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static double One(byte* at) => *(double*)at;
+    }
+
+    // Four rows of x (float64, `stride` apart, from `x`) by `count` 64-bit values of a stored row (at `row`): 8 values at a
+    // time made float64 in registers (TL), each multiplied with the four rows' matching values in float64 FMAs; two sums a
+    // row, the last count mod 8 one at a time; each output its float64 sum rounded to float32 once.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void LongDecodedFour(long* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    private static unsafe void WideFour<TL>(byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3) where TL : struct, IWideLoad
     {
         nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
         Vector256<double> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
         int p = 0;
         for (; p + 8 <= count; p += 8)
         {
-            var w0 = LongsToDoubles(row + p);
-            var w1 = LongsToDoubles(row + p + 4);
+            var w0 = TL.Four(row + 8 * p);
+            var w1 = TL.Four(row + 8 * p + 32);
             double* xp = x + p;
             a0 = Fma.MultiplyAdd(w0, Vector256.Load(xp), a0);
             b0 = Fma.MultiplyAdd(w1, Vector256.Load(xp + 4), b0);
@@ -2861,7 +2899,7 @@ internal sealed partial class CpuBackend
         double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
         for (; p < count; p++)
         {
-            double w = row[p];
+            double w = TL.One(row + 8 * p);
             t0 = Math.FusedMultiplyAdd(w, x[p], t0);
             t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
             t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
@@ -2874,37 +2912,103 @@ internal sealed partial class CpuBackend
         y3 = (float)(Vector256.Sum(a3 + b3) + t3);
     }
 
-    // LongDecodedFour for one row of x, 16 codes a step in four sums. (Asking for the bytes 1 KB ahead measured no faster:
-    // generation streams the weights at the memory's rate, 82 GB/s, as the head's product alone does.)
+    // WideFour for one row of x, 16 values a step in four sums. (Asking for the bytes 1 KB ahead measured no faster on
+    // int64: generation streams the weights at the memory's rate, 82 GB/s, as the head's product alone does.)
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe double LongDecodedSum(long* row, double* x, int k)
+    private static unsafe double WideSum<TL>(byte* row, double* x, int k) where TL : struct, IWideLoad
     {
         Vector256<double> a = default, b = default, c = default, d = default;
         int p = 0;
         for (; p + 16 <= k; p += 16)
         {
-            a = Fma.MultiplyAdd(LongsToDoubles(row + p), Vector256.Load(x + p), a);
-            b = Fma.MultiplyAdd(LongsToDoubles(row + p + 4), Vector256.Load(x + p + 4), b);
-            c = Fma.MultiplyAdd(LongsToDoubles(row + p + 8), Vector256.Load(x + p + 8), c);
-            d = Fma.MultiplyAdd(LongsToDoubles(row + p + 12), Vector256.Load(x + p + 12), d);
+            byte* at = row + 8 * p;
+            a = Fma.MultiplyAdd(TL.Four(at), Vector256.Load(x + p), a);
+            b = Fma.MultiplyAdd(TL.Four(at + 32), Vector256.Load(x + p + 4), b);
+            c = Fma.MultiplyAdd(TL.Four(at + 64), Vector256.Load(x + p + 8), c);
+            d = Fma.MultiplyAdd(TL.Four(at + 96), Vector256.Load(x + p + 12), d);
         }
 
         for (; p + 4 <= k; p += 4)
         {
-            a = Fma.MultiplyAdd(LongsToDoubles(row + p), Vector256.Load(x + p), a);
+            a = Fma.MultiplyAdd(TL.Four(row + 8 * p), Vector256.Load(x + p), a);
         }
 
         double t = 0;
         for (; p < k; p++)
         {
-            t = Math.FusedMultiplyAdd(row[p], x[p], t);
+            t = Math.FusedMultiplyAdd(TL.One(row + 8 * p), x[p], t);
         }
 
         return Vector256.Sum((a + b) + (c + d)) + t;
     }
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe float LongDecodedOne(long* row, double* x, int k) => (float)LongDecodedSum(row, x, k);
+    // WideFour with x as float32 (`stride` apart, from `x`), each 4 values widened to float64 in registers as they are read:
+    // the same FMAs in the same order, so the same sums.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void WideMixedFour<TL>(byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3) where TL : struct, IWideLoad
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector256<double> a0 = default, a1 = default, a2 = default, a3 = default, b0 = default, b1 = default, b2 = default, b3 = default;
+        int p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            var w0 = TL.Four(row + 8 * p);
+            var w1 = TL.Four(row + 8 * p + 32);
+            float* xp = x + p;
+            a0 = Fma.MultiplyAdd(w0, Avx.ConvertToVector256Double(Sse.LoadVector128(xp)), a0);
+            b0 = Fma.MultiplyAdd(w1, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + 4)), b0);
+            a1 = Fma.MultiplyAdd(w0, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r1)), a1);
+            b1 = Fma.MultiplyAdd(w1, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r1 + 4)), b1);
+            a2 = Fma.MultiplyAdd(w0, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r2)), a2);
+            b2 = Fma.MultiplyAdd(w1, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r2 + 4)), b2);
+            a3 = Fma.MultiplyAdd(w0, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r3)), a3);
+            b3 = Fma.MultiplyAdd(w1, Avx.ConvertToVector256Double(Sse.LoadVector128(xp + r3 + 4)), b3);
+        }
+
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (; p < count; p++)
+        {
+            double w = TL.One(row + 8 * p);
+            t0 = Math.FusedMultiplyAdd(w, x[p], t0);
+            t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = Math.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = (float)(Vector256.Sum(a0 + b0) + t0);
+        y1 = (float)(Vector256.Sum(a1 + b1) + t1);
+        y2 = (float)(Vector256.Sum(a2 + b2) + t2);
+        y3 = (float)(Vector256.Sum(a3 + b3) + t3);
+    }
+
+    // WideMixedFour for one row of x, 16 values a step in four sums (WideSum's, x widened in registers).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe double WideMixedSum<TL>(byte* row, float* x, int k) where TL : struct, IWideLoad
+    {
+        Vector256<double> a = default, b = default, c = default, d = default;
+        int p = 0;
+        for (; p + 16 <= k; p += 16)
+        {
+            byte* at = row + 8 * p;
+            a = Fma.MultiplyAdd(TL.Four(at), Avx.ConvertToVector256Double(Sse.LoadVector128(x + p)), a);
+            b = Fma.MultiplyAdd(TL.Four(at + 32), Avx.ConvertToVector256Double(Sse.LoadVector128(x + p + 4)), b);
+            c = Fma.MultiplyAdd(TL.Four(at + 64), Avx.ConvertToVector256Double(Sse.LoadVector128(x + p + 8)), c);
+            d = Fma.MultiplyAdd(TL.Four(at + 96), Avx.ConvertToVector256Double(Sse.LoadVector128(x + p + 12)), d);
+        }
+
+        for (; p + 4 <= k; p += 4)
+        {
+            a = Fma.MultiplyAdd(TL.Four(row + 8 * p), Avx.ConvertToVector256Double(Sse.LoadVector128(x + p)), a);
+        }
+
+        double t = 0;
+        for (; p < k; p++)
+        {
+            t = Math.FusedMultiplyAdd(TL.One(row + 8 * p), x[p], t);
+        }
+
+        return Vector256.Sum((a + b) + (c + d)) + t;
+    }
 
     // Four int64 codes (at `at`, 32 bytes) as one step of the integer lane: lane b holds the four codes' byte b (the dwords'
     // low halves to lanes 0-3, their high halves to 4-7, then each 128-bit half's 4 × 4 bytes transposed), the top bytes
@@ -3007,6 +3111,100 @@ internal sealed partial class CpuBackend
         }
 
         return Vector256.Sum(f * LongPlanes);
+    }
+
+    // ------------------------------------------------------------------ float64 rows read where they are stored
+
+    // A float64 weight (by its description: a float of 11 exponent and 52 mantissa bits, 64 bits a value) takes, under the
+    // measured route, two lanes over its stored rows, neither of which writes the weight's values anywhere nor narrows them:
+    // both multiply the stored values, read in registers as they are, with x in float64 FMAs, each output's float64 sum
+    // rounded to float32 once; the decoded lane reads x widened to float64 once a call (WidenRows), the mixed lane widens
+    // x's float32 values in registers as it reads them (the same FMAs in the same order: the same sums). No integer lane: the
+    // values are not integer codes. The measured route keeps the faster at each shape.
+
+    // float64 as a format read where it is stored (IRowFormat): by its description; the decoded lane timed against the mixed
+    // lane; x widened to float64 for the decoded lane; tiles of up to DoubleTileRows rows of x over a group of stored rows,
+    // passes over k of DoubleSpan values; no scratch (DoubleKernels).
+    private readonly unsafe struct DoubleFormat : IRowFormat<DoubleFormat, DoubleKernels>
+    {
+        public static bool Reads(ElementType type, int k, out DoubleFormat format)
+        {
+            format = default;
+            return type is { BlockSize: 1, BlockBits: 64, Float: { Exponent: 11, Mantissa: 52 } } && Avx2.IsSupported && Fma.IsSupported && BitConverter.IsLittleEndian;
+        }
+
+        public int First => DecodedLaneId;
+
+        public int Second => MixedLaneId;
+
+        public bool BothRun => true;
+
+        public int Unmeasured => DecodedLaneId;
+
+        public int GroupBytes => DoubleGroupBytes;
+
+        public (int Columns, int Rows) Tile(int total, int m, int threads, nint rowBytes) => ((total + 8 * threads - 1) / (8 * threads), Math.Min(m, DoubleTileRows));
+
+        public int Span(int k) => DoubleSpan;
+
+        public LaneInput Prepare(int lane, float[] x, int m, int k)
+        {
+            if (lane != DecodedLaneId)
+            {
+                return new LaneInput(x, false, null, null);
+            }
+
+            var wide = ArrayPool<float>.Shared.Rent(2 * m * k);
+            WidenRows(x, wide, m, k);
+            return new LaneInput(wide, true, null, null);
+        }
+
+        public (int Floats, int Bytes) Scratch(int k, int group) => (0, 0);
+
+        public DoubleKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(lane == MixedLaneId, x.Values, k);
+    }
+
+    // Stored bytes a group of float64 rows takes with more than one row of x (RowGroups; at most the tile's columns): the
+    // tile's x passes once a group, so the larger the group the less of x streams a stored row (128 KB groups held two rows
+    // of 6,144 values, under which 3-6 MB of x streamed from L3).
+    private const int DoubleGroupBytes = 1 << 20;
+
+    // Values of k four rows of x pass over a group's float64 rows at a time (RowGroups): x's four rows as float64 (16 KB) stay
+    // in L1 across the group, an efficiency core's too (32 KB).
+    private const int DoubleSpan = 512;
+
+    // Rows of x a float64 tile takes at most (DoubleFormat.Tile): each stored row read from memory once a product of up to that
+    // many rows.
+    private const int DoubleTileRows = 128;
+
+    // The float64 lanes as RowGroups' kernels: nothing to set up for a group of rows; x as float64 (the decoded lane: two
+    // floats' room a value) or as it is (the mixed lane).
+    private readonly unsafe struct DoubleKernels(bool mixed, float* x, int k) : IRowKernels
+    {
+        public void Group(byte* stored, nint rowBytes, int c0, int count)
+        {
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (mixed)
+            {
+                WideMixedFour<DoubleLoad>(row + (nint)p0 * sizeof(double), x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                WideFour<DoubleLoad>(row + (nint)p0 * sizeof(double), (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float One(byte* row, int c, int i) => Single(row, i);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Single(byte* row, int i) => mixed
+            ? (float)WideMixedSum<DoubleLoad>(row, x + (nint)i * k, k)
+            : (float)WideSum<DoubleLoad>(row, (double*)x + (nint)i * k, k);
     }
 
     /// <summary>
