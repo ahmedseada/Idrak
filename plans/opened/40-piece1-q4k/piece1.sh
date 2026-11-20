@@ -10,7 +10,7 @@ top=D:/Projects/idrak/test-output/adad/piece1-q4k
 wt=D:/Projects/idrak/test-output/worktrees/adad
 adad="$wt/src/Idrak.Adad.Host/bin/Release/net10.0/adad.dll"
 ncu="/c/Program Files/NVIDIA Corporation/Nsight Compute 2026.2.1/ncu.bat"
-what=$1; n=$2; out=$top/cycle$n
+what=$1; n=$2; out=$top/${3:-cycle$n}
 mkdir -p "$out"
 case $what in
   bench)

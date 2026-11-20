@@ -40,6 +40,21 @@ internal static class SuperMmaKernels
         && s.ScaleOffset + 2 <= HeaderBytes && s.MinOffset + 2 <= HeaderBytes
         && (s.SubMins is null ? s.SubScales : s.SubScales.Concat(s.SubMins)).All(list => list.All(q => q.Offset < HeaderBytes));
 
+    /// <summary>
+    /// Whether every value's scale · code is exact in float32 for <paramref name="s"/>: d's significand (the float's
+    /// mantissa bits and one), the sub-block scale's bits (its pieces, its bias) and the code's bits (its planes, its bias)
+    /// fit float32's 24 bits. Then (scale · code rounded) − min rounded equals one fused scale · code − min rounded, bit for
+    /// bit, and A decodes each value in one fused step (q4_k: 11 + 6 + 4 = 21 bits).
+    /// </summary>
+    internal static bool ExactScaledCodes(SuperBlock s)
+    {
+        static int BitsOf(long magnitude) => magnitude <= 0 ? 0 : 64 - System.Numerics.BitOperations.LeadingZeroCount((ulong)magnitude);
+        int scaleBits = s.SubScales.Max(list => list.Sum(q => q.Bits));
+        long scaleMax = s.SubScalesSigned ? (1L << (scaleBits - 1)) + Math.Abs(s.SubScaleBias) : (1L << scaleBits) - 1 + Math.Abs(s.SubScaleBias);
+        long codeMax = (1L << s.Planes.Sum(p => p.Bits)) - 1 + Math.Abs(s.CodeBias);
+        return s.Scale.Mantissa + 1 + BitsOf(scaleMax) + BitsOf(codeMax) <= 24;
+    }
+
     /// <summary>B's further condition: the codes are the unsigned 4-bit fields as they are (no bias), which int8 holds exactly.</summary>
     internal static bool FitsInt8(SuperBlock s) => Fits(s) && s.CodeBias == 0;
 
@@ -122,6 +137,7 @@ internal static class SuperMmaKernels
         int chunks = rowBytes / 16, copiesA = BM * chunks / Threads, codeCopies = bn * codeChunks / Threads;
         int ksteps = int8 ? subs : rowBytes / 32;                          // k32 steps (B) or k16 steps (A) a stage
         int pieces = SuperKernels.SuperPieces(s);
+        bool exact = ExactScaledCodes(s);
         if (chunks is not (4 or 8) || bn * codeChunks % Threads != 0 || bn > Threads)
         {
             throw new NotSupportedException($"shape {cfg}");
@@ -371,7 +387,7 @@ internal static class SuperMmaKernels
 
         // The stage's sub-block scales and minimums, by the thread that staged the row's header (its own copies landed):
         // row tid's d · (sc_j + bias) and dmin · m_j for the stage's sub-blocks j, as the widening rounds them, into the
-        // stage's scale area [sub][row] (pairs of float32).
+        // stage's scale area [sub][row] (pairs of float32: the scale and the minimum negated).
         string table = b.RD();
         b.L($"mov.u64 {table}, super_pieces;");
         void Scales(string block, string stageOff)
@@ -453,10 +469,11 @@ internal static class SuperMmaKernels
                     string mnI = Assemble(1, 0), mnF = b.F();
                     b.L($"cvt.rn.f32.s32 {mnF}, {mnI};");
                     b.L($"mul.rn.f32 {min}, {dmin}, {mnF};");
+                    b.L($"neg.f32 {min}, {min};");                        // kept negated: the decode and B add it
                 }
                 else
                 {
-                    b.L($"mov.f32 {min}, 0f00000000;");
+                    b.L($"mov.f32 {min}, 0f80000000;");                    // −0: x + (−0) is x, as x − 0
                 }
 
                 string at2 = b.R();
@@ -610,20 +627,24 @@ internal static class SuperMmaKernels
             var f = new string[4];
             for (int e = 0; e < 4; e++)
             {
+                // The code as a float: one byte of the word converted (I2F with a byte select).
                 string u = b.R();
                 f[e] = b.F();
-                b.L(string.Create(CultureInfo.InvariantCulture, $"prmt.b32 {u}, {w}, 0x4B000000, 0x{0x7440 + e:X4};"));
-                b.L($"mov.b32 {f[e]}, {u};");
-                b.L($"sub.rn.f32 {f[e]}, {f[e]}, 0f4B000000;");               // the code, exactly (2^23 + code − 2^23)
+                b.L($"bfe.u32 {u}, {w}, {8 * e}, 8;");
+                b.L($"cvt.rn.f32.u32 {f[e]}, {u};");
                 if (s.CodeBias != 0)
                 {
                     b.L(string.Create(CultureInfo.InvariantCulture, $"add.rn.f32 {f[e]}, {f[e]}, 0f{BitConverter.SingleToInt32Bits(s.CodeBias):X8};"));
                 }
 
-                b.L($"mul.rn.f32 {f[e]}, {wScale[j]}, {f[e]};");
-                if (s.SubMins is not null)
+                if (exact)
                 {
-                    b.L($"sub.rn.f32 {f[e]}, {f[e]}, {wMin[j]};");
+                    b.L($"fma.rn.f32 {f[e]}, {wScale[j]}, {f[e]}, {wMin[j]};"); // scale · code exact: one rounding, as the widening's two
+                }
+                else
+                {
+                    b.L($"mul.rn.f32 {f[e]}, {wScale[j]}, {f[e]};");
+                    b.L($"add.rn.f32 {f[e]}, {f[e]}, {wMin[j]};");
                 }
             }
 
@@ -733,7 +754,7 @@ internal static class SuperMmaKernels
                 return;
             }
 
-            // The sub-block's scales: x's rows (pairs of scale and block sum), W's columns (pairs of scale and minimum, negated).
+            // The sub-block's scales: x's rows (pairs of scale and block sum), W's columns (pairs of scale and minimum negated).
             for (int i = 0; i < 4; i++)
             {
                 for (int h = 0; h < 2; h++)
@@ -745,8 +766,6 @@ internal static class SuperMmaKernels
             for (int j = 0; j < nt; j++)
             {
                 b.L($"ld.shared.v4.f32 {{{cScale[j, 0]}, {cMin[j, 0]}, {cScale[j, 1]}, {cMin[j, 1]}}}, [{scStage}+{(ks * bn + j * 8) * 8}];");
-                b.L($"neg.f32 {cMin[j, 0]}, {cMin[j, 0]};");
-                b.L($"neg.f32 {cMin[j, 1]}, {cMin[j, 1]};");
             }
 
             for (int i = 0; i < 4; i++)

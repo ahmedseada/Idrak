@@ -1,0 +1,8 @@
+[4 s] qwen3-1.7b m = 128 done
+[7 s] qwen3-1.7b m = 512 done
+[14 s] qwen3-1.7b m = 2048 done
+[25 s] qwen3-1.7b m = 4096 done
+[29 s] llama-3.2-3b m = 128 done
+[33 s] llama-3.2-3b m = 512 done
+[44 s] llama-3.2-3b m = 2048 done
+[65 s] llama-3.2-3b m = 4096 done

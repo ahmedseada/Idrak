@@ -7,7 +7,7 @@ mkdir -p "$dst/reference"
 cp "$src"/*.sh "$src"/*.py "$src"/reference-*.txt "$src"/tests-*.txt "$dst/"
 cp "$src"/reference/Program.cs "$src"/reference/RefHarness.csproj "$dst/reference/"
 cp "$src"/reference-tuning/*.txt "$dst/reference/tuning-measured.txt"
-for c in "$src"/cycle*; do
+for c in "$src"/cycle* "$src"/fix*; do
   n=$(basename "$c"); mkdir -p "$dst/$n"
   for f in "$c"/*.txt "$c"/*.csv; do [ -f "$f" ] && [ "$(basename "$f")" != bench-stdout.txt ] && cp "$f" "$dst/$n/"; done
   for d in bench-method-1 trace-run; do [ -d "$c/$d" ] && mkdir -p "$dst/$n/$d" && cp "$c/$d"/*.txt "$dst/$n/$d/"; done

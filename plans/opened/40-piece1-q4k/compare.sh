@@ -3,7 +3,7 @@
 # warm µs in both, the change, each run's own spread (min-max over its samples), and whether the change lies outside the
 # larger spread; then the measured choice per shape in both and whether it moved.
 top=D:/Projects/idrak/test-output/adad/piece1-q4k
-a=$top/cycle$1/kernels.txt; b=$top/cycle$2/kernels.txt
+a=$top/$1/kernels.txt; b=$top/$2/kernels.txt
 rows() {
   awk -F'|' '
     /^## / { split($0, h, ", m = "); model = substr(h[1], 4); m = h[2] + 0 }

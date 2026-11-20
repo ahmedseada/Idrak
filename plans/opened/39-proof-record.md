@@ -1797,7 +1797,17 @@ run, both models at m = 512, read with `idrak trace --read`). Comparisons betwee
 
 **Commits and cycles (running list)**:
 
-1. This commit (Adad, piece 1): the package, the three lanes, the tests, the reference harness, the kernel bench; cycle 1.
+1. `796dddbe` Adad, piece 1: the package, the three lanes, the tests, the reference harness, the kernel bench; cycle 1.
+2. This commit. **Fix 1 (A's decode)**, from cycle 1's SASS (A 8.36–11.59 instructions a HMMA against the native
+   kernel's 1.83–2.53). Where the description makes scale · code exact in float32 (`ExactScaledCodes`: float16 d's 11
+   significant bits, the 6-bit scales, the 4-bit codes, 21 ≤ 24; q4_k qualifies), the widening's `mul.rn` then
+   `sub.rn` is one `fma.rn(scale, code, −min)`, bit for bit; each code becomes a float in one `bfe` + `cvt` (`ptxas`:
+   `I2F.U8` with a byte select, `cycle1/probe/`); the scale area holds −min (B drops its negations). Tests: 9 of 9
+   (`tests-3.txt`; A still the control's output bit for bit in all 342 variants). SASS (`fix1/sass-mix.txt`): A's main
+   loop 528 instructions per 64 HMMA (r128 shapes; 655 before), 8.14–9.59 a HMMA. Bench (`fix1/kernels.txt`,
+   `fix1/compare-cycle1.txt`): A −0.4 to −1.6% at m ≥ 512 (outside both runs' spreads at 14 of its 56 rows, every one
+   faster), m = 128 within the spread; B and the control unchanged. A is not limited by its instruction issue (at the
+   native kernel's HMMA rate it issues about 15% of its slots).
 
 ### Earlier measurements (superseded: lane choices shared across types, mixed builds)
 

@@ -92,5 +92,7 @@ internal static class TypeTests
         t.Check(other.Id != s.Id, "another description has another id");
         t.Check(SuperMmaKernels.Fits(s) && SuperMmaKernels.FitsInt8(s), "A and B read q4_k's description");
         t.Check(!SuperMmaKernels.FitsInt8(other), "B does not read a description whose codes carry a bias");
+        t.Check(SuperMmaKernels.ExactScaledCodes(s), "q4_k's scale · code is exact in float32 (11 + 6 + 4 bits)");
+        t.Check(!SuperMmaKernels.ExactScaledCodes(s with { Scale = new FloatBits(8, 23) }), "a float32 d's scale · code is not (24 + 6 + 4 bits)");
     }
 }
