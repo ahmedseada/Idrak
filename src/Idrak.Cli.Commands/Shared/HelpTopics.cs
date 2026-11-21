@@ -252,7 +252,7 @@ internal static class HelpTopics
         loss (idrak quantize reports a perplexity check). The KV cache has its own formats (-k), which bound the memory
         a long context takes (idrak memory shows what fits where).
 
-        Commands: idrak quantize, idrak memory, idrak perplexity, idrak bench.
+        Commands: idrak quantize, idrak memory, idrak score, idrak bench.
         """;
 
     private const string Plugins = """

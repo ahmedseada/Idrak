@@ -276,12 +276,12 @@ internal abstract partial class DesktopTests : Tests
         {
             string text = Path.Combine(cache, "text.txt");
             File.WriteAllText(text, string.Concat(Enumerable.Repeat("The town by the river has a mill. People walk to the market in the morning. ", 20)));
-            var json = IdrakJson(cache, "perplexity", MeasureModel, text, "--window", "64", "-d", device.ToString());
+            var json = IdrakJson(cache, "score", MeasureModel, text, "--window", "64", "-d", device.ToString());
             double perplexity = (double)json["perplexity"]!;
             Check(double.IsFinite(perplexity) && perplexity > 1 && (int)json["windows"]! > 1 && (int)json["scored_tokens"]! == (int)json["tokens"]! - (int)json["windows"]!, json.ToJsonString());
             var int8 = IdrakJson(cache, "perplexity", MeasureModel, text, "--window", "64", "-w", "int8", "-d", device.ToString());
             Check(Math.Abs((double)int8["perplexity"]! - perplexity) < 0.1 * perplexity, $"int8 {int8["perplexity"]} near float32 {perplexity}");
-            Check(MeasureIdrak(cache, "perplexity", MeasureModel, text, "--window", "100000").Code == 2, "a window past the context");
+            Check(MeasureIdrak(cache, "score", MeasureModel, text, "--window", "100000").Code == 2, "a window past the context");
         }
         finally
         {

@@ -10,14 +10,17 @@ using Idrak.Models;
 namespace Idrak.Cli.Commands.Measure;
 
 /// <summary>
-/// <c>idrak perplexity MODEL FILE</c>: exp of the mean negative log-likelihood of a text's tokens, read in windows of
-/// the model's context, to compare weight formats and fine-tunes on the same text.
+/// <c>idrak score MODEL FILE</c> (also <c>idrak perplexity</c>): the perplexity of a text's tokens, exp of their mean
+/// negative log-likelihood, read in windows of the model's context, to compare weight formats and fine-tunes on the
+/// same text.
 /// </summary>
 internal sealed class PerplexityCommand : Command
 {
-    public override string Name => "perplexity";
+    public override string Name => "score";
 
-    public override string Summary => "Perplexity of a text under a model (compare weight formats and fine-tunes)";
+    public override IReadOnlyCollection<string> Aliases => ["perplexity"];
+
+    public override string Summary => "Score a text under a model: its perplexity (compare weight formats and fine-tunes)";
 
     public override string Usage =>
         "MODEL FILE [options]\n\n" +
@@ -30,8 +33,8 @@ internal sealed class PerplexityCommand : Command
         "      --window N        tokens per window (default the context, at most 1024)\n" +
         "      --max-tokens N    score only the first N tokens of the text\n\n" +
         "Examples:\n" +
-        "  idrak perplexity org/model wiki.txt\n" +
-        "  idrak perplexity org/model wiki.txt -w int4 -j";
+        "  idrak score org/model wiki.txt\n" +
+        "  idrak score org/model wiki.txt -w int4 -j";
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions.Where(o => o != "--kv"), "--window", "--max-tokens"];   // scored without a KV cache
 
@@ -43,7 +46,7 @@ internal sealed class PerplexityCommand : Command
         string file = context.Argument(1, "FILE (the text to score)");
         if (context.Positional.Count > 2)
         {
-            throw new UsageException("perplexity takes a model and one text file.");
+            throw new UsageException("score takes a model and one text file.");
         }
 
         if (!File.Exists(file))
@@ -53,7 +56,7 @@ internal sealed class PerplexityCommand : Command
 
         if (context.Option("--kv") is not null)
         {
-            throw new UsageException("--kv does not apply: perplexity reads whole windows without a key/value cache.");
+            throw new UsageException("--kv does not apply: score reads whole windows without a key/value cache.");
         }
 
         var choice = ModelChoices.Choose(context, modelName);

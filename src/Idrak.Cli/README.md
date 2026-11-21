@@ -624,7 +624,7 @@ the run is measured, and each case says how many (`read back: N encrypted`).
 | `idrak bench` (`b`) | Speed of a model (tokens per second, GFLOP/s, memory) or of the kernels on a device |
 | `idrak bench documents` (`b documents`) | Speed and memory of reading, drawing, writing, editing and signing documents, cold and warm |
 | `idrak eval` | Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1) |
-| `idrak perplexity` | Perplexity of a text under a model (compare weight formats and fine-tunes) |
+| `idrak score` (`perplexity`) | Score a text under a model: its perplexity (compare weight formats and fine-tunes) |
 | `idrak profile` | Time per layer, operation and kernel of one decoding step |
 | `idrak check` | Compare token ids, chat templates, logits and greedy output with a transformers reference |
 | `idrak tuning show` | The kernel choices measured on this machine (the tuning caches); --reset clears them |
@@ -637,7 +637,7 @@ idrak b --devices cpu --warmup 5s --settle 2   # kernels with a longer, stricter
 idrak bench documents --save laptop            # the documents bench on the samples and the large set
 idrak b documents --sets ./reports --cases open,text-lines,text-parallel --compare laptop
 idrak eval qwen held-out.jsonl --limit 100
-idrak perplexity qwen wiki.txt -w int4
+idrak score qwen wiki.txt -w int4
 ```
 
 ### Design

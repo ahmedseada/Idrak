@@ -405,7 +405,7 @@ internal static partial class Messages
         ["Compares a vision-language model with a transformers reference: pixels, features, logits, tokens"] =
             "مقارنة نموذج رؤية ولغة بمرجع transformers: البكسلات والخصائص والقيم اللوغاريتمية والرموز",
         ["Answer metrics of a chat model on held-out conversations (accuracy, exact match, F1, error rates)"] = "مقاييس إجابات نموذج محادثة على محادثات محجوزة (الدقة والتطابق التام و F1 ومعدلات الخطأ)",
-        ["Perplexity of a text under a model (compare weight formats and fine-tunes)"] = "حيرة نص تحت نموذج (لمقارنة صيغ الأوزان والضبط الدقيق)",
+        ["Score a text under a model: its perplexity (compare weight formats and fine-tunes)"] = "تقييم نص تحت نموذج: حيرته (لمقارنة صيغ الأوزان والضبط الدقيق)",
         ["Time per layer, operation and kernel of one decoding step or one prompt pass"] = "الوقت لكل طبقة وعملية ونواة في خطوة فك ترميز واحدة أو مرور واحد على الموجه",
         ["The kernel choices measured on this machine (the tuning caches); --reset clears them"] = "اختيارات النوى المقيسة على هذا الجهاز (مخازن الضبط)؛ والخيار --reset يمسحها",
         ["Give a model (and its weight and KV formats) a short name, kept in the config"] = "إعطاء نموذج (وصيغ أوزانه وذاكرة KV) اسما مختصرا يحفظ في الإعدادات",

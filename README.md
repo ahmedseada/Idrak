@@ -152,7 +152,7 @@ dependency.
   QLoRA's NF4 with double quantization), DoRA, full tuning; chat and completion objectives; distillation from a
   teacher model or saved distributions; `idrak tune`, `idrak distill`, `idrak merge`, `idrak quantize`.
 - Pre-training from scratch: `idrak pretrain` over the decoder spec, with `idrak data tokens`.
-- Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak perplexity`,
+- Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak score`,
   `idrak compare`.
 - Retrieval and RAG: embedders, BM25 and vector indexes, rerankers, chunking, fusion; `idrak rag index|search|ask|eval`.
 - A coding agent (`idrak agent`): tools that list, read, search, edit and write the files of one folder (no path or
