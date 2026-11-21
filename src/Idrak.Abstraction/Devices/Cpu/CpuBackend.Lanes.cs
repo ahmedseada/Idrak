@@ -747,9 +747,10 @@ internal sealed partial class CpuBackend
     // WideDotProdInstructions). Each gives the bits the others give (the same operations in the same order: integer sums
     // exact, every multiply-add fused, float sums in the lanes' fixed order), so a shape's measured choice among them
     // changes its speed alone, and a CPU that has none of them runs every lane, with the same results, by the portable
-    // instructions.
+    // instructions. Each lane by the portable instructions, NEON or Arm's dot products has a 128-bit twin (NarrowLane),
+    // its four-row kernels on 128-bit vectors by the sets' 128-bit forms, another candidate with the same bits.
 
-    /// <summary>The instruction set a lane's kernels are compiled for (a lane id's high bits: LaneOf).</summary>
+    /// <summary>The instruction set a lane's kernels are compiled for (a lane id's bits 4-6: LaneOf).</summary>
     private enum Instructions : byte
     {
         Portable,
@@ -768,14 +769,21 @@ internal sealed partial class CpuBackend
     private static readonly bool s_avx2Lanes = Avx2.IsSupported && Fma.IsSupported, s_vnniLanes = s_avx2Lanes && AvxVnni.IsSupported,
         s_neonLanes = AdvSimd.Arm64.IsSupported, s_dotProdLanes = s_neonLanes && Dp.IsSupported;
 
-    // A lane id: its kind (RowLaneId .. DescribedLaneId) in the low 4 bits, its instruction set above.
-    private static int LaneOf(int kind, Instructions with) => kind | (int)with << 4;
+    // A lane id: its kind (RowLaneId .. DescribedLaneId) in the low 4 bits, its instruction set in the next 3, and in the
+    // top bit whether its four-row kernels run on 128-bit vectors (NarrowLane: the lane's 128-bit twin).
+    private static int LaneOf(int kind, Instructions with, bool narrow = false) => kind | (int)with << 4 | (narrow ? NarrowLane : 0);
+
+    // The lane id's bit of a 128-bit twin: the same kind, instructions and one-row kernels, its four-row kernels written on
+    // 128-bit vectors (four rows of x sharing each stored row's decode where 256-bit vectors are not accelerated too).
+    private const int NarrowLane = 0x80;
 
     private static int KindOf(int lane) => lane & 15;
 
-    private static Instructions InstructionsOf(int lane) => (Instructions)(lane >> 4);
+    private static Instructions InstructionsOf(int lane) => (Instructions)(lane >> 4 & 7);
 
-    // A lane's name: its kind's, and the instruction set where it is not the portable one.
+    private static bool NarrowOf(int lane) => (lane & NarrowLane) != 0;
+
+    // A lane's name: its kind's, the instruction set where it is not the portable one, and a 128-bit twin's vectors.
     private static string LaneName(int lane) => InstructionsOf(lane) switch
     {
         Instructions.Avx2 => LaneNames[KindOf(lane)] + " by AVX2 and FMA",
@@ -784,9 +792,9 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => LaneNames[KindOf(lane)] + " by Arm's dot products (DotProd)",
         Instructions.DotProdWide => LaneNames[KindOf(lane)] + " by Arm's dot products, two a step for codes past 127 (DotProd)",
         _ => LaneNames[KindOf(lane)],
-    };
+    } + (NarrowOf(lane) ? ", four rows of x at a time on 128-bit vectors" : "");
 
-    // A lane's short name in a measurement's times (its kind's first word, and its instruction set's).
+    // A lane's short name in a measurement's times (its kind's first word, its instruction set's, and /128 for a 128-bit twin).
     private static string LaneShortName(int lane) => LaneNames[KindOf(lane)].Split(' ')[0] + InstructionsOf(lane) switch
     {
         Instructions.Avx2 => "/avx2",
@@ -795,17 +803,18 @@ internal sealed partial class CpuBackend
         Instructions.DotProd => "/dotprod",
         Instructions.DotProdWide => "/dotprod2",
         _ => "",
-    };
+    } + (NarrowOf(lane) ? "/128" : "");
 
     /// <summary>
-    /// A format's candidate lanes that run on this CPU (up to 8, a byte each), the first the one the others are timed
-    /// against: each kind of lane by the portable instructions, then by each instruction set the CPU has that the kind takes.
+    /// A format's candidate lanes that run on this CPU (up to 16, a byte each), the first the one the others are timed
+    /// against: each kind of lane by the portable instructions, then by each instruction set the CPU has that the kind takes,
+    /// then its 128-bit twins (by the portable instructions, and by each of Arm's sets the CPU has that the kind takes).
     /// </summary>
     private readonly struct LaneList
     {
-        private readonly ulong lanes;
+        private readonly UInt128 lanes;
 
-        private LaneList(ulong lanes, int count)
+        private LaneList(UInt128 lanes, int count)
         {
             this.lanes = lanes;
             Count = count;
@@ -813,16 +822,18 @@ internal sealed partial class CpuBackend
 
         public int Count { get; }
 
-        public int this[int index] => (int)(lanes >> (8 * index) & 0xFF);
+        public int this[int index] => (byte)(lanes >> (8 * index));
 
-        public LaneList With(int lane) => new(lanes | (ulong)lane << (8 * Count), Count + 1);
+        public LaneList With(int lane) => new(lanes | (UInt128)(uint)lane << (8 * Count), Count + 1);
 
         /// <summary>
         /// A kind of lane by the portable instructions, then by AVX2 and FMA, and (int8 dot products) by AVX-VNNI where the CPU
         /// has them, or by NEON, and (int8 dot products) by Arm's dot products where the CPU has those;
         /// <paramref name="pairs"/>: the kind's int8 dot products take AVX2's multiply-adds (the codes at most 127, so no
         /// pair of products saturates), so its AVX2 lane is one, as are its NEON lane (16-bit products of signed bytes) and
-        /// its DotProd lane (Arm's signed dot products of its codes as they are; else two a step: DotProdWide).
+        /// its DotProd lane (Arm's signed dot products of its codes as they are; else two a step: DotProdWide). Then the
+        /// kind's 128-bit twins (NarrowLane): by the portable instructions on any CPU, and by NEON and Arm's dot products as
+        /// the kind takes them where the CPU has them.
         /// </summary>
         public LaneList WithKind(int kind, bool dots = false, bool pairs = true)
         {
@@ -842,7 +853,42 @@ internal sealed partial class CpuBackend
                 list = list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide));
             }
 
-            return dots && s_vnniLanes ? list.With(LaneOf(kind, Instructions.Vnni)) : list;
+            if (dots && s_vnniLanes)
+            {
+                list = list.With(LaneOf(kind, Instructions.Vnni));
+            }
+
+            list = list.With(LaneOf(kind, Instructions.Portable, narrow: true));
+            if (s_neonLanes && (!dots || pairs))
+            {
+                list = list.With(LaneOf(kind, Instructions.Neon, narrow: true));
+            }
+
+            return dots && s_dotProdLanes ? list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide, narrow: true)) : list;
+        }
+
+        /// <summary>
+        /// The lanes a product of <paramref name="m"/> rows of x takes as candidates: all of them from 4 rows, where its four
+        /// rows of x run together; below that the 256-bit lanes alone (a 128-bit twin's kernels for fewer rows are its 256-bit
+        /// lane's own).
+        /// </summary>
+        public LaneList ForRows(int m)
+        {
+            if (m >= 4)
+            {
+                return this;
+            }
+
+            var wide = default(LaneList);
+            for (int i = 0; i < Count; i++)
+            {
+                if (!NarrowOf(this[i]))
+                {
+                    wide = wide.With(this[i]);
+                }
+            }
+
+            return wide;
         }
 
         public bool Contains(int lane)
@@ -975,6 +1021,30 @@ internal sealed partial class CpuBackend
 
         /// <summary>The cache line at <paramref name="at"/> asked for (a hint, where the instruction set has one; it never faults).</summary>
         static abstract void Prefetch(void* at);
+
+        // The 128-bit forms the 128-bit twins' four-row kernels take (lanes 0-3 of a 256-bit lane set in one vector, 4-7 in
+        // another: each the 256-bit operation's on its half, so the same bits).
+
+        /// <summary>Dot over 128 bits: <paramref name="sum"/> + in each 32-bit lane its 4 bytes of codes by x's 4, exactly.</summary>
+        static abstract Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x);
+
+        /// <summary>a · b + c over 128 bits, rounded once.</summary>
+        static abstract Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c);
+
+        /// <summary>a · b + c over 128 bits, rounded once.</summary>
+        static abstract Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c);
+
+        /// <summary>The low two 32-bit lanes of a and b, interleaved (a0, b0, a1, b1): UnpackLow over one 128-bit half.</summary>
+        static abstract Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b);
+
+        /// <summary>The high two 32-bit lanes of a and b, interleaved (a2, b2, a3, b3): UnpackHigh over one 128-bit half.</summary>
+        static abstract Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b);
+
+        /// <summary>The low 64-bit lanes of a and b (a0, b0): UnpackLow over one 128-bit half.</summary>
+        static abstract Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b);
+
+        /// <summary>The high 64-bit lanes of a and b (a1, b1): UnpackHigh over one 128-bit half.</summary>
+        static abstract Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b);
     }
 
     /// <summary>
@@ -1002,16 +1072,18 @@ internal sealed partial class CpuBackend
                 + (Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(odd, 16), 16) + Vector256.ShiftRightArithmetic(odd, 16));
         }
 
-        // Dot over 128 bits (a half of a 256-bit lane set where those are not accelerated: the same operations, lane by lane).
+        // Dot over 128 bits (a half of a 256-bit lane set where those are not accelerated, and the 128-bit twins': the same
+        // operations, lane by lane). The shifts by their operators, which the JIT takes as its own instructions however much
+        // it has inlined into a kernel (measured: Vector128.ShiftLeft and the shifts right left as calls, 33 in q4_k's
+        // 128-bit integer kernel by the portable instructions on 64-bit Arm).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x)
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x)
         {
             var c = codes.AsInt16();
             var v = x.AsInt16();
-            var even = ((c & Vector128.Create((short)0xFF)) * Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(v, 8), 8)).AsInt32();
-            var odd = (Vector128.ShiftRightLogical(c, 8) * Vector128.ShiftRightArithmetic(v, 8)).AsInt32();
-            return sum + (Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(even, 16), 16) + Vector128.ShiftRightArithmetic(even, 16))
-                + (Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(odd, 16), 16) + Vector128.ShiftRightArithmetic(odd, 16));
+            var even = ((c & Vector128.Create((short)0xFF)) * ((v << 8) >> 8)).AsInt32();
+            var odd = ((c >>> 8) * (v >> 8)).AsInt32();
+            return sum + (((even << 16) >> 16) + (even >> 16)) + (((odd << 16) >> 16) + (odd >> 16));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1253,6 +1325,27 @@ internal sealed partial class CpuBackend
         public static void Prefetch(void* at)
         {
         }
+
+        // Fused as the 256-bit form chooses it (FusedInHardware: whether the CPU fuses in hardware).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) =>
+            FusedInHardware.Single ? Vector128.FusedMultiplyAdd(a, b, c) : ExactFused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) =>
+            FusedInHardware.Double ? Vector128.FusedMultiplyAdd(a, b, c) : ExactFused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => Interleave(a, b, 0);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => Interleave(a, b, 2);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => Vector128.Create(a.GetElement(0), b.GetElement(0));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => Vector128.Create(a.GetElement(1), b.GetElement(1));
     }
 
     /// <summary>The lanes' operations by x86's AVX2 and FMA (the int8 dot products by its multiply-adds: codes at most 127).</summary>
@@ -1358,6 +1451,28 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => Sse.Prefetch0(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) =>
+            sum + Sse2.MultiplyAddAdjacent(Ssse3.MultiplyAddAdjacent(codes, x), Vector128.Create((short)1));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) => Fma.MultiplyAdd(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) => Fma.MultiplyAdd(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => Sse2.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => Sse2.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => Sse2.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => Sse2.UnpackHigh(a, b);
     }
 
     /// <summary>The lanes' operations by AVX2 and FMA, the int8 dot products by AVX-VNNI's (any unsigned codes).</summary>
@@ -1458,6 +1573,27 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => Sse.Prefetch0(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) => AvxVnni.MultiplyWideningAndAdd(sum, codes, x);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) => Fma.MultiplyAdd(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) => Fma.MultiplyAdd(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => Sse2.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => Sse2.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => Sse2.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => Sse2.UnpackHigh(a, b);
     }
 
     /// <summary>
@@ -1477,7 +1613,7 @@ internal sealed partial class CpuBackend
         // Each byte's product exact in 16 bits (at most 127 · 128: the codes signed bytes as they are), each pair of them
         // widened and added, then each 4 bytes' two pairs.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x)
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x)
         {
             var c = codes.AsSByte();
             var low = AdvSimd.AddPairwiseWidening(AdvSimd.MultiplyWideningLower(c.GetLower(), x.GetLower()));
@@ -1617,6 +1753,24 @@ internal sealed partial class CpuBackend
         public static void Prefetch(void* at)
         {
         }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) => AdvSimd.FusedMultiplyAdd(c, a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) => AdvSimd.Arm64.FusedMultiplyAdd(c, a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => AdvSimd.Arm64.ZipLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => AdvSimd.Arm64.ZipHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => AdvSimd.Arm64.ZipLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => AdvSimd.Arm64.ZipHigh(a, b);
     }
 
     /// <summary>
@@ -1722,6 +1876,27 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => NeonInstructions.Prefetch(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) => Dp.DotProduct(sum, codes.AsSByte(), x);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) => NeonInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) => NeonInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => NeonInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => NeonInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => NeonInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => NeonInstructions.UnpackHigh(a, b);
     }
 
     /// <summary>
@@ -1736,7 +1911,7 @@ internal sealed partial class CpuBackend
             Vector256.Create(Dot(sum.GetLower(), codes.GetLower(), x.GetLower()), Dot(sum.GetUpper(), codes.GetUpper(), x.GetUpper()));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) =>
+        public static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) =>
             Dp.DotProduct(Dp.DotProduct(sum, (codes ^ Vector128.Create((byte)0x80)).AsSByte(), x), Vector128.Create((sbyte)-128), -x);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1830,6 +2005,24 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Prefetch(void* at) => DotProdInstructions.Prefetch(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<float> Fused(Vector128<float> a, Vector128<float> b, Vector128<float> c) => DotProdInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Fused(Vector128<double> a, Vector128<double> b, Vector128<double> c) => DotProdInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackLow(Vector128<uint> a, Vector128<uint> b) => DotProdInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<uint> UnpackHigh(Vector128<uint> a, Vector128<uint> b) => DotProdInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackLow(Vector128<ulong> a, Vector128<ulong> b) => DotProdInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<ulong> UnpackHigh(Vector128<ulong> a, Vector128<ulong> b) => DotProdInstructions.UnpackHigh(a, b);
     }
 
     /// <summary>
@@ -1922,7 +2115,28 @@ internal sealed partial class CpuBackend
     // products inlined into one kernel pass its inlining budget, the rest left as calls (measured: 26-37 calls in a four-row
     // kernel's code, none in a one-row kernel's). There the four-row kernels take a row at a time by their one-row kernels
     // (the same operations in the same order, so the same bits), which are never inlined, so each is compiled on its own
-    // budget: IntegerOne, ScaledStepsOne, SixIntegerOne, StepsOne, WideStepsOne.
+    // budget: IntegerOne, ScaledStepsOne, SixIntegerOne, StepsOne, WideStepsOne. Every lane's 128-bit twin (NarrowLane) has
+    // four-row kernels written on 128-bit vectors (each 256-bit vector of the 256-bit kernel as its two halves, every
+    // operation the 256-bit one's on its half, and the halves' sums added as Vector256.Sum adds them: the same bits), whose
+    // operations are the CPU's own instructions wherever 128-bit vectors are accelerated: four rows of x share each stored
+    // row's decode there too. The measured choice times the twins against the 256-bit lanes for four rows of x or more.
+
+    // The sum of a 256-bit lane set held as its two 128-bit halves, as Vector256.Sum adds them (the lower half's sum, then
+    // the upper's: each half's lanes in pairs).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float SumOf(Vector128<float> lower, Vector128<float> upper) => Vector128.Sum(lower) + Vector128.Sum(upper);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double SumOf(Vector128<double> lower, Vector128<double> upper) => Vector128.Sum(lower) + Vector128.Sum(upper);
+
+    // x's 16 bytes from `at` (a half of a 256-bit step's 32).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> Dot<TI>(Vector128<int> sum, Vector128<byte> codes, ref sbyte x, nint at) where TI : struct, IInstructions =>
+        TI.Dot(sum, codes, Vector128.LoadUnsafe(ref x, (nuint)at));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector128<int> DotAt<TI>(Vector128<int> sum, Vector128<byte> codes, sbyte* x) where TI : struct, IInstructions =>
+        TI.Dot(sum, codes, Vector128.Load(x));
 
     // a · b + c rounded once from separate operations: each product exact in float64, its sum with c rounded to odd there,
     // then to float32 to nearest (float64's 53 bits are float32's 24 and two more: the two roundings give the one).
@@ -2093,7 +2307,7 @@ internal sealed partial class CpuBackend
     // call by the lane's kind and instruction set.
     private readonly unsafe struct NibbleKernels : IRowKernels
     {
-        private readonly bool integer;
+        private readonly bool integer, narrow;
         private readonly Instructions with;
         private readonly NibbleBlocks blocks;
         private readonly int k, superBlocks, rowTable, codeOffset, blockBytes;
@@ -2103,6 +2317,7 @@ internal sealed partial class CpuBackend
         public NibbleKernels(int lane, NibbleBlocks blocks, int k, LanePointers input, float* table)
         {
             integer = KindOf(lane) == IntegerLaneId;
+            narrow = NarrowOf(lane);
             with = InstructionsOf(lane);
             this.blocks = blocks;
             this.k = k;
@@ -2130,6 +2345,12 @@ internal sealed partial class CpuBackend
         {
             ref byte codes = ref *(row + codeOffset);
             ref float scales = ref *(table + c * rowTable);
+            if (narrow)
+            {
+                FourNarrow(ref codes, ref scales, i, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             if (integer)
             {
                 ref sbyte xr = ref *(xq + (nint)i * k);
@@ -2178,6 +2399,41 @@ internal sealed partial class CpuBackend
             else
             {
                 DecodedFour<Avx2Instructions>(ref codes, blockBytes, superBlocks, ref scales, ref xf, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        // The 128-bit twin's four rows (by the portable instructions, or by NEON or Arm's dot products where the twin is theirs).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FourNarrow(ref byte codes, ref float scales, int i, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                ref sbyte xr = ref *(xq + (nint)i * k);
+                ref float sr = ref *(xs + (nint)i * rowTable);
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.DotProd)
+                {
+                    IntegerFour128<DotProdInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xr, ref sr, k, out y0, out y1, out y2, out y3);
+                }
+                else if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    IntegerFour128<NeonInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xr, ref sr, k, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    IntegerFour128<PortableInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xr, ref sr, k, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
+            ref float xf = ref *(x + (nint)i * k);
+            if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+            {
+                DecodedFour128<NeonInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xf, k, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                DecodedFour128<PortableInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xf, k, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -2472,6 +2728,130 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(f3);
     }
 
+    // IntegerFour on 128-bit vectors (its 128-bit twin): each 256-bit vector as its halves (`l`: lanes 0-3, `u`: lanes 4-7),
+    // the groups' words interleaved half by half, a half's codes the other half's swapped in (Swap), the upper half's
+    // shifted by 4 (ShiftUpper); each row's sums in two registers a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void IntegerFour128<TI>(ref byte codes, int blockBytes, int blocks, ref float table, ref sbyte x, ref float xs, int k,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        nint r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k, s1 = blocks * 16, s2 = 2 * s1, s3 = 3 * s1;
+        var low = Vector128.Create((byte)15);
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            ref byte g = ref Unsafe.Add(ref codes, (nint)b * blockBytes);
+            var g0l = Vector128.LoadUnsafe(ref g).AsUInt32();
+            var g0u = Vector128.LoadUnsafe(ref g, 16).AsUInt32();
+            var g1l = Vector128.LoadUnsafe(ref g, 32).AsUInt32();
+            var g1u = Vector128.LoadUnsafe(ref g, 48).AsUInt32();
+            var g2l = Vector128.LoadUnsafe(ref g, 64).AsUInt32();
+            var g2u = Vector128.LoadUnsafe(ref g, 80).AsUInt32();
+            var g3l = Vector128.LoadUnsafe(ref g, 96).AsUInt32();
+            var g3u = Vector128.LoadUnsafe(ref g, 112).AsUInt32();
+            var p01l = TI.UnpackLow(g0l, g1l).AsUInt64();
+            var p01u = TI.UnpackLow(g0u, g1u).AsUInt64();
+            var p23l = TI.UnpackLow(g2l, g3l).AsUInt64();
+            var p23u = TI.UnpackLow(g2u, g3u).AsUInt64();
+            var h01l = TI.UnpackHigh(g0l, g1l).AsUInt64();
+            var h01u = TI.UnpackHigh(g0u, g1u).AsUInt64();
+            var h23l = TI.UnpackHigh(g2l, g3l).AsUInt64();
+            var h23u = TI.UnpackHigh(g2u, g3u).AsUInt64();
+            ref sbyte xb = ref Unsafe.Add(ref x, (nint)b * NibbleBlocks.Values);
+            Vector128<int> i0l = default, i0u = default, i1l = default, i1u = default, i2l = default, i2u = default, i3l = default, i3u = default;
+
+            // Word t of each group: q's lower half [t of groups 0-3], its upper [t + 4]; w = Halves(q), v = Halves(Swap(q)).
+            var ql = TI.UnpackLow(p01l, p23l).AsUInt32();
+            var qu = TI.UnpackLow(p01u, p23u).AsUInt32();
+            var wl = ql.AsByte() & low;
+            var wu = (qu >>> 4).AsByte() & low;
+            var vl = qu.AsByte() & low;
+            var vu = (ql >>> 4).AsByte() & low;
+            i0l = Dot<TI>(Dot<TI>(i0l, wl, ref xb, 0), vl, ref xb, 32);
+            i0u = Dot<TI>(Dot<TI>(i0u, wu, ref xb, 16), vu, ref xb, 48);
+            i1l = Dot<TI>(Dot<TI>(i1l, wl, ref xb, r1), vl, ref xb, r1 + 32);
+            i1u = Dot<TI>(Dot<TI>(i1u, wu, ref xb, r1 + 16), vu, ref xb, r1 + 48);
+            i2l = Dot<TI>(Dot<TI>(i2l, wl, ref xb, r2), vl, ref xb, r2 + 32);
+            i2u = Dot<TI>(Dot<TI>(i2u, wu, ref xb, r2 + 16), vu, ref xb, r2 + 48);
+            i3l = Dot<TI>(Dot<TI>(i3l, wl, ref xb, r3), vl, ref xb, r3 + 32);
+            i3u = Dot<TI>(Dot<TI>(i3u, wu, ref xb, r3 + 16), vu, ref xb, r3 + 48);
+
+            ql = TI.UnpackHigh(p01l, p23l).AsUInt32();
+            qu = TI.UnpackHigh(p01u, p23u).AsUInt32();
+            wl = ql.AsByte() & low;
+            wu = (qu >>> 4).AsByte() & low;
+            vl = qu.AsByte() & low;
+            vu = (ql >>> 4).AsByte() & low;
+            i0l = Dot<TI>(Dot<TI>(i0l, wl, ref xb, 64), vl, ref xb, 96);
+            i0u = Dot<TI>(Dot<TI>(i0u, wu, ref xb, 80), vu, ref xb, 112);
+            i1l = Dot<TI>(Dot<TI>(i1l, wl, ref xb, r1 + 64), vl, ref xb, r1 + 96);
+            i1u = Dot<TI>(Dot<TI>(i1u, wu, ref xb, r1 + 80), vu, ref xb, r1 + 112);
+            i2l = Dot<TI>(Dot<TI>(i2l, wl, ref xb, r2 + 64), vl, ref xb, r2 + 96);
+            i2u = Dot<TI>(Dot<TI>(i2u, wu, ref xb, r2 + 80), vu, ref xb, r2 + 112);
+            i3l = Dot<TI>(Dot<TI>(i3l, wl, ref xb, r3 + 64), vl, ref xb, r3 + 96);
+            i3u = Dot<TI>(Dot<TI>(i3u, wu, ref xb, r3 + 80), vu, ref xb, r3 + 112);
+
+            ql = TI.UnpackLow(h01l, h23l).AsUInt32();
+            qu = TI.UnpackLow(h01u, h23u).AsUInt32();
+            wl = ql.AsByte() & low;
+            wu = (qu >>> 4).AsByte() & low;
+            vl = qu.AsByte() & low;
+            vu = (ql >>> 4).AsByte() & low;
+            i0l = Dot<TI>(Dot<TI>(i0l, wl, ref xb, 128), vl, ref xb, 160);
+            i0u = Dot<TI>(Dot<TI>(i0u, wu, ref xb, 144), vu, ref xb, 176);
+            i1l = Dot<TI>(Dot<TI>(i1l, wl, ref xb, r1 + 128), vl, ref xb, r1 + 160);
+            i1u = Dot<TI>(Dot<TI>(i1u, wu, ref xb, r1 + 144), vu, ref xb, r1 + 176);
+            i2l = Dot<TI>(Dot<TI>(i2l, wl, ref xb, r2 + 128), vl, ref xb, r2 + 160);
+            i2u = Dot<TI>(Dot<TI>(i2u, wu, ref xb, r2 + 144), vu, ref xb, r2 + 176);
+            i3l = Dot<TI>(Dot<TI>(i3l, wl, ref xb, r3 + 128), vl, ref xb, r3 + 160);
+            i3u = Dot<TI>(Dot<TI>(i3u, wu, ref xb, r3 + 144), vu, ref xb, r3 + 176);
+
+            ql = TI.UnpackHigh(h01l, h23l).AsUInt32();
+            qu = TI.UnpackHigh(h01u, h23u).AsUInt32();
+            wl = ql.AsByte() & low;
+            wu = (qu >>> 4).AsByte() & low;
+            vl = qu.AsByte() & low;
+            vu = (ql >>> 4).AsByte() & low;
+            i0l = Dot<TI>(Dot<TI>(i0l, wl, ref xb, 192), vl, ref xb, 224);
+            i0u = Dot<TI>(Dot<TI>(i0u, wu, ref xb, 208), vu, ref xb, 240);
+            i1l = Dot<TI>(Dot<TI>(i1l, wl, ref xb, r1 + 192), vl, ref xb, r1 + 224);
+            i1u = Dot<TI>(Dot<TI>(i1u, wu, ref xb, r1 + 208), vu, ref xb, r1 + 240);
+            i2l = Dot<TI>(Dot<TI>(i2l, wl, ref xb, r2 + 192), vl, ref xb, r2 + 224);
+            i2u = Dot<TI>(Dot<TI>(i2u, wu, ref xb, r2 + 208), vu, ref xb, r2 + 240);
+            i3l = Dot<TI>(Dot<TI>(i3l, wl, ref xb, r3 + 192), vl, ref xb, r3 + 224);
+            i3u = Dot<TI>(Dot<TI>(i3u, wu, ref xb, r3 + 208), vu, ref xb, r3 + 240);
+
+            ref float sc = ref Unsafe.Add(ref table, b * 16);
+            var scl = Vector128.LoadUnsafe(ref sc);
+            var scu = Vector128.LoadUnsafe(ref sc, 4);
+            var mnl = Vector128.LoadUnsafe(ref sc, 8);
+            var mnu = Vector128.LoadUnsafe(ref sc, 12);
+            ref float sb = ref Unsafe.Add(ref xs, b * 16);
+            f0l = Scaled<TI>(f0l, i0l, scl, mnl, ref sb, 0);
+            f0u = Scaled<TI>(f0u, i0u, scu, mnu, ref sb, 4);
+            f1l = Scaled<TI>(f1l, i1l, scl, mnl, ref Unsafe.Add(ref sb, s1), 0);
+            f1u = Scaled<TI>(f1u, i1u, scu, mnu, ref Unsafe.Add(ref sb, s1), 4);
+            f2l = Scaled<TI>(f2l, i2l, scl, mnl, ref Unsafe.Add(ref sb, s2), 0);
+            f2u = Scaled<TI>(f2u, i2u, scu, mnu, ref Unsafe.Add(ref sb, s2), 4);
+            f3l = Scaled<TI>(f3l, i3l, scl, mnl, ref Unsafe.Add(ref sb, s3), 0);
+            f3u = Scaled<TI>(f3u, i3u, scu, mnu, ref Unsafe.Add(ref sb, s3), 4);
+        }
+
+        y0 = SumOf(f0l, f0u);
+        y1 = SumOf(f1l, f1u);
+        y2 = SumOf(f2l, f2u);
+        y3 = SumOf(f3l, f3u);
+    }
+
+    // Scaled over a 128-bit half (`half` 0: lanes 0-3, 4: lanes 4-7): x's scales and its minimums' factors at `half` and 8 + `half`.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> Scaled<TI>(Vector128<float> sum, Vector128<int> dots, Vector128<float> scales, Vector128<float> minimums, ref float x, nuint half)
+        where TI : struct, IInstructions
+    {
+        sum = TI.Fused(Vector128.ConvertToSingle(dots) * Vector128.LoadUnsafe(ref x, half), scales, sum);
+        return TI.Fused(minimums, Vector128.LoadUnsafe(ref x, half + 8), sum);
+    }
+
     // IntegerFour for one row of x, the stored row's blocks from `row` (codes `codeOffset` into each); each block's scales from
     // `table`, or, with `decode`, decoded from the block as it is read (NibbleBlocks.Block: no table).
     [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
@@ -2570,6 +2950,68 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(l1 + h1);
         y2 = Vector256.Sum(l2 + h2);
         y3 = Vector256.Sum(l3 + h3);
+    }
+
+    // DecodedFour on 128-bit vectors (its 128-bit twin): each 8 codes widened as two halves of 4 (`l`, `u`), each sum a
+    // register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static void DecodedFour128<TI>(ref byte codes, int blockBytes, int blocks, ref float table, ref float x, int k,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        var mask = Vector128.Create(15);
+        nint r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        Vector128<float> l0l = default, l0u = default, l1l = default, l1u = default, l2l = default, l2u = default, l3l = default, l3u = default;
+        Vector128<float> h0l = default, h0u = default, h1l = default, h1u = default, h2l = default, h2u = default, h3l = default, h3u = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            ref byte block = ref Unsafe.Add(ref codes, (nint)b * blockBytes);
+            ref float xb = ref Unsafe.Add(ref x, (nint)b * NibbleBlocks.Values);
+            ref float scales = ref Unsafe.Add(ref table, b * 16);
+            for (int g = 0; g < 4; g++)
+            {
+                var dl = Vector128.Create(Unsafe.Add(ref scales, g));
+                var dh = Vector128.Create(Unsafe.Add(ref scales, 4 + g));
+                var ml = Vector128.Create(Unsafe.Add(ref scales, 8 + g));
+                var mh = Vector128.Create(Unsafe.Add(ref scales, 12 + g));
+                ref byte group = ref Unsafe.Add(ref block, 32 * g);
+                ref float xg = ref Unsafe.Add(ref xb, 64 * g);
+                for (int p = 0; p < 32; p += 8)
+                {
+                    var shorts = Vector128.WidenLower(Vector128.CreateScalarUnsafe(Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref group, p))).AsByte());
+                    var cl = Vector128.WidenLower(shorts).AsInt32();
+                    var cu = Vector128.WidenUpper(shorts).AsInt32();
+                    var wll = Vector128.ConvertToSingle(cl & mask) * dl + ml;
+                    var wlu = Vector128.ConvertToSingle(cu & mask) * dl + ml;
+                    var whl = Vector128.ConvertToSingle(cl >>> 4) * dh + mh;
+                    var whu = Vector128.ConvertToSingle(cu >>> 4) * dh + mh;
+                    ref float xp = ref Unsafe.Add(ref xg, p);
+                    l0l = TI.Fused(wll, Vector128.LoadUnsafe(ref xp), l0l);
+                    l0u = TI.Fused(wlu, Vector128.LoadUnsafe(ref xp, 4), l0u);
+                    h0l = TI.Fused(whl, Vector128.LoadUnsafe(ref xp, 32), h0l);
+                    h0u = TI.Fused(whu, Vector128.LoadUnsafe(ref xp, 36), h0u);
+                    ref float x1 = ref Unsafe.Add(ref xp, r1);
+                    l1l = TI.Fused(wll, Vector128.LoadUnsafe(ref x1), l1l);
+                    l1u = TI.Fused(wlu, Vector128.LoadUnsafe(ref x1, 4), l1u);
+                    h1l = TI.Fused(whl, Vector128.LoadUnsafe(ref x1, 32), h1l);
+                    h1u = TI.Fused(whu, Vector128.LoadUnsafe(ref x1, 36), h1u);
+                    ref float x2 = ref Unsafe.Add(ref xp, r2);
+                    l2l = TI.Fused(wll, Vector128.LoadUnsafe(ref x2), l2l);
+                    l2u = TI.Fused(wlu, Vector128.LoadUnsafe(ref x2, 4), l2u);
+                    h2l = TI.Fused(whl, Vector128.LoadUnsafe(ref x2, 32), h2l);
+                    h2u = TI.Fused(whu, Vector128.LoadUnsafe(ref x2, 36), h2u);
+                    ref float x3 = ref Unsafe.Add(ref xp, r3);
+                    l3l = TI.Fused(wll, Vector128.LoadUnsafe(ref x3), l3l);
+                    l3u = TI.Fused(wlu, Vector128.LoadUnsafe(ref x3, 4), l3u);
+                    h3l = TI.Fused(whl, Vector128.LoadUnsafe(ref x3, 32), h3l);
+                    h3u = TI.Fused(whu, Vector128.LoadUnsafe(ref x3, 36), h3u);
+                }
+            }
+        }
+
+        y0 = SumOf(l0l + h0l, l0u + h0u);
+        y1 = SumOf(l1l + h1l, l1u + h1u);
+        y2 = SumOf(l2l + h2l, l2u + h2u);
+        y3 = SumOf(l3l + h3l, l3u + h3u);
     }
 
     // DecodedFour for one row of x, the blocks and their scales as IntegerOne takes them.
@@ -2698,7 +3140,7 @@ internal sealed partial class CpuBackend
     // of the group; `tail` for a row read alone), so the kernels read whole groups.
     private readonly unsafe struct ScaledKernels : IRowKernels
     {
-        private readonly bool integer;
+        private readonly bool integer, narrow;
         private readonly Instructions with;
         private readonly ScaledNibbles plan;
         private readonly int k, blocks, groups, full, groupBytes, rowTable, tailBytes;
@@ -2710,6 +3152,7 @@ internal sealed partial class CpuBackend
         public ScaledKernels(int lane, ScaledNibbles plan, int k, float* x, sbyte* xq, float* xs, float* table, byte* tails, byte* tail)
         {
             integer = KindOf(lane) == IntegerLaneId;
+            narrow = NarrowOf(lane);
             with = InstructionsOf(lane);
             this.plan = plan;
             this.k = k;
@@ -2788,6 +3231,12 @@ internal sealed partial class CpuBackend
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
             float* scales = table + c * rowTable;
+            if (narrow)
+            {
+                FourNarrow(row, c, i, scales, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             if (integer)
             {
                 float* steps = scales + groups * ScaledNibbles.Group;
@@ -2836,6 +3285,41 @@ internal sealed partial class CpuBackend
             else
             {
                 ScaledDecodedFour<Avx2Instructions>(row, tails + c * groupBytes, blocks, plan, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        // The 128-bit twin's four rows (by the portable instructions, or by NEON or Arm's dot products where the twin is theirs).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FourNarrow(byte* row, int c, int i, float* scales, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                float* steps = scales + groups * ScaledNibbles.Group;
+                sbyte* xr = xq + i * xStride;
+                float* sr = xs + i * sStride;
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.DotProd)
+                {
+                    ScaledStepsFour128<DotProdInstructions>(steps, scales, groups, xr, sr, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+                else if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    ScaledStepsFour128<NeonInstructions>(steps, scales, groups, xr, sr, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    ScaledStepsFour128<PortableInstructions>(steps, scales, groups, xr, sr, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
+            if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+            {
+                ScaledDecodedFour128<NeonInstructions>(row, tails + c * groupBytes, blocks, plan, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                ScaledDecodedFour128<PortableInstructions>(row, tails + c * groupBytes, blocks, plan, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -2897,16 +3381,17 @@ internal sealed partial class CpuBackend
     // The packed bfloat16 product (a tied head) takes the same measured choice of lanes (ILaneChoice, CpuBackend.Typed.cs).
 
     /// <summary>
-    /// A product with candidate lanes (up to 8), timed on the real operands once per shape and the fastest kept for the
-    /// shape (Chosen): a weight's product over its stored rows by the described lane and its written format's lanes
-    /// (LaneCandidates), each by the portable instructions and by those the CPU has; the packed bfloat16 product.
+    /// A product with candidate lanes (up to MostCandidates), timed on the real operands once per shape and the fastest kept
+    /// for the shape (Chosen): a weight's product over its stored rows by the described lane and its written format's lanes
+    /// (LaneCandidates), each by the portable instructions and by those the CPU has, and their 128-bit twins for 4 rows of
+    /// x or more; the packed bfloat16 product.
     /// </summary>
     private interface ILaneChoice
     {
         /// <summary>The name the shape's choice is kept under (with the rows' class, n and k).</summary>
         string Name { get; }
 
-        /// <summary>The candidates that run on this CPU (1 to 8).</summary>
+        /// <summary>The candidates that run on this CPU (1 to MostCandidates).</summary>
         int Count { get; }
 
         /// <summary>Candidate <paramref name="index"/>'s lane, the first the one the others are timed against.</summary>
@@ -3089,8 +3574,10 @@ internal sealed partial class CpuBackend
     private static int Chosen<TC>(in TC product, int m, int n, int k) where TC : struct, ILaneChoice =>
         StoredLanes.TryGetValue((product.Name, LaneKey(product.Name, m, n, k).Rows, n, k), out int known) ? known : Measure(product, m, n, k);
 
-    // The most candidates a product's measuring takes.
-    private const int MostCandidates = 8;
+    // The most candidates a product's measuring takes: a weight's described lanes and its written format's, each kind by
+    // the portable instructions and by each instruction set the CPU has that it takes, with the 128-bit twins for 4 rows
+    // of x or more (q4_k's 4 rows on a CPU with NEON and DotProd: 6 described lanes, 4 decoded, 6 integer).
+    private const int MostCandidates = 16;
 
     // The fastest of the product's candidates, timed once on the real operands, each against the fastest so far (each run
     // writes all of y, which the caller writes again: Faster until the times settle, or TimeBrief's fixed rounds with a
@@ -3134,11 +3621,16 @@ internal sealed partial class CpuBackend
 
     // A weight's candidates as a choice of lanes (Chosen): the described lanes where the described lane reads the weight's
     // type and the setting takes it (first: the others are timed against its portable lane), then the written format's
-    // lanes where one reads the type and the setting takes them; its product by any of them.
+    // lanes where one reads the type and the setting takes them, the 128-bit twins among them for 4 rows of x or more
+    // (LaneList.ForRows); its product by any of them.
     private readonly struct LaneCandidates<TF, TK>(TF written, bool hasWritten, DescribedFormat described, bool hasDescribed,
         StoredLane lane, float[] x, float[] y, int m, int n, int k) : ILaneChoice
         where TF : struct, IRowFormat<TF, TK> where TK : struct, IRowKernels
     {
+        private LaneList DescribedLanes => hasDescribed ? described.Lanes.ForRows(m) : default;
+
+        private LaneList WrittenLanes => hasWritten ? written.Lanes.ForRows(m) : default;
+
         public string Name => lane.Type.Name + ProductRoutes.Lanes switch
         {
             RouteLanes.Described => " (described lane)",
@@ -3146,22 +3638,12 @@ internal sealed partial class CpuBackend
             _ => "",
         };
 
-        public int Count => (hasDescribed ? described.Lanes.Count : 0) + (hasWritten ? written.Lanes.Count : 0);
+        public int Count => DescribedLanes.Count + WrittenLanes.Count;
 
         public int Candidate(int index)
         {
-            if (hasDescribed)
-            {
-                var lanes = described.Lanes;
-                if (index < lanes.Count)
-                {
-                    return lanes[index];
-                }
-
-                index -= lanes.Count;
-            }
-
-            return written.Lanes[index];
+            var lanes = DescribedLanes;
+            return index < lanes.Count ? lanes[index] : WrittenLanes[index - lanes.Count];
         }
 
         public int Unmeasured => hasDescribed ? described.Unmeasured : written.Unmeasured;
@@ -3727,6 +4209,16 @@ internal sealed partial class CpuBackend
         return (value | special | Vector256.ShiftLeft(bits & Vector256.Create(0x8000), 16)).AsSingle();
     }
 
+    // HalfLanes over 128 bits (the same operations, lane by lane).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> HalfLanes(Vector128<int> bits)
+    {
+        var magnitude = bits & Vector128.Create(0x7FFF);
+        var value = ((magnitude << 13).AsSingle() * Vector128.Create(0x77800000).AsSingle()).AsInt32();
+        var special = Vector128.GreaterThan(magnitude, Vector128.Create(0x7BFF)) & Vector128.Create(0x7F800000);
+        return (value | special | ((bits & Vector128.Create(0x8000)) << 16)).AsSingle();
+    }
+
     // sum + the dot products of 4 codes by 4 of x's int8 codes (32 bytes at `x`), in each 32-bit lane.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe Vector256<int> DotAt<TI>(Vector256<int> sum, Vector256<byte> codes, sbyte* x) where TI : struct, IInstructions =>
@@ -3843,6 +4335,85 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(f1);
         y2 = Vector256.Sum(f2);
         y3 = Vector256.Sum(f3);
+    }
+
+    // ScaledStepsFour on 128-bit vectors (its 128-bit twin): each step's two halves (`l`: blocks 0-3, `u`: blocks 4-7) loaded
+    // once and dotted with each row's matching 16 bytes of x.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ScaledStepsFour128<TI>(float* steps, float* table, int groups, sbyte* x, float* xs, nint xStride, nint sStride,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = (byte*)(steps + g * ScaledStepFloats);
+            var s0l = Vector128.Load(at);
+            var s0u = Vector128.Load(at + 16);
+            var s1l = Vector128.Load(at + 32);
+            var s1u = Vector128.Load(at + 48);
+            var s2l = Vector128.Load(at + 64);
+            var s2u = Vector128.Load(at + 80);
+            var s3l = Vector128.Load(at + 96);
+            var s3u = Vector128.Load(at + 112);
+            var s4l = Vector128.Load(at + 128);
+            var s4u = Vector128.Load(at + 144);
+            var s5l = Vector128.Load(at + 160);
+            var s5u = Vector128.Load(at + 176);
+            var s6l = Vector128.Load(at + 192);
+            var s6u = Vector128.Load(at + 208);
+            var s7l = Vector128.Load(at + 224);
+            var s7u = Vector128.Load(at + 240);
+            var dwl = Vector128.Load(table + g * ScaledNibbles.Group);
+            var dwu = Vector128.Load(table + g * ScaledNibbles.Group + 4);
+            sbyte* xg = x + g * ScaledNibbles.GroupCodes;
+            float* sg = xs + g * 16;
+            var il = StepDots<TI>(Vector128.Load((int*)(sg + 8)), s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg);
+            var iu = StepDots<TI>(Vector128.Load((int*)(sg + 12)), s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 16);
+            f0l = TI.Fused(Vector128.ConvertToSingle(il), dwl * Vector128.Load(sg), f0l);
+            f0u = TI.Fused(Vector128.ConvertToSingle(iu), dwu * Vector128.Load(sg + 4), f0u);
+
+            xg += xStride;
+            sg += sStride;
+            il = StepDots<TI>(Vector128.Load((int*)(sg + 8)), s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg);
+            iu = StepDots<TI>(Vector128.Load((int*)(sg + 12)), s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 16);
+            f1l = TI.Fused(Vector128.ConvertToSingle(il), dwl * Vector128.Load(sg), f1l);
+            f1u = TI.Fused(Vector128.ConvertToSingle(iu), dwu * Vector128.Load(sg + 4), f1u);
+
+            xg += xStride;
+            sg += sStride;
+            il = StepDots<TI>(Vector128.Load((int*)(sg + 8)), s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg);
+            iu = StepDots<TI>(Vector128.Load((int*)(sg + 12)), s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 16);
+            f2l = TI.Fused(Vector128.ConvertToSingle(il), dwl * Vector128.Load(sg), f2l);
+            f2u = TI.Fused(Vector128.ConvertToSingle(iu), dwu * Vector128.Load(sg + 4), f2u);
+
+            xg += xStride;
+            sg += sStride;
+            il = StepDots<TI>(Vector128.Load((int*)(sg + 8)), s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg);
+            iu = StepDots<TI>(Vector128.Load((int*)(sg + 12)), s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 16);
+            f3l = TI.Fused(Vector128.ConvertToSingle(il), dwl * Vector128.Load(sg), f3l);
+            f3u = TI.Fused(Vector128.ConvertToSingle(iu), dwu * Vector128.Load(sg + 4), f3u);
+        }
+
+        y0 = SumOf(f0l, f0u);
+        y1 = SumOf(f1l, f1u);
+        y2 = SumOf(f2l, f2u);
+        y3 = SumOf(f3l, f3u);
+    }
+
+    // A row's sums of a group's 8 steps over one 128-bit half: `i` + each step's half (s0..s7) dotted with x's matching 16
+    // bytes of its 32 (from `x`, a step every 32).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector128<int> StepDots<TI>(Vector128<int> i, Vector128<byte> s0, Vector128<byte> s1, Vector128<byte> s2, Vector128<byte> s3,
+        Vector128<byte> s4, Vector128<byte> s5, Vector128<byte> s6, Vector128<byte> s7, sbyte* x) where TI : struct, IInstructions
+    {
+        i = DotAt<TI>(i, s0, x);
+        i = DotAt<TI>(i, s1, x + 32);
+        i = DotAt<TI>(i, s2, x + 64);
+        i = DotAt<TI>(i, s3, x + 96);
+        i = DotAt<TI>(i, s4, x + 128);
+        i = DotAt<TI>(i, s5, x + 160);
+        i = DotAt<TI>(i, s6, x + 192);
+        return DotAt<TI>(i, s7, x + 224);
     }
 
     // ScaledStepsFour for one row of x (its first row's operations, in their order).
@@ -3991,6 +4562,123 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(a1 + h1);
         y2 = Vector256.Sum(a2 + h2);
         y3 = Vector256.Sum(a3 + h3);
+    }
+
+    // ScaledDecodedFour on 128-bit vectors (its 128-bit twin): a block's scale and its bias's product read as the lane the
+    // 256-bit kernel broadcasts (the same floats), its codes as 8 halves of 4 values, each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ScaledDecodedFour128<TI>(byte* row, byte* tail, int blocks, ScaledNibbles plan, float* table, float* x, int k,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        float bias = plan.ValueBias;
+        nint bytes = plan.Bytes, codeOffset = plan.CodeOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        int full = blocks / ScaledNibbles.Group;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> h0l = default, h0u = default, h1l = default, h1u = default, h2l = default, h2u = default, h3l = default, h3u = default;
+        for (int g = 0; g * ScaledNibbles.Group < blocks; g++)
+        {
+            byte* group = g < full ? row + g * ScaledNibbles.Group * bytes : tail;
+            float* dw = table + g * ScaledNibbles.Group;
+            int count = Math.Min(ScaledNibbles.Group, blocks - g * ScaledNibbles.Group);
+            for (int l = 0; l < count; l++)
+            {
+                var d = Vector128.Create(dw[l]);
+                var b = Vector128.Create(dw[l] * bias);
+                BlockCodes128(group + l * bytes + codeOffset, plan, out var c0l, out var c0u, out var c1l, out var c1u, out var c2l, out var c2u, out var c3l, out var c3u);
+                var w0l = TI.Fused(c0l, d, b);
+                var w0u = TI.Fused(c0u, d, b);
+                var w1l = TI.Fused(c1l, d, b);
+                var w1u = TI.Fused(c1u, d, b);
+                var w2l = TI.Fused(c2l, d, b);
+                var w2u = TI.Fused(c2u, d, b);
+                var w3l = TI.Fused(c3l, d, b);
+                var w3u = TI.Fused(c3u, d, b);
+                float* xb = x + (g * ScaledNibbles.Group + l) * ScaledNibbles.Values;
+                a0l = TI.Fused(w0l, Vector128.Load(xb), a0l);
+                a0u = TI.Fused(w0u, Vector128.Load(xb + 4), a0u);
+                h0l = TI.Fused(w1l, Vector128.Load(xb + 8), h0l);
+                h0u = TI.Fused(w1u, Vector128.Load(xb + 12), h0u);
+                a0l = TI.Fused(w2l, Vector128.Load(xb + 16), a0l);
+                a0u = TI.Fused(w2u, Vector128.Load(xb + 20), a0u);
+                h0l = TI.Fused(w3l, Vector128.Load(xb + 24), h0l);
+                h0u = TI.Fused(w3u, Vector128.Load(xb + 28), h0u);
+                float* x1 = xb + r1;
+                a1l = TI.Fused(w0l, Vector128.Load(x1), a1l);
+                a1u = TI.Fused(w0u, Vector128.Load(x1 + 4), a1u);
+                h1l = TI.Fused(w1l, Vector128.Load(x1 + 8), h1l);
+                h1u = TI.Fused(w1u, Vector128.Load(x1 + 12), h1u);
+                a1l = TI.Fused(w2l, Vector128.Load(x1 + 16), a1l);
+                a1u = TI.Fused(w2u, Vector128.Load(x1 + 20), a1u);
+                h1l = TI.Fused(w3l, Vector128.Load(x1 + 24), h1l);
+                h1u = TI.Fused(w3u, Vector128.Load(x1 + 28), h1u);
+                float* x2 = xb + r2;
+                a2l = TI.Fused(w0l, Vector128.Load(x2), a2l);
+                a2u = TI.Fused(w0u, Vector128.Load(x2 + 4), a2u);
+                h2l = TI.Fused(w1l, Vector128.Load(x2 + 8), h2l);
+                h2u = TI.Fused(w1u, Vector128.Load(x2 + 12), h2u);
+                a2l = TI.Fused(w2l, Vector128.Load(x2 + 16), a2l);
+                a2u = TI.Fused(w2u, Vector128.Load(x2 + 20), a2u);
+                h2l = TI.Fused(w3l, Vector128.Load(x2 + 24), h2l);
+                h2u = TI.Fused(w3u, Vector128.Load(x2 + 28), h2u);
+                float* x3 = xb + r3;
+                a3l = TI.Fused(w0l, Vector128.Load(x3), a3l);
+                a3u = TI.Fused(w0u, Vector128.Load(x3 + 4), a3u);
+                h3l = TI.Fused(w1l, Vector128.Load(x3 + 8), h3l);
+                h3u = TI.Fused(w1u, Vector128.Load(x3 + 12), h3u);
+                a3l = TI.Fused(w2l, Vector128.Load(x3 + 16), a3l);
+                a3u = TI.Fused(w2u, Vector128.Load(x3 + 20), a3u);
+                h3l = TI.Fused(w3l, Vector128.Load(x3 + 24), h3l);
+                h3u = TI.Fused(w3u, Vector128.Load(x3 + 28), h3u);
+            }
+        }
+
+        y0 = SumOf(a0l + h0l, a0u + h0u);
+        y1 = SumOf(a1l + h1l, a1u + h1u);
+        y2 = SumOf(a2l + h2l, a2u + h2u);
+        y3 = SumOf(a3l + h3l, a3u + h3u);
+    }
+
+    // BlockCodes on 128-bit vectors: each of its four 8-value vectors as two halves of 4 (the same values).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void BlockCodes128(byte* codes, ScaledNibbles plan, out Vector128<float> w0l, out Vector128<float> w0u, out Vector128<float> w1l,
+        out Vector128<float> w1u, out Vector128<float> w2l, out Vector128<float> w2u, out Vector128<float> w3l, out Vector128<float> w3u)
+    {
+        var v = Vector128.Load(codes);
+        var nibble = Vector128.Create((byte)15);
+        if (plan.Mapped)
+        {
+            var lo = Vector128.ShuffleNative(plan.CodeValues, (v & nibble).AsSByte());
+            var hi = Vector128.ShuffleNative(plan.CodeValues, ((v.AsUInt16() >>> 4).AsByte() & nibble).AsSByte());
+            var lo0 = Vector128.WidenLower(lo);
+            var lo1 = Vector128.WidenUpper(lo);
+            var hi0 = Vector128.WidenLower(hi);
+            var hi1 = Vector128.WidenUpper(hi);
+            w0l = Vector128.ConvertToSingle(Vector128.WidenLower(lo0));
+            w0u = Vector128.ConvertToSingle(Vector128.WidenUpper(lo0));
+            w1l = Vector128.ConvertToSingle(Vector128.WidenLower(lo1));
+            w1u = Vector128.ConvertToSingle(Vector128.WidenUpper(lo1));
+            w2l = Vector128.ConvertToSingle(Vector128.WidenLower(hi0));
+            w2u = Vector128.ConvertToSingle(Vector128.WidenUpper(hi0));
+            w3l = Vector128.ConvertToSingle(Vector128.WidenLower(hi1));
+            w3u = Vector128.ConvertToSingle(Vector128.WidenUpper(hi1));
+            return;
+        }
+
+        var mask = Vector128.Create(15);
+        var a = Vector128.WidenLower(v);
+        var c = Vector128.WidenUpper(v);
+        var a0 = Vector128.WidenLower(a).AsInt32();
+        var a1 = Vector128.WidenUpper(a).AsInt32();
+        var c0 = Vector128.WidenLower(c).AsInt32();
+        var c1 = Vector128.WidenUpper(c).AsInt32();
+        w0l = Vector128.ConvertToSingle(a0 & mask);
+        w0u = Vector128.ConvertToSingle(a1 & mask);
+        w1l = Vector128.ConvertToSingle(c0 & mask);
+        w1u = Vector128.ConvertToSingle(c1 & mask);
+        w2l = Vector128.ConvertToSingle(a0 >>> 4);
+        w2u = Vector128.ConvertToSingle(a1 >>> 4);
+        w3l = Vector128.ConvertToSingle(c0 >>> 4);
+        w3u = Vector128.ConvertToSingle(c1 >>> 4);
     }
 
     // ScaledDecodedFour for one row of x, each of a block's four vectors in its own sum.
@@ -4240,7 +4928,7 @@ internal sealed partial class CpuBackend
 
         public (int Floats, int Bytes) Scratch(int k, int group) => (0, 0);
 
-        public BFloat16Kernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(KindOf(lane) == PairedLaneId, InstructionsOf(lane), x.Values, k);
+        public BFloat16Kernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(KindOf(lane) == PairedLaneId, InstructionsOf(lane), NarrowOf(lane), x.Values, k);
     }
 
     // Stored bytes a group of bfloat16 rows takes with more than one row of x (RowGroups): float32 rows of x take 4 bytes a
@@ -4252,7 +4940,7 @@ internal sealed partial class CpuBackend
     private const int BFloat16Span = 2048;
 
     // The bfloat16 lanes as RowGroups' kernels (by the lane's instruction set): nothing to set up for a group of rows.
-    private readonly unsafe struct BFloat16Kernels(bool paired, Instructions with, float* x, int k) : IRowKernels
+    private readonly unsafe struct BFloat16Kernels(bool paired, Instructions with, bool narrow, float* x, int k) : IRowKernels
     {
         public void Group(byte* stored, nint rowBytes, int c0, int count)
         {
@@ -4263,6 +4951,32 @@ internal sealed partial class CpuBackend
         {
             ushort* at = (ushort*)row + p0;
             float* xp = x + (nint)i * k + p0;
+            if (narrow)
+            {
+                // The 128-bit twin's four rows (by the portable instructions, or by NEON where the twin is its).
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    if (paired)
+                    {
+                        PairedFour128<NeonInstructions>(at, xp, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        ShiftedFour128<NeonInstructions>(at, xp, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+                }
+                else if (paired)
+                {
+                    PairedFour128<PortableInstructions>(at, xp, k, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    ShiftedFour128<PortableInstructions>(at, xp, k, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
             if (AdvSimd.Arm64.IsSupported && with != Instructions.Portable)
             {
                 if (paired)
@@ -4417,6 +5131,60 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(a3 + b3) + t3;
     }
 
+    // PairedFour on 128-bit vectors (its 128-bit twin): each 16 values as two halves of 8 (`l`: values 0-7, `u`: 8-15), the
+    // even and odd values of each half made by the shift and the mask, each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void PairedFour128<TI>(ushort* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TI : struct, IInstructions
+    {
+        var high = Vector128.Create(0xFFFF0000u);
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            var vl = Vector128.Load((uint*)(row + p));
+            var vu = Vector128.Load((uint*)(row + p + 8));
+            var lol = (vl << 16).AsSingle();
+            var lou = (vu << 16).AsSingle();
+            var hil = (vl & high).AsSingle();
+            var hiu = (vu & high).AsSingle();
+            float* xp = x + p;
+            a0l = TI.Fused(lol, Vector128.Load(xp), a0l);
+            a0u = TI.Fused(lou, Vector128.Load(xp + 4), a0u);
+            b0l = TI.Fused(hil, Vector128.Load(xp + 8), b0l);
+            b0u = TI.Fused(hiu, Vector128.Load(xp + 12), b0u);
+            a1l = TI.Fused(lol, Vector128.Load(xp + r1), a1l);
+            a1u = TI.Fused(lou, Vector128.Load(xp + r1 + 4), a1u);
+            b1l = TI.Fused(hil, Vector128.Load(xp + r1 + 8), b1l);
+            b1u = TI.Fused(hiu, Vector128.Load(xp + r1 + 12), b1u);
+            a2l = TI.Fused(lol, Vector128.Load(xp + r2), a2l);
+            a2u = TI.Fused(lou, Vector128.Load(xp + r2 + 4), a2u);
+            b2l = TI.Fused(hil, Vector128.Load(xp + r2 + 8), b2l);
+            b2u = TI.Fused(hiu, Vector128.Load(xp + r2 + 12), b2u);
+            a3l = TI.Fused(lol, Vector128.Load(xp + r3), a3l);
+            a3u = TI.Fused(lou, Vector128.Load(xp + r3 + 4), a3u);
+            b3l = TI.Fused(hil, Vector128.Load(xp + r3 + 8), b3l);
+            b3u = TI.Fused(hiu, Vector128.Load(xp + r3 + 12), b3u);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = BFloat16Value(row[p]);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = SumOf(a0l + b0l, a0u + b0u) + t0;
+        y1 = SumOf(a1l + b1l, a1u + b1u) + t1;
+        y2 = SumOf(a2l + b2l, a2u + b2u) + t2;
+        y3 = SumOf(a3l + b3l, a3u + b3u) + t3;
+    }
+
     // PairedFour for one row of x, 32 values a step in four sums.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe float PairedOne<TI>(ushort* row, float* x, int k) where TI : struct, IInstructions
@@ -4494,6 +5262,59 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(a1 + b1) + t1;
         y2 = Vector256.Sum(a2 + b2) + t2;
         y3 = Vector256.Sum(a3 + b3) + t3;
+    }
+
+    // ShiftedFour on 128-bit vectors (its 128-bit twin): each 8 values widened as two halves of 4 and shifted, each sum a
+    // register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ShiftedFour128<TI>(ushort* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            var lo = Vector128.Load(row + p);
+            var hi = Vector128.Load(row + p + 8);
+            var lol = (Vector128.WidenLower(lo) << 16).AsSingle();
+            var lou = (Vector128.WidenUpper(lo) << 16).AsSingle();
+            var hil = (Vector128.WidenLower(hi) << 16).AsSingle();
+            var hiu = (Vector128.WidenUpper(hi) << 16).AsSingle();
+            float* xp = x + p;
+            a0l = TI.Fused(lol, Vector128.Load(xp), a0l);
+            a0u = TI.Fused(lou, Vector128.Load(xp + 4), a0u);
+            b0l = TI.Fused(hil, Vector128.Load(xp + 8), b0l);
+            b0u = TI.Fused(hiu, Vector128.Load(xp + 12), b0u);
+            a1l = TI.Fused(lol, Vector128.Load(xp + r1), a1l);
+            a1u = TI.Fused(lou, Vector128.Load(xp + r1 + 4), a1u);
+            b1l = TI.Fused(hil, Vector128.Load(xp + r1 + 8), b1l);
+            b1u = TI.Fused(hiu, Vector128.Load(xp + r1 + 12), b1u);
+            a2l = TI.Fused(lol, Vector128.Load(xp + r2), a2l);
+            a2u = TI.Fused(lou, Vector128.Load(xp + r2 + 4), a2u);
+            b2l = TI.Fused(hil, Vector128.Load(xp + r2 + 8), b2l);
+            b2u = TI.Fused(hiu, Vector128.Load(xp + r2 + 12), b2u);
+            a3l = TI.Fused(lol, Vector128.Load(xp + r3), a3l);
+            a3u = TI.Fused(lou, Vector128.Load(xp + r3 + 4), a3u);
+            b3l = TI.Fused(hil, Vector128.Load(xp + r3 + 8), b3l);
+            b3u = TI.Fused(hiu, Vector128.Load(xp + r3 + 12), b3u);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = BFloat16Value(row[p]);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = SumOf(a0l + b0l, a0u + b0u) + t0;
+        y1 = SumOf(a1l + b1l, a1u + b1u) + t1;
+        y2 = SumOf(a2l + b2l, a2u + b2u) + t2;
+        y3 = SumOf(a3l + b3l, a3u + b3u) + t3;
     }
 
     // ShiftedFour for one row of x, 32 values a step in four sums.
@@ -4618,7 +5439,7 @@ internal sealed partial class CpuBackend
     // floats' room each) or as int8 codes with 2 floats a block (the integer lane: RoundLongRow).
     private readonly unsafe struct LongKernels : IRowKernels
     {
-        private readonly bool integer;
+        private readonly bool integer, narrow;
         private readonly Instructions with;
         private readonly int k;
         private readonly nint table;
@@ -4628,6 +5449,7 @@ internal sealed partial class CpuBackend
         public LongKernels(int lane, int k, LanePointers input, byte* steps)
         {
             integer = KindOf(lane) == IntegerLaneId;
+            narrow = NarrowOf(lane);
             with = InstructionsOf(lane);
             this.k = k;
             this.input = input;
@@ -4664,6 +5486,12 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
+            if (narrow)
+            {
+                FourNarrow(row, c, i, p0, p1, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             if (integer)
             {
                 byte* at = steps + ((nint)c * k + p0) * sizeof(long);
@@ -4707,6 +5535,39 @@ internal sealed partial class CpuBackend
             else
             {
                 WideFour<LongLoad, Avx2Instructions>(values, xd, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        // The 128-bit twin's four rows (by the portable instructions, or by NEON or Arm's dot products where the twin is theirs).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FourNarrow(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                byte* at = steps + ((nint)c * k + p0) * sizeof(long);
+                sbyte* xq = input.Codes + (nint)i * k + p0;
+                float* xs = input.Scales + i * table + p0 / LongBlock * 2;
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.DotProdWide)
+                {
+                    LongIntegerFour128<WideDotProdInstructions>(at, xq, xs, k, table, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    LongIntegerFour128<PortableInstructions>(at, xq, xs, k, table, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
+            byte* values = row + (nint)p0 * sizeof(long);
+            double* xd = (double*)input.Values + (nint)i * k + p0;
+            if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+            {
+                WideFour128<LongLoad, NeonInstructions>(values, xd, k, p1 - p0, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                WideFour128<LongLoad, PortableInstructions>(values, xd, k, p1 - p0, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -4852,11 +5713,24 @@ internal sealed partial class CpuBackend
         return (high.AsDouble() - Vector256.Create(442726361368656609280.0)) + low;
     }
 
+    // LongsToDoubles over two codes (the same operations, lane by lane).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector128<double> LongsToDoubles128(long* at)
+    {
+        var v = Vector128.Load(at);
+        var high = ((v.AsInt32() >> 16).AsInt64() & Vector128.Create(unchecked((long)0xFFFFFFFF00000000))) + Vector128.Create(442721857769029238784.0).AsInt64();
+        var low = ((v & Vector128.Create(0x0000FFFFFFFFFFFFL)) | Vector128.Create(4503599627370496.0).AsInt64()).AsDouble();
+        return (high.AsDouble() - Vector128.Create(442726361368656609280.0)) + low;
+    }
+
     /// <summary>How a stored 64-bit value is made float64 in registers (the decoded lanes of int64's and float64's weights).</summary>
     private unsafe interface IWideLoad
     {
         /// <summary>The four values from <paramref name="at"/> as float64.</summary>
         static abstract Vector256<double> Four(byte* at);
+
+        /// <summary>The two values from <paramref name="at"/> as float64 (Four's over 128 bits).</summary>
+        static abstract Vector128<double> Two(byte* at);
 
         /// <summary>The value at <paramref name="at"/> as float64.</summary>
         static abstract double One(byte* at);
@@ -4869,6 +5743,9 @@ internal sealed partial class CpuBackend
         public static Vector256<double> Four(byte* at) => LongsToDoubles((long*)at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Two(byte* at) => LongsToDoubles128((long*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double One(byte* at) => *(long*)at;
     }
 
@@ -4877,6 +5754,9 @@ internal sealed partial class CpuBackend
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<double> Four(byte* at) => Vector256.Load((double*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector128<double> Two(byte* at) => Vector128.Load((double*)at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static double One(byte* at) => *(double*)at;
@@ -4921,6 +5801,57 @@ internal sealed partial class CpuBackend
         y1 = (float)(Vector256.Sum(a1 + b1) + t1);
         y2 = (float)(Vector256.Sum(a2 + b2) + t2);
         y3 = (float)(Vector256.Sum(a3 + b3) + t3);
+    }
+
+    // WideFour on 128-bit vectors (its 128-bit twin): each 4 values as two halves of 2 (`l`, `u`), each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void WideFour128<TL, TI>(byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TL : struct, IWideLoad where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<double> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<double> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            byte* at = row + 8 * p;
+            var w0l = TL.Two(at);
+            var w0u = TL.Two(at + 16);
+            var w1l = TL.Two(at + 32);
+            var w1u = TL.Two(at + 48);
+            double* xp = x + p;
+            a0l = TI.Fused(w0l, Vector128.Load(xp), a0l);
+            a0u = TI.Fused(w0u, Vector128.Load(xp + 2), a0u);
+            b0l = TI.Fused(w1l, Vector128.Load(xp + 4), b0l);
+            b0u = TI.Fused(w1u, Vector128.Load(xp + 6), b0u);
+            a1l = TI.Fused(w0l, Vector128.Load(xp + r1), a1l);
+            a1u = TI.Fused(w0u, Vector128.Load(xp + r1 + 2), a1u);
+            b1l = TI.Fused(w1l, Vector128.Load(xp + r1 + 4), b1l);
+            b1u = TI.Fused(w1u, Vector128.Load(xp + r1 + 6), b1u);
+            a2l = TI.Fused(w0l, Vector128.Load(xp + r2), a2l);
+            a2u = TI.Fused(w0u, Vector128.Load(xp + r2 + 2), a2u);
+            b2l = TI.Fused(w1l, Vector128.Load(xp + r2 + 4), b2l);
+            b2u = TI.Fused(w1u, Vector128.Load(xp + r2 + 6), b2u);
+            a3l = TI.Fused(w0l, Vector128.Load(xp + r3), a3l);
+            a3u = TI.Fused(w0u, Vector128.Load(xp + r3 + 2), a3u);
+            b3l = TI.Fused(w1l, Vector128.Load(xp + r3 + 4), b3l);
+            b3u = TI.Fused(w1u, Vector128.Load(xp + r3 + 6), b3u);
+        }
+
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (; p < count; p++)
+        {
+            double w = TL.One(row + 8 * p);
+            t0 = Math.FusedMultiplyAdd(w, x[p], t0);
+            t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = Math.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = (float)(SumOf(a0l + b0l, a0u + b0u) + t0);
+        y1 = (float)(SumOf(a1l + b1l, a1u + b1u) + t1);
+        y2 = (float)(SumOf(a2l + b2l, a2u + b2u) + t2);
+        y3 = (float)(SumOf(a3l + b3l, a3u + b3u) + t3);
     }
 
     // WideFour for one row of x, 16 values a step in four sums. (Asking for the bytes 1 KB ahead measured no faster on
@@ -4991,6 +5922,65 @@ internal sealed partial class CpuBackend
         y1 = (float)(Vector256.Sum(a1 + b1) + t1);
         y2 = (float)(Vector256.Sum(a2 + b2) + t2);
         y3 = (float)(Vector256.Sum(a3 + b3) + t3);
+    }
+
+    // WideMixedFour on 128-bit vectors (its 128-bit twin): each 4 of x widened as two halves of 2, each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void WideMixedFour128<TL, TI>(byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TL : struct, IWideLoad where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<double> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<double> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            byte* at = row + 8 * p;
+            var w0l = TL.Two(at);
+            var w0u = TL.Two(at + 16);
+            var w1l = TL.Two(at + 32);
+            var w1u = TL.Two(at + 48);
+            float* xp = x + p;
+            var v = Vector128.Load(xp);
+            var e = Vector128.Load(xp + 4);
+            a0l = TI.Fused(w0l, Vector128.WidenLower(v), a0l);
+            a0u = TI.Fused(w0u, Vector128.WidenUpper(v), a0u);
+            b0l = TI.Fused(w1l, Vector128.WidenLower(e), b0l);
+            b0u = TI.Fused(w1u, Vector128.WidenUpper(e), b0u);
+            v = Vector128.Load(xp + r1);
+            e = Vector128.Load(xp + r1 + 4);
+            a1l = TI.Fused(w0l, Vector128.WidenLower(v), a1l);
+            a1u = TI.Fused(w0u, Vector128.WidenUpper(v), a1u);
+            b1l = TI.Fused(w1l, Vector128.WidenLower(e), b1l);
+            b1u = TI.Fused(w1u, Vector128.WidenUpper(e), b1u);
+            v = Vector128.Load(xp + r2);
+            e = Vector128.Load(xp + r2 + 4);
+            a2l = TI.Fused(w0l, Vector128.WidenLower(v), a2l);
+            a2u = TI.Fused(w0u, Vector128.WidenUpper(v), a2u);
+            b2l = TI.Fused(w1l, Vector128.WidenLower(e), b2l);
+            b2u = TI.Fused(w1u, Vector128.WidenUpper(e), b2u);
+            v = Vector128.Load(xp + r3);
+            e = Vector128.Load(xp + r3 + 4);
+            a3l = TI.Fused(w0l, Vector128.WidenLower(v), a3l);
+            a3u = TI.Fused(w0u, Vector128.WidenUpper(v), a3u);
+            b3l = TI.Fused(w1l, Vector128.WidenLower(e), b3l);
+            b3u = TI.Fused(w1u, Vector128.WidenUpper(e), b3u);
+        }
+
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (; p < count; p++)
+        {
+            double w = TL.One(row + 8 * p);
+            t0 = Math.FusedMultiplyAdd(w, x[p], t0);
+            t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = Math.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = (float)(SumOf(a0l + b0l, a0u + b0u) + t0);
+        y1 = (float)(SumOf(a1l + b1l, a1u + b1u) + t1);
+        y2 = (float)(SumOf(a2l + b2l, a2u + b2u) + t2);
+        y3 = (float)(SumOf(a3l + b3l, a3u + b3u) + t3);
     }
 
     // WideMixedFour for one row of x, 16 values a step in four sums (WideSum's, x widened in registers).
@@ -5119,6 +6109,65 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(f3 * planes);
     }
 
+    // LongIntegerFour on 128-bit vectors (its 128-bit twin): each step's halves (`l`: planes 0-3, `u`: planes 4-7) loaded once
+    // and dotted with each row's 4 codes; the top byte's bias in the upper half's lane 3 (LongStart's lane 7).
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void LongIntegerFour128<TI>(byte* steps, sbyte* x, float* xs, int stride, nint table, int count, out float y0, out float y1, out float y2, out float y3)
+        where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride, t2 = 2 * table, t3 = 3 * table;
+        var top = Vector128.Create(0, 0, 0, -1);
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int b = 0; b < count / LongBlock; b++)
+        {
+            byte* w = steps + b * LongBlock * sizeof(long);
+            sbyte* xb = x + b * LongBlock;
+            float* sb = xs + b * 2;
+            Vector128<int> i0l = default, i1l = default, i2l = default, i3l = default;
+            var i0u = Vector128.Create(*(int*)(sb + 1)) & top;
+            var i1u = Vector128.Create(*(int*)(sb + table + 1)) & top;
+            var i2u = Vector128.Create(*(int*)(sb + t2 + 1)) & top;
+            var i3u = Vector128.Create(*(int*)(sb + t3 + 1)) & top;
+            for (int s = 0; s < 8; s++)
+            {
+                var stepl = Vector128.Load(w + 32 * s);
+                var stepu = Vector128.Load(w + 32 * s + 16);
+                var c0 = Vector128.Create(*(int*)(xb + 4 * s)).AsSByte();
+                var c1 = Vector128.Create(*(int*)(xb + r1 + 4 * s)).AsSByte();
+                var c2 = Vector128.Create(*(int*)(xb + r2 + 4 * s)).AsSByte();
+                var c3 = Vector128.Create(*(int*)(xb + r3 + 4 * s)).AsSByte();
+                i0l = TI.Dot(i0l, stepl, c0);
+                i0u = TI.Dot(i0u, stepu, c0);
+                i1l = TI.Dot(i1l, stepl, c1);
+                i1u = TI.Dot(i1u, stepu, c1);
+                i2l = TI.Dot(i2l, stepl, c2);
+                i2u = TI.Dot(i2u, stepu, c2);
+                i3l = TI.Dot(i3l, stepl, c3);
+                i3u = TI.Dot(i3u, stepu, c3);
+            }
+
+            var d0 = Vector128.Create(*sb);
+            var d1 = Vector128.Create(*(sb + table));
+            var d2 = Vector128.Create(*(sb + t2));
+            var d3 = Vector128.Create(*(sb + t3));
+            f0l = TI.Fused(Vector128.ConvertToSingle(i0l), d0, f0l);
+            f0u = TI.Fused(Vector128.ConvertToSingle(i0u), d0, f0u);
+            f1l = TI.Fused(Vector128.ConvertToSingle(i1l), d1, f1l);
+            f1u = TI.Fused(Vector128.ConvertToSingle(i1u), d1, f1u);
+            f2l = TI.Fused(Vector128.ConvertToSingle(i2l), d2, f2l);
+            f2u = TI.Fused(Vector128.ConvertToSingle(i2u), d2, f2u);
+            f3l = TI.Fused(Vector128.ConvertToSingle(i3l), d3, f3l);
+            f3u = TI.Fused(Vector128.ConvertToSingle(i3u), d3, f3u);
+        }
+
+        var pl = Vector128.Create(1f, 256f, 65536f, 16777216f);                          // LongPlanes' lanes 0-3, then 4-7
+        var pu = Vector128.Create(4294967296f, 1099511627776f, 281474976710656f, 72057594037927936f);
+        y0 = SumOf(f0l * pl, f0u * pu);
+        y1 = SumOf(f1l * pl, f1u * pu);
+        y2 = SumOf(f2l * pl, f2u * pu);
+        y3 = SumOf(f3l * pl, f3u * pu);
+    }
+
     // LongIntegerFour for one row of x.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe float LongIntegerOne<TI>(long* row, sbyte* x, float* xs, int k) where TI : struct, IInstructions
@@ -5188,7 +6237,7 @@ internal sealed partial class CpuBackend
 
         public (int Floats, int Bytes) Scratch(int k, int group) => (0, 0);
 
-        public DoubleKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(KindOf(lane) == MixedLaneId, InstructionsOf(lane), x.Values, k);
+        public DoubleKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(KindOf(lane) == MixedLaneId, InstructionsOf(lane), NarrowOf(lane), x.Values, k);
     }
 
     // Stored bytes a group of float64 rows takes with more than one row of x (RowGroups; at most the tile's columns): the
@@ -5206,7 +6255,7 @@ internal sealed partial class CpuBackend
 
     // The float64 lanes as RowGroups' kernels (by the lane's instruction set): nothing to set up for a group of rows; x as
     // float64 (the decoded lane: two floats' room a value) or as it is (the mixed lane).
-    private readonly unsafe struct DoubleKernels(bool mixed, Instructions with, float* x, int k) : IRowKernels
+    private readonly unsafe struct DoubleKernels(bool mixed, Instructions with, bool narrow, float* x, int k) : IRowKernels
     {
         public void Group(byte* stored, nint rowBytes, int c0, int count)
         {
@@ -5216,6 +6265,32 @@ internal sealed partial class CpuBackend
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
             byte* at = row + (nint)p0 * sizeof(double);
+            if (narrow)
+            {
+                // The 128-bit twin's four rows (by the portable instructions, or by NEON where the twin is its).
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    if (mixed)
+                    {
+                        WideMixedFour128<DoubleLoad, NeonInstructions>(at, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        WideFour128<DoubleLoad, NeonInstructions>(at, (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+                }
+                else if (mixed)
+                {
+                    WideMixedFour128<DoubleLoad, PortableInstructions>(at, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    WideFour128<DoubleLoad, PortableInstructions>(at, (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
             if (AdvSimd.Arm64.IsSupported && with != Instructions.Portable)
             {
                 if (mixed)
@@ -5348,7 +6423,7 @@ internal sealed partial class CpuBackend
     // set up.
     private readonly unsafe struct TwoBitKernels : IRowKernels
     {
-        private readonly bool integer;
+        private readonly bool integer, narrow;
         private readonly Instructions with;
         private readonly TwoBitBlocks plan;
         private readonly int k, blocks, groups;
@@ -5359,6 +6434,7 @@ internal sealed partial class CpuBackend
         public TwoBitKernels(int lane, TwoBitBlocks plan, int k, LanePointers input, float* steps)
         {
             integer = KindOf(lane) == IntegerLaneId;
+            narrow = NarrowOf(lane);
             with = InstructionsOf(lane);
             this.plan = plan;
             this.k = k;
@@ -5402,6 +6478,12 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
+            if (narrow)
+            {
+                FourNarrow(row, c, i, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             if (integer)
             {
                 float* at = steps + (nint)c * groups * TwoBitStepFloats;
@@ -5448,6 +6530,39 @@ internal sealed partial class CpuBackend
             else
             {
                 TwoBitDecodedFour<Avx2Instructions>(row, plan, blocks, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        // The 128-bit twin's four rows (by the portable instructions, or by NEON or Arm's dot products where the twin is theirs).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FourNarrow(byte* row, int c, int i, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                float* at = steps + (nint)c * groups * TwoBitStepFloats;
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.DotProd)
+                {
+                    TwoBitIntegerFour128<DotProdInstructions>(at, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+                else if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    TwoBitIntegerFour128<NeonInstructions>(at, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    TwoBitIntegerFour128<PortableInstructions>(at, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
+            if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+            {
+                TwoBitDecodedFour128<NeonInstructions>(row, plan, blocks, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                TwoBitDecodedFour128<PortableInstructions>(row, plan, blocks, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -5651,6 +6766,60 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(f3);
     }
 
+    // TwoBitIntegerFour on 128-bit vectors (its 128-bit twin): each step's halves (`l`: blocks 0-3, `u`: blocks 4-7) loaded
+    // once and dotted with each row's matching 16 bytes of x.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void TwoBitIntegerFour128<TI>(float* steps, int groups, sbyte* x, float* xs, nint xStride, nint sStride,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        nint x2 = 2 * xStride, x3 = 3 * xStride;
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = (byte*)(steps + g * TwoBitStepFloats);
+            sbyte* xg = x + g * TwoBitBlocks.GroupCodes;
+            float* sg = xs + g * 16;
+            var i0l = Vector128.Load((int*)(sg + 8));
+            var i0u = Vector128.Load((int*)(sg + 12));
+            var i1l = Vector128.Load((int*)(sg + sStride + 8));
+            var i1u = Vector128.Load((int*)(sg + sStride + 12));
+            var i2l = Vector128.Load((int*)(sg + 2 * sStride + 8));
+            var i2u = Vector128.Load((int*)(sg + 2 * sStride + 12));
+            var i3l = Vector128.Load((int*)(sg + 3 * sStride + 8));
+            var i3u = Vector128.Load((int*)(sg + 3 * sStride + 12));
+            for (int s = 0; s < 8; s++)
+            {
+                var stepl = Vector128.Load(at + 32 * s);
+                var stepu = Vector128.Load(at + 32 * s + 16);
+                sbyte* xs0 = xg + 32 * s;
+                i0l = DotAt<TI>(i0l, stepl, xs0);
+                i0u = DotAt<TI>(i0u, stepu, xs0 + 16);
+                i1l = DotAt<TI>(i1l, stepl, xs0 + xStride);
+                i1u = DotAt<TI>(i1u, stepu, xs0 + xStride + 16);
+                i2l = DotAt<TI>(i2l, stepl, xs0 + x2);
+                i2u = DotAt<TI>(i2u, stepu, xs0 + x2 + 16);
+                i3l = DotAt<TI>(i3l, stepl, xs0 + x3);
+                i3u = DotAt<TI>(i3u, stepu, xs0 + x3 + 16);
+            }
+
+            var dwl = Vector128.Load((float*)(at + 256));
+            var dwu = Vector128.Load((float*)(at + 272));
+            f0l = TI.Fused(Vector128.ConvertToSingle(i0l), dwl * Vector128.Load(sg), f0l);
+            f0u = TI.Fused(Vector128.ConvertToSingle(i0u), dwu * Vector128.Load(sg + 4), f0u);
+            f1l = TI.Fused(Vector128.ConvertToSingle(i1l), dwl * Vector128.Load(sg + sStride), f1l);
+            f1u = TI.Fused(Vector128.ConvertToSingle(i1u), dwu * Vector128.Load(sg + sStride + 4), f1u);
+            f2l = TI.Fused(Vector128.ConvertToSingle(i2l), dwl * Vector128.Load(sg + 2 * sStride), f2l);
+            f2u = TI.Fused(Vector128.ConvertToSingle(i2u), dwu * Vector128.Load(sg + 2 * sStride + 4), f2u);
+            f3l = TI.Fused(Vector128.ConvertToSingle(i3l), dwl * Vector128.Load(sg + 3 * sStride), f3l);
+            f3u = TI.Fused(Vector128.ConvertToSingle(i3u), dwu * Vector128.Load(sg + 3 * sStride + 4), f3u);
+        }
+
+        y0 = SumOf(f0l, f0u);
+        y1 = SumOf(f1l, f1u);
+        y2 = SumOf(f2l, f2u);
+        y3 = SumOf(f3l, f3u);
+    }
+
     // TwoBitIntegerFour for one row of x.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe float TwoBitIntegerOne<TI>(byte* row, TwoBitBlocks plan, int blocks, sbyte* x, float* xs) where TI : struct, IInstructions
@@ -5727,6 +6896,88 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(a1 + b1);
         y2 = Vector256.Sum(a2 + b2);
         y3 = Vector256.Sum(a3 + b3);
+    }
+
+    // TwoBitDecodedFour on 128-bit vectors (its 128-bit twin): a block's scale read as the lane the 256-bit kernel broadcasts
+    // (the same float), its table's four values (the 256-bit table's lanes 4-7 repeat them) picked by each 4 codes (Pick),
+    // each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void TwoBitDecodedFour128<TI>(byte* row, TwoBitBlocks plan, int blocks, float* x, int k, out float y0, out float y1, out float y2, out float y3)
+        where TI : struct, IInstructions
+    {
+        var values = plan.Table.GetLower();
+        nint bytes = plan.Bytes, scaleOffset = plan.ScaleOffset, codeOffset = plan.CodeOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        for (int g = 0; g * TwoBitBlocks.Group < blocks; g++)
+        {
+            int count = Math.Min(TwoBitBlocks.Group, blocks - g * TwoBitBlocks.Group);
+            byte* group = row + g * TwoBitBlocks.Group * bytes;
+            for (int l = 0; l < count; l++)
+            {
+                byte* block = group + l * bytes;
+                var table = values * HalfLanes(Vector128.Create(*(int*)(block + scaleOffset)));
+                uint lo = *(uint*)(block + codeOffset), hi = *(uint*)(block + codeOffset + 4);
+                var w0l = Pick(table, lo);
+                var w0u = Pick(table, lo >> 8);
+                var w1l = Pick(table, lo >> 16);
+                var w1u = Pick(table, lo >> 24);
+                var w2l = Pick(table, hi);
+                var w2u = Pick(table, hi >> 8);
+                var w3l = Pick(table, hi >> 16);
+                var w3u = Pick(table, hi >> 24);
+                float* xb = x + (g * TwoBitBlocks.Group + l) * TwoBitBlocks.Values;
+                a0l = TI.Fused(w0l, Vector128.Load(xb), a0l);
+                a0u = TI.Fused(w0u, Vector128.Load(xb + 4), a0u);
+                b0l = TI.Fused(w1l, Vector128.Load(xb + 8), b0l);
+                b0u = TI.Fused(w1u, Vector128.Load(xb + 12), b0u);
+                a0l = TI.Fused(w2l, Vector128.Load(xb + 16), a0l);
+                a0u = TI.Fused(w2u, Vector128.Load(xb + 20), a0u);
+                b0l = TI.Fused(w3l, Vector128.Load(xb + 24), b0l);
+                b0u = TI.Fused(w3u, Vector128.Load(xb + 28), b0u);
+                float* x1 = xb + r1;
+                a1l = TI.Fused(w0l, Vector128.Load(x1), a1l);
+                a1u = TI.Fused(w0u, Vector128.Load(x1 + 4), a1u);
+                b1l = TI.Fused(w1l, Vector128.Load(x1 + 8), b1l);
+                b1u = TI.Fused(w1u, Vector128.Load(x1 + 12), b1u);
+                a1l = TI.Fused(w2l, Vector128.Load(x1 + 16), a1l);
+                a1u = TI.Fused(w2u, Vector128.Load(x1 + 20), a1u);
+                b1l = TI.Fused(w3l, Vector128.Load(x1 + 24), b1l);
+                b1u = TI.Fused(w3u, Vector128.Load(x1 + 28), b1u);
+                float* x2 = xb + r2;
+                a2l = TI.Fused(w0l, Vector128.Load(x2), a2l);
+                a2u = TI.Fused(w0u, Vector128.Load(x2 + 4), a2u);
+                b2l = TI.Fused(w1l, Vector128.Load(x2 + 8), b2l);
+                b2u = TI.Fused(w1u, Vector128.Load(x2 + 12), b2u);
+                a2l = TI.Fused(w2l, Vector128.Load(x2 + 16), a2l);
+                a2u = TI.Fused(w2u, Vector128.Load(x2 + 20), a2u);
+                b2l = TI.Fused(w3l, Vector128.Load(x2 + 24), b2l);
+                b2u = TI.Fused(w3u, Vector128.Load(x2 + 28), b2u);
+                float* x3 = xb + r3;
+                a3l = TI.Fused(w0l, Vector128.Load(x3), a3l);
+                a3u = TI.Fused(w0u, Vector128.Load(x3 + 4), a3u);
+                b3l = TI.Fused(w1l, Vector128.Load(x3 + 8), b3l);
+                b3u = TI.Fused(w1u, Vector128.Load(x3 + 12), b3u);
+                a3l = TI.Fused(w2l, Vector128.Load(x3 + 16), a3l);
+                a3u = TI.Fused(w2u, Vector128.Load(x3 + 20), a3u);
+                b3l = TI.Fused(w3l, Vector128.Load(x3 + 24), b3l);
+                b3u = TI.Fused(w3u, Vector128.Load(x3 + 28), b3u);
+            }
+        }
+
+        y0 = SumOf(a0l + b0l, a0u + b0u);
+        y1 = SumOf(a1l + b1l, a1u + b1u);
+        y2 = SumOf(a2l + b2l, a2u + b2u);
+        y3 = SumOf(a3l + b3l, a3u + b3u);
+    }
+
+    // The entries of a table of 4 floats picked by 4 two-bit codes (code j the word's bits 2j and 2j + 1, from its lowest):
+    // each lane's code moved to its top two bits by a multiply, then 30 places right, then its 4 bytes by a byte shuffle.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> Pick(Vector128<float> table, uint word)
+    {
+        var code = (Vector128.Create(word) * Vector128.Create(1u << 30, 1u << 28, 1u << 26, 1u << 24)) >>> 30;
+        return Vector128.ShuffleNative(table.AsByte(), (code * Vector128.Create(0x04040404u) + Vector128.Create(0x03020100u)).AsByte()).AsSingle();
     }
 
     // TwoBitDecodedFour for one row of x, each of a block's four vectors in its own sum.
@@ -6175,7 +7426,7 @@ internal sealed partial class CpuBackend
     // table).
     private readonly unsafe struct SixKernels : IRowKernels
     {
-        private readonly bool integer;
+        private readonly bool integer, narrow;
         private readonly Instructions with;
         private readonly SixBlocks blocks;
         private readonly int k, superBlocks, rowTable, xsRow;
@@ -6185,6 +7436,7 @@ internal sealed partial class CpuBackend
         public SixKernels(int lane, SixBlocks blocks, int k, LanePointers input, float* table)
         {
             integer = KindOf(lane) == IntegerLaneId;
+            narrow = NarrowOf(lane);
             with = InstructionsOf(lane);
             this.blocks = blocks;
             this.k = k;
@@ -6225,6 +7477,12 @@ internal sealed partial class CpuBackend
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
             float* scales = table + c * rowTable;
+            if (narrow)
+            {
+                FourNarrow(row, scales, i, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             if (integer)
             {
                 sbyte* xr = xq + (nint)i * k;
@@ -6272,6 +7530,40 @@ internal sealed partial class CpuBackend
             else
             {
                 SixDecodedFour<Avx2Instructions>(row, blocks, superBlocks, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+        }
+
+        // The 128-bit twin's four rows (by the portable instructions, or by NEON or Arm's dot products where the twin is theirs).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void FourNarrow(byte* row, float* scales, int i, out float y0, out float y1, out float y2, out float y3)
+        {
+            if (integer)
+            {
+                sbyte* xr = xq + (nint)i * k;
+                float* sr = xs + (nint)i * xsRow;
+                if (AdvSimd.Arm64.IsSupported && with == Instructions.DotProd)
+                {
+                    SixIntegerFour128<DotProdInstructions>(row, blocks, superBlocks, scales, xr, sr, k, xsRow, out y0, out y1, out y2, out y3);
+                }
+                else if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+                {
+                    SixIntegerFour128<NeonInstructions>(row, blocks, superBlocks, scales, xr, sr, k, xsRow, out y0, out y1, out y2, out y3);
+                }
+                else
+                {
+                    SixIntegerFour128<PortableInstructions>(row, blocks, superBlocks, scales, xr, sr, k, xsRow, out y0, out y1, out y2, out y3);
+                }
+
+                return;
+            }
+
+            if (AdvSimd.Arm64.IsSupported && with == Instructions.Neon)
+            {
+                SixDecodedFour128<NeonInstructions>(row, blocks, superBlocks, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
+            }
+            else
+            {
+                SixDecodedFour128<PortableInstructions>(row, blocks, superBlocks, scales, x + (nint)i * k, k, out y0, out y1, out y2, out y3);
             }
         }
 
@@ -6459,6 +7751,96 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(f3);
     }
 
+    // SixIntegerFour on 128-bit vectors (its 128-bit twin): each half block's steps made once as halves (SixSteps128: `l`
+    // lanes 0-3, `u` lanes 4-7), then dotted with each row's.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SixIntegerFour128<TI>(byte* row, SixBlocks plan, int blocks, float* table, sbyte* x, float* xs, int k, int xsRow,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        nint s1 = xsRow, s2 = 2 * (nint)xsRow, s3 = 3 * (nint)xsRow;
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            for (int h = 0; h < 2; h++)
+            {
+                SixSteps128<TI>(block + lowOffset + 64 * h, block + highOffset + 32 * h, out var t0l, out var t0u, out var t1l, out var t1u, out var t2l, out var t2u,
+                    out var t3l, out var t3u);
+                float* w = table + b * 16 + 8 * h;
+                var wl = Vector128.Load(w);
+                var wu = Vector128.Load(w + 4);
+                sbyte* xh = x + b * SixBlocks.Values + SixBlocks.Half * h;
+                float* sh = xs + (2 * b + h) * 16;
+                f0l = SixHalf<TI>(f0l, t0l, t1l, t2l, t3l, wl, xh, sh);
+                f0u = SixHalf<TI>(f0u, t0u, t1u, t2u, t3u, wu, xh + 16, sh + 4);
+                f1l = SixHalf<TI>(f1l, t0l, t1l, t2l, t3l, wl, xh + r1, sh + s1);
+                f1u = SixHalf<TI>(f1u, t0u, t1u, t2u, t3u, wu, xh + r1 + 16, sh + s1 + 4);
+                f2l = SixHalf<TI>(f2l, t0l, t1l, t2l, t3l, wl, xh + r2, sh + s2);
+                f2u = SixHalf<TI>(f2u, t0u, t1u, t2u, t3u, wu, xh + r2 + 16, sh + s2 + 4);
+                f3l = SixHalf<TI>(f3l, t0l, t1l, t2l, t3l, wl, xh + r3, sh + s3);
+                f3u = SixHalf<TI>(f3u, t0u, t1u, t2u, t3u, wu, xh + r3 + 16, sh + s3 + 4);
+            }
+        }
+
+        y0 = SumOf(f0l, f0u);
+        y1 = SumOf(f1l, f1u);
+        y2 = SumOf(f2l, f2u);
+        y3 = SumOf(f3l, f3u);
+    }
+
+    // SixSteps on 128-bit vectors: each 32-byte vector of codes as its halves (`l`, `u`), joined and transposed half by half.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void SixSteps128<TI>(byte* low, byte* high, out Vector128<byte> s0l, out Vector128<byte> s0u, out Vector128<byte> s1l, out Vector128<byte> s1u,
+        out Vector128<byte> s2l, out Vector128<byte> s2u, out Vector128<byte> s3l, out Vector128<byte> s3u) where TI : struct, IInstructions
+    {
+        SixJoin(Vector128.Load(low), Vector128.Load(low + 32), Vector128.Load(high).AsUInt16(), out var c0, out var c1, out var c2, out var c3);
+        var u0 = TI.UnpackLow(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        var u1 = TI.UnpackHigh(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        var u2 = TI.UnpackLow(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        var u3 = TI.UnpackHigh(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        s0l = TI.UnpackLow(u0, u2).AsByte();
+        s1l = TI.UnpackHigh(u0, u2).AsByte();
+        s2l = TI.UnpackLow(u1, u3).AsByte();
+        s3l = TI.UnpackHigh(u1, u3).AsByte();
+        SixJoin(Vector128.Load(low + 16), Vector128.Load(low + 48), Vector128.Load(high + 16).AsUInt16(), out c0, out c1, out c2, out c3);
+        u0 = TI.UnpackLow(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        u1 = TI.UnpackHigh(c0.AsUInt32(), c1.AsUInt32()).AsUInt64();
+        u2 = TI.UnpackLow(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        u3 = TI.UnpackHigh(c2.AsUInt32(), c3.AsUInt32()).AsUInt64();
+        s0u = TI.UnpackLow(u0, u2).AsByte();
+        s1u = TI.UnpackHigh(u0, u2).AsByte();
+        s2u = TI.UnpackLow(u1, u3).AsByte();
+        s3u = TI.UnpackHigh(u1, u3).AsByte();
+    }
+
+    // SixSteps' joins over one 128-bit half: the low plane's bytes a and b, the high plane's h, as the half's four code vectors.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void SixJoin(Vector128<byte> a, Vector128<byte> b, Vector128<ushort> h, out Vector128<byte> c0, out Vector128<byte> c1, out Vector128<byte> c2,
+        out Vector128<byte> c3)
+    {
+        var nibble = Vector128.Create((byte)15);
+        var top = Vector128.Create((byte)48);
+        c0 = (a & nibble) | ((h << 4).AsByte() & top);
+        c1 = (b & nibble) | ((h << 2).AsByte() & top);
+        c2 = ((a.AsUInt16() >>> 4).AsByte() & nibble) | (h.AsByte() & top);
+        c3 = ((b.AsUInt16() >>> 4).AsByte() & nibble) | ((h >>> 2).AsByte() & top);
+    }
+
+    // SixHalf over one 128-bit half: a row's sums of its four steps' halves (x's matching 16 bytes of each 32 from `x`; the
+    // half's code-sum starts at `xs` + 8, its block scales at `xs`).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector128<float> SixHalf<TI>(Vector128<float> f, Vector128<byte> t0, Vector128<byte> t1, Vector128<byte> t2, Vector128<byte> t3, Vector128<float> w,
+        sbyte* x, float* xs) where TI : struct, IInstructions
+    {
+        var i = Vector128.Load((int*)(xs + 8));
+        i = DotAt<TI>(i, t0, x);
+        i = DotAt<TI>(i, t1, x + 32);
+        i = DotAt<TI>(i, t2, x + 64);
+        i = DotAt<TI>(i, t3, x + 96);
+        return TI.Fused(Vector128.ConvertToSingle(i), w * Vector128.Load(xs), f);
+    }
+
     // The 256 bytes SixAheadBytes past a block asked into the cache (a row read alone streams from memory: measured 7% more
     // tokens a second decoding), where the instruction set asks.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -6570,6 +7952,95 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(a1 + b1);
         y2 = Vector256.Sum(a2 + b2);
         y3 = Vector256.Sum(a3 + b3);
+    }
+
+    // SixDecodedFour on 128-bit vectors (its 128-bit twin): each run's 8 values joined as two halves of 4 (`l`, `u`), each
+    // sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SixDecodedFour128<TI>(byte* row, SixBlocks plan, int blocks, float* table, float* x, int k,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        var bias = Vector128.Create(plan.CodeBias);
+        var nibble = Vector128.Create(15);
+        var top = Vector128.Create(48);
+        nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        for (int b = 0; b < blocks; b++)
+        {
+            byte* block = row + b * bytes;
+            for (int h = 0; h < 2; h++)
+            {
+                byte* low = block + lowOffset + 64 * h, high = block + highOffset + 32 * h;
+                float* scales = table + b * 16 + 8 * h, xh = x + b * SixBlocks.Values + SixBlocks.Half * h;
+                for (int p = 0; p < 32; p += 8)
+                {
+                    var a = Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(ulong*)(low + p)).AsByte());
+                    var c = Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(ulong*)(low + 32 + p)).AsByte());
+                    var e = Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(ulong*)(high + p)).AsByte());
+                    var al = Vector128.WidenLower(a).AsInt32();
+                    var au = Vector128.WidenUpper(a).AsInt32();
+                    var cl = Vector128.WidenLower(c).AsInt32();
+                    var cu = Vector128.WidenUpper(c).AsInt32();
+                    var hl = Vector128.WidenLower(e).AsInt32();
+                    var hu = Vector128.WidenUpper(e).AsInt32();
+                    float* s = scales + 4 * (p >> 4);
+                    var d0 = Vector128.Create(s[0]);
+                    var d1 = Vector128.Create(s[1]);
+                    var d2 = Vector128.Create(s[2]);
+                    var d3 = Vector128.Create(s[3]);
+                    var w0l = Vector128.ConvertToSingle(((al & nibble) | ((hl << 4) & top)) + bias) * d0;
+                    var w0u = Vector128.ConvertToSingle(((au & nibble) | ((hu << 4) & top)) + bias) * d0;
+                    var w1l = Vector128.ConvertToSingle(((cl & nibble) | ((hl << 2) & top)) + bias) * d1;
+                    var w1u = Vector128.ConvertToSingle(((cu & nibble) | ((hu << 2) & top)) + bias) * d1;
+                    var w2l = Vector128.ConvertToSingle(((al >>> 4) | (hl & top)) + bias) * d2;
+                    var w2u = Vector128.ConvertToSingle(((au >>> 4) | (hu & top)) + bias) * d2;
+                    var w3l = Vector128.ConvertToSingle(((cl >>> 4) | ((hl >>> 2) & top)) + bias) * d3;
+                    var w3u = Vector128.ConvertToSingle(((cu >>> 4) | ((hu >>> 2) & top)) + bias) * d3;
+                    float* xp = xh + p;
+                    a0l = TI.Fused(w0l, Vector128.Load(xp), a0l);
+                    a0u = TI.Fused(w0u, Vector128.Load(xp + 4), a0u);
+                    b0l = TI.Fused(w1l, Vector128.Load(xp + 32), b0l);
+                    b0u = TI.Fused(w1u, Vector128.Load(xp + 36), b0u);
+                    a0l = TI.Fused(w2l, Vector128.Load(xp + 64), a0l);
+                    a0u = TI.Fused(w2u, Vector128.Load(xp + 68), a0u);
+                    b0l = TI.Fused(w3l, Vector128.Load(xp + 96), b0l);
+                    b0u = TI.Fused(w3u, Vector128.Load(xp + 100), b0u);
+                    float* x1 = xp + r1;
+                    a1l = TI.Fused(w0l, Vector128.Load(x1), a1l);
+                    a1u = TI.Fused(w0u, Vector128.Load(x1 + 4), a1u);
+                    b1l = TI.Fused(w1l, Vector128.Load(x1 + 32), b1l);
+                    b1u = TI.Fused(w1u, Vector128.Load(x1 + 36), b1u);
+                    a1l = TI.Fused(w2l, Vector128.Load(x1 + 64), a1l);
+                    a1u = TI.Fused(w2u, Vector128.Load(x1 + 68), a1u);
+                    b1l = TI.Fused(w3l, Vector128.Load(x1 + 96), b1l);
+                    b1u = TI.Fused(w3u, Vector128.Load(x1 + 100), b1u);
+                    float* x2 = xp + r2;
+                    a2l = TI.Fused(w0l, Vector128.Load(x2), a2l);
+                    a2u = TI.Fused(w0u, Vector128.Load(x2 + 4), a2u);
+                    b2l = TI.Fused(w1l, Vector128.Load(x2 + 32), b2l);
+                    b2u = TI.Fused(w1u, Vector128.Load(x2 + 36), b2u);
+                    a2l = TI.Fused(w2l, Vector128.Load(x2 + 64), a2l);
+                    a2u = TI.Fused(w2u, Vector128.Load(x2 + 68), a2u);
+                    b2l = TI.Fused(w3l, Vector128.Load(x2 + 96), b2l);
+                    b2u = TI.Fused(w3u, Vector128.Load(x2 + 100), b2u);
+                    float* x3 = xp + r3;
+                    a3l = TI.Fused(w0l, Vector128.Load(x3), a3l);
+                    a3u = TI.Fused(w0u, Vector128.Load(x3 + 4), a3u);
+                    b3l = TI.Fused(w1l, Vector128.Load(x3 + 32), b3l);
+                    b3u = TI.Fused(w1u, Vector128.Load(x3 + 36), b3u);
+                    a3l = TI.Fused(w2l, Vector128.Load(x3 + 64), a3l);
+                    a3u = TI.Fused(w2u, Vector128.Load(x3 + 68), a3u);
+                    b3l = TI.Fused(w3l, Vector128.Load(x3 + 96), b3l);
+                    b3u = TI.Fused(w3u, Vector128.Load(x3 + 100), b3u);
+                }
+            }
+        }
+
+        y0 = SumOf(a0l + b0l, a0u + b0u);
+        y1 = SumOf(a1l + b1l, a1u + b1u);
+        y2 = SumOf(a2l + b2l, a2u + b2u);
+        y3 = SumOf(a3l + b3l, a3u + b3u);
     }
 
     // SixDecodedFour for one row of x, each run in its own sum; the scales as SixIntegerOne takes them.
@@ -8256,6 +9727,31 @@ internal sealed partial class CpuBackend
 
             return result.AsSingle();
         }
+
+        /// <summary>HalfBits over 128 bits (the same operations, lane by lane).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector128<float> HalfBits(Vector128<int> bits, (int SignShift, int Magnitude, int Shift, float Times, int Special) h)
+        {
+            var magnitude = bits & Vector128.Create(h.Magnitude);
+            var value = (magnitude << h.Shift).AsSingle();
+            if (h.Times != 1f)
+            {
+                value *= Vector128.Create(h.Times);
+            }
+
+            var result = value.AsInt32();
+            if (h.Special != 0)
+            {
+                result |= Vector128.GreaterThanOrEqual(magnitude, Vector128.Create(h.Special)) & Vector128.Create(0x7F800000);
+            }
+
+            if (h.SignShift != 0)
+            {
+                result |= (bits & Vector128.Create(0x8000)) << h.SignShift;
+            }
+
+            return result.AsSingle();
+        }
     }
 
     // Steps of the described lane's integer arithmetic a group of stored rows makes at most with more than one row of x (its
@@ -8394,7 +9890,7 @@ internal sealed partial class CpuBackend
             _ => (0, 0),
         };
 
-        public DescribedKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(plan, InstructionsOf(lane), k, x, (byte*)floats, bytes);
+        public DescribedKernels Kernels(int lane, int k, LanePointers x, float* floats, byte* bytes) => new(plan, InstructionsOf(lane), NarrowOf(lane), k, x, (byte*)floats, bytes);
     }
 
     // The described lane as RowGroups' kernels, each call by the lane's instruction set. Integer: a group's stored rows made
@@ -8405,16 +9901,18 @@ internal sealed partial class CpuBackend
     {
         private readonly DescribedPlan plan;
         private readonly Instructions with;
+        private readonly bool narrow;
         private readonly int k, groups, full, tailBytes, rowSteps, chunks;
         private readonly nint xRow, lRow;
         private readonly float* x, lanes;
         private readonly sbyte* xq;
         private readonly byte* steps, tail;
 
-        public DescribedKernels(DescribedPlan plan, Instructions with, int k, LanePointers input, byte* steps, byte* tail)
+        public DescribedKernels(DescribedPlan plan, Instructions with, bool narrow, int k, LanePointers input, byte* steps, byte* tail)
         {
             this.plan = plan;
             this.with = with;
+            this.narrow = narrow;
             this.k = k;
             this.steps = steps;
             this.tail = tail;
@@ -8510,26 +10008,33 @@ internal sealed partial class CpuBackend
             }
         }
 
+        // Four rows by the 256-bit kernels, or (the 128-bit twin) by the 128-bit ones.
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private void FourBy<TI>(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
         {
             switch (plan.Mode)
             {
                 case DescribedMode.Integer:
-                    DescribedIntegerFour<TI>(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow, xRow, lRow, out y0, out y1, out y2, out y3);
+                    DescribedIntegerFour<TI>(plan, narrow, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow, xRow, lRow, out y0, out y1, out y2, out y3);
                     return;
                 case DescribedMode.Double:
-                    DescribedDoubleFour<TI>(plan, row + (nint)p0 * plan.Bytes, (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    DescribedDoubleFour<TI>(plan, narrow, row + (nint)p0 * plan.Bytes, (double*)x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
                     return;
                 default:
                     if (plan.Wide == WideRead.Codes)
                     {
                         Tail(row);
+                        if (narrow)
+                        {
+                            DescribedCodesFour128<TI>(plan, row, tail, full, groups, chunks, x + i * xRow, xRow, out y0, out y1, out y2, out y3);
+                            return;
+                        }
+
                         DescribedCodesFour<TI>(plan, row, tail, full, groups, chunks, x + i * xRow, xRow, out y0, out y1, out y2, out y3);
                         return;
                     }
 
-                    DescribedSingleFour<TI>(plan, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
+                    DescribedSingleFour<TI>(plan, narrow, row + (nint)p0 * plan.Bytes, x + (nint)i * k + p0, k, p1 - p0, out y0, out y1, out y2, out y3);
                     return;
             }
         }
@@ -8834,6 +10339,9 @@ internal sealed partial class CpuBackend
     {
         static abstract Vector256<sbyte> Load<TI>(sbyte* at) where TI : struct, IInstructions;
 
+        /// <summary>Load's lower 128-bit half (lanes 0-3), or its upper (4-7): the 128-bit twins' four-row kernels'.</summary>
+        static abstract Vector128<sbyte> Half<TI>(sbyte* at, bool upper) where TI : struct, IInstructions;
+
         static abstract Vector256<byte> Plane<TI>(byte* at, int s) where TI : struct, IInstructions;
     }
 
@@ -8841,6 +10349,9 @@ internal sealed partial class CpuBackend
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public static Vector256<sbyte> Load<TI>(sbyte* at) where TI : struct, IInstructions => Vector256.Load(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector128<sbyte> Half<TI>(sbyte* at, bool upper) where TI : struct, IInstructions => Vector128.Load(upper ? at + 16 : at);
 
         public static Vector256<byte> Plane<TI>(byte* at, int s) where TI : struct, IInstructions => throw new NotSupportedException("Codes of at most 8 bits have one byte plane.");
     }
@@ -8852,6 +10363,14 @@ internal sealed partial class CpuBackend
         {
             var v = Vector128.Load((int*)at);
             return TI.Permute(Vector256.Create(v, v), Vector256.Create(0, 0, 1, 1, 2, 2, 3, 3)).AsSByte();
+        }
+
+        // Dwords 0, 0, 1, 1 (the lower half) or 2, 2, 3, 3 (the upper): each dword interleaved with itself.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector128<sbyte> Half<TI>(sbyte* at, bool upper) where TI : struct, IInstructions
+        {
+            var v = Vector128.Load((uint*)at);
+            return (upper ? TI.UnpackHigh(v, v) : TI.UnpackLow(v, v)).AsSByte();
         }
 
         // 16-bit codes: 4 chunks' 4 codes (8 bytes each, 64 bytes apart), each 128-bit half's two chunks transposed.
@@ -8867,6 +10386,10 @@ internal sealed partial class CpuBackend
         public static Vector256<sbyte> Load<TI>(sbyte* at) where TI : struct, IInstructions =>
             TI.Permute(Vector256.CreateScalarUnsafe(*(long*)at).AsInt32(), Vector256.Create(0, 0, 0, 0, 1, 1, 1, 1)).AsSByte();
 
+        // Dword 0 in every lane of the lower half, dword 1 in the upper's.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector128<sbyte> Half<TI>(sbyte* at, bool upper) where TI : struct, IInstructions => Vector128.Create(*((int*)at + (upper ? 1 : 0))).AsSByte();
+
         // 32-bit codes: 2 chunks' 4 codes (16 bytes each, 128 bytes apart), each 128-bit half's 4 × 4 bytes transposed.
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public static Vector256<byte> Plane<TI>(byte* at, int s) where TI : struct, IInstructions =>
@@ -8878,6 +10401,9 @@ internal sealed partial class CpuBackend
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public static Vector256<sbyte> Load<TI>(sbyte* at) where TI : struct, IInstructions => Vector256.Create(*(int*)at).AsSByte();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public static Vector128<sbyte> Half<TI>(sbyte* at, bool upper) where TI : struct, IInstructions => Vector128.Create(*(int*)at).AsSByte();
 
         // 64-bit codes: one chunk's 4 codes (32 bytes), their low dwords then their high ones, each half's 4 × 4 bytes transposed.
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -8966,11 +10492,32 @@ internal sealed partial class CpuBackend
     }
 
     // The described integer lane, four rows of x by one stored row made into steps (DescribedRowSteps), dispatched on the
-    // step's x load (the plan's byte planes).
+    // step's x load (the plan's byte planes); by the 128-bit kernels where `narrow` (the 128-bit twin).
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DescribedIntegerFour<TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+    private static unsafe void DescribedIntegerFour<TI>(DescribedPlan plan, bool narrow, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
+        if (narrow)
+        {
+            switch (plan.P)
+            {
+                case 1:
+                    ChunkStepsFour128<TI>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                    break;
+                case 2:
+                    StepsFour128<FourChunks, TI>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                    break;
+                case 4:
+                    StepsFour128<TwoChunks, TI>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                    break;
+                default:
+                    StepsFour128<OneChunk, TI>(plan, steps, groups, x, lanes, xRow, lRow, out y0, out y1, out y2, out y3);
+                    break;
+            }
+
+            return;
+        }
+
         switch (plan.P)
         {
             case 1:
@@ -9035,6 +10582,73 @@ internal sealed partial class CpuBackend
         y3 = Vector256.Sum(f3 * w);
     }
 
+    // StepsFour on 128-bit vectors (its 128-bit twin): each step's halves (`l`: lanes 0-3, `u`: lanes 4-7) loaded once and
+    // dotted with each row's matching half of x's step (IStepLoad.Half), the lanes' starts, scales and weights a half each.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void StepsFour128<TX, TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+        out float y0, out float y1, out float y2, out float y3) where TX : struct, IStepLoad where TI : struct, IInstructions
+    {
+        int groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
+        var top = plan.TopLanes;
+        var weights = plan.LaneWeights!.Value;
+        Vector128<int> topl = top.GetLower(), topu = top.GetUpper();
+        Vector128<float> wl = weights.GetLower(), wu = weights.GetUpper();
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * 256;
+            var s0l = Vector128.Load(at);
+            var s0u = Vector128.Load(at + 16);
+            var s1l = Vector128.Load(at + 32);
+            var s1u = Vector128.Load(at + 48);
+            var s2l = Vector128.Load(at + 64);
+            var s2u = Vector128.Load(at + 80);
+            var s3l = Vector128.Load(at + 96);
+            var s3u = Vector128.Load(at + 112);
+            var s4l = Vector128.Load(at + 128);
+            var s4u = Vector128.Load(at + 144);
+            var s5l = Vector128.Load(at + 160);
+            var s5u = Vector128.Load(at + 176);
+            var s6l = Vector128.Load(at + 192);
+            var s6u = Vector128.Load(at + 208);
+            var s7l = Vector128.Load(at + 224);
+            var s7u = Vector128.Load(at + 240);
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            f0l = WideRow128<TX, TI>(f0l, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg, xStep, lg, cg, topl, false);
+            f0u = WideRow128<TX, TI>(f0u, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg, xStep, lg, cg, topu, true);
+            f1l = WideRow128<TX, TI>(f1l, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg + xRow, xStep, lg + lRow, cg, topl, false);
+            f1u = WideRow128<TX, TI>(f1u, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + xRow, xStep, lg + lRow, cg, topu, true);
+            f2l = WideRow128<TX, TI>(f2l, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg + 2 * xRow, xStep, lg + 2 * lRow, cg, topl, false);
+            f2u = WideRow128<TX, TI>(f2u, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 2 * xRow, xStep, lg + 2 * lRow, cg, topu, true);
+            f3l = WideRow128<TX, TI>(f3l, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, xg + 3 * xRow, xStep, lg + 3 * lRow, cg, topl, false);
+            f3u = WideRow128<TX, TI>(f3u, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, xg + 3 * xRow, xStep, lg + 3 * lRow, cg, topu, true);
+        }
+
+        y0 = SumOf(f0l * wl, f0u * wu);
+        y1 = SumOf(f1l * wl, f1u * wu);
+        y2 = SumOf(f2l * wl, f2u * wu);
+        y3 = SumOf(f3l * wl, f3u * wu);
+    }
+
+    // WideRow over one 128-bit half (`upper`: lanes 4-7, else 0-3): the half's steps dotted with x's matching half of each.
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe Vector128<float> WideRow128<TX, TI>(Vector128<float> f, Vector128<byte> s0, Vector128<byte> s1, Vector128<byte> s2, Vector128<byte> s3,
+        Vector128<byte> s4, Vector128<byte> s5, Vector128<byte> s6, Vector128<byte> s7, sbyte* x, int xStep, float* lanes, int cg, Vector128<int> top, bool upper)
+        where TX : struct, IStepLoad where TI : struct, IInstructions
+    {
+        var i = TX.Half<TI>((sbyte*)(lanes + cg), upper).AsInt32() & top;
+        i = TI.Dot(i, s0, TX.Half<TI>(x, upper));
+        i = TI.Dot(i, s1, TX.Half<TI>(x + xStep, upper));
+        i = TI.Dot(i, s2, TX.Half<TI>(x + 2 * xStep, upper));
+        i = TI.Dot(i, s3, TX.Half<TI>(x + 3 * xStep, upper));
+        i = TI.Dot(i, s4, TX.Half<TI>(x + 4 * xStep, upper));
+        i = TI.Dot(i, s5, TX.Half<TI>(x + 5 * xStep, upper));
+        i = TI.Dot(i, s6, TX.Half<TI>(x + 6 * xStep, upper));
+        i = TI.Dot(i, s7, TX.Half<TI>(x + 7 * xStep, upper));
+        return TI.Fused(Vector128.ConvertToSingle(i), TX.Half<TI>((sbyte*)lanes, upper).AsSingle(), f);
+    }
+
     // StepsFour for codes of at most 8 bits (P = 1: a chunk a lane, x's steps 32 bytes): a group's steps (8, or 4 for chunks
     // of 16) loaded once and held while each of the four rows of x is dotted with them in turn.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
@@ -9091,6 +10705,94 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(f1);
         y2 = Vector256.Sum(f2);
         y3 = Vector256.Sum(f3);
+    }
+
+    // ChunkStepsFour on 128-bit vectors (its 128-bit twin): a group's steps' halves (`l`: chunks 0-3, `u`: chunks 4-7) loaded
+    // once and held while each row of x is dotted with them, its scales and minimums a half each.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void ChunkStepsFour128<TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        int t = plan.T, stepBytes = plan.GroupStepBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats;
+        bool mins = plan.Mins, eight = t == 8;
+        Vector128<float> f0l = default, f0u = default, f1l = default, f1u = default, f2l = default, f2u = default, f3l = default, f3u = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = steps + (nint)g * stepBytes;
+            var s0l = Vector128.Load(at);
+            var s0u = Vector128.Load(at + 16);
+            var s1l = Vector128.Load(at + 32);
+            var s1u = Vector128.Load(at + 48);
+            var s2l = Vector128.Load(at + 64);
+            var s2u = Vector128.Load(at + 80);
+            var s3l = Vector128.Load(at + 96);
+            var s3u = Vector128.Load(at + 112);
+            Vector128<byte> s4l = default, s4u = default, s5l = default, s5u = default, s6l = default, s6u = default, s7l = default, s7u = default;
+            if (eight)
+            {
+                s4l = Vector128.Load(at + 128);
+                s4u = Vector128.Load(at + 144);
+                s5l = Vector128.Load(at + 160);
+                s5u = Vector128.Load(at + 176);
+                s6l = Vector128.Load(at + 192);
+                s6u = Vector128.Load(at + 208);
+                s7l = Vector128.Load(at + 224);
+                s7u = Vector128.Load(at + 240);
+            }
+
+            var scalel = Vector128.Load((float*)(at + 32 * t));
+            var scaleu = Vector128.Load((float*)(at + 32 * t + 16));
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            f0l = ChunkRow128<TI>(f0l, eight, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, scalel, xg, lg);
+            f0u = ChunkRow128<TI>(f0u, eight, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, scaleu, xg + 16, lg + 4);
+            f1l = ChunkRow128<TI>(f1l, eight, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, scalel, xg + xRow, lg + lRow);
+            f1u = ChunkRow128<TI>(f1u, eight, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, scaleu, xg + xRow + 16, lg + lRow + 4);
+            f2l = ChunkRow128<TI>(f2l, eight, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, scalel, xg + 2 * xRow, lg + 2 * lRow);
+            f2u = ChunkRow128<TI>(f2u, eight, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, scaleu, xg + 2 * xRow + 16, lg + 2 * lRow + 4);
+            f3l = ChunkRow128<TI>(f3l, eight, s0l, s1l, s2l, s3l, s4l, s5l, s6l, s7l, scalel, xg + 3 * xRow, lg + 3 * lRow);
+            f3u = ChunkRow128<TI>(f3u, eight, s0u, s1u, s2u, s3u, s4u, s5u, s6u, s7u, scaleu, xg + 3 * xRow + 16, lg + 3 * lRow + 4);
+            if (mins)
+            {
+                var minl = Vector128.Load((float*)(at + 32 * t + 32));
+                var minu = Vector128.Load((float*)(at + 32 * t + 48));
+                f0l = TI.Fused(minl, Vector128.Load(lg + 16), f0l);
+                f0u = TI.Fused(minu, Vector128.Load(lg + 20), f0u);
+                f1l = TI.Fused(minl, Vector128.Load(lg + lRow + 16), f1l);
+                f1u = TI.Fused(minu, Vector128.Load(lg + lRow + 20), f1u);
+                f2l = TI.Fused(minl, Vector128.Load(lg + 2 * lRow + 16), f2l);
+                f2u = TI.Fused(minu, Vector128.Load(lg + 2 * lRow + 20), f2u);
+                f3l = TI.Fused(minl, Vector128.Load(lg + 3 * lRow + 16), f3l);
+                f3u = TI.Fused(minu, Vector128.Load(lg + 3 * lRow + 20), f3u);
+            }
+        }
+
+        y0 = SumOf(f0l, f0u);
+        y1 = SumOf(f1l, f1u);
+        y2 = SumOf(f2l, f2u);
+        y3 = SumOf(f3l, f3u);
+    }
+
+    // ChunkRow over one 128-bit half: its steps' halves dotted with x's matching 16 bytes of each 32 (from `x`), from x's
+    // starts (`lanes` + 8), then times the half's scales and x's (`lanes`).
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe Vector128<float> ChunkRow128<TI>(Vector128<float> f, bool eight, Vector128<byte> s0, Vector128<byte> s1, Vector128<byte> s2, Vector128<byte> s3,
+        Vector128<byte> s4, Vector128<byte> s5, Vector128<byte> s6, Vector128<byte> s7, Vector128<float> scale, sbyte* x, float* lanes) where TI : struct, IInstructions
+    {
+        var i = Vector128.Load((int*)(lanes + 8));
+        i = DotAt<TI>(i, s0, x);
+        i = DotAt<TI>(i, s1, x + 32);
+        i = DotAt<TI>(i, s2, x + 64);
+        i = DotAt<TI>(i, s3, x + 96);
+        if (eight)
+        {
+            i = DotAt<TI>(i, s4, x + 128);
+            i = DotAt<TI>(i, s5, x + 160);
+            i = DotAt<TI>(i, s6, x + 192);
+            i = DotAt<TI>(i, s7, x + 224);
+        }
+
+        return TI.Fused(Vector128.ConvertToSingle(i), scale * Vector128.Load(lanes), f);
     }
 
     // f + a group's sums for a row of x: its steps dotted with x's (32 bytes a step from `x`), each lane's sum from x's start
@@ -9615,6 +11317,9 @@ internal sealed partial class CpuBackend
     {
         Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions;
 
+        /// <summary>Eight's first 4 values, over 128 bits (the 128-bit twins' four-row kernels).</summary>
+        Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions;
+
         float One(byte* at);
     }
 
@@ -9625,14 +11330,24 @@ internal sealed partial class CpuBackend
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => Vector256.ShiftLeft(TI.Widen((ushort*)at), 16).AsSingle();
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => (FourShorts(at) << 16).AsSingle();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public float One(byte* at) => BitConverter.Int32BitsToSingle(*(ushort*)at << 16);
     }
+
+    // The 4 16-bit values at `at`, each a 32-bit lane (zero-extended).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe Vector128<int> FourShorts(byte* at) => Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(ulong*)at).AsUInt16()).AsInt32();
 
     // Any other 16-bit float by its bits (DescribedPlan.HalfBits).
     private readonly unsafe struct HalfRead((int SignShift, int Magnitude, int Shift, float Times, int Special) h) : ISingleRead
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => DescribedPlan.HalfBits(TI.Widen((ushort*)at), h);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => DescribedPlan.HalfBits(FourShorts(at), h);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public float One(byte* at) => DescribedPlan.HalfBits(Vector256.Create((int)*(ushort*)at), h).ToScalar();
@@ -9646,6 +11361,10 @@ internal sealed partial class CpuBackend
             Vector256.ConvertToSingle(signed ? TI.Widen((short*)at) : TI.Widen((ushort*)at));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions =>
+            Vector128.ConvertToSingle(signed ? Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(long*)at).AsInt16()) : FourShorts(at));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public float One(byte* at) => signed ? *(short*)at : *(ushort*)at;
     }
 
@@ -9654,6 +11373,9 @@ internal sealed partial class CpuBackend
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => Vector256.Load((float*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => Vector128.Load((float*)at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public float One(byte* at) => *(float*)at;
@@ -9666,6 +11388,9 @@ internal sealed partial class CpuBackend
         public Vector256<float> Eight<TI>(byte* at) where TI : struct, IInstructions => read.Eight<TI>(at) + Vector256.Create(offset);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<float> Four<TI>(byte* at) where TI : struct, IInstructions => read.Four<TI>(at) + Vector128.Create(offset);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public float One(byte* at) => read.One(at) + offset;
     }
 
@@ -9673,6 +11398,9 @@ internal sealed partial class CpuBackend
     private unsafe interface IDoubleRead
     {
         Vector256<double> Four(byte* at);
+
+        /// <summary>Four's first two values, over 128 bits (the 128-bit twins' four-row kernels).</summary>
+        Vector128<double> Two(byte* at);
 
         double One(byte* at);
     }
@@ -9684,6 +11412,9 @@ internal sealed partial class CpuBackend
         public Vector256<double> Four(byte* at) => Vector256.Load((double*)at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<double> Two(byte* at) => Vector128.Load((double*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public double One(byte* at) => *(double*)at;
     }
 
@@ -9692,6 +11423,9 @@ internal sealed partial class CpuBackend
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<double> Four(byte* at) => LongsToDoubles((long*)at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<double> Two(byte* at) => LongsToDoubles128((long*)at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public double One(byte* at) => *(long*)at;
@@ -9710,6 +11444,13 @@ internal sealed partial class CpuBackend
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<double> Two(byte* at)
+        {
+            var wide = Vector128.WidenLower(Vector128.CreateScalarUnsafe(*(long*)at).AsInt32());
+            return (wide + Vector128.Create(6755399441055744.0).AsInt64()).AsDouble() - Vector128.Create(6755399441055744.0);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public double One(byte* at) => *(int*)at;
     }
 
@@ -9720,36 +11461,51 @@ internal sealed partial class CpuBackend
         public Vector256<double> Four(byte* at) => read.Four(at) + Vector256.Create(offset);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector128<double> Two(byte* at) => read.Two(at) + Vector128.Create(offset);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public double One(byte* at) => read.One(at) + offset;
     }
 
     // The described float64 lane: four rows of x (float64, `stride` apart) by `count` stored values, dispatched on how a value
-    // reads (and whether the description adds a code offset).
+    // reads (and whether the description adds a code offset); by the 128-bit kernel where `narrow` (the 128-bit twin).
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DescribedDoubleFour<TI>(DescribedPlan plan, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    private static unsafe void DescribedDoubleFour<TI>(DescribedPlan plan, bool narrow, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
         where TI : struct, IInstructions
     {
         switch (plan.Wide)
         {
             case WideRead.Long:
-                DoubleFourBy<LongRead, TI>(new LongRead(), 8, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                DoubleFourBy<LongRead, TI>(new LongRead(), 8, plan.Offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             case WideRead.Int:
-                DoubleFourBy<IntRead, TI>(new IntRead(), 4, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                DoubleFourBy<IntRead, TI>(new IntRead(), 4, plan.Offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             default:
-                DoubleFourBy<DoubleRead, TI>(new DoubleRead(), 8, plan.Offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                DoubleFourBy<DoubleRead, TI>(new DoubleRead(), 8, plan.Offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DoubleFourBy<TR, TI>(TR read, int bytes, double offset, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
-        where TR : struct, IDoubleRead where TI : struct, IInstructions
+    private static unsafe void DoubleFourBy<TR, TI>(TR read, int bytes, double offset, bool narrow, byte* row, double* x, int stride, int count,
+        out float y0, out float y1, out float y2, out float y3) where TR : struct, IDoubleRead where TI : struct, IInstructions
     {
         if (offset == 0)
         {
+            if (narrow)
+            {
+                DoubleFour128<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             DoubleFour<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            return;
+        }
+
+        if (narrow)
+        {
+            DoubleFour128<DoubleOffset<TR>, TI>(new DoubleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
             return;
         }
 
@@ -9810,6 +11566,58 @@ internal sealed partial class CpuBackend
         y3 = (float)(Vector256.Sum(a3 + b3) + t3);
     }
 
+    // DoubleFour on 128-bit vectors (its 128-bit twin): each 4 values made as two halves of 2 (TR.Two), each sum a register
+    // a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DoubleFour128<TR, TI>(TR read, int bytes, byte* row, double* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, IDoubleRead where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<double> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<double> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 8 <= count; p += 8)
+        {
+            byte* at = row + (nint)p * bytes;
+            var w0l = read.Two(at);
+            var w0u = read.Two(at + 2 * bytes);
+            var w1l = read.Two(at + 4 * bytes);
+            var w1u = read.Two(at + 6 * bytes);
+            double* xp = x + p;
+            a0l = TI.Fused(w0l, Vector128.Load(xp), a0l);
+            a0u = TI.Fused(w0u, Vector128.Load(xp + 2), a0u);
+            b0l = TI.Fused(w1l, Vector128.Load(xp + 4), b0l);
+            b0u = TI.Fused(w1u, Vector128.Load(xp + 6), b0u);
+            a1l = TI.Fused(w0l, Vector128.Load(xp + r1), a1l);
+            a1u = TI.Fused(w0u, Vector128.Load(xp + r1 + 2), a1u);
+            b1l = TI.Fused(w1l, Vector128.Load(xp + r1 + 4), b1l);
+            b1u = TI.Fused(w1u, Vector128.Load(xp + r1 + 6), b1u);
+            a2l = TI.Fused(w0l, Vector128.Load(xp + r2), a2l);
+            a2u = TI.Fused(w0u, Vector128.Load(xp + r2 + 2), a2u);
+            b2l = TI.Fused(w1l, Vector128.Load(xp + r2 + 4), b2l);
+            b2u = TI.Fused(w1u, Vector128.Load(xp + r2 + 6), b2u);
+            a3l = TI.Fused(w0l, Vector128.Load(xp + r3), a3l);
+            a3u = TI.Fused(w0u, Vector128.Load(xp + r3 + 2), a3u);
+            b3l = TI.Fused(w1l, Vector128.Load(xp + r3 + 4), b3l);
+            b3u = TI.Fused(w1u, Vector128.Load(xp + r3 + 6), b3u);
+        }
+
+        double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
+        for (; p < count; p++)
+        {
+            double w = read.One(row + (nint)p * bytes);
+            t0 = Math.FusedMultiplyAdd(w, x[p], t0);
+            t1 = Math.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = Math.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = Math.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = (float)(SumOf(a0l + b0l, a0u + b0u) + t0);
+        y1 = (float)(SumOf(a1l + b1l, a1u + b1u) + t1);
+        y2 = (float)(SumOf(a2l + b2l, a2u + b2u) + t2);
+        y3 = (float)(SumOf(a3l + b3l, a3u + b3u) + t3);
+    }
+
     // DoubleFour for one row of x, 16 values a step in four sums.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private static unsafe double DoubleOne<TR, TI>(TR read, int bytes, byte* row, double* x, int k) where TR : struct, IDoubleRead where TI : struct, IInstructions
@@ -9840,36 +11648,49 @@ internal sealed partial class CpuBackend
     }
 
     // The described float32 lane over values of 2 or 4 bytes: four rows of x by `count` values of a stored row, dispatched on
-    // how a value reads (and whether the description adds a code offset).
+    // how a value reads (and whether the description adds a code offset); by the 128-bit kernel where `narrow` (the
+    // 128-bit twin).
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void DescribedSingleFour<TI>(DescribedPlan plan, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+    private static unsafe void DescribedSingleFour<TI>(DescribedPlan plan, bool narrow, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
         where TI : struct, IInstructions
     {
         float offset = (float)plan.D.CodeOffset;
         switch (plan.Wide)
         {
             case WideRead.Half when plan.Half16 is { Shift: 16, Times: 1f, Special: 0, SignShift: 16 }:
-                SingleFourBy<HighHalfRead, TI>(new HighHalfRead(), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<HighHalfRead, TI>(new HighHalfRead(), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             case WideRead.Half:
-                SingleFourBy<HalfRead, TI>(new HalfRead(plan.Half16), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<HalfRead, TI>(new HalfRead(plan.Half16), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             case WideRead.Short:
-                SingleFourBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), 2, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<ShortRead, TI>(new ShortRead(plan.D.Code.Signed), 2, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
             default:
-                SingleFourBy<SingleRead, TI>(new SingleRead(), 4, offset, row, x, stride, count, out y0, out y1, out y2, out y3);
+                SingleFourBy<SingleRead, TI>(new SingleRead(), 4, offset, narrow, row, x, stride, count, out y0, out y1, out y2, out y3);
                 break;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void SingleFourBy<TR, TI>(TR read, int bytes, float offset, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
-        where TR : struct, ISingleRead where TI : struct, IInstructions
+    private static unsafe void SingleFourBy<TR, TI>(TR read, int bytes, float offset, bool narrow, byte* row, float* x, int stride, int count,
+        out float y0, out float y1, out float y2, out float y3) where TR : struct, ISingleRead where TI : struct, IInstructions
     {
         if (offset == 0f)
         {
+            if (narrow)
+            {
+                SingleFour128<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+                return;
+            }
+
             SingleFour<TR, TI>(read, bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
+            return;
+        }
+
+        if (narrow)
+        {
+            SingleFour128<SingleOffset<TR>, TI>(new SingleOffset<TR>(read, offset), bytes, row, x, stride, count, out y0, out y1, out y2, out y3);
             return;
         }
 
@@ -9931,6 +11752,58 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(a1 + b1) + t1;
         y2 = Vector256.Sum(a2 + b2) + t2;
         y3 = Vector256.Sum(a3 + b3) + t3;
+    }
+
+    // SingleFour on 128-bit vectors (its 128-bit twin): each 8 values made as two halves of 4 (TR.Four), each sum a register
+    // a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void SingleFour128<TR, TI>(TR read, int bytes, byte* row, float* x, int stride, int count, out float y0, out float y1, out float y2, out float y3)
+        where TR : struct, ISingleRead where TI : struct, IInstructions
+    {
+        nint r1 = stride, r2 = 2 * (nint)stride, r3 = 3 * (nint)stride;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        Vector128<float> b0l = default, b0u = default, b1l = default, b1u = default, b2l = default, b2u = default, b3l = default, b3u = default;
+        int p = 0;
+        for (; p + 16 <= count; p += 16)
+        {
+            byte* at = row + (nint)p * bytes;
+            var lol = read.Four<TI>(at);
+            var lou = read.Four<TI>(at + 4 * bytes);
+            var hil = read.Four<TI>(at + 8 * bytes);
+            var hiu = read.Four<TI>(at + 12 * bytes);
+            float* xp = x + p;
+            a0l = TI.Fused(lol, Vector128.Load(xp), a0l);
+            a0u = TI.Fused(lou, Vector128.Load(xp + 4), a0u);
+            b0l = TI.Fused(hil, Vector128.Load(xp + 8), b0l);
+            b0u = TI.Fused(hiu, Vector128.Load(xp + 12), b0u);
+            a1l = TI.Fused(lol, Vector128.Load(xp + r1), a1l);
+            a1u = TI.Fused(lou, Vector128.Load(xp + r1 + 4), a1u);
+            b1l = TI.Fused(hil, Vector128.Load(xp + r1 + 8), b1l);
+            b1u = TI.Fused(hiu, Vector128.Load(xp + r1 + 12), b1u);
+            a2l = TI.Fused(lol, Vector128.Load(xp + r2), a2l);
+            a2u = TI.Fused(lou, Vector128.Load(xp + r2 + 4), a2u);
+            b2l = TI.Fused(hil, Vector128.Load(xp + r2 + 8), b2l);
+            b2u = TI.Fused(hiu, Vector128.Load(xp + r2 + 12), b2u);
+            a3l = TI.Fused(lol, Vector128.Load(xp + r3), a3l);
+            a3u = TI.Fused(lou, Vector128.Load(xp + r3 + 4), a3u);
+            b3l = TI.Fused(hil, Vector128.Load(xp + r3 + 8), b3l);
+            b3u = TI.Fused(hiu, Vector128.Load(xp + r3 + 12), b3u);
+        }
+
+        float t0 = 0f, t1 = 0f, t2 = 0f, t3 = 0f;
+        for (; p < count; p++)
+        {
+            float w = read.One(row + (nint)p * bytes);
+            t0 = MathF.FusedMultiplyAdd(w, x[p], t0);
+            t1 = MathF.FusedMultiplyAdd(w, x[r1 + p], t1);
+            t2 = MathF.FusedMultiplyAdd(w, x[r2 + p], t2);
+            t3 = MathF.FusedMultiplyAdd(w, x[r3 + p], t3);
+        }
+
+        y0 = SumOf(a0l + b0l, a0u + b0u) + t0;
+        y1 = SumOf(a1l + b1l, a1u + b1u) + t1;
+        y2 = SumOf(a2l + b2l, a2u + b2u) + t2;
+        y3 = SumOf(a3l + b3l, a3u + b3u) + t3;
     }
 
     // SingleFour for one row of x, 32 values a step in four sums.
@@ -9999,6 +11872,68 @@ internal sealed partial class CpuBackend
         y2 = Vector256.Sum(a2);
         y3 = Vector256.Sum(a3);
     }
+
+    // DescribedCodesFour on 128-bit vectors (its 128-bit twin): each group's scales and minimums and each span's codes made
+    // once for the four rows (by the plan's Factor and Raw, compiled on their own: CodesFactors, CodesRaw), then each 4 codes'
+    // numbers read from the table as a half, times their chunk's scale less its minimum (the lanes the 256-bit kernel
+    // broadcasts), each sum a register a half.
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void DescribedCodesFour128<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, float* x, nint stride,
+        out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
+    {
+        int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
+        float* table = plan.CodeValues;
+        float* factors = stackalloc float[16];
+        byte* codes = stackalloc byte[32];
+        nint s2 = 2 * stride, s3 = 3 * stride;
+        Vector128<float> a0l = default, a0u = default, a1l = default, a1u = default, a2l = default, a2u = default, a3l = default, a3u = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = g / gpp, gp = g - period * gpp;
+            byte* at = period < full ? row + (nint)period * plan.PeriodBytes : tail;
+            CodesFactors<TI>(plan, at, gp, Math.Min(8, chunks - g * 8), factors);
+            for (int s = 0; s < spans; s++)
+            {
+                CodesRaw<TI>(plan, at, gp * spans + s, codes);
+                for (int e = 0; e < 4; e++)
+                {
+                    int lane = (32 * s + 8 * e) / c;
+                    var d = Vector128.Create(factors[lane]);
+                    var m = Vector128.Create(factors[8 + lane]);
+                    byte* ce = codes + 8 * e;
+                    var wl = TI.Fused(Vector128.Create(table[ce[0]], table[ce[1]], table[ce[2]], table[ce[3]]), d, m);
+                    var wu = TI.Fused(Vector128.Create(table[ce[4]], table[ce[5]], table[ce[6]], table[ce[7]]), d, m);
+                    float* xp = x + (nint)g * plan.GroupValues + 32 * s + 8 * e;
+                    a0l = TI.Fused(wl, Vector128.Load(xp), a0l);
+                    a0u = TI.Fused(wu, Vector128.Load(xp + 4), a0u);
+                    a1l = TI.Fused(wl, Vector128.Load(xp + stride), a1l);
+                    a1u = TI.Fused(wu, Vector128.Load(xp + stride + 4), a1u);
+                    a2l = TI.Fused(wl, Vector128.Load(xp + s2), a2l);
+                    a2u = TI.Fused(wu, Vector128.Load(xp + s2 + 4), a2u);
+                    a3l = TI.Fused(wl, Vector128.Load(xp + s3), a3l);
+                    a3u = TI.Fused(wu, Vector128.Load(xp + s3 + 4), a3u);
+                }
+            }
+        }
+
+        y0 = SumOf(a0l, a0u);
+        y1 = SumOf(a1l, a1u);
+        y2 = SumOf(a2l, a2u);
+        y3 = SumOf(a3l, a3u);
+    }
+
+    // A group's scales (at `into`) and minimums (at `into` + 8) as DescribedPlan.Factor reads them, compiled on its own.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void CodesFactors<TI>(DescribedPlan plan, byte* at, int gp, int valid, float* into) where TI : struct, IInstructions
+    {
+        plan.Factor<TI>(at, gp, valid, out var scale, out var min);
+        scale.Store(into);
+        min.Store(into + 8);
+    }
+
+    // A span's 32 codes as DescribedPlan.Raw makes them, into `into`, compiled on its own.
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void CodesRaw<TI>(DescribedPlan plan, byte* at, int span, byte* into) where TI : struct, IInstructions => plan.Raw<TI>(at, span).Store(into);
 
     // DescribedCodesFour for one row of x.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
