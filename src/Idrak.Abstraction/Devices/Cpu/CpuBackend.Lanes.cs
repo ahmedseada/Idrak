@@ -1486,6 +1486,12 @@ internal sealed partial class CpuBackend
         }
     }
 
+    // Where 256-bit vectors are not accelerated every Vector256 operation is a method the JIT inlines, and four rows' dot
+    // products inlined into one kernel pass its inlining budget, the rest left as calls (measured: 26-37 calls in a four-row
+    // kernel's code, none in a one-row kernel's). There the four-row kernels take a row at a time by their one-row kernels
+    // (the same operations in the same order, so the same bits), which are never inlined, so each is compiled on its own
+    // budget: IntegerOne, ScaledStepsOne, SixIntegerOne, StepsOne, WideStepsOne.
+
     // a · b + c rounded once from separate operations: each product exact in float64, its sum with c rounded to odd there,
     // then to float32 to nearest (float64's 53 bits are float32's 24 and two more: the two roundings give the one).
     // Where 256-bit vectors are not accelerated, by their 128-bit halves (the same operations, lane by lane).
@@ -1912,8 +1918,18 @@ internal sealed partial class CpuBackend
     private static void IntegerFour<TI>(ref byte codes, int blockBytes, int blocks, ref float table, ref sbyte x, ref float xs, int k,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
-        var low = Vector256.Create((byte)15);
         nint r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k, s1 = blocks * 16, s2 = 2 * s1, s3 = 3 * s1;
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            // Each row by itself (the same operations in the same order: IntegerOne), never inlined, so compiled on its own.
+            y0 = IntegerOne<TI>(ref codes, 0, blockBytes, blocks, ref table, null, ref x, ref xs);
+            y1 = IntegerOne<TI>(ref codes, 0, blockBytes, blocks, ref table, null, ref Unsafe.Add(ref x, r1), ref Unsafe.Add(ref xs, s1));
+            y2 = IntegerOne<TI>(ref codes, 0, blockBytes, blocks, ref table, null, ref Unsafe.Add(ref x, r2), ref Unsafe.Add(ref xs, s2));
+            y3 = IntegerOne<TI>(ref codes, 0, blockBytes, blocks, ref table, null, ref Unsafe.Add(ref x, r3), ref Unsafe.Add(ref xs, s3));
+            return;
+        }
+
+        var low = Vector256.Create((byte)15);
         Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
         for (int b = 0; b < blocks; b++)
         {
@@ -1992,7 +2008,7 @@ internal sealed partial class CpuBackend
 
     // IntegerFour for one row of x, the stored row's blocks from `row` (codes `codeOffset` into each); each block's scales from
     // `table`, or, with `decode`, decoded from the block as it is read (NibbleBlocks.Block: no table).
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     private static float IntegerOne<TI>(ref byte row, int codeOffset, int blockBytes, int blocks, ref float table, NibbleBlocks? decode, ref sbyte x, ref float xs)
         where TI : struct, IInstructions
     {
@@ -3232,6 +3248,16 @@ internal sealed partial class CpuBackend
     private static unsafe void ScaledStepsFour<TI>(float* steps, float* table, int groups, sbyte* x, float* xs, nint xStride, nint sStride,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            // Each row by itself (the same operations in the same order: ScaledStepsOne), never inlined, so compiled on its own.
+            y0 = ScaledStepsOne<TI>(steps, table, groups, x, xs);
+            y1 = ScaledStepsOne<TI>(steps, table, groups, x + xStride, xs + sStride);
+            y2 = ScaledStepsOne<TI>(steps, table, groups, x + 2 * xStride, xs + 2 * sStride);
+            y3 = ScaledStepsOne<TI>(steps, table, groups, x + 3 * xStride, xs + 3 * sStride);
+            return;
+        }
+
         Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
         for (int g = 0; g < groups; g++)
         {
@@ -3303,6 +3329,31 @@ internal sealed partial class CpuBackend
         y1 = Vector256.Sum(f1);
         y2 = Vector256.Sum(f2);
         y3 = Vector256.Sum(f3);
+    }
+
+    // ScaledStepsFour for one row of x (its first row's operations, in their order).
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float ScaledStepsOne<TI>(float* steps, float* table, int groups, sbyte* x, float* xs) where TI : struct, IInstructions
+    {
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            byte* at = (byte*)(steps + g * ScaledStepFloats);
+            sbyte* xg = x + g * ScaledNibbles.GroupCodes;
+            float* sg = xs + g * 16;
+            var i = Vector256.Load((int*)(sg + 8));
+            i = DotAt<TI>(i, Vector256.Load(at), xg);
+            i = DotAt<TI>(i, Vector256.Load(at + 32), xg + 32);
+            i = DotAt<TI>(i, Vector256.Load(at + 64), xg + 64);
+            i = DotAt<TI>(i, Vector256.Load(at + 96), xg + 96);
+            i = DotAt<TI>(i, Vector256.Load(at + 128), xg + 128);
+            i = DotAt<TI>(i, Vector256.Load(at + 160), xg + 160);
+            i = DotAt<TI>(i, Vector256.Load(at + 192), xg + 192);
+            i = DotAt<TI>(i, Vector256.Load(at + 224), xg + 224);
+            f = TI.Fused(Vector256.ConvertToSingle(i), Vector256.Load(table + g * ScaledNibbles.Group) * Vector256.Load(sg), f);
+        }
+
+        return Vector256.Sum(f);
     }
 
     // ScaledIntegerFour for one row of x.
@@ -4405,20 +4456,21 @@ internal sealed partial class CpuBackend
     }
 
     // ShuffleHalves' controls: each 128-bit half's 4 × 4 bytes transposed (its byte 4j + i to 4i + j); each half's even bytes of
-    // each 8, then its odd ones (two 16-bit codes' bytes apart).
-    private static Vector256<byte> TransposeQuads =>
+    // each 8, then its odd ones (two 16-bit codes' bytes apart). Fields, so code where 256-bit vectors are not accelerated
+    // loads them rather than building them in each loop (the JIT takes them as constants where they are).
+    private static readonly Vector256<byte> TransposeQuads =
         Vector256.Create((byte)0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 16, 20, 24, 28, 17, 21, 25, 29, 18, 22, 26, 30, 19, 23, 27, 31);
 
-    private static Vector256<byte> EvenOddPairs =>
+    private static readonly Vector256<byte> EvenOddPairs =
         Vector256.Create((byte)0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15, 16, 18, 20, 22, 17, 19, 21, 23, 24, 26, 28, 30, 25, 27, 29, 31);
 
     // Four int64 codes (at `at`, 32 bytes) as one step of the integer lane: lane b holds the four codes' byte b (the dwords'
     // low halves to lanes 0-3, their high halves to 4-7, then each 128-bit half's 4 × 4 bytes transposed), the top bytes
     // offset by 128 (unsigned: the code's sign comes back through x's code sums).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static unsafe Vector256<byte> LongStep<TI>(long* at, Vector256<byte> bias) where TI : struct, IInstructions =>
+    private static unsafe Vector256<byte> LongStep<TI>(long* at, Vector256<byte> transpose, Vector256<byte> bias) where TI : struct, IInstructions =>
         TI.ShuffleHalves(TI.Permute(Vector256.Load((int*)at), Vector256.Create(0, 2, 4, 6, 1, 3, 5, 7)).AsByte(),
-            TransposeQuads) ^ bias;
+            transpose) ^ bias;
 
     // sum + x's codes [4s, 4s + 4) (one dword, at `x`) by a step's bytes, in each lane (unsigned bytes by signed).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -4451,9 +4503,10 @@ internal sealed partial class CpuBackend
     private static unsafe void LongSteps<TI>(long* row, byte* into, int k) where TI : struct, IInstructions
     {
         var bias = LongBias;
+        var transpose = TransposeQuads;
         for (int p = 0; p + 4 <= k; p += 4)
         {
-            LongStep<TI>(row + p, bias).Store(into + p * sizeof(long));
+            LongStep<TI>(row + p, transpose, bias).Store(into + p * sizeof(long));
         }
     }
 
@@ -4504,12 +4557,14 @@ internal sealed partial class CpuBackend
     private static unsafe float LongIntegerOne<TI>(long* row, sbyte* x, float* xs, int k) where TI : struct, IInstructions
     {
         var bias = LongBias;
+        var transpose = TransposeQuads;
         Vector256<float> f = default;
         for (int b = 0; b < k / LongBlock; b++)
         {
             long* w = row + b * LongBlock;
-            f = LongBlockSum<TI>(f, LongStep<TI>(w, bias), LongStep<TI>(w + 4, bias), LongStep<TI>(w + 8, bias), LongStep<TI>(w + 12, bias), LongStep<TI>(w + 16, bias),
-                LongStep<TI>(w + 20, bias), LongStep<TI>(w + 24, bias), LongStep<TI>(w + 28, bias), x + b * LongBlock, xs + b * 2);
+            f = LongBlockSum<TI>(f, LongStep<TI>(w, transpose, bias), LongStep<TI>(w + 4, transpose, bias), LongStep<TI>(w + 8, transpose, bias), LongStep<TI>(w + 12, transpose, bias),
+                LongStep<TI>(w + 16, transpose, bias), LongStep<TI>(w + 20, transpose, bias), LongStep<TI>(w + 24, transpose, bias), LongStep<TI>(w + 28, transpose, bias),
+                x + b * LongBlock, xs + b * 2);
         }
 
         return Vector256.Sum(f * LongPlanes);
@@ -5678,6 +5733,16 @@ internal sealed partial class CpuBackend
     private static unsafe void SixIntegerFour<TI>(byte* row, SixBlocks plan, int blocks, float* table, sbyte* x, float* xs, int k, int xsRow,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            // Each row by itself (the same operations in the same order: SixIntegerOne), never inlined, so compiled on its own.
+            y0 = SixIntegerOne<TI>(row, plan, blocks, table, x, xs);
+            y1 = SixIntegerOne<TI>(row, plan, blocks, table, x + k, xs + xsRow);
+            y2 = SixIntegerOne<TI>(row, plan, blocks, table, x + 2 * k, xs + 2 * xsRow);
+            y3 = SixIntegerOne<TI>(row, plan, blocks, table, x + 3 * k, xs + 3 * xsRow);
+            return;
+        }
+
         nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset, r1 = k, r2 = 2 * (nint)k, r3 = 3 * (nint)k;
         nint s1 = xsRow, s2 = 2 * (nint)xsRow, s3 = 3 * (nint)xsRow;
         Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
@@ -5717,7 +5782,7 @@ internal sealed partial class CpuBackend
 
     // SixIntegerFour for one row of x; each block's scales from `table`, or, where it is null (a row read alone), decoded
     // from the block as it is read (SixBlocks.Scales: no table), the bytes ahead asked into the cache (SixAhead).
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     private static unsafe float SixIntegerOne<TI>(byte* row, SixBlocks plan, int blocks, float* table, sbyte* x, float* xs) where TI : struct, IInstructions
     {
         nint bytes = plan.Bytes, lowOffset = plan.LowOffset, highOffset = plan.HighOffset;
@@ -7725,7 +7790,7 @@ internal sealed partial class CpuBackend
     }
 
     // A wide integer's one row of x by a stored row made into steps (WideRowSteps).
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     private static unsafe float WideStepsOne<TX, TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes) where TX : struct, IStepLoad where TI : struct, IInstructions
     {
         int groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
@@ -7772,6 +7837,16 @@ internal sealed partial class CpuBackend
     private static unsafe void StepsFour<TX, TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
         out float y0, out float y1, out float y2, out float y3) where TX : struct, IStepLoad where TI : struct, IInstructions
     {
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            // Each row by itself (the same operations in the same order: WideStepsOne), never inlined, so compiled on its own.
+            y0 = WideStepsOne<TX, TI>(plan, steps, groups, x, lanes);
+            y1 = WideStepsOne<TX, TI>(plan, steps, groups, x + xRow, lanes + lRow);
+            y2 = WideStepsOne<TX, TI>(plan, steps, groups, x + 2 * xRow, lanes + 2 * lRow);
+            y3 = WideStepsOne<TX, TI>(plan, steps, groups, x + 3 * xRow, lanes + 3 * lRow);
+            return;
+        }
+
         int groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, cg = plan.Cg, xStep = 4 * cg;
         var top = plan.TopLanes;
         Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
@@ -7807,6 +7882,16 @@ internal sealed partial class CpuBackend
     private static unsafe void ChunkStepsFour<TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes, nint xRow, nint lRow,
         out float y0, out float y1, out float y2, out float y3) where TI : struct, IInstructions
     {
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            // Each row by itself (the same operations in the same order: StepsOne), never inlined, so compiled on its own.
+            y0 = StepsOne<EightChunks, TI>(plan, steps, groups, x, lanes);
+            y1 = StepsOne<EightChunks, TI>(plan, steps, groups, x + xRow, lanes + lRow);
+            y2 = StepsOne<EightChunks, TI>(plan, steps, groups, x + 2 * xRow, lanes + 2 * lRow);
+            y3 = StepsOne<EightChunks, TI>(plan, steps, groups, x + 3 * xRow, lanes + 3 * lRow);
+            return;
+        }
+
         int t = plan.T, stepBytes = plan.GroupStepBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats;
         bool mins = plan.Mins, eight = t == 8;
         Vector256<float> f0 = default, f1 = default, f2 = default, f3 = default;
@@ -7881,7 +7966,7 @@ internal sealed partial class CpuBackend
         _ => WideStepsOne<OneChunk, TI>(plan, steps, groups, x, lanes),
     };
 
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
     private static unsafe float StepsOne<TX, TI>(DescribedPlan plan, byte* steps, int groups, sbyte* x, float* lanes) where TX : struct, IStepLoad where TI : struct, IInstructions
     {
         int t = plan.T, stepBytes = plan.GroupStepBytes, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, xStep = 4 * plan.Cg;
