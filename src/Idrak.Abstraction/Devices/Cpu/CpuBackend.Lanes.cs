@@ -8,6 +8,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -30,8 +31,8 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // end) reads any type from its description alone (ElementType.Description) and is the first candidate; the formats above
 // are candidates beside it, kept at a shape where they measure faster (ProductRoutes.Lanes: all, described, written).
 // Every lane's kernels are written once over IInstructions and run on any CPU by .NET's portable vector types
-// (PortableInstructions); the instruction sets only some CPUs have (x86's AVX2 and FMA, AVX-VNNI) give each lane extra
-// candidates where the CPU has them, with the same bits, kept at a shape only where they measure faster.
+// (PortableInstructions); the instruction sets only some CPUs have (x86's AVX2 and FMA, AVX-VNNI; Arm's dot products) give
+// each lane extra candidates where the CPU has them, with the same bits, kept at a shape only where they measure faster.
 internal sealed partial class CpuBackend
 {
     /// <summary>How the values of a stored row widen to float32: the type's description decides which.</summary>
@@ -740,10 +741,11 @@ internal sealed partial class CpuBackend
     // vector types alone (Vector256 and Vector128, each operation the CPU's own instructions where .NET maps it to them:
     // any CPU), which every lane of every format takes on every CPU; and the instruction sets only some CPUs have, each an
     // extra candidate of the measured choice where the CPU has them (x86's AVX2 and FMA: Avx2Instructions, the int8 dot
-    // products by its multiply-adds; with AVX-VNNI's dot products: VnniInstructions). Each gives the bits the others give
-    // (the same operations in the same order: integer sums exact, every multiply-add fused, float sums in the lanes' fixed
-    // order), so a shape's measured choice among them changes its speed alone, and a CPU that has none of them runs every
-    // lane, with the same results, by the portable instructions.
+    // products by its multiply-adds; with AVX-VNNI's dot products: VnniInstructions; a 64-bit Arm CPU's dot products,
+    // FEAT_DotProd: DotProdInstructions, and for codes past 127 WideDotProdInstructions). Each gives the bits the others
+    // give (the same operations in the same order: integer sums exact, every multiply-add fused, float sums in the lanes'
+    // fixed order), so a shape's measured choice among them changes its speed alone, and a CPU that has none of them runs
+    // every lane, with the same results, by the portable instructions.
 
     /// <summary>The instruction set a lane's kernels are compiled for (a lane id's high bits: LaneOf).</summary>
     private enum Instructions : byte
@@ -751,11 +753,16 @@ internal sealed partial class CpuBackend
         Portable,
         Avx2,
         Vnni,
+        DotProd,
+        DotProdWide,
     }
 
     // Whether the CPU has the instruction sets of the extra candidates (as the runtime reports them: its DOTNET_Enable*
-    // settings turn them off): x86's AVX2 and FMA; AVX-VNNI with them.
-    private static readonly bool s_avx2Lanes = Avx2.IsSupported && Fma.IsSupported, s_vnniLanes = s_avx2Lanes && AvxVnni.IsSupported;
+    // settings turn them off): x86's AVX2 and FMA; AVX-VNNI with them; a 64-bit Arm CPU's dot products (FEAT_DotProd,
+    // DOTNET_EnableArm64Dp). The dispatch to a lane's kernels tests AdvSimd.Arm64.IsSupported first, a constant to the JIT,
+    // so an x86 process compiles none of the Arm branches and an Arm process none of the x86 ones.
+    private static readonly bool s_avx2Lanes = Avx2.IsSupported && Fma.IsSupported, s_vnniLanes = s_avx2Lanes && AvxVnni.IsSupported,
+        s_dotProdLanes = AdvSimd.Arm64.IsSupported && Dp.IsSupported;
 
     // A lane id: its kind (RowLaneId .. DescribedLaneId) in the low 4 bits, its instruction set above.
     private static int LaneOf(int kind, Instructions with) => kind | (int)with << 4;
@@ -769,6 +776,8 @@ internal sealed partial class CpuBackend
     {
         Instructions.Avx2 => LaneNames[KindOf(lane)] + " by AVX2 and FMA",
         Instructions.Vnni => LaneNames[KindOf(lane)] + " by AVX-VNNI",
+        Instructions.DotProd => LaneNames[KindOf(lane)] + " by Arm's dot products (DotProd)",
+        Instructions.DotProdWide => LaneNames[KindOf(lane)] + " by Arm's dot products, two a step for codes past 127 (DotProd)",
         _ => LaneNames[KindOf(lane)],
     };
 
@@ -777,6 +786,8 @@ internal sealed partial class CpuBackend
     {
         Instructions.Avx2 => "/avx2",
         Instructions.Vnni => "/avx-vnni",
+        Instructions.DotProd => "/dotprod",
+        Instructions.DotProdWide => "/dotprod2",
         _ => "",
     };
 
@@ -802,8 +813,10 @@ internal sealed partial class CpuBackend
 
         /// <summary>
         /// A kind of lane by the portable instructions, then by AVX2 and FMA, and (int8 dot products) by AVX-VNNI where the CPU
-        /// has them; <paramref name="pairs"/>: the kind's int8 dot products take AVX2's multiply-adds (the codes at most 127,
-        /// so no pair of products saturates), so its AVX2 lane is one.
+        /// has them, or (int8 dot products) by Arm's dot products where the CPU has those; <paramref name="pairs"/>: the
+        /// kind's int8 dot products take AVX2's multiply-adds (the codes at most 127, so no pair of products saturates), so
+        /// its AVX2 lane is one, and Arm's signed dot products take its codes as they are (DotProd; else two a step:
+        /// DotProdWide).
         /// </summary>
         public LaneList WithKind(int kind, bool dots = false, bool pairs = true)
         {
@@ -811,6 +824,11 @@ internal sealed partial class CpuBackend
             if (s_avx2Lanes && (!dots || pairs))
             {
                 list = list.With(LaneOf(kind, Instructions.Avx2));
+            }
+
+            if (dots && s_dotProdLanes)
+            {
+                list = list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide));
             }
 
             return dots && s_vnniLanes ? list.With(LaneOf(kind, Instructions.Vnni)) : list;
@@ -832,7 +850,8 @@ internal sealed partial class CpuBackend
 
     /// <summary>
     /// The operations of the lanes' kernels that instruction sets do differently, each giving the same bits whichever set
-    /// does it (the lanes' kernels are generic over it: PortableInstructions, Avx2Instructions, VnniInstructions).
+    /// does it (the lanes' kernels are generic over it: PortableInstructions, Avx2Instructions, VnniInstructions,
+    /// DotProdInstructions, WideDotProdInstructions).
     /// </summary>
     private unsafe interface IInstructions
     {
@@ -1431,6 +1450,218 @@ internal sealed partial class CpuBackend
     }
 
     /// <summary>
+    /// The lanes' operations by .NET's portable vector types, the int8 dot products by a 64-bit Arm CPU's (FEAT_DotProd,
+    /// optional from Armv8.2 and mandatory from Armv8.4: SDOT, each 32-bit lane plus the products of its 4 signed bytes by
+    /// x's 4, exactly): the codes of a kind that takes them at most 127 (LaneList.WithKind), so signed bytes as they are.
+    /// </summary>
+    private unsafe struct DotProdInstructions : IInstructions
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Dot(Vector256<int> sum, Vector256<byte> codes, Vector256<sbyte> x) => Vector256.Create(
+            Dp.DotProduct(sum.GetLower(), codes.GetLower().AsSByte(), x.GetLower()), Dp.DotProduct(sum.GetUpper(), codes.GetUpper().AsSByte(), x.GetUpper()));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Fused(Vector256<float> a, Vector256<float> b, Vector256<float> c) => PortableInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Fused(Vector256<double> a, Vector256<double> b, Vector256<double> c) => PortableInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> UnpackLow(Vector256<uint> a, Vector256<uint> b) => PortableInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> UnpackHigh(Vector256<uint> a, Vector256<uint> b) => PortableInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> UnpackLow(Vector256<ulong> a, Vector256<ulong> b) => PortableInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> UnpackHigh(Vector256<ulong> a, Vector256<ulong> b) => PortableInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> Swap(Vector256<uint> v) => PortableInstructions.Swap(v);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> Lows(Vector256<ulong> a, Vector256<ulong> b) => PortableInstructions.Lows(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> Highs(Vector256<ulong> a, Vector256<ulong> b) => PortableInstructions.Highs(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftRight(Vector256<uint> v, Vector256<uint> counts) => PortableInstructions.ShiftRight(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftLeft(Vector256<uint> v, Vector256<uint> counts) => PortableInstructions.ShiftLeft(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> ShiftRight(Vector256<ulong> v, Vector256<ulong> counts) => PortableInstructions.ShiftRight(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftUpper(Vector256<uint> v, int count) => PortableInstructions.ShiftUpper(v, count);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, int* offsets) => PortableInstructions.Gather(at, offsets);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, int* offsets, int count) => PortableInstructions.Gather(at, offsets, count);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Gather(float* table, Vector256<int> indices) => PortableInstructions.Gather(table, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => PortableInstructions.ShuffleBytes(bytes, control);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(byte* at) => PortableInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Doubles(float* at) => PortableInstructions.Doubles(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> Halves(byte* at) => PortableInstructions.Halves(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(ushort* at) => PortableInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(short* at) => PortableInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(Vector128<sbyte> v) => PortableInstructions.Widen(v);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(Vector128<byte> v, bool signed) => PortableInstructions.Widen(v, signed);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> ShuffleHalves(Vector256<byte> bytes, Vector256<byte> control) => PortableInstructions.ShuffleHalves(bytes, control);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Broadcast(Vector256<float> v, int lane) => PortableInstructions.Broadcast(v, lane);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Permute(Vector256<float> v, Vector256<int> indices) => PortableInstructions.Permute(v, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Permute(Vector256<int> v, Vector256<int> indices) => PortableInstructions.Permute(v, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> Pairs(Vector256<uint> word, int first) => PortableInstructions.Pairs(word, first);
+
+        public static bool ShiftsByLane => PortableInstructions.ShiftsByLane;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Prefetch(void* at) => PortableInstructions.Prefetch(at);
+    }
+
+    /// <summary>
+    /// The lanes' operations as DotProdInstructions does them, the int8 dot products of any unsigned codes (0-255) by two of
+    /// Arm's signed ones a step: c · x = (c − 128) · x + (−128) · (−x), the codes with their top bit flipped read as signed
+    /// bytes, then −128 by −x (x within ±127, so −x is a signed byte too); every sum exact in 32 bits.
+    /// </summary>
+    private unsafe struct WideDotProdInstructions : IInstructions
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Dot(Vector256<int> sum, Vector256<byte> codes, Vector256<sbyte> x) =>
+            Vector256.Create(Dot(sum.GetLower(), codes.GetLower(), x.GetLower()), Dot(sum.GetUpper(), codes.GetUpper(), x.GetUpper()));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x) =>
+            Dp.DotProduct(Dp.DotProduct(sum, (codes ^ Vector128.Create((byte)0x80)).AsSByte(), x), Vector128.Create((sbyte)-128), -x);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Fused(Vector256<float> a, Vector256<float> b, Vector256<float> c) => DotProdInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Fused(Vector256<double> a, Vector256<double> b, Vector256<double> c) => DotProdInstructions.Fused(a, b, c);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> UnpackLow(Vector256<uint> a, Vector256<uint> b) => DotProdInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> UnpackHigh(Vector256<uint> a, Vector256<uint> b) => DotProdInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> UnpackLow(Vector256<ulong> a, Vector256<ulong> b) => DotProdInstructions.UnpackLow(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> UnpackHigh(Vector256<ulong> a, Vector256<ulong> b) => DotProdInstructions.UnpackHigh(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> Swap(Vector256<uint> v) => DotProdInstructions.Swap(v);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> Lows(Vector256<ulong> a, Vector256<ulong> b) => DotProdInstructions.Lows(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> Highs(Vector256<ulong> a, Vector256<ulong> b) => DotProdInstructions.Highs(a, b);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftRight(Vector256<uint> v, Vector256<uint> counts) => DotProdInstructions.ShiftRight(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftLeft(Vector256<uint> v, Vector256<uint> counts) => DotProdInstructions.ShiftLeft(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<ulong> ShiftRight(Vector256<ulong> v, Vector256<ulong> counts) => DotProdInstructions.ShiftRight(v, counts);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> ShiftUpper(Vector256<uint> v, int count) => DotProdInstructions.ShiftUpper(v, count);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, int* offsets) => DotProdInstructions.Gather(at, offsets);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Gather(byte* at, int* offsets, int count) => DotProdInstructions.Gather(at, offsets, count);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Gather(float* table, Vector256<int> indices) => DotProdInstructions.Gather(table, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> ShuffleBytes(Vector256<byte> bytes, Vector256<byte> control) => DotProdInstructions.ShuffleBytes(bytes, control);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(byte* at) => DotProdInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Doubles(float* at) => DotProdInstructions.Doubles(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> Halves(byte* at) => DotProdInstructions.Halves(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(ushort* at) => DotProdInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(short* at) => DotProdInstructions.Widen(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(Vector128<sbyte> v) => DotProdInstructions.Widen(v);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Widen(Vector128<byte> v, bool signed) => DotProdInstructions.Widen(v, signed);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> ShuffleHalves(Vector256<byte> bytes, Vector256<byte> control) => DotProdInstructions.ShuffleHalves(bytes, control);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Broadcast(Vector256<float> v, int lane) => DotProdInstructions.Broadcast(v, lane);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<float> Permute(Vector256<float> v, Vector256<int> indices) => DotProdInstructions.Permute(v, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<int> Permute(Vector256<int> v, Vector256<int> indices) => DotProdInstructions.Permute(v, indices);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<uint> Pairs(Vector256<uint> word, int first) => DotProdInstructions.Pairs(word, first);
+
+        public static bool ShiftsByLane => DotProdInstructions.ShiftsByLane;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Prefetch(void* at) => DotProdInstructions.Prefetch(at);
+    }
+
+    /// <summary>
     /// Whether Vector256.FusedMultiplyAdd, for float32 and for float64, runs faster than ExactFused (the CPU fuses in
     /// hardware; else the runtime's own fused multiply-add is a scalar call a value): each timed once on the same values in
     /// 8 chains, the least of 5 rounds, the faster kept. Both give the same bits, so the choice changes speed alone. Made
@@ -1732,6 +1963,20 @@ internal sealed partial class CpuBackend
             {
                 ref sbyte xr = ref *(xq + (nint)i * k);
                 ref float sr = ref *(xs + (nint)i * rowTable);
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    if (with == Instructions.DotProd)
+                    {
+                        IntegerFour<DotProdInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xr, ref sr, k, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        IntegerFour<PortableInstructions>(ref codes, blockBytes, superBlocks, ref scales, ref xr, ref sr, k, out y0, out y1, out y2, out y3);
+                    }
+
+                    return;
+                }
+
                 switch (with)
                 {
                     case Instructions.Vnni:
@@ -1780,6 +2025,13 @@ internal sealed partial class CpuBackend
             {
                 ref sbyte xr = ref *(xq + (nint)i * k);
                 ref float sr = ref *(xs + (nint)i * rowTable);
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    return with == Instructions.DotProd
+                        ? IntegerOne<DotProdInstructions>(ref *row, codeOffset, blockBytes, superBlocks, ref scales, decode, ref xr, ref sr)
+                        : IntegerOne<PortableInstructions>(ref *row, codeOffset, blockBytes, superBlocks, ref scales, decode, ref xr, ref sr);
+                }
+
                 return with switch
                 {
                     Instructions.Vnni => IntegerOne<VnniInstructions>(ref *row, codeOffset, blockBytes, superBlocks, ref scales, decode, ref xr, ref sr),
@@ -2296,6 +2548,12 @@ internal sealed partial class CpuBackend
 
         public void Group(byte* stored, nint rowBytes, int c0, int count)
         {
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                GroupBy<PortableInstructions>(stored, rowBytes, c0, count);
+                return;
+            }
+
             switch (with)
             {
                 case Instructions.Portable:
@@ -2343,6 +2601,20 @@ internal sealed partial class CpuBackend
                 float* steps = scales + groups * ScaledNibbles.Group;
                 sbyte* xr = xq + i * xStride;
                 float* sr = xs + i * sStride;
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    if (with == Instructions.DotProd)
+                    {
+                        ScaledStepsFour<DotProdInstructions>(steps, scales, groups, xr, sr, xStride, sStride, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        ScaledStepsFour<PortableInstructions>(steps, scales, groups, xr, sr, xStride, sStride, out y0, out y1, out y2, out y3);
+                    }
+
+                    return;
+                }
+
                 switch (with)
                 {
                     case Instructions.Vnni:
@@ -2387,6 +2659,13 @@ internal sealed partial class CpuBackend
         {
             if (integer)
             {
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    return with == Instructions.DotProd
+                        ? ScaledIntegerOne<DotProdInstructions>(row, last, groups, full, plan, xq + i * xStride, xs + i * sStride)
+                        : ScaledIntegerOne<PortableInstructions>(row, last, groups, full, plan, xq + i * xStride, xs + i * sStride);
+                }
+
                 return with switch
                 {
                     Instructions.Vnni => ScaledIntegerOne<VnniInstructions>(row, last, groups, full, plan, xq + i * xStride, xs + i * sStride),
@@ -4140,7 +4419,7 @@ internal sealed partial class CpuBackend
             {
                 long* row = (long*)(stored + (c0 + c) * rowBytes);
                 byte* into = steps + c * rowBytes;
-                if (with == Instructions.Portable)
+                if (with == Instructions.Portable || AdvSimd.Arm64.IsSupported)
                 {
                     LongSteps<PortableInstructions>(row, into, k);
                 }
@@ -4159,6 +4438,20 @@ internal sealed partial class CpuBackend
                 byte* at = steps + ((nint)c * k + p0) * sizeof(long);
                 sbyte* xq = input.Codes + (nint)i * k + p0;
                 float* xs = input.Scales + i * table + p0 / LongBlock * 2;
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    if (with == Instructions.DotProdWide)
+                    {
+                        LongIntegerFour<WideDotProdInstructions>(at, xq, xs, k, table, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        LongIntegerFour<PortableInstructions>(at, xq, xs, k, table, p1 - p0, out y0, out y1, out y2, out y3);
+                    }
+
+                    return;
+                }
+
                 switch (with)
                 {
                     case Instructions.Vnni:
@@ -4190,6 +4483,13 @@ internal sealed partial class CpuBackend
         {
             if (integer)
             {
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    return with == Instructions.DotProdWide
+                        ? LongIntegerOne<WideDotProdInstructions>((long*)row, input.Codes + (nint)i * k, input.Scales + i * table, k)
+                        : LongIntegerOne<PortableInstructions>((long*)row, input.Codes + (nint)i * k, input.Scales + i * table, k);
+                }
+
                 return with == Instructions.Vnni
                     ? LongIntegerOne<VnniInstructions>((long*)row, input.Codes + (nint)i * k, input.Scales + i * table, k)
                     : LongIntegerOne<PortableInstructions>((long*)row, input.Codes + (nint)i * k, input.Scales + i * table, k);
@@ -4822,7 +5122,7 @@ internal sealed partial class CpuBackend
             {
                 byte* row = stored + (c0 + c) * rowBytes;
                 float* into = steps + (nint)c * groups * TwoBitStepFloats;
-                if (with == Instructions.Portable)
+                if (with == Instructions.Portable || AdvSimd.Arm64.IsSupported)
                 {
                     TwoBitSteps<PortableInstructions>(row, plan, blocks, into);
                 }
@@ -4840,6 +5140,20 @@ internal sealed partial class CpuBackend
             if (integer)
             {
                 float* at = steps + (nint)c * groups * TwoBitStepFloats;
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    if (with == Instructions.DotProd)
+                    {
+                        TwoBitIntegerFour<DotProdInstructions>(at, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        TwoBitIntegerFour<PortableInstructions>(at, groups, xq + i * xStride, xs + i * sStride, xStride, sStride, out y0, out y1, out y2, out y3);
+                    }
+
+                    return;
+                }
+
                 switch (with)
                 {
                     case Instructions.Vnni:
@@ -4872,6 +5186,13 @@ internal sealed partial class CpuBackend
         {
             if (integer)
             {
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    return with == Instructions.DotProd
+                        ? TwoBitIntegerOne<DotProdInstructions>(row, plan, blocks, xq + i * xStride, xs + i * sStride)
+                        : TwoBitIntegerOne<PortableInstructions>(row, plan, blocks, xq + i * xStride, xs + i * sStride);
+                }
+
                 return with switch
                 {
                     Instructions.Vnni => TwoBitIntegerOne<VnniInstructions>(row, plan, blocks, xq + i * xStride, xs + i * sStride),
@@ -5454,7 +5775,7 @@ internal sealed partial class CpuBackend
                 ref float into = ref MemoryMarshal.GetReference(table);
                 for (int b = 0; b < blocks; b++)
                 {
-                    if (with == Instructions.Portable)
+                    if (with == Instructions.Portable || AdvSimd.Arm64.IsSupported)
                     {
                         Block<PortableInstructions>(ref Unsafe.Add(ref first, b * super.Bytes), ref Unsafe.Add(ref into, b * 16));
                     }
@@ -5601,7 +5922,7 @@ internal sealed partial class CpuBackend
                 byte* row = stored + (c0 + c) * rowBytes;
                 for (int b = 0; b < superBlocks; b++)
                 {
-                    if (with == Instructions.Portable)
+                    if (with == Instructions.Portable || AdvSimd.Arm64.IsSupported)
                     {
                         blocks.Scales<PortableInstructions>(row + b * blocks.Bytes, table + c * rowTable + b * 16);
                     }
@@ -5622,6 +5943,20 @@ internal sealed partial class CpuBackend
             {
                 sbyte* xr = xq + (nint)i * k;
                 float* sr = xs + (nint)i * xsRow;
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    if (with == Instructions.DotProd)
+                    {
+                        SixIntegerFour<DotProdInstructions>(row, blocks, superBlocks, scales, xr, sr, k, xsRow, out y0, out y1, out y2, out y3);
+                    }
+                    else
+                    {
+                        SixIntegerFour<PortableInstructions>(row, blocks, superBlocks, scales, xr, sr, k, xsRow, out y0, out y1, out y2, out y3);
+                    }
+
+                    return;
+                }
+
                 switch (with)
                 {
                     case Instructions.Vnni:
@@ -5658,6 +5993,13 @@ internal sealed partial class CpuBackend
         {
             if (integer)
             {
+                if (AdvSimd.Arm64.IsSupported)
+                {
+                    return with == Instructions.DotProd
+                        ? SixIntegerOne<DotProdInstructions>(row, blocks, superBlocks, scales, xq + (nint)i * k, xs + (nint)i * xsRow)
+                        : SixIntegerOne<PortableInstructions>(row, blocks, superBlocks, scales, xq + (nint)i * k, xs + (nint)i * xsRow);
+                }
+
                 return with switch
                 {
                     Instructions.Vnni => SixIntegerOne<VnniInstructions>(row, blocks, superBlocks, scales, xq + (nint)i * k, xs + (nint)i * xsRow),
@@ -7714,7 +8056,7 @@ internal sealed partial class CpuBackend
                     int groups = plan.Groups(k);
                     var codes = ArrayPool<sbyte>.Shared.Rent(m * groups * plan.GroupValues);
                     var lanes = ArrayPool<float>.Shared.Rent(m * groups * plan.LaneFloats);
-                    if (InstructionsOf(lane) == Instructions.Portable)
+                    if (InstructionsOf(lane) == Instructions.Portable || AdvSimd.Arm64.IsSupported)
                     {
                         RoundDescribedRows<PortableInstructions>(plan, x, codes, lanes, m, k);
                     }
@@ -7803,7 +8145,7 @@ internal sealed partial class CpuBackend
                 return;
             }
 
-            if (with == Instructions.Portable)
+            if (with == Instructions.Portable || AdvSimd.Arm64.IsSupported)
             {
                 GroupBy<PortableInstructions>(stored, rowBytes, c0, count);
             }
@@ -7828,6 +8170,22 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public void Four(byte* row, int c, int i, int p0, int p1, out float y0, out float y1, out float y2, out float y3)
         {
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                switch (with)
+                {
+                    case Instructions.DotProd:
+                        FourBy<DotProdInstructions>(row, c, i, p0, p1, out y0, out y1, out y2, out y3);
+                        return;
+                    case Instructions.DotProdWide:
+                        FourBy<WideDotProdInstructions>(row, c, i, p0, p1, out y0, out y1, out y2, out y3);
+                        return;
+                    default:
+                        FourBy<PortableInstructions>(row, c, i, p0, p1, out y0, out y1, out y2, out y3);
+                        return;
+                }
+            }
+
             switch (with)
             {
                 case Instructions.Vnni:
@@ -7874,6 +8232,16 @@ internal sealed partial class CpuBackend
                 return Single(row, i);
             }
 
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                return with switch
+                {
+                    Instructions.DotProd => DescribedIntegerSteps<DotProdInstructions>(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow),
+                    Instructions.DotProdWide => DescribedIntegerSteps<WideDotProdInstructions>(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow),
+                    _ => DescribedIntegerSteps<PortableInstructions>(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow),
+                };
+            }
+
             return with switch
             {
                 Instructions.Vnni => DescribedIntegerSteps<VnniInstructions>(plan, steps + (nint)c * rowSteps, groups, xq + i * xRow, lanes + i * lRow),
@@ -7883,12 +8251,25 @@ internal sealed partial class CpuBackend
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public float Single(byte* row, int i) => with switch
+        public float Single(byte* row, int i)
         {
-            Instructions.Vnni => SingleBy<VnniInstructions>(row, i),
-            Instructions.Avx2 => SingleBy<Avx2Instructions>(row, i),
-            _ => SingleBy<PortableInstructions>(row, i),
-        };
+            if (AdvSimd.Arm64.IsSupported)
+            {
+                return with switch
+                {
+                    Instructions.DotProd => SingleBy<DotProdInstructions>(row, i),
+                    Instructions.DotProdWide => SingleBy<WideDotProdInstructions>(row, i),
+                    _ => SingleBy<PortableInstructions>(row, i),
+                };
+            }
+
+            return with switch
+            {
+                Instructions.Vnni => SingleBy<VnniInstructions>(row, i),
+                Instructions.Avx2 => SingleBy<Avx2Instructions>(row, i),
+                _ => SingleBy<PortableInstructions>(row, i),
+            };
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         private float SingleBy<TI>(byte* row, int i) where TI : struct, IInstructions
