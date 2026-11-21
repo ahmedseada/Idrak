@@ -17,9 +17,13 @@ internal sealed unsafe partial class CudaBackend
     private static bool WrittenTaken(ElementType type) =>
         ProductRoutes.Current != ProductRoute.Measured || ProductRoutes.Lanes != RouteLanes.Described || DescribedOf(type) is null;
 
-    // A few rows' group under the measured route runs the parts each product's own lane takes (RoutedLane): one launch where
-    // every product takes the same lane that has one (the written few-row kernels' Grouped, the described rows product's
-    // group: each output as its own launch computes it), else each product by its own lane; other routes, the written one.
+    // A few rows' group under the measured route: of the group's one launches (the written few-row kernels' Grouped: 1; the
+    // described rows product's by each warp split: DescribedFusedLane + split; each output as its own launch by that lane
+    // computes it) and the split launches (each product by its own measured lane: 0), the fastest measured once a shape on
+    // the real operands, cold as the products are (Tune; the reference is the grouped launch of the first product's own
+    // lane, where it has one). Each product's own choice alone split q6_k's queries, keys and values and its gate and up
+    // apart, slower than one launch (305 tokens a second against 334 with the described lane alone). Other routes, the
+    // written one.
     private bool FewMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
     {
         var type = products[0].Values.ElementType;
@@ -28,16 +32,109 @@ internal sealed unsafe partial class CudaBackend
             return Grouped(x, m, k, products, null, 0);
         }
 
-        int written = type.Super is not null || type.Grid is not null ? SuperFewLane : 0;
-        if (EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0))
+        Span<int> candidates = stackalloc int[8];
+        int count = GroupCandidates(products, m, k, candidates);
+        var key = GroupKey(type, m, k, products);
+        int reference = GroupReference(x, m, k, products, candidates[..count]);
+        if (!TryTuned(key, candidates[..count], reference, out int lane))
         {
-            return true;
+            var array = products.ToArray();                                // measured once a shape
+            lane = Tune(key, candidates[..count], reference, c => GroupLane(c, x, m, k, array), cold: true);
+        }
+
+        if (_groupsSaid.TryAdd(key, 0))
+        {
+            SayStored(type, m, products[0].Columns, k, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lane switch
+            {
+                0 => "each product by its own lane",
+                1 => "written kernels' one launch",
+                _ => $"described lane's one launch ({1 << (lane - DescribedFusedLane)} warps a group of 8 rows)",
+            }} (of {count} lanes)"), string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"a group of {products.Length} sharing x ({string.Join(", ", products.ToArray().Select(p => p.Columns))} outputs)"));
+        }
+
+        return GroupLane(lane, x, m, k, products);
+    }
+
+    // The group shapes this process has recorded (ProductRoutes.Chose).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<TuneKey, byte> _groupsSaid = new();
+
+    // A number for each type, for the groups' keys.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> FewGroupIds = new(StringComparer.Ordinal);
+
+    private static TuneKey GroupKey(ElementType type, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) =>
+        new(TuneOp.ProductRoute, 7000 + FewGroupIds.GetOrAdd(type.Name, static _ => FewGroupIds.Count), m, k, products[0].Columns, products.Length > 1 ? products[1].Columns : 0,
+            products.Length > 2 ? products[2].Columns : 0, 1 + (int)ProductRoutes.Lanes);
+
+    // The group's candidates: the split launches (0) first, then each one launch the setting takes that reads the group
+    // (all of one type, all with a scale an output row or none).
+    private int GroupCandidates(ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, int m, int k, Span<int> into)
+    {
+        int count = 0;
+        into[count++] = 0;
+        var type = products[0].Values.ElementType;
+        bool scaled = products[0].Scales is not null;
+        if (products.Length is < 2 or > 3 || m is <= 0 or > 8 || k <= 0)
+        {
+            return count;
+        }
+
+        foreach (var (values, scales, _, columns) in products)
+        {
+            if (values.ElementType != type || scales is not null != scaled || columns <= 0)
+            {
+                return count;
+            }
+        }
+
+        if (WrittenTaken(type) && WrittenFuses(type, scaled, k))
+        {
+            into[count++] = 1;
+        }
+
+        if (DescribedTaken(type) && DescribedOf(type) is { } plan && DescribedRow(plan, type, k, out _, out int align) && (long)m * k <= int.MaxValue / 2
+            && Described(plan, align, k % 2 == 0) is not null)
+        {
+            for (int split = 3; split >= 0; split--)
+            {
+                into[count++] = DescribedFusedLane + split;
+            }
+        }
+
+        return count;
+    }
+
+    // The group's reference: the one launch of the first product's own lane (RoutedLane) where the group has it, else the
+    // split launches.
+    private int GroupReference(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, ReadOnlySpan<int> candidates)
+    {
+        if (candidates.Length == 1)
+        {
+            return 0;
         }
 
         var first = products[0];
-        return RoutedLane(x, first.Values, first.Scales, first.Output, m, first.Columns, k) is int rows and >= DescribedRowsLane and < DescribedRowsLane + 4
-            && EachTakes(x, m, k, products, rows) && RunDescribedMany(x, m, k, products, rows - DescribedRowsLane)
-            || EachRouted(x, m, k, products);
+        int own = RoutedLane(x, first.Values, first.Scales, first.Output, m, first.Columns, k) ?? -1;
+        int grouped = own is 0 or SuperFewLane ? 1 : own is >= DescribedRowsLane and < DescribedRowsLane + 4 ? DescribedFusedLane + own - DescribedRowsLane : 0;
+        return candidates.Contains(grouped) ? grouped : 0;
+    }
+
+    // One lane of a group: 0 each product by its own measured lane, 1 the written kernels' one launch, DescribedFusedLane +
+    // split the described rows product's one launch.
+    private bool GroupLane(int lane, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) => lane switch
+    {
+        1 => Grouped(x, m, k, products, null, 0),
+        >= DescribedFusedLane => RunDescribedMany(x, m, k, products, lane - DescribedFusedLane),
+        _ => EachRouted(x, m, k, products),
+    };
+
+    /// <summary>Tests: the lane a few rows' group settled on (GroupLane's: 0 each product by its own lane), or null where none is measured yet.</summary>
+    internal int? StoredGroupChoice(Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products)
+    {
+        Span<int> candidates = stackalloc int[8];
+        int count = GroupCandidates(products, m, k, candidates);
+        int reference = GroupReference(x, m, k, products, candidates[..count]);
+        return TryTuned(GroupKey(products[0].Values.ElementType, m, k, products), candidates[..count], reference, out int lane) ? lane : null;
     }
 
     // Each product of a group by its own measured lane (StoredRouted); false where one is not taken so (the caller runs them all).
@@ -181,7 +278,9 @@ internal sealed unsafe partial class CudaBackend
     // followed by the pass of its own (GatedActivation, AddRmsNormAffine: 0) against each fused pass the route takes: the
     // written kernels' (1, where the setting takes them and they read the type) and the described lane's by each warp split
     // of its rows product (DescribedFusedLane + split, where the setting takes the described lane and it reads the type), and
-    // a fused one runs only where it is clearly faster (Tune's fallback is the composition). A number for each type, for the keys.
+    // a fused one runs only where it is clearly faster (Tune's fallback is the composition), timed cold as the few-row products are
+    // (a decoding step reads each weight from memory; warm timings of these 10 us passes chose other splits run to run). A
+    // number for each type, for the keys.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> EpilogueIds = new(StringComparer.Ordinal);
 
     // The described lane's fused passes: DescribedFusedLane + split (log2 of the warps a group of 8 rows takes, 0 - 3).
@@ -263,7 +362,7 @@ internal sealed unsafe partial class CudaBackend
         var key = EpilogueKey(0, activation, array[0].Values.ElementType, m, n, k);
         if (!TryTuned(key, candidates[..count], 0, out int lane))
         {
-            lane = Tune(key, candidates[..count], 0, c => GatedLane(c, activation, x, m, k, array, hidden));
+            lane = Tune(key, candidates[..count], 0, c => GatedLane(c, activation, x, m, k, array, hidden), cold: true);
         }
 
         SayEpilogue(key, 0, array[0].Values.ElementType, m, n, k, lane, count);
@@ -372,7 +471,7 @@ internal sealed unsafe partial class CudaBackend
         var key = EpilogueKey(1, scales is null ? 0 : 1, weight.ElementType, m, n, k);
         if (!TryTuned(key, candidates[..count], 0, out int lane))
         {
-            lane = Tune(key, candidates[..count], 0, c => AddNormLane(c, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset));
+            lane = Tune(key, candidates[..count], 0, c => AddNormLane(c, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset), cold: true);
         }
 
         SayEpilogue(key, 1, weight.ElementType, m, n, k, lane, count);

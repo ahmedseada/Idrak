@@ -22,7 +22,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
-        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K, and under the measured route each product by its own lane, the described lane and the written kernels measured and the described lane alone, Q6_K, int64, float64, int2 and mxfp4 too; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once, with the described lane and the written kernels measured and with the described lane alone) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
+        ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K, and under the measured route the group's one launches, the written kernels' and the described lane's by each warp split, measured against each product by its own lane, the described lane and the written kernels measured and the described lane alone, Q6_K, int64, float64, int2 and mxfp4 too, each output the bits of its product by the lane the group settled on; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once, with the described lane and the written kernels measured and with the described lane alone) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
         ("product routes: the fused epilogues of stored weights (CUDA, few rows, the measured route with every lane): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization, by each fused lane (the written kernels' where they read the type, the described lane's by each warp split), match the same lane's own products composed with them, and through the dispatchers (the lanes competing, no storage converted) the composition or fused lane the shape settled on matches its own products (bfloat16, int8, q4_0, Q4_K, Q6_K, int2, mxfp4, int64 with a scale an output row, float64; 1, 3 and 8 rows; within 1e-5 of the values' magnitude)", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
@@ -1337,11 +1337,17 @@ internal abstract partial class DesktopTests : Tests
                                 continue;
                             }
 
+                            // CUDA's few rows: the group's measured lane (each product by its own, or one launch of a lane: then each
+                            // output that lane's product's bits).
+                            int? groupLane = device.Backend is Idrak.Gpu.Cuda.CudaBackend cuda && m <= 8 ? cuda.StoredGroupChoice(input.Storage, m, k, products) : null;
                             for (int j = 0; j < count; j++)
                             {
-                                float[] together = outputs[j].ToArray(), alone = RouteProduct(weights[j], x, m, device);
+                                float[] together = outputs[j].ToArray();
+                                float[] alone = groupLane is { } lane && lane > 0 && device.Backend is Idrak.Gpu.Cuda.CudaBackend own
+                                    ? OwnLaneProduct(own, weights[j], x, m, Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(weights[j].Type, lane), device)
+                                    : RouteProduct(weights[j], x, m, device);
                                 int differs = Enumerable.Range(0, alone.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(together[i]) != BitConverter.SingleToInt32Bits(alone[i]), -1);
-                                Check(differs < 0, differs < 0 ? "" : $"{device}: {format}, {count} weights, {m} rows: weight {j}'s output {differs} is {together[differs]:R} grouped, {alone[differs]:R} alone");
+                                Check(differs < 0, differs < 0 ? "" : $"{device}: {format}, {count} weights, {m} rows (group lane {groupLane?.ToString() ?? "own"}): weight {j}'s output {differs} is {together[differs]:R} grouped, {alone[differs]:R} alone");
                             }
                         }
                     }
@@ -1355,6 +1361,17 @@ internal abstract partial class DesktopTests : Tests
                 }
             }
         });
+    }
+
+    // A stored weight's product by one of CUDA's measured-route lanes (CudaBackend.StoredRoutedLane), on the device.
+    private static float[] OwnLaneProduct(Idrak.Gpu.Cuda.CudaBackend cuda, StoredWeight weight, float[] x, int m, int lane, Device device)
+    {
+        using var scope = new TensorScope();
+        var input = Tensor.From(x, [m, weight.Rows], device);
+        var y = Tensor.Empty([m, weight.Columns], device);
+        Check(cuda.StoredRoutedLane(lane, input.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, weight.Columns, weight.Rows),
+            $"{device}: {weight.Type.Name}: product lane {lane} did not run");
+        return y.ToArray();
     }
 
     private static void ProductRoutesEpilogues(Device device)
@@ -1529,10 +1546,21 @@ internal abstract partial class DesktopTests : Tests
                         string what = $"{format}, {m} rows, dispatched, activation {kind}";
                         var h = Gated(gate, up, x, m, kind, null, what);
                         int chosen = cuda.StoredEpilogueChoice(0, kind, gate.Type, gate.Scales is not null, m, n, k) ?? 0;
-                        int productLane = Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, chosen);
+                        if (chosen == 0)
+                        {
+                            // The composition: the pair's products as their group settled on (each by its own lane, or one
+                            // launch of a lane), then the pass.
+                            using var scope = new TensorScope();
+                            var input = Tensor.From(x, [m, k], device);
+                            (Storage, Storage?, Storage, int)[] pair = [(gate.StoredValues.Storage, gate.Scales?.Storage, Tensor.Empty([m, n], device).Storage, n),
+                                (up.StoredValues.Storage, up.Scales?.Storage, Tensor.Empty([m, n], device).Storage, n)];
+                            chosen = -(cuda.StoredGroupChoice(input.Storage, m, k, pair) ?? 0);
+                        }
+
+                        int productLane = Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, Math.Abs(chosen));
                         float[] g = chosen == 0 ? RouteProduct(gate, x, m, device) : LaneProduct(gate, x, m, productLane);
                         float[] u = chosen == 0 ? RouteProduct(up, x, m, device) : LaneProduct(up, x, m, productLane);
-                        CheckGated(h, g, u, kind, $"{what} (lane {chosen})");
+                        CheckGated(h, g, u, kind, $"{what} ({(chosen > 0 ? $"fused lane {chosen}" : $"composed, group lane {-chosen}")})");
                     }
 
                     {
