@@ -602,11 +602,18 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    // Stored weights (StoredWeight): the generic product under the generic and measured routes, for a description these
-    // kernels widen with a scale per output row or none; the host fallback otherwise, as today.
+    // Stored weights (StoredWeight): under the measured route only lanes that never widen the weight (StoredRouted: the
+    // described lane, the written kernels that read the type as stored), where one takes it; the generic product under the
+    // generic route (the described lane for a type no generic kernel widens), and under the measured route for a type
+    // neither reads, for a description these kernels widen with a scale per output row or none; the host fallback otherwise.
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
     {
         bool perRow = !layout.HasScales || layout is { BlockRows: 1, ScaleColumns: 1 } && layout.BlockColumns >= k;
+        if (ProductRoutes.Current == ProductRoute.Measured && zeros is null && perRow && StoredRouted(x, weight, scales, y, m, n, k))
+        {
+            return;
+        }
+
         if (ProductRoutes.Current != ProductRoute.Name && zeros is null && scales is null && (weight.ElementType.Super is not null || weight.ElementType.Grid is not null)
             && StoredSuper(x, weight, y, m, n, k))
         {
@@ -619,19 +626,24 @@ internal sealed unsafe partial class CudaBackend
             return;
         }
 
+        if (ProductRoutes.Current == ProductRoute.Generic && zeros is null && perRow && DescribedOf(weight.ElementType) is { } plan
+            && RunDescribedRows(plan, x, weight, scales, y, m, n, k))
+        {
+            return;
+        }
+
         base.StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
     }
 
     // The types a load keeps as stored for this device (BackendCapabilities.StoredFormats): under the generic and measured
-    // routes those the generic kernels widen that carry no scales of their own (block formats, floats); none under the
-    // named route (today's). Read when asked, so types registered after the device started (ggml's) count.
-    private sealed class DescribedStoredFormats : IReadOnlySet<string>
+    // routes those the generic kernels widen that carry no scales of their own (block formats, floats), and every type the
+    // described lane reads where its kernels load (the device reaches their target); none under the named route (today's).
+    // Read when asked, so types registered after the device started (ggml's) count.
+    private sealed class DescribedStoredFormats(bool described) : IReadOnlySet<string>
     {
-        public static readonly DescribedStoredFormats Instance = new();
-
         public bool Contains(string item) => ProductRoutes.Current != ProductRoute.Name && ElementTypes.Find(item) is { } type
             && ((type.IsBlock || type.Float is not null) && DecodeOf(type) is not null || type.Super is { } super && PtxKernels.SuperFits(super)
-                || type.Grid is { } grid && PtxKernels.GridFits(grid));
+                || type.Grid is { } grid && PtxKernels.GridFits(grid) || described && DescribedOf(type) is not null);
 
         private HashSet<string> Now() =>
             new(ElementTypes.All.Where(t => Contains(t.Name)).Select(t => t.Name), StringComparer.OrdinalIgnoreCase);
@@ -654,6 +666,445 @@ internal sealed unsafe partial class CudaBackend
 
         public bool SetEquals(IEnumerable<string> other) => Now().SetEquals(other);
     }
+
+    // ------------------------------------------------------------------ the described lane (any type read from its description)
+
+    // Each type's plan once (null: the described lane does not read it; DescribedReason says why).
+    private static readonly ConcurrentDictionary<ElementType, DescribedPlan?> DescribedPlans = new();
+
+    /// <summary>The described lane's plan of <paramref name="type"/> (its description compiled once), or null where it does not read the type.</summary>
+    internal static DescribedPlan? DescribedOf(ElementType type) =>
+        DescribedPlans.GetOrAdd(type, static t => t.Description is { } d ? DescribedPlan.Of(d, out _) : null);
+
+    /// <summary>Why the described lane does not read <paramref name="type"/>, or null where it does (diagnostics, tests).</summary>
+    internal static string? DescribedReason(ElementType type) =>
+        type.Description is not { } d ? "the type has no description" : DescribedPlan.Of(d, out string? reason) is null ? reason : null;
+
+    // A plan's kernels for rows of one alignment: the rows products (by DescribedRowCounts), the tensor-core product (zero
+    // where the module has none), the widening of x (a wide plan's).
+    private sealed class DescribedFunctions(Dictionary<string, IntPtr> kernels, DescribedPlan plan, int align, bool pairs)
+    {
+        public IntPtr[] Rows { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Select(r => kernels[PtxKernels.DescribedRowsName(plan, align, pairs, r)])];
+
+        public IntPtr Mma { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedMmaName(plan, align));
+
+        public IntPtr Widen { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedWidenName(plan, align, pairs));
+    }
+
+    private readonly ConcurrentDictionary<(DescribedPlan, int, bool), DescribedFunctions?> _described = new();
+
+    // A wide plan's x widened to float64 (a call's, in queue order).
+    private readonly KeptScratch _describedWide = new();
+
+    private DescribedFunctions? Described(DescribedPlan plan, int align, bool pairs) =>
+        _described.TryGetValue((plan, align, pairs), out var functions) ? functions : LoadDescribed(plan, align, pairs);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private DescribedFunctions? LoadDescribed(DescribedPlan plan, int align, bool pairs)
+    {
+        lock (_typedLock)
+        {
+            if (_described.TryGetValue((plan, align, pairs), out var known))
+            {
+                return known;
+            }
+
+            DescribedFunctions? functions = null;
+            if (BelowTarget(PtxKernels.TensorCoreTarget) is { } below)
+            {
+                TypedUnavailableReason = below;
+            }
+            else
+            {
+                var (names, source) = PtxKernels.DescribedModule(plan, align, pairs);
+                var kernels = LoadDynamicModule(PtxKernels.DescribedModuleName(plan, align, pairs), names, source, name => DescribedShared(plan, align, pairs, name), out string? reason);
+                if (kernels is null)
+                {
+                    TypedUnavailableReason = reason;
+                }
+                else
+                {
+                    functions = new DescribedFunctions(kernels, plan, align, pairs);
+                }
+            }
+
+            _described[(plan, align, pairs)] = functions;
+            return functions;
+        }
+    }
+
+    // A described kernel's dynamic shared memory, by its name.
+    private static int DescribedShared(DescribedPlan plan, int align, bool pairs, string name)
+    {
+        if (name == PtxKernels.DescribedMmaName(plan, align))
+        {
+            return PtxKernels.DescribedMmaShared(plan, align);
+        }
+
+        foreach (int rows in PtxKernels.DescribedRowCounts)
+        {
+            if (name == PtxKernels.DescribedRowsName(plan, align, pairs, rows))
+            {
+                return PtxKernels.DescribedRowsShared(plan, align, rows);
+            }
+        }
+
+        return 0;
+    }
+
+    // The bytes of a row of k values and the alignment its pattern blocks start at (16 at most): what a plan's kernels are
+    // compiled for. False where a row passes 2 GB.
+    private static bool DescribedRow(DescribedPlan plan, ElementType type, int k, out int rowBytes, out int align)
+    {
+        long bytes = type.ByteCount(k);
+        rowBytes = (int)Math.Min(bytes, int.MaxValue);
+        align = DescribedPlan.Gcd(16, DescribedPlan.Gcd(rowBytes, plan.PatternBytes));
+        return bytes <= int.MaxValue;
+    }
+
+    // The described lane's rows product: y [m, n] = x [m, k] · Wᵀ (× a scale an output row), any row count: the variant of
+    // the fewest rows that hold m, past 16 the grid's y over chunks of 16; a wide plan's x widened to float64 first.
+    private bool RunDescribedRows(DescribedPlan plan, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k)
+    {
+        if (!DescribedRow(plan, w.ElementType, k, out int rowBytes, out int align) || (long)m * k > int.MaxValue / 2
+            || Described(plan, align, k % 2 == 0) is not { } functions)
+        {
+            return false;
+        }
+
+        if (m == 0 || n == 0)
+        {
+            return true;
+        }
+
+        if (k == 0)
+        {
+            Fill(y, m * n, 0f);
+            return true;
+        }
+
+        var counts = PtxKernels.DescribedRowCounts;
+        int variant = counts.Length - 1;
+        for (int i = 0; i < counts.Length; i++)
+        {
+            if (m <= counts[i])
+            {
+                variant = i;
+                break;
+            }
+        }
+
+        int rows = counts[variant];
+        var input = x;
+        if (plan.Wide)
+        {
+            input = _describedWide.Get(this, 2 * m * k);
+            Launch(functions.Widen, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(input), U(m * k));
+        }
+
+        t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
+        Launch(functions.Rows[variant], (uint)((n + PtxKernels.DescribedRowsBlock - 1) / PtxKernels.DescribedRowsBlock), (uint)((m + rows - 1) / rows),
+            PtxKernels.DescribedRowsThreads, 1, P(input), P(w), rowScales is null ? 0UL : P(rowScales), P(y), U(m), U(n), U(k), U(rowBytes));
+        return true;
+    }
+
+    // The k splits the described tensor-core product is measured with.
+    private static readonly int[] DescribedSplits = [1, 2, 4, 8];
+
+    // The values x's bfloat16 rows are padded to for the tensor-core product: whole spans of W and the native kind's 128.
+    private static int DescribedPadded(DescribedPlan plan, int k)
+    {
+        int span = PtxKernels.DescribedMmaSpan(plan), unit = span / DescribedPlan.Gcd(span, 128) * 128;
+        return (k + unit - 1) / unit * unit;
+    }
+
+    // Whether the described tensor-core product takes the product: a bfloat16 run, prompt-sized, a float32 plan, and the
+    // kernels and x's packing load here.
+    private bool DescribedMmaTakes(DescribedPlan plan, ElementType type, int m, int k) =>
+        m > PtxKernels.TypedGemvRows[^1] && BFloat16Products && !plan.Wide && (long)m * DescribedPadded(plan, k) <= int.MaxValue
+        && DescribedRow(plan, type, k, out _, out int align) && Described(plan, align, true) is { Mma: not 0 }
+        && NativePack(DecodeOf(ElementType.Float32)!, PtxKernels.NativeKind.BF16) is not null;
+
+    // The described tensor-core product, k split in up to `splits` parts (each whole spans of W; their sums added in order):
+    // x packed to bfloat16 rows once (shared by a group's products, SharedPack), W read as stored.
+    private bool RunDescribedMma(DescribedPlan plan, int splits, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k)
+    {
+        if (!DescribedMmaTakes(plan, w.ElementType, m, k) || !DescribedRow(plan, w.ElementType, k, out int rowBytes, out int align)
+            || Described(plan, align, true) is not { } functions || NativePack(DecodeOf(ElementType.Float32)!, PtxKernels.NativeKind.BF16) is not { } pack)
+        {
+            return false;
+        }
+
+        if (n == 0)
+        {
+            return true;
+        }
+
+        int kp = DescribedPadded(plan, k), spans = kp / PtxKernels.DescribedMmaSpan(plan);
+        int per = (spans + splits - 1) / splits, used = (spans + per - 1) / per;
+        var shared = kp == PtxKernels.NativePadded(k) ? SharedPack(x, m, k, PtxKernels.NativeKind.BF16) : null;
+        var px = shared ?? Allocate(m * kp / 2, zeroed: false);
+        try
+        {
+            if (shared is null)
+            {
+                LaunchPack(pack.X, m, kp, P(x), P(px), U(m), U(k), U(kp));
+            }
+
+            var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
+            t_sharedBytes = (uint)PtxKernels.DescribedMmaShared(plan, align);
+            Launch(functions.Mma, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
+                (uint)used, PtxKernels.DescribedMmaThreads, 1, P(px), P(w), rowScales is null ? 0UL : P(rowScales), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+            if (used > 1)
+            {
+                var sum = Typed(DecodeOf(ElementType.Float32)!)!.Sum;
+                Launch(sum, (uint)((m * n + 255) / 256), 1, 256, 1, P(target), P(y), U(m * n), U(used));
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (shared is null)
+            {
+                px.Release();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tests: the described lane run directly: the rows product (<paramref name="mma"/> false; any row count) or the
+    /// tensor-core product, k split in <paramref name="splits"/> (a bfloat16 run's prompts). False where it does not take the
+    /// product (the type's description it does not read: DescribedReason).
+    /// </summary>
+    internal bool StoredDescribed(ElementType type, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, bool mma = false, int splits = 1) =>
+        DescribedOf(type) is { } plan && (mma ? RunDescribedMma(plan, splits, x, weight, scales, y, m, n, k) : RunDescribedRows(plan, x, weight, scales, y, m, n, k));
+
+    // The measured route's lanes beyond the written ones (0 - 6 above): the written super-block or grid few-row kernel, the
+    // described rows product, the described tensor-core product (k split in 1, 2, 4 or 8).
+    private const int SuperFewLane = 20, DescribedRowsLane = 30, DescribedMmaLane = 31;
+
+    private static readonly ConcurrentDictionary<string, int> RoutedIds = new(StringComparer.Ordinal);
+
+    private readonly ConcurrentDictionary<(string, int, int, int, int, bool), byte> _routedSaid = new();
+
+    /// <summary>
+    /// The measured route's product of a stored weight (IDRAK_ROUTES=measured): only lanes that never widen the weight (no
+    /// copy of its values in float32 or bfloat16, at load or a call, in memory or in shared memory): the described lane
+    /// where it reads the type and ProductRoutes.Lanes takes it, the written kernels that read the type as stored where the
+    /// setting takes them (the few-row kernels, decoding in registers; a 16-bit float's tensor-core kernels, its values as
+    /// they are the operands); the fastest at the shape measured once on the real operands (Tune). With the written kernels
+    /// alone and none for the shape, the described lane, never a widening one. False where no lane takes the product (a type
+    /// the described lane does not read and no written kernel reads as stored at the shape: today's lanes then).
+    /// </summary>
+    private bool StoredRouted(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
+    {
+        if (RoutedLane(x, weight, scales, y, m, n, k) is not { } lane)
+        {
+            return false;
+        }
+
+        return m == 0 || n == 0 || RunRouted(lane, DescribedOf(weight.ElementType), x, weight, scales, y, m, n, k);
+    }
+
+    // The measured route's lane of a stored weight's product at the shape (StoredRouted), measured once on the real operands
+    // (writing y, which the caller writes again), or null where no lane takes it. Recorded (ProductRoutes.Chose) once a shape.
+    private int? RoutedLane(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
+    {
+        var type = weight.ElementType;
+        var lanes = ProductRoutes.Lanes;
+        var plan = DescribedOf(type);
+        bool few = m <= PtxKernels.TypedGemvRows[^1];
+        Span<int> candidates = stackalloc int[16];
+        int count = 0;
+        bool describedFirst = plan is not null && lanes != RouteLanes.Written;
+        if (describedFirst)
+        {
+            count = AddDescribed(plan!, type, m, k, candidates);
+        }
+
+        if (!(plan is not null && lanes == RouteLanes.Described))
+        {
+            count += AddWritten(type, scales, m, k, candidates[count..]);
+        }
+
+        if (count == 0 && plan is not null && !describedFirst)
+        {
+            count = AddDescribed(plan, type, m, k, candidates);
+        }
+
+        if (count == 0)
+        {
+            return null;
+        }
+
+        int lane = candidates[0];
+        if (count > 1 && m > 0 && n > 0)
+        {
+            var key = new TuneKey(TuneOp.ProductRoute, 6000 + RoutedIds.GetOrAdd(type.Name, static _ => RoutedIds.Count), few ? m : TuneSizes.Class(m), n, k, count, (int)lanes,
+                BFloat16Products ? 1 : 0);
+            if (!TryTuned(key, candidates[..count], candidates[0], out lane))
+            {
+                lane = MeasureRouted(key, candidates[..count].ToArray(), x, weight, scales, y, m, n, k, few);
+            }
+        }
+
+        if (_routedSaid.TryAdd((type.Name, few ? m : TuneSizes.Class(m), n, k, (int)lanes, BFloat16Products), 0))
+        {
+            SayStored(type, m, n, k, $"{RoutedName(lane)}{(count > 1 ? $" (of {count} lanes)" : " (the only lane)")}");
+        }
+
+        return lane;
+    }
+
+    // Whether every product of a group takes the lane `lane` alone under the measured route (RoutedLane): then the written
+    // kernels' one launch over the group gives each product's own bits.
+    private bool EachTakes(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products, int lane)
+    {
+        foreach (var (values, scales, output, columns) in products)
+        {
+            if (RoutedLane(x, values, scales, output, m, columns, k) != lane)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The described lane's candidates: the rows product; for a bfloat16 run's prompts, the tensor-core product first, by its
+    // k splits (each at least a span of W a split).
+    private int AddDescribed(DescribedPlan plan, ElementType type, int m, int k, Span<int> into)
+    {
+        int count = 0;
+        if (DescribedMmaTakes(plan, type, m, k))
+        {
+            int spans = DescribedPadded(plan, k) / PtxKernels.DescribedMmaSpan(plan);
+            for (int s = 0; s < DescribedSplits.Length; s++)
+            {
+                if (DescribedSplits[s] == 1 || spans >= 2 * DescribedSplits[s])
+                {
+                    into[count++] = DescribedMmaLane + s;
+                }
+            }
+        }
+
+        if (DescribedRow(plan, type, k, out _, out _))
+        {
+            into[count++] = DescribedRowsLane;
+        }
+
+        return count;
+    }
+
+    // The written kernels' candidates that read the type as stored: few rows, the few-row kernels (a super-block or grid
+    // description's; a typed description's); prompts, a 16-bit float's tensor-core kernels over its values as they are (the
+    // matrix units, the native kind read in place, the native kind staging them as they are, the tensor rows as stored) and
+    // the native kind over int8 codes read raw (widened in registers).
+    private int AddWritten(ElementType type, Storage? scales, int m, int k, Span<int> into)
+    {
+        int count = 0;
+        bool few = m <= PtxKernels.TypedGemvRows[^1];
+        if (type.Super is not null || type.Grid is not null)
+        {
+            if (few && scales is null && Decoded(type) is var (_, values) && k % values == 0)
+            {
+                into[count++] = SuperFewLane;
+            }
+
+            return count;
+        }
+
+        if (DecodeOf(type) is not { } d)
+        {
+            return 0;
+        }
+
+        if (few)
+        {
+            if ((d.PerValue ? (long)k * d.Bits % 32 == 0 : k % PtxKernels.TypedTileDepth == 0 && scales is null) && Typed(d) is not null)
+            {
+                into[count++] = 0;
+            }
+
+            return count;
+        }
+
+        bool asStored = PtxKernels.NativeKind.BF16.Holds(d);
+        if (asStored && MatrixUnitLane(d, m, k) && scales is null)
+        {
+            into[count++] = 1;
+        }
+
+        var kind = PtxKernels.NativeKind.For(d);
+        if (kind.Holds(d) && MatrixUnitLane(d, m, k) && scales is null && k % 8 == 0 && PtxKernels.NativePadded(k) == k && NativeKernel(kind) is not null && NativePack(d, kind) is not null)
+        {
+            into[count++] = 2;
+        }
+
+        if (asStored && NativeDirectLane(type, scales, m, k))
+        {
+            into[count++] = 4;
+        }
+
+        if (MatrixUnitLane(d, m, k) && NativeRawLane(d, m, k))
+        {
+            into[count++] = 5;
+        }
+
+        if (TensorRowsSource(type, scales, m, k) is { Widen: 0, BlockBytes: 0, Int8: false })
+        {
+            into[count++] = 6;
+        }
+
+        return count;
+    }
+
+    // Timed cold for few rows (a decoding step reads each weight from memory), warm for prompts (as the lanes over stored
+    // rows were measured before).
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private int MeasureRouted(TuneKey key, int[] candidates, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, bool few)
+    {
+        var plan = DescribedOf(weight.ElementType);
+        return Tune(key, candidates, candidates[0], c => RunRouted(c, plan, x, weight, scales, y, m, n, k), cold: few);
+    }
+
+    // One lane of the measured route's product (StoredRouted's candidates).
+    private bool RunRouted(int lane, DescribedPlan? plan, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
+    {
+        switch (lane)
+        {
+            case DescribedRowsLane:
+                return RunDescribedRows(plan!, x, weight, scales, y, m, n, k);
+            case >= DescribedMmaLane and < DescribedMmaLane + 4:
+                return RunDescribedMma(plan!, DescribedSplits[lane - DescribedMmaLane], x, weight, scales, y, m, n, k);
+            case SuperFewLane:
+                if (Decoded(weight.ElementType) is not var (f, _))
+                {
+                    return false;
+                }
+
+                Launch(f.Gemv[TypedRowVariant(m)], (uint)((n + 7) / 8), 1, 256, 1, P(x), P(weight), P(y), U(m), U(n), U(k));
+                return true;
+            default:
+                return DecodeOf(weight.ElementType) is { } d && RunStoredLane(lane, d, x, weight, scales, y, m, n, k);
+        }
+    }
+
+    private static string RoutedName(int lane) => lane switch
+    {
+        DescribedRowsLane => "described lane, rows product (values decoded in registers from the stored bytes)",
+        >= DescribedMmaLane and < DescribedMmaLane + 4 => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"described lane, tensor cores (values decoded in registers from the stored bytes){(lane == DescribedMmaLane ? "" : $", k split in {DescribedSplits[lane - DescribedMmaLane]}")}"),
+        SuperFewLane => "written few-row kernel (from the super-block description)",
+        0 => "written few-row kernel",
+        1 => "written matrix units (values as stored)",
+        2 => "written native kind (values read in place)",
+        4 => "written native kind (values staged as stored)",
+        5 => "written native kind (int8 codes read raw)",
+        6 => "written tensor rows (rows as stored)",
+        _ => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"lane {lane}"),
+    };
 
     // ------------------------------------------------------------------ the routes
 

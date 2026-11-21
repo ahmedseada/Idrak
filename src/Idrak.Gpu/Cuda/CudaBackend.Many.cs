@@ -10,7 +10,41 @@ namespace Idrak.Gpu.Cuda;
 internal sealed unsafe partial class CudaBackend
 {
     public override bool StoredMatMulManyKernel(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products) =>
-        m > PtxKernels.TypedGemvRows[^1] ? SharedInput(x, m, k, products) : Grouped(x, m, k, products, null, 0);
+        m > PtxKernels.TypedGemvRows[^1] ? SharedInput(x, m, k, products) : FewMany(x, m, k, products);
+
+    // Whether the measured route's products of `type` take the written kernels only where the setting does (ProductRoutes.Lanes):
+    // false with the described lane alone where it reads the type.
+    private static bool WrittenTaken(ElementType type) =>
+        ProductRoutes.Current != ProductRoute.Measured || ProductRoutes.Lanes != RouteLanes.Described || DescribedOf(type) is null;
+
+    // A few rows' group under the measured route runs the parts each product's own lane takes (RoutedLane): the written
+    // few-row kernels' one launch (Grouped: each output as its own launch computes it) where every product takes the written
+    // few-row kernel, else each product by its own lane (the described lane among them); other routes, the one launch.
+    private bool FewMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        var type = products[0].Values.ElementType;
+        if (ProductRoutes.Current != ProductRoute.Measured)
+        {
+            return Grouped(x, m, k, products, null, 0);
+        }
+
+        int written = type.Super is not null || type.Grid is not null ? SuperFewLane : 0;
+        return EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0) || EachRouted(x, m, k, products);
+    }
+
+    // Each product of a group by its own measured lane (StoredRouted); false where one is not taken so (the caller runs them all).
+    private bool EachRouted(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        foreach (var (values, scales, output, columns) in products)
+        {
+            if (!StoredRouted(x, values, scales, output, m, columns, k))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     public override bool StoredMatMulManyAvailable(int m) => ProductRoutes.Current != ProductRoute.Name && (m <= PtxKernels.TypedGemvRows[^1] || BFloat16Products);
 
@@ -64,11 +98,14 @@ internal sealed unsafe partial class CudaBackend
 
         var shared = new SharedX(x, m, k, kind, pack.X);
         var list = products.ToArray();                                     // prompt-sized: one small copy per call
+        bool measured = ProductRoutes.Current == ProductRoute.Measured;
         bool EachOwn()
         {
             foreach (var (values, scales, output, columns) in list)
             {
-                bool done = values.ElementType.Super is not null || values.ElementType.Grid is not null ? StoredSuper(x, values, output, m, columns, k) : StoredMeasured(x, values, scales, output, m, columns, k);
+                // Under the measured route each by its own measured lane (StoredRouted: none widening), else as before.
+                bool done = measured && StoredRouted(x, values, scales, output, m, columns, k)
+                    || (values.ElementType.Super is not null || values.ElementType.Grid is not null ? StoredSuper(x, values, output, m, columns, k) : StoredMeasured(x, values, scales, output, m, columns, k));
                 if (!done)
                 {
                     return false;                                    // the caller runs them one by one
@@ -81,7 +118,10 @@ internal sealed unsafe partial class CudaBackend
         try
         {
             _sharedX = shared;
-            return TensorRowsGroup(x, m, k, list, EachOwn);          // one launch over the group, where it measures faster
+            // The tensor rows' one launch over the group (written; its outputs the bits of each product's tensor rows): under the
+            // measured route only where every product takes the tensor rows alone (RoutedLane), else each its own lane; it
+            // runs where it measures faster.
+            return !measured || EachTakes(x, m, k, list, 6) ? TensorRowsGroup(x, m, k, list, EachOwn) : EachOwn();
         }
         finally
         {
@@ -139,7 +179,7 @@ internal sealed unsafe partial class CudaBackend
 
     public override bool? StoredEpilogueFused(int kind, int detail, ElementType type, int m, int n, int k)
     {
-        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1])
+        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || !WrittenTaken(type))
         {
             return false;
         }
@@ -150,7 +190,7 @@ internal sealed unsafe partial class CudaBackend
     public override bool StoredMatMulGatedPairKernel(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products,
         Storage hidden)
     {
-        if (products.Length != 2 || products[0].Columns != products[1].Columns || activation is < 0 or > 2)
+        if (products.Length != 2 || products[0].Columns != products[1].Columns || activation is < 0 or > 2 || !WrittenTaken(products[0].Values.ElementType))
         {
             return false;
         }
@@ -183,7 +223,7 @@ internal sealed unsafe partial class CudaBackend
             return Grouped(x, m, k, products, hidden, activation);
         }
 
-        if (!Grouped(x, m, k, products, null, 0))
+        if (!FewMany(x, m, k, products))
         {
             return false;
         }
@@ -200,7 +240,7 @@ internal sealed unsafe partial class CudaBackend
     public override bool StoredMatMulAddRmsNormKernel(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset)
     {
-        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || k <= 0 || n <= 0)
+        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || k <= 0 || n <= 0 || !WrittenTaken(weight.ElementType))
         {
             return false;
         }
@@ -220,7 +260,8 @@ internal sealed unsafe partial class CudaBackend
     {
         if (lane == 0)
         {
-            bool product = weight.ElementType.Super is not null || weight.ElementType.Grid is not null ? StoredSuper(x, weight, y, m, n, k) : StoredMeasured(x, weight, scales, y, m, n, k);
+            bool product = ProductRoutes.Current == ProductRoute.Measured && StoredRouted(x, weight, scales, y, m, n, k)
+                || (weight.ElementType.Super is not null || weight.ElementType.Grid is not null ? StoredSuper(x, weight, y, m, n, k) : StoredMeasured(x, weight, scales, y, m, n, k));
             if (!product)
             {
                 return false;

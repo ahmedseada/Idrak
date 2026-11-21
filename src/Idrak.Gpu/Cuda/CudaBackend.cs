@@ -393,7 +393,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         {
             NativeTypes = CudaNativeTypes.Of(BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
             NativeReport = CudaNativeTypes.Report(_computeMajor, _computeMinor, BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
-            StoredFormats = DescribedStoredFormats.Instance,               // the generic products' types (ProductRoutes; none under the named route)
+            StoredFormats = new DescribedStoredFormats(BelowTarget(PtxKernels.TensorCoreTarget) is null),   // the routes' types (ProductRoutes; none under the named route)
         };
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");

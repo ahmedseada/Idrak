@@ -116,6 +116,27 @@ public sealed class StoredWeight : PackedWeight, IRecordable
                     filled = fill(target, bytes);
                 }
             }
+            else if ((long)storage.Length * sizeof(float) > Array.MaxLength)
+            {
+                // Past what one array holds (an 8-byte type's head): one native host buffer, uploaded in pieces of 256 MB.
+                long whole = (long)storage.Length * sizeof(float);
+                byte* buffer = (byte*)NativeMemory.Alloc((nuint)whole);
+                try
+                {
+                    new Span<byte>(buffer + bytes, (int)(whole - bytes)).Clear();
+                    filled = fill(buffer, bytes);
+                    const int Piece = 1 << 28;
+                    for (long at = 0; filled && at < whole; at += Piece)
+                    {
+                        int count = (int)(Math.Min(Piece, whole - at) / sizeof(float));
+                        values.Backend.UploadRange(new ReadOnlySpan<float>(buffer + at, count), storage, (int)(at / sizeof(float)));
+                    }
+                }
+                finally
+                {
+                    NativeMemory.Free(buffer);
+                }
+            }
             else
             {
                 int words = checked(storage.Length * sizeof(float));
