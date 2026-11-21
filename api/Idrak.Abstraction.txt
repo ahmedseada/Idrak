@@ -9159,13 +9159,21 @@ public sealed record Idrak.Abstraction.TypeDescription : System.IEquatable<Idrak
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes { get; init; }
-  public TypeDescription(int Values, int Bytes, Idrak.Abstraction.NumberType Code, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes, double CodeOffset = 0, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins = null, bool MinsAdded = false)
+  public TypeDescription(int Values, int Bytes, Idrak.Abstraction.NumberType Code, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes, double CodeOffset = 0, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins = null, bool MinsAdded = false, int Group = 1, int GroupBytes = 0)
   public bool HasCodebook { get; }
   public bool MinsAdded { get; init; }
+  public bool Shared(Idrak.Abstraction.BlockScale scale)
   public bool Valid { get; }
   public double CodeOffset { get; init; }
   public double ValueOf(System.ReadOnlySpan<byte> block, int v)
+  public int BlockStart(int v)
   public int Bytes { get; init; }
+  public int Group { get; init; }
+  public int GroupBytes { get; init; }
+  public int ScaleBase(Idrak.Abstraction.BlockScale scale, int v)
+  public int ScaleIndex(Idrak.Abstraction.BlockScale scale, int v)
+  public int UnitBytes { get; }
+  public int UnitValues { get; }
   public int Values { get; init; }
   public static ulong Field(System.ReadOnlySpan<byte> bytes, long bit, int bits)
   public ulong CodeBits(System.ReadOnlySpan<byte> block, int v)

@@ -695,7 +695,11 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 /// (or of the values a byte holds). A codebook code (<see cref="NumberType.Width"/> more than 1) gives Width values from one
 /// index: the planes place each entry's index (entry e = v / Width), and value v takes its entry's value v mod Width; a
 /// codebook scale (its Values its Width: a vector of factors, as IQ2_XXS's sign masks) gives each value it covers its own
-/// factor. A kernel that reads this alone multiplies any type described so, with no code of its own (the described lanes).
+/// factor. A scale level shared over many blocks (a scale whose Values pass a block's, as a second-level scale of block
+/// scales) lives in a group of <paramref name="Group"/> blocks: the group's blocks one after another, then such levels, the
+/// group <paramref name="GroupBytes"/> bytes; each level's scale i of a group (its values i · Values of the group on) at its
+/// own position, bits [8 · Offset + i · its bits) from the group's first byte (or its pieces', from there). A kernel that
+/// reads this alone multiplies any type described so, with no code of its own (the described lanes).
 /// </summary>
 /// <param name="Values">Values a block holds.</param>
 /// <param name="Bytes">Bytes a block takes.</param>
@@ -705,18 +709,41 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 /// <param name="Scales">Multiplied with a value's number, or null: none.</param>
 /// <param name="Mins">Their product taken from (or added to) a value, or null: none.</param>
 /// <param name="MinsAdded">Whether the minimums' product is added rather than subtracted.</param>
+/// <param name="Group">Blocks a group holds: more than 1 where a scale level is shared over many blocks (stored after them).</param>
+/// <param name="GroupBytes">Bytes a group takes, its blocks and its shared levels (0: Group · Bytes).</param>
 public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
-    IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false)
+    IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false, int Group = 1, int GroupBytes = 0)
 {
+    /// <summary>Values a group of blocks holds (Group · Values): the unit a row is whole of.</summary>
+    public int UnitValues => Group * Values;
+
+    /// <summary>Bytes a group takes (GroupBytes, or Group · Bytes).</summary>
+    public int UnitBytes => GroupBytes > 0 ? GroupBytes : Group * Bytes;
+
+    /// <summary>Whether <paramref name="scale"/> is a level shared over many blocks (its values pass a block's: stored at the group's own position).</summary>
+    public bool Shared(BlockScale scale) => scale.Values > Values;
+
+    /// <summary>Value <paramref name="v"/>'s block's first byte in its group (v within the group).</summary>
+    public int BlockStart(int v) => v % UnitValues / Values * Bytes;
+
+    /// <summary>The byte <paramref name="scale"/>'s Offset counts from for value <paramref name="v"/> of a group: its block's first, or the group's (a shared level).</summary>
+    public int ScaleBase(BlockScale scale, int v) => Shared(scale) ? 0 : BlockStart(v);
+
+    /// <summary>The index of <paramref name="scale"/>'s number covering value <paramref name="v"/> of a group (in its block, or in the group for a shared level).</summary>
+    public int ScaleIndex(BlockScale scale, int v) => (Shared(scale) ? v % UnitValues : v % Values) / scale.Values;
+
     /// <summary>
     /// Whether the description holds together: the planes' bits make the code's, each plane's fields (an entry's, a
     /// codebook's) within a block, the scales cover whole values (a codebook scale exactly its entry's values).
     /// </summary>
-    public bool Valid => Values >= 1 && Bytes >= 1 && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1 && Planes.Sum(p => p.Bits) == Code.Bits
+    public bool Valid => Values >= 1 && Bytes >= 1 && Group >= 1 && UnitBytes >= Group * Bytes && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1
+        && Planes.Sum(p => p.Bits) == Code.Bits
         && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
             && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8) && Enumerable.Range(0, Values / Code.Width).All(v => p.Place(v).Byte + Math.Max(1, p.Bits / 8) <= Bytes))
-        && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && Values % s.Values == 0 && (s.Type.Width == 1 || s.Values == s.Type.Width)
-            && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes));
+        && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && (s.Type.Width == 1 || s.Values == s.Type.Width) && (Shared(s)
+            ? s.Values % Values == 0 && UnitValues % s.Values == 0 && s.Type.Width == 1
+                && (s.Pieces is { } shared ? shared.Count == UnitValues / s.Values : 8L * s.Offset + (long)UnitValues / s.Values * s.Type.Bits <= 8L * UnitBytes)
+            : Values % s.Values == 0 && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes)));
 
     /// <summary>Whether a value's code or factors come from a codebook (a code or a scale of more than one value an entry).</summary>
     public bool HasCodebook => Code.Width > 1 || (Scales ?? []).Concat(Mins ?? []).Any(s => s.Type.Width > 1);
@@ -734,9 +761,14 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         return value;
     }
 
-    /// <summary>Value <paramref name="v"/>'s code bits in <paramref name="block"/>, its planes' fields joined (the first the lowest bits): a codebook's, its entry's index.</summary>
+    /// <summary>
+    /// Value <paramref name="v"/>'s code bits in <paramref name="block"/> (a group's bytes where Group passes 1, v within the
+    /// group), its planes' fields joined (the first the lowest bits): a codebook's, its entry's index.
+    /// </summary>
     public ulong CodeBits(ReadOnlySpan<byte> block, int v)
     {
+        block = block[BlockStart(v)..];
+        v %= Values;
         ulong code = 0;
         int low = 0, entry = v / Code.Width;
         for (int p = 0; p < Planes.Count; p++)
@@ -750,13 +782,17 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         return code;
     }
 
-    /// <summary>Value <paramref name="v"/> of <paramref name="block"/>, by the description alone (in float64; the reference a kernel's values are checked against).</summary>
+    /// <summary>
+    /// Value <paramref name="v"/> of <paramref name="block"/> (a group's bytes where Group passes 1, v within the group), by
+    /// the description alone (in float64; the reference a kernel's values are checked against).
+    /// </summary>
     public double ValueOf(ReadOnlySpan<byte> block, int v)
     {
+        v %= UnitValues;
         double value = Code.Value(CodeBits(block, v), v % Code.Width) + CodeOffset;
         foreach (var scale in Scales ?? [])
         {
-            value *= scale.Value(block, v % Values / scale.Values, v % scale.Values);
+            value *= scale.Value(block[ScaleBase(scale, v)..], ScaleIndex(scale, v), v % scale.Values);
         }
 
         if (Mins is { Count: > 0 } mins)
@@ -764,7 +800,7 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
             double min = 1;
             foreach (var m in mins)
             {
-                min *= m.Value(block, v % Values / m.Values, v % m.Values);
+                min *= m.Value(block[ScaleBase(m, v)..], ScaleIndex(m, v), v % m.Values);
             }
 
             value = MinsAdded ? value + min : value - min;
@@ -773,12 +809,12 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         return value;
     }
 
-    /// <summary>The values of whole blocks of <paramref name="source"/> into <paramref name="destination"/>, by the description alone.</summary>
+    /// <summary>The values of whole groups of blocks of <paramref name="source"/> into <paramref name="destination"/>, by the description alone.</summary>
     public void Decode(ReadOnlySpan<byte> source, Span<float> destination)
     {
         for (int i = 0; i < destination.Length; i++)
         {
-            destination[i] = (float)ValueOf(source.Slice(i / Values * Bytes, Bytes), i % Values);
+            destination[i] = (float)ValueOf(source.Slice(i / UnitValues * UnitBytes, UnitBytes), i % UnitValues);
         }
     }
 

@@ -6569,8 +6569,8 @@ internal sealed partial class CpuBackend
             Cg = 8;
             T = chunk / 4;
             GroupValues = 8 * chunk;
-            Period = Lcm(Lcm(d.Values, 32), GroupValues);
-            PeriodBytes = Period / d.Values * d.Bytes;
+            Period = Lcm(Lcm(d.UnitValues, 32), GroupValues);
+            PeriodBytes = Period / d.UnitValues * d.UnitBytes;
             Planes = d.Planes.Count;
             if (!(book ? CodebookSpans(vectors) : Spans()) || !Places() || !Factors(all, (d.Scales ?? []).Count(f => f.Type.Width == 1)))
             {
@@ -6787,7 +6787,7 @@ internal sealed partial class CpuBackend
                     {
                         int v = 32 * r + t;
                         var (b, s) = plane.Place(v % d.Values);
-                        at[t] = v / d.Values * d.Bytes + b;
+                        at[t] = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b;
                         shift[t] = s;
                         first = Math.Min(first, at[t]);
                         if (shifts[..runs].IndexOf(s) < 0)
@@ -6889,7 +6889,7 @@ internal sealed partial class CpuBackend
                 {
                     int v = 32 * r + j * w;
                     var (b, s) = d.Planes[0].Place(v % d.Values / w);
-                    entryAt[r * perSpan + j] = v / d.Values * d.Bytes + b;
+                    entryAt[r * perSpan + j] = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b;
                     entryShift[r * perSpan + j] = s;
                 }
             }
@@ -6913,7 +6913,7 @@ internal sealed partial class CpuBackend
                 {
                     for (int q = 0; q < 32 / vw; q++)
                     {
-                        int v = 32 * r + q * vw, block = v / d.Values * d.Bytes, index = v % d.Values / vw;
+                        int v = 32 * r + q * vw, block = v / d.UnitValues * d.UnitBytes + d.ScaleBase(factor, v), index = d.ScaleIndex(factor, v);
                         start.Add(offset.Count);
                         if (factor.Pieces is { } pieces)
                         {
@@ -7154,7 +7154,7 @@ internal sealed partial class CpuBackend
                     for (int t = 1; t < C; t++)
                     {
                         int v = Order[c * C + t];
-                        if (v / D.Values != v0 / D.Values || v % D.Values / f.Values != v0 % D.Values / f.Values)
+                        if (v / D.UnitValues != v0 / D.UnitValues || D.ScaleBase(f, v) != D.ScaleBase(f, v0) || D.ScaleIndex(f, v) != D.ScaleIndex(f, v0))
                         {
                             return false;
                         }
@@ -7230,8 +7230,8 @@ internal sealed partial class CpuBackend
                     {
                         for (int l = 0; l < 8; l++)
                         {
-                            int c = g * Cg + l / P, v0 = Order[c * C], block = v0 / D.Values, index = v0 % D.Values / factor.Values;
-                            int start = block * D.Bytes, bit, bits, left = 0;
+                            int c = g * Cg + l / P, v0 = Order[c * C], index = D.ScaleIndex(factor, v0);
+                            int start = v0 / D.UnitValues * D.UnitBytes + D.ScaleBase(factor, v0), bit, bits, left = 0;
                             scalarBlock[(g * factors + f) * 8 + l] = start;
                             scalarIndex[(g * factors + f) * 8 + l] = index;
                             if (factor.Pieces is { } p)
@@ -7343,7 +7343,7 @@ internal sealed partial class CpuBackend
             for (int t = 0; t < 32; t++)
             {
                 int v = 32 * span + t;
-                codes[t] = (byte)D.CodeBits(new ReadOnlySpan<byte>(period + v / Values * Bytes, Bytes), v % Values);
+                codes[t] = (byte)D.CodeBits(new ReadOnlySpan<byte>(period + v / D.UnitValues * D.UnitBytes, D.UnitBytes), v % D.UnitValues);
             }
 
             return Vector256.Create<byte>(codes);
@@ -7515,7 +7515,7 @@ internal sealed partial class CpuBackend
             for (int l = 0; l < 8; l++)
             {
                 int i = (gp * factors + f) * 8 + l;
-                values[l] = (float)factor.Value(new ReadOnlySpan<byte>(period + scalarBlock[i], Bytes), scalarIndex[i]);
+                values[l] = (float)factor.Value(new ReadOnlySpan<byte>(period + scalarBlock[i], PeriodBytes - scalarBlock[i]), scalarIndex[i]);
             }
 
             return Vector256.Create<float>(values);
@@ -7585,7 +7585,7 @@ internal sealed partial class CpuBackend
 
         public static bool Reads(ElementType type, int k, out DescribedFormat format)
         {
-            format = type.Description is { } d && k > 0 && k % d.Values == 0 && type.ByteCount(k) == (long)k / d.Values * d.Bytes && DescribedPlan.Of(d) is { } plan
+            format = type.Description is { } d && k > 0 && k % d.UnitValues == 0 && type.ByteCount(k) == (long)k / d.UnitValues * d.UnitBytes && DescribedPlan.Of(d) is { } plan
                 ? new DescribedFormat(plan, k) : default;
             return format.plan is not null;
         }

@@ -1713,8 +1713,8 @@ internal sealed class DescribedPlan
             return null;
         }
 
-        int patternValues = d.Values / Gcd(d.Values, 16) * 16;
-        long patternBytes = (long)(patternValues / d.Values) * d.Bytes;
+        int patternValues = d.UnitValues / Gcd(d.UnitValues, 16) * 16;
+        long patternBytes = (long)(patternValues / d.UnitValues) * d.UnitBytes;
         if (patternValues > 1024 || patternBytes > 2048)
         {
             reason = $"a pattern block of {patternValues} values takes {patternBytes} bytes (at most 1024 values in 2048 bytes)";
@@ -1749,14 +1749,14 @@ internal sealed class DescribedPlan
                 int[] factorWithin0 = new int[scalesAll.Count];
                 for (int t = 0; t < 4; t++)
                 {
-                    int u = 16 * s + 2 * t + Columns[i], block = u / d.Values, v = u % d.Values;
+                    int u = 16 * s + 2 * t + Columns[i], v = u % d.Values;
                     var own = new Field[planes];
                     int low = 0;
                     for (int p = 0; p < planes; p++)
                     {
                         var plane = d.Planes[p];
                         var (at, shift) = plane.Place(v / width);
-                        own[p] = new Field(p, block * d.Bytes + at, shift, plane.Bits, low);
+                        own[p] = new Field(p, u / d.UnitValues * d.UnitBytes + d.BlockStart(u) + at, shift, plane.Bits, low);
                         low += plane.Bits;
                     }
 
@@ -1780,7 +1780,7 @@ internal sealed class DescribedPlan
                         return null;
                     }
 
-                    var ownPieces = FactorPieces(d, block, v);
+                    var ownPieces = FactorPieces(d, u);
                     string ownKey = GroupKey(ownPieces);
                     if (t == 0)
                     {
@@ -1927,12 +1927,12 @@ internal sealed class DescribedPlan
 
         Field[] FieldsOf(int u)
         {
-            int block = u / d.Values, v = u % d.Values, low = 0;
+            int v = u % d.Values, low = 0;
             var own = new Field[planes];
             for (int p = 0; p < planes; p++)
             {
                 var (at, s) = d.Planes[p].Place(v);
-                own[p] = new Field(p, block * d.Bytes + at, s, d.Planes[p].Bits, low);
+                own[p] = new Field(p, u / d.UnitValues * d.UnitBytes + d.BlockStart(u) + at, s, d.Planes[p].Bits, low);
                 low += d.Planes[p].Bits;
             }
 
@@ -1966,7 +1966,7 @@ internal sealed class DescribedPlan
         }
 
         // Each chunk's values share one factor group: of 32 where every step's do, else of 16.
-        int GroupOf(int u) => groupOf.TryGetValue(GroupKey(FactorPieces(d, u / d.Values, u % d.Values)), out int g) ? g : -1;
+        int GroupOf(int u) => groupOf.TryGetValue(GroupKey(FactorPieces(d, u)), out int g) ? g : -1;
         bool Shares(int from, int length) => Enumerable.Range(from, length).All(u => GroupOf(u) == GroupOf(from) && GroupOf(u) >= 0);
         int chunk = Enumerable.Range(0, steps).All(s => Shares(32 * s, 32)) ? 32 : Enumerable.Range(0, 2 * steps).All(h => Shares(16 * h, 16)) ? 16 : 0;
         if (chunk == 0)
@@ -2037,15 +2037,16 @@ internal sealed class DescribedPlan
         return Read.Table;
     }
 
-    // Each factor's pieces for value v of block `block` of a pattern block (the scales, then the minimums).
-    private static Piece[][] FactorPieces(TypeDescription d, int block, int v)
+    // Each factor's pieces for value u of a pattern block (the scales, then the minimums), from the pattern block's first
+    // byte: a block's from its block's, a shared level's from its group's.
+    private static Piece[][] FactorPieces(TypeDescription d, int u)
     {
         var all = (d.Scales ?? []).Concat(d.Mins ?? []).ToList();
         var result = new Piece[all.Count][];
         for (int q = 0; q < all.Count; q++)
         {
             var scale = all[q];
-            int index = v / scale.Values, origin = block * d.Bytes;
+            int index = d.ScaleIndex(scale, u), origin = u / d.UnitValues * d.UnitBytes + d.ScaleBase(scale, u);
             var pieces = new List<Piece>();
             int low = 0;
             if (scale.Pieces is { } own)
@@ -2082,7 +2083,7 @@ internal sealed class DescribedPlan
             $"{Number(s.Type)}/{s.Values}/{s.Offset}/{s.Bias.ToString("R", CultureInfo.InvariantCulture)}/{string.Join("|", (s.Pieces ?? []).Select(p => string.Join(",", p.Select(x => string.Create(CultureInfo.InvariantCulture, $"{x.Offset}.{x.Shift}.{x.Bits}")))))}");
         string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}")));
         string text = string.Create(CultureInfo.InvariantCulture,
-            $"{d.Values}x{d.Bytes};{Number(d.Code)};{planes};{d.CodeOffset.ToString("R", CultureInfo.InvariantCulture)};{string.Join(";", (d.Scales ?? []).Select(Scale))};-{string.Join(";", (d.Mins ?? []).Select(Scale))};{d.MinsAdded}");
+            $"{d.Values}x{d.Bytes}g{d.Group}.{d.UnitBytes};{Number(d.Code)};{planes};{d.CodeOffset.ToString("R", CultureInfo.InvariantCulture)};{string.Join(";", (d.Scales ?? []).Select(Scale))};-{string.Join(";", (d.Mins ?? []).Select(Scale))};{d.MinsAdded}");
         ulong hash = 14695981039346656037UL;
         foreach (char c in text)
         {
