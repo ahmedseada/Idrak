@@ -274,26 +274,25 @@ internal abstract partial class DesktopTests : Tests
                 DescribedDecodes(type, words, k, n);
                 string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
                 Check(arithmetic is not null, $"the described lane does not read {type.Name} ({weight.Description}; its description {type.Description})");
+                // Every lane that runs on this CPU: the format's two kinds (q4_k, q4_0, q6_k, int64, int2 and mxfp4: decoded and
+                // integer; bfloat16: shifted and paired; float64: decoded and mixed, x widened once or in registers), each by
+                // the portable instructions and by each instruction set the CPU has; then the described lane's.
+                var written = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredLanesOf(type, k);
+                var describedLanes = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
+                Check(written.Count > 0 && describedLanes.Count > 0, $"{type.Name} [{k}]: {written.Count} written lanes and {describedLanes.Count} described lanes run here");
                 foreach (int m in new[] { 1, 3, 4, 5, 9, 70 })
                 {
                     var x = RouteValues(random, (long)m * k);
-                    // q4_k, q4_0, q6_k and int64: the decoded and the integer lane; bfloat16: the shifted and the paired lane;
-                    // float64: the decoded and the mixed lane (x widened once, or in registers); then the described lane alone.
-                    foreach (int which in new[] { 0, 1, 2 })
+                    for (int which = 0; which < written.Count + describedLanes.Count; which++)
                     {
-                        bool second = which == 1, described = which == 2;
+                        bool described = which >= written.Count;
                         var y = new float[m * n];
-                        bool integer = described ? arithmetic == "integer" : second && !bfloat16 && !float64;
+                        bool integer = described ? arithmetic == "integer" : written[which].Second && !bfloat16 && !float64;
                         bool ran = described
-                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, storage.Length, x, y, m, n, k, rowScales)
-                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(second, type, words, storage.Length, x, y, m, n, k, rowScales);
-                        if (!ran)
-                        {
-                            Check(integer && !described, $"the {(described ? "described" : bfloat16 ? "bfloat16" : float64 && second ? "mixed" : "decoded")} lane does not read {type.Name} ({weight.Description})");
-                            continue;
-                        }
-
-                        string lane = described ? $"described ({arithmetic})" : bfloat16 ? second ? "paired" : "shifted" : float64 && second ? "mixed" : integer ? "integer" : "decoded";
+                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(which - written.Count, type, words, storage.Length, x, y, m, n, k, rowScales)
+                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(which, type, words, storage.Length, x, y, m, n, k, rowScales);
+                        string lane = described ? $"{describedLanes[which - written.Count]} ({arithmetic})" : written[which].Lane;
+                        Check(ran, $"{lane}: does not read {type.Name} ({weight.Description}), though listed as running here");
                         for (int i = 0; i < m; i++)
                         {
                             var steps = integer ? HalfSteps(x, i, k) : null;
@@ -312,7 +311,7 @@ internal abstract partial class DesktopTests : Tests
                                 double error = Math.Abs(y[i * n + j] - sum);
                                 if (!(error <= bound))
                                 {
-                                    Check(false, $"the {lane} lane, {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} (error {error:E2} past the bound {bound:E2})");
+                                    Check(false, $"the {lane}, {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} (error {error:E2} past the bound {bound:E2})");
                                 }
                             }
                         }
@@ -511,10 +510,12 @@ internal abstract partial class DesktopTests : Tests
     }
 
     // The bits of the CPU's lanes over stored weights on fixed operands: each format's weights packed from seeded values, x
-    // seeded, 1, 3, 4, 5, 9 and 70 rows; per format and lane the SHA-256 (its first 16 hex digits) of every output's bits,
-    // and of the packed weights' bytes; the types made of a description alone (DescribedOnlyTypes) by the described lane.
-    // A lane computes alike on every CPU, whatever its instruction sets, so one list holds (LaneBitsRecorded); a lane that
-    // does not run here, or a hash not in the list, fails naming it, and the hashes made here are listed to compare.
+    // seeded, 1, 3, 4, 5, 9 and 70 rows; per format and kind of lane the SHA-256 (its first 16 hex digits) of every output's
+    // bits, and of the packed weights' bytes; the types made of a description alone (DescribedOnlyTypes) by the described
+    // lane. Every lane that runs here is hashed on its own (each kind by the portable instructions and by each instruction
+    // set the CPU has), and each must give its kind's bits: a lane computes alike on every CPU, whatever its instructions,
+    // so one list holds (LaneBitsRecorded). A lane that does not run here, or a hash not in the list, fails naming it, and
+    // the hashes made here are listed to compare.
     private static void ProductRoutesLaneBits(Device device)
     {
         if (device.Backend is not Idrak.Abstraction.Devices.Cpu.CpuBackend)
@@ -524,13 +525,14 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var random = new Random(97);
-        var made = new SortedDictionary<string, string>(StringComparer.Ordinal);
-        var hashes = new Dictionary<string, System.Security.Cryptography.IncrementalHash>(StringComparer.Ordinal);
-        void Add(string key, ReadOnlySpan<byte> bytes)
+        var hashes = new Dictionary<(string Key, string Lane), System.Security.Cryptography.IncrementalHash>();
+        var order = new List<(string Key, string Lane)>();
+        void Add(string key, string lane, ReadOnlySpan<byte> bytes)
         {
-            if (!hashes.TryGetValue(key, out var hash))
+            if (!hashes.TryGetValue((key, lane), out var hash))
             {
-                hashes[key] = hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+                hashes[(key, lane)] = hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+                order.Add((key, lane));
             }
 
             hash.AppendData(bytes);
@@ -548,23 +550,32 @@ internal abstract partial class DesktopTests : Tests
                 var storage = weight.StoredValues.Storage;
                 var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(storage);
                 var rowScales = weight.Scales is { } held ? Idrak.Abstraction.Devices.Cpu.CpuBackend.D(held.Storage) : null;
-                Add($"{format} packed", System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan(0, storage.Length)));
+                Add($"{format} packed", "", System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan(0, storage.Length)));
                 if (rowScales is not null)
                 {
-                    Add($"{format} packed", System.Runtime.InteropServices.MemoryMarshal.AsBytes(rowScales.AsSpan()));
+                    Add($"{format} packed", "", System.Runtime.InteropServices.MemoryMarshal.AsBytes(rowScales.AsSpan()));
                 }
 
+                var written = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredLanesOf(type, k);
+                var described = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
+                Check(written.Count >= 2 && described.Count >= 1, $"{format} [{k}]: {written.Count} written lanes and {described.Count} described lanes run here");
                 foreach (int m in rows)
                 {
                     var x = RouteValues(random, (long)m * k);
-                    foreach (var lane in new[] { "first", "second", "described" })
+                    for (int lane = 0; lane < written.Count; lane++)
                     {
                         var y = new float[m * n];
-                        bool ran = lane == "described"
-                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, storage.Length, x, y, m, n, k, rowScales)
-                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane == "second", type, words, storage.Length, x, y, m, n, k, rowScales);
-                        Check(ran, $"{format} [{k}, {n}], {m} rows: its {lane} lane does not run here");
-                        Add($"{format} {lane}", System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane, type, words, storage.Length, x, y, m, n, k, rowScales),
+                            $"{format} [{k}, {n}], {m} rows: its {written[lane].Lane} does not run here");
+                        Add($"{format} {(written[lane].Second ? "second" : "first")}", written[lane].Lane, System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                    }
+
+                    for (int lane = 0; lane < described.Count; lane++)
+                    {
+                        var y = new float[m * n];
+                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane, type, words, storage.Length, x, y, m, n, k, rowScales),
+                            $"{format} [{k}, {n}], {m} rows: its {described[lane]} does not run here");
+                        Add($"{format} described", described[lane], System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
                     }
                 }
             }
@@ -575,27 +586,38 @@ internal abstract partial class DesktopTests : Tests
                 var bytes = DescribedOnlyBytes(d, k, n, random);
                 var words = new float[(bytes.Length + 3) / 4];
                 Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+                var described = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
+                Check(described.Count >= 1, $"{name}: no described lane runs here");
                 foreach (int m in rows)
                 {
                     var x = RouteValues(random, (long)m * k);
-                    var y = new float[m * n];
-                    Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, words.Length, x, y, m, n, k), $"{name}, {m} rows: the described lane does not run here");
-                    Add($"{name} described", System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                    for (int lane = 0; lane < described.Count; lane++)
+                    {
+                        var y = new float[m * n];
+                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane, type, words, words.Length, x, y, m, n, k), $"{name}, {m} rows: its {described[lane]} does not run here");
+                        Add($"{name} described", described[lane], System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                    }
                 }
             }
         });
 
-        foreach (var (key, hash) in hashes)
+        var made = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var differ = new List<string>();
+        foreach (var (key, lane) in order)
         {
-            made[key] = Convert.ToHexString(hash.GetHashAndReset())[..16];
-            hash.Dispose();
+            using var hash = hashes[(key, lane)];
+            string hex = Convert.ToHexString(hash.GetHashAndReset())[..16];
+            made.TryAdd(key, hex);                                         // the kind's first lane: the portable one
+            if (!LaneBitsRecorded.TryGetValue(key, out var recorded) || recorded != hex)
+            {
+                differ.Add($"{key}{(lane.Length > 0 ? $" by the {lane}" : "")}: the bits hash to {hex}, recorded {recorded ?? "nothing"}");
+            }
         }
 
-        var differ = made.Where(e => !LaneBitsRecorded.TryGetValue(e.Key, out var recorded) || recorded != e.Value)
-            .Select(e => $"{e.Key}: the bits hash to {e.Value}, recorded {(LaneBitsRecorded.TryGetValue(e.Key, out var recorded) ? recorded : "nothing")}")
-            .Concat(LaneBitsRecorded.Keys.Where(key => !made.ContainsKey(key)).Select(key => $"{key}: recorded, not hashed here")).ToList();
-        Check(differ.Count == 0, $"{differ.Count} of {made.Count} lanes differ from the recorded bits: {string.Join("; ", differ)}"
+        differ.AddRange(LaneBitsRecorded.Keys.Where(key => !made.ContainsKey(key)).Select(key => $"{key}: recorded, not hashed here"));
+        Check(differ.Count == 0, $"{differ.Count} of {order.Count} lanes differ from the recorded bits: {string.Join("; ", differ)}"
             + $"{Environment.NewLine}the hashes made here:{Environment.NewLine}{string.Join(Environment.NewLine, made.Select(e => $"        [\"{e.Key}\"] = \"{e.Value}\","))}");
+        Console.WriteLine($"{order.Count} lanes hashed (each kind of lane by every instruction set that runs here), every one the recorded bits of its kind");
     }
 
     // The hashes ProductRoutesLaneBits makes, recorded (the CPU's lanes give these bits on any CPU).
