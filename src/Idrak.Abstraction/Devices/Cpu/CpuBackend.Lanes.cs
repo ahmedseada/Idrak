@@ -901,6 +901,12 @@ internal sealed partial class CpuBackend
         /// <summary>The 8 bytes at <paramref name="at"/>, each a 32-bit lane (zero-extended).</summary>
         static abstract Vector256<int> Widen(byte* at);
 
+        /// <summary>The 4 float32 values at <paramref name="at"/> as float64, exactly.</summary>
+        static abstract Vector256<double> Doubles(float* at);
+
+        /// <summary>The 16 bytes at <paramref name="at"/> in both 128-bit halves.</summary>
+        static abstract Vector256<byte> Halves(byte* at);
+
         /// <summary>The 8 values at <paramref name="at"/>, each a 32-bit lane (zero-extended).</summary>
         static abstract Vector256<int> Widen(ushort* at);
 
@@ -1130,6 +1136,16 @@ internal sealed partial class CpuBackend
         public static Vector256<int> Widen(byte* at) => Widen(Vector128.CreateScalarUnsafe(Unsafe.ReadUnaligned<ulong>(at)).AsByte(), false);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Doubles(float* at) => FloatsToDoubles(at);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> Halves(byte* at)
+        {
+            var v = Vector128.Load(at);
+            return Vector256.Create(v, v);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Widen(ushort* at)
         {
             var v = Vector128.Load(at);
@@ -1273,6 +1289,13 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Widen(byte* at) => Avx2.ConvertToVector256Int32(at);
 
+        // The load folded into the conversion.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Doubles(float* at) => Avx.ConvertToVector256Double(Sse.LoadVector128(at));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> Halves(byte* at) => Avx2.BroadcastVector128ToVector256(at);
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Widen(ushort* at) => Avx2.ConvertToVector256Int32(at);
 
@@ -1366,6 +1389,13 @@ internal sealed partial class CpuBackend
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Widen(byte* at) => Avx2.ConvertToVector256Int32(at);
+
+        // The load folded into the conversion.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<double> Doubles(float* at) => Avx.ConvertToVector256Double(Sse.LoadVector128(at));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static Vector256<byte> Halves(byte* at) => Avx2.BroadcastVector128ToVector256(at);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Widen(ushort* at) => Avx2.ConvertToVector256Int32(at);
@@ -4400,14 +4430,14 @@ internal sealed partial class CpuBackend
             var w0 = TL.Four(row + 8 * p);
             var w1 = TL.Four(row + 8 * p + 32);
             float* xp = x + p;
-            a0 = TI.Fused(w0, FloatsToDoubles(xp), a0);
-            b0 = TI.Fused(w1, FloatsToDoubles(xp + 4), b0);
-            a1 = TI.Fused(w0, FloatsToDoubles(xp + r1), a1);
-            b1 = TI.Fused(w1, FloatsToDoubles(xp + r1 + 4), b1);
-            a2 = TI.Fused(w0, FloatsToDoubles(xp + r2), a2);
-            b2 = TI.Fused(w1, FloatsToDoubles(xp + r2 + 4), b2);
-            a3 = TI.Fused(w0, FloatsToDoubles(xp + r3), a3);
-            b3 = TI.Fused(w1, FloatsToDoubles(xp + r3 + 4), b3);
+            a0 = TI.Fused(w0, TI.Doubles(xp), a0);
+            b0 = TI.Fused(w1, TI.Doubles(xp + 4), b0);
+            a1 = TI.Fused(w0, TI.Doubles(xp + r1), a1);
+            b1 = TI.Fused(w1, TI.Doubles(xp + r1 + 4), b1);
+            a2 = TI.Fused(w0, TI.Doubles(xp + r2), a2);
+            b2 = TI.Fused(w1, TI.Doubles(xp + r2 + 4), b2);
+            a3 = TI.Fused(w0, TI.Doubles(xp + r3), a3);
+            b3 = TI.Fused(w1, TI.Doubles(xp + r3 + 4), b3);
         }
 
         double t0 = 0, t1 = 0, t2 = 0, t3 = 0;
@@ -4435,15 +4465,15 @@ internal sealed partial class CpuBackend
         for (; p + 16 <= k; p += 16)
         {
             byte* at = row + 8 * p;
-            a = TI.Fused(TL.Four(at), FloatsToDoubles(x + p), a);
-            b = TI.Fused(TL.Four(at + 32), FloatsToDoubles(x + p + 4), b);
-            c = TI.Fused(TL.Four(at + 64), FloatsToDoubles(x + p + 8), c);
-            d = TI.Fused(TL.Four(at + 96), FloatsToDoubles(x + p + 12), d);
+            a = TI.Fused(TL.Four(at), TI.Doubles(x + p), a);
+            b = TI.Fused(TL.Four(at + 32), TI.Doubles(x + p + 4), b);
+            c = TI.Fused(TL.Four(at + 64), TI.Doubles(x + p + 8), c);
+            d = TI.Fused(TL.Four(at + 96), TI.Doubles(x + p + 12), d);
         }
 
         for (; p + 4 <= k; p += 4)
         {
-            a = TI.Fused(TL.Four(row + 8 * p), FloatsToDoubles(x + p), a);
+            a = TI.Fused(TL.Four(row + 8 * p), TI.Doubles(x + p), a);
         }
 
         double t = 0;
@@ -5258,8 +5288,11 @@ internal sealed partial class CpuBackend
 
         // The fields' pieces as vector controls (PiecesInLanes), or null: the scalar Read. Each piece is a byte's bits (its
         // shift and width within the byte), so its lane's value shifts by multiplies: its byte times 2^(8 − shift), then 8
-        // places right, masked, then times 2^place; a signed field's sign extended by its top bit (Signs: v ^ s − s).
-        private sealed record LanePieces(int Window, Vector256<byte>[] Bytes, Vector256<uint>[] Rights, Vector256<uint>[] Masks, Vector256<uint>[] Places, Vector256<int> Signs);
+        // places right, masked, then times 2^place; or, where the instructions shift each lane by its own count, by its
+        // shift right and its place left (Shifts, Lefts: the same integers); a signed field's sign extended by its top bit
+        // (Signs: v ^ s − s).
+        private sealed record LanePieces(int Window, Vector256<byte>[] Bytes, Vector256<uint>[] Rights, Vector256<uint>[] Masks, Vector256<uint>[] Places,
+            Vector256<uint>[] Shifts, Vector256<uint>[] Lefts, Vector256<int> Signs);
 
         private readonly LanePieces? pieces;
 
@@ -5288,8 +5321,9 @@ internal sealed partial class CpuBackend
 
             int fields = bits.Length;
             var (bytes, rights, masks, places) = (new Vector256<byte>[2 * most], new Vector256<uint>[2 * most], new Vector256<uint>[2 * most], new Vector256<uint>[2 * most]);
+            var (shifts, lefts) = (new Vector256<uint>[2 * most], new Vector256<uint>[2 * most]);
             Span<byte> control = stackalloc byte[32];
-            Span<uint> r = stackalloc uint[8], m = stackalloc uint[8], p = stackalloc uint[8];
+            Span<uint> r = stackalloc uint[8], m = stackalloc uint[8], p = stackalloc uint[8], h = stackalloc uint[8], e = stackalloc uint[8];
             // Each lane's scale field's top bit (the sign of a signed one: its value v ^ s − s), from the first half's fields.
             Span<int> signs = stackalloc int[8];
             for (int l = 0; l < 8; l++)
@@ -5309,14 +5343,16 @@ internal sealed partial class CpuBackend
                         bool has = field < fields && piece < start[field + 1];
                         control[4 * l] = has ? (byte)(offset[piece] - window) : (byte)0x80;
                         (r[l], m[l], p[l]) = has ? (1u << (8 - shift[piece]), (uint)mask[piece], 1u << place[piece]) : (0u, 0u, 0u);
+                        (h[l], e[l]) = has ? ((uint)shift[piece], (uint)place[piece]) : (0u, 0u);
                     }
 
                     bytes[half * most + q] = Vector256.Create<byte>(control);
                     (rights[half * most + q], masks[half * most + q], places[half * most + q]) = (Vector256.Create<uint>(r), Vector256.Create<uint>(m), Vector256.Create<uint>(p));
+                    (shifts[half * most + q], lefts[half * most + q]) = (Vector256.Create<uint>(h), Vector256.Create<uint>(e));
                 }
             }
 
-            return new LanePieces(window, bytes, rights, masks, places, Vector256.Create<int>(signs));
+            return new LanePieces(window, bytes, rights, masks, places, shifts, lefts, Vector256.Create<int>(signs));
         }
 
         /// <summary>
@@ -5331,7 +5367,7 @@ internal sealed partial class CpuBackend
             float d = Super(ref block, super.ScaleOffset), dmin = super.MinOffset >= 0 ? Super(ref block, super.MinOffset) : 0f;
             var at = Vector128.LoadUnsafe(ref Unsafe.Add(ref block, lanes.Window));
             var both = Vector256.Create(at, at);
-            var scales = FieldsInLanes<TI>(both, 0, lanes.Bytes, lanes.Rights, lanes.Masks, lanes.Places);
+            var scales = FieldsInLanes<TI>(both, 0, lanes);
             if (super.SubScalesSigned)
             {
                 scales = (scales ^ lanes.Signs) - lanes.Signs;
@@ -5339,7 +5375,7 @@ internal sealed partial class CpuBackend
 
             (Vector256.ConvertToSingle(scales + Vector256.Create(super.SubScaleBias)) * Vector256.Create(d)).StoreUnsafe(ref into);
             var lows = super.SubMins is not null
-                ? -(Vector256.ConvertToSingle(FieldsInLanes<TI>(both, 1, lanes.Bytes, lanes.Rights, lanes.Masks, lanes.Places)) * Vector256.Create(dmin))
+                ? -(Vector256.ConvertToSingle(FieldsInLanes<TI>(both, 1, lanes)) * Vector256.Create(dmin))
                 : Vector256.Create(-0f);
             lows.StoreUnsafe(ref into, 8);
         }
@@ -5354,13 +5390,27 @@ internal sealed partial class CpuBackend
 
         // Fields [8 · half, 8 · half + 8) of a block, lane l sub-block (0, 2, 4, 6, 1, 3, 5, 7)[l]'s (Read's values): each
         // piece's byte picked into its lane (the lane's other bytes 0), shifted right by its multiplier and 8 places, masked,
-        // and put in place by its multiplier.
+        // and put in place by its multiplier; or shifted by its lane's own counts where the instructions have such shifts.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static Vector256<int> FieldsInLanes<TI>(Vector256<byte> window, int half, Vector256<byte>[] bytes, Vector256<uint>[] rights, Vector256<uint>[] masks, Vector256<uint>[] places)
+        private static Vector256<int> FieldsInLanes<TI>(Vector256<byte> window, int half, LanePieces lanes)
             where TI : struct, IInstructions
         {
+            var (bytes, masks) = (lanes.Bytes, lanes.Masks);
             int most = bytes.Length / 2;
             Vector256<uint> value = default;
+            if (TI.ShiftsByLane)
+            {
+                var (shifts, lefts) = (lanes.Shifts, lanes.Lefts);
+                for (int q = half * most; q < half * most + most; q++)
+                {
+                    var piece = TI.ShuffleBytes(window, bytes[q]).AsUInt32();
+                    value |= TI.ShiftLeft(TI.ShiftRight(piece, shifts[q]) & masks[q], lefts[q]);
+                }
+
+                return value.AsInt32();
+            }
+
+            var (rights, places) = (lanes.Rights, lanes.Places);
             for (int q = half * most; q < half * most + most; q++)
             {
                 var piece = TI.ShuffleBytes(window, bytes[q]).AsUInt32();
@@ -6936,16 +6986,16 @@ internal sealed partial class CpuBackend
                 switch (runKind[at])
                 {
                     case 1:
-                        v = OneRun.Load<TI>(from, runShift[at], runCount + 8 * at);
+                        v = OneRun.Load<TI>(from, runShift, runCount, at);
                         break;
                     case 2:
-                        v = TwoRuns.Load<TI>(from, runShift[at], runCount + 8 * at);
+                        v = TwoRuns.Load<TI>(from, runShift, runCount, at);
                         break;
                     case 4:
-                        v = FourRuns.Load<TI>(from, runShift[at], runCount + 8 * at);
+                        v = FourRuns.Load<TI>(from, runShift, runCount, at);
                         break;
                     case 8:
-                        v = EightRuns.Load<TI>(from, runShift[at], runCount + 8 * at);
+                        v = EightRuns.Load<TI>(from, runShift, runCount, at);
                         break;
                     default:
                         return OneByOne(period, span);
@@ -7071,10 +7121,16 @@ internal sealed partial class CpuBackend
             min = mn;
         }
 
-        // Entry i's gathered dwords shifted right by its lanes' shifts (by one shift where every lane's is the same).
+        // Entry i's gathered dwords shifted right by its lanes' shifts (by one shift where every lane's is the same and the
+        // instruction set does not shift lanes by their own counts in one instruction).
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private Vector256<int> Shifted<TI>(Vector256<int> words, int i) where TI : struct, IInstructions
         {
+            if (TI.ShiftsByLane)
+            {
+                return TI.ShiftRight(words.AsUInt32(), fShift[i].AsUInt32()).AsInt32();
+            }
+
             int one = fShiftOne[i];
             return one switch
             {
@@ -7095,7 +7151,7 @@ internal sealed partial class CpuBackend
             {
                 var piece = (Shifted<TI>(TI.Gather(period, fOffset + 8 * (at + q)), at + q) & fMask[at + q]).AsUInt32();
                 int one = fLeftOne[at + q];
-                bits |= (one >= 0 ? Vector256.ShiftLeft(piece, one) : TI.ShiftLeft(piece, fLeft[at + q].AsUInt32())).AsInt32();
+                bits |= (TI.ShiftsByLane || one < 0 ? TI.ShiftLeft(piece, fLeft[at + q].AsUInt32()) : Vector256.ShiftLeft(piece, one)).AsInt32();
             }
 
             float bias = factorBias[f];
@@ -7255,7 +7311,14 @@ internal sealed partial class CpuBackend
                     int groups = plan.Groups(k);
                     var codes = ArrayPool<sbyte>.Shared.Rent(m * groups * plan.GroupValues);
                     var lanes = ArrayPool<float>.Shared.Rent(m * groups * plan.LaneFloats);
-                    RoundDescribedRows(plan, x, codes, lanes, m, k);
+                    if (InstructionsOf(lane) == Instructions.Portable)
+                    {
+                        RoundDescribedRows<PortableInstructions>(plan, x, codes, lanes, m, k);
+                    }
+                    else
+                    {
+                        RoundDescribedRows<Avx2Instructions>(plan, x, codes, lanes, m, k);
+                    }
                     return new LaneInput(x, false, codes, lanes);
                 case DescribedMode.Double:
                     var wide = ArrayPool<float>.Shared.Rent(2 * m * k);
@@ -7448,18 +7511,18 @@ internal sealed partial class CpuBackend
 
     // x rounded to int8 for the described lane's integer arithmetic, row by row (RoundDescribedRow), over the threads where
     // x is large.
-    private static void RoundDescribedRows(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int m, int k)
+    private static void RoundDescribedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int m, int k) where TI : struct, IInstructions
     {
         int groups = plan.Groups(k), xRow = groups * plan.GroupValues, lRow = groups * plan.LaneFloats;
         if (m > 1 && (long)m * k >= 1 << 16)
         {
-            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundDescribedRow(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow)));
+            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow)));
             return;
         }
 
         for (int i = 0; i < m; i++)
         {
-            RoundDescribedRow(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow));
+            RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow));
         }
     }
 
@@ -7469,10 +7532,10 @@ internal sealed partial class CpuBackend
     // stored codes are (one chunk a lane of each step; a wide integer's chunks 4 bytes each of a step's 4 · Cg); per group
     // LaneFloats floats: each lane's block scale, as int32 bits its plane's least times its chunk's code sum, and (minimums)
     // its block scale times its chunk's code sum (in plane 0's lanes). Blocks past k are zero codes, scales and sums. The
-    // integer lane's product is then the product of x so rounded. Shared by the lane's every instruction set, so made by the
-    // portable instructions (values moved and integers summed: the same on any CPU).
+    // integer lane's product is then the product of x so rounded. Made by the instruction set of the lane that prepares it
+    // (values moved and integers summed: the same bytes by any set, so the lanes of every set share it).
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private static unsafe void RoundDescribedRow(DescribedPlan plan, ReadOnlySpan<float> x, Span<sbyte> codes, Span<float> lanes)
+    private static unsafe void RoundDescribedRow<TI>(DescribedPlan plan, ReadOnlySpan<float> x, Span<sbyte> codes, Span<float> lanes) where TI : struct, IInstructions
     {
         int k = x.Length, groups = plan.Groups(k), spansPerPeriod = plan.Period / 32, spans = plan.GroupValues / 32, p = plan.P, laneFloats = plan.LaneFloats;
         bool half = plan.C == 16, mins = plan.Mins;
@@ -7523,7 +7586,7 @@ internal sealed partial class CpuBackend
                     int r = from / 32 % spansPerPeriod;
                     var lower = rounded.GetLower();
                     var upper = rounded.GetUpper();
-                    rounded = PortableInstructions.ShuffleBytes(Vector256.Create(lower, lower), order[2 * r]) | PortableInstructions.ShuffleBytes(Vector256.Create(upper, upper), order[2 * r + 1]);
+                    rounded = TI.ShuffleBytes(Vector256.Create(lower, lower), order[2 * r]) | TI.ShuffleBytes(Vector256.Create(upper, upper), order[2 * r + 1]);
                 }
 
                 made[q] = rounded;
@@ -7537,7 +7600,7 @@ internal sealed partial class CpuBackend
             switch (p)
             {
                 case 1 when !half:
-                    Transpose8<PortableInstructions>(made[0], made[1], made[2], made[3], made[4], made[5], made[6], made[7], out var s0, out var s1, out var s2, out var s3,
+                    Transpose8<TI>(made[0], made[1], made[2], made[3], made[4], made[5], made[6], made[7], out var s0, out var s1, out var s2, out var s3,
                         out var s4, out var s5, out var s6, out var s7);
                     s0.Store(to);
                     s1.Store(to + 32);
@@ -7549,7 +7612,7 @@ internal sealed partial class CpuBackend
                     s7.Store(to + 224);
                     break;
                 case 1:
-                    Transpose4<PortableInstructions>(made[0], made[1], made[2], made[3], out var h0, out var h1, out var h2, out var h3);
+                    Transpose4<TI>(made[0], made[1], made[2], made[3], out var h0, out var h1, out var h2, out var h3);
                     h0.Store(to);
                     h1.Store(to + 32);
                     h2.Store(to + 64);
@@ -7559,24 +7622,24 @@ internal sealed partial class CpuBackend
                     made[0].Store(to);
                     break;
                 case 4:
-                    var lo = PortableInstructions.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32()).AsUInt64();
-                    var hi = PortableInstructions.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32()).AsUInt64();
-                    PortableInstructions.Lows(lo, hi).AsByte().Store(to);
-                    PortableInstructions.Highs(lo, hi).AsByte().Store(to + 32);
+                    var lo = TI.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32()).AsUInt64();
+                    var hi = TI.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32()).AsUInt64();
+                    TI.Lows(lo, hi).AsByte().Store(to);
+                    TI.Highs(lo, hi).AsByte().Store(to + 32);
                     break;
                 default:
-                    var t0 = PortableInstructions.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32());
-                    var t1 = PortableInstructions.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32());
-                    var t2 = PortableInstructions.UnpackLow(made[2].AsUInt32(), made[3].AsUInt32());
-                    var t3 = PortableInstructions.UnpackHigh(made[2].AsUInt32(), made[3].AsUInt32());
-                    var u0 = PortableInstructions.UnpackLow(t0.AsUInt64(), t2.AsUInt64());
-                    var u1 = PortableInstructions.UnpackHigh(t0.AsUInt64(), t2.AsUInt64());
-                    var u2 = PortableInstructions.UnpackLow(t1.AsUInt64(), t3.AsUInt64());
-                    var u3 = PortableInstructions.UnpackHigh(t1.AsUInt64(), t3.AsUInt64());
-                    PortableInstructions.Lows(u0, u1).AsByte().Store(to);
-                    PortableInstructions.Lows(u2, u3).AsByte().Store(to + 32);
-                    PortableInstructions.Highs(u0, u1).AsByte().Store(to + 64);
-                    PortableInstructions.Highs(u2, u3).AsByte().Store(to + 96);
+                    var t0 = TI.UnpackLow(made[0].AsUInt32(), made[1].AsUInt32());
+                    var t1 = TI.UnpackHigh(made[0].AsUInt32(), made[1].AsUInt32());
+                    var t2 = TI.UnpackLow(made[2].AsUInt32(), made[3].AsUInt32());
+                    var t3 = TI.UnpackHigh(made[2].AsUInt32(), made[3].AsUInt32());
+                    var u0 = TI.UnpackLow(t0.AsUInt64(), t2.AsUInt64());
+                    var u1 = TI.UnpackHigh(t0.AsUInt64(), t2.AsUInt64());
+                    var u2 = TI.UnpackLow(t1.AsUInt64(), t3.AsUInt64());
+                    var u3 = TI.UnpackHigh(t1.AsUInt64(), t3.AsUInt64());
+                    TI.Lows(u0, u1).AsByte().Store(to);
+                    TI.Lows(u2, u3).AsByte().Store(to + 32);
+                    TI.Highs(u0, u1).AsByte().Store(to + 64);
+                    TI.Highs(u2, u3).AsByte().Store(to + 96);
                     break;
             }
 
@@ -8090,33 +8153,38 @@ internal sealed partial class CpuBackend
 
     /// <summary>
     /// How the described lane loads a span's run of its one code plane and shifts it (every span the same:
-    /// DescribedPlan.UniformRuns): by each lane's shift (Load's shift) where the instruction set shifts lanes by their own
-    /// counts in one instruction (IInstructions.ShiftsByLane), else by the shifts as numbers (Load's counts, RunCounts' 8).
+    /// DescribedPlan.UniformRuns): span s by each lane's shift (shifts[s]) where the instruction set shifts lanes by their
+    /// own counts in one instruction (IInstructions.ShiftsByLane), else by the shifts as numbers (RunCounts' 8 of span s).
+    /// The arrays and s are passed, not the span's entries, so the branch not taken reads nothing (the taken one's shift
+    /// read in place, within the shift instruction).
     /// </summary>
     private unsafe interface IRunLoad
     {
-        static abstract Vector256<byte> Load<TI>(byte* at, Vector256<ulong> shift, int* counts) where TI : struct, IInstructions;
+        static abstract Vector256<byte> Load<TI>(byte* at, Vector256<ulong>* shifts, int* counts, int s) where TI : struct, IInstructions;
     }
 
     // One run: 32 bytes at one shift.
     private unsafe struct OneRun : IRunLoad
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong> shift, int* counts) where TI : struct, IInstructions => TI.ShiftsByLane
-            ? TI.ShiftRight(Vector256.Load(at).AsUInt64(), shift).AsByte()
-            : Vector256.ShiftRightLogical(Vector256.Load(at).AsUInt64(), counts[0]).AsByte();
+        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong>* shifts, int* counts, int s) where TI : struct, IInstructions => TI.ShiftsByLane
+            ? TI.ShiftRight(Vector256.Load(at).AsUInt64(), shifts[s]).AsByte()
+            : Vector256.ShiftRightLogical(Vector256.Load(at).AsUInt64(), counts[8 * s]).AsByte();
     }
 
     // Two runs: 16 bytes at two shifts (a 128-bit half each).
     private unsafe struct TwoRuns : IRunLoad
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong> shift, int* counts) where TI : struct, IInstructions
+        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong>* shifts, int* counts, int s) where TI : struct, IInstructions
         {
+            if (TI.ShiftsByLane)
+            {
+                return TI.ShiftRight(TI.Halves(at).AsUInt64(), shifts[s]).AsByte();
+            }
+
             var v = Vector128.Load(at).AsUInt64();
-            return TI.ShiftsByLane
-                ? TI.ShiftRight(Vector256.Create(v, v), shift).AsByte()
-                : Vector256.Create(Vector128.ShiftRightLogical(v, counts[0]), Vector128.ShiftRightLogical(v, counts[2])).AsByte();
+            return Vector256.Create(Vector128.ShiftRightLogical(v, counts[8 * s]), Vector128.ShiftRightLogical(v, counts[8 * s + 2])).AsByte();
         }
     }
 
@@ -8124,12 +8192,16 @@ internal sealed partial class CpuBackend
     private unsafe struct FourRuns : IRunLoad
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong> shift, int* counts) where TI : struct, IInstructions
+        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong>* shifts, int* counts, int s) where TI : struct, IInstructions
         {
             ulong v = *(ulong*)at;
-            return TI.ShiftsByLane
-                ? TI.ShiftRight(Vector256.Create(v), shift).AsByte()
-                : Vector256.Create(v >> counts[0], v >> counts[1], v >> counts[2], v >> counts[3]).AsByte();
+            if (TI.ShiftsByLane)
+            {
+                return TI.ShiftRight(Vector256.Create(v), shifts[s]).AsByte();
+            }
+
+            int* c = counts + 8 * s;
+            return Vector256.Create(v >> c[0], v >> c[1], v >> c[2], v >> c[3]).AsByte();
         }
     }
 
@@ -8137,12 +8209,16 @@ internal sealed partial class CpuBackend
     private unsafe struct EightRuns : IRunLoad
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong> shift, int* counts) where TI : struct, IInstructions
+        public static Vector256<byte> Load<TI>(byte* at, Vector256<ulong>* shifts, int* counts, int s) where TI : struct, IInstructions
         {
             uint v = *(uint*)at;
-            return TI.ShiftsByLane
-                ? TI.ShiftRight(Vector256.Create(v), shift.AsUInt32()).AsByte()
-                : Vector256.Create(v >> counts[0], v >> counts[1], v >> counts[2], v >> counts[3], v >> counts[4], v >> counts[5], v >> counts[6], v >> counts[7]).AsByte();
+            if (TI.ShiftsByLane)
+            {
+                return TI.ShiftRight(Vector256.Create(v), shifts[s].AsUInt32()).AsByte();
+            }
+
+            int* c = counts + 8 * s;
+            return Vector256.Create(v >> c[0], v >> c[1], v >> c[2], v >> c[3], v >> c[4], v >> c[5], v >> c[6], v >> c[7]).AsByte();
         }
     }
 
@@ -8174,7 +8250,7 @@ internal sealed partial class CpuBackend
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     private static unsafe Vector256<byte> SpanCodes<TR, TM, TI>(byte* at, int* offsets, Vector256<ulong>* shifts, int* counts, int s, Vector256<byte> mask, Vector256<byte> table)
         where TR : struct, IRunLoad where TM : struct, ICodeMap where TI : struct, IInstructions =>
-        TM.Map<TI>(TR.Load<TI>(at + offsets[s], shifts[s], counts + 8 * s) & mask, table);
+        TM.Map<TI>(TR.Load<TI>(at + offsets[s], shifts, counts, s) & mask, table);
 
     // Group gp of the period at `at` as the integer lane's steps (DescribedPlan.Steps, a plan with uniform runs): 8 spans
     // transposed (chunks of 32), or 4 (chunks of 16: s4..s7 not written).
@@ -8212,26 +8288,26 @@ internal sealed partial class CpuBackend
         {
             case 8:
                 var g = TI.Gather(at, offsets).AsUInt32() ^ flip;
-                s0 = GatheredStep<TM, TI>(g, shifts[0], shift[0], mask, table);
-                s1 = GatheredStep<TM, TI>(g, shifts[1], shift[1], mask, table);
-                s2 = GatheredStep<TM, TI>(g, shifts[2], shift[2], mask, table);
-                s3 = GatheredStep<TM, TI>(g, shifts[3], shift[3], mask, table);
-                s4 = GatheredStep<TM, TI>(g, shifts[4], shift[4], mask, table);
-                s5 = GatheredStep<TM, TI>(g, shifts[5], shift[5], mask, table);
-                s6 = GatheredStep<TM, TI>(g, shifts[6], shift[6], mask, table);
-                s7 = GatheredStep<TM, TI>(g, shifts[7], shift[7], mask, table);
+                s0 = GatheredStep<TM, TI>(g, shifts, shift, 0, mask, table);
+                s1 = GatheredStep<TM, TI>(g, shifts, shift, 1, mask, table);
+                s2 = GatheredStep<TM, TI>(g, shifts, shift, 2, mask, table);
+                s3 = GatheredStep<TM, TI>(g, shifts, shift, 3, mask, table);
+                s4 = GatheredStep<TM, TI>(g, shifts, shift, 4, mask, table);
+                s5 = GatheredStep<TM, TI>(g, shifts, shift, 5, mask, table);
+                s6 = GatheredStep<TM, TI>(g, shifts, shift, 6, mask, table);
+                s7 = GatheredStep<TM, TI>(g, shifts, shift, 7, mask, table);
                 return;
             case 4:
                 var a0 = TI.Gather(at, offsets).AsUInt32() ^ flip;
                 var a1 = TI.Gather(at + 4, offsets).AsUInt32() ^ flip;
-                s0 = GatheredStep<TM, TI>(a0, shifts[0], shift[0], mask, table);
-                s1 = GatheredStep<TM, TI>(a1, shifts[0], shift[0], mask, table);
-                s2 = GatheredStep<TM, TI>(a0, shifts[1], shift[1], mask, table);
-                s3 = GatheredStep<TM, TI>(a1, shifts[1], shift[1], mask, table);
-                s4 = GatheredStep<TM, TI>(a0, shifts[2], shift[2], mask, table);
-                s5 = GatheredStep<TM, TI>(a1, shifts[2], shift[2], mask, table);
-                s6 = GatheredStep<TM, TI>(a0, shifts[3], shift[3], mask, table);
-                s7 = GatheredStep<TM, TI>(a1, shifts[3], shift[3], mask, table);
+                s0 = GatheredStep<TM, TI>(a0, shifts, shift, 0, mask, table);
+                s1 = GatheredStep<TM, TI>(a1, shifts, shift, 0, mask, table);
+                s2 = GatheredStep<TM, TI>(a0, shifts, shift, 1, mask, table);
+                s3 = GatheredStep<TM, TI>(a1, shifts, shift, 1, mask, table);
+                s4 = GatheredStep<TM, TI>(a0, shifts, shift, 2, mask, table);
+                s5 = GatheredStep<TM, TI>(a1, shifts, shift, 2, mask, table);
+                s6 = GatheredStep<TM, TI>(a0, shifts, shift, 3, mask, table);
+                s7 = GatheredStep<TM, TI>(a1, shifts, shift, 3, mask, table);
                 return;
             default:
                 // Two runs of 16 bytes: the 8 chunks' runs loaded (chunk l and l + 4 a vector) and their dwords transposed by
@@ -8248,23 +8324,25 @@ internal sealed partial class CpuBackend
                 var b1 = TI.UnpackHigh(w0, w2).AsUInt32() ^ flip;
                 var b2 = TI.UnpackLow(w1, w3).AsUInt32() ^ flip;
                 var b3 = TI.UnpackHigh(w1, w3).AsUInt32() ^ flip;
-                s0 = GatheredStep<TM, TI>(b0, shifts[0], shift[0], mask, table);
-                s1 = GatheredStep<TM, TI>(b1, shifts[0], shift[0], mask, table);
-                s2 = GatheredStep<TM, TI>(b2, shifts[0], shift[0], mask, table);
-                s3 = GatheredStep<TM, TI>(b3, shifts[0], shift[0], mask, table);
-                s4 = GatheredStep<TM, TI>(b0, shifts[1], shift[1], mask, table);
-                s5 = GatheredStep<TM, TI>(b1, shifts[1], shift[1], mask, table);
-                s6 = GatheredStep<TM, TI>(b2, shifts[1], shift[1], mask, table);
-                s7 = GatheredStep<TM, TI>(b3, shifts[1], shift[1], mask, table);
+                s0 = GatheredStep<TM, TI>(b0, shifts, shift, 0, mask, table);
+                s1 = GatheredStep<TM, TI>(b1, shifts, shift, 0, mask, table);
+                s2 = GatheredStep<TM, TI>(b2, shifts, shift, 0, mask, table);
+                s3 = GatheredStep<TM, TI>(b3, shifts, shift, 0, mask, table);
+                s4 = GatheredStep<TM, TI>(b0, shifts, shift, 1, mask, table);
+                s5 = GatheredStep<TM, TI>(b1, shifts, shift, 1, mask, table);
+                s6 = GatheredStep<TM, TI>(b2, shifts, shift, 1, mask, table);
+                s7 = GatheredStep<TM, TI>(b3, shifts, shift, 1, mask, table);
                 return;
         }
     }
 
-    // A gathered dword vector at one run's shifts (by `one` where every lane's is the same), masked and mapped: a step.
+    // A gathered dword vector at run q's shifts (shifts[q]; by one[q] where every lane's is the same and the instruction set
+    // does not shift lanes by their own counts in one instruction), masked and mapped: a step. The arrays and q are passed,
+    // not the run's entries, so the branch not taken reads nothing.
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-    private static Vector256<byte> GatheredStep<TM, TI>(Vector256<uint> words, Vector256<uint> shift, int one, Vector256<byte> mask, Vector256<byte> table)
+    private static unsafe Vector256<byte> GatheredStep<TM, TI>(Vector256<uint> words, Vector256<uint>* shifts, int* one, int q, Vector256<byte> mask, Vector256<byte> table)
         where TM : struct, ICodeMap where TI : struct, IInstructions =>
-        TM.Map<TI>((one >= 0 ? Vector256.ShiftRightLogical(words, one) : TI.ShiftRight(words, shift)).AsByte() & mask, table);
+        TM.Map<TI>((TI.ShiftsByLane || one[q] < 0 ? TI.ShiftRight(words, shifts[q]) : Vector256.ShiftRightLogical(words, one[q])).AsByte() & mask, table);
 
     // MadeOne for a plan with uniform runs (P = 1), its load and map as type parameters.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
