@@ -15,6 +15,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: bfloat16, float16, int8, q8_0, q4_0, iq4_nl (a code table), int64 (codes with a scale an output row), float64, int2 (2-bit codes, 32 a block with a float16 scale) and mxfp4 (OCP: E2M1 values sharing an E8M0 scale) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes, the measured route with the described lane and the written kernels, the described lane alone and the written kernels alone (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesNear),
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
         ("product routes: the CPU's two lanes over q4_k's, q4_0's, mxfp4's, q6_k's, int64's and int2's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values (int64: over its eight byte planes), its two over bfloat16's stored values (made float32 in registers in even and odd pairs or by a shift) and its two over float64's (float64 FMAs, x widened once or in registers), each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; q4_0 rows of 3, 8 and 10 blocks: a last group of 8 short; q6_k rows of 1 and 3 super-blocks; int64 rows of 100, 256 and 544 values, with a scale an output row; float64 rows of 100, 256 and 2600 values: passes over k in spans; int2 and mxfp4 rows of 3, 8 and 10 blocks: a last group of 8 short; bfloat16 rows of 100, 256, 520 and 4200 values: passes over k in spans; the packed bfloat16 product under the measured route, 1, 3, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x); the described lane alone (any type read from its description, none of the written kernels) over each of them too, each type's description decoding its stored bytes to its own conversion's values, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers)", ProductRoutesNibbleLanes),
+        ("product routes: the CPU's lanes over stored weights give the same bits on any CPU: every lane that runs here (q4_k, q4_0, mxfp4, q6_k, bfloat16, int64, float64 and int2 by their written lanes and the described lane, the types made of a description alone by the described lane; 1, 3, 4, 5, 9 and 70 rows of fixed operands) the SHA-256 of its outputs recorded for its format and lane, the packed weights' bytes too", ProductRoutesLaneBits),
         ("product routes: CUDA's described lane alone (any type read from its description; no written kernel, nothing of a weight widened) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row), float64, int2 and mxfp4 as stored, over float16, int8, q8_0 and iq4_nl, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers): the rows product (1, 3, 8, 9 and 70 rows; float64 arithmetic for 64- and 32-bit codes) within float32's bound for k terms, and in a bfloat16 run the tensor-core product (9, 70 and 130 rows; k split in 1 and 2) within it of x and the values rounded to bfloat16, and a whole-byte integer code's integer product (int64, int8, 32-bit integers: the byte planes by int8 tensor cores) within it and x's rounding to int8 a block of 32 values", ProductRoutesDescribedCuda),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
@@ -508,6 +509,137 @@ internal abstract partial class DesktopTests : Tests
 
         Check(ran == made.Length * 4, $"the described lane ran {ran} of {made.Length * 4} products of types made of a description alone");
     }
+
+    // The bits of the CPU's lanes over stored weights on fixed operands: each format's weights packed from seeded values, x
+    // seeded, 1, 3, 4, 5, 9 and 70 rows; per format and lane the SHA-256 (its first 16 hex digits) of every output's bits,
+    // and of the packed weights' bytes; the types made of a description alone (DescribedOnlyTypes) by the described lane.
+    // A lane computes alike on every CPU, whatever its instruction sets, so one list holds (LaneBitsRecorded); a lane that
+    // does not run here, or a hash not in the list, fails naming it, and the hashes made here are listed to compare.
+    private static void ProductRoutesLaneBits(Device device)
+    {
+        if (device.Backend is not Idrak.Abstraction.Devices.Cpu.CpuBackend)
+        {
+            Skip($"the lanes over stored weights are the CPU's (not {device})");
+            return;
+        }
+
+        var random = new Random(97);
+        var made = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        var hashes = new Dictionary<string, System.Security.Cryptography.IncrementalHash>(StringComparer.Ordinal);
+        void Add(string key, ReadOnlySpan<byte> bytes)
+        {
+            if (!hashes.TryGetValue(key, out var hash))
+            {
+                hashes[key] = hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+            }
+
+            hash.AppendData(bytes);
+        }
+
+        int[] rows = [1, 3, 4, 5, 9, 70];
+        UnderRoute(ProductRoute.Measured, () =>
+        {
+            foreach (var (format, k, n) in new[] { ("q4_k", 512, 37), ("q4_0", 320, 37), ("mxfp4", 320, 37), ("q6_k", 768, 37), ("bfloat16", 520, 37), ("bfloat16", 4200, 9),
+                ("int64", 544, 37), ("float64", 2600, 9), ("int2", 320, 37) })
+            {
+                var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
+                var values = RouteValues(random, (long)k * n);
+                using var weight = (StoredWeight)PackedWeightFormats.Pack(format, values, k, n, device);
+                var storage = weight.StoredValues.Storage;
+                var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(storage);
+                var rowScales = weight.Scales is { } held ? Idrak.Abstraction.Devices.Cpu.CpuBackend.D(held.Storage) : null;
+                Add($"{format} packed", System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan(0, storage.Length)));
+                if (rowScales is not null)
+                {
+                    Add($"{format} packed", System.Runtime.InteropServices.MemoryMarshal.AsBytes(rowScales.AsSpan()));
+                }
+
+                foreach (int m in rows)
+                {
+                    var x = RouteValues(random, (long)m * k);
+                    foreach (var lane in new[] { "first", "second", "described" })
+                    {
+                        var y = new float[m * n];
+                        bool ran = lane == "described"
+                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, storage.Length, x, y, m, n, k, rowScales)
+                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane == "second", type, words, storage.Length, x, y, m, n, k, rowScales);
+                        Check(ran, $"{format} [{k}, {n}], {m} rows: its {lane} lane does not run here");
+                        Add($"{format} {lane}", System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                    }
+                }
+            }
+
+            foreach (var (name, type, d, k) in DescribedOnlyTypes())
+            {
+                int n = 37;
+                var bytes = DescribedOnlyBytes(d, k, n, random);
+                var words = new float[(bytes.Length + 3) / 4];
+                Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+                foreach (int m in rows)
+                {
+                    var x = RouteValues(random, (long)m * k);
+                    var y = new float[m * n];
+                    Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(type, words, words.Length, x, y, m, n, k), $"{name}, {m} rows: the described lane does not run here");
+                    Add($"{name} described", System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
+                }
+            }
+        });
+
+        foreach (var (key, hash) in hashes)
+        {
+            made[key] = Convert.ToHexString(hash.GetHashAndReset())[..16];
+            hash.Dispose();
+        }
+
+        var differ = made.Where(e => !LaneBitsRecorded.TryGetValue(e.Key, out var recorded) || recorded != e.Value)
+            .Select(e => $"{e.Key}: the bits hash to {e.Value}, recorded {(LaneBitsRecorded.TryGetValue(e.Key, out var recorded) ? recorded : "nothing")}")
+            .Concat(LaneBitsRecorded.Keys.Where(key => !made.ContainsKey(key)).Select(key => $"{key}: recorded, not hashed here")).ToList();
+        Check(differ.Count == 0, $"{differ.Count} of {made.Count} lanes differ from the recorded bits: {string.Join("; ", differ)}"
+            + $"{Environment.NewLine}the hashes made here:{Environment.NewLine}{string.Join(Environment.NewLine, made.Select(e => $"        [\"{e.Key}\"] = \"{e.Value}\","))}");
+    }
+
+    // The hashes ProductRoutesLaneBits makes, recorded (the CPU's lanes give these bits on any CPU).
+    private static readonly Dictionary<string, string> LaneBitsRecorded = new(StringComparer.Ordinal)
+    {
+        ["16-bit integers described"] = "AA650437BFD4B7EC",
+        ["16-bit integers plus 0.5 described"] = "C758FF37AA9881B3",
+        ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values described"] = "266CB3932659C6D5",
+        ["32-bit integers described"] = "BEF4122A2A5C359A",
+        ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values described"] = "B2EFD9742133B719",
+        ["bfloat16 described"] = "1F14D9DAE9B8DFDF",
+        ["bfloat16 first"] = "1F14D9DAE9B8DFDF",
+        ["bfloat16 packed"] = "B2B8ADDE868D62F8",
+        ["bfloat16 second"] = "A2C47570E1FE4008",
+        ["float64 described"] = "C151C31D72C6C283",
+        ["float64 first"] = "C151C31D72C6C283",
+        ["float64 packed"] = "B09057F69C11D882",
+        ["float64 second"] = "C151C31D72C6C283",
+        ["fp6 E2M3 in a 4-bit and a 2-bit plane, an E8M0 scale a 32 values described"] = "275089C20C16CCD2",
+        ["int2 described"] = "DD87E37FA24AE3F6",
+        ["int2 first"] = "DAB1A16E2310BE7C",
+        ["int2 packed"] = "4D39DB18C6D4D6F4",
+        ["int2 second"] = "DD87E37FA24AE3F6",
+        ["int64 described"] = "21F1BA49477B8C02",
+        ["int64 first"] = "2CD5D31DFF2540CE",
+        ["int64 packed"] = "ECBA01AB8ED13831",
+        ["int64 second"] = "21F1BA49477B8C02",
+        ["mxfp4 described"] = "E789C7DEB1AB96BA",
+        ["mxfp4 first"] = "7102698DDEA25EDF",
+        ["mxfp4 packed"] = "CAECF9C30E7FAD8D",
+        ["mxfp4 second"] = "E789C7DEB1AB96BA",
+        ["q4_0 described"] = "3D3B7C646E54EC9D",
+        ["q4_0 first"] = "5141931BE5AE4177",
+        ["q4_0 packed"] = "EED96641580BA4BE",
+        ["q4_0 second"] = "3D3B7C646E54EC9D",
+        ["q4_k described"] = "2C7667C71A41568D",
+        ["q4_k first"] = "EA45628929DC06D0",
+        ["q4_k packed"] = "9A51AEFF0C835D8D",
+        ["q4_k second"] = "1DB7C46450939FF7",
+        ["q6_k described"] = "FE20B8A3603EB411",
+        ["q6_k first"] = "C1F28A6BECFD0343",
+        ["q6_k packed"] = "CD4B4CE1C48EFDD1",
+        ["q6_k second"] = "EAE080B4EDE7E2F1",
+    };
 
     // CUDA's described lane run alone (no written kernel) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row),
     // float64, int2 and mxfp4 as stored, over the routes' other formats, and over the types made of a description alone
