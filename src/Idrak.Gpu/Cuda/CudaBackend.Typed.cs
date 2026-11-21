@@ -586,9 +586,10 @@ internal sealed unsafe partial class CudaBackend
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void SayStored(ElementType type, int m, int n, int k, string lane) =>
+    // `part`: what of the shape's work the lane does, where it is not the product (a fused pass, a group's launches).
+    private void SayStored(ElementType type, int m, int n, int k, string lane, string? part = null) =>
         ProductRoutes.Chose(Kind, string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"{type.Name} {m}x{k}->{n}{(BFloat16Products ? " mixed bfloat16" : "")}"), lane);
+            $"{type.Name} {m}x{k}->{n}{(BFloat16Products ? " mixed bfloat16" : "")}{(part is null ? "" : ", " + part)}"), lane);
 
     /// <summary>Tests: the stored products' tensor-core lane for <paramref name="type"/> run directly (false when it cannot take the product).</summary>
     internal bool StoredMatrixUnits(ElementType type, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k)
@@ -690,6 +691,14 @@ internal sealed unsafe partial class CudaBackend
         public IntPtr[] RowsMany { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Where(r => r <= PtxKernels.TypedGemvRows[^1])
             .Select(r => kernels[PtxKernels.DescribedRowsName(plan, align, pairs, r) + "_many"])];
 
+        // The fused few-row variants (DescribedRowCounts up to 8; zero where the module has none: its shared memory past the
+        // device's): the gate/up pair's act(gate) · up, a product's residual + y and its RMS norm.
+        public IntPtr[] RowsGated { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Where(r => r <= PtxKernels.TypedGemvRows[^1])
+            .Select(r => kernels.GetValueOrDefault(PtxKernels.DescribedFusedName(plan, align, pairs, r, PtxKernels.Epilogue.Gated)))];
+
+        public IntPtr[] RowsAddNorm { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Where(r => r <= PtxKernels.TypedGemvRows[^1])
+            .Select(r => kernels.GetValueOrDefault(PtxKernels.DescribedFusedName(plan, align, pairs, r, PtxKernels.Epilogue.AddNorm)))];
+
         public IntPtr Mma { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedMmaName(plan, align));
 
         public IntPtr Widen { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedWidenName(plan, align, pairs));
@@ -725,7 +734,7 @@ internal sealed unsafe partial class CudaBackend
             }
             else
             {
-                var (names, source) = PtxKernels.DescribedModule(plan, align, pairs);
+                var (names, source) = PtxKernels.DescribedModule(plan, align, pairs, _limits.SharedPerBlockOptin);
                 var kernels = LoadDynamicModule(PtxKernels.DescribedModuleName(plan, align, pairs), names, source, name => DescribedShared(plan, align, pairs, name), out string? reason);
                 if (kernels is null)
                 {
@@ -761,6 +770,14 @@ internal sealed unsafe partial class CudaBackend
             if (name == own || name == own + "_many")
             {
                 return PtxKernels.DescribedRowsShared(plan, align, rows);
+            }
+
+            foreach (var epilogue in new[] { PtxKernels.Epilogue.Gated, PtxKernels.Epilogue.AddNorm })
+            {
+                if (name == PtxKernels.DescribedFusedName(plan, align, pairs, rows, epilogue))
+                {
+                    return PtxKernels.DescribedRowsShared(plan, align, rows, epilogue);
+                }
             }
         }
 
@@ -866,6 +883,78 @@ internal sealed unsafe partial class CudaBackend
         (args[0], args[10], args[11], args[12]) = (P(input), U(m), U(k), U(rowBytes));
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
         Launch(functions.RowsMany[variant], (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, args);
+        return true;
+    }
+
+    // The described rows product's variant of the fewest rows that hold m (few rows: up to 8).
+    private static int DescribedFewVariant(int m) => m <= 1 ? 0 : m <= 2 ? 1 : m <= 4 ? 2 : 3;
+
+    // The described lane's fused gate/up pair (few rows): both weights' same rows in one launch, each lane decoding the
+    // gate's and the up's values against one load of x, their sums as their own launches add them (split: log2 of the
+    // warps a group of 8 rows takes), then hidden = act(gate) · up as gated_act_f32 computes it; neither product stored.
+    // False where the plan, the shapes or the device do not take it.
+    private bool RunDescribedGated(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products,
+        Storage hidden, int split)
+    {
+        if (products.Length != 2 || m is <= 0 or > 8 || k <= 0 || activation is < 0 or > 2)
+        {
+            return false;
+        }
+
+        var (gate, up) = (products[0], products[1]);
+        var type = gate.Values.ElementType;
+        if (up.Values.ElementType != type || gate.Columns != up.Columns || gate.Columns <= 0 || gate.Scales is null != up.Scales is null
+            || DescribedOf(type) is not { } plan || !DescribedRow(plan, type, k, out int rowBytes, out int align) || (long)m * k > int.MaxValue / 2
+            || Described(plan, align, k % 2 == 0) is not { } functions || functions.RowsGated[DescribedFewVariant(m)] == 0)
+        {
+            return false;
+        }
+
+        int n = gate.Columns, variant = DescribedFewVariant(m), rows = PtxKernels.DescribedRowCounts[variant], perBlock = 64 >> split;
+        var kernel = functions.RowsGated[variant];
+        var input = x;
+        if (plan.Wide)
+        {
+            input = _describedWide.Get(this, 2 * m * k);
+            Launch(functions.Widen, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(input), U(m * k));
+        }
+
+        t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.Gated);
+        Launch(kernel, (uint)((n + perBlock - 1) / perBlock), 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(gate.Values), gate.Scales is null ? 0UL : P(gate.Scales),
+            P(hidden), P(up.Values), up.Scales is null ? 0UL : P(up.Scales), U(m), U(n), U(k), U(rowBytes), U(split), U(activation));
+        return true;
+    }
+
+    // Each block's sums of squares of the fused residual and norm (a call's, in queue order): [blocks, m].
+    private readonly KeptScratch _describedNormParts = new();
+
+    // The described lane's fused residual and norm (few rows): y = x · Wᵀ (× a scale an output row) by the rows product
+    // (split as above), sum = residual + y in registers and stored, normalized = sum · 1 / sqrt(mean of the row's squares +
+    // eps) · (gain + offset) by the last block to finish, as add_rms_norm_affine_f32 computes it; y not stored. False where
+    // the plan, the shapes or the device do not take it.
+    private bool RunDescribedAddNorm(Storage x, Storage weight, Storage? scales, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized,
+        float eps, float offset, int split)
+    {
+        var type = weight.ElementType;
+        if (m is <= 0 or > 8 || n <= 0 || k <= 0 || DescribedOf(type) is not { } plan || !DescribedRow(plan, type, k, out int rowBytes, out int align)
+            || (long)m * k > int.MaxValue / 2 || Described(plan, align, k % 2 == 0) is not { } functions || functions.RowsAddNorm[DescribedFewVariant(m)] == 0)
+        {
+            return false;
+        }
+
+        int variant = DescribedFewVariant(m), rows = PtxKernels.DescribedRowCounts[variant], perBlock = 64 >> split, blocks = (n + perBlock - 1) / perBlock;
+        var kernel = functions.RowsAddNorm[variant];
+        var input = x;
+        if (plan.Wide)
+        {
+            input = _describedWide.Get(this, 2 * m * k);
+            Launch(functions.Widen, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(input), U(m * k));
+        }
+
+        var parts = _describedNormParts.Get(this, blocks * m);
+        t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.AddNorm);
+        Launch(kernel, (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(weight), scales is null ? 0UL : P(scales), P(residual), P(sum), P(gain), P(normalized),
+            P(parts), EpilogueCount(), U(m), U(n), U(k), U(rowBytes), U(split), F(eps), F(offset));
         return true;
     }
 

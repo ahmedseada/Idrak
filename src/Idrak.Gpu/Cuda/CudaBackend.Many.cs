@@ -177,58 +177,167 @@ internal sealed unsafe partial class CudaBackend
         return shared.Permuted;
     }
 
-    // The fused epilogues are candidates, not defaults: each shape measures, once and on the real operands,
-    // the fused pass against the products followed by the pass of its own (GatedActivation, AddRmsNormAffine), and the
-    // fused one runs only where it is clearly faster (Tune's fallback is the composition). A number for each type, for the keys.
+    // The fused epilogues are candidates, not defaults: each shape measures, once and on the real operands, the products
+    // followed by the pass of its own (GatedActivation, AddRmsNormAffine: 0) against each fused pass the route takes: the
+    // written kernels' (1, where the setting takes them and they read the type) and the described lane's by each warp split
+    // of its rows product (DescribedFusedLane + split, where the setting takes the described lane and it reads the type), and
+    // a fused one runs only where it is clearly faster (Tune's fallback is the composition). A number for each type, for the keys.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> EpilogueIds = new(StringComparer.Ordinal);
 
+    // The described lane's fused passes: DescribedFusedLane + split (log2 of the warps a group of 8 rows takes, 0 - 3).
+    private const int DescribedFusedLane = 10;
+
     private static TuneKey EpilogueKey(int kind, int detail, ElementType type, int m, int n, int k) =>
-        new(TuneOp.ProductRoute, (kind == 0 ? 4000 : 5000) + EpilogueIds.GetOrAdd(type.Name, static _ => EpilogueIds.Count), m, n, k, detail);
+        new(TuneOp.ProductRoute, (kind == 0 ? 4000 : 5000) + EpilogueIds.GetOrAdd(type.Name, static _ => EpilogueIds.Count), m, n, k, detail, 1 + (int)ProductRoutes.Lanes);
+
+    // Whether the measured route's products of `type` take the described lane (ProductRoutes.Lanes) and it reads the type.
+    private static bool DescribedTaken(ElementType type) =>
+        ProductRoutes.Current == ProductRoute.Measured && ProductRoutes.Lanes != RouteLanes.Written && DescribedOf(type) is not null;
+
+    // The epilogue's candidates at the shape (kind 0 the gate/up pair, 1 the residual and norm), the composition first.
+    private int EpilogueCandidates(int kind, ElementType type, bool scaled, int m, int k, Span<int> into)
+    {
+        int count = 0;
+        into[count++] = 0;
+        if (WrittenTaken(type) && WrittenFuses(type, scaled, k))
+        {
+            into[count++] = 1;
+        }
+
+        if (DescribedTaken(type) && DescribedFuses(kind, type, m, k))
+        {
+            for (int split = 3; split >= 0; split--)
+            {
+                into[count++] = DescribedFusedLane + split;
+            }
+        }
+
+        return count;
+    }
+
+    // Whether the written few-row kernels have the type's fused variants (Grouped's and FusedAddNorm's).
+    private bool WrittenFuses(ElementType type, bool scaled, int k) => type.Super is not null || type.Grid is not null
+        ? !scaled && Decoded(type) is var (_, values) && k % values == 0
+        : DecodeOf(type) is { } d && (d.PerValue ? (long)k * d.Bits % 32 == 0 : k % PtxKernels.TypedTileDepth == 0 && !scaled) && Typed(d) is not null;
+
+    // Whether the described lane's module has the type's fused variant for m rows (its shared memory within the device's).
+    private bool DescribedFuses(int kind, ElementType type, int m, int k) => m is > 0 and <= 8 && DescribedOf(type) is { } plan
+        && DescribedRow(plan, type, k, out _, out int align) && (long)m * k <= int.MaxValue / 2 && Described(plan, align, k % 2 == 0) is { } functions
+        && (kind == 0 ? functions.RowsGated : functions.RowsAddNorm)[DescribedFewVariant(m)] != 0;
 
     public override bool? StoredEpilogueFused(int kind, int detail, ElementType type, int m, int n, int k)
     {
-        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || !WrittenTaken(type))
+        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1])
         {
             return false;
         }
 
-        return TryTuned(EpilogueKey(kind, detail, type, m, n, k), [0, 1], 0, out int lane) ? lane == 1 : null;
+        Span<int> candidates = stackalloc int[8];
+        int count = EpilogueCandidates(kind, type, kind == 1 && detail != 0, m, k, candidates);
+        if (count == 1)
+        {
+            return false;
+        }
+
+        return TryTuned(EpilogueKey(kind, detail, type, m, n, k), candidates[..count], 0, out int lane) ? lane != 0 : null;
     }
 
     public override bool StoredMatMulGatedPairKernel(int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products,
         Storage hidden)
     {
-        if (products.Length != 2 || products[0].Columns != products[1].Columns || activation is < 0 or > 2 || !WrittenTaken(products[0].Values.ElementType))
+        if (products.Length != 2 || products[0].Columns != products[1].Columns || activation is < 0 or > 2 || ProductRoutes.Current == ProductRoute.Name
+            || m <= 0 || m > PtxKernels.TypedGemvRows[^1])
         {
             return false;
         }
 
         var array = products.ToArray();
         int n = array[0].Columns;
-        var key = EpilogueKey(0, activation, array[0].Values.ElementType, m, n, k);
-        if (!TryTuned(key, [0, 1], 0, out int lane))
+        Span<int> candidates = stackalloc int[8];
+        int count = EpilogueCandidates(0, array[0].Values.ElementType, array[0].Scales is not null, m, k, candidates);
+        if (count == 1)
         {
-            lane = Tune(key, [0, 1], 0, c => GatedLane(c, activation, x, m, k, array, hidden));
+            return false;                                                  // no fused pass: the caller composes
         }
 
+        var key = EpilogueKey(0, activation, array[0].Values.ElementType, m, n, k);
+        if (!TryTuned(key, candidates[..count], 0, out int lane))
+        {
+            lane = Tune(key, candidates[..count], 0, c => GatedLane(c, activation, x, m, k, array, hidden));
+        }
+
+        SayEpilogue(key, 0, array[0].Values.ElementType, m, n, k, lane, count);
         return GatedLane(lane, activation, x, m, k, array, hidden);
     }
 
-    /// <summary>Tests: the fused gate/up pass run directly (not measured against the composition).</summary>
-    internal bool StoredGatedFused(int activation, Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products, Storage hidden) =>
-        GatedLane(1, activation, x, m, k, products, hidden);
+    // The epilogue shapes this process has recorded (ProductRoutes.Chose), measured here or read from the tuning cache.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<TuneKey, byte> _epiloguesSaid = new();
 
-    /// <summary>Tests: the fused residual and norm pass run directly (not measured against the composition).</summary>
+    private void SayEpilogue(TuneKey key, int kind, ElementType type, int m, int n, int k, int lane, int count)
+    {
+        if (_epiloguesSaid.TryAdd(key, 0))
+        {
+            string what = lane switch
+            {
+                0 => "the products, then the pass of its own",
+                1 => "written kernels' fused pass",
+                _ => $"described lane's fused pass ({1 << (lane - DescribedFusedLane)} warps a group of 8 rows)",
+            };
+            SayStored(type, m, n, k, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{what} (of {count} lanes)"),
+                kind == 0 ? "gate/up pair, act(gate) · up" : "residual + y and its RMS norm");
+        }
+    }
+
+    /// <summary>
+    /// Tests: a fused gate/up pass run directly by <paramref name="lane"/> (1 the written kernels', DescribedFusedLane +
+    /// split the described lane's: StoredEpilogueCandidates), not measured against the composition.
+    /// </summary>
+    internal bool StoredGatedFused(int activation, Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products, Storage hidden,
+        int lane = 1) =>
+        lane != 0 && GatedLane(lane, activation, x, m, k, products, hidden);
+
+    /// <summary>Tests: a fused residual and norm pass run directly by <paramref name="lane"/> (as StoredGatedFused's), not measured against the composition.</summary>
     internal bool StoredAddNormFused(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
-        Storage normalized, float eps, float offset) =>
-        AddNormLane(1, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        Storage normalized, float eps, float offset, int lane = 1) =>
+        lane != 0 && AddNormLane(lane, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
 
-    // 1 the fused pass; 0 the grouped products, then act(gate) · up as a pass of its own.
+    /// <summary>Tests: the epilogue's lanes at the shape (kind 0 the gate/up pair, 1 the residual and norm), the composition (0) first.</summary>
+    internal int[] StoredEpilogueCandidates(int kind, ElementType type, bool scaled, int m, int k)
+    {
+        Span<int> candidates = stackalloc int[8];
+        return candidates[..EpilogueCandidates(kind, type, scaled, m, k, candidates)].ToArray();
+    }
+
+    /// <summary>Tests: the epilogue lane the shape settled on (detail: the activation, or whether the weight has scales), or null where none is measured yet.</summary>
+    internal int? StoredEpilogueChoice(int kind, int detail, ElementType type, bool scaled, int m, int n, int k)
+    {
+        var candidates = StoredEpilogueCandidates(kind, type, scaled, m, k);
+        return TryTuned(EpilogueKey(kind, detail, type, m, n, k), candidates, 0, out int lane) ? lane : null;
+    }
+
+    /// <summary>
+    /// Tests: the product lane a fused lane's own products take (the written few-row kernel: 0, or the super-block one; the
+    /// described rows product of the fused lane's split), for StoredRoutedLane.
+    /// </summary>
+    internal static int StoredEpilogueProductLane(ElementType type, int fusedLane) => fusedLane >= DescribedFusedLane ? DescribedRowsLane + fusedLane - DescribedFusedLane
+        : type.Super is not null || type.Grid is not null ? SuperFewLane : 0;
+
+    /// <summary>Tests: a stored weight's product by one of the measured route's lanes (StoredRouted's candidates), not measured.</summary>
+    internal bool StoredRoutedLane(int lane, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k) =>
+        RunRouted(lane, DescribedOf(weight.ElementType), x, weight, scales, y, m, n, k);
+
+    // 0 the grouped products, then act(gate) · up as a pass of its own; 1 the written kernels' fused pass; DescribedFusedLane
+    // + split the described lane's.
     private bool GatedLane(int lane, int activation, Storage x, int m, int k, (Storage Values, Storage? Scales, Storage Output, int Columns)[] products, Storage hidden)
     {
         if (lane == 1)
         {
             return Grouped(x, m, k, products, hidden, activation);
+        }
+
+        if (lane >= DescribedFusedLane)
+        {
+            return RunDescribedGated(activation, x, m, k, products, hidden, lane - DescribedFusedLane);
         }
 
         if (!FewMany(x, m, k, products))
@@ -248,24 +357,38 @@ internal sealed unsafe partial class CudaBackend
     public override bool StoredMatMulAddRmsNormKernel(Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset)
     {
-        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || k <= 0 || n <= 0 || !WrittenTaken(weight.ElementType))
+        if (ProductRoutes.Current == ProductRoute.Name || m <= 0 || m > PtxKernels.TypedGemvRows[^1] || k <= 0 || n <= 0)
         {
             return false;
         }
 
-        var key = EpilogueKey(1, scales is null ? 0 : 1, weight.ElementType, m, n, k);
-        if (!TryTuned(key, [0, 1], 0, out int lane))
+        Span<int> candidates = stackalloc int[8];
+        int count = EpilogueCandidates(1, weight.ElementType, scales is not null, m, k, candidates);
+        if (count == 1)
         {
-            lane = Tune(key, [0, 1], 0, c => AddNormLane(c, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset));
+            return false;                                                  // no fused pass: the caller composes
         }
 
+        var key = EpilogueKey(1, scales is null ? 0 : 1, weight.ElementType, m, n, k);
+        if (!TryTuned(key, candidates[..count], 0, out int lane))
+        {
+            lane = Tune(key, candidates[..count], 0, c => AddNormLane(c, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset));
+        }
+
+        SayEpilogue(key, 1, weight.ElementType, m, n, k, lane, count);
         return AddNormLane(lane, x, weight, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
-    // 1 the fused pass; 0 the product (the routed few-row lane), then residual + y and its norm as a pass of its own.
+    // 0 the product (the routed few-row lane), then residual + y and its norm as a pass of its own; 1 the written kernels'
+    // fused pass; DescribedFusedLane + split the described lane's.
     private bool AddNormLane(int lane, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain,
         Storage normalized, float eps, float offset)
     {
+        if (lane >= DescribedFusedLane)
+        {
+            return RunDescribedAddNorm(x, weight, scales, m, n, k, residual, sum, gain, normalized, eps, offset, lane - DescribedFusedLane);
+        }
+
         if (lane == 0)
         {
             bool product = ProductRoutes.Current == ProductRoute.Measured && StoredRouted(x, weight, scales, y, m, n, k)
