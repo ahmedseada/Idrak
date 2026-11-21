@@ -951,6 +951,11 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Vector256<int> Dot(Vector256<int> sum, Vector256<byte> codes, Vector256<sbyte> x)
         {
+            if (!Vector256.IsHardwareAccelerated)
+            {
+                return Vector256.Create(Dot(sum.GetLower(), codes.GetLower(), x.GetLower()), Dot(sum.GetUpper(), codes.GetUpper(), x.GetUpper()));
+            }
+
             // Even and odd bytes as 16-bit lanes (codes zero-extended, x sign-extended), each product exact in 16 bits (at most
             // 255 · 128), each 32-bit lane's two of each added as 32-bit integers.
             var c = codes.AsInt16();
@@ -959,6 +964,18 @@ internal sealed partial class CpuBackend
             var odd = (Vector256.ShiftRightLogical(c, 8) * Vector256.ShiftRightArithmetic(v, 8)).AsInt32();
             return sum + (Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(even, 16), 16) + Vector256.ShiftRightArithmetic(even, 16))
                 + (Vector256.ShiftRightArithmetic(Vector256.ShiftLeft(odd, 16), 16) + Vector256.ShiftRightArithmetic(odd, 16));
+        }
+
+        // Dot over 128 bits (a half of a 256-bit lane set where those are not accelerated: the same operations, lane by lane).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static Vector128<int> Dot(Vector128<int> sum, Vector128<byte> codes, Vector128<sbyte> x)
+        {
+            var c = codes.AsInt16();
+            var v = x.AsInt16();
+            var even = ((c & Vector128.Create((short)0xFF)) * Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(v, 8), 8)).AsInt32();
+            var odd = (Vector128.ShiftRightLogical(c, 8) * Vector128.ShiftRightArithmetic(v, 8)).AsInt32();
+            return sum + (Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(even, 16), 16) + Vector128.ShiftRightArithmetic(even, 16))
+                + (Vector128.ShiftRightArithmetic(Vector128.ShiftLeft(odd, 16), 16) + Vector128.ShiftRightArithmetic(odd, 16));
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -1471,10 +1488,17 @@ internal sealed partial class CpuBackend
 
     // a · b + c rounded once from separate operations: each product exact in float64, its sum with c rounded to odd there,
     // then to float32 to nearest (float64's 53 bits are float32's 24 and two more: the two roundings give the one).
+    // Where 256-bit vectors are not accelerated, by their 128-bit halves (the same operations, lane by lane).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Vector256<float> ExactFused(Vector256<float> a, Vector256<float> b, Vector256<float> c) =>
-        Vector256.Narrow(OddSum(Vector256.WidenLower(a) * Vector256.WidenLower(b), Vector256.WidenLower(c)),
-            OddSum(Vector256.WidenUpper(a) * Vector256.WidenUpper(b), Vector256.WidenUpper(c)));
+    private static Vector256<float> ExactFused(Vector256<float> a, Vector256<float> b, Vector256<float> c) => Vector256.IsHardwareAccelerated
+        ? Vector256.Narrow(OddSum(Vector256.WidenLower(a) * Vector256.WidenLower(b), Vector256.WidenLower(c)),
+            OddSum(Vector256.WidenUpper(a) * Vector256.WidenUpper(b), Vector256.WidenUpper(c)))
+        : Vector256.Create(ExactFused(a.GetLower(), b.GetLower(), c.GetLower()), ExactFused(a.GetUpper(), b.GetUpper(), c.GetUpper()));
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<float> ExactFused(Vector128<float> a, Vector128<float> b, Vector128<float> c) =>
+        Vector128.Narrow(OddSum(Vector128.WidenLower(a) * Vector128.WidenLower(b), Vector128.WidenLower(c)),
+            OddSum(Vector128.WidenUpper(a) * Vector128.WidenUpper(b), Vector128.WidenUpper(c)));
 
     // a · b + c rounded once from separate operations: a · b = ph + pl exactly (Dekker's product, each halved by 2^27 + 1),
     // c + ph = th + tl exactly, tl + pl rounded to odd, then th plus that rounded to nearest (Boldo and Melquiond's emulated
@@ -1483,6 +1507,11 @@ internal sealed partial class CpuBackend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector256<double> ExactFused(Vector256<double> a, Vector256<double> b, Vector256<double> c)
     {
+        if (!Vector256.IsHardwareAccelerated)
+        {
+            return Vector256.Create(ExactFused(a.GetLower(), b.GetLower(), c.GetLower()), ExactFused(a.GetUpper(), b.GetUpper(), c.GetUpper()));
+        }
+
         var ph = a * b;
         var split = Vector256.Create(134217729.0);
         var ta = a * split;
@@ -1500,6 +1529,44 @@ internal sealed partial class CpuBackend
         var most = Vector256.Create(1e299);
         var finite = Vector256.LessThan(Vector256.Abs(a), most) & Vector256.LessThan(Vector256.Abs(b), most) & Vector256.LessThan(Vector256.Abs(c), Vector256.Create(double.PositiveInfinity));
         return Vector256.ConditionalSelect(finite, sum, ph + c);
+    }
+
+    // ExactFused over 128 bits (the same operations, lane by lane).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<double> ExactFused(Vector128<double> a, Vector128<double> b, Vector128<double> c)
+    {
+        var ph = a * b;
+        var split = Vector128.Create(134217729.0);
+        var ta = a * split;
+        var ah = ta - (ta - a);
+        var al = a - ah;
+        var tb = b * split;
+        var bh = tb - (tb - b);
+        var bl = b - bh;
+        var pl = ((ah * bh - ph) + ah * bl + al * bh) + al * bl;
+        var th = c + ph;
+        var cc = th - ph;
+        var tl = (c - cc) + (ph - (th - cc));
+        var v = OddSum(tl, pl);
+        var sum = Vector128.ConditionalSelect(Vector128.Equals(v, Vector128<double>.Zero), th, th + v);
+        var most = Vector128.Create(1e299);
+        var finite = Vector128.LessThan(Vector128.Abs(a), most) & Vector128.LessThan(Vector128.Abs(b), most) & Vector128.LessThan(Vector128.Abs(c), Vector128.Create(double.PositiveInfinity));
+        return Vector128.ConditionalSelect(finite, sum, ph + c);
+    }
+
+    // OddSum over 128 bits (the same operations, lane by lane).
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<double> OddSum(Vector128<double> p, Vector128<double> c)
+    {
+        var s = p + c;
+        var pp = s - c;
+        var e = (p - pp) + (c - (s - pp));
+        var bits = s.AsInt64();
+        var exponent = Vector128.Create(0x7FF0000000000000L);
+        var inexact = ~Vector128.Equals(e, Vector128<double>.Zero).AsInt64() & Vector128.Equals(bits & Vector128<long>.One, Vector128<long>.Zero)
+            & ~Vector128.Equals(bits & exponent, exponent);
+        var step = Vector128.LessThan(bits ^ e.AsInt64(), Vector128<long>.Zero) | Vector128<long>.One;
+        return (bits + (step & inexact)).AsDouble();
     }
 
     // p + c rounded to odd: their sum where it is exact, else the neighbour of the exact sum whose last bit is 1 (the sum
