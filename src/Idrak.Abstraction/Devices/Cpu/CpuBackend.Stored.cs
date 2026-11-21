@@ -20,8 +20,67 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // pages, with no copy of their own.
 internal sealed partial class CpuBackend
 {
+    // x [m, k] times its columns' scales into `into`: value (i, c) times scales[c / block], a row at a time, the scales of a
+    // run of `block` columns as one vector, over the threads where x is large.
+    private static void ScaleColumns(float[] x, float[] scales, float[] into, int m, int k, int block)
+    {
+        void Row(int i)
+        {
+            var row = x.AsSpan(i * k, k);
+            var to = into.AsSpan(i * k, k);
+            for (int c = 0; c < k; c += block)
+            {
+                int count = Math.Min(block, k - c), j = 0;
+                float s = scales[c / block];
+                var from = row.Slice(c, count);
+                var into1 = to.Slice(c, count);
+                var sv = System.Numerics.Vector<float>.One * s;
+                for (; j <= count - System.Numerics.Vector<float>.Count; j += System.Numerics.Vector<float>.Count)
+                {
+                    (new System.Numerics.Vector<float>(from[j..]) * sv).CopyTo(into1[j..]);
+                }
+
+                for (; j < count; j++)
+                {
+                    into1[j] = from[j] * s;
+                }
+            }
+        }
+
+        if (m > 1 && (long)m * k >= 1 << 16)
+        {
+            Parallel.For(0, m, ComputeResources.ParallelOptions, Row);
+            return;
+        }
+
+        for (int i = 0; i < m; i++)
+        {
+            Row(i);
+        }
+    }
+
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
     {
+        // Scales on x's columns (StoredScales.OnColumns: one block of rows over every output, each scale a column or a run of
+        // columns all outputs share): x times them once a call, then the routed product with no scales, so no weight's value
+        // is scaled anywhere (m · k multiplies, not n · k).
+        if (ProductRoutes.Current != ProductRoute.Name && zeros is null && scales is not null && layout.OnColumns(n, k) && m > 0 && k > 0)
+        {
+            var scaled = Allocate(m * k, zeroed: false);
+            try
+            {
+                ScaleColumns(D(x), D(scales), D(scaled), m, k, layout.BlockColumns);
+                if (StoredRouted(scaled, weight, null, null, y, m, n, k, default))
+                {
+                    return;
+                }
+            }
+            finally
+            {
+                scaled.Release();
+            }
+        }
+
         // The generic and measured routes (ProductRoutes): the lanes over the stored layout (CpuBackend.Lanes.cs).
         if (ProductRoutes.Current != ProductRoute.Name && StoredRouted(x, weight, scales, zeros, y, m, n, k, layout))
         {

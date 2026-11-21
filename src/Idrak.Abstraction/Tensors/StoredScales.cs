@@ -19,4 +19,12 @@ public readonly record struct StoredScales(int BlockRows, int BlockColumns, int 
 
     /// <summary>The index of the scale of stored value (<paramref name="row"/>, <paramref name="column"/>).</summary>
     public int IndexOf(int row, int column) => row / BlockRows * ScaleColumns + column / BlockColumns;
+
+    /// <summary>
+    /// Whether every one of <paramref name="rows"/> outputs shares the scales (one block of rows over them all), each scale a
+    /// column or a run of columns of <paramref name="columns"/> (one for the whole tensor too): scales on x's columns, which a
+    /// product applies to x once a call (m · columns multiplies) instead of to the weight's values.
+    /// </summary>
+    public bool OnColumns(int rows, int columns) =>
+        HasScales && BlockRows >= rows && BlockColumns >= 1 && ScaleColumns >= (columns + BlockColumns - 1) / BlockColumns;
 }

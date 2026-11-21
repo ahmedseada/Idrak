@@ -609,6 +609,18 @@ internal sealed unsafe partial class CudaBackend
     // neither reads, for a description these kernels widen with a scale per output row or none; the host fallback otherwise.
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
     {
+        // Scales on x's columns (StoredScales.OnColumns: one block of rows over every output, each scale a column or a run of
+        // columns all outputs share): x times them once a call (m · k multiplies, not n · k), then the product with no scales,
+        // so no weight's value is scaled anywhere.
+        if (ProductRoutes.Current != ProductRoute.Name && zeros is null && scales is not null && layout.OnColumns(n, k) && m > 0 && k > 0 && (long)m * k <= int.MaxValue
+            && ColumnScaler() is { } scaler)
+        {
+            var scaled = _columnScaled.Get(this, m * k);
+            Launch(scaler, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(scales), P(scaled), U(m * k), U(k), U(layout.BlockColumns));
+            StoredMatMulKernel(scaled, weight, null, null, y, m, n, k, default);
+            return;
+        }
+
         bool perRow = !layout.HasScales || layout is { BlockRows: 1, ScaleColumns: 1 } && layout.BlockColumns >= k;
         if (ProductRoutes.Current == ProductRoute.Measured && zeros is null && perRow && StoredRouted(x, weight, scales, y, m, n, k))
         {
@@ -634,6 +646,34 @@ internal sealed unsafe partial class CudaBackend
         }
 
         base.StoredMatMulKernel(x, weight, scales, zeros, y, m, n, k, layout);
+    }
+
+    // x times its columns' scales (a call's, in queue order).
+    private readonly KeptScratch _columnScaled = new();
+
+    // The kernel scaling x by its columns' scales (PtxKernels.ColumnScale), loaded on first use; null where it does not load.
+    private IntPtr? _columnScaler;
+    private bool _columnScalerTried;
+
+    private IntPtr? ColumnScaler()
+    {
+        if (_columnScalerTried)
+        {
+            return _columnScaler;
+        }
+
+        lock (_typedLock)
+        {
+            if (!_columnScalerTried)
+            {
+                var (name, source) = PtxKernels.ColumnScale();
+                _columnScaler = LoadDynamicModule(name, [name], source, static _ => 0, out string? reason) is { } kernels ? kernels[name] : null;
+                TypedUnavailableReason = _columnScaler is null ? reason : TypedUnavailableReason;
+                _columnScalerTried = true;
+            }
+
+            return _columnScaler;
+        }
     }
 
     // The types a load keeps as stored for this device (BackendCapabilities.StoredFormats): under the generic and measured

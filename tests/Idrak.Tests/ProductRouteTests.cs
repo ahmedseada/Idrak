@@ -27,6 +27,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
+        ("product routes: scales on x's columns (a stored weight's scales shared by every output: a scale a column, a run of 32 columns, one for the whole tensor) are applied to x once a call, then the product with no scales: under the generic and measured routes the product of x and the weight's values times their columns' scales (q4_0, int8, bfloat16, int2; 1, 3, 9 and 70 rows; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesColumnScales),
         ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and IDRAK_ROUTE_LANES all, described and written (any case, blank is all), each refusing anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
     ];
 
@@ -1427,6 +1428,83 @@ internal abstract partial class DesktopTests : Tests
         Check(cuda.StoredRoutedLane(lane, input.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, weight.Columns, weight.Rows),
             $"{device}: {weight.Type.Name}: product lane {lane} did not run");
         return y.ToArray();
+    }
+
+    private static void ProductRoutesColumnScales(Device device)
+    {
+        if (device.Backend is not (Idrak.Abstraction.Devices.Cpu.CpuBackend or Idrak.Gpu.Cuda.CudaBackend))
+        {
+            Skip($"scales on x's columns are the CPU's and CUDA's stored products (not {device})");
+            return;
+        }
+
+        var random = new Random(89);
+        int runs = 0;
+        foreach (var route in new[] { ProductRoute.Generic, ProductRoute.Measured })
+        {
+            UnderRoute(route, () =>
+            {
+                int k = 256, n = 37;
+                foreach (string format in new[] { "q4_0", "int8", "bfloat16", "int2" })
+                {
+                    // The weight's stored bytes (packed on the CPU, no scales of its own), then the same bytes with scales on
+                    // its columns on the device.
+                    var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
+                    using var plain = (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, Device.Cpu);
+                    if (plain.Scales is not null)
+                    {
+                        continue;                                              // a type packed with scales of its own
+                    }
+
+                    float[] w;
+                    using (var expanded = plain.Dequantize())
+                    {
+                        w = expanded.ToArray();                                // [k, n]
+                    }
+
+                    var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(plain.StoredValues.Storage);
+                    var bytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan())[..(int)type.ByteCount((long)k * n)].ToArray();
+                    foreach (int block in new[] { 1, 32, k })
+                    {
+                        int count = (k + block - 1) / block;
+                        var scales = Enumerable.Range(0, count).Select(_ => 0.25f + random.NextSingle()).ToArray();
+                        var layout = new StoredScales(n, block, count);
+                        using var weight = StoredWeight.FromStored(type, bytes, k, n, new StoredScaling(scales, null, layout), device);
+                        foreach (int m in new[] { 1, 3, 9, 70 })
+                        {
+                            var x = RouteValues(random, (long)m * k);
+                            var y = RouteProduct(weight, x, m, device);
+                            for (int i = 0; i < m; i++)
+                            {
+                                var steps = HalfSteps(x, i, k);
+                                for (int j = 0; j < n; j++)
+                                {
+                                    double sum = 0, magnitude = 0, rounding = 0;
+                                    for (int r = 0; r < k; r++)
+                                    {
+                                        double value = (double)w[r * n + j] * scales[r / block], term = x[i * k + r] * value;
+                                        sum += term;
+                                        magnitude += Math.Abs(term);
+                                        rounding += Math.Abs(value) * steps[r];
+                                    }
+
+                                    // x's rounding allowed (an integer lane may take the shape), twice: x times the scales is rounded too.
+                                    double bound = k * Math.Pow(2, -22) * (magnitude + rounding) + 2 * rounding + 1e-30, error = Math.Abs(y[i * n + j] - sum);
+                                    if (!(error <= bound))
+                                    {
+                                        Check(false, $"{device}: {route} route, {format} with a scale every {block} columns, {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of the scaled values {sum} (error {error:E2} past {bound:E2})");
+                                    }
+                                }
+                            }
+
+                            runs++;
+                        }
+                    }
+                }
+            });
+        }
+
+        Check(runs > 0, $"{device}: no product with scales on x's columns ran");
     }
 
     private static void ProductRoutesEpilogues(Device device)

@@ -4955,6 +4955,51 @@ internal static partial class PtxKernels
         }
     }
 
+    /// <summary>
+    /// The kernel scaling x by its columns' scales (scales on x's columns, applied once a call before a product): y[i] =
+    /// x[i] · s[(i mod p_k) / p_block] for i below p_count, a thread a value, as the CPU's ScaleColumns multiplies.
+    /// </summary>
+    internal static (string Name, string Source) ColumnScale() => ("scale_columns_f32", ".version 6.0\n.target sm_50\n.address_size 64\n" + """
+        .visible .entry scale_columns_f32(
+            .param .u64 p_x, .param .u64 p_s, .param .u64 p_y, .param .u32 p_count, .param .u32 p_k, .param .u32 p_block
+        )
+        .maxntid 256, 1, 1
+        {
+            .reg .pred %p<2>;
+            .reg .b32 %r<8>;
+            .reg .f32 %f<4>;
+            .reg .b64 %rd<8>;
+            ld.param.u64 %rd1, [p_x];
+            ld.param.u64 %rd2, [p_s];
+            ld.param.u64 %rd3, [p_y];
+            cvta.to.global.u64 %rd1, %rd1;
+            cvta.to.global.u64 %rd2, %rd2;
+            cvta.to.global.u64 %rd3, %rd3;
+            ld.param.u32 %r1, [p_count];
+            ld.param.u32 %r2, [p_k];
+            ld.param.u32 %r3, [p_block];
+            mov.u32 %r4, %ctaid.x;
+            mov.u32 %r5, %tid.x;
+            mad.lo.u32 %r4, %r4, 256, %r5;
+            setp.ge.u32 %p0, %r4, %r1;
+            @%p0 bra DONE;
+            rem.u32 %r6, %r4, %r2;
+            div.u32 %r6, %r6, %r3;
+            mul.wide.u32 %rd4, %r6, 4;
+            add.u64 %rd4, %rd4, %rd2;
+            ld.global.nc.f32 %f1, [%rd4];
+            mul.wide.u32 %rd5, %r4, 4;
+            add.u64 %rd6, %rd5, %rd1;
+            ld.global.nc.f32 %f2, [%rd6];
+            mul.rn.f32 %f3, %f2, %f1;
+            add.u64 %rd7, %rd5, %rd3;
+            st.global.f32 [%rd7], %f3;
+        DONE:
+            ret;
+        }
+
+        """);
+
     // x's float32 values widened to float64 (a wide plan's x, once a call): y[i] = x[i] for i below p_count.
     private static void DescribedWiden(StringBuilder sb, DescribedPlan p, int align, bool pairs) => sb.AppendLine(CultureInfo.InvariantCulture, $$"""
         .visible .entry {{DescribedWidenName(p, align, pairs)}}(

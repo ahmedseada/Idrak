@@ -8647,6 +8647,7 @@ public sealed class Idrak.Abstraction.SlotTable<TKey, TValue> where TKey : notnu
 public readonly record struct Idrak.Abstraction.StoredScales : System.IEquatable<Idrak.Abstraction.StoredScales>
   public StoredScales(int BlockRows, int BlockColumns, int ScaleColumns)
   public bool HasScales { get; }
+  public bool OnColumns(int rows, int columns)
   public int BlockColumns { get; init; }
   public int BlockRows { get; init; }
   public int IndexOf(int row, int column)
