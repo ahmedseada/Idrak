@@ -23,7 +23,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
         ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K, and under the measured route each product by its own lane, the described lane and the written kernels measured and the described lane alone, Q6_K, int64, float64, int2 and mxfp4 too; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once, with the described lane and the written kernels measured and with the described lane alone) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
-        ("product routes: the fused epilogues of stored weights (CUDA's written kernels, few rows, the measured route with the written kernels alone): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
+        ("product routes: the fused epilogues of stored weights (CUDA, few rows, the measured route with every lane): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization, by each fused lane (the written kernels' where they read the type, the described lane's by each warp split), match the same lane's own products composed with them, and through the dispatchers (the lanes competing, no storage converted) the composition or fused lane the shape settled on matches its own products (bfloat16, int8, q4_0, Q4_K, Q6_K, int2, mxfp4, int64 with a scale an output row, float64; 1, 3 and 8 rows; within 1e-5 of the values' magnitude)", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
@@ -1381,13 +1381,114 @@ internal abstract partial class DesktopTests : Tests
             }
         }
 
-        // The fused epilogues are written kernels: compared with the written kernels' own products composed with them (with the
-        // described lane among the candidates, a shape's composed products may take it and sum in another order).
+        // A product by one of the measured route's lanes (CudaBackend.StoredRoutedLane), on the device.
+        float[] LaneProduct(StoredWeight weight, float[] x, int m, int lane)
+        {
+            using var scope = new TensorScope();
+            var input = Tensor.From(x, [m, weight.Rows], device);
+            var y = Tensor.Empty([m, weight.Columns], device);
+            Check(cuda.StoredRoutedLane(lane, input.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, weight.Columns, weight.Rows),
+                $"{device}: {weight.Type.Name}: product lane {lane} did not run");
+            return y.ToArray();
+        }
+
+        // The gate/up pair's hidden by `lane` (null: through the dispatcher, the lanes competing), no storage converted.
+        float[]? Gated(StoredWeight gate, StoredWeight up, float[] x, int m, int kind, int? lane, string what)
+        {
+            int k = gate.Rows, n = gate.Columns;
+            using var scope = new TensorScope();
+            var input = Tensor.From(x, [m, k], device);
+            var gateOut = Tensor.Empty([m, n], device);
+            var upOut = Tensor.Empty([m, n], device);
+            var hidden = Tensor.Empty([m, n], device);
+            (Storage, Storage?, Storage, int)[] pair = [(gate.StoredValues.Storage, gate.Scales?.Storage, gateOut.Storage, n), (up.StoredValues.Storage, up.Scales?.Storage, upOut.Storage, n)];
+            // As Linear calls it: the stored weights reach the kernel as they are, no conversion counted.
+            var seen = new ConversionsSeen();
+            bool ran;
+            using (Telemetry.Subscribe(seen))
+            {
+                ran = lane is { } own ? cuda.StoredGatedFused(kind, input.Storage, m, k, pair, hidden.Storage, own)
+                    : device.Backend.StoredMatMulGatedPair(kind, input.Storage, m, k, pair, hidden.Storage);
+            }
+
+            Check(seen.Events.Count == 0, $"{device}: {what}: the gate/up pair converted {seen.Events.Count} storages ({string.Join("; ", seen.Events.Take(3))})");
+            Check(ran, $"{device}: {what}: no gate/up pair");
+            return ran ? hidden.ToArray() : null;
+        }
+
+        // The residual and norm pass by `lane` (null: through the dispatcher): (sum, normalized), no storage converted.
+        (float[] Sum, float[] Normalized)? AddNorm(StoredWeight weight, float[] x, int m, float[] residualValues, float[] gain, int? lane, string what)
+        {
+            int k = weight.Rows, n = weight.Columns;
+            using var scope = new TensorScope();
+            var input = Tensor.From(x, [m, k], device);
+            var residual = Tensor.From(residualValues, [m, n], device);
+            var gains = Tensor.From(gain, [n], device);
+            var y = Tensor.Empty([m, n], device);
+            var sum = Tensor.Empty([m, n], device);
+            var normalized = Tensor.Empty([m, n], device);
+            var seen = new ConversionsSeen();
+            bool ran;
+            using (Telemetry.Subscribe(seen))
+            {
+                ran = lane is { } own
+                    ? cuda.StoredAddNormFused(input.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage, gains.Storage,
+                        normalized.Storage, 1e-6f, 0.5f, own)
+                    : device.Backend.StoredMatMulAddRmsNorm(input.Storage, weight.StoredValues.Storage, weight.Scales?.Storage, y.Storage, m, n, k, residual.Storage, sum.Storage,
+                        gains.Storage, normalized.Storage, 1e-6f, 0.5f);
+            }
+
+            // The stored weight reaches the kernel as it is (a weight converted every call was a decoding step's 6 ms).
+            Check(seen.Events.Count == 0, $"{device}: {what}: the residual and norm product converted {seen.Events.Count} storages ({string.Join("; ", seen.Events.Take(3))})");
+            Check(ran, $"{device}: {what}: no residual and norm pass");
+            return ran ? (sum.ToArray(), normalized.ToArray()) : null;
+        }
+
+        void CheckGated(float[]? h, float[] g, float[] u, int kind, string what)
+        {
+            for (int i = 0; h is not null && i < h.Length; i++)
+            {
+                double expected = (double)Act(g[i], kind) * u[i];
+                Near(h[i], expected, Math.Abs(expected) + Math.Abs(g[i] * u[i]), $"{what}: hidden {i}");
+            }
+        }
+
+        void CheckAddNorm((float[] Sum, float[] Normalized)? got, float[] y, float[] residualValues, float[] gain, int m, int n, string what)
+        {
+            if (got is not var (s, o))
+            {
+                return;
+            }
+
+            for (int i = 0; i < m; i++)
+            {
+                double squares = 0;
+                for (int j = 0; j < n; j++)
+                {
+                    double v = (double)residualValues[i * n + j] + y[i * n + j];
+                    squares += v * v;
+                    Near(s[i * n + j], v, Math.Abs(v) + 1, $"{what}: sum [{i}, {j}]");
+                }
+
+                double scale = 1 / Math.Sqrt(squares / n + 1e-6);
+                for (int j = 0; j < n; j++)
+                {
+                    double v = (double)residualValues[i * n + j] + y[i * n + j], expected = v * scale * (gain[j] + 0.5);
+                    Near(o[i * n + j], expected, Math.Abs(expected) + 1, $"{what}: normalized [{i}, {j}]");
+                }
+            }
+        }
+
+        // Each fused lane (the written kernels' where they read the type, the described lane's by each warp split of its rows
+        // product) against the same lane's own products composed with the pass, so both sides add in one order; then every
+        // lane competing (the measured route, all lanes), the dispatcher's result against the lane it settled on: the
+        // composition (each product by its own measured lane, RouteProduct) or that fused lane's own products.
         var random = new Random(79);
-        UnderLanes(RouteLanes.Written, () => UnderRoute(ProductRoute.Measured, () =>
+        int fusedRuns = 0, describedRuns = 0;
+        UnderLanes(RouteLanes.All, () => UnderRoute(ProductRoute.Measured, () =>
         {
             int k = 256, n = 96;
-            foreach (string format in new[] { "bfloat16", "int8", "q4_0", "q4_k" })
+            foreach (string format in new[] { "bfloat16", "int8", "q4_0", "q4_k", "q6_k", "int2", "mxfp4", "int64", "float64" })
             {
                 using var gate = (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, device);
                 using var up = (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, device);
@@ -1395,89 +1496,56 @@ internal abstract partial class DesktopTests : Tests
                 foreach (int m in new[] { 1, 3, 8 })
                 {
                     var x = RouteValues(random, (long)m * k);
-                    float[] g = RouteProduct(gate, x, m, device), u = RouteProduct(up, x, m, device);
-                    foreach (var (kind, fused) in new[] { 0, 1, 2 }.SelectMany(kind => new[] { (kind, false), (kind, true) }))
+                    var residualValues = RouteValues(random, (long)m * n);
+                    var gatedLanes = cuda.StoredEpilogueCandidates(0, gate.Type, gate.Scales is not null, m, k);
+                    var normLanes = cuda.StoredEpilogueCandidates(1, gate.Type, gate.Scales is not null, m, k);
+                    Check(Idrak.Gpu.Cuda.CudaBackend.DescribedOf(gate.Type) is null || gatedLanes.Any(l => l >= 10) && normLanes.Any(l => l >= 10),
+                        $"{device}: {format}, {m} rows: the described lane reads the type but offers no fused pass (gate/up lanes {string.Join(", ", gatedLanes)}; norm lanes {string.Join(", ", normLanes)})");
+                    foreach (int lane in gatedLanes.Where(l => l != 0))
                     {
-                        using var scope = new TensorScope();
-                        var input = Tensor.From(x, [m, k], device);
-                        var gateOut = Tensor.Empty([m, n], device);
-                        var upOut = Tensor.Empty([m, n], device);
-                        var hidden = Tensor.Empty([m, n], device);
-                        (Storage, Storage?, Storage, int)[] pair = [(gate.StoredValues.Storage, gate.Scales?.Storage, gateOut.Storage, n), (up.StoredValues.Storage, up.Scales?.Storage, upOut.Storage, n)];
-                        // Through the dispatcher (as Linear calls it): the stored weights reach the kernel as they are, no conversion counted.
-                        var seen = new ConversionsSeen();
-                        bool ran;
-                        using (Telemetry.Subscribe(seen))
+                        int productLane = Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, lane);
+                        float[] g = LaneProduct(gate, x, m, productLane), u = LaneProduct(up, x, m, productLane);
+                        foreach (int kind in new[] { 0, 1, 2 })
                         {
-                            ran = fused ? cuda.StoredGatedFused(kind, input.Storage, m, k, pair, hidden.Storage)
-                                : device.Backend.StoredMatMulGatedPair(kind, input.Storage, m, k, pair, hidden.Storage);
+                            string what = $"{format}, {m} rows, fused lane {lane}, activation {kind}";
+                            CheckGated(Gated(gate, up, x, m, kind, lane, what), g, u, kind, what);
                         }
 
-                        Check(seen.Events.Count == 0, $"{device}: {format}, {m} rows: the gate/up pair converted {seen.Events.Count} storages ({string.Join("; ", seen.Events.Take(3))})");
-                        if (!ran)
-                        {
-                            Check(false, $"{device}: {format}, {m} rows: no fused gate/up pair");
-                            continue;
-                        }
-
-                        var h = hidden.ToArray();
-                        for (int i = 0; i < m * n; i++)
-                        {
-                            double expected = (double)Act(g[i], kind) * u[i];
-                            Near(h[i], expected, Math.Abs(expected) + Math.Abs(g[i] * u[i]), $"{format}, {m} rows, activation {kind}: hidden {i}");
-                        }
+                        fusedRuns++;
+                        describedRuns += lane >= 10 ? 1 : 0;
                     }
 
-                    foreach (bool fused in new[] { false, true })
-                    using (var scope = new TensorScope())
+                    foreach (int lane in normLanes.Where(l => l != 0))
                     {
-                        var input = Tensor.From(x, [m, k], device);
-                        var residualValues = RouteValues(random, (long)m * n);
-                        var residual = Tensor.From(residualValues, [m, n], device);
-                        var gains = Tensor.From(gain, [n], device);
-                        var y = Tensor.Empty([m, n], device);
-                        var sum = Tensor.Empty([m, n], device);
-                        var normalized = Tensor.Empty([m, n], device);
-                        var seen = new ConversionsSeen();
-                        bool ran;
-                        using (Telemetry.Subscribe(seen))
-                        {
-                            ran = fused ? cuda.StoredAddNormFused(input.Storage, gate.StoredValues.Storage, gate.Scales?.Storage, y.Storage, m, n, k,
-                                    residual.Storage, sum.Storage, gains.Storage, normalized.Storage, 1e-6f, 0.5f)
-                                : device.Backend.StoredMatMulAddRmsNorm(input.Storage, gate.StoredValues.Storage, gate.Scales?.Storage, y.Storage, m, n, k,
-                                    residual.Storage, sum.Storage, gains.Storage, normalized.Storage, 1e-6f, 0.5f);
-                        }
+                        int productLane = Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, lane);
+                        string what = $"{format}, {m} rows, fused lane {lane}";
+                        CheckAddNorm(AddNorm(gate, x, m, residualValues, gain, lane, what), LaneProduct(gate, x, m, productLane), residualValues, gain, m, n, what);
+                        fusedRuns++;
+                    }
 
-                        // The stored weight reaches the kernel as it is (a weight converted every call was a decoding step's 6 ms).
-                        Check(seen.Events.Count == 0, $"{device}: {format}, {m} rows: the residual and norm product converted {seen.Events.Count} storages ({string.Join("; ", seen.Events.Take(3))})");
-                        if (!ran)
-                        {
-                            Check(false, $"{device}: {format}, {m} rows: no fused residual and norm");
-                            continue;
-                        }
+                    // Every lane competing: the result of the lane the shape settled on.
+                    foreach (int kind in new[] { 0, 1, 2 })
+                    {
+                        string what = $"{format}, {m} rows, dispatched, activation {kind}";
+                        var h = Gated(gate, up, x, m, kind, null, what);
+                        int chosen = cuda.StoredEpilogueChoice(0, kind, gate.Type, gate.Scales is not null, m, n, k) ?? 0;
+                        int productLane = Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, chosen);
+                        float[] g = chosen == 0 ? RouteProduct(gate, x, m, device) : LaneProduct(gate, x, m, productLane);
+                        float[] u = chosen == 0 ? RouteProduct(up, x, m, device) : LaneProduct(up, x, m, productLane);
+                        CheckGated(h, g, u, kind, $"{what} (lane {chosen})");
+                    }
 
-                        float[] s = sum.ToArray(), o = normalized.ToArray();
-                        for (int i = 0; i < m; i++)
-                        {
-                            double squares = 0;
-                            for (int j = 0; j < n; j++)
-                            {
-                                double v = (double)residualValues[i * n + j] + g[i * n + j];
-                                squares += v * v;
-                                Near(s[i * n + j], v, Math.Abs(v) + 1, $"{format}, {m} rows: sum [{i}, {j}]");
-                            }
-
-                            double scale = 1 / Math.Sqrt(squares / n + 1e-6);
-                            for (int j = 0; j < n; j++)
-                            {
-                                double v = (double)residualValues[i * n + j] + g[i * n + j], expected = v * scale * (gain[j] + 0.5);
-                                Near(o[i * n + j], expected, Math.Abs(expected) + 1, $"{format}, {m} rows: normalized [{i}, {j}]");
-                            }
-                        }
+                    {
+                        string what = $"{format}, {m} rows, dispatched";
+                        var got = AddNorm(gate, x, m, residualValues, gain, null, what);
+                        int chosen = cuda.StoredEpilogueChoice(1, gate.Scales is null ? 0 : 1, gate.Type, gate.Scales is not null, m, n, k) ?? 0;
+                        float[] y = chosen == 0 ? RouteProduct(gate, x, m, device) : LaneProduct(gate, x, m, Idrak.Gpu.Cuda.CudaBackend.StoredEpilogueProductLane(gate.Type, chosen));
+                        CheckAddNorm(got, y, residualValues, gain, m, n, $"{what} (lane {chosen})");
                     }
                 }
             }
         }));
+        Check(fusedRuns > 0 && describedRuns > 0, $"{device}: {fusedRuns} fused passes compared, {describedRuns} of them the described lane's");
     }
 
     // B's panels filled as a tile asks for them (the tiles lane's way), from B [k, n].
