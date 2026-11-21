@@ -1025,13 +1025,23 @@ internal sealed unsafe partial class CudaBackend
         bool few = m <= PtxKernels.TypedGemvRows[^1];
         Span<int> candidates = stackalloc int[24];
         int count = 0;
-        bool describedFirst = plan is not null && lanes != RouteLanes.Written;
-        if (describedFirst)
+        // The first candidate is kept unless another is clearly faster (Tune's margin): the described lane, but for a prompt
+        // of a type whose stored values are the tensor cores' operands as they are (a native kind holds it: bfloat16 in a
+        // bfloat16 run), the written kernels that read them so.
+        bool asOperands = !few && DecodeOf(type) is { } typed && PtxKernels.NativeKind.For(typed).Holds(typed);
+        bool takesDescribed = plan is not null && lanes != RouteLanes.Written, takesWritten = !(plan is not null && lanes == RouteLanes.Described);
+        if (takesWritten && asOperands)
         {
-            count = AddDescribed(plan!, type, m, k, candidates);
+            count = AddWritten(type, scales, m, k, candidates);
         }
 
-        if (!(plan is not null && lanes == RouteLanes.Described))
+        bool describedFirst = takesDescribed;
+        if (describedFirst)
+        {
+            count += AddDescribed(plan!, type, m, k, candidates[count..]);
+        }
+
+        if (takesWritten && !asOperands)
         {
             count += AddWritten(type, scales, m, k, candidates[count..]);
         }
