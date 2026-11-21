@@ -707,6 +707,9 @@ internal sealed unsafe partial class CudaBackend
         public IntPtr Quant { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedQuantName(plan));
 
         public IntPtr Int { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedIntName(plan));
+
+        // The integer product over narrow codes (zero where the module has none).
+        public IntPtr Narrow { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedNarrowName(plan, align));
     }
 
     private readonly ConcurrentDictionary<(DescribedPlan, int, bool), DescribedFunctions?> _described = new();
@@ -762,6 +765,11 @@ internal sealed unsafe partial class CudaBackend
         if (name == PtxKernels.DescribedIntName(plan))
         {
             return PtxKernels.DescribedIntShared(plan);
+        }
+
+        if (name == PtxKernels.DescribedNarrowName(plan, align))
+        {
+            return PtxKernels.DescribedNarrowShared(plan, align);
         }
 
         foreach (int rows in PtxKernels.DescribedRowCounts)
@@ -1050,11 +1058,54 @@ internal sealed unsafe partial class CudaBackend
         int per = (steps + splits - 1) / splits, used = (steps + per - 1) / per;
         var quant = _describedQuant.Get(this, codes + m * steps);
         ulong q = P(quant), s = q + (ulong)codes * sizeof(float);
-        Launch(functions.Quant, (uint)((m * steps + 255) / 256), 1, 256, 1, P(x), q, s, U(m), U(k), U(kp));
+        Launch(functions.Quant, (uint)((m * steps + 255) / 256), 1, 256, 1, P(x), q, s, 0UL, U(m), U(k), U(kp));
         var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
         t_sharedBytes = (uint)PtxKernels.DescribedIntShared(plan);
         Launch(functions.Int, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
             (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, rowScales is null ? 0UL : P(rowScales), P(w), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+        if (used > 1)
+        {
+            var sum = Typed(DecodeOf(ElementType.Float32)!)!.Sum;
+            Launch(sum, (uint)((m * n + 255) / 256), 1, 256, 1, P(target), P(y), U(m * n), U(used));
+        }
+
+        return true;
+    }
+
+    // Whether the integer product over narrow codes takes the product (DescribedPlan.NarrowChunk: codes of 8 bits or fewer
+    // whose numbers are whole within int8 at a power of two): a bfloat16 run's prompts (x rounded to int8 a block of 32, as
+    // the run rounds x for its tensor cores), x in pairs, and the kernels load here (the device has int8 tensor cores: the
+    // module's target, and the kernel's shared memory within its limit).
+    private bool DescribedNarrowTakes(DescribedPlan plan, ElementType type, int m, int k) =>
+        plan.NarrowChunk > 0 && m > PtxKernels.TypedGemvRows[^1] && BFloat16Products && k % 2 == 0 && DescribedRow(plan, type, k, out _, out int align)
+        && (long)m * DescribedPadded(plan, k) <= int.MaxValue / 2 && Described(plan, align, true) is { Narrow: not 0, Quant: not 0 };
+
+    // The integer product over narrow codes, k split in up to `splits` parts (each whole spans of W; their sums added in
+    // order): x rounded to int8 a block of 32 values once (DescribedQuant, with its codes' sums of 16 where the plan has
+    // minimums), then the codes made int8 in registers by int8 tensor cores, the factors a chunk at a time.
+    private bool RunDescribedNarrow(DescribedPlan plan, int splits, Storage x, Storage w, Storage? rowScales, Storage y, int m, int n, int k)
+    {
+        if (!DescribedNarrowTakes(plan, w.ElementType, m, k) || !DescribedRow(plan, w.ElementType, k, out int rowBytes, out int align)
+            || Described(plan, align, true) is not { } functions)
+        {
+            return false;
+        }
+
+        if (n == 0)
+        {
+            return true;
+        }
+
+        bool mins = plan.Factors.Any(f => f.Min);
+        int kp = DescribedPadded(plan, k), spans = kp / PtxKernels.DescribedMmaSpan(plan), blocks = kp / 32, codes = m * kp / 4;
+        int per = (spans + splits - 1) / splits, used = (spans + per - 1) / per;
+        var quant = _describedQuant.Get(this, codes + m * blocks + (mins ? m * kp / 16 : 0));
+        ulong q = P(quant), s = q + (ulong)codes * sizeof(float), sums = mins ? s + (ulong)(m * blocks) * sizeof(float) : 0UL;
+        Launch(functions.Quant, (uint)((m * blocks + 255) / 256), 1, 256, 1, P(x), q, s, sums, U(m), U(k), U(kp));
+        var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
+        t_sharedBytes = (uint)PtxKernels.DescribedNarrowShared(plan, align);
+        Launch(functions.Narrow, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
+            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, rowScales is null ? 0UL : P(rowScales), P(w), P(target), sums, U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
         if (used > 1)
         {
             var sum = Typed(DecodeOf(ElementType.Float32)!)!.Sum;
@@ -1072,14 +1123,15 @@ internal sealed unsafe partial class CudaBackend
     /// </summary>
     internal bool StoredDescribed(ElementType type, Storage x, Storage weight, Storage? scales, Storage y, int m, int n, int k, bool mma = false, int splits = 1,
         bool integer = false, int rowSplit = 3) =>
-        DescribedOf(type) is { } plan && (integer ? RunDescribedInt(plan, splits, x, weight, scales, y, m, n, k)
+        DescribedOf(type) is { } plan && (integer ? plan.IntegerBytes > 0 ? RunDescribedInt(plan, splits, x, weight, scales, y, m, n, k) : RunDescribedNarrow(plan, splits, x, weight, scales, y, m, n, k)
             : mma ? RunDescribedMma(plan, splits, x, weight, scales, y, m, n, k) : RunDescribedRows(plan, x, weight, scales, y, m, n, k, rowSplit));
 
     // The measured route's lanes beyond the written ones (0 - 6 above): the written super-block or grid few-row kernel, the
     // described rows product, the described tensor-core product (k split in 1, 2, 4 or 8).
     // The rows product's lanes 30 + split (log2 of the warps a group of 8 weight rows takes: 0 - 3), the tensor-core
-    // product's 34 + its k split's place in DescribedSplits, the integer product's 40 + it.
-    private const int SuperFewLane = 20, DescribedRowsLane = 30, DescribedMmaLane = 34, DescribedIntLane = 40;
+    // product's 34 + its k split's place in DescribedSplits, the integer product's 40 + it, the integer product over narrow
+    // codes' 44 + it.
+    private const int SuperFewLane = 20, DescribedRowsLane = 30, DescribedMmaLane = 34, DescribedIntLane = 40, DescribedNarrowLane = 44;
 
     private static readonly ConcurrentDictionary<string, int> RoutedIds = new(StringComparer.Ordinal);
 
@@ -1208,6 +1260,18 @@ internal sealed unsafe partial class CudaBackend
             }
         }
 
+        if (DescribedNarrowTakes(plan, type, m, k))
+        {
+            int spans = DescribedPadded(plan, k) / PtxKernels.DescribedMmaSpan(plan);
+            for (int s = 0; s < DescribedSplits.Length; s++)
+            {
+                if (DescribedSplits[s] == 1 || spans >= 2 * DescribedSplits[s])
+                {
+                    into[count++] = DescribedNarrowLane + s;
+                }
+            }
+        }
+
         if (DescribedRow(plan, type, k, out _, out _))
         {
             for (int split = 3; split >= 0; split--)
@@ -1302,6 +1366,8 @@ internal sealed unsafe partial class CudaBackend
                 return RunDescribedMma(plan!, DescribedSplits[lane - DescribedMmaLane], x, weight, scales, y, m, n, k);
             case >= DescribedIntLane and < DescribedIntLane + 4:
                 return RunDescribedInt(plan!, DescribedSplits[lane - DescribedIntLane], x, weight, scales, y, m, n, k);
+            case >= DescribedNarrowLane and < DescribedNarrowLane + 4:
+                return RunDescribedNarrow(plan!, DescribedSplits[lane - DescribedNarrowLane], x, weight, scales, y, m, n, k);
             case SuperFewLane:
                 if (Decoded(weight.ElementType) is not var (f, _))
                 {
@@ -1323,6 +1389,8 @@ internal sealed unsafe partial class CudaBackend
             $"described lane, tensor cores (values decoded in registers from the stored bytes){(lane == DescribedMmaLane ? "" : $", k split in {DescribedSplits[lane - DescribedMmaLane]}")}"),
         >= DescribedIntLane and < DescribedIntLane + 4 => string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"described lane, int8 tensor cores (the codes' byte planes exact, x rounded to int8 a block of 32){(lane == DescribedIntLane ? "" : $", k split in {DescribedSplits[lane - DescribedIntLane]}")}"),
+        >= DescribedNarrowLane and < DescribedNarrowLane + 4 => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"described lane, int8 tensor cores over narrow codes (made int8 in registers, x rounded to int8 a block of 32){(lane == DescribedNarrowLane ? "" : $", k split in {DescribedSplits[lane - DescribedNarrowLane]}")}"),
         SuperFewLane => "written few-row kernel (from the super-block description)",
         0 => "written few-row kernel",
         1 => "written matrix units (values as stored)",

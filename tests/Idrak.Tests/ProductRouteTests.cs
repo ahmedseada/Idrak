@@ -16,7 +16,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
         ("product routes: the CPU's two lanes over q4_k's, q4_0's, mxfp4's, q6_k's, int64's and int2's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values (int64: over its eight byte planes), its two over bfloat16's stored values (made float32 in registers in even and odd pairs or by a shift) and its two over float64's (float64 FMAs, x widened once or in registers), each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; q4_0 rows of 3, 8 and 10 blocks: a last group of 8 short; q6_k rows of 1 and 3 super-blocks; int64 rows of 100, 256 and 544 values, with a scale an output row; float64 rows of 100, 256 and 2600 values: passes over k in spans; int2 and mxfp4 rows of 3, 8 and 10 blocks: a last group of 8 short; bfloat16 rows of 100, 256, 520 and 4200 values: passes over k in spans; the packed bfloat16 product under the measured route, 1, 3, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x); the described lane alone (any type read from its description, none of the written kernels) over each of them too, each type's description decoding its stored bytes to its own conversion's values, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers)", ProductRoutesNibbleLanes),
         ("product routes: the CPU's lanes over stored weights give the same bits on any CPU: every lane that runs here (q4_k, q4_0, mxfp4, q6_k, bfloat16, int64, float64 and int2 by their written lanes and the described lane, the types made of a description alone by the described lane; 1, 3, 4, 5, 9 and 70 rows of fixed operands) the SHA-256 of its outputs recorded for its format and lane, the packed weights' bytes too", ProductRoutesLaneBits),
-        ("product routes: CUDA's described lane alone (any type read from its description; no written kernel, nothing of a weight widened) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row), float64, int2 and mxfp4 as stored, over float16, int8, q8_0 and iq4_nl, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers): the rows product (1, 3, 8, 9 and 70 rows; float64 arithmetic for 64- and 32-bit codes) within float32's bound for k terms, and in a bfloat16 run the tensor-core product (9, 70 and 130 rows; k split in 1 and 2) within it of x and the values rounded to bfloat16, and a whole-byte integer code's integer product (int64, int8, 32-bit integers: the byte planes by int8 tensor cores) within it and x's rounding to int8 a block of 32 values", ProductRoutesDescribedCuda),
+        ("product routes: CUDA's described lane alone (any type read from its description; no written kernel, nothing of a weight widened) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row), float64, int2 and mxfp4 as stored, over float16, int8, q8_0 and iq4_nl, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers): the rows product (1, 3, 8, 9 and 70 rows; float64 arithmetic for 64- and 32-bit codes) within float32's bound for k terms, and in a bfloat16 run the tensor-core product (9, 70 and 130 rows; k split in 1 and 2) within it of x and the values rounded to bfloat16, and the integer products within it and x's rounding to int8 a block of 32 values: a whole-byte integer code's (int64, int8, 32-bit integers: the byte planes by int8 tensor cores) and narrow codes' (q4_k, q4_0, q6_k, int2, mxfp4, q8_0, iq4_nl and the description-only types whose codes' numbers are whole within int8 at a power of two: made int8 in registers, the factors a chunk of 32 or 16 at a time); every type the narrow lane reads must offer it", ProductRoutesDescribedCuda),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
@@ -684,6 +684,11 @@ internal abstract partial class DesktopTests : Tests
             {
                 var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
                 Check(Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type) is not null, $"{device}: the described lane does not read {format}: {Idrak.Gpu.Cuda.CudaBackend.DescribedReason(type)}");
+                if (format is "q4_k" or "q4_0" or "q6_k" or "int2" or "mxfp4" or "q8_0" or "iq4_nl" && Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type) is { } narrowPlan)
+                {
+                    Check(narrowPlan.NarrowChunk > 0, $"{device}: the integer lane over narrow codes does not read {format}: {narrowPlan.NarrowReason}");
+                }
+
                 using var weight = (StoredWeight)PackedWeightFormats.Pack(format, RouteValues(random, (long)k * n), k, n, device);
                 float[] expanded;
                 using (var values = weight.Dequantize())
@@ -728,14 +733,15 @@ internal abstract partial class DesktopTests : Tests
     {
         int ran = 0;
         var plan = Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type);
-        bool wide = plan?.Wide ?? false, whole = plan?.IntegerBytes > 0 && type.ByteCount(k) % 16 == 0;
+        bool wide = plan?.Wide ?? false, whole = plan?.IntegerBytes > 0 && type.ByteCount(k) % 16 == 0, narrow = plan?.IntegerBytes == 0 && plan.NarrowChunk > 0 && k % 2 == 0;
         // Lanes: 0 the rows product (`splits`: log2 of the warps a group of 8 weight rows takes), 1 the tensor-core product, 2
-        // the integer product (a whole-byte integer code's); `splits` the k splits of the last two.
+        // the integer product (a whole-byte integer code's byte planes, or narrow codes made int8 in registers); `splits` the
+        // k splits of the last two.
         foreach (var (lane, m, splits) in new[] { (0, 1, 3), (0, 3, 2), (0, 8, 1), (0, 9, 0), (0, 70, 3), (0, 1, 0), (1, 9, 1), (1, 70, 1), (1, 130, 1), (1, 130, 2),
             (2, 9, 1), (2, 70, 1), (2, 130, 1), (2, 130, 2) })
         {
             bool mma = lane == 1, integer = lane == 2;
-            if (mma && wide || integer && !whole)
+            if (mma && wide || integer && !(whole || narrow))
             {
                 continue;                                                       // float64 arithmetic: no tensor-core product
             }
