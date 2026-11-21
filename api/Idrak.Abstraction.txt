@@ -50,6 +50,7 @@ public sealed record Idrak.Abstraction.BlockScale : System.IEquatable<Idrak.Abst
   public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ScalePiece>>? Pieces { get; init; }
   public double Bias { get; init; }
   public double Value(System.ReadOnlySpan<byte> block, int index)
+  public double Value(System.ReadOnlySpan<byte> block, int index, int within)
   public int Offset { get; init; }
   public int Values { get; init; }
   public ulong Bits(System.ReadOnlySpan<byte> block, int index)
@@ -808,10 +809,12 @@ public enum Idrak.Abstraction.Cluster.WireType : int
 
 public sealed record Idrak.Abstraction.CodePlane : System.IEquatable<Idrak.Abstraction.CodePlane>
   public (int, int) Place(int value)
-  public CodePlane(int Offset, int Bits, int Group)
+  public CodePlane(int Offset, int Bits, int Group, int Stride = 0)
   public int Bits { get; init; }
   public int Group { get; init; }
   public int Offset { get; init; }
+  public int Stride { get; init; }
+  public static Idrak.Abstraction.CodePlane? Fit(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ScalePiece>> fields)
 
 public sealed record Idrak.Abstraction.CommandLimits : System.IEquatable<Idrak.Abstraction.CommandLimits>
   public CommandLimits()
@@ -7171,16 +7174,19 @@ public enum Idrak.Abstraction.NumberKind : int
 public sealed record Idrak.Abstraction.NumberType : System.IEquatable<Idrak.Abstraction.NumberType>
   public Idrak.Abstraction.FloatSpecials Specials { get; init; }
   public Idrak.Abstraction.NumberKind Kind { get; init; }
-  public NumberType(int Bits, Idrak.Abstraction.NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true, Idrak.Abstraction.FloatSpecials Specials = (Idrak.Abstraction.FloatSpecials)0, System.Collections.Generic.IReadOnlyList<double>? Table = null)
+  public NumberType(int Bits, Idrak.Abstraction.NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true, Idrak.Abstraction.FloatSpecials Specials = (Idrak.Abstraction.FloatSpecials)0, System.Collections.Generic.IReadOnlyList<double>? Table = null, int Width = 1)
   public System.Collections.Generic.IReadOnlyList<double>? Table { get; init; }
   public bool Signed { get; init; }
   public bool Subnormals { get; init; }
   public bool Valid { get; }
   public double Value(ulong bits)
+  public double Value(ulong bits, int within)
   public int Bits { get; init; }
   public int Exponent { get; init; }
   public int ExponentBias { get; init; }
   public int Mantissa { get; init; }
+  public int Width { get; init; }
+  public static Idrak.Abstraction.NumberType Codebook(int bits, int width, System.Collections.Generic.IReadOnlyList<double> table)
   public static Idrak.Abstraction.NumberType Entries(int bits, System.Collections.Generic.IReadOnlyList<double> table)
   public static Idrak.Abstraction.NumberType Floating(int exponent, int mantissa, bool signed = true, int? bias = null, bool subnormals = true, Idrak.Abstraction.FloatSpecials specials = (Idrak.Abstraction.FloatSpecials)0)
   public static Idrak.Abstraction.NumberType Integer(int bits, bool signed)
@@ -9154,6 +9160,7 @@ public sealed record Idrak.Abstraction.TypeDescription : System.IEquatable<Idrak
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes { get; init; }
   public TypeDescription(int Values, int Bytes, Idrak.Abstraction.NumberType Code, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.CodePlane> Planes, double CodeOffset = 0, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Scales = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.BlockScale>? Mins = null, bool MinsAdded = false)
+  public bool HasCodebook { get; }
   public bool MinsAdded { get; init; }
   public bool Valid { get; }
   public double CodeOffset { get; init; }

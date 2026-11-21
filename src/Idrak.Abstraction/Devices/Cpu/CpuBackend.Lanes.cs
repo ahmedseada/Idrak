@@ -6092,6 +6092,10 @@ internal sealed partial class CpuBackend
         Flip,
         Shuffle,
         Table,
+
+        // A codebook: each entry's index read and its values' bytes copied from the plan's table, the sign vectors applied
+        // as bytes, then made unsigned (DescribedPlan.CodebookCodes).
+        Codebook,
     }
 
     // How a block's scale or minimum reads (DescribedPlan.Factor): an integer (unsigned, two's complement), through a table
@@ -6350,6 +6354,30 @@ internal sealed partial class CpuBackend
         private int* fLeftOne;
         private int[] scalarBlock = [], scalarIndex = [];
 
+        // The factors a chunk takes (the scales, then the minimums; a codebook's vector factors are not among them).
+        private List<BlockScale> factorList = [];
+
+        // A codebook (CodeMap.Codebook): each entry's values as the integer lane's signed bytes; the bytes adding the least
+        // back; per span each entry's index field (its byte from the period's first, its shift) and the indices' mask; per
+        // vector factor its width, its masks (0xFF where its value is -1, an entry a width) and per span and group of it its
+        // index's pieces (from vecStart: byte, shift, mask, place).
+        private sbyte* entryBytes;
+        private Vector256<byte> leastBytes;
+        private int entryWidth = 1, entryMask;
+        private int* entryAt;
+        private int* entryShift;
+        private int vectorCount;
+        private int[] vectorWidth = [];
+        private byte*[] vectorMasks = [];
+        private int[] vecStart = [], vecOffset = [], vecShift = [], vecMask = [], vecPlace = [];
+
+        // The codebook's fast reading (entries of 4 or 8 values; at most one vector factor, of groups of 8 whose every index
+        // lies within 16 bits of its first byte): per span and group the index's first byte and shift, and its mask.
+        private bool codebookFast;
+        private int* signAt;
+        private int* signShift;
+        private int signMask;
+
         /// <summary>The plan of <paramref name="d"/>, or null where the lane does not read it.</summary>
         public static DescribedPlan? Of(TypeDescription d) => Plans.GetValue(d, static x => (object?)Make(x) ?? x) as DescribedPlan;
 
@@ -6489,15 +6517,26 @@ internal sealed partial class CpuBackend
                 return false;
             }
 
-            var all = (d.Scales ?? []).Concat(d.Mins ?? []).ToList();
+            // A codebook's vector factors (scales a vector of ±1 each: sign masks) are applied to the integer codes as bytes;
+            // every other factor is a chunk's (one number for a chunk's values).
+            var vectors = (d.Scales ?? []).Where(f => f.Type.Width > 1).ToList();
+            if ((d.Mins ?? []).Any(f => f.Type.Width > 1) || vectors.Any(f => f.Type.Table!.Any(v => v is not (1d or -1d))))
+            {
+                return false;
+            }
+
+            bool book = d.HasCodebook;
+            var all = (d.Scales ?? []).Where(f => f.Type.Width == 1).Concat(d.Mins ?? []).ToList();
+            factorList = all;
             int chunk = all.All(f => f.Values % 32 == 0) ? 32 : all.All(f => f.Values % 16 == 0) ? 16 : all.All(f => f.Values % 8 == 0) ? 8 : 0;
             if (chunk == 0)
             {
                 return false;
             }
 
-            // The codes' numbers, and the unit that makes them whole within a byte's span (the integer lanes' dot products
-            // take unsigned bytes of any value: IInstructions.Dot).
+            // The codes' numbers (a codebook's: every entry's values, and their negations under sign vectors), and the unit
+            // that makes them whole within a byte's span (the integer lanes' dot products take unsigned bytes of any value:
+            // IInstructions.Dot).
             int count = 1 << d.Code.Bits;
             var numbers = new double[count];
             for (int c = 0; c < count; c++)
@@ -6505,10 +6544,12 @@ internal sealed partial class CpuBackend
                 numbers[c] = d.Code.Value((ulong)c) + d.CodeOffset;
             }
 
+            var entries = book ? d.Code.Table!.Select(v => v + d.CodeOffset).ToArray() : numbers;
+            double[] reached = vectors.Count > 0 ? [.. entries, .. entries.Select(v => -v)] : entries;
             int unitShift = -1, least = 0, span = 255;
-            for (int s = 0; s <= 7 && unitShift < 0 && chunk >= 16 && numbers.All(double.IsFinite); s++)
+            for (int s = 0; s <= 7 && unitShift < 0 && chunk >= 16 && reached.All(double.IsFinite); s++)
             {
-                var scaled = numbers.Select(n => Math.ScaleB(n, s)).ToArray();
+                var scaled = reached.Select(n => Math.ScaleB(n, s)).ToArray();
                 if (scaled.All(v => v == Math.Round(v)) && scaled.Max() - scaled.Min() <= span)
                 {
                     unitShift = s;
@@ -6518,6 +6559,11 @@ internal sealed partial class CpuBackend
             }
 
             Mode = unitShift >= 0 ? DescribedMode.Integer : DescribedMode.Single;
+            if (book && (Mode != DescribedMode.Integer || d.Planes.Count != 1 || 32 % d.Code.Width != 0 || d.Code.Width > 8 || vectors.Any(f => 32 % f.Values != 0 || f.Values > 8)))
+            {
+                return false;                                                  // a codebook reads in the integer lane alone
+            }
+
             Wide = WideRead.Codes;
             C = chunk;
             Cg = 8;
@@ -6526,9 +6572,29 @@ internal sealed partial class CpuBackend
             Period = Lcm(Lcm(d.Values, 32), GroupValues);
             PeriodBytes = Period / d.Values * d.Bytes;
             Planes = d.Planes.Count;
-            if (!Spans() || !Places() || !Factors(all, d.Scales?.Count ?? 0))
+            if (!(book ? CodebookSpans(vectors) : Spans()) || !Places() || !Factors(all, (d.Scales ?? []).Count(f => f.Type.Width == 1)))
             {
                 return false;
+            }
+
+            if (book)
+            {
+                // Each entry's values as the integer lane's signed bytes (number · 2^unit), and the bytes that make them unsigned.
+                Mins = d.Mins is { Count: > 0 };
+                CodeValues = Pin<float>(count);
+                Unit = MathF.ScaleB(1f, -unitShift);
+                PlaneLeast = Pin<int>(1);
+                PlaneLeast[0] = least;
+                entryBytes = Pin<sbyte>(entries.Length);
+                for (int i = 0; i < entries.Length; i++)
+                {
+                    entryBytes[i] = (sbyte)Math.ScaleB(entries[i], unitShift);
+                }
+
+                leastBytes = Vector256.Create(unchecked((byte)-least));
+                Map = CodeMap.Codebook;
+                Ready();
+                return true;
             }
 
             Mins = d.Mins is { Count: > 0 };
@@ -6794,6 +6860,268 @@ internal sealed partial class CpuBackend
             return true;
         }
 
+        // A codebook's spans, in value order: each span's entries' index fields and each vector factor's index pieces of each
+        // of its groups (one plane of indices; entries and vector groups dividing a span).
+        private bool CodebookSpans(List<BlockScale> vectors)
+        {
+            var d = D;
+            int spans = Period / 32, w = d.Code.Width, perSpan = 32 / w;
+            runOffset = Pin<int>(spans * Planes);
+            runKind = Pin<byte>(spans * Planes);
+            runShift = Pin<Vector256<ulong>>(spans * Planes);
+            runCount = Pin<int>(8 * spans * Planes);
+            planeMask = Pin<Vector256<byte>>(Planes);
+            planeLow = Pin<int>(Planes);
+            planeMask[0] = Vector256.Create((byte)((1 << d.Planes[0].Bits) - 1));
+            Order = Pin<int>(Period);
+            for (int v = 0; v < Period; v++)
+            {
+                Order[v] = v;
+            }
+
+            Identity = true;
+            (entryWidth, entryMask) = (w, (1 << d.Planes[0].Bits) - 1);
+            entryAt = Pin<int>(spans * perSpan);
+            entryShift = Pin<int>(spans * perSpan);
+            for (int r = 0; r < spans; r++)
+            {
+                for (int j = 0; j < perSpan; j++)
+                {
+                    int v = 32 * r + j * w;
+                    var (b, s) = d.Planes[0].Place(v % d.Values / w);
+                    entryAt[r * perSpan + j] = v / d.Values * d.Bytes + b;
+                    entryShift[r * perSpan + j] = s;
+                }
+            }
+
+            vectorCount = vectors.Count;
+            vectorWidth = new int[vectorCount];
+            vectorMasks = new byte*[vectorCount];
+            var (start, offset, shift, mask, place) = (new List<int>(), new List<int>(), new List<int>(), new List<int>(), new List<int>());
+            for (int f = 0; f < vectorCount; f++)
+            {
+                var factor = vectors[f];
+                int vw = factor.Values;
+                vectorWidth[f] = vw;
+                vectorMasks[f] = Pin<byte>(factor.Type.Table!.Count);
+                for (int i = 0; i < factor.Type.Table!.Count; i++)
+                {
+                    vectorMasks[f][i] = factor.Type.Table[i] < 0 ? (byte)0xFF : (byte)0;
+                }
+
+                for (int r = 0; r < spans; r++)
+                {
+                    for (int q = 0; q < 32 / vw; q++)
+                    {
+                        int v = 32 * r + q * vw, block = v / d.Values * d.Bytes, index = v % d.Values / vw;
+                        start.Add(offset.Count);
+                        if (factor.Pieces is { } pieces)
+                        {
+                            int at = 0;
+                            foreach (var piece in pieces[index])
+                            {
+                                offset.Add(block + piece.Offset);
+                                shift.Add(piece.Shift);
+                                mask.Add((1 << piece.Bits) - 1);
+                                place.Add(at);
+                                at += piece.Bits;
+                            }
+                        }
+                        else
+                        {
+                            // Its bits one after another from Offset: a piece a byte they touch.
+                            long bit = 8L * factor.Offset + (long)index * factor.Type.Bits;
+                            for (int left = factor.Type.Bits, at = 0; left > 0;)
+                            {
+                                int s = (int)(bit % 8), take = Math.Min(left, 8 - s);
+                                offset.Add(block + (int)(bit / 8));
+                                shift.Add(s);
+                                mask.Add((1 << take) - 1);
+                                place.Add(at);
+                                (bit, left, at) = (bit + take, left - take, at + take);
+                            }
+                        }
+                    }
+                }
+            }
+
+            start.Add(offset.Count);
+            (vecStart, vecOffset, vecShift, vecMask, vecPlace) = ([.. start], [.. offset], [.. shift], [.. mask], [.. place]);
+
+            // The fast reading where every vector group's index is contiguous bits within 16 of its first byte.
+            codebookFast = w is 4 or 8 && (vectorCount == 0 || vectorCount == 1 && vectorWidth[0] == 8);
+            if (codebookFast && vectorCount == 1)
+            {
+                int groups = spans * 4;
+                signAt = Pin<int>(groups);
+                signShift = Pin<int>(groups);
+                for (int q = 0; q < groups && codebookFast; q++)
+                {
+                    int bit = -1, bits = 0;
+                    for (int piece = vecStart[q]; piece < vecStart[q + 1]; piece++)
+                    {
+                        int at = 8 * vecOffset[piece] + vecShift[piece];
+                        bit = bit < 0 ? at : bit;
+                        codebookFast &= at == bit + bits && vecPlace[piece] == bits;
+                        bits += BitOperations.PopCount((uint)vecMask[piece]);
+                    }
+
+                    codebookFast &= bit >= 0 && bit % 8 + bits <= 16 && bit / 8 + 2 <= PeriodBytes;
+                    if (codebookFast)
+                    {
+                        (signAt[q], signShift[q], signMask) = (bit / 8, bit % 8, (1 << bits) - 1);
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        // A codebook span's 32 codes as the integer lane's unsigned bytes: each entry's values' bytes from the table (a word an
+        // entry of 8 or 4 values), the sign vector's -1s applied ((v ^ m) - m a byte; each group's index one unaligned 16-bit
+        // load), the least added back; any other codebook by CodebookAny.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> CodebookCodes(byte* period, int span)
+        {
+            if (!codebookFast)
+            {
+                return CodebookAny(period, span);
+            }
+
+            int mask = entryMask;
+            Vector256<byte> v;
+            if (entryWidth == 8)
+            {
+                int at = span * 4;
+                v = Vector256.Create(*(ulong*)(entryBytes + 8 * (period[entryAt[at]] >> entryShift[at] & mask)),
+                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 1]] >> entryShift[at + 1] & mask)),
+                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 2]] >> entryShift[at + 2] & mask)),
+                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 3]] >> entryShift[at + 3] & mask))).AsByte();
+            }
+            else
+            {
+                int at = span * 8;
+                v = Vector256.Create(*(uint*)(entryBytes + 4 * (period[entryAt[at]] >> entryShift[at] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 1]] >> entryShift[at + 1] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 2]] >> entryShift[at + 2] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 3]] >> entryShift[at + 3] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 4]] >> entryShift[at + 4] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 5]] >> entryShift[at + 5] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 6]] >> entryShift[at + 6] & mask)),
+                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 7]] >> entryShift[at + 7] & mask))).AsByte();
+            }
+
+            if (vectorCount == 1)
+            {
+                int g = span * 4, sm = signMask;
+                ulong* masks = (ulong*)vectorMasks[0];
+                var m = Vector256.Create(masks[Unsafe.ReadUnaligned<ushort>(period + signAt[g]) >> signShift[g] & sm],
+                    masks[Unsafe.ReadUnaligned<ushort>(period + signAt[g + 1]) >> signShift[g + 1] & sm],
+                    masks[Unsafe.ReadUnaligned<ushort>(period + signAt[g + 2]) >> signShift[g + 2] & sm],
+                    masks[Unsafe.ReadUnaligned<ushort>(period + signAt[g + 3]) >> signShift[g + 3] & sm]).AsByte();
+                v = (v ^ m) - m;
+            }
+
+            return v + leastBytes;
+        }
+
+        // Any codebook span's codes (entries of 1, 2, 4 or 8 values, vector factors of any group width and pieces).
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> CodebookAny(byte* period, int span)
+        {
+            int w = entryWidth, per = 32 / w, at = span * per;
+            Vector256<byte> v;
+            switch (w)
+            {
+                case 8:
+                    v = Vector256.Create(*(ulong*)(entryBytes + 8 * (period[entryAt[at]] >> entryShift[at] & entryMask)),
+                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 1]] >> entryShift[at + 1] & entryMask)),
+                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 2]] >> entryShift[at + 2] & entryMask)),
+                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 3]] >> entryShift[at + 3] & entryMask))).AsByte();
+                    break;
+                case 4:
+                    v = Vector256.Create(*(uint*)(entryBytes + 4 * (period[entryAt[at]] >> entryShift[at] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 1]] >> entryShift[at + 1] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 2]] >> entryShift[at + 2] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 3]] >> entryShift[at + 3] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 4]] >> entryShift[at + 4] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 5]] >> entryShift[at + 5] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 6]] >> entryShift[at + 6] & entryMask)),
+                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 7]] >> entryShift[at + 7] & entryMask))).AsByte();
+                    break;
+                default:
+                    Span<byte> bytes = stackalloc byte[32];
+                    for (int j = 0; j < per; j++)
+                    {
+                        new ReadOnlySpan<byte>(entryBytes + w * (period[entryAt[at + j]] >> entryShift[at + j] & entryMask), w).CopyTo(bytes.Slice(j * w, w));
+                    }
+
+                    v = Vector256.Create<byte>(bytes);
+                    break;
+            }
+
+            for (int f = 0; f < vectorCount; f++)
+            {
+                var m = VectorMask(period, span, f);
+                v = (v ^ m) - m;
+            }
+
+            return v + leastBytes;
+        }
+
+        // Vector factor f's masks of a span's 32 values (0xFF where the value is negated): each of its groups' index read from
+        // its pieces, its entry's mask bytes.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> VectorMask(byte* period, int span, int f)
+        {
+            int vw = vectorWidth[f], groups = 32 / vw, first = (f * (Period / 32) + span) * groups;
+            byte* masks = vectorMasks[f];
+            ulong w0 = 0, w1 = 0, w2 = 0, w3 = 0;
+            for (int q = 0; q < groups; q++)
+            {
+                int index = 0;
+                for (int p = vecStart[first + q]; p < vecStart[first + q + 1]; p++)
+                {
+                    index |= (period[vecOffset[p]] >> vecShift[p] & vecMask[p]) << vecPlace[p];
+                }
+
+                // The group's mask bytes into its place of the 32 (a whole word for groups of 8; groups divide 8).
+                {
+                    int pos = q * vw;
+                    ulong bits = 0;
+                    if (vw == 8)
+                    {
+                        bits = *(ulong*)(masks + index * 8);
+                    }
+                    else
+                    {
+                        for (int b = 0; b < vw; b++)
+                        {
+                            bits |= (ulong)masks[index * vw + b] << (8 * (pos % 8 + b));
+                        }
+                    }
+
+                    switch (pos / 8)
+                    {
+                        case 0:
+                            w0 |= bits;
+                            break;
+                        case 1:
+                            w1 |= bits;
+                            break;
+                        case 2:
+                            w2 |= bits;
+                            break;
+                        default:
+                            w3 |= bits;
+                            break;
+                    }
+                }
+            }
+
+            return Vector256.Create(w0, w1, w2, w3).AsByte();
+        }
+
         // Each value of the period's place in x's integer layout (group g's bytes from g · GroupValues: step s, lane l = j · P
         // + p, 4 bytes of chunk j's positions 4s..4s + 3 in its span's order) and its chunk; false where a chunk's values do
         // not share every scale (the order mixes them).
@@ -6818,7 +7146,7 @@ internal sealed partial class CpuBackend
                 ChunkOf[v] = c;
             }
 
-            foreach (var f in (D.Scales ?? []).Concat(D.Mins ?? []))
+            foreach (var f in factorList)
             {
                 for (int c = 0; c < Period / C; c++)
                 {
@@ -7025,6 +7353,11 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
         public Vector256<byte> Codes<TI>(byte* period, int span) where TI : struct, IInstructions
         {
+            if (Map == CodeMap.Codebook)
+            {
+                return CodebookCodes(period, span);
+            }
+
             var code = Raw<TI>(period, span);
             return Map switch
             {
@@ -7177,7 +7510,7 @@ internal sealed partial class CpuBackend
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
         private Vector256<float> ReadOneByOne(byte* period, int gp, int f)
         {
-            var factor = f < scaleFactors ? D.Scales![f] : D.Mins![f - scaleFactors];
+            var factor = factorList[f];
             Span<float> values = stackalloc float[8];
             for (int l = 0; l < 8; l++)
             {

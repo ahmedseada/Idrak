@@ -88,13 +88,42 @@ public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool Signe
 /// <param name="Offset">The plane's first byte in the block.</param>
 /// <param name="Bits">Bits a field takes (1, 2, 4 or 8).</param>
 /// <param name="Group">Values a group holds (a power of two).</param>
-public sealed record CodePlane(int Offset, int Bits, int Group)
+/// <param name="Stride">
+/// Bytes from a group's first byte to the next group's, where groups do not follow one another (other fields between them,
+/// as IQ2_XXS's grid indices lie between its signs and scales); 0: the group's own bytes.
+/// </param>
+public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0)
 {
     /// <summary>The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it.</summary>
     public (int Byte, int Shift) Place(int value)
     {
         int per = Group * Bits / 8, w = value % Group;
-        return (Offset + value / Group * per + w % per, Bits * (w / per));
+        return (Offset + value / Group * (Stride > 0 ? Stride : per) + w % per, Bits * (w / per));
+    }
+
+    /// <summary>
+    /// The plane whose fields are <paramref name="fields"/> (field i one piece, all of one width of 1, 2, 4 or 8 bits), in
+    /// groups of a power of two that are a stride apart; null where no such plane places them.
+    /// </summary>
+    public static CodePlane? Fit(IReadOnlyList<IReadOnlyList<ScalePiece>> fields)
+    {
+        if (fields.Count == 0 || fields.Any(f => f.Count != 1) || fields[0][0].Bits is not (1 or 2 or 4 or 8) || fields.Any(f => f[0].Bits != fields[0][0].Bits))
+        {
+            return null;
+        }
+
+        int bits = fields[0][0].Bits;
+        for (int group = 8 / bits; group <= Math.Max(8 / bits, fields.Count); group *= 2)
+        {
+            int per = group * bits / 8, stride = fields.Count > group ? fields[group][0].Offset - fields[0][0].Offset : per;
+            var plane = new CodePlane(fields[0][0].Offset, bits, group, stride == per ? 0 : stride);
+            if (stride >= per && Enumerable.Range(0, fields.Count).All(i => plane.Place(i) == (fields[i][0].Offset, fields[i][0].Shift)))
+            {
+                return plane;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -540,9 +569,13 @@ public enum FloatSpecials
 /// <param name="ExponentBias">Subtracted from a float's exponent.</param>
 /// <param name="Subnormals">Whether a float's exponent 0 is a subnormal (else 2^(−bias) · (1 + mantissa)).</param>
 /// <param name="Specials">A float's codes that are not finite.</param>
-/// <param name="Table">Each code's value (2^Bits entries), for a table's codes.</param>
+/// <param name="Table">Each code's value (2^Bits entries), for a table's codes; a codebook's (<paramref name="Width"/> more than 1) 2^Bits · Width, code c's value i at c · Width + i.</param>
+/// <param name="Width">
+/// Values one code stands for: 1, a number; more, a codebook (a table's codes only), a code indexing a vector of that many
+/// values, one index giving several values (ggml's IQ2_XXS grid: an 8-bit index, 8 magnitudes).
+/// </param>
 public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Exponent = 0, int Mantissa = 0, int ExponentBias = 0, bool Subnormals = true,
-    FloatSpecials Specials = FloatSpecials.Ieee, IReadOnlyList<double>? Table = null)
+    FloatSpecials Specials = FloatSpecials.Ieee, IReadOnlyList<double>? Table = null, int Width = 1)
 {
     /// <summary>A whole number of <paramref name="bits"/> bits (two's complement when <paramref name="signed"/>).</summary>
     public static NumberType Integer(int bits, bool signed) => new(bits, NumberKind.Integer, signed);
@@ -554,15 +587,24 @@ public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Expo
     /// <summary>Codes of <paramref name="bits"/> bits, each standing for its entry of <paramref name="table"/>.</summary>
     public static NumberType Entries(int bits, IReadOnlyList<double> table) => new(bits, NumberKind.Table, false, Table: table);
 
-    /// <summary>Whether the description holds together: the bits add up, a table has an entry a code.</summary>
-    public bool Valid => Bits is >= 1 and <= 64 && Kind switch
+    /// <summary>
+    /// A codebook: codes of <paramref name="bits"/> bits, each standing for a vector of <paramref name="width"/> values,
+    /// code c's value i <paramref name="table"/>[c · width + i].
+    /// </summary>
+    public static NumberType Codebook(int bits, int width, IReadOnlyList<double> table) => new(bits, NumberKind.Table, false, Table: table, Width: width);
+
+    /// <summary>Whether the description holds together: the bits add up, a table has an entry a code (Width of them a codebook's).</summary>
+    public bool Valid => Bits is >= 1 and <= 64 && Width >= 1 && (Width == 1 || Kind == NumberKind.Table) && Kind switch
     {
         NumberKind.Integer => true,
         NumberKind.Float => Exponent >= 1 && Mantissa >= 0 && (Signed ? 1 : 0) + Exponent + Mantissa == Bits && Exponent <= 15,
-        _ => Bits <= 16 && Table is { } t && t.Count == 1 << Bits,
+        _ => Bits <= 16 && Table is { } t && t.Count == (1 << Bits) * Width,
     };
 
-    /// <summary>The number the field's <paramref name="bits"/> (its lowest Bits bits) stand for.</summary>
+    /// <summary>Value <paramref name="within"/> (below Width) of the vector the field's <paramref name="bits"/> stand for: a codebook's entry's.</summary>
+    public double Value(ulong bits, int within) => Width == 1 ? Value(bits) : Table![(int)(bits & ((1UL << Bits) - 1)) * Width + within];
+
+    /// <summary>The number the field's <paramref name="bits"/> (its lowest Bits bits) stand for (a codebook's: its entry's first value).</summary>
     public double Value(ulong bits)
     {
         bits = Bits == 64 ? bits : bits & ((1UL << Bits) - 1);
@@ -571,7 +613,7 @@ public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Expo
             case NumberKind.Integer:
                 return Signed && Bits < 64 ? (long)(bits << (64 - Bits)) >> (64 - Bits) : Signed ? (long)bits : (double)bits;
             case NumberKind.Table:
-                return Table![(int)bits];
+                return Table![(int)bits * Width];
         }
 
         bool negative = Signed && (bits >> (Bits - 1) & 1) != 0;
@@ -636,6 +678,12 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 
     /// <summary>The number of scale <paramref name="index"/> of <paramref name="block"/>, its bias added.</summary>
     public double Value(ReadOnlySpan<byte> block, int index) => Type.Value(Bits(block, index)) + Bias;
+
+    /// <summary>
+    /// The number scale <paramref name="index"/> of <paramref name="block"/> gives the value <paramref name="within"/> of the
+    /// values it covers (a codebook's: its entry's value of that place; a number's: the same for each), its bias added.
+    /// </summary>
+    public double Value(ReadOnlySpan<byte> block, int index, int within) => Type.Value(Bits(block, index), within % Type.Width) + Bias;
 }
 
 /// <summary>
@@ -644,8 +692,10 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 /// first plane the lowest bits), read as a number of <paramref name="Code"/>'s kind; value v = (that number +
 /// <paramref name="CodeOffset"/>) · the product of the <paramref name="Scales"/> covering v, less the product of the
 /// <paramref name="Mins"/> covering v (added where <paramref name="MinsAdded"/>). A per-element type is a block of one value
-/// (or of the values a byte holds). A kernel that reads this alone multiplies any type described so, with no code of its
-/// own (the CPU's described lane).
+/// (or of the values a byte holds). A codebook code (<see cref="NumberType.Width"/> more than 1) gives Width values from one
+/// index: the planes place each entry's index (entry e = v / Width), and value v takes its entry's value v mod Width; a
+/// codebook scale (its Values its Width: a vector of factors, as IQ2_XXS's sign masks) gives each value it covers its own
+/// factor. A kernel that reads this alone multiplies any type described so, with no code of its own (the described lanes).
 /// </summary>
 /// <param name="Values">Values a block holds.</param>
 /// <param name="Bytes">Bytes a block takes.</param>
@@ -658,12 +708,18 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
     IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false)
 {
-    /// <summary>Whether the description holds together: the planes' bits make the code's, each plane's fields within a block, the scales cover whole values.</summary>
-    public bool Valid => Values >= 1 && Bytes >= 1 && Code.Valid && Planes.Count >= 1 && Planes.Sum(p => p.Bits) == Code.Bits
+    /// <summary>
+    /// Whether the description holds together: the planes' bits make the code's, each plane's fields (an entry's, a
+    /// codebook's) within a block, the scales cover whole values (a codebook scale exactly its entry's values).
+    /// </summary>
+    public bool Valid => Values >= 1 && Bytes >= 1 && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1 && Planes.Sum(p => p.Bits) == Code.Bits
         && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
-            && Enumerable.Range(0, Values).All(v => p.Place(v).Byte + Math.Max(1, p.Bits / 8) <= Bytes))
-        && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && Values % s.Values == 0
+            && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8) && Enumerable.Range(0, Values / Code.Width).All(v => p.Place(v).Byte + Math.Max(1, p.Bits / 8) <= Bytes))
+        && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && Values % s.Values == 0 && (s.Type.Width == 1 || s.Values == s.Type.Width)
             && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes));
+
+    /// <summary>Whether a value's code or factors come from a codebook (a code or a scale of more than one value an entry).</summary>
+    public bool HasCodebook => Code.Width > 1 || (Scales ?? []).Concat(Mins ?? []).Any(s => s.Type.Width > 1);
 
     /// <summary>Bits [<paramref name="bit"/>, + <paramref name="bits"/>) of <paramref name="bytes"/>, little-endian (at most 64).</summary>
     public static ulong Field(ReadOnlySpan<byte> bytes, long bit, int bits)
@@ -678,15 +734,15 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         return value;
     }
 
-    /// <summary>Value <paramref name="v"/>'s code bits in <paramref name="block"/>, its planes' fields joined (the first the lowest bits).</summary>
+    /// <summary>Value <paramref name="v"/>'s code bits in <paramref name="block"/>, its planes' fields joined (the first the lowest bits): a codebook's, its entry's index.</summary>
     public ulong CodeBits(ReadOnlySpan<byte> block, int v)
     {
         ulong code = 0;
-        int low = 0;
+        int low = 0, entry = v / Code.Width;
         for (int p = 0; p < Planes.Count; p++)
         {
             var plane = Planes[p];
-            var (at, shift) = plane.Place(v);
+            var (at, shift) = plane.Place(entry);
             code |= Field(block, 8L * at + shift, plane.Bits) << low;
             low += plane.Bits;
         }
@@ -697,10 +753,10 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     /// <summary>Value <paramref name="v"/> of <paramref name="block"/>, by the description alone (in float64; the reference a kernel's values are checked against).</summary>
     public double ValueOf(ReadOnlySpan<byte> block, int v)
     {
-        double value = Code.Value(CodeBits(block, v)) + CodeOffset;
+        double value = Code.Value(CodeBits(block, v), v % Code.Width) + CodeOffset;
         foreach (var scale in Scales ?? [])
         {
-            value *= scale.Value(block, v % Values / scale.Values);
+            value *= scale.Value(block, v % Values / scale.Values, v % scale.Values);
         }
 
         if (Mins is { Count: > 0 } mins)
@@ -708,7 +764,7 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
             double min = 1;
             foreach (var m in mins)
             {
-                min *= m.Value(block, v % Values / m.Values);
+                min *= m.Value(block, v % Values / m.Values, v % m.Values);
             }
 
             value = MinsAdded ? value + min : value - min;
@@ -728,10 +784,15 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 
     /// <summary>
     /// The description older entries imply (<see cref="ElementType.Float"/>, the integer bits, <see cref="ElementType.Scaled"/>,
-    /// <see cref="ElementType.Super"/>), or null where they say nothing a value reads from (a vector codebook, a truth value).
+    /// <see cref="ElementType.Super"/>, <see cref="ElementType.Grid"/>: a codebook), or null where they say nothing a value reads from (a truth value).
     /// </summary>
     internal static TypeDescription? Of(ElementType type)
     {
+        if (type.Grid is { } grid)
+        {
+            return OfGrid(grid);
+        }
+
         if (type.Super is { } s)
         {
             int subBits = s.SubScales[0].Sum(p => p.Bits);
@@ -775,6 +836,42 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
             : Checked(new TypeDescription(8 / type.BlockBits, 1, number, [new CodePlane(0, type.BlockBits, 8 / type.BlockBits)]));
 
         static TypeDescription? Checked(TypeDescription d) => d.Valid ? d : null;
+    }
+
+    // A grid codebook's description (GridBlock: ggml's IQ2_XXS, IQ3_XXS): the code a codebook of the grid's magnitudes
+    // (times the sub-scales' factor, a power of two), each entry's index one plane; the scales the super-scale, each
+    // sub-block's scale plus its offset, and each sign group's vector of ±1 (a codebook of the sign masks). Null where the
+    // entries' indices do not lie as one plane or the tables do not cover every index.
+    private static TypeDescription? OfGrid(GridBlock g)
+    {
+        if (CodePlane.Fit(g.Entries) is not { } plane || g.Grid.Count != (1 << plane.Bits) * g.EntryValues || g.Signs.Count == 0 || g.SubScales.Count == 0)
+        {
+            return null;
+        }
+
+        int signBits = g.Signs[0].Sum(p => p.Bits), subBits = g.SubScales[0].Sum(p => p.Bits);
+        if (g.SignTable.Count != 1 << signBits)
+        {
+            return null;
+        }
+
+        var signs = new double[g.SignTable.Count * g.SignValues];
+        for (int s = 0; s < g.SignTable.Count; s++)
+        {
+            for (int i = 0; i < g.SignValues; i++)
+            {
+                signs[s * g.SignValues + i] = (g.SignTable[s] >> i & 1) != 0 ? -1 : 1;
+            }
+        }
+
+        var code = NumberType.Codebook(plane.Bits, g.EntryValues, [.. g.Grid.Select(v => v * (double)g.SubScaleFactor)]);
+        var description = new TypeDescription(g.Values, g.Bytes, code, [plane], 0,
+        [
+            new BlockScale(NumberType.Floating(g.Scale.Exponent, g.Scale.Mantissa), g.Values, g.ScaleOffset),
+            new BlockScale(NumberType.Integer(subBits, false), g.SubValues, 0, g.SubScales, g.SubScaleOffset),
+            new BlockScale(NumberType.Codebook(signBits, g.SignValues, signs), g.SignValues, 0, g.Signs),
+        ]);
+        return description.Valid ? description : null;
     }
 }
 
@@ -1065,8 +1162,8 @@ public sealed class ElementType : IKind
     /// <summary>
     /// How the type's values read from their bits (<see cref="TypeDescription"/>): what the CPU's described lane reads to
     /// multiply the type where it is stored, with no code of the type's own. A type that gives none has the one its older
-    /// entries imply (<see cref="Float"/>, the integer bits, <see cref="Scaled"/>, <see cref="Super"/>), or null where they
-    /// say nothing a value reads from (a vector codebook, a truth value).
+    /// entries imply (<see cref="Float"/>, the integer bits, <see cref="Scaled"/>, <see cref="Super"/>, <see cref="Grid"/>: a
+    /// codebook), or null where they say nothing a value reads from (a truth value).
     /// </summary>
     public TypeDescription? Description
     {

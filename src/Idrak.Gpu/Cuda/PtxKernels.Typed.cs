@@ -1575,10 +1575,24 @@ internal sealed class DescribedPlan
     internal readonly record struct Piece(int Byte, int Shift, int Bits, int Low);
 
     /// <summary>A value a thread reads in a step: its code's fields and its factors' group.</summary>
-    internal sealed record Slot(Field[] Fields, int Group);
+    /// <param name="Fields">The code's fields (a codebook's: its entry's index's).</param>
+    /// <param name="Group">The factors' group.</param>
+    /// <param name="Within">Thread 0's value's place in its codebook entry (0: not a codebook), and in each factor's vector (<paramref name="FactorWithin"/>[q]).</param>
+    /// <param name="FactorWithin">Each factor's place of thread 0's value in its vector (0 for a factor of one number).</param>
+    internal sealed record Slot(Field[] Fields, int Group, int Within = 0, int[]? FactorWithin = null);
 
-    /// <summary>A scale or minimum of the description: how its bits read, its table (a <see cref="Read.Table"/>), its bits, whether a signed integer, its bias, whether a minimum.</summary>
-    internal sealed record Factor(Read Read, double[]? Table, int Bits, bool Signed, double Bias, bool Min);
+    /// <summary>
+    /// A scale or minimum of the description: how its bits read, its table (a <see cref="Read.Table"/>; a vector factor's
+    /// every entry's values), its bits, whether a signed integer, its bias, whether a minimum, and its width (values an entry
+    /// gives: more than 1, a vector factor, its value read for each value apart from the group's product).
+    /// </summary>
+    internal sealed record Factor(Read Read, double[]? Table, int Bits, bool Signed, double Bias, bool Min, int Width = 1);
+
+    /// <summary>Each thread's offset of its values' place in their codebook entry from thread 0's ([t]); and of each factor's ([q][t]).</summary>
+    public int[] WithinDeltas { get; private set; } = new int[4];
+
+    /// <inheritdoc cref="WithinDeltas"/>
+    public int[][] FactorWithinDeltas { get; private set; } = [];
 
     /// <summary>The k positions of a step a thread reads, after its own 2t: the mma fragment's.</summary>
     internal static readonly int[] Columns = [0, 1, 8, 9];
@@ -1690,7 +1704,13 @@ internal sealed class DescribedPlan
                 return null;
             }
 
-            factors.Add(new Factor(factorRead.Value, factorTable, scale.Type.Bits, scale.Type.Kind == NumberKind.Integer && scale.Type.Signed, scale.Bias, min));
+            factors.Add(new Factor(factorRead.Value, factorTable, scale.Type.Bits, scale.Type.Kind == NumberKind.Integer && scale.Type.Signed, scale.Bias, min, scale.Type.Width));
+        }
+
+        if (factors.Any(f => f.Width > 1 && f.Min))
+        {
+            reason = "a minimum of a vector of factors (a codebook minimum) has no reading here";
+            return null;
         }
 
         int patternValues = d.Values / Gcd(d.Values, 16) * 16;
@@ -1712,6 +1732,12 @@ internal sealed class DescribedPlan
         var slots = new Slot[steps * 4];
         var groups = new List<Piece[][]>();
         var groupOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        // A codebook's values: each entry's index's fields (entry v / Width), the value's place in its entry (v mod Width) and
+        // in each vector factor's (v mod its Values), each thread's place a fixed offset from thread 0's.
+        var scalesAll = (d.Scales ?? []).Concat(d.Mins ?? []).ToList();
+        int width = d.Code.Width;
+        var withinDeltas = new int[4];
+        var factorWithinDeltas = scalesAll.Select(_ => new int[4]).ToArray();
         for (int s = 0; s < steps; s++)
         {
             for (int i = 0; i < 4; i++)
@@ -1719,6 +1745,8 @@ internal sealed class DescribedPlan
                 Field[] fields = [];
                 Piece[][] pieces = [];
                 string key = "";
+                int within0 = 0;
+                int[] factorWithin0 = new int[scalesAll.Count];
                 for (int t = 0; t < 4; t++)
                 {
                     int u = 16 * s + 2 * t + Columns[i], block = u / d.Values, v = u % d.Values;
@@ -1727,9 +1755,29 @@ internal sealed class DescribedPlan
                     for (int p = 0; p < planes; p++)
                     {
                         var plane = d.Planes[p];
-                        var (at, shift) = plane.Place(v);
+                        var (at, shift) = plane.Place(v / width);
                         own[p] = new Field(p, block * d.Bytes + at, shift, plane.Bits, low);
                         low += plane.Bits;
+                    }
+
+                    int within = v % width;
+                    var factorWithin = scalesAll.Select(f => v % f.Values % f.Type.Width).ToArray();
+                    if (t == 0)
+                    {
+                        (within0, factorWithin0) = (within, factorWithin);
+                    }
+                    else if (s == 0 && i == 0)
+                    {
+                        withinDeltas[t] = within - within0;
+                        for (int q = 0; q < scalesAll.Count; q++)
+                        {
+                            factorWithinDeltas[q][t] = factorWithin[q] - factorWithin0[q];
+                        }
+                    }
+                    else if (within - within0 != withinDeltas[t] || Enumerable.Range(0, scalesAll.Count).Any(q => factorWithin[q] - factorWithin0[q] != factorWithinDeltas[q][t]))
+                    {
+                        reason = $"a value's place in its codebook entry does not follow one offset a thread (step {s}, value {Columns[i]}, thread {t})";
+                        return null;
                     }
 
                     var ownPieces = FactorPieces(d, block, v);
@@ -1768,11 +1816,12 @@ internal sealed class DescribedPlan
                     groupOf[key] = group;
                 }
 
-                slots[s * 4 + i] = new Slot(fields, group);
+                slots[s * 4 + i] = new Slot(fields, group, within0, factorWithin0);
             }
         }
 
         var plan = new DescribedPlan(d, Canonical(d), read, table, patternValues, (int)patternBytes, deltaBytes, deltaShifts, slots, [.. groups], [.. factors]);
+        (plan.WithinDeltas, plan.FactorWithinDeltas) = (withinDeltas, factorWithinDeltas);
         plan.NarrowReason = plan.Narrow(groupOf);
         return plan;
     }
@@ -1822,6 +1871,11 @@ internal sealed class DescribedPlan
     private string? Narrow(Dictionary<string, int> groupOf)
     {
         var d = Description;
+        if (d.HasCodebook)
+        {
+            return "a codebook's codes or factors (vectors an index) have no int8 reading here";
+        }
+
         if (Wide || d.Code.Bits > 8 || PatternValues % 32 != 0 || CodeRead is not (Read.Signed or Read.Unsigned or Read.Table))
         {
             return "the codes are not of 8 bits or fewer read as integers or a table, or a pattern block is not whole steps of 32 values";
@@ -1979,7 +2033,7 @@ internal sealed class DescribedPlan
             return null;
         }
 
-        table = [.. Enumerable.Range(0, 1 << n.Bits).Select(c => n.Value((ulong)c))];
+        table = n.Width > 1 ? [.. n.Table!] : [.. Enumerable.Range(0, 1 << n.Bits).Select(c => n.Value((ulong)c))];
         return Read.Table;
     }
 
@@ -2023,10 +2077,10 @@ internal sealed class DescribedPlan
     private static string Canonical(TypeDescription d)
     {
         static string Number(NumberType n) => string.Create(CultureInfo.InvariantCulture,
-            $"{n.Bits}{n.Kind}{(n.Signed ? 's' : 'u')}e{n.Exponent}m{n.Mantissa}b{n.ExponentBias}{(n.Subnormals ? 'n' : 'x')}{n.Specials}[{string.Join(",", (n.Table ?? []).Select(e => e.ToString("R", CultureInfo.InvariantCulture)))}]");
+            $"{n.Bits}{n.Kind}{(n.Signed ? 's' : 'u')}e{n.Exponent}m{n.Mantissa}b{n.ExponentBias}{(n.Subnormals ? 'n' : 'x')}{n.Specials}w{n.Width}[{string.Join(",", (n.Table ?? []).Select(e => e.ToString("R", CultureInfo.InvariantCulture)))}]");
         static string Scale(BlockScale s) => string.Create(CultureInfo.InvariantCulture,
             $"{Number(s.Type)}/{s.Values}/{s.Offset}/{s.Bias.ToString("R", CultureInfo.InvariantCulture)}/{string.Join("|", (s.Pieces ?? []).Select(p => string.Join(",", p.Select(x => string.Create(CultureInfo.InvariantCulture, $"{x.Offset}.{x.Shift}.{x.Bits}")))))}");
-        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}")));
+        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}")));
         string text = string.Create(CultureInfo.InvariantCulture,
             $"{d.Values}x{d.Bytes};{Number(d.Code)};{planes};{d.CodeOffset.ToString("R", CultureInfo.InvariantCulture)};{string.Join(";", (d.Scales ?? []).Select(Scale))};-{string.Join(";", (d.Mins ?? []).Select(Scale))};{d.MinsAdded}");
         ulong hash = 14695981039346656037UL;
@@ -2266,9 +2320,11 @@ internal static partial class PtxKernels
     // plane's fields from `planeBase[p] + origin` (the row's staged pattern block plus the thread's offset of the plane),
     // the factors from `groupBase + origin`; a load of 1, 2, 4 or 8 bytes as the bases' alignment allows, each kept for
     // the values that read the same bytes.
-    // `maxShift`: each plane's largest bit offset of a thread's fields from thread 0's (null: the plan's, MaxDeltaShift).
+    // `maxShift`: each plane's largest bit offset of a thread's fields from thread 0's (null: the plan's, MaxDeltaShift);
+    // `within`, `factorWithin`: the thread's offset of its values' place in their codebook entry and in each factor's vector
+    // (DescribedPlan.WithinDeltas; null: 0).
     private sealed class DescribedBlock(DescribedEmit e, DescribedPlan plan, string[] planeBase, string groupBase, int origin, int[] planeAlign, int groupAlign,
-        string?[] deltaShift, string? codeTable, string?[] factorTables, int[]? maxShift = null)
+        string?[] deltaShift, string? codeTable, string?[] factorTables, int[]? maxShift = null, string? within = null, string?[]? factorWithin = null)
     {
         private readonly List<(int Which, int Start, int Width, string Reg)> _loads = [];
         private readonly Dictionary<int, (string? S, string? B)> _groups = [];
@@ -2575,8 +2631,36 @@ internal static partial class PtxKernels
             for (int q = 0; q < plan.Factors.Length; q++)
             {
                 var factor = plan.Factors[q];
+                if (factor.Width > 1)
+                {
+                    continue;                                             // a vector factor: each value's own (Value)
+                }
+
+                string number = FactorNumber(pieces[q], q, null);
+                ref string? product = ref factor.Min ? ref min : ref scale;
+                if (product is null)
+                {
+                    product = number;
+                }
+                else
+                {
+                    string times = e.F();
+                    e.L($"mul.rn.f32 {times}, {product}, {number};");
+                    product = times;
+                }
+            }
+
+            return _products[g] = (scale, min);
+        }
+
+        // Factor q's number from its pieces (its bias added): a vector factor's, its entry's value at `place` (thread 0's
+        // place, plus the thread's offset).
+        private string FactorNumber(DescribedPlan.Piece[] pieces, int q, int? place)
+        {
+            var factor = plan.Factors[q];
+            {
                 string bits = "";
-                foreach (var piece in pieces[q])
+                foreach (var piece in pieces)
                 {
                     var (reg, bit, wide) = Bytes(-1, piece.Byte, 1);
                     string part = e.B();
@@ -2609,7 +2693,7 @@ internal static partial class PtxKernels
                     bits = extended;
                 }
 
-                string number = Number(bits, factor.Read, factor.Bits, factorTables[q]);
+                string number = place is { } at ? Entry(bits, factor.Width, at, factorWithin?[q], factorTables[q]!) : Number(bits, factor.Read, factor.Bits, factorTables[q]);
                 if (factor.Bias != 0)
                 {
                     string biased = e.F();
@@ -2617,20 +2701,24 @@ internal static partial class PtxKernels
                     number = biased;
                 }
 
-                ref string? product = ref factor.Min ? ref min : ref scale;
-                if (product is null)
-                {
-                    product = number;
-                }
-                else
-                {
-                    string times = e.F();
-                    e.L($"mul.rn.f32 {times}, {product}, {number};");
-                    product = times;
-                }
+                return number;
+            }
+        }
+
+        // A codebook's value: entry `bits`'s value at `place` (+ the thread's offset `delta`) of its `width`, from `table`.
+        private string Entry(string bits, int width, int place, string? delta, string table)
+        {
+            string index = e.B(), address = e.B(), f = e.F();
+            e.L($"mad.lo.u32 {index}, {bits}, {width}, {place};");
+            if (delta is not null)
+            {
+                e.L($"add.u32 {index}, {index}, {delta};");
             }
 
-            return _products[g] = (scale, min);
+            e.L($"shl.b32 {address}, {index}, 2;");
+            e.L($"add.u32 {address}, {address}, {table};");
+            e.L($"ld.shared.f32 {f}, [{address}];");
+            return f;
         }
 
         /// <summary>Slot <paramref name="index"/>'s value in a register (float32; float64 for a wide plan).</summary>
@@ -2661,7 +2749,19 @@ internal static partial class PtxKernels
                 }
             }
 
-            string number = Number(code, plan.CodeRead, plan.Description.Code.Bits, codeTable);
+            string number = plan.Description.Code.Width > 1 ? Entry(code, plan.Description.Code.Width, slot.Within, within, codeTable!)
+                : Number(code, plan.CodeRead, plan.Description.Code.Bits, codeTable);
+            for (int q = 0; q < plan.Factors.Length; q++)
+            {
+                if (plan.Factors[q].Width > 1)
+                {
+                    // A vector factor (a codebook scale: a sign mask's ±1): this value's own, times the code's number.
+                    string factor = FactorNumber(plan.Groups[slot.Group][q], q, slot.FactorWithin![q]), times = e.F();
+                    e.L($"mul.rn.f32 {times}, {number}, {factor};");
+                    number = times;
+                }
+            }
+
             var (scale, sum) = Factors(slot.Group);
             string type = plan.Wide ? "f64" : "f32";
             if (scale is null && sum is null)
@@ -2756,6 +2856,11 @@ internal static partial class PtxKernels
 
         return (bytes, shifts, aligns);
     }
+
+    // The thread's offset of its values' place in their codebook entry and in each vector factor's (null: 0, or not a codebook).
+    private static (string? Within, string?[] FactorWithin) DescribedWithin(DescribedEmit e, DescribedPlan p, string t) =>
+        (p.Description.Code.Width > 1 ? e.OfThread(t, p.WithinDeltas) : null,
+            [.. p.Factors.Select((f, q) => f.Width > 1 ? e.OfThread(t, p.FactorWithinDeltas[q]) : null)]);
 
     // Each plane's base for a row's pattern block at `block`: the block plus the thread's offset of the plane.
     private static string[] DescribedPlaneBases(DescribedEmit e, string?[] deltaBytes, string block)
@@ -3001,6 +3106,7 @@ internal static partial class PtxKernels
         e.L($"add.u32 {ring}, {ring}, {smem};");
         e.L($"add.u32 {ring}, {ring}, {tables};");
         var (deltaByte, deltaShift, planeAlign) = DescribedDeltas(e, p, t, align);
+        var (within, factorWithin) = DescribedWithin(e, p, t);
 
         // x's rows of this block (clamped into x: rows past m read row m - 1 and are not written).
         var xRow = new string[rows];
@@ -3151,7 +3257,7 @@ internal static partial class PtxKernels
             var read = new DescribedBlock[weights];
             for (int wi = 0; wi < weights; wi++)
             {
-                read[wi] = new DescribedBlock(e, p, planeBase[wi], block[wi], 0, planeAlign, Math.Min(align, 16), deltaShift, codeTable, factorTables);
+                read[wi] = new DescribedBlock(e, p, planeBase[wi], block[wi], 0, planeAlign, Math.Min(align, 16), deltaShift, codeTable, factorTables, within: within, factorWithin: factorWithin);
             }
 
             for (int s = 0; s < p.Steps; s++)
@@ -3694,6 +3800,7 @@ internal static partial class PtxKernels
         }
 
         var (deltaByte, deltaShift, planeAlign) = DescribedDeltas(e, p, t, align);
+        var (within, factorWithin) = DescribedWithin(e, p, t);
         var acc = new string[32];
         for (int c = 0; c < 32; c++)
         {
@@ -3781,7 +3888,8 @@ internal static partial class PtxKernels
                 {
                     if (!reads.TryGetValue((nt, pb), out var read))
                     {
-                        read = new DescribedBlock(e, p, planeBases[nt], rowBase[nt], pb * p.PatternBytes, planeAlign, Math.Min(align, 16), deltaShift, codeTable, factorTables);
+                        read = new DescribedBlock(e, p, planeBases[nt], rowBase[nt], pb * p.PatternBytes, planeAlign, Math.Min(align, 16), deltaShift, codeTable, factorTables,
+                            within: within, factorWithin: factorWithin);
                         reads[(nt, pb)] = read;
                     }
 
