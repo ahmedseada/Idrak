@@ -74,36 +74,52 @@ internal sealed class StoredPackedFormat : IPackedFormat, IRowPackedFormat
                 })!;
             }
 
-            // As a load expands a file's weights for a device that has no product of the type: the stored values in float32.
+            // As a load expands a file's weights for a device that has no product of the type: the stored values in float32,
+            // a block of output rows encoded and expanded at a time (an 8-byte type's head, 151,936 × 2,048 values, takes
+            // 2.5 GB stored: past what one array of bytes holds).
             long rowBytes = _type.ByteCount(k);
-            var bytes = new byte[checked(rowBytes * n)];
-            var rowScales = new float[n];
-            fixed (byte* into = bytes)
-            {
-                if (RowScaled(type))
-                {
-                    EncodeRows((first, count, destination) =>
-                    {
-                        Columns((float*)values, k, n, first, count, destination);
-                        return true;
-                    }, k, n, into, rowBytes, (j, row, stored) => rowScales[j] = EncodeScaledRow(type, row, stored));
-                }
-                else
-                {
-                    StoreColumns((float*)values, k, n, into);
-                    rowScales.AsSpan().Fill(1f);
-                }
-            }
-
+            int per = (int)Math.Clamp((32L << 20) / Math.Max(1, rowBytes), 1, Math.Max(1, n));
+            byte[] chunk = ArrayPool<byte>.Shared.Rent((int)Math.Max(1, per * rowBytes));
+            var rowScales = new float[per];
             var expanded = new float[(long)k * n];
             var row = new float[k];
-            for (int j = 0; j < n; j++)
+            try
             {
-                _type.Decode(bytes.AsSpan((int)(j * rowBytes), (int)rowBytes), row);
-                for (int r = 0; r < k; r++)
+                fixed (byte* into = chunk)
                 {
-                    expanded[(long)r * n + j] = row[r] * rowScales[j];
+                    for (int first = 0; first < n; first += per)
+                    {
+                        int count = Math.Min(per, n - first), at = first;
+                        WeightRows block = (f, c, destination) =>
+                        {
+                            Columns((float*)values, k, n, at + f, c, destination);
+                            return true;
+                        };
+
+                        if (RowScaled(type))
+                        {
+                            EncodeRows(block, k, count, into, rowBytes, (j, source, stored) => rowScales[j] = EncodeScaledRow(type, source, stored));
+                        }
+                        else
+                        {
+                            EncodeRows(block, k, count, into, rowBytes, (_, source, stored) => type.Encode(source, stored));
+                            rowScales.AsSpan().Fill(1f);
+                        }
+
+                        for (int j = 0; j < count; j++)
+                        {
+                            _type.Decode(chunk.AsSpan((int)(j * rowBytes), (int)rowBytes), row);
+                            for (int r = 0; r < k; r++)
+                            {
+                                expanded[(long)r * n + first + j] = row[r] * rowScales[j];
+                            }
+                        }
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(chunk);
             }
 
             return new ExpandedWeight(_type.Name, Tensor.Persistent(expanded, [k, n], device));
