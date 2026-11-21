@@ -1589,7 +1589,17 @@ internal sealed class DescribedPlan
         (Description, Code, CodeRead, CodeTable, PatternValues, PatternBytes, DeltaBytes, DeltaShifts, Slots, Groups, Factors) =
             (description, code, read, table, patternValues, patternBytes, deltaBytes, deltaShifts, slots, groups, factors);
         Wide = read is Read.WideSigned or Read.WideUnsigned or Read.Long or Read.ULong or Read.Double;
+        IntegerBytes = description is { Values: 1, Code.Kind: NumberKind.Integer, CodeOffset: 0, Planes: [{ Offset: 0, Group: 1 } plane] } && (description.Scales?.Count ?? 0) == 0
+            && (description.Mins?.Count ?? 0) == 0 && plane.Bits == description.Code.Bits && plane.Bits % 8 == 0 && plane.Bits <= 64 && description.Bytes == plane.Bits / 8
+            ? plane.Bits / 8 : 0;
     }
+
+    /// <summary>
+    /// The bytes of a whole-byte integer code (a value a block, one plane, no factors: int8, int16, int32, int64), else 0:
+    /// such codes also multiply by their byte planes exactly in int8 tensor cores (x rounded to int8 a block of 32 values),
+    /// the top plane two's complement where the code is signed, the planes weighted 2^(8p).
+    /// </summary>
+    public int IntegerBytes { get; }
 
     /// <summary>The description read.</summary>
     public TypeDescription Description { get; }
@@ -1968,6 +1978,14 @@ internal static partial class PtxKernels
         {
             DescribedWiden(sb, p, align, pairs);
             names.Add(DescribedWidenName(p, align, pairs));
+        }
+
+        if (p.IntegerBytes > 0 && pairs && align == 16)
+        {
+            DescribedQuant(sb, p);
+            names.Add(DescribedQuantName(p));
+            DescribedInt(sb, p);
+            names.Add(DescribedIntName(p));
         }
 
         return ([.. names], sb.ToString());
@@ -2543,12 +2561,15 @@ internal static partial class PtxKernels
         var (chunks, stride) = DescribedRow(spanBytes, align);
         int stageBytes = DescribedRowsBlock * stride, tables = DescribedTablesBytes(p), redAt = tables + 8 * 2 * stageBytes;
 
-        string x, w, rs, y, m, n, k, rb, hasScales, row0 = e.B();
+        // p_split: log2 of the warps a group of 8 weight rows takes (1, 2, 4 or 8, measured per shape): the block's 8 warps
+        // are 8 >> p_split groups, each over its rows' spans; the block 64 >> p_split rows.
+        string x, w, rs, y, m, n, k, rb, hasScales, row0 = e.B(), blockRow0 = e.B(), split = e.B(), rowShift = e.B();
         if (!many)
         {
-            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_rb"]);
+            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_rb", "p_split"]);
             (x, w, rs, y, hasScales) = (pointers[0], pointers[1], pointers[2], pointers[3], scaled);
             (m, n, k, rb) = (values[0], values[1], values[2], values[3]);
+            e.L($"mov.u32 {split}, {values[4]};");
             e.L($"mov.u32 {row0}, %ctaid.x;");
         }
         else
@@ -2556,15 +2577,21 @@ internal static partial class PtxKernels
             // A group of up to three weights sharing x (p_n2 0 for two; all scaled or none): the block's weight by its index
             // among their blocks.
             var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w0", "p_rs0", "p_y0", "p_w1", "p_rs1", "p_y1", "p_w2", "p_rs2", "p_y2"],
-                ["p_m", "p_k", "p_rb", "p_n0", "p_n1", "p_n2"]);
+                ["p_m", "p_k", "p_rb", "p_n0", "p_n1", "p_n2", "p_split"]);
             (x, m, k, rb, hasScales) = (pointers[0], values[0], values[1], values[2], scaled);
             (w, rs, y, n) = (pointers[1], pointers[2], pointers[3], values[3]);
-            string blockIndex = e.B(), first = e.B(), second = e.B(), p1 = e.P(), p2 = e.P();
+            e.L($"mov.u32 {split}, {values[6]};");
+            string blockIndex = e.B(), first = e.B(), second = e.B(), p1 = e.P(), p2 = e.P(), perBlock = e.B();
+            e.L($"neg.s32 {rowShift}, {split};");
+            e.L($"add.s32 {rowShift}, {rowShift}, 6;");
+            e.L($"mov.u32 {perBlock}, 1;");
+            e.L($"shl.b32 {perBlock}, {perBlock}, {rowShift};");
+            e.L($"sub.u32 {perBlock}, {perBlock}, 1;");
             e.L($"mov.u32 {blockIndex}, %ctaid.x;");
-            e.L($"add.u32 {first}, {values[3]}, {DescribedRowsBlock - 1};");
-            e.L($"shr.u32 {first}, {first}, 3;");
-            e.L($"add.u32 {second}, {values[4]}, {DescribedRowsBlock - 1};");
-            e.L($"shr.u32 {second}, {second}, 3;");
+            e.L($"add.u32 {first}, {values[3]}, {perBlock};");
+            e.L($"shr.u32 {first}, {first}, {rowShift};");
+            e.L($"add.u32 {second}, {values[4]}, {perBlock};");
+            e.L($"shr.u32 {second}, {second}, {rowShift};");
             e.L($"add.u32 {second}, {second}, {first};");
             e.L($"setp.ge.u32 {p1}, {blockIndex}, {first};");
             e.L($"setp.ge.u32 {p2}, {blockIndex}, {second};");
@@ -2583,13 +2610,21 @@ internal static partial class PtxKernels
             e.L($"mov.u32 {row0}, {blockIndex};");
         }
 
-        string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), xr0 = e.B(), smem = e.B();
+        string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), xr0 = e.B(), smem = e.B(), group = e.B(), sub = e.B(), warps = e.B();
         e.L($"mov.u32 {tid}, %tid.x;");
         e.L($"and.b32 {lane}, {tid}, 31;");
         e.L($"shr.u32 {warp}, {tid}, 5;");
         e.L($"shr.u32 {g}, {lane}, 2;");
         e.L($"and.b32 {t}, {lane}, 3;");
-        e.L($"shl.b32 {row0}, {row0}, 3;");
+        e.L($"neg.s32 {rowShift}, {split};");
+        e.L($"add.s32 {rowShift}, {rowShift}, 6;");
+        e.L($"shl.b32 {blockRow0}, {row0}, {rowShift};");
+        e.L($"shr.u32 {group}, {warp}, {split};");
+        e.L($"mov.u32 {warps}, 1;");
+        e.L($"shl.b32 {warps}, {warps}, {split};");
+        e.L($"sub.u32 {sub}, {warps}, 1;");
+        e.L($"and.b32 {sub}, {warp}, {sub};");
+        e.L($"mad.lo.u32 {row0}, {group}, 8, {blockRow0};");
         e.L($"mov.u32 {xr0}, %ctaid.y;");
         e.L($"mul.lo.u32 {xr0}, {xr0}, {rows};");
         e.L($"mov.u32 {smem}, described_smem;");
@@ -2656,7 +2691,7 @@ internal static partial class PtxKernels
 
         string i = e.B(), so = e.B(), next = e.B(), soNext = e.B(), any = e.P(), more = e.P();
         string loop = e.Label("SPAN"), end = e.Label("SPANS_DONE"), noIssue = e.Label("NO_ISSUE"), noFirst = e.Label("NO_FIRST");
-        e.L($"mov.u32 {i}, {warp};");
+        e.L($"mov.u32 {i}, {sub};");
         e.L($"mov.u32 {so}, 0;");
         e.L($"setp.ge.u32 {any}, {i}, {spans};");
         e.L($"@{any} bra {noFirst};");
@@ -2666,7 +2701,7 @@ internal static partial class PtxKernels
         e.Mark(loop);
         e.L($"setp.ge.u32 {any}, {i}, {spans};");
         e.L($"@{any} bra {end};");
-        e.L($"add.u32 {next}, {i}, 8;");
+        e.L($"add.u32 {next}, {i}, {warps};");
         e.L($"sub.u32 {soNext}, {stageBytes}, {so};");
         e.L($"setp.ge.u32 {more}, {next}, {spans};");
         e.L($"@{more} bra {noIssue};");
@@ -2823,28 +2858,45 @@ internal static partial class PtxKernels
 
         e.Mark(skip);
         e.L($"bar.sync 0;");
-        string done = e.Label("DONE"), outside = e.P(), gg = e.B(), xi = e.B(), outRow = e.B(), outX = e.B();
-        e.L($"setp.ge.u32 {outside}, {tid}, {DescribedRowsBlock * rows};");
+        // The block's outputs (its 64 >> p_split rows by its rows of x), each by one thread in turn: output o (row group, row
+        // g, x row) its group's warps' sums added in warp order.
+        string done = e.Label("DONE"), outside = e.P(), gg = e.B(), xi = e.B(), outRow = e.B(), outX = e.B(), outputs = e.B(), grp = e.B(), rem = e.B(), o = e.B();
+        string outLoop = e.Label("OUTPUT"), outNext = e.Label("OUTPUT_NEXT");
+        e.L($"mov.u32 {outputs}, {DescribedRowsBlock * DescribedRowsBlock * rows};");
+        e.L($"shr.u32 {outputs}, {outputs}, {split};");
+        e.L($"mov.u32 {o}, {tid};");
+        e.Mark(outLoop);
+        e.L($"setp.ge.u32 {outside}, {o}, {outputs};");
         e.L($"@{outside} bra {done};");
-        e.L($"div.u32 {gg}, {tid}, {rows};");
-        e.L($"rem.u32 {xi}, {tid}, {rows};");
-        e.L($"add.u32 {outRow}, {row0}, {gg};");
+        e.L($"div.u32 {grp}, {o}, {DescribedRowsBlock * rows};");
+        e.L($"rem.u32 {rem}, {o}, {DescribedRowsBlock * rows};");
+        e.L($"div.u32 {gg}, {rem}, {rows};");
+        e.L($"rem.u32 {xi}, {rem}, {rows};");
+        e.L($"mad.lo.u32 {outRow}, {grp}, 8, {blockRow0};");
+        e.L($"add.u32 {outRow}, {outRow}, {gg};");
         e.L($"add.u32 {outX}, {xr0}, {xi};");
         e.L($"setp.ge.u32 {outside}, {outRow}, {n};");
-        e.L($"@{outside} bra {done};");
+        e.L($"@{outside} bra {outNext};");
         e.L($"setp.ge.u32 {outside}, {outX}, {m};");
-        e.L($"@{outside} bra {done};");
-        string sumAt = e.B(), total = wide ? e.G() : e.F();
-        e.L($"mad.lo.u32 {sumAt}, {gg}, {rows}, {xi};");
+        e.L($"@{outside} bra {outNext};");
+        string sumAt = e.B(), total = wide ? e.G() : e.F(), firstWarp = e.B();
+        e.L($"shl.b32 {firstWarp}, {grp}, {split};");
+        e.L($"mad.lo.u32 {sumAt}, {firstWarp}, {DescribedRowsBlock}, {gg};");
+        e.L($"mad.lo.u32 {sumAt}, {sumAt}, {rows}, {xi};");
         e.L($"mul.lo.u32 {sumAt}, {sumAt}, {eb};");
         e.L($"add.u32 {sumAt}, {sumAt}, {smem};");
         e.L($"ld.shared.{ft} {total}, [{sumAt}+{redAt}];");
+        string sumsDone = e.Label("SUMS_DONE");
         for (int wi = 1; wi < 8; wi++)
         {
-            string add = wide ? e.G() : e.F();
+            string add = wide ? e.G() : e.F(), inGroup = e.P();
+            e.L($"setp.gt.u32 {inGroup}, {warps}, {wi};");
+            e.L($"@!{inGroup} bra {sumsDone};");
             e.L($"ld.shared.{ft} {add}, [{sumAt}+{redAt + wi * DescribedRowsBlock * rows * eb}];");
             e.L($"add.rn.{ft} {total}, {total}, {add};");
         }
+
+        e.Mark(sumsDone);
 
         string scaleAt = e.W(), scale = e.F(), result = e.F(), yAt = e.W(), col = e.W(), noScale = e.Label("NO_SCALE");
         e.L($"@!{hasScales} bra {noScale};");
@@ -2878,14 +2930,17 @@ internal static partial class PtxKernels
         e.L($"shl.b64 {yAt}, {yAt}, 2;");
         e.L($"add.u64 {yAt}, {yAt}, {y};");
         e.L($"st.global.f32 [{yAt}], {result};");
+        e.Mark(outNext);
+        e.L($"add.u32 {o}, {o}, {DescribedRowsThreads};");
+        e.L($"bra {outLoop};");
         e.Mark(done);
         e.L($"ret;");
 
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{DescribedRowsName(p, align, pairs, rows)}}{{(many ? "_many" : "")}}(
                 .param .u64 p_x, {{(many
-                    ? ".param .u64 p_w0, .param .u64 p_rs0, .param .u64 p_y0, .param .u64 p_w1, .param .u64 p_rs1, .param .u64 p_y1, .param .u64 p_w2, .param .u64 p_rs2, .param .u64 p_y2,\n    .param .u32 p_m, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_n0, .param .u32 p_n1, .param .u32 p_n2"
-                    : ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb")}}
+                    ? ".param .u64 p_w0, .param .u64 p_rs0, .param .u64 p_y0, .param .u64 p_w1, .param .u64 p_rs1, .param .u64 p_y1, .param .u64 p_w2, .param .u64 p_rs2, .param .u64 p_y2,\n    .param .u32 p_m, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_n0, .param .u32 p_n1, .param .u32 p_n2, .param .u32 p_split"
+                    : ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split")}}
             )
             .maxntid {{DescribedRowsThreads}}, 1, 1
             {
@@ -3205,6 +3260,463 @@ internal static partial class PtxKernels
         sb.Append(e.ToString());
         sb.AppendLine("}");
         sb.AppendLine();
+    }
+
+    internal static string DescribedQuantName(DescribedPlan p) => string.Create(CultureInfo.InvariantCulture, $"described_{p.Code}_quant");
+
+    internal static string DescribedIntName(DescribedPlan p) => string.Create(CultureInfo.InvariantCulture, $"described_{p.Code}_int");
+
+    // The integer product's x stage (64 rows of 32 int8 values, 16 bytes of padding: ldmatrix rows in distinct banks), its
+    // scales (64 floats), and W's stage (64 rows of 32 values' bytes and 16 of padding).
+    private const int DescribedIntXRow = 48;
+
+    private static int DescribedIntWRow(DescribedPlan p) => 32 * p.IntegerBytes + 16;
+
+    private static int DescribedIntStage(DescribedPlan p) => DescribedMmaTile * DescribedIntXRow + 4 * DescribedMmaTile + DescribedMmaTile * DescribedIntWRow(p);
+
+    /// <summary>Dynamic shared memory of the integer product: two stages.</summary>
+    internal static int DescribedIntShared(DescribedPlan p) => 2 * DescribedIntStage(p);
+
+    // x rounded to int8 a block of 32 values (the integer product's x, once a call), as the CPU's integer lanes round it:
+    // each block's scale s = max |x| / 127 (0 for a block of zeros), each value round(x · 127 / max |x|) clamped to ±127;
+    // q [m, kp] the int8 values (zero past k), s [m, kp / 32] the scales. A thread a block.
+    private static void DescribedQuant(StringBuilder sb, DescribedPlan p)
+    {
+        var e = new DescribedEmit();
+        string x = e.W(), q = e.W(), s = e.W(), m = e.B(), k = e.B(), kp = e.B();
+        e.L($"ld.param.u64 {x}, [p_x];");
+        e.L($"ld.param.u64 {q}, [p_q];");
+        e.L($"ld.param.u64 {s}, [p_s];");
+        e.L($"cvta.to.global.u64 {x}, {x};");
+        e.L($"cvta.to.global.u64 {q}, {q};");
+        e.L($"cvta.to.global.u64 {s}, {s};");
+        e.L($"ld.param.u32 {m}, [p_m];");
+        e.L($"ld.param.u32 {k}, [p_k];");
+        e.L($"ld.param.u32 {kp}, [p_kp];");
+        string index = e.B(), tid = e.B(), blocks = e.B(), total = e.B(), outside = e.P(), row = e.B(), block = e.B(), first = e.B(), done = e.Label("DONE");
+        e.L($"mov.u32 {index}, %ctaid.x;");
+        e.L($"mov.u32 {tid}, %tid.x;");
+        e.L($"mad.lo.u32 {index}, {index}, 256, {tid};");
+        e.L($"shr.u32 {blocks}, {kp}, 5;");
+        e.L($"mul.lo.u32 {total}, {blocks}, {m};");
+        e.L($"setp.ge.u32 {outside}, {index}, {total};");
+        e.L($"@{outside} bra {done};");
+        e.L($"div.u32 {row}, {index}, {blocks};");
+        e.L($"rem.u32 {block}, {index}, {blocks};");
+        e.L($"shl.b32 {first}, {block}, 5;");
+        string rowAt = e.W();
+        e.L($"mul.wide.u32 {rowAt}, {row}, {k};");
+        var values = new string[32];
+        string most = e.F();
+        e.L($"mov.f32 {most}, 0f00000000;");
+        for (int i = 0; i < 32; i++)
+        {
+            string at = e.B(), inside = e.P(), address = e.W();
+            values[i] = e.F();
+            e.L($"mov.f32 {values[i]}, 0f00000000;");
+            e.L($"add.u32 {at}, {first}, {i};");
+            e.L($"setp.lt.u32 {inside}, {at}, {k};");
+            e.L($"cvt.u64.u32 {address}, {at};");
+            e.L($"add.u64 {address}, {address}, {rowAt};");
+            e.L($"shl.b64 {address}, {address}, 2;");
+            e.L($"add.u64 {address}, {address}, {x};");
+            e.L($"@{inside} ld.global.f32 {values[i]}, [{address}];");
+            string magnitude = e.F();
+            e.L($"abs.f32 {magnitude}, {values[i]};");
+            e.L($"max.f32 {most}, {most}, {magnitude};");
+        }
+
+        string scale = e.F(), inverse = e.F(), zero = e.P();
+        e.L($"div.rn.f32 {scale}, {most}, 0f42FE0000;");
+        e.L($"div.rn.f32 {inverse}, 0f42FE0000, {most};");
+        e.L($"setp.eq.f32 {zero}, {most}, 0f00000000;");
+        e.L($"@{zero} mov.f32 {inverse}, 0f00000000;");
+        var words = new string[8];
+        for (int wd = 0; wd < 8; wd++)
+        {
+            words[wd] = e.B();
+            e.L($"mov.b32 {words[wd]}, 0;");
+            for (int j = 0; j < 4; j++)
+            {
+                string scaled = e.F(), code = e.B();
+                e.L($"mul.rn.f32 {scaled}, {values[4 * wd + j]}, {inverse};");
+                e.L($"cvt.rni.s32.f32 {code}, {scaled};");
+                e.L($"max.s32 {code}, {code}, -127;");
+                e.L($"min.s32 {code}, {code}, 127;");
+                e.L($"bfi.b32 {words[wd]}, {code}, {words[wd]}, {8 * j}, 8;");
+            }
+        }
+
+        string qAt = e.W(), sAt = e.W();
+        e.L($"mul.wide.u32 {qAt}, {row}, {kp};");
+        string firstWide = e.W();
+        e.L($"cvt.u64.u32 {firstWide}, {first};");
+        e.L($"add.u64 {qAt}, {qAt}, {firstWide};");
+        e.L($"add.u64 {qAt}, {qAt}, {q};");
+        e.L($"st.global.v4.b32 [{qAt}], {{{words[0]}, {words[1]}, {words[2]}, {words[3]}}};");
+        e.L($"st.global.v4.b32 [{qAt}+16], {{{words[4]}, {words[5]}, {words[6]}, {words[7]}}};");
+        e.L($"mul.wide.u32 {sAt}, {index}, 4;");
+        e.L($"add.u64 {sAt}, {sAt}, {s};");
+        e.L($"st.global.f32 [{sAt}], {scale};");
+        e.Mark(done);
+        e.L($"ret;");
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
+            .visible .entry {{DescribedQuantName(p)}}(
+                .param .u64 p_x, .param .u64 p_q, .param .u64 p_s, .param .u32 p_m, .param .u32 p_k, .param .u32 p_kp
+            )
+            .maxntid 256, 1, 1
+            {
+            """);
+        sb.Append(e.Declarations());
+        sb.Append(e.ToString());
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    // The integer product (a whole-byte integer code's prompts, a bfloat16 run): y [m, n] = Σ over x's blocks of 32 of the
+    // block's scale · Σ over the code's byte planes of 2^(8p) · the int8 dot products of x's codes and the plane's bytes
+    // (× a scale an output row where p_rs is given); q, s: x as DescribedQuant rounds it (rows of kp), W n rows of p_rb bytes
+    // (a multiple of 16) as stored; k split over the grid's z (each split p_per steps of 32, its sums into y's plane z). A
+    // block of 4 warps (2 × 2) computes 64 × 64 outputs, each warp 32 × 32 as mma.sync m16n8k32 tiles (u8 × s8 for the low
+    // planes, s8 × s8 for a signed code's top one); x's codes, scales and W's bytes of a step in two cp.async stages; each
+    // B fragment's plane gathered from the stored bytes by byte permutes. Each step's plane sums are exact (32 · 127 · 255
+    // at most), joined in pairs exactly (low + 256 · high), then in float32 (2^16 a pair) and added times the block's scale.
+    private static void DescribedInt(StringBuilder sb, DescribedPlan p)
+    {
+        var e = new DescribedEmit();
+        int bytes = p.IntegerBytes, wRow = DescribedIntWRow(p), stage = DescribedIntStage(p), xsAt = DescribedMmaTile * DescribedIntXRow,
+            wAt = xsAt + 4 * DescribedMmaTile, chunks = 2 * bytes;
+        bool signed = p.Description.Code.Signed;
+        var (pointers, values, hasScales) = DescribedParameters(e, ["p_q", "p_s", "p_rs", "p_w", "p_y"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
+        var (q, s, rs, w, y) = (pointers[0], pointers[1], pointers[2], pointers[3], pointers[4]);
+        var (m, n, kp, rb, per) = (values[0], values[1], values[3], values[4], values[5]);
+        string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), wm = e.B(), wn = e.B(), n0 = e.B(), m0 = e.B(), z = e.B(), smem = e.B();
+        e.L($"mov.u32 {tid}, %tid.x;");
+        e.L($"and.b32 {lane}, {tid}, 31;");
+        e.L($"shr.u32 {warp}, {tid}, 5;");
+        e.L($"shr.u32 {g}, {lane}, 2;");
+        e.L($"and.b32 {t}, {lane}, 3;");
+        e.L($"and.b32 {wm}, {warp}, 1;");
+        e.L($"shr.u32 {wn}, {warp}, 1;");
+        e.L($"mov.u32 {n0}, %ctaid.x;");
+        e.L($"shl.b32 {n0}, {n0}, 6;");
+        e.L($"mov.u32 {m0}, %ctaid.y;");
+        e.L($"shl.b32 {m0}, {m0}, 6;");
+        e.L($"mov.u32 {z}, %ctaid.z;");
+        e.L($"mov.u32 {smem}, described_smem;");
+
+        // This split's steps [sp0, sp1) of 32 values.
+        string all = e.B(), sp0 = e.B(), sp1 = e.B(), lastRow = e.B(), lastX = e.B(), blocks = e.B();
+        e.L($"shr.u32 {all}, {kp}, 5;");
+        e.L($"mov.u32 {blocks}, {all};");
+        e.L($"mul.lo.u32 {sp0}, {z}, {per};");
+        e.L($"add.u32 {sp1}, {sp0}, {per};");
+        e.L($"min.u32 {sp1}, {sp1}, {all};");
+        e.L($"sub.u32 {lastRow}, {n}, 1;");
+        e.L($"sub.u32 {lastX}, {m}, 1;");
+
+        // The copies of a step: x's codes (a chunk a thread: row tid / 2, half tid % 2), x's scales (threads below 64, one
+        // float each, 4-byte copies), W's bytes (64 rows of 2 · bytes chunks).
+        string xr = e.B(), xh = e.B(), xIn = e.P(), xSize = e.B(), xFrom = e.W(), xTo = e.B(), xRowClamped = e.B();
+        e.L($"shr.u32 {xr}, {tid}, 1;");
+        e.L($"and.b32 {xh}, {tid}, 1;");
+        e.L($"add.u32 {xRowClamped}, {m0}, {xr};");
+        e.L($"setp.lt.u32 {xIn}, {xRowClamped}, {m};");
+        e.L($"selp.u32 {xSize}, 16, 0, {xIn};");
+        e.L($"min.u32 {xRowClamped}, {xRowClamped}, {lastX};");
+        e.L($"mul.wide.u32 {xFrom}, {xRowClamped}, {kp};");
+        string half = e.W();
+        e.L($"mul.wide.u32 {half}, {xh}, 16;");
+        e.L($"add.u64 {xFrom}, {xFrom}, {half};");
+        e.L($"add.u64 {xFrom}, {xFrom}, {q};");
+        e.L($"mad.lo.u32 {xTo}, {xr}, {DescribedIntXRow}, {smem};");
+        e.L($"shl.b32 {xh}, {xh}, 4;");
+        e.L($"add.u32 {xTo}, {xTo}, {xh};");
+        string sIn = e.P(), sRow = e.B(), sSize = e.B(), sFrom = e.W(), sTo = e.B(), sThread = e.P();
+        e.L($"setp.lt.u32 {sThread}, {tid}, {DescribedMmaTile};");
+        e.L($"add.u32 {sRow}, {m0}, {tid};");
+        e.L($"setp.lt.u32 {sIn}, {sRow}, {m};");
+        e.L($"selp.u32 {sSize}, 4, 0, {sIn};");
+        e.L($"min.u32 {sRow}, {sRow}, {lastX};");
+        e.L($"mul.wide.u32 {sFrom}, {sRow}, {blocks};");
+        e.L($"shl.b64 {sFrom}, {sFrom}, 2;");
+        e.L($"add.u64 {sFrom}, {sFrom}, {s};");
+        e.L($"shl.b32 {sTo}, {tid}, 2;");
+        e.L($"add.u32 {sTo}, {sTo}, {smem};");
+        e.L($"add.u32 {sTo}, {sTo}, {xsAt};");
+        var wCopies = DescribedCopies(e, tid, DescribedMmaThreads, DescribedMmaTile, chunks, wRow, n0, n, lastRow, rb, w);
+
+        // Issues step `step`'s copies into the stage at offset `so`.
+        void Issue(string step, string so)
+        {
+            string xk = e.W(), xSrc = e.W(), xDst = e.B(), sSrc = e.W(), sDst = e.B(), stepWide = e.W(), wSpan = e.W(), wStage = e.B();
+            e.L($"mul.wide.u32 {xk}, {step}, 32;");
+            e.L($"add.u64 {xSrc}, {xFrom}, {xk};");
+            e.L($"add.u32 {xDst}, {xTo}, {so};");
+            e.L($"cp.async.cg.shared.global [{xDst}], [{xSrc}], 16, {xSize};");
+            e.L($"cvt.u64.u32 {stepWide}, {step};");
+            e.L($"shl.b64 {stepWide}, {stepWide}, 2;");
+            e.L($"add.u64 {sSrc}, {sFrom}, {stepWide};");
+            e.L($"add.u32 {sDst}, {sTo}, {so};");
+            e.L($"@{sThread} cp.async.ca.shared.global [{sDst}], [{sSrc}], 4, {sSize};");
+            e.L($"mul.wide.u32 {wSpan}, {step}, {32 * bytes};");
+            e.L($"add.u32 {wStage}, {smem}, {so};");
+            e.L($"add.u32 {wStage}, {wStage}, {wAt};");
+            DescribedIssue(e, wCopies, wSpan, wStage);
+        }
+
+        // The lane's ldmatrix offset of A; its B rows' offsets (row 32 wn + 8 nt + g, values 4t ...); its scales' rows.
+        string aOff = e.B(), tmp = e.B();
+        e.L($"and.b32 {aOff}, {lane}, 15;");
+        e.L($"mad.lo.u32 {aOff}, {wm}, 32, {aOff};");
+        e.L($"mul.lo.u32 {aOff}, {aOff}, {DescribedIntXRow};");
+        e.L($"shr.u32 {tmp}, {lane}, 4;");
+        e.L($"shl.b32 {tmp}, {tmp}, 4;");
+        e.L($"add.u32 {aOff}, {aOff}, {tmp};");
+        var bOff = new string[4];
+        for (int nt = 0; nt < 4; nt++)
+        {
+            bOff[nt] = e.B();
+            e.L($"mad.lo.u32 {bOff[nt]}, {wn}, 32, {g};");
+            e.L($"add.u32 {bOff[nt]}, {bOff[nt]}, {8 * nt};");
+            e.L($"mul.lo.u32 {bOff[nt]}, {bOff[nt]}, {wRow};");
+            e.L($"mad.lo.u32 {bOff[nt]}, {t}, {4 * bytes}, {bOff[nt]};");
+            e.L($"add.u32 {bOff[nt]}, {bOff[nt]}, {wAt};");
+        }
+
+        string sOff = e.B();
+        e.L($"mad.lo.u32 {sOff}, {wm}, 32, {g};");
+        e.L($"shl.b32 {sOff}, {sOff}, 2;");
+        e.L($"add.u32 {sOff}, {sOff}, {xsAt};");
+        var acc = new string[32];
+        for (int c = 0; c < 32; c++)
+        {
+            acc[c] = e.F();
+            e.L($"mov.f32 {acc[c]}, 0f00000000;");
+        }
+
+        string zero = e.B();
+        e.L($"mov.b32 {zero}, 0;");
+
+        string i = e.B(), so = e.B(), next = e.B(), soNext = e.B(), any = e.P(), more = e.P();
+        string loop = e.Label("STEP"), done = e.Label("STEPS_DONE"), noFirst = e.Label("NO_FIRST"), noIssue = e.Label("NO_ISSUE");
+        e.L($"mov.u32 {i}, {sp0};");
+        e.L($"mov.u32 {so}, 0;");
+        e.L($"setp.ge.u32 {any}, {i}, {sp1};");
+        e.L($"@{any} bra {noFirst};");
+        Issue(i, so);
+        e.Mark(noFirst);
+        e.L($"cp.async.commit_group;");
+        e.Mark(loop);
+        e.L($"setp.ge.u32 {any}, {i}, {sp1};");
+        e.L($"@{any} bra {done};");
+        e.L($"add.u32 {next}, {i}, 1;");
+        e.L($"sub.u32 {soNext}, {stage}, {so};");
+        e.L($"setp.ge.u32 {more}, {next}, {sp1};");
+        e.L($"@{more} bra {noIssue};");
+        Issue(next, soNext);
+        e.Mark(noIssue);
+        e.L($"cp.async.commit_group;");
+        e.L($"cp.async.wait_group 1;");
+        e.L($"bar.sync 0;");
+        string base0 = e.B(), aAt = e.B();
+        e.L($"add.u32 {base0}, {smem}, {so};");
+        e.L($"add.u32 {aAt}, {base0}, {aOff};");
+        var a = new string[2][];
+        var scales = new string[2][];
+        for (int mt = 0; mt < 2; mt++)
+        {
+            a[mt] = [e.B(), e.B(), e.B(), e.B()];
+            e.L($"ldmatrix.sync.aligned.m8n8.x4.shared.b16 {{{a[mt][0]}, {a[mt][1]}, {a[mt][2]}, {a[mt][3]}}}, [{aAt}+{mt * 16 * DescribedIntXRow}];");
+            string sAtRow = e.B();
+            scales[mt] = [e.F(), e.F()];
+            e.L($"add.u32 {sAtRow}, {base0}, {sOff};");
+            e.L($"ld.shared.f32 {scales[mt][0]}, [{sAtRow}+{64 * mt}];");
+            e.L($"ld.shared.f32 {scales[mt][1]}, [{sAtRow}+{64 * mt + 32}];");
+        }
+
+        for (int nt = 0; nt < 4; nt++)
+        {
+            // The two halves' stored words (values 4t .. 4t + 3, then 16 + 4t ...), then each plane's bytes of them.
+            string bAt = e.B();
+            e.L($"add.u32 {bAt}, {base0}, {bOff[nt]};");
+            var raw = new string[2][];
+            for (int h = 0; h < 2; h++)
+            {
+                raw[h] = new string[bytes];
+                for (int wd = 0; wd < bytes; wd++)
+                {
+                    raw[h][wd] = e.B();
+                }
+
+                int at = h * 16 * bytes;
+                for (int wd = 0; wd < bytes; wd += 4)
+                {
+                    int count = Math.Min(4, bytes - wd);
+                    string op = count switch { 4 => "v4.u32", 2 => "v2.u32", _ => "u32" };
+                    string regs = count == 1 ? raw[h][wd] : "{" + string.Join(", ", raw[h][wd..(wd + count)]) + "}";
+                    e.L($"ld.shared.{op} {regs}, [{bAt}+{at + 4 * wd}];");
+                }
+            }
+
+            var planes = new string[bytes][];
+            for (int pl = 0; pl < bytes; pl++)
+            {
+                planes[pl] = new string[2];
+                for (int h = 0; h < 2; h++)
+                {
+                    // Byte pl of values 0 .. 3: byte (v · bytes + pl) of the half's words.
+                    var at = Enumerable.Range(0, 4).Select(v => v * bytes + pl).ToArray();
+                    int firstWord = at[0] / 4, lastWord = at[3] / 4;
+                    string reg = e.B();
+                    if (bytes == 1)
+                    {
+                        reg = raw[h][0];
+                    }
+                    else if (lastWord - firstWord <= 1)
+                    {
+                        int selector = at.Select((b, v) => (b - 4 * firstWord) << (4 * v)).Sum();
+                        string second = lastWord == firstWord ? raw[h][firstWord] : raw[h][lastWord];
+                        e.L($"prmt.b32 {reg}, {raw[h][firstWord]}, {second}, {selector};");
+                    }
+                    else
+                    {
+                        string low = e.B(), high = e.B();
+                        e.L($"prmt.b32 {low}, {raw[h][at[0] / 4]}, {raw[h][at[1] / 4]}, {(at[0] % 4) | (4 + at[1] % 4) << 4};");
+                        e.L($"prmt.b32 {high}, {raw[h][at[2] / 4]}, {raw[h][at[3] / 4]}, {(at[2] % 4) | (4 + at[3] % 4) << 4};");
+                        e.L($"prmt.b32 {reg}, {low}, {high}, {0x5410};");
+                    }
+
+                    planes[pl][h] = reg;
+                }
+            }
+
+            for (int mt = 0; mt < 2; mt++)
+            {
+                var sums = new string[bytes][];
+                for (int pl = 0; pl < bytes; pl++)
+                {
+                    sums[pl] = [e.B(), e.B(), e.B(), e.B()];
+                    string type = pl == bytes - 1 && signed ? "s8" : "u8";
+                    e.L($"mma.sync.aligned.m16n8k32.row.col.s32.s8.{type}.s32 {{{sums[pl][0]}, {sums[pl][1]}, {sums[pl][2]}, {sums[pl][3]}}}, {{{a[mt][0]}, {a[mt][1]}, {a[mt][2]}, {a[mt][3]}}}, {{{planes[pl][0]}, {planes[pl][1]}}}, {{{zero}, {zero}, {zero}, {zero}}};");
+                }
+
+                for (int c = 0; c < 4; c++)
+                {
+                    // The planes joined: pairs exactly in int32, then in float32 from the top pair down; times the row's block scale.
+                    string? value = null;
+                    for (int pair = (bytes - 1) / 2; pair >= 0; pair--)
+                    {
+                        string joined = sums[2 * pair][c];
+                        if (2 * pair + 1 < bytes)
+                        {
+                            joined = e.B();
+                            e.L($"mad.lo.s32 {joined}, {sums[2 * pair + 1][c]}, 256, {sums[2 * pair][c]};");
+                        }
+
+                        string part = e.F();
+                        e.L($"cvt.rn.f32.s32 {part}, {joined};");
+                        if (value is null)
+                        {
+                            value = part;
+                        }
+                        else
+                        {
+                            string folded = e.F();
+                            e.L($"fma.rn.f32 {folded}, {value}, 0f47800000, {part};");
+                            value = folded;
+                        }
+                    }
+
+                    int index = (mt * 4 + nt) * 4 + c;
+                    e.L($"fma.rn.f32 {acc[index]}, {value}, {scales[mt][c / 2]}, {acc[index]};");
+                }
+            }
+        }
+
+        e.L($"bar.sync 0;");
+        e.L($"mov.u32 {so}, {soNext};");
+        e.L($"mov.u32 {i}, {next};");
+        e.L($"bra {loop};");
+        e.Mark(done);
+        e.L($"cp.async.wait_group 0;");
+        DescribedStores(e, acc, y, rs, hasScales, m, n, z, wm, wn, m0, n0, g, t);
+        e.L($"ret;");
+        sb.AppendLine(CultureInfo.InvariantCulture, $$"""
+            .visible .entry {{DescribedIntName(p)}}(
+                .param .u64 p_q, .param .u64 p_s, .param .u64 p_rs, .param .u64 p_w, .param .u64 p_y,
+                .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_kp, .param .u32 p_rb, .param .u32 p_per
+            )
+            .maxntid {{DescribedMmaThreads}}, 1, 1
+            {
+            """);
+        sb.Append(e.Declarations());
+        sb.Append(e.ToString());
+        sb.AppendLine("}");
+        sb.AppendLine();
+    }
+
+    // The tensor-core products' stores: y's plane z (p_y holds as many planes of [m, n] as the grid's z), tile (mt, nt)'s
+    // value c at row m0 + 32 wm + 16 mt + g (+ 8 for c ≥ 2), column n0 + 32 wn + 8 nt + 2t (+ 1 for odd c), times the
+    // column's scale where given; two columns a store where n is even.
+    private static void DescribedStores(DescribedEmit e, string[] acc, string y, string rs, string hasScales, string m, string n, string z, string wm, string wn,
+        string m0, string n0, string g, string t)
+    {
+        string plane = e.W(), zWide = e.W(), rowOut = e.B(), colOut = e.B(), even = e.P(), tmp = e.B();
+        e.L($"mul.wide.u32 {plane}, {m}, {n};");
+        e.L($"cvt.u64.u32 {zWide}, {z};");
+        e.L($"mul.lo.u64 {plane}, {plane}, {zWide};");
+        e.L($"shl.b64 {plane}, {plane}, 2;");
+        e.L($"add.u64 {y}, {y}, {plane};");
+        e.L($"mad.lo.u32 {rowOut}, {wm}, 32, {m0};");
+        e.L($"add.u32 {rowOut}, {rowOut}, {g};");
+        e.L($"mad.lo.u32 {colOut}, {wn}, 32, {n0};");
+        e.L($"shl.b32 {tmp}, {t}, 1;");
+        e.L($"add.u32 {colOut}, {colOut}, {tmp};");
+        e.L($"and.b32 {tmp}, {n}, 1;");
+        e.L($"setp.eq.u32 {even}, {tmp}, 0;");
+        for (int nt = 0; nt < 4; nt++)
+        {
+            string col = e.B(), col1 = e.B(), in0 = e.P(), in1 = e.P(), s0 = e.F(), s1 = e.F(), sAt = e.W(), q0 = e.P(), q1 = e.P();
+            e.L($"add.u32 {col}, {colOut}, {8 * nt};");
+            e.L($"add.u32 {col1}, {col}, 1;");
+            e.L($"setp.lt.u32 {in0}, {col}, {n};");
+            e.L($"setp.lt.u32 {in1}, {col1}, {n};");
+            e.L($"mov.f32 {s0}, 0f3F800000;");
+            e.L($"mov.f32 {s1}, 0f3F800000;");
+            e.L($"mul.wide.u32 {sAt}, {col}, 4;");
+            e.L($"add.u64 {sAt}, {sAt}, {rs};");
+            e.L($"and.pred {q0}, {in0}, {hasScales};");
+            e.L($"and.pred {q1}, {in1}, {hasScales};");
+            e.L($"@{q0} ld.global.f32 {s0}, [{sAt}];");
+            e.L($"@{q1} ld.global.f32 {s1}, [{sAt}+4];");
+            for (int mt = 0; mt < 2; mt++)
+            {
+                for (int half = 0; half < 2; half++)
+                {
+                    int c = (mt * 4 + nt) * 4 + 2 * half;
+                    string row = e.B(), inRow = e.P(), yAt = e.W(), colWide = e.W(), both = e.P(), single = e.P(), s0p = e.P(), s1p = e.P();
+                    e.L($"add.u32 {row}, {rowOut}, {16 * mt + 8 * half};");
+                    e.L($"setp.lt.u32 {inRow}, {row}, {m};");
+                    e.L($"mul.rn.f32 {acc[c]}, {acc[c]}, {s0};");
+                    e.L($"mul.rn.f32 {acc[c + 1]}, {acc[c + 1]}, {s1};");
+                    e.L($"mul.wide.u32 {yAt}, {row}, {n};");
+                    e.L($"cvt.u64.u32 {colWide}, {col};");
+                    e.L($"add.u64 {yAt}, {yAt}, {colWide};");
+                    e.L($"shl.b64 {yAt}, {yAt}, 2;");
+                    e.L($"add.u64 {yAt}, {yAt}, {y};");
+                    e.L($"and.pred {both}, {inRow}, {in1};");
+                    e.L($"and.pred {both}, {both}, {even};");
+                    e.L($"@{both} st.global.v2.f32 [{yAt}], {{{acc[c]}, {acc[c + 1]}}};");
+                    e.L($"not.pred {single}, {both};");
+                    e.L($"and.pred {single}, {single}, {inRow};");
+                    e.L($"and.pred {s0p}, {single}, {in0};");
+                    e.L($"and.pred {s1p}, {single}, {in1};");
+                    e.L($"@{s0p} st.global.f32 [{yAt}], {acc[c]};");
+                    e.L($"@{s1p} st.global.f32 [{yAt}+4], {acc[c + 1]};");
+                }
+            }
+        }
     }
 
     // x's float32 values widened to float64 (a wide plan's x, once a call): y[i] = x[i] for i below p_count.

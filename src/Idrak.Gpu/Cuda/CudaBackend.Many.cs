@@ -29,8 +29,14 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int written = type.Super is not null || type.Grid is not null ? SuperFewLane : 0;
-        return EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0)
-            || EachTakes(x, m, k, products, DescribedRowsLane) && RunDescribedMany(x, m, k, products)
+        if (EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0))
+        {
+            return true;
+        }
+
+        var first = products[0];
+        return RoutedLane(x, first.Values, first.Scales, first.Output, m, first.Columns, k) is int rows and >= DescribedRowsLane and < DescribedRowsLane + 4
+            && EachTakes(x, m, k, products, rows) && RunDescribedMany(x, m, k, products, rows - DescribedRowsLane)
             || EachRouted(x, m, k, products);
     }
 

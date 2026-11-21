@@ -15,7 +15,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: bfloat16, float16, int8, q8_0, q4_0, iq4_nl (a code table), int64 (codes with a scale an output row), float64, int2 (2-bit codes, 32 a block with a float16 scale) and mxfp4 (OCP: E2M1 values sharing an E8M0 scale) weights give the product of their values (as ggml decodes them) under the name, generic and measured routes, the measured route with the described lane and the written kernels, the described lane alone and the written kernels alone (1, 3, 8, 9 and 70 rows; widths not a multiple of 4; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesNear),
         ("product routes: under the generic and measured routes int8 and bfloat16 weights are kept stored in the file's layout (a row an output; int8 with today's codes and a scale an output)", ProductRoutesStoredLayout),
         ("product routes: the CPU's two lanes over q4_k's, q4_0's, mxfp4's, q6_k's, int64's and int2's stored codes, decoded in registers and by int8 dot products over x rounded to int8 a block of 32 values (int64: over its eight byte planes), its two over bfloat16's stored values (made float32 in registers in even and odd pairs or by a shift) and its two over float64's (float64 FMAs, x widened once or in registers), each give the product of the weights' values (1, 3, 4, 5, 9 and 70 rows; q4_0 rows of 3, 8 and 10 blocks: a last group of 8 short; q6_k rows of 1 and 3 super-blocks; int64 rows of 100, 256 and 544 values, with a scale an output row; float64 rows of 100, 256 and 2600 values: passes over k in spans; int2 and mxfp4 rows of 3, 8 and 10 blocks: a last group of 8 short; bfloat16 rows of 100, 256, 520 and 4200 values: passes over k in spans; the packed bfloat16 product under the measured route, 1, 3, 9 and 70 rows; within float32's bound for k terms, the integer lane also within its rounding of x); the described lane alone (any type read from its description, none of the written kernels) over each of them too, each type's description decoding its stored bytes to its own conversion's values, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers)", ProductRoutesNibbleLanes),
-        ("product routes: CUDA's described lane alone (any type read from its description; no written kernel, nothing of a weight widened) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row), float64, int2 and mxfp4 as stored, over float16, int8, q8_0 and iq4_nl, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers): the rows product (1, 3, 8, 9 and 70 rows; float64 arithmetic for 64- and 32-bit codes) within float32's bound for k terms, and in a bfloat16 run the tensor-core product (9, 70 and 130 rows; k split in 1 and 2) within it of x and the values rounded to bfloat16", ProductRoutesDescribedCuda),
+        ("product routes: CUDA's described lane alone (any type read from its description; no written kernel, nothing of a weight widened) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row), float64, int2 and mxfp4 as stored, over float16, int8, q8_0 and iq4_nl, and over types made of a description alone (3-bit codes in two planes with an E8M0 scale, a table of fractions with a bfloat16 scale, fp6 E2M3 in two planes, 16-bit integers with and without a code offset, 32-bit integers): the rows product (1, 3, 8, 9 and 70 rows; float64 arithmetic for 64- and 32-bit codes) within float32's bound for k terms, and in a bfloat16 run the tensor-core product (9, 70 and 130 rows; k split in 1 and 2) within it of x and the values rounded to bfloat16, and a whole-byte integer code's integer product (int64, int8, 32-bit integers: the byte planes by int8 tensor cores) within it and x's rounding to int8 a block of 32 values", ProductRoutesDescribedCuda),
         ("product routes: the matrix-unit lanes (CUDA, a bfloat16 run) give the product of x rounded to bfloat16 and the weights' values (the native kind's, and float16's: rounded to bfloat16 too), for bfloat16, float16, int8, q8_0, q4_0 and iq4_nl (9, 70 and 130 rows; within float32's bound for k terms); the tensor rows (today's tensor-core kernel over bfloat16, float16 and int8 rows as stored, 32-value blocks decoded as the tiles load, the other formats' widened to bfloat16 rows; 128- and 64-row tiles) alone and as one launch over a group sharing x (bfloat16, float16, int8, q8_0, q4_0, Q4_K, IQ2_XXS; 128, 256 and 70 columns; 9, 130 and 300 rows) too", ProductRoutesMatrixUnits),
         ("product routes: q8_0 packs at load as ggml stores it (each value within half its block's step), kept as stored where the device multiplies it and expanded to float32 elsewhere", ProductRoutesQ8Packing),
         ("product routes: the k-quants' super-block descriptions (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K) and the grid codebooks' (IQ2_XXS, IQ3_XXS) decode random blocks to the same bits as ggml's decoders", ProductRoutesSuperDecode),
@@ -573,24 +573,29 @@ internal abstract partial class DesktopTests : Tests
         Random random, float[]? rowScales = null)
     {
         int ran = 0;
-        bool wide = Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type)?.Wide ?? false;
-        foreach (var (mma, m, splits) in new[] { (false, 1, 1), (false, 3, 1), (false, 8, 1), (false, 9, 1), (false, 70, 1), (true, 9, 1), (true, 70, 1), (true, 130, 1), (true, 130, 2) })
+        var plan = Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type);
+        bool wide = plan?.Wide ?? false, whole = plan?.IntegerBytes > 0 && type.ByteCount(k) % 16 == 0;
+        // Lanes: 0 the rows product (`splits`: log2 of the warps a group of 8 weight rows takes), 1 the tensor-core product, 2
+        // the integer product (a whole-byte integer code's); `splits` the k splits of the last two.
+        foreach (var (lane, m, splits) in new[] { (0, 1, 3), (0, 3, 2), (0, 8, 1), (0, 9, 0), (0, 70, 3), (0, 1, 0), (1, 9, 1), (1, 70, 1), (1, 130, 1), (1, 130, 2),
+            (2, 9, 1), (2, 70, 1), (2, 130, 1), (2, 130, 2) })
         {
-            if (mma && wide)
+            bool mma = lane == 1, integer = lane == 2;
+            if (mma && wide || integer && !whole)
             {
-                continue;                                                       // float64 arithmetic: the rows product alone
+                continue;                                                       // float64 arithmetic: no tensor-core product
             }
 
             var x = RouteValues(random, (long)m * k);
             float[] y;
             using (var scope = new TensorScope())
-            using (var mixed = mma ? (IDisposable)MixedPrecision.BFloat16() : null)
+            using (var mixed = lane > 0 ? (IDisposable)MixedPrecision.BFloat16() : null)
             {
                 var input = Tensor.From(x, [m, k], device);
                 var output = Tensor.Empty([m, n], device);
-                if (!cuda.StoredDescribed(type, input.Storage, stored, scales, output.Storage, m, n, k, mma, splits))
+                if (!cuda.StoredDescribed(type, input.Storage, stored, scales, output.Storage, m, n, k, mma, lane == 0 ? 1 : splits, integer, lane == 0 ? splits : 3))
                 {
-                    Check(false, $"{device}: the described lane's {(mma ? "tensor-core" : "rows")} product does not take {name} [{k}, {n}], {m} rows ({cuda.TypedUnavailableReason})");
+                    Check(false, $"{device}: the described lane's {(integer ? "integer" : mma ? "tensor-core" : "rows")} product does not take {name} [{k}, {n}], {m} rows ({cuda.TypedUnavailableReason})");
                     continue;
                 }
 
@@ -599,12 +604,18 @@ internal abstract partial class DesktopTests : Tests
 
             for (int i = 0; i < m; i++)
             {
+                var steps = integer ? BlockHalfSteps(x, i, k) : null;
                 for (int j = 0; j < n; j++)
                 {
                     double sum = 0, magnitude = 0, slack = 0;
                     for (int r = 0; r < k; r++)
                     {
                         float wv = w[j * k + r], xv = x[i * k + r];
+                        if (steps is not null)
+                        {
+                            slack += Math.Abs(wv) * (r < steps.Length ? steps[r] : 0);
+                        }
+
                         double rowScale = rowScales?[j] ?? 1;
                         if (mma)
                         {
@@ -620,10 +631,11 @@ internal abstract partial class DesktopTests : Tests
                         magnitude += Math.Abs(term);
                     }
 
-                    double bound = k * Math.Pow(2, -23) * magnitude + slack + 1e-30, error = Math.Abs(y[i * n + j] - sum);
+                    double bound = k * Math.Pow(2, -23) * (magnitude + slack) + slack + 1e-30, error = Math.Abs(y[i * n + j] - sum);
                     if (!(error <= bound))
                     {
-                        Check(false, $"{device}: the described lane's {(mma ? $"tensor-core product (k split in {splits})" : "rows product")}, {name} [{k}, {n}], {m} rows: "
+                        string product = integer ? $"integer product (k split in {splits})" : mma ? $"tensor-core product (k split in {splits})" : "rows product";
+                        Check(false, $"{device}: the described lane's {product}, {name} [{k}, {n}], {m} rows: "
                             + $"y[{i}, {j}] = {y[i * n + j]}, the product of the values {sum} (error {error:E2} past the bound {bound:E2})");
                         return ran;
                     }
@@ -636,6 +648,29 @@ internal abstract partial class DesktopTests : Tests
         return ran;
 
         static float Bf16(float v) => BitConverter.Int32BitsToSingle(BFloat16Bits.Round(v) << 16);
+
+        // Half the step of x's rounding to int8 a block of 32 values (a last block shorter), with a margin for its float32
+        // arithmetic, at each value of row i.
+        static double[] BlockHalfSteps(float[] x, int i, int k)
+        {
+            var steps = new double[k];
+            for (int b = 0; b * 32 < k; b++)
+            {
+                int end = Math.Min(k, b * 32 + 32);
+                double most = 0;
+                for (int v = b * 32; v < end; v++)
+                {
+                    most = Math.Max(most, Math.Abs(x[i * k + v]));
+                }
+
+                for (int v = b * 32; v < end; v++)
+                {
+                    steps[v] = most / 127 * 0.5001;
+                }
+            }
+
+            return steps;
+        }
     }
 
     private static void ProductRoutesStoredLayout(Device device)
