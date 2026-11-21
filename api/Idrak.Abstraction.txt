@@ -809,7 +809,8 @@ public enum Idrak.Abstraction.Cluster.WireType : int
 
 public sealed record Idrak.Abstraction.CodePlane : System.IEquatable<Idrak.Abstraction.CodePlane>
   public (int, int) Place(int value)
-  public CodePlane(int Offset, int Bits, int Group, int Stride = 0)
+  public CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false)
+  public bool Stream { get; init; }
   public int Bits { get; init; }
   public int Group { get; init; }
   public int Offset { get; init; }

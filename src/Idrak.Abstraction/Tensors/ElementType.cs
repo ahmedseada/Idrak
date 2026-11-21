@@ -92,11 +92,22 @@ public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool Signe
 /// Bytes from a group's first byte to the next group's, where groups do not follow one another (other fields between them,
 /// as IQ2_XXS's grid indices lie between its signs and scales); 0: the group's own bytes.
 /// </param>
-public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0)
+/// <param name="Stream">
+/// Whether the fields are a continuous stream of bits from the plane's first byte (field v at bit v · Bits, little-endian),
+/// each field read at its bit position, across byte boundaries where it falls so (codes of 3, 5, 6 or 7 bits packed tight);
+/// Group and Stride then say nothing.
+/// </param>
+public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false)
 {
-    /// <summary>The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it.</summary>
+    /// <summary>The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it (a stream's field may run into the next bytes).</summary>
     public (int Byte, int Shift) Place(int value)
     {
+        if (Stream)
+        {
+            long bit = 8L * Offset + (long)value * Bits;
+            return ((int)(bit >> 3), (int)(bit & 7));
+        }
+
         int per = Group * Bits / 8, w = value % Group;
         return (Offset + value / Group * (Stride > 0 ? Stride : per) + w % per, Bits * (w / per));
     }
@@ -738,8 +749,9 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     /// </summary>
     public bool Valid => Values >= 1 && Bytes >= 1 && Group >= 1 && UnitBytes >= Group * Bytes && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1
         && Planes.Sum(p => p.Bits) == Code.Bits
-        && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
-            && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8) && Enumerable.Range(0, Values / Code.Width).All(v => p.Place(v).Byte + Math.Max(1, p.Bits / 8) <= Bytes))
+        && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Stream ? p.Bits <= 64 : (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
+                && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8))
+            && Enumerable.Range(0, Values / Code.Width).All(v => p.Place(v).Byte + (p.Place(v).Shift + p.Bits + 7) / 8 <= Bytes))
         && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && (s.Type.Width == 1 || s.Values == s.Type.Width) && (Shared(s)
             ? s.Values % Values == 0 && UnitValues % s.Values == 0 && s.Type.Width == 1
                 && (s.Pieces is { } shared ? shared.Count == UnitValues / s.Values : 8L * s.Offset + (long)UnitValues / s.Values * s.Type.Bits <= 8L * UnitBytes)

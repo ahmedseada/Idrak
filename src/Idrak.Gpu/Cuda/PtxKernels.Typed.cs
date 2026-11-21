@@ -2081,7 +2081,7 @@ internal sealed class DescribedPlan
             $"{n.Bits}{n.Kind}{(n.Signed ? 's' : 'u')}e{n.Exponent}m{n.Mantissa}b{n.ExponentBias}{(n.Subnormals ? 'n' : 'x')}{n.Specials}w{n.Width}[{string.Join(",", (n.Table ?? []).Select(e => e.ToString("R", CultureInfo.InvariantCulture)))}]");
         static string Scale(BlockScale s) => string.Create(CultureInfo.InvariantCulture,
             $"{Number(s.Type)}/{s.Values}/{s.Offset}/{s.Bias.ToString("R", CultureInfo.InvariantCulture)}/{string.Join("|", (s.Pieces ?? []).Select(p => string.Join(",", p.Select(x => string.Create(CultureInfo.InvariantCulture, $"{x.Offset}.{x.Shift}.{x.Bits}")))))}");
-        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}")));
+        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}{(p.Stream ? "s" : "")}")));
         string text = string.Create(CultureInfo.InvariantCulture,
             $"{d.Values}x{d.Bytes}g{d.Group}.{d.UnitBytes};{Number(d.Code)};{planes};{d.CodeOffset.ToString("R", CultureInfo.InvariantCulture)};{string.Join(";", (d.Scales ?? []).Select(Scale))};-{string.Join(";", (d.Mins ?? []).Select(Scale))};{d.MinsAdded}");
         ulong hash = 14695981039346656037UL;

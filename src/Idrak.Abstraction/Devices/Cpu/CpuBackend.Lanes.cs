@@ -6512,7 +6512,7 @@ internal sealed partial class CpuBackend
         private bool Narrow()
         {
             var d = D;
-            if (d.Code.Bits > 8 || d.Planes.Any(p => p.Bits is not (1 or 2 or 4 or 8)))
+            if (d.Code.Bits > 8 || d.Planes.Any(p => p.Stream ? p.Bits > 8 : p.Bits is not (1 or 2 or 4 or 8)))
             {
                 return false;
             }
@@ -6648,7 +6648,7 @@ internal sealed partial class CpuBackend
                 }
 
                 int spans = Period / 32;
-                if (Planes == 1 && Map != CodeMap.Table && Enumerable.Range(0, spans).All(r => runKind[r] == runKind[0]) && runKind[0] != 0)
+                if (Planes == 1 && Map != CodeMap.Table && Enumerable.Range(0, spans).All(r => runKind[r] == runKind[0]) && runKind[0] is 1 or 2 or 4 or 8)
                 {
                     UniformRuns = runKind[0];
                 }
@@ -6762,6 +6762,7 @@ internal sealed partial class CpuBackend
             runCount = Pin<int>(8 * spans * Planes);
             planeMask = Pin<Vector256<byte>>(Planes);
             planeLow = Pin<int>(Planes);
+            streamAt = Pin<int>(4 * spans * Planes);
             Order = Pin<int>(Period);
             int low = 0;
             for (int p = 0; p < Planes; p++)
@@ -6782,6 +6783,34 @@ internal sealed partial class CpuBackend
                 for (int p = 0; p < Planes && vector; p++)
                 {
                     var plane = d.Planes[p];
+                    if (plane.Stream)
+                    {
+                        // A bit stream (fields across byte boundaries): the span's four groups of 8 fields, each Bits whole
+                        // bytes from a byte boundary within one block, made in value order (StreamLoad).
+                        for (int q = 0; q < 4 && vector; q++)
+                        {
+                            int v0 = 32 * r + 8 * q;
+                            var (b0, s0) = plane.Place(v0 % d.Values);
+                            vector = s0 == 0 && v0 % d.Values + 8 <= d.Values;
+                            streamAt[4 * (r * Planes + p) + q] = v0 / d.UnitValues * d.UnitBytes + d.BlockStart(v0) + b0;
+                        }
+
+                        for (int t = 0; t < 32; t++)
+                        {
+                            mine[t] = 32 * r + t;
+                        }
+
+                        if (!vector || p > 0 && !mine.SequenceEqual(order))
+                        {
+                            vector = false;
+                            break;
+                        }
+
+                        mine.CopyTo(order);
+                        runKind[r * Planes + p] = StreamRuns;
+                        continue;
+                    }
+
                     int first = int.MaxValue, runs = 0;
                     for (int t = 0; t < 32; t++)
                     {
@@ -7325,6 +7354,9 @@ internal sealed partial class CpuBackend
                     case 8:
                         v = EightRuns.Load<TI>(from, runShift, runCount, at);
                         break;
+                    case StreamRuns:
+                        v = StreamLoad(period, at, D.Planes[p].Bits);
+                        break;
                     default:
                         return OneByOne(period, span);
                 }
@@ -7334,6 +7366,44 @@ internal sealed partial class CpuBackend
 
             return code;
         }
+
+        // A span's run kind for a bit stream (Spans; Raw reads it by StreamLoad).
+        private const byte StreamRuns = 16;
+
+        // Per span and stream plane, its four groups' first bytes (from the period's first).
+        private int* streamAt;
+
+        // A stream plane's span of 32 fields (`bits` bits each, across byte boundaries) as bytes in value order: each group of 8
+        // fields one word of its `bits` bytes, a 64-bit lane each, and field j of every lane shifted out and masked at once.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> StreamLoad(byte* period, int at, int bits)
+        {
+            int* group = streamAt + 4 * at;
+            var words = Vector256.Create(StreamWord(period + group[0], bits), StreamWord(period + group[1], bits), StreamWord(period + group[2], bits),
+                StreamWord(period + group[3], bits));
+            var mask = Vector256.Create((ulong)((1 << bits) - 1));
+            var codes = words & mask;
+            for (int j = 1; j < 8; j++)
+            {
+                codes |= Vector256.ShiftLeft(Vector256.ShiftRightLogical(words, j * bits) & mask, 8 * j);
+            }
+
+            return codes.AsByte();
+        }
+
+        // The `bits` bytes of 8 stream fields from `p` (little-endian), and no byte past them.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static ulong StreamWord(byte* p, int bits) => bits switch
+        {
+            1 => p[0],
+            2 => Unsafe.ReadUnaligned<ushort>(p),
+            3 => Unsafe.ReadUnaligned<ushort>(p) | (ulong)p[2] << 16,
+            4 => Unsafe.ReadUnaligned<uint>(p),
+            5 => Unsafe.ReadUnaligned<uint>(p) | (ulong)p[4] << 32,
+            6 => Unsafe.ReadUnaligned<uint>(p) | (ulong)Unsafe.ReadUnaligned<ushort>(p + 4) << 32,
+            7 => Unsafe.ReadUnaligned<uint>(p) | (ulong)Unsafe.ReadUnaligned<ushort>(p + 4) << 32 | (ulong)p[6] << 48,
+            _ => Unsafe.ReadUnaligned<ulong>(p),
+        };
 
         // A span's codes one value at a time, in value order, by the description (a layout the runs do not take).
         [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
