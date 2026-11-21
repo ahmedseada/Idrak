@@ -22,7 +22,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: k-quant and grid-codebook weights (Q4_K, Q6_K, IQ2_XXS, IQ3_XXS) by their CUDA lanes from the description, the few-row kernel (1, 5 rows), the float32 product (70, 130), the native kind in a bfloat16 run (70, 130) and the tensor rows decoding as the tiles load or over widened rows (70, 300; 128- and 64-row tiles), give the product of their values (the bfloat16 lanes': x and the weights rounded to bfloat16; within float32's bound for k terms)", ProductRoutesSuperLanes),
         ("product routes: the CPU's float32 product over B packed once into the tiled kernel's panels (MultiplyPanels, today's path over stored rows), or filled as each tile needs them (MultiplyPanelsFrom, the tiles lane), gives the bits of the product over B [k, n] (70, 130 and 512 rows)", ProductRoutesPanels),
         ("product routes: stored weights sharing an input in one launch (CUDA's grouped few-row kernels: 2 and 3 weights of bfloat16, int8, q8_0, q4_0, iq4_nl, Q4_K, and under the measured route each product by its own lane, the described lane and the written kernels measured and the described lane alone, Q6_K, int64, float64, int2 and mxfp4 too; the CPU's grouped pass over Q4_K's, q4_0's, Q6_K's, bfloat16's, int64's, float64's, int2's and mxfp4's stored values, x prepared once, with the described lane and the written kernels measured and with the described lane alone) give each the bits of its own product (1, 3 and 8 rows; 70 and 130 in a bfloat16 run, x packed once for the group)", ProductRoutesMany),
-        ("product routes: the fused epilogues of stored weights (CUDA, few rows): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
+        ("product routes: the fused epilogues of stored weights (CUDA's written kernels, few rows, the measured route with the written kernels alone): the gate/up pair's act(gate) · up (SiLU, tanh GELU, ReLU) and a product's residual + y with its RMS normalization match the products composed with them (bfloat16, int8, q4_0, Q4_K; 1, 3 and 8 rows; within 1e-5 of the values' magnitude), through the dispatchers with no storage converted", ProductRoutesEpilogues),
         ("product routes: a bfloat16 checkpoint loaded under the measured route packs each weight from the file's rows (a bfloat16 weight's bits kept as they are; no float32 matrix, no transposition): every weight and the logits the bits of packing the float32 values, for bfloat16, int8, q8_0, q4_0, q4_k and iq2_xxs, with tied and own heads", ProductRoutesCheckpointRows),
         ("product routes: attention written token-major for the output projection (IMergedHeadsLayout: float32, bfloat16 and int8 caches, plain and windowed) gives the bits of the heads merged after attention, where the device writes so (the CPU; CUDA's tensor-core passes in a bfloat16 run, the bfloat16 cache's staging its halves as they are: the float32 cache's bits over the same values)", ProductRoutesMergedAttention),
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
@@ -1192,8 +1192,10 @@ internal abstract partial class DesktopTests : Tests
             }
         }
 
+        // The fused epilogues are written kernels: compared with the written kernels' own products composed with them (with the
+        // described lane among the candidates, a shape's composed products may take it and sum in another order).
         var random = new Random(79);
-        UnderRoute(ProductRoute.Measured, () =>
+        UnderLanes(RouteLanes.Written, () => UnderRoute(ProductRoute.Measured, () =>
         {
             int k = 256, n = 96;
             foreach (string format in new[] { "bfloat16", "int8", "q4_0", "q4_k" })
@@ -1286,7 +1288,7 @@ internal abstract partial class DesktopTests : Tests
                     }
                 }
             }
-        });
+        }));
     }
 
     // B's panels filled as a tile asks for them (the tiles lane's way), from B [k, n].

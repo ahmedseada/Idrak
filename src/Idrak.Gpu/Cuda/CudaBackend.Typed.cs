@@ -686,6 +686,10 @@ internal sealed unsafe partial class CudaBackend
     {
         public IntPtr[] Rows { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Select(r => kernels[PtxKernels.DescribedRowsName(plan, align, pairs, r)])];
 
+        // The same over a group of 2 or 3 weights sharing x in one launch (few rows: DescribedRowCounts up to 8).
+        public IntPtr[] RowsMany { get; } = [.. PtxKernels.DescribedRowCounts.ToArray().Where(r => r <= PtxKernels.TypedGemvRows[^1])
+            .Select(r => kernels[PtxKernels.DescribedRowsName(plan, align, pairs, r) + "_many"])];
+
         public IntPtr Mma { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedMmaName(plan, align));
 
         public IntPtr Widen { get; } = kernels.GetValueOrDefault(PtxKernels.DescribedWidenName(plan, align, pairs));
@@ -743,7 +747,8 @@ internal sealed unsafe partial class CudaBackend
 
         foreach (int rows in PtxKernels.DescribedRowCounts)
         {
-            if (name == PtxKernels.DescribedRowsName(plan, align, pairs, rows))
+            string own = PtxKernels.DescribedRowsName(plan, align, pairs, rows);
+            if (name == own || name == own + "_many")
             {
                 return PtxKernels.DescribedRowsShared(plan, align, rows);
             }
@@ -805,6 +810,47 @@ internal sealed unsafe partial class CudaBackend
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
         Launch(functions.Rows[variant], (uint)((n + PtxKernels.DescribedRowsBlock - 1) / PtxKernels.DescribedRowsBlock), (uint)((m + rows - 1) / rows),
             PtxKernels.DescribedRowsThreads, 1, P(input), P(w), rowScales is null ? 0UL : P(rowScales), P(y), U(m), U(n), U(k), U(rowBytes));
+        return true;
+    }
+
+    // The described rows product over a group of 2 or 3 weights of one type sharing x (few rows; all with a scale an output
+    // row or none) in one launch, each block one weight's 8 rows: each output its own product's bits.
+    private bool RunDescribedMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
+    {
+        var type = products[0].Values.ElementType;
+        if (products.Length is < 2 or > 3 || m is <= 0 or > 8 || k <= 0 || DescribedOf(type) is not { } plan || !DescribedRow(plan, type, k, out int rowBytes, out int align)
+            || (long)m * k > int.MaxValue / 2 || Described(plan, align, k % 2 == 0) is not { } functions)
+        {
+            return false;
+        }
+
+        bool scaled = products[0].Scales is not null;
+        long blocks = 0;
+        Span<ulong> args = stackalloc ulong[16];
+        args.Clear();
+        for (int i = 0; i < products.Length; i++)
+        {
+            var (values, scales, output, columns) = products[i];
+            if (values.ElementType != type || scales is not null != scaled || columns <= 0)
+            {
+                return false;
+            }
+
+            (args[1 + 3 * i], args[2 + 3 * i], args[3 + 3 * i], args[13 + i]) = (P(values), scales is null ? 0UL : P(scales), P(output), U(columns));
+            blocks += (columns + PtxKernels.DescribedRowsBlock - 1) / PtxKernels.DescribedRowsBlock;
+        }
+
+        int variant = m <= 1 ? 0 : m <= 2 ? 1 : m <= 4 ? 2 : 3, rows = PtxKernels.DescribedRowCounts[variant];
+        var input = x;
+        if (plan.Wide)
+        {
+            input = _describedWide.Get(this, 2 * m * k);
+            Launch(functions.Widen, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(input), U(m * k));
+        }
+
+        (args[0], args[10], args[11], args[12]) = (P(input), U(m), U(k), U(rowBytes));
+        t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
+        Launch(functions.RowsMany[variant], (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, args);
         return true;
     }
 

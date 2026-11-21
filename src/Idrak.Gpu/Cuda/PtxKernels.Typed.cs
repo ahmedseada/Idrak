@@ -1951,6 +1951,11 @@ internal static partial class PtxKernels
         {
             DescribedRows(sb, p, align, pairs, rows, words.Length);
             names.Add(DescribedRowsName(p, align, pairs, rows));
+            if (rows <= TypedGemvRows[^1])
+            {
+                DescribedRows(sb, p, align, pairs, rows, words.Length, many: true);
+                names.Add(DescribedRowsName(p, align, pairs, rows) + "_many");
+            }
         }
 
         if (!p.Wide && pairs)
@@ -2529,7 +2534,7 @@ internal static partial class PtxKernels
     // (DescribedSpan pattern blocks a span) into its two shared stages in turn; lane (g, t) reads weight row g's values of
     // each step at 2t + 0, 1, 8, 9, with x's values there (pairs where k is even). Each lane's sums in k's order; the four
     // lanes added by a butterfly; the 8 warps' sums added in warp order by one thread an output.
-    private static void DescribedRows(StringBuilder sb, DescribedPlan p, int align, bool pairs, int rows, int tableWords)
+    private static void DescribedRows(StringBuilder sb, DescribedPlan p, int align, bool pairs, int rows, int tableWords, bool many = false)
     {
         var e = new DescribedEmit();
         bool wide = p.Wide;
@@ -2538,16 +2543,52 @@ internal static partial class PtxKernels
         var (chunks, stride) = DescribedRow(spanBytes, align);
         int stageBytes = DescribedRowsBlock * stride, tables = DescribedTablesBytes(p), redAt = tables + 8 * 2 * stageBytes;
 
-        var (pointers, values, hasScales) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_rb"]);
-        var (x, w, rs, y) = (pointers[0], pointers[1], pointers[2], pointers[3]);
-        var (m, n, k, rb) = (values[0], values[1], values[2], values[3]);
-        string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), row0 = e.B(), xr0 = e.B(), smem = e.B();
+        string x, w, rs, y, m, n, k, rb, hasScales, row0 = e.B();
+        if (!many)
+        {
+            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_rb"]);
+            (x, w, rs, y, hasScales) = (pointers[0], pointers[1], pointers[2], pointers[3], scaled);
+            (m, n, k, rb) = (values[0], values[1], values[2], values[3]);
+            e.L($"mov.u32 {row0}, %ctaid.x;");
+        }
+        else
+        {
+            // A group of up to three weights sharing x (p_n2 0 for two; all scaled or none): the block's weight by its index
+            // among their blocks.
+            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w0", "p_rs0", "p_y0", "p_w1", "p_rs1", "p_y1", "p_w2", "p_rs2", "p_y2"],
+                ["p_m", "p_k", "p_rb", "p_n0", "p_n1", "p_n2"]);
+            (x, m, k, rb, hasScales) = (pointers[0], values[0], values[1], values[2], scaled);
+            (w, rs, y, n) = (pointers[1], pointers[2], pointers[3], values[3]);
+            string blockIndex = e.B(), first = e.B(), second = e.B(), p1 = e.P(), p2 = e.P();
+            e.L($"mov.u32 {blockIndex}, %ctaid.x;");
+            e.L($"add.u32 {first}, {values[3]}, {DescribedRowsBlock - 1};");
+            e.L($"shr.u32 {first}, {first}, 3;");
+            e.L($"add.u32 {second}, {values[4]}, {DescribedRowsBlock - 1};");
+            e.L($"shr.u32 {second}, {second}, 3;");
+            e.L($"add.u32 {second}, {second}, {first};");
+            e.L($"setp.ge.u32 {p1}, {blockIndex}, {first};");
+            e.L($"setp.ge.u32 {p2}, {blockIndex}, {second};");
+            e.L($"@{p1} mov.u64 {w}, {pointers[4]};");
+            e.L($"@{p1} mov.u64 {rs}, {pointers[5]};");
+            e.L($"@{p1} mov.u64 {y}, {pointers[6]};");
+            e.L($"@{p1} mov.u32 {n}, {values[4]};");
+            e.L($"@{p1} sub.u32 {blockIndex}, {blockIndex}, {first};");
+            e.L($"@{p2} mov.u64 {w}, {pointers[7]};");
+            e.L($"@{p2} mov.u64 {rs}, {pointers[8]};");
+            e.L($"@{p2} mov.u64 {y}, {pointers[9]};");
+            e.L($"@{p2} mov.u32 {n}, {values[5]};");
+            string less = e.B();
+            e.L($"sub.u32 {less}, {second}, {first};");
+            e.L($"@{p2} sub.u32 {blockIndex}, {blockIndex}, {less};");
+            e.L($"mov.u32 {row0}, {blockIndex};");
+        }
+
+        string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), xr0 = e.B(), smem = e.B();
         e.L($"mov.u32 {tid}, %tid.x;");
         e.L($"and.b32 {lane}, {tid}, 31;");
         e.L($"shr.u32 {warp}, {tid}, 5;");
         e.L($"shr.u32 {g}, {lane}, 2;");
         e.L($"and.b32 {t}, {lane}, 3;");
-        e.L($"mov.u32 {row0}, %ctaid.x;");
         e.L($"shl.b32 {row0}, {row0}, 3;");
         e.L($"mov.u32 {xr0}, %ctaid.y;");
         e.L($"mul.lo.u32 {xr0}, {xr0}, {rows};");
@@ -2593,11 +2634,15 @@ internal static partial class PtxKernels
             e.L($"add.u64 {xRow[r]}, {xRow[r]}, {x};");
         }
 
+        // Each row's two sums (the pairs' first values, their second: two FMA chains), added once the spans are done.
         var acc = new string[rows];
+        var acc1 = new string[rows];
         for (int r = 0; r < rows; r++)
         {
             acc[r] = wide ? e.G() : e.F();
+            acc1[r] = wide ? e.G() : e.F();
             e.L($"mov.{ft} {acc[r]}, {DescribedEmit.Immediate(0, wide)};");
+            e.L($"mov.{ft} {acc1[r]}, {DescribedEmit.Immediate(0, wide)};");
         }
 
         // Span `which`'s copies into stage offset `so`.
@@ -2730,13 +2775,19 @@ internal static partial class PtxKernels
                         }
 
                         e.L($"fma.rn.{ft} {acc[r]}, {xa}, {v0}, {acc[r]};");
-                        e.L($"fma.rn.{ft} {acc[r]}, {xb}, {v1}, {acc[r]};");
+                        e.L($"fma.rn.{ft} {acc1[r]}, {xb}, {v1}, {acc1[r]};");
                     }
                 }
             }
         }
 
-        // The four lanes of a row added (a butterfly), then each warp's sums into shared memory, added in warp order.
+        // The two chains added; the four lanes of a row added (a butterfly), then each warp's sums into shared memory, added
+        // in warp order.
+        for (int r = 0; r < rows; r++)
+        {
+            e.L($"add.rn.{ft} {acc[r]}, {acc[r]}, {acc1[r]};");
+        }
+
         foreach (int width in new[] { 1, 2 })
         {
             for (int r = 0; r < rows; r++)
@@ -2831,9 +2882,10 @@ internal static partial class PtxKernels
         e.L($"ret;");
 
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
-            .visible .entry {{DescribedRowsName(p, align, pairs, rows)}}(
-                .param .u64 p_x, .param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,
-                .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb
+            .visible .entry {{DescribedRowsName(p, align, pairs, rows)}}{{(many ? "_many" : "")}}(
+                .param .u64 p_x, {{(many
+                    ? ".param .u64 p_w0, .param .u64 p_rs0, .param .u64 p_y0, .param .u64 p_w1, .param .u64 p_rs1, .param .u64 p_y1, .param .u64 p_w2, .param .u64 p_rs2, .param .u64 p_y2,\n    .param .u32 p_m, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_n0, .param .u32 p_n1, .param .u32 p_n2"
+                    : ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb")}}
             )
             .maxntid {{DescribedRowsThreads}}, 1, 1
             {

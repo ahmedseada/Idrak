@@ -17,9 +17,9 @@ internal sealed unsafe partial class CudaBackend
     private static bool WrittenTaken(ElementType type) =>
         ProductRoutes.Current != ProductRoute.Measured || ProductRoutes.Lanes != RouteLanes.Described || DescribedOf(type) is null;
 
-    // A few rows' group under the measured route runs the parts each product's own lane takes (RoutedLane): the written
-    // few-row kernels' one launch (Grouped: each output as its own launch computes it) where every product takes the written
-    // few-row kernel, else each product by its own lane (the described lane among them); other routes, the one launch.
+    // A few rows' group under the measured route runs the parts each product's own lane takes (RoutedLane): one launch where
+    // every product takes the same lane that has one (the written few-row kernels' Grouped, the described rows product's
+    // group: each output as its own launch computes it), else each product by its own lane; other routes, the written one.
     private bool FewMany(Storage x, int m, int k, ReadOnlySpan<(Storage Values, Storage? Scales, Storage Output, int Columns)> products)
     {
         var type = products[0].Values.ElementType;
@@ -29,7 +29,9 @@ internal sealed unsafe partial class CudaBackend
         }
 
         int written = type.Super is not null || type.Grid is not null ? SuperFewLane : 0;
-        return EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0) || EachRouted(x, m, k, products);
+        return EachTakes(x, m, k, products, written) && Grouped(x, m, k, products, null, 0)
+            || EachTakes(x, m, k, products, DescribedRowsLane) && RunDescribedMany(x, m, k, products)
+            || EachRouted(x, m, k, products);
     }
 
     // Each product of a group by its own measured lane (StoredRouted); false where one is not taken so (the caller runs them all).
