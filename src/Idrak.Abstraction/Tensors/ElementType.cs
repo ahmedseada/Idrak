@@ -2555,8 +2555,11 @@ internal static class ElementConversions
 /// 4. each level's numbers searched again, the finest first: each chunk's least-squares number given the codes, rounded, and
 ///    its neighbours, the codes chosen again for each and the error measured, the best kept.
 /// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added), each
-/// field written where the description places it (planes, pieces, levels shared over a group of blocks). The same bytes on
-/// every CPU: scalar arithmetic in a fixed order.
+/// field written where the description places it (planes of bits or of digits, listed places, pieces, levels shared over a
+/// group of blocks); codes sharing a field (IQ1_S's delta sign, one a sub-block) are chosen together for the field's number
+/// that leaves them the least error. A type of no scale, minimum or factor (a per-element type) is rounded as its number
+/// type defines: to the nearest number, a tie to the even code, a zero's sign kept, a float past its range its infinity,
+/// its NaN or its largest as its specials say. The same bytes on every CPU: scalar arithmetic in a fixed order.
 /// </summary>
 internal sealed class DescribedEncoder
 {
@@ -2575,29 +2578,132 @@ internal sealed class DescribedEncoder
     // side (a level of at most SmallGrid numbers), in this many passes (a codebook's fewer, as BookSteps).
     private const int Refinements = 4, SmallGrid = 256, Neighbours = 4, Passes = 2, BookNeighbours = 2, BookPasses = 1;
 
+    // The most numbers a field shared by several codes may take (its codes searched for each).
+    private const int SharedLimit = 16;
+
+    private readonly TypeDescription d;
     private readonly int n, size, unit, units, slots, codeWidth, neighbours, passes;
     private readonly Grid? codeGrid;
+    private readonly Grid[]? sharedGrids;
     private readonly Book? codeBook;
     private readonly FactorLevel? factor;
     private readonly Level[] scales, mins, free, all;
-    private readonly bool minsAdded, negativeScale;
+    private readonly bool minsAdded, negativeScale, direct;
     private readonly int minSign;
     private readonly Fields codes;
+    private readonly DigitPlane[] digitPlanes;
+    private readonly int[]? leader;
+    private readonly ulong sharedMask;
+    private readonly ulong[] sharedValues;
     private readonly double top, bottom, topStep, bottomStep;
 
     private DescribedEncoder(TypeDescription d)
     {
+        this.d = d;
         n = d.UnitValues;
         size = d.UnitBytes;
         codeWidth = d.Code.Width;
         slots = n / codeWidth;
+
+        // The code's planes: each code slot's field in each, the lowest bits first: its bits at their place in its block, or a
+        // digit of a byte in a plane of digits (CodePlane.Radix). A field several slots share (one bit that entries of a
+        // sub-block hold in common) groups those slots, whose codes must agree there: leader[s] is the first slot of s's group.
+        int planes = d.Planes.Count;
+        var lows = new int[planes];
+        for (int p = 1; p < planes; p++)
+        {
+            lows[p] = lows[p - 1] + d.Planes[p - 1].Bits;
+        }
+
+        var start = new int[slots + 1];
+        var bits = new List<int>();
+        var widths = new List<int>();
+        var pieceLows = new List<int>();
+        var keys = new long[planes, slots];
+        var digitSlots = new List<(int Byte, int Digit)>[planes];
+        for (int s = 0; s < slots; s++)
+        {
+            int v = s * codeWidth, block = d.BlockStart(v), entry = v % d.Values / codeWidth;
+            for (int p = 0; p < planes; p++)
+            {
+                var plane = d.Planes[p];
+                var (at, shift) = plane.Place(entry);
+                if (plane.Radix == 0)
+                {
+                    bits.Add(8 * (block + at) + shift);
+                    widths.Add(plane.Bits);
+                    pieceLows.Add(lows[p]);
+                    keys[p, s] = 8L * (block + at) + shift;
+                }
+                else
+                {
+                    (digitSlots[p] ??= []).Add((block + at, shift));
+                    keys[p, s] = 64L * (block + at) + shift;
+                }
+            }
+
+            start[s + 1] = bits.Count;
+        }
+
+        codes = new Fields(start, [.. bits], [.. widths], [.. pieceLows]);
+        digitPlanes =[.. Enumerable.Range(0, planes).Where(p => d.Planes[p].Radix != 0)
+            .Select(p => DigitPlane.Of(d.Planes[p], lows[p], digitSlots[p], size) ?? throw Unwritten(d, $"its plane of base-{d.Planes[p].Radix} digits has numbers of digits no byte reads as"))];
+
+        int[]? partition = null;
+        for (int p = 0; p < planes; p++)
+        {
+            var first = new Dictionary<long, int>();
+            var lead = new int[slots];
+            bool shared = false;
+            for (int s = 0; s < slots; s++)
+            {
+                if (first.TryGetValue(keys[p, s], out int l))
+                {
+                    lead[s] = l;
+                    shared = true;
+                }
+                else
+                {
+                    first[keys[p, s]] = s;
+                    lead[s] = s;
+                }
+            }
+
+            if (shared)
+            {
+                if (partition is not null && !partition.AsSpan().SequenceEqual(lead))
+                {
+                    throw Unwritten(d, "its planes share fields among different groups of codes");
+                }
+
+                partition = lead;
+                sharedMask |= (d.Planes[p].Bits >= 64 ? ulong.MaxValue : (1UL << d.Planes[p].Bits) - 1) << lows[p];
+            }
+        }
+
+        leader = partition;
+        int sharedBits = BitOperations.PopCount(sharedMask);
+        if (1 << Math.Min(sharedBits, 30) > SharedLimit)
+        {
+            throw Unwritten(d, $"a field its codes share takes {sharedBits} bits (at most {BitOperations.Log2(SharedLimit)} are searched)");
+        }
+
+        sharedValues = [.. Enumerable.Range(0, 1 << sharedBits).Select(k => Scatter((ulong)k, sharedMask))];
+
+        // The codes' numbers: those the planes can hold (a plane of digits holds digits below its radix).
+        Func<ulong, bool>? held = digitPlanes.Length == 0 ? null : code => digitPlanes.All(dp => dp.Holds(code));
         if (codeWidth == 1)
         {
-            codeGrid = Grid.Of(d.Code, d.CodeOffset) ?? throw Unwritten(d, "its codes' numbers are not a table, an integer or a float of up to 16 bits");
+            codeGrid = Grid.Of(d.Code, d.CodeOffset, held) ?? throw Unwritten(d, "its codes' numbers are not a table, an integer or a float of up to 16 bits");
+            if (sharedMask != 0)
+            {
+                sharedGrids = [.. sharedValues.Select(value => Grid.Of(d.Code, d.CodeOffset, code => (held?.Invoke(code) ?? true) && (code & sharedMask) == value)
+                    ?? throw Unwritten(d, "a number of its shared field holds no code"))];
+            }
         }
         else
         {
-            codeBook = Book.Of(d.Code, d.CodeOffset) ?? throw Unwritten(d, "its codebook is not a table of up to 16 bits");
+            codeBook = Book.Of(d.Code, d.CodeOffset, held) ?? throw Unwritten(d, "its codebook is not a table of up to 16 bits");
         }
 
         var scaleLevels = new List<Level>();
@@ -2677,28 +2783,21 @@ internal sealed class DescribedEncoder
             minSign = 2;                                                    // a sign shared by the group's units
         }
 
-        // Each code slot's planes (the lowest bits first) at its place in its block.
-        var start = new int[slots + 1];
-        var bits = new List<int>();
-        var widths = new List<int>();
-        for (int s = 0; s < slots; s++)
+        // A group of codes sharing a field lies within a unit (its codes chosen together).
+        if (leader is { } leaders && Enumerable.Range(0, slots).Any(s => leaders[s] * codeWidth / unit != s * codeWidth / unit))
         {
-            int v = s * codeWidth, block = d.BlockStart(v), entry = v % d.Values / codeWidth;
-            foreach (var plane in d.Planes)
-            {
-                var (at, shift) = plane.Place(entry);
-                bits.Add(8 * (block + at) + shift);
-                widths.Add(plane.Bits);
-            }
-
-            start[s + 1] = bits.Count;
+            throw Unwritten(d, "codes sharing a field lie in different units of its scales");
         }
 
-        codes = new Fields(start, [.. bits], [.. widths]);
+        // Values of no scale, minimum or factor, each its own code (a per-element type) are rounded as a float format
+        // defines (Grid.Round).
+        direct = scales.Length == 0 && mins.Length == 0 && factor is null && codeGrid is not null && sharedMask == 0 && digitPlanes.Length == 0;
 
-        // No two fields share a bit (a minimum stored in a scale's bits is that scale's level).
+        // No two fields share a bit (a minimum stored in a scale's bits is that scale's level; codes sharing a field, theirs;
+        // a plane of digits takes its bytes whole).
         var owned = new bool[8 * size];
-        if (!codes.Claim(owned) || all.Any(l => !l.Fields.Claim(owned)) || factor is { } owner && !owner.Fields.Claim(owned))
+        if (!codes.Claim(owned, repeats: true) || digitPlanes.Any(p => !p.Claim(owned)) || all.Any(l => !l.Fields.Claim(owned))
+            || factor is { } owner && !owner.Fields.Claim(owned))
         {
             throw Unwritten(d, "two of its fields share bits");
         }
@@ -2761,6 +2860,21 @@ internal sealed class DescribedEncoder
         return true;
     }
 
+    // The bits of k placed at the set bits of mask, the lowest first.
+    private static ulong Scatter(ulong k, ulong mask)
+    {
+        ulong placed = 0;
+        for (int b = 0, i = 0; b < 64; b++)
+        {
+            if ((mask >> b & 1) != 0)
+            {
+                placed |= (k >> i++ & 1) << b;
+            }
+        }
+
+        return placed;
+    }
+
     private Level LevelOf(TypeDescription d, BlockScale s, bool scale)
     {
         var grid = Grid.Of(s.Type, s.Bias) ?? throw Unwritten(d, "a scale or minimum is not a table, an integer or a float of up to 16 bits");
@@ -2813,6 +2927,23 @@ internal sealed class DescribedEncoder
         var w = Work.For(this);
         for (int g = 0; g < source.Length / n; g++)
         {
+            if (direct)
+            {
+                // Each value its code, rounded as the code's float format defines (or the nearest number of an integer or a table).
+                for (int v = 0; v < n; v++)
+                {
+                    w.CodeBits[v] = codeGrid!.Round(source[g * n + v]);
+                    if (!chosen.IsEmpty)
+                    {
+                        double number = d.Code.Value(w.CodeBits[v]);
+                        chosen[g * n + v] = (float)(d.CodeOffset == 0 ? number : number + d.CodeOffset);
+                    }
+                }
+
+                WriteCodes(w, destination.Slice(g * size, size));
+                continue;
+            }
+
             EncodeGroup(source.Slice(g * n, n), destination.Slice(g * size, size), w);
             if (!chosen.IsEmpty)
             {
@@ -2914,6 +3045,7 @@ internal sealed class DescribedEncoder
         var y = w.X.AsSpan(u * unit, unit);
         var g = w.TryG.AsSpan(0, unit);
         var best = w.BestG.AsSpan(0, unit);
+        w.Quantizer.Unit = u;
         if (scales.Length == 0)
         {
             // No scale: the codes' numbers are the values, less a minimum where there is one.
@@ -3210,6 +3342,7 @@ internal sealed class DescribedEncoder
     {
         var y = w.X.AsSpan(u * unit, unit);
         var numbers = g.Slice(u * unit, unit);
+        w.Quantizer.Unit = u;
         w.Quantizer.Run(y, a != 0f ? 1f / a : 0f, c, numbers);
         w.Quantizer.Codes.AsSpan(0, unit / codeWidth).CopyTo(codeSlots.Slice(u * unit / codeWidth));
         if (factor is { } f)
@@ -3326,12 +3459,12 @@ internal sealed class DescribedEncoder
     // The group's bytes: each code slot's planes, each level's chunks, each factor's chunks.
     private void Write(Work w, Span<byte> group)
     {
-        group.Clear();
         for (int s = 0; s < slots; s++)
         {
-            codes.Write(group, s, codeGrid is { } grid ? grid.Codes[w.Codes[s]] : (ulong)w.Codes[s]);
+            w.CodeBits[s] = codeGrid is { } grid ? grid.Codes[w.Codes[s]] : (ulong)w.Codes[s];
         }
 
+        WriteCodes(w, group);
         foreach (var level in all)
         {
             var ranks = w.Ranks[level.Index];
@@ -3350,30 +3483,59 @@ internal sealed class DescribedEncoder
         }
     }
 
-    // Fields of bits in a group: field f's pieces at [start[f], start[f + 1]), each its first bit and width, the lowest bits
-    // of a field's number first.
-    private sealed class Fields(int[] start, int[] bits, int[] widths)
+    // The group cleared, then each code slot's bits (CodeBits) into its planes: the planes of bits field by field, each plane
+    // of digits its bytes whole.
+    private void WriteCodes(Work w, Span<byte> group)
+    {
+        group.Clear();
+        for (int s = 0; s < slots; s++)
+        {
+            codes.Write(group, s, w.CodeBits[s]);
+        }
+
+        foreach (var plane in digitPlanes)
+        {
+            plane.Write(group, w.CodeBits, w.Digits);
+        }
+    }
+
+    // Fields of bits in a group: field f's pieces at [start[f], start[f + 1]), each its first bit and width, a field's number's
+    // lowest bits the first piece's (or, with `lows`, each piece the number's bits from lows[piece]: a code's planes).
+    private sealed class Fields(int[] start, int[] bits, int[] widths, int[]? lows = null)
     {
         public void Write(Span<byte> group, int field, ulong value)
         {
             for (int p = start[field]; p < start[field + 1]; p++)
             {
                 int b = bits[p];
-                for (int i = 0; i < widths[p]; i++, b++, value >>= 1)
+                ulong piece = lows is null ? value : value >> lows[p];
+                for (int i = 0; i < widths[p]; i++, b++, piece >>= 1)
                 {
-                    if ((value & 1) != 0)
+                    if ((piece & 1) != 0)
                     {
                         group[b >> 3] |= (byte)(1 << (b & 7));
                     }
                 }
+
+                if (lows is null)
+                {
+                    value = widths[p] >= 64 ? 0 : value >> widths[p];
+                }
             }
         }
 
-        // Marks the fields' bits as owned; false where a bit is owned already or past the group.
-        public bool Claim(bool[] owned)
+        // Marks the fields' bits as owned; false where a bit is owned already or past the group (with `repeats`, a piece
+        // listed again whole is the same field: codes sharing it).
+        public bool Claim(bool[] owned, bool repeats = false)
         {
+            var seen = new HashSet<(int, int)>();
             for (int p = 0; p < bits.Length; p++)
             {
+                if (repeats && !seen.Add((bits[p], widths[p])))
+                {
+                    continue;
+                }
+
                 for (int b = bits[p]; b < bits[p] + widths[p]; b++)
                 {
                     if (b < 0 || b >= owned.Length || owned[b])
@@ -3382,6 +3544,96 @@ internal sealed class DescribedEncoder
                     }
 
                     owned[b] = true;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    // A plane of digits (CodePlane.Radix): each code slot's digit of a byte; a byte written from its digits as the byte that
+    // reads as them (each number of digits' first such byte, found once from the plane's own reading of every byte).
+    private sealed class DigitPlane
+    {
+        private readonly int radix, digits, low, size;
+        private readonly ulong mask;
+        private readonly int[] slotByte, slotDigit, touched;
+        private readonly byte[] byteOf;
+
+        private DigitPlane(int radix, int digits, int low, ulong mask, int size, int[] slotByte, int[] slotDigit, byte[] byteOf)
+        {
+            (this.radix, this.digits, this.low, this.mask, this.size, this.slotByte, this.slotDigit, this.byteOf) = (radix, digits, low, mask, size, slotByte, slotDigit, byteOf);
+            touched = [.. slotByte.Distinct().Order()];
+        }
+
+        // The plane at `low` of the code, its slots' (byte, digit), in groups of `size` bytes; null where a number of digits
+        // has no byte that reads as it.
+        public static DigitPlane? Of(CodePlane plane, int low, List<(int Byte, int Digit)> slots, int size)
+        {
+            int radix = plane.Radix, digits = plane.Digits, numbers = 1;
+            for (int i = 0; i < digits; i++)
+            {
+                numbers *= radix;
+            }
+
+            var byteOf = new int[numbers];
+            byteOf.AsSpan().Fill(-1);
+            for (int b = 0; b < 256; b++)
+            {
+                int number = 0;
+                for (int i = 0; i < digits; i++)
+                {
+                    number = number * radix + plane.Digit((byte)b, i);
+                }
+
+                if (byteOf[number] < 0)
+                {
+                    byteOf[number] = b;
+                }
+            }
+
+            return byteOf.Any(b => b < 0) ? null
+                : new DigitPlane(radix, digits, low, (1UL << plane.Bits) - 1, size, [.. slots.Select(s => s.Byte)], [.. slots.Select(s => s.Digit)], [.. byteOf.Select(b => (byte)b)]);
+        }
+
+        // Whether a code's digit in this plane is one the radix holds.
+        public bool Holds(ulong code) => (code >> low & mask) < (ulong)radix;
+
+        // Each touched byte from its slots' digits (a digit no slot gives: 0).
+        public void Write(Span<byte> group, ReadOnlySpan<ulong> codes, Span<int> scratch)
+        {
+            var of = scratch[..(size * digits)];
+            of.Clear();
+            for (int s = 0; s < slotByte.Length; s++)
+            {
+                of[slotByte[s] * digits + slotDigit[s]] = (int)(codes[s] >> low & mask);
+            }
+
+            foreach (int b in touched)
+            {
+                int number = 0;
+                for (int i = 0; i < digits; i++)
+                {
+                    number = number * radix + of[b * digits + i];
+                }
+
+                group[b] = byteOf[number];
+            }
+        }
+
+        // Its bytes, whole.
+        public bool Claim(bool[] owned)
+        {
+            foreach (int b in touched)
+            {
+                for (int i = 8 * b; i < 8 * b + 8; i++)
+                {
+                    if (i >= owned.Length || owned[i])
+                    {
+                        return false;
+                    }
+
+                    owned[i] = true;
                 }
             }
 
@@ -3421,24 +3673,33 @@ internal sealed class DescribedEncoder
         public Fields Fields { get; } = fields;
     }
 
-    /// <summary>The distinct finite numbers of a number type of up to 16 bits, its bias added, ascending, each with a code giving it.</summary>
+    /// <summary>
+    /// The distinct finite numbers of a number type of up to 16 bits (the codes a filter holds), its bias added, ascending,
+    /// each with a code giving it; a signed float's −0 and +0 apart. Nearest rounds to the nearest number, a tie to the even
+    /// code (its lowest bit clear: a float's even mantissa, an integer's even number), a zero keeping its sign;
+    /// <see cref="Round"/> also rounds a float past its largest as its specials define (an infinity, a NaN, or the largest).
+    /// </summary>
     internal sealed class Grid
     {
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Bias), Grid?> Made = new();
 
+        private readonly NumberType type;
         private readonly int[] ranks;
         private readonly double[] mids;
         private readonly bool uniform, half;
-        private readonly double first, step, inverse;
+        private readonly double first, step, inverse, overflow;
+        private readonly int negativeZero = -1, positiveZero = -1;
 
         private Grid(NumberType type, double bias, List<(double Value, ulong Code)> numbers)
         {
-            numbers.Sort((p, q) => p.Value != q.Value ? p.Value.CompareTo(q.Value) : p.Code.CompareTo(q.Code));
+            this.type = type;
+            static bool Negative(double v) => v == 0 && double.IsNegative(v);
+            numbers.Sort((p, q) => p.Value != q.Value ? p.Value.CompareTo(q.Value) : Negative(p.Value) != Negative(q.Value) ? (Negative(p.Value) ? -1 : 1) : p.Code.CompareTo(q.Code));
             var values = new List<double>();
             var codes = new List<ulong>();
             foreach (var (value, code) in numbers)
             {
-                if (values.Count == 0 || value != values[^1])
+                if (values.Count == 0 || value != values[^1] || Negative(value) != Negative(values[^1]))
                 {
                     values.Add(value);
                     codes.Add(code);
@@ -3451,9 +3712,26 @@ internal sealed class DescribedEncoder
             mids = [.. Values.Zip(Values.Skip(1), (p, q) => (p + q) / 2)];
             ranks = new int[1 << type.Bits];
             ranks.AsSpan().Fill(-1);
+            for (int r = 0; r < Values.Length; r++)
+            {
+                if (Values[r] == 0 && Negative(Values[r]))
+                {
+                    negativeZero = r;
+                }
+                else if (Values[r] == 0)
+                {
+                    positiveZero = r;
+                }
+            }
+
             foreach (var (value, code) in numbers)
             {
-                ranks[code] = Array.BinarySearch(Values, value);
+                ranks[code] = value == 0 && negativeZero >= 0 ? (Negative(value) ? negativeZero : positiveZero) : Array.BinarySearch(Values, value);
+            }
+
+            if (negativeZero < 0 || positiveZero < 0)
+            {
+                negativeZero = positiveZero = -1;                           // one zero: no sign to keep
             }
 
             first = Values[0];
@@ -3461,6 +3739,14 @@ internal sealed class DescribedEncoder
             inverse = 1 / step;
             uniform = Values.Length > 1 && Values.Select((v, i) => v == first + i * step).All(x => x);
             half = bias == 0 && type is { Kind: NumberKind.Float, Bits: 16, Exponent: 5, Mantissa: 10, ExponentBias: 15, Signed: true, Subnormals: true, Specials: FloatSpecials.Ieee };
+
+            // A float's overflow: past its largest number by half the step the next exponent would take (the largest plus
+            // the largest's own step, halved).
+            if (type.Kind == NumberKind.Float && bias == 0 && Values[^1] > 0)
+            {
+                double largest = Values[^1];
+                overflow = largest + Math.ScaleB(1, Math.ILogB(largest) - type.Mantissa) / 2;
+            }
         }
 
         public double[] Values { get; }
@@ -3475,25 +3761,32 @@ internal sealed class DescribedEncoder
 
         public bool HasPositive => Values[^1] > 0;
 
-        /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/>, or null (not one number of up to 16 bits, or no finite number).</summary>
-        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid
-            ? Made.GetOrAdd((type, bias), static key =>
+        /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> (made once), or null (not one number of up to 16 bits, or no finite number).</summary>
+        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid ? Made.GetOrAdd((type, bias), static key => Make(key.Type, key.Bias, null)) : null;
+
+        /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> over the codes <paramref name="holds"/> takes (all where null).</summary>
+        public static Grid? Of(NumberType type, double bias, Func<ulong, bool>? holds) => holds is null ? Of(type, bias)
+            : type.Width == 1 && type.Bits <= 16 && type.Valid ? Make(type, bias, holds) : null;
+
+        private static Grid? Make(NumberType type, double bias, Func<ulong, bool>? holds)
+        {
+            var numbers = new List<(double, ulong)>();
+            for (ulong code = 0; code < 1UL << type.Bits; code++)
             {
-                var numbers = new List<(double, ulong)>();
-                for (ulong code = 0; code < 1UL << key.Type.Bits; code++)
+                double value = bias == 0 ? type.Value(code) : type.Value(code) + bias;    // −0 kept (−0 + 0 is +0)
+                if (double.IsFinite(value) && (holds?.Invoke(code) ?? true))
                 {
-                    double value = key.Type.Value(code) + key.Bias;
-                    if (double.IsFinite(value))
-                    {
-                        numbers.Add((value, code));
-                    }
+                    numbers.Add((value, code));
                 }
+            }
 
-                return numbers.Count == 0 ? null : new Grid(key.Type, key.Bias, numbers);
-            })
-            : null;
+            return numbers.Count == 0 ? null : new Grid(type, bias, numbers);
+        }
 
-        /// <summary>The rank of the number nearest <paramref name="x"/> (NaN as 0).</summary>
+        /// <summary>The rank of a code (−1: not a finite number of the grid).</summary>
+        public int RankOf(ulong code) => code < (ulong)ranks.Length ? ranks[code] : -1;
+
+        /// <summary>The rank of the number nearest <paramref name="x"/> (NaN as 0), a tie to the even code, a zero keeping its sign.</summary>
         public int Nearest(double x)
         {
             if (double.IsNaN(x))
@@ -3503,14 +3796,18 @@ internal sealed class DescribedEncoder
 
             if (half)
             {
-                var h = (Half)x;
+                var h = (Half)x;                                            // to nearest, ties to even
                 return Half.IsInfinity(h) ? (x > 0 ? Count - 1 : 0) : ranks[BitConverter.HalfToUInt16Bits(h)];
+            }
+
+            if (x == 0 && negativeZero >= 0)
+            {
+                return double.IsNegative(x) ? negativeZero : positiveZero;
             }
 
             if (uniform)
             {
-                double q = (x - first) * inverse;
-                return q <= 0 ? 0 : q >= Count - 1 ? Count - 1 : (int)Math.Round(q);
+                return Uniform(x);
             }
 
             int lo = 0, hi = Count - 1;
@@ -3521,13 +3818,83 @@ internal sealed class DescribedEncoder
                 {
                     lo = m + 1;
                 }
-                else
+                else if (x < mids[m])
                 {
                     hi = m;
+                }
+                else
+                {
+                    return Even(m, m + 1);
                 }
             }
 
             return lo;
+        }
+
+        // Evenly spaced numbers: the nearest by the step, a tie to the even code.
+        private int Uniform(double x)
+        {
+            double q = (x - first) * inverse;
+            int last = Count - 1;
+            if (!(q > 0))
+            {
+                return 0;
+            }
+
+            if (q >= last)
+            {
+                return last;
+            }
+
+            double floor = Math.Floor(q), fraction = q - floor;
+            int r = (int)floor;
+            return fraction > 0.5 ? r + 1 : fraction < 0.5 ? r : Even(r, r + 1);
+        }
+
+        private int Even(int a, int b) => (Codes[a] & 1) == 0 ? a : b;
+
+        /// <summary>
+        /// The code of <paramref name="x"/> as the number type defines rounding to it: <see cref="Nearest"/>, and a float past
+        /// its largest number by half its next step or more (a tie to the even code) its infinity of that sign (IEEE's
+        /// specials), its NaN of that sign (a NaN code alone: no infinity) or its largest (no specials); NaN its quiet NaN of
+        /// that sign (a format with no NaN: its zero). A table's or an integer's: the nearest, the largest past its range.
+        /// </summary>
+        public ulong Round(double x)
+        {
+            ulong sign = type.Signed && type.Kind == NumberKind.Float && double.IsNegative(x) ? 1UL << (type.Bits - 1) : 0;
+            if (double.IsNaN(x))
+            {
+                return Special(sign, nan: true) ?? Codes[Nearest(0)];
+            }
+
+            if (overflow > 0 && Math.Abs(x) >= overflow && (type.Signed || x > 0))
+            {
+                int extreme = x > 0 ? Count - 1 : 0;
+                if (Math.Abs(x) > overflow || (Codes[extreme] & 1) != 0)
+                {
+                    return Special(sign, nan: false) ?? Codes[extreme];
+                }
+            }
+
+            return Codes[Nearest(x)];
+        }
+
+        // A float's code past its numbers: IEEE's infinity (all exponent bits) or quiet NaN (and the mantissa's top bit), the
+        // all-ones NaN of a format with no infinity; null for a format with neither.
+        private ulong? Special(ulong sign, bool nan)
+        {
+            if (type.Kind != NumberKind.Float)
+            {
+                return null;
+            }
+
+            ulong exponent = ((1UL << type.Exponent) - 1) << type.Mantissa;
+            return type.Specials switch
+            {
+                FloatSpecials.Ieee => sign | exponent | (nan && type.Mantissa > 0 ? 1UL << (type.Mantissa - 1) : 0),
+                FloatSpecials.AllOnesNaN => sign | exponent | ((1UL << type.Mantissa) - 1),
+                _ => null,
+            };
         }
 
         /// <summary>
@@ -3539,13 +3906,10 @@ internal sealed class DescribedEncoder
             bool keep = !ranks.IsEmpty;
             if (uniform)
             {
-                int last = Count - 1;
-                var floats = Floats;
                 for (int i = 0; i < y.Length; i++)
                 {
-                    double q = ((y[i] - c0) * t - first) * inverse;
-                    int r = !(q > 0) ? 0 : q >= last ? last : (int)Math.Round(q);
-                    numbers[i] = floats[r];
+                    int r = Uniform((y[i] - c0) * t);
+                    numbers[i] = Floats[r];
                     if (keep)
                     {
                         ranks[i] = r;
@@ -3558,6 +3922,7 @@ internal sealed class DescribedEncoder
             for (int i = 0; i < y.Length; i++)
             {
                 int r = Nearest((y[i] - c0) * t);
+                r = r == negativeZero ? positiveZero : r;                   // a scaled value's zero: +0 (its sign changes no value)
                 numbers[i] = Floats[r];
                 if (keep)
                 {
@@ -3569,32 +3934,41 @@ internal sealed class DescribedEncoder
 
     /// <summary>
     /// A codebook of up to 16-bit codes (its offset added to each entry's numbers): each code's vector of Width numbers, and
-    /// the entry nearest a target vector under weights. Where the patterns of the codebook's numbers (each value one of the
-    /// numbers any entry holds) are few, each pattern's nearest entries are listed once, and a target's nearest is the best
-    /// of its own pattern's list (the target's values each rounded to the nearest number); otherwise every entry is measured.
+    /// the entry nearest a target vector under weights. Its entries are searched in parts by their indices' top bits, as many
+    /// bits as make every part's patterns few (each value one of the numbers the part's entries hold: IQ1's 12-bit index, its
+    /// top bit the delta's sign, is two parts of three numbers a value); a part of few patterns lists each pattern's nearest
+    /// entries once, and a target's nearest there is the best of its own pattern's list (each target value rounded to the
+    /// nearest number); any other part is measured entry by entry. Entries the planes cannot hold are never chosen, and a
+    /// constraint (index bits that must take given values: a field codes share) searches the entries that agree.
     /// </summary>
     internal sealed class Book
     {
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Offset), Book?> Made = new();
 
-        // Entries listed a pattern, and the most patterns listed.
-        private const int Listed = 16, PatternLimit = 1 << 16;
+        // Entries listed a pattern, the most patterns a part lists, the most index bits the parts split by.
+        private const int Listed = 16, PatternLimit = 1 << 16, MostSplit = 4;
 
-        private readonly float[] levelMids;
-        private readonly int listed;
-        private readonly long patterns;
-        private int[]? lists;
+        private readonly bool[]? held;
+        private readonly Part[] parts;
+        private readonly int bits, split;
 
-        private Book(NumberType type, double offset)
+        private Book(NumberType type, double offset, Func<ulong, bool>? holds)
         {
-            Entries = 1 << type.Bits;
+            bits = type.Bits;
+            Entries = 1 << bits;
             Width = type.Width;
             Table = [.. type.Table!.Take(Entries * Width).Select(v => (float)(v + offset))];
-            Levels = [.. Table.Select(v => (double)v).Distinct().Order()];
-            levelMids = [.. Levels.Zip(Levels.Skip(1), (p, q) => (float)((p + q) / 2))];
-            listed = Math.Min(Entries, Listed);
-            double count = Math.Pow(Levels.Length, Width);
-            patterns = Entries > listed && count <= PatternLimit ? (long)count : 0;
+            held = holds is null ? null : [.. Enumerable.Range(0, Entries).Select(e => holds((ulong)e))];
+            Levels = [.. Enumerable.Range(0, Entries).Where(Holds).SelectMany(e => Table.Skip(e * Width).Take(Width)).Select(v => (double)v).Distinct().Order()];
+            parts = [new Part(this, 0, Entries)];
+            for (int s = 1; s <= Math.Min(MostSplit, bits) && !parts.All(p => p.Listable); s++)
+            {
+                var made = Enumerable.Range(0, 1 << s).Select(k => new Part(this, k << (bits - s), 1 << (bits - s))).ToArray();
+                if (made.All(p => p.Listable))
+                {
+                    (parts, split) = (made, s);
+                }
+            }
         }
 
         public int Entries { get; }
@@ -3604,124 +3978,204 @@ internal sealed class DescribedEncoder
         /// <summary>Entry e's number i at e · Width + i.</summary>
         public float[] Table { get; }
 
-        /// <summary>The distinct numbers the entries hold, ascending.</summary>
+        /// <summary>The distinct numbers the entries it may choose hold, ascending.</summary>
         public double[] Levels { get; }
 
-        /// <summary>The codebook of <paramref name="type"/> plus <paramref name="offset"/>, or null (not a table of up to 16 bits).</summary>
-        public static Book? Of(NumberType type, double offset) => type is { Kind: NumberKind.Table, Bits: <= 16, Table: not null } && type.Valid
-            ? Made.GetOrAdd((type, offset), static key => new Book(key.Type, key.Offset))
+        /// <summary>The codebook of <paramref name="type"/> plus <paramref name="offset"/> (over the codes <paramref name="holds"/> takes, all where null), or null (not a table of up to 16 bits).</summary>
+        public static Book? Of(NumberType type, double offset, Func<ulong, bool>? holds = null) => type is { Kind: NumberKind.Table, Bits: <= 16, Table: not null } && type.Valid
+            ? holds is null ? Made.GetOrAdd((type, offset), static key => new Book(key.Type, key.Offset, null)) : new Book(type, offset, holds)
             : null;
 
+        private bool Holds(int e) => held is null || held[e];
+
         /// <summary>The entry nearest <paramref name="target"/> (Width values) under <paramref name="weight"/>: the least Σ w (t − e)².</summary>
-        public int Nearest(ReadOnlySpan<float> target, ReadOnlySpan<float> weight)
+        public int Nearest(ReadOnlySpan<float> target, ReadOnlySpan<float> weight) => Nearest(target, weight, 0, 0, out _);
+
+        /// <summary>The nearest entry whose index bits under <paramref name="mask"/> are <paramref name="value"/>'s, and its distance.</summary>
+        public int Nearest(ReadOnlySpan<float> target, ReadOnlySpan<float> weight, ulong mask, ulong value, out float distance)
         {
-            if (patterns == 0)
+            int best = -1;
+            distance = float.PositiveInfinity;
+            ulong top = split == 0 ? 0 : ((1UL << split) - 1) << (bits - split), within = mask & ~top;
+            foreach (var part in parts)
             {
-                return Best(target, weight, null, 0, Entries);
+                if ((((ulong)part.First ^ value) & mask & top) == 0)
+                {
+                    part.Search(this, target, weight, within, value, ref best, ref distance);
+                }
             }
 
-            var list = Volatile.Read(ref lists) ?? List();
-            int pattern = 0, scale = 1;
-            for (int i = 0; i < Width; i++)
+            if (best < 0)
             {
-                pattern += Level(target[i]) * scale;
-                scale *= Levels.Length;
+                Measure(target, weight, 0, Entries, mask, value, ref best, ref distance);
             }
 
-            return Best(target, weight, list, pattern * listed, listed);
+            return Math.Max(best, 0);
         }
 
-        // The best of `count` entries (from list[at], or entries at..at + count).
-        private int Best(ReadOnlySpan<float> target, ReadOnlySpan<float> weight, int[]? list, int at, int count)
+        // Entries first..first + count that it holds and that agree with the constraint, the nearest kept in (best, distance).
+        private void Measure(ReadOnlySpan<float> target, ReadOnlySpan<float> weight, int first, int count, ulong mask, ulong value, ref int best, ref float distance)
         {
-            int best = 0;
-            float bestDistance = float.PositiveInfinity;
-            for (int c = 0; c < count; c++)
+            for (int e = first; e < first + count; e++)
             {
-                int e = list is null ? at + c : list[at + c];
-                var entry = Table.AsSpan(e * Width, Width);
-                float distance = 0f;
-                for (int i = 0; i < Width && distance < bestDistance; i++)
+                if (Holds(e) && (((ulong)e ^ value) & mask) == 0)
                 {
-                    float r = target[i] - entry[i];
-                    distance += weight[i] * r * r;
+                    Consider(target, weight, e, ref best, ref distance);
+                }
+            }
+        }
+
+        // Entry e against the best so far (its distance summed until it passes it).
+        private void Consider(ReadOnlySpan<float> target, ReadOnlySpan<float> weight, int e, ref int best, ref float distance)
+        {
+            var entry = Table.AsSpan(e * Width, Width);
+            float sum = 0f;
+            for (int i = 0; i < Width && sum < distance; i++)
+            {
+                float r = target[i] - entry[i];
+                sum += weight[i] * r * r;
+            }
+
+            if (sum < distance)
+            {
+                distance = sum;
+                best = e;
+            }
+        }
+
+        // Entries First..First + Count of the codebook: the numbers its held entries hold, and its patterns' lists where few.
+        private sealed class Part
+        {
+            private readonly double[] levels;
+            private readonly float[] mids;
+            private readonly int listed, heldCount;
+            private readonly long patterns;
+            private int[]? lists;
+
+            public Part(Book book, int first, int count)
+            {
+                First = first;
+                Count = count;
+                var entries = Enumerable.Range(first, count).Where(book.Holds).ToArray();
+                heldCount = entries.Length;
+                levels = [.. entries.SelectMany(e => book.Table.Skip(e * book.Width).Take(book.Width)).Select(v => (double)v).Distinct().Order()];
+                mids = [.. levels.Zip(levels.Skip(1), (p, q) => (float)((p + q) / 2))];
+                listed = Math.Min(heldCount, Listed);
+                double many = Math.Pow(Math.Max(1, levels.Length), book.Width);
+                patterns = heldCount > listed && many <= PatternLimit ? (long)many : 0;
+            }
+
+            public int First { get; }
+
+            public int Count { get; }
+
+            // Whether its search is short: few entries, or few patterns to list.
+            public bool Listable => heldCount <= Listed || patterns > 0;
+
+            public void Search(Book book, ReadOnlySpan<float> target, ReadOnlySpan<float> weight, ulong mask, ulong value, ref int best, ref float distance)
+            {
+                if (patterns == 0)
+                {
+                    book.Measure(target, weight, First, Count, mask, value, ref best, ref distance);
+                    return;
                 }
 
-                if (distance < bestDistance)
+                var list = Volatile.Read(ref lists) ?? List(book);
+                int pattern = 0, scale = 1;
+                for (int i = 0; i < book.Width; i++)
                 {
-                    bestDistance = distance;
-                    best = e;
+                    pattern += Level(target[i]) * scale;
+                    scale *= levels.Length;
+                }
+
+                int before = best;
+                for (int c = pattern * listed; c < (pattern + 1) * listed; c++)
+                {
+                    int e = list[c];
+                    if ((((ulong)e ^ value) & mask) == 0)
+                    {
+                        book.Consider(target, weight, e, ref best, ref distance);
+                    }
+                }
+
+                if (mask != 0 && best == before)
+                {
+                    book.Measure(target, weight, First, Count, mask, value, ref best, ref distance);   // none of the list agrees
                 }
             }
 
-            return best;
-        }
-
-        // The index of the number nearest x.
-        private int Level(float x)
-        {
-            int lo = 0, hi = Levels.Length - 1;
-            while (lo < hi)
+            // The index of the number nearest x.
+            private int Level(float x)
             {
-                int m = (lo + hi) >> 1;
-                if (x > levelMids[m])
+                int lo = 0, hi = levels.Length - 1;
+                while (lo < hi)
                 {
-                    lo = m + 1;
+                    int m = (lo + hi) >> 1;
+                    if (x > mids[m])
+                    {
+                        lo = m + 1;
+                    }
+                    else
+                    {
+                        hi = m;
+                    }
                 }
-                else
-                {
-                    hi = m;
-                }
+
+                return lo;
             }
 
-            return lo;
-        }
-
-        // Each pattern's nearest entries (by squared distance, then index), made once.
-        private int[] List()
-        {
-            var made = new int[patterns * listed];
-            Parallel.For(0, patterns, ComputeResources.ParallelOptions, () => (new float[Width], new float[listed], new int[listed]), (p, _, scratch) =>
+            // Each pattern's nearest held entries (by squared distance, then index), made once.
+            private int[] List(Book book)
             {
-                var (point, distances, indices) = scratch;
-                long rest = p;
-                for (int i = 0; i < Width; i++, rest /= Levels.Length)
+                var made = new int[patterns * listed];
+                int width = book.Width;
+                Parallel.For(0, patterns, ComputeResources.ParallelOptions, () => (new float[width], new float[listed], new int[listed]), (p, _, scratch) =>
                 {
-                    point[i] = (float)Levels[rest % Levels.Length];
-                }
-
-                int held = 0;
-                for (int e = 0; e < Entries; e++)
-                {
-                    float distance = 0f;
-                    for (int i = 0; i < Width; i++)
+                    var (point, distances, indices) = scratch;
+                    long rest = p;
+                    for (int i = 0; i < width; i++, rest /= levels.Length)
                     {
-                        float r = point[i] - Table[e * Width + i];
-                        distance += r * r;
+                        point[i] = (float)levels[rest % levels.Length];
                     }
 
-                    if (held == listed && distance >= distances[held - 1])
+                    int kept = 0;
+                    for (int e = First; e < First + Count; e++)
                     {
-                        continue;
+                        if (!book.Holds(e))
+                        {
+                            continue;
+                        }
+
+                        float distance = 0f;
+                        for (int i = 0; i < width; i++)
+                        {
+                            float r = point[i] - book.Table[e * width + i];
+                            distance += r * r;
+                        }
+
+                        if (kept == listed && distance >= distances[kept - 1])
+                        {
+                            continue;
+                        }
+
+                        int at = kept == listed ? kept - 1 : kept++;
+                        while (at > 0 && distances[at - 1] > distance)
+                        {
+                            distances[at] = distances[at - 1];
+                            indices[at] = indices[at - 1];
+                            at--;
+                        }
+
+                        distances[at] = distance;
+                        indices[at] = e;
                     }
 
-                    int at = held == listed ? held - 1 : held++;
-                    while (at > 0 && distances[at - 1] > distance)
-                    {
-                        distances[at] = distances[at - 1];
-                        indices[at] = indices[at - 1];
-                        at--;
-                    }
-
-                    distances[at] = distance;
-                    indices[at] = e;
-                }
-
-                indices.AsSpan(0, listed).CopyTo(made.AsSpan((int)(p * listed), listed));
-                return scratch;
-            }, static _ => { });
-            Volatile.Write(ref lists, made);
-            return made;
+                    indices.AsSpan(0, listed).CopyTo(made.AsSpan((int)(p * listed), listed));
+                    return scratch;
+                }, static _ => { });
+                Volatile.Write(ref lists, made);
+                return made;
+            }
         }
     }
 
@@ -3794,11 +4248,61 @@ internal sealed class DescribedEncoder
 
         public int[] Factors { get; }
 
+        // The unit a run quantizes (its codes' slots from Unit · its slots).
+        public int Unit { get; set; }
+
         public override void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g)
         {
             if (e.codeGrid is { } grid)
             {
-                grid.Quantize(y, t, c0, g, Codes);
+                if (e.sharedGrids is not { } subs)
+                {
+                    grid.Quantize(y, t, c0, g, Codes);
+                    return;
+                }
+
+                // Codes sharing a field: each group's codes by the number of the field that leaves them the least error.
+                var leaders = e.leader!;
+                int s0 = Unit * y.Length;
+                for (int i = 0; i < y.Length; i++)
+                {
+                    if (leaders[s0 + i] != s0 + i)
+                    {
+                        continue;
+                    }
+
+                    int bestK = 0;
+                    double bestError = double.PositiveInfinity;
+                    for (int k = 0; k < subs.Length; k++)
+                    {
+                        double error = 0;
+                        for (int j = i; j < y.Length; j++)
+                        {
+                            if (leaders[s0 + j] == s0 + i)
+                            {
+                                float zj = (y[j] - c0) * t, r = zj - subs[k].Floats[subs[k].Nearest(zj)];
+                                error += (double)r * r;
+                            }
+                        }
+
+                        if (error < bestError)
+                        {
+                            (bestError, bestK) = (error, k);
+                        }
+                    }
+
+                    var sub = subs[bestK];
+                    for (int j = i; j < y.Length; j++)
+                    {
+                        if (leaders[s0 + j] == s0 + i)
+                        {
+                            int r = sub.Nearest((y[j] - c0) * t);
+                            Codes[j] = grid.RankOf(sub.Codes[r]);
+                            g[j] = sub.Floats[r];
+                        }
+                    }
+                }
+
                 return;
             }
 
@@ -3864,23 +4368,62 @@ internal sealed class DescribedEncoder
             }
         }
 
-        // Each entry's code nearest its targets over the factors (none: 1); numbers into g; the squared distance to z.
+        // Each entry's code nearest its targets over the factors (none: 1; codes sharing a field: each group's by the number of
+        // the field that leaves them the least error); numbers into g; the squared distance to z.
         private double Entries(Book book, Book? factors, ReadOnlySpan<float> z, Span<float> g)
         {
-            int width = book.Width, fw = factors?.Width ?? 1;
-            double total = 0;
-            for (int s = 0; s < z.Length / width; s++)
+            int width = book.Width, fw = factors?.Width ?? 1, count = z.Length / width;
+            if (e.leader is not { } leaders)
             {
-                for (int i = 0; i < width; i++)
+                for (int s = 0; s < count; s++)
                 {
-                    int v = s * width + i;
-                    float phi = factors is null ? 1f : factors.Table[Factors[v / fw] * fw + v % fw];
-                    target[i] = phi != 0f ? z[v] / phi : 0f;
-                    weight[i] = phi * phi;
+                    Codes[s] = Entry(book, factors, z, s, 0, 0, out _);
                 }
+            }
+            else
+            {
+                int s0 = Unit * count;
+                for (int s = 0; s < count; s++)
+                {
+                    if (leaders[s0 + s] != s0 + s)
+                    {
+                        continue;
+                    }
 
-                int k = book.Nearest(target.AsSpan(0, width), weight.AsSpan(0, width));
-                Codes[s] = k;
+                    ulong bestValue = 0;
+                    double bestError = double.PositiveInfinity;
+                    foreach (ulong value in e.sharedValues)
+                    {
+                        double error = 0;
+                        for (int j = s; j < count; j++)
+                        {
+                            if (leaders[s0 + j] == s0 + s)
+                            {
+                                Entry(book, factors, z, j, e.sharedMask, value, out float distance);
+                                error += distance;
+                            }
+                        }
+
+                        if (error < bestError)
+                        {
+                            (bestError, bestValue) = (error, value);
+                        }
+                    }
+
+                    for (int j = s; j < count; j++)
+                    {
+                        if (leaders[s0 + j] == s0 + s)
+                        {
+                            Codes[j] = Entry(book, factors, z, j, e.sharedMask, bestValue, out _);
+                        }
+                    }
+                }
+            }
+
+            double total = 0;
+            for (int s = 0; s < count; s++)
+            {
+                int k = Codes[s];
                 for (int i = 0; i < width; i++)
                 {
                     int v = s * width + i;
@@ -3892,6 +4435,21 @@ internal sealed class DescribedEncoder
             }
 
             return total;
+        }
+
+        // Slot s's entry nearest its targets over the factors, among the entries whose index bits under mask are value's.
+        private int Entry(Book book, Book? factors, ReadOnlySpan<float> z, int s, ulong mask, ulong value, out float distance)
+        {
+            int width = book.Width, fw = factors?.Width ?? 1;
+            for (int i = 0; i < width; i++)
+            {
+                int v = s * width + i;
+                float phi = factors is null ? 1f : factors.Table[Factors[v / fw] * fw + v % fw];
+                target[i] = phi != 0f ? z[v] / phi : 0f;
+                weight[i] = phi * phi;
+            }
+
+            return book.Nearest(target.AsSpan(0, width), weight.AsSpan(0, width), mask, value, out distance);
         }
     }
 
@@ -3930,9 +4488,16 @@ internal sealed class DescribedEncoder
             LevelTargets = [.. e.all.Select(l => new float[l.Chunks])];
             LevelWeights = [.. e.all.Select(l => new float[l.Chunks])];
             Quantizer = new CodeQuantizer(e);
+            CodeBits = new ulong[n];
+            Digits = new int[8 * e.size];
         }
 
         public DescribedEncoder Owner { get; }
+
+        // Each code slot's bits as written, and a plane of digits' digits a byte.
+        public ulong[] CodeBits { get; }
+
+        public int[] Digits { get; }
 
         public float[] X { get; }
 
