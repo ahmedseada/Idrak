@@ -809,11 +809,15 @@ public enum Idrak.Abstraction.Cluster.WireType : int
 
 public sealed record Idrak.Abstraction.CodePlane : System.IEquatable<Idrak.Abstraction.CodePlane>
   public (int, int) Place(int value)
-  public CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false)
+  public CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.FieldPlace>? Places = null, int Radix = 0)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.FieldPlace>? Places { get; init; }
   public bool Stream { get; init; }
   public int Bits { get; init; }
+  public int Digit(byte value, int digit)
+  public int Digits { get; }
   public int Group { get; init; }
   public int Offset { get; init; }
+  public int Radix { get; init; }
   public int Stride { get; init; }
   public static Idrak.Abstraction.CodePlane? Fit(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ScalePiece>> fields)
 
@@ -5077,6 +5081,11 @@ public static class Idrak.Abstraction.ElementTypes
   public static void CountConversion(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Operations.Operation operation, Idrak.Abstraction.ElementType from, Idrak.Abstraction.ElementType to, long elements)
   public static void Register(Idrak.Abstraction.ElementType type)
   public static void Report(Idrak.Abstraction.ElementTypeChoice choice, Idrak.Abstraction.Device device)
+
+public readonly record struct Idrak.Abstraction.FieldPlace : System.IEquatable<Idrak.Abstraction.FieldPlace>
+  public FieldPlace(int Byte, int Shift)
+  public int Byte { get; init; }
+  public int Shift { get; init; }
 
 public sealed class Idrak.Abstraction.FiniteDoubleJsonConverter : System.Text.Json.Serialization.JsonConverter<double>
   public FiniteDoubleJsonConverter()

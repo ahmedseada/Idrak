@@ -1603,7 +1603,7 @@ internal sealed class DescribedPlan
         (Description, Code, CodeRead, CodeTable, PatternValues, PatternBytes, DeltaBytes, DeltaShifts, Slots, Groups, Factors) =
             (description, code, read, table, patternValues, patternBytes, deltaBytes, deltaShifts, slots, groups, factors);
         Wide = read is Read.WideSigned or Read.WideUnsigned or Read.Long or Read.ULong or Read.Double;
-        IntegerBytes = description is { Values: 1, Code.Kind: NumberKind.Integer, CodeOffset: 0, Planes: [{ Offset: 0, Group: 1 } plane] } && (description.Scales?.Count ?? 0) == 0
+        IntegerBytes = description is { Values: 1, Code.Kind: NumberKind.Integer, CodeOffset: 0, Planes: [{ Offset: 0, Group: 1, Places: null, Radix: 0 } plane] } && (description.Scales?.Count ?? 0) == 0
             && (description.Mins?.Count ?? 0) == 0 && plane.Bits == description.Code.Bits && plane.Bits % 8 == 0 && plane.Bits <= 64 && description.Bytes == plane.Bits / 8
             ? plane.Bits / 8 : 0;
     }
@@ -1679,6 +1679,12 @@ internal sealed class DescribedPlan
         if (!d.Valid)
         {
             reason = "the description does not hold together";
+            return null;
+        }
+
+        if (d.Planes.Any(p => p.Radix != 0))
+        {
+            reason = "a plane of a radix's digits (CodePlane.Radix: each code a digit of its byte read as a fraction) has no reading here";
             return null;
         }
 
@@ -2081,7 +2087,11 @@ internal sealed class DescribedPlan
             $"{n.Bits}{n.Kind}{(n.Signed ? 's' : 'u')}e{n.Exponent}m{n.Mantissa}b{n.ExponentBias}{(n.Subnormals ? 'n' : 'x')}{n.Specials}w{n.Width}[{string.Join(",", (n.Table ?? []).Select(e => e.ToString("R", CultureInfo.InvariantCulture)))}]");
         static string Scale(BlockScale s) => string.Create(CultureInfo.InvariantCulture,
             $"{Number(s.Type)}/{s.Values}/{s.Offset}/{s.Bias.ToString("R", CultureInfo.InvariantCulture)}/{string.Join("|", (s.Pieces ?? []).Select(p => string.Join(",", p.Select(x => string.Create(CultureInfo.InvariantCulture, $"{x.Offset}.{x.Shift}.{x.Bits}")))))}");
-        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}{(p.Stream ? "s" : "")}")));
+        // (A plane's listed places and radix only where it has them: the text of every description without them as before.)
+        static string Listed(CodePlane p) => p.Places is { } places
+            ? string.Create(CultureInfo.InvariantCulture, $"[{string.Join(",", places.Select(f => string.Create(CultureInfo.InvariantCulture, $"{f.Byte}.{f.Shift}")))}]r{p.Radix}")
+            : p.Radix != 0 ? string.Create(CultureInfo.InvariantCulture, $"r{p.Radix}") : "";
+        string planes = string.Join(",", d.Planes.Select(p => string.Create(CultureInfo.InvariantCulture, $"{p.Offset}.{p.Bits}.{p.Group}.{p.Stride}{(p.Stream ? "s" : "")}{Listed(p)}")));
         string text = string.Create(CultureInfo.InvariantCulture,
             $"{d.Values}x{d.Bytes}g{d.Group}.{d.UnitBytes};{Number(d.Code)};{planes};{d.CodeOffset.ToString("R", CultureInfo.InvariantCulture)};{string.Join(";", (d.Scales ?? []).Select(Scale))};-{string.Join(";", (d.Mins ?? []).Select(Scale))};{d.MinsAdded}");
         ulong hash = 14695981039346656037UL;

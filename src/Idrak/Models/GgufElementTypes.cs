@@ -140,6 +140,74 @@ internal static class GgufElementTypes
 
     private static readonly int[] KSignTable = [.. GgufGrids.KSigns];
 
+    // The formats described as data alone (TypeDescription), read as ggml's dequantize_row_* functions read them
+    // (Gguf.DequantizeBlock, GgufFile.LowBit.cs), each value exactly theirs: a code from its planes (an integer, a table's
+    // entry, a codebook's index), plus the code offset, times the scales, with the minimum added.
+    // - Q4_1 and Q5_1: d · q + m (a float16 scale and minimum a block); Q5_0 and Q5_1's fifth bits a stream of 1-bit
+    //   fields (value v's at bit v of the 32-bit word), Q5_0's code less 16.
+    // - IQ4_XS: IQ4_NL's grid entry by a 4-bit code, times d and each sub-block's 6-bit scale less 32 (its low 4 bits a
+    //   nibble from byte 4, its high 2 from the 16-bit word at 2).
+    // - TQ2_0: 2-bit codes less 1 (−1, 0, 1), value 128c + 32s + m in byte 32c + m at bit 2s; TQ1_0: base-3 digits less 1,
+    //   five a byte read as a fraction (a plane of digits: CodePlane.Radix), value 32p + m digit p of byte m, 160 + 16p + m
+    //   digit p of byte 32 + m, 240 + 4p + m digit p of byte 48 + m; d after them.
+    // - IQ2_XS, IQ2_S and IQ3_S: a grid codebook whose index takes more than a byte (9 bits in a 16-bit word with a 7-bit
+    //   sign index, KSigns' mask; or a byte plus 2 or 1 high bits in a plane of their own), each sub-block's 4-bit scale (s +
+    //   1/2, the grid's quarter folded into its magnitudes; IQ3_S's 1 + 2s, a table), and the signs a vector of factors a
+    //   group of 8 (IQ2_S's and IQ3_S's a byte of sign bits).
+    // - IQ1_S and IQ1_M: a codebook of the grid's values plus the delta (±1/8, its sign the index's top bit): an 8-bit
+    //   index, its 3 high bits, and the delta's sign (IQ1_S's a 16-bit word's of 4 entries, listed; IQ1_M's a nibble an
+    //   entry), times each sub-block's 1 + 2s (a table) and d (IQ1_M's float16 the top nibbles of its 4 scale words).
+    private static readonly NumberType Float16Number = NumberType.Floating(5, 10);
+
+    // The sign vectors a byte of sign bits gives (bit i set: value i negative); and KSigns' 7-bit indices' masks.
+    private static readonly NumberType SignBits = SignCodebook(8, s => s);
+
+    private static readonly NumberType KSignVectors = SignCodebook(7, s => KSignTable[s]);
+
+    private static NumberType SignCodebook(int bits, Func<int, int> mask) =>
+        NumberType.Codebook(bits, 8, [.. Enumerable.Range(0, 1 << bits).SelectMany(s => Enumerable.Range(0, 8).Select(i => (mask(s) >> i & 1) != 0 ? -1d : 1d))]);
+
+    // 1 + 2s for an s of `bits` bits.
+    private static NumberType Odd(int bits) => NumberType.Entries(bits, [.. Enumerable.Range(0, 1 << bits).Select(s => 1d + 2 * s)]);
+
+    // A grid's entries as a codebook of `index` bits, `width` values an entry, each magnitude times `factor`.
+    private static NumberType GridCodebook(int index, int width, sbyte[] grid, double factor) => NumberType.Codebook(index, width, [.. grid.Select(v => v * factor)]);
+
+    // IQ1_S's and IQ1_M's codebook: index c's low 11 bits an IQ1 grid entry, its bit 11 the delta's sign (set: −1/8).
+    private static readonly NumberType Iq1Codebook = NumberType.Codebook(12, 8,
+        [.. Enumerable.Range(0, 1 << 12).SelectMany(c => Enumerable.Range(0, 8).Select(j => GgufGrids.IQ1S[(c & 2047) * 8 + j] + (c >> 11 != 0 ? -0.125 : 0.125)))]);
+
+    private static FieldPlace[] Fields(int count, Func<int, FieldPlace> of) => [.. Enumerable.Range(0, count).Select(of)];
+
+    // TQ1_0's digits: value v's byte and digit (above).
+    private static FieldPlace Tq1Digit(int v) => v < 160 ? new(v % 32, v / 32) : v < 240 ? new(32 + (v - 160) % 16, (v - 160) / 16) : new(48 + (v - 240) % 4, (v - 240) / 4);
+
+    private static readonly Dictionary<string, TypeDescription> Descriptions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Q4_1"] = new(32, 20, NumberType.Integer(4, false), [new CodePlane(4, 4, 32)], Scales: [new BlockScale(Float16Number, 32, 0)], Mins: [new BlockScale(Float16Number, 32, 2)],
+            MinsAdded: true),
+        ["Q5_0"] = new(32, 22, NumberType.Integer(5, false), [new CodePlane(6, 4, 32), new CodePlane(2, 1, 1, Stream: true)], -16, [new BlockScale(Float16Number, 32, 0)]),
+        ["Q5_1"] = new(32, 24, NumberType.Integer(5, false), [new CodePlane(8, 4, 32), new CodePlane(4, 1, 1, Stream: true)], Scales: [new BlockScale(Float16Number, 32, 0)],
+            Mins: [new BlockScale(Float16Number, 32, 2)], MinsAdded: true),
+        ["IQ4_XS"] = new(256, 136, NumberType.Entries(4, [.. Iq4Grid.Select(v => (double)v)]), [new CodePlane(8, 4, 32)],
+            Scales: [new BlockScale(Float16Number, 256, 0), new BlockScale(NumberType.Integer(6, false), 32, 0, Pieces(8, ib => [new(4 + ib / 2, 4 * (ib % 2), 4), new(2 + ib / 4, 2 * (ib % 4), 2)]), -32)]),
+        ["TQ2_0"] = new(256, 66, NumberType.Integer(2, false), [new CodePlane(0, 2, 128)], -1, [new BlockScale(Float16Number, 256, 64)]),
+        ["TQ1_0"] = new(256, 54, NumberType.Integer(2, false), [new CodePlane(0, 2, 1, Places: Fields(256, Tq1Digit), Radix: 3)], -1, [new BlockScale(Float16Number, 256, 52)]),
+        ["IQ2_XS"] = new(256, 74, GridCodebook(9, 8, GgufGrids.IQ2XS, 0.25), [new CodePlane(2, 9, 1, Places: Fields(32, e => new(2 + 2 * e, 0)))],
+            Scales: [new BlockScale(Float16Number, 256, 0), new BlockScale(NumberType.Integer(4, false), 16, 66, Bias: 0.5), new BlockScale(KSignVectors, 8, 0, Pieces(32, e => [new(3 + 2 * e, 1, 7)]))]),
+        ["IQ2_S"] = new(256, 82, GridCodebook(10, 8, GgufGrids.IQ2S, 0.25), [new CodePlane(2, 8, 1), new CodePlane(66, 2, 4)],
+            Scales: [new BlockScale(Float16Number, 256, 0), new BlockScale(NumberType.Integer(4, false), 16, 74, Bias: 0.5), new BlockScale(SignBits, 8, 34)]),
+        ["IQ3_S"] = new(256, 110, GridCodebook(9, 4, GgufGrids.IQ3S, 1), [new CodePlane(2, 8, 1), new CodePlane(66, 1, 8)],
+            Scales: [new BlockScale(Float16Number, 256, 0), new BlockScale(Odd(4), 32, 106), new BlockScale(SignBits, 8, 74)]),
+        ["IQ1_S"] = new(256, 50, Iq1Codebook,
+            [new CodePlane(2, 8, 1), new CodePlane(0, 3, 1, Places: Fields(32, i => new(34 + 2 * (i / 4) + 3 * (i % 4) / 8, 3 * (i % 4) % 8))),
+                new CodePlane(0, 1, 1, Places: Fields(32, i => new(35 + 2 * (i / 4), 7)))],
+            Scales: [new BlockScale(Float16Number, 256, 0), new BlockScale(Odd(3), 32, 0, Pieces(8, ib => [new(35 + 2 * ib, 4, 3)]))]),
+        ["IQ1_M"] = new(256, 56, Iq1Codebook, [new CodePlane(0, 8, 1), new CodePlane(32, 4, 2)],
+            Scales: [new BlockScale(Float16Number, 256, 0, [[new(49, 4, 4), new(51, 4, 4), new(53, 4, 4), new(55, 4, 4)]]),
+                new BlockScale(Odd(3), 16, 0, Pieces(16, m => Bits(48 + 2 * (m / 4), 3 * (m % 4), 3)))]),
+    };
+
     private static readonly Dictionary<string, GridBlock> GridDescribed = new(StringComparer.OrdinalIgnoreCase)
     {
         ["IQ2_XXS"] = new(256, 66, Half16, ScaleOffset: 0, SubValues: 32, Pieces(8, j => Bits(2 + 8 * j + 4, 28, 4)), SubScaleOffset: 0.5f, SubScaleFactor: 0.25f,
@@ -496,6 +564,7 @@ internal static class GgufElementTypes
                 Scaled = Described.GetValueOrDefault(type.Name),
                 Super = SuperDescribed.GetValueOrDefault(type.Name),
                 Grid = GridDescribed.GetValueOrDefault(type.Name),
+                Description = Descriptions.GetValueOrDefault(type.Name),
                 ToFloat32 = (source, destination) => GgufTypes.Get(typeId).Dequantize(source, destination),
                 FromFloat32 = Encoders.GetValueOrDefault(type.Name),
             });

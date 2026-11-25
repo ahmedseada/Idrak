@@ -29,6 +29,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
         ("product routes: scales on x's columns (a stored weight's scales shared by every output: a scale a column, a run of 32 columns, one for the whole tensor) are applied to x once a call, then the product with no scales: under the generic and measured routes the product of x and the weight's values times their columns' scales (q4_0, int8, bfloat16, int2; 1, 3, 9 and 70 rows; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesColumnScales),
         ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and IDRAK_ROUTE_LANES all, described and written (any case, blank is all), each refusing anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
+        ("product routes: ggml's q4_1, q5_0, q5_1, iq4_xs, tq1_0, tq2_0, iq2_xs, iq2_s, iq3_s, iq1_s and iq1_m described as data (a minimum added, fifth bits a stream, 6-bit scales in two pieces, base-3 digits of a byte read as a fraction, codebook indices of 9 to 12 bits over two or three planes and listed fields, the delta folded into IQ1's codebook, a float16 scale in four pieces) decode random blocks to ggml's values bit for bit, and the CPU's described lane, by the integer arithmetic and every instruction set that runs here, gives the product of those values (1, 3, 4, 5, 9 and 70 rows; within float32's bound for k terms and x's rounding to int8 a block of 32); CUDA's described lane gives it too where it reads the type, and where it does not says why", ProductRoutesGgufDescribed),
     ];
 
     private static readonly string[] RouteFormats = ["bfloat16", "float16", "int8", "q8_0", "q4_0", "iq4_nl"];
@@ -566,6 +567,157 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(ran == made.Length * 4, $"the described lane ran {ran} of {made.Length * 4} products of types made of a description alone");
+    }
+
+    // ggml's types described as data alone (GgufElementTypes.Descriptions), each with the row length it is multiplied with.
+    private static readonly (string Format, int K)[] GgufDescribedFormats =
+    [
+        ("q4_1", 96), ("q5_0", 96), ("q5_1", 320), ("iq4_xs", 512), ("tq1_0", 256), ("tq2_0", 512), ("iq2_xs", 512), ("iq2_s", 256), ("iq3_s", 512), ("iq1_s", 256),
+        ("iq1_m", 512),
+    ];
+
+    // Each described ggml type's random blocks (37 rows): the description's values the exact values of ggml's dequantizer
+    // (the type's own conversion), bit for bit; then on the CPU the described lane by each lane that runs here (all of them
+    // the integer arithmetic), on CUDA its described lane where its plan reads the type (else its reason), each within
+    // float32's bound of the product of those values (and x's rounding where x is rounded to int8).
+    private static void ProductRoutesGgufDescribed(Device device)
+    {
+        bool cpu = device.Backend is Idrak.Abstraction.Devices.Cpu.CpuBackend;
+        var cuda = device.Backend as Idrak.Gpu.Cuda.CudaBackend;
+        if (!cpu && cuda is null)
+        {
+            Skip($"the described lanes are the CPU's and CUDA's (not {device})");
+            return;
+        }
+
+        var random = new Random(61);
+        int n = 37, ran = 0, declined = 0;
+        UnderRoute(ProductRoute.Measured, () => GgufDescribedUnder(device, cuda, random, n, ref ran, ref declined));
+        Check(ran > 0 || cuda is not null && declined == GgufDescribedFormats.Length, $"{device}: the described lane ran no product of ggml's described types");
+        Console.WriteLine($"{device}: {ran} products of ggml's described types, {declined} types the described lane does not read here");
+    }
+
+    private static void GgufDescribedUnder(Device device, Idrak.Gpu.Cuda.CudaBackend? cuda, Random random, int n, ref int ran, ref int declined)
+    {
+        foreach (var (format, k) in GgufDescribedFormats)
+        {
+            var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
+            var d = type.Description;
+            Check(d is { Valid: true }, $"{format}: no description that holds together ({d})");
+            if (d is null)
+            {
+                continue;
+            }
+
+            var bytes = GgufDescribedBytes(d, k, n, random);
+            float[] exact = new float[n * k], described = new float[n * k];
+            type.Decode(bytes, exact);                                                         // ggml's values: row j's value r at j · k + r
+            d.Decode(bytes, described);
+            int differ = -1;
+            for (int i = 0; i < exact.Length && differ < 0; i++)
+            {
+                differ = BitConverter.SingleToInt32Bits(exact[i]) == BitConverter.SingleToInt32Bits(described[i]) ? -1 : i;
+            }
+
+            Check(differ < 0, $"{format}: value {differ} is {(differ < 0 ? 0 : exact[differ]):R} by ggml's dequantizer, {(differ < 0 ? 0 : described[differ]):R} by its description");
+            Check(exact.All(float.IsFinite), $"{format}: its random values are not all finite");
+            if (cuda is not null)
+            {
+                if (Idrak.Gpu.Cuda.CudaBackend.DescribedOf(type) is null)
+                {
+                    Check(Idrak.Gpu.Cuda.CudaBackend.DescribedReason(type) is { Length: > 0 }, $"{device}: {format}: not read, and no reason given");
+                    declined++;
+                    continue;
+                }
+
+                using var stored = Tensor.FromBytes(bytes, type, [n, k], device);
+                ran += DescribedCudaProducts(cuda, device, format, type, stored.Storage, null, exact, k, n, random);
+                continue;
+            }
+
+            var words = new float[(bytes.Length + 3) / 4];
+            Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+            string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
+            Check(arithmetic == "integer", $"the described lane reads {format} by {arithmetic ?? "nothing"}, not the integer arithmetic ({d})");
+            var lanes = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
+            foreach (int m in new[] { 1, 3, 4, 5, 9, 70 })
+            {
+                var x = RouteValues(random, (long)m * k);
+                for (int lane = 0; lane < lanes.Count; lane++)
+                {
+                    var y = new float[m * n];
+                    if (!Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane, type, words, words.Length, x, y, m, n, k))
+                    {
+                        Check(false, $"{format} [{k}, {n}], {m} rows: its {lanes[lane]} does not run here, though listed");
+                        continue;
+                    }
+
+                    for (int i = 0; i < m; i++)
+                    {
+                        var steps = HalfSteps(x, i, k);
+                        for (int j = 0; j < n; j++)
+                        {
+                            double sum = 0, magnitude = 0, rounding = 0;
+                            for (int r = 0; r < k; r++)
+                            {
+                                double term = (double)x[i * k + r] * exact[j * k + r];
+                                sum += term;
+                                magnitude += Math.Abs(term);
+                                rounding += Math.Abs(exact[j * k + r]) * steps[r];
+                            }
+
+                            double bound = k * Math.Pow(2, -23) * (magnitude + rounding) + rounding + 1e-30, error = Math.Abs(y[i * n + j] - sum);
+                            if (!(error <= bound))
+                            {
+                                Check(false, $"the {lanes[lane]} ({arithmetic}), {format} [{k}, {n}], {m} rows: y[{i}, {j}] = {y[i * n + j]}, the product of ggml's values {sum} (error {error:E2} past the bound {bound:E2})");
+                                i = m;
+                                break;
+                            }
+                        }
+                    }
+
+                    ran++;
+                }
+            }
+        }
+    }
+
+    // n rows of k values of description d as stored: random bytes, each 16-bit float scale and minimum (at its offset or
+    // from its pieces) set to a finite value of either sign, magnitude in [2^-4, 2^0).
+    private static byte[] GgufDescribedBytes(TypeDescription d, int k, int n, Random random)
+    {
+        var bytes = new byte[n * (k / d.Values) * d.Bytes];
+        random.NextBytes(bytes);
+        for (int at = 0; at < bytes.Length; at += d.Bytes)
+        {
+            var block = bytes.AsSpan(at, d.Bytes);
+            foreach (var scale in (d.Scales ?? []).Concat(d.Mins ?? []).Where(s => s.Type is { Kind: NumberKind.Float, Bits: 16 }))
+            {
+                for (int index = 0; index < d.Values / scale.Values; index++)
+                {
+                    int bits = random.Next(2) << 15 | random.Next(11, 15) << 10 | random.Next(1 << 10);
+                    if (scale.Pieces is { } pieces)
+                    {
+                        foreach (var piece in pieces[index])
+                        {
+                            int mask = (1 << piece.Bits) - 1;
+                            block[piece.Offset] = (byte)(block[piece.Offset] & ~(mask << piece.Shift) | (bits & mask) << piece.Shift);
+                            bits >>= piece.Bits;
+                        }
+
+                        continue;
+                    }
+
+                    for (int b = 0; b < 16; b++)
+                    {
+                        long bit = 8L * scale.Offset + 16L * index + b;
+                        block[(int)(bit >> 3)] = (byte)(block[(int)(bit >> 3)] & ~(1 << (int)(bit & 7)) | (bits >> b & 1) << (int)(bit & 7));
+                    }
+                }
+            }
+        }
+
+        return bytes;
     }
 
     // The bits of the CPU's lanes over stored weights on fixed operands: each format's weights packed from seeded values, x

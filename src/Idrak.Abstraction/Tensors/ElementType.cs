@@ -86,7 +86,7 @@ public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool Signe
 /// codes are a plane of 4 bits in groups of 64, Q6_K's high bits a plane of 2 bits in groups of 128).
 /// </summary>
 /// <param name="Offset">The plane's first byte in the block.</param>
-/// <param name="Bits">Bits a field takes (1, 2, 4 or 8).</param>
+/// <param name="Bits">Bits a field takes (1, 2, 4 or 8; up to 64 in a stream or listed; a digit's number's in a plane of digits).</param>
 /// <param name="Group">Values a group holds (a power of two).</param>
 /// <param name="Stride">
 /// Bytes from a group's first byte to the next group's, where groups do not follow one another (other fields between them,
@@ -97,11 +97,62 @@ public sealed record ScaledBlock(int Values, int Bytes, int CodeBits, bool Signe
 /// each field read at its bit position, across byte boundaries where it falls so (codes of 3, 5, 6 or 7 bits packed tight);
 /// Group and Stride then say nothing.
 /// </param>
-public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false)
+/// <param name="Places">
+/// Each field's place in the block, listed (field v at Places[v]: its byte and its lowest bit there, the field running into
+/// the next bytes where its bits pass the byte's; a plane of digits: its byte and its digit), where no rule of Offset, Group,
+/// Stride or the stream places them (ggml's IQ1_S high index bits, 3 a field in 16-bit words of 4; IQ2_XS's 9-bit indices,
+/// one a 16-bit word); null: by the rule, Offset and the rest saying where.
+/// </param>
+/// <param name="Radix">
+/// 0: each field is Bits bits. 2 or more: each field is a digit of base Radix of its byte read as a fraction, most
+/// significant first: digit i of byte b is ⌊Radix · ((b · Radix^i) mod 256) / 256⌋, its byte and i from
+/// <paramref name="Places"/> (ggml's TQ1_0: five base-3 digits a byte, b = ⌈n · 256 / 243⌉ of the digits' number n); Bits
+/// the bits a digit's number takes (Radix − 1 fits them).
+/// </param>
+public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0, bool Stream = false, IReadOnlyList<FieldPlace>? Places = null, int Radix = 0)
 {
-    /// <summary>The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it (a stream's field may run into the next bytes).</summary>
+    /// <summary>Digits of <see cref="Radix"/> a byte holds as a fraction (the largest n with Radix^n at most 256; 0 for a plane of bits).</summary>
+    public int Digits
+    {
+        get
+        {
+            int n = 0;
+            for (int power = Radix; Radix >= 2 && power <= 256; power *= Radix)
+            {
+                n++;
+            }
+
+            return n;
+        }
+    }
+
+    /// <summary>
+    /// Digit <paramref name="digit"/> (0 the most significant) of <paramref name="value"/> read as a fraction in base
+    /// <see cref="Radix"/>: ⌊Radix · ((value · Radix^digit) mod 256) / 256⌋.
+    /// </summary>
+    public int Digit(byte value, int digit)
+    {
+        int power = 1;
+        for (int i = 0; i < digit; i++)
+        {
+            power *= Radix;
+        }
+
+        return (value * power & 0xFF) * Radix >> 8;
+    }
+
+    /// <summary>
+    /// The byte of value <paramref name="value"/>'s field in the block and the field's lowest bit in it (a stream's or a
+    /// listed field may run into the next bytes; a plane of digits: the digit).
+    /// </summary>
     public (int Byte, int Shift) Place(int value)
     {
+        if (Places is { } places)
+        {
+            var place = places[value];
+            return (place.Byte, place.Shift);
+        }
+
         if (Stream)
         {
             long bit = 8L * Offset + (long)value * Bits;
@@ -137,6 +188,14 @@ public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0, 
         return null;
     }
 }
+
+/// <summary>
+/// Where a listed field of a code plane lies (<see cref="CodePlane.Places"/>): byte <paramref name="Byte"/> of the block,
+/// from its bit <paramref name="Shift"/> (a plane of digits: its digit <paramref name="Shift"/>, 0 the most significant).
+/// </summary>
+/// <param name="Byte">The field's byte in the block.</param>
+/// <param name="Shift">The field's lowest bit in the byte (0 to 7), or a digit's place.</param>
+public readonly record struct FieldPlace(int Byte, int Shift);
 
 /// <summary>
 /// A piece of a sub-block's scale or minimum (<see cref="SuperBlock"/>): <paramref name="Bits"/> bits at bit
@@ -749,13 +808,34 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     /// </summary>
     public bool Valid => Values >= 1 && Bytes >= 1 && Group >= 1 && UnitBytes >= Group * Bytes && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1
         && Planes.Sum(p => p.Bits) == Code.Bits
-        && Planes.All(p => p.Bits >= 1 && p.Group >= 1 && (p.Stream ? p.Bits <= 64 : (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0
-                && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8))
-            && Enumerable.Range(0, Values / Code.Width).All(v => p.Place(v).Byte + (p.Place(v).Shift + p.Bits + 7) / 8 <= Bytes))
+        && Planes.All(PlaneHolds)
         && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && (s.Type.Width == 1 || s.Values == s.Type.Width) && (Shared(s)
             ? s.Values % Values == 0 && UnitValues % s.Values == 0 && s.Type.Width == 1
                 && (s.Pieces is { } shared ? shared.Count == UnitValues / s.Values : 8L * s.Offset + (long)UnitValues / s.Values * s.Type.Bits <= 8L * UnitBytes)
             : Values % s.Values == 0 && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes)));
+
+    // Whether plane p's fields hold together: fields of 1, 2, 4 or 8 bits in groups (or whole bytes a value), a stream's or
+    // listed fields of up to 64 bits, or listed digits of a radix (each a digit its byte holds, its number within the bits);
+    // a listed plane a field an entry; each field within a block.
+    private bool PlaneHolds(CodePlane p)
+    {
+        int fields = Values / Code.Width;
+        if (p.Bits < 1 || p.Group < 1 || p.Places is { } listed && listed.Count != fields)
+        {
+            return false;
+        }
+
+        if (p.Radix != 0)
+        {
+            return p.Radix >= 2 && p.Places is { } digits && !p.Stream && p.Bits <= 8 && p.Radix - 1 < 1 << p.Bits
+                && digits.All(f => f.Byte >= 0 && f.Byte < Bytes && f.Shift >= 0 && f.Shift < p.Digits);
+        }
+
+        bool shape = p.Places is { } places ? p.Bits <= 64 && places.All(f => f.Byte >= 0 && f.Shift is >= 0 and <= 7)
+            : p.Stream ? p.Bits <= 64
+            : (p.Bits is 1 or 2 or 4 or 8 || p.Bits % 8 == 0 && p.Group == 1) && p.Group * p.Bits % 8 == 0 && (p.Stride == 0 || p.Stride >= p.Group * p.Bits / 8);
+        return shape && Enumerable.Range(0, fields).All(v => p.Place(v).Byte + (p.Place(v).Shift + p.Bits + 7) / 8 <= Bytes);
+    }
 
     /// <summary>Whether a value's code or factors come from a codebook (a code or a scale of more than one value an entry).</summary>
     public bool HasCodebook => Code.Width > 1 || (Scales ?? []).Concat(Mins ?? []).Any(s => s.Type.Width > 1);
@@ -775,7 +855,8 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 
     /// <summary>
     /// Value <paramref name="v"/>'s code bits in <paramref name="block"/> (a group's bytes where Group passes 1, v within the
-    /// group), its planes' fields joined (the first the lowest bits): a codebook's, its entry's index.
+    /// group), its planes' fields joined (the first the lowest bits; a plane of digits gives its digit): a codebook's, its
+    /// entry's index.
     /// </summary>
     public ulong CodeBits(ReadOnlySpan<byte> block, int v)
     {
@@ -787,7 +868,7 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         {
             var plane = Planes[p];
             var (at, shift) = plane.Place(entry);
-            code |= Field(block, 8L * at + shift, plane.Bits) << low;
+            code |= (plane.Radix != 0 ? (ulong)plane.Digit(block[at], shift) : Field(block, 8L * at + shift, plane.Bits)) << low;
             low += plane.Bits;
         }
 
@@ -1229,7 +1310,7 @@ public sealed class ElementType : IKind
         init
         {
             field = value is null || value.Valid ? value : throw new ArgumentException($"The description of {Name} does not hold together: {value}.", nameof(Description));
-            _described = true;
+            _described = value is not null;                                 // none given: the one the older entries imply
         }
     }
 

@@ -8177,9 +8177,11 @@ internal sealed partial class CpuBackend
     //   bit flipped or by a byte shuffle), 8 chunks' codes transposed into the int8 dot products' lanes (or, a chunk's codes
     //   16 bytes or fewer, gathered straight into them: GatheredSteps), the least added back through x's code sums; the
     //   scales and minimums of the 8 chunks gathered and read by their number types at once (an integer, a table of an 8-bit
-    //   type's numbers, a 16-bit float by its bits); where every span's codes load alike, the load and the map are the
-    //   kernels' type parameters (UniformOne, UniformRowSteps); a wide integer's byte planes are made by its plane count's
-    //   own step (IStepLoad.Plane);
+    //   type's numbers, a 16-bit float by its bits, its pieces joined first); where every span's codes load alike, the load
+    //   and the map are the kernels' type parameters (UniformOne, UniformRowSteps); a wide integer's byte planes are made by
+    //   its plane count's own step (IStepLoad.Plane); a plane of a radix's digits by its runs' bytes times each run's power
+    //   of the radix (DigitsOf); a codebook's entries by an index of up to 16 bits over any planes, each plane's field read
+    //   from a word and the fields joined (Entry);
     // - float32: values a float32 holds (16-bit floats by their bits, 16-bit integers, float32, codes of up to 8 bits
     //   through a table of their numbers times their scales), float32 FMAs with x;
     // - float64: 64-bit floats as stored, 32- and 64-bit integers made float64 in registers, FMAs with x in float64 (no
@@ -8242,7 +8244,8 @@ internal sealed partial class CpuBackend
     /// plane) and the order they give the span's values; how a code becomes the integer lane's byte; each value of the
     /// period's place in x's layout; for each scale and minimum, the 8 lanes' bytes, shifts and masks at each group of the
     /// period and how its number reads. Null where the description is one the lane cannot read in registers (codes wider
-    /// than 8 bits that are not one plane of whole bytes a value).
+    /// than 8 bits that are not one plane of whole bytes a value; a codebook's index of more than 16 bits, or of a radix's
+    /// digits).
     /// </summary>
     private sealed unsafe class DescribedPlan
     {
@@ -8478,6 +8481,12 @@ internal sealed partial class CpuBackend
         private int entryWidth = 1, entryMask;
         private int* entryAt;
         private int* entryShift;
+
+        // An index wider than a byte's field (CodebookSpans): per entry and plane its 32-bit word's first byte and shift; per
+        // plane its mask and its bits' place in the index.
+        private bool entryWide;
+        private uint* entryMasks;
+        private int* entryLows;
         private int vectorCount;
         private int[] vectorWidth = [];
         private byte*[] vectorMasks = [];
@@ -8526,7 +8535,7 @@ internal sealed partial class CpuBackend
         private bool Wide64()
         {
             var d = D;
-            if (d is not { Values: 1, Planes: [{ Offset: 0, Group: 1, Bits: 16 or 32 or 64 } plane], Scales: null or [], Mins: null or [] } || d.Bytes != plane.Bits / 8)
+            if (d is not { Values: 1, Planes: [{ Offset: 0, Group: 1, Bits: 16 or 32 or 64, Places: null, Radix: 0 } plane], Scales: null or [], Mins: null or [] } || d.Bytes != plane.Bits / 8)
             {
                 return false;
             }
@@ -8624,7 +8633,10 @@ internal sealed partial class CpuBackend
         private bool Narrow()
         {
             var d = D;
-            if (d.Code.Bits > 8 || d.Planes.Any(p => p.Stream ? p.Bits > 8 : p.Bits is not (1 or 2 or 4 or 8)))
+            bool book = d.HasCodebook;
+            // Codes of at most 8 bits from fields of at most 8 (bits, or a radix's digits); a codebook's entry indices of up
+            // to 16 bits from fields of bits, each read whole however many planes and bytes it takes (CodebookSpans).
+            if (book ? d.Code.Bits > 16 || d.Planes.Any(p => p.Radix != 0) : d.Code.Bits > 8 || d.Planes.Any(p => p.Bits > 8))
             {
                 return false;
             }
@@ -8637,7 +8649,6 @@ internal sealed partial class CpuBackend
                 return false;
             }
 
-            bool book = d.HasCodebook;
             var all = (d.Scales ?? []).Where(f => f.Type.Width == 1).Concat(d.Mins ?? []).ToList();
             factorList = all;
             int chunk = all.All(f => f.Values % 32 == 0) ? 32 : all.All(f => f.Values % 16 == 0) ? 16 : all.All(f => f.Values % 8 == 0) ? 8 : 0;
@@ -8656,7 +8667,7 @@ internal sealed partial class CpuBackend
                 numbers[c] = d.Code.Value((ulong)c) + d.CodeOffset;
             }
 
-            var entries = book ? d.Code.Table!.Select(v => v + d.CodeOffset).ToArray() : numbers;
+            var entries = book && d.Code.Width > 1 ? d.Code.Table!.Select(v => v + d.CodeOffset).ToArray() : numbers;
             double[] reached = vectors.Count > 0 ? [.. entries, .. entries.Select(v => -v)] : entries;
             int unitShift = -1, least = 0, span = 255;
             for (int s = 0; s <= 7 && unitShift < 0 && chunk >= 16 && reached.All(double.IsFinite); s++)
@@ -8671,7 +8682,7 @@ internal sealed partial class CpuBackend
             }
 
             Mode = unitShift >= 0 ? DescribedMode.Integer : DescribedMode.Single;
-            if (book && (Mode != DescribedMode.Integer || d.Planes.Count != 1 || 32 % d.Code.Width != 0 || d.Code.Width > 8 || vectors.Any(f => 32 % f.Values != 0 || f.Values > 8)))
+            if (book && (Mode != DescribedMode.Integer || 32 % d.Code.Width != 0 || d.Code.Width > 8 || vectors.Any(f => 32 % f.Values != 0 || f.Values > 8)))
             {
                 return false;                                                  // a codebook reads in the integer lane alone
             }
@@ -8760,7 +8771,8 @@ internal sealed partial class CpuBackend
                 }
 
                 int spans = Period / 32;
-                if (Planes == 1 && Map != CodeMap.Table && Enumerable.Range(0, spans).All(r => runKind[r] == runKind[0]) && runKind[0] is 1 or 2 or 4 or 8)
+                // (A plane of digits is made by Raw alone: its runs' bytes times each run's power of the radix.)
+                if (Planes == 1 && d.Planes[0].Radix == 0 && Map != CodeMap.Table && Enumerable.Range(0, spans).All(r => runKind[r] == runKind[0]) && runKind[0] is 1 or 2 or 4 or 8)
                 {
                     UniformRuns = runKind[0];
                 }
@@ -8875,12 +8887,15 @@ internal sealed partial class CpuBackend
             planeMask = Pin<Vector256<byte>>(Planes);
             planeLow = Pin<int>(Planes);
             streamAt = Pin<int>(4 * spans * Planes);
+            planeRadix = Pin<int>(Planes);
+            digitTimes = d.Planes.Any(p => p.Radix != 0) ? Pin<Vector256<byte>>(spans * Planes) : null;
             Order = Pin<int>(Period);
             int low = 0;
             for (int p = 0; p < Planes; p++)
             {
                 planeMask[p] = Vector256.Create((byte)((1 << d.Planes[p].Bits) - 1));
                 planeLow[p] = low;
+                planeRadix[p] = d.Planes[p].Radix;
                 low += d.Planes[p].Bits;
             }
 
@@ -8889,6 +8904,7 @@ internal sealed partial class CpuBackend
             Span<int> mine = stackalloc int[32];
             Span<int> order = stackalloc int[32];
             Span<int> shifts = stackalloc int[8];
+            Span<byte> times = stackalloc byte[32];
             for (int r = 0; r < spans; r++)
             {
                 bool vector = true;
@@ -8923,11 +8939,20 @@ internal sealed partial class CpuBackend
                         continue;
                     }
 
+                    // Runs of bytes at one shift (a plane of digits: at one digit, the runs loaded as they are and each
+                    // byte's digit made by its run's power of the radix); a listed field running into the next byte is
+                    // read one value at a time.
                     int first = int.MaxValue, runs = 0;
                     for (int t = 0; t < 32; t++)
                     {
                         int v = 32 * r + t;
                         var (b, s) = plane.Place(v % d.Values);
+                        if (plane.Radix == 0 && s + plane.Bits > 8)
+                        {
+                            vector = false;
+                            break;
+                        }
+
                         at[t] = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b;
                         shift[t] = s;
                         first = Math.Min(first, at[t]);
@@ -8972,6 +8997,26 @@ internal sealed partial class CpuBackend
                     int i = r * Planes + p;
                     runOffset[i] = first;
                     runKind[i] = (byte)runs;
+                    if (plane.Radix != 0)
+                    {
+                        // Digits: the runs' bytes loaded unshifted, byte j of the 32 times the radix to its run's digit.
+                        for (int j = 0; j < 32; j++)
+                        {
+                            int power = 1;
+                            for (int e = 0; e < shifts[j / n]; e++)
+                            {
+                                power *= plane.Radix;
+                            }
+
+                            times[j] = (byte)power;
+                        }
+
+                        digitTimes[i] = Vector256.Create<byte>(times);
+                        runShift[i] = default;
+                        new Span<int>(runCount + 8 * i, 8).Clear();
+                        continue;
+                    }
+
                     // 8 runs: a shift a 32-bit lane; fewer: a shift a 64-bit lane, run q's in lanes [4q / runs, 4(q + 1) / runs).
                     runShift[i] = runs == 8
                         ? Vector256.Create(shifts[0], shifts[1], shifts[2], shifts[3], shifts[4], shifts[5], shifts[6], shifts[7]).AsUInt64()
@@ -9022,16 +9067,45 @@ internal sealed partial class CpuBackend
 
             Identity = true;
             (entryWidth, entryMask) = (w, (1 << d.Planes[0].Bits) - 1);
-            entryAt = Pin<int>(spans * perSpan);
-            entryShift = Pin<int>(spans * perSpan);
+            // Each entry's index: one plane whose fields each lie within a byte, a byte read a field; else (more planes, fields
+            // across bytes or of more than 8 bits) each plane's field from a 32-bit word kept within the period, its bits
+            // joined (the first plane the lowest).
+            entryWide = Planes > 1 || Enumerable.Range(0, d.Values / w).Any(e => d.Planes[0].Place(e).Shift + d.Planes[0].Bits > 8);
+            if (entryWide && PeriodBytes < 4)
+            {
+                return false;
+            }
+
+            entryAt = Pin<int>(spans * perSpan * Planes);
+            entryShift = Pin<int>(spans * perSpan * Planes);
+            entryMasks = Pin<uint>(Planes);
+            entryLows = Pin<int>(Planes);
+            for (int p = 0, low = 0; p < Planes; low += d.Planes[p].Bits, p++)
+            {
+                (entryMasks[p], entryLows[p]) = ((1u << d.Planes[p].Bits) - 1, low);
+            }
+
             for (int r = 0; r < spans; r++)
             {
                 for (int j = 0; j < perSpan; j++)
                 {
                     int v = 32 * r + j * w;
-                    var (b, s) = d.Planes[0].Place(v % d.Values / w);
-                    entryAt[r * perSpan + j] = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b;
-                    entryShift[r * perSpan + j] = s;
+                    for (int p = 0; p < Planes; p++)
+                    {
+                        var (b, s) = d.Planes[p].Place(v % d.Values / w);
+                        int at = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b, i = (r * perSpan + j) * Planes + p;
+                        if (entryWide)
+                        {
+                            int kept = Math.Max(0, Math.Min(at, PeriodBytes - 4));
+                            (at, s) = (kept, s + 8 * (at - kept));
+                            if (s + d.Planes[p].Bits > 32)
+                            {
+                                return false;
+                            }
+                        }
+
+                        (entryAt[i], entryShift[i]) = (at, s);
+                    }
                 }
             }
 
@@ -9129,27 +9203,26 @@ internal sealed partial class CpuBackend
                 return CodebookAny(period, span);
             }
 
-            int mask = entryMask;
             Vector256<byte> v;
             if (entryWidth == 8)
             {
                 int at = span * 4;
-                v = Vector256.Create(*(ulong*)(entryBytes + 8 * (period[entryAt[at]] >> entryShift[at] & mask)),
-                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 1]] >> entryShift[at + 1] & mask)),
-                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 2]] >> entryShift[at + 2] & mask)),
-                    *(ulong*)(entryBytes + 8 * (period[entryAt[at + 3]] >> entryShift[at + 3] & mask))).AsByte();
+                v = Vector256.Create(*(ulong*)(entryBytes + 8 * Entry(period, at)),
+                    *(ulong*)(entryBytes + 8 * Entry(period, at + 1)),
+                    *(ulong*)(entryBytes + 8 * Entry(period, at + 2)),
+                    *(ulong*)(entryBytes + 8 * Entry(period, at + 3))).AsByte();
             }
             else
             {
                 int at = span * 8;
-                v = Vector256.Create(*(uint*)(entryBytes + 4 * (period[entryAt[at]] >> entryShift[at] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 1]] >> entryShift[at + 1] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 2]] >> entryShift[at + 2] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 3]] >> entryShift[at + 3] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 4]] >> entryShift[at + 4] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 5]] >> entryShift[at + 5] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 6]] >> entryShift[at + 6] & mask)),
-                    *(uint*)(entryBytes + 4 * (period[entryAt[at + 7]] >> entryShift[at + 7] & mask))).AsByte();
+                v = Vector256.Create(*(uint*)(entryBytes + 4 * Entry(period, at)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 1)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 2)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 3)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 4)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 5)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 6)),
+                    *(uint*)(entryBytes + 4 * Entry(period, at + 7))).AsByte();
             }
 
             if (vectorCount == 1)
@@ -9175,26 +9248,26 @@ internal sealed partial class CpuBackend
             switch (w)
             {
                 case 8:
-                    v = Vector256.Create(*(ulong*)(entryBytes + 8 * (period[entryAt[at]] >> entryShift[at] & entryMask)),
-                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 1]] >> entryShift[at + 1] & entryMask)),
-                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 2]] >> entryShift[at + 2] & entryMask)),
-                        *(ulong*)(entryBytes + 8 * (period[entryAt[at + 3]] >> entryShift[at + 3] & entryMask))).AsByte();
+                    v = Vector256.Create(*(ulong*)(entryBytes + 8 * Entry(period, at)),
+                        *(ulong*)(entryBytes + 8 * Entry(period, at + 1)),
+                        *(ulong*)(entryBytes + 8 * Entry(period, at + 2)),
+                        *(ulong*)(entryBytes + 8 * Entry(period, at + 3))).AsByte();
                     break;
                 case 4:
-                    v = Vector256.Create(*(uint*)(entryBytes + 4 * (period[entryAt[at]] >> entryShift[at] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 1]] >> entryShift[at + 1] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 2]] >> entryShift[at + 2] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 3]] >> entryShift[at + 3] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 4]] >> entryShift[at + 4] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 5]] >> entryShift[at + 5] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 6]] >> entryShift[at + 6] & entryMask)),
-                        *(uint*)(entryBytes + 4 * (period[entryAt[at + 7]] >> entryShift[at + 7] & entryMask))).AsByte();
+                    v = Vector256.Create(*(uint*)(entryBytes + 4 * Entry(period, at)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 1)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 2)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 3)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 4)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 5)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 6)),
+                        *(uint*)(entryBytes + 4 * Entry(period, at + 7))).AsByte();
                     break;
                 default:
                     Span<byte> bytes = stackalloc byte[32];
                     for (int j = 0; j < per; j++)
                     {
-                        new ReadOnlySpan<byte>(entryBytes + w * (period[entryAt[at + j]] >> entryShift[at + j] & entryMask), w).CopyTo(bytes.Slice(j * w, w));
+                        new ReadOnlySpan<byte>(entryBytes + w * Entry(period, at + j), w).CopyTo(bytes.Slice(j * w, w));
                     }
 
                     v = Vector256.Create<byte>(bytes);
@@ -9208,6 +9281,24 @@ internal sealed partial class CpuBackend
             }
 
             return v + leastBytes;
+        }
+
+        // Entry e's index (e counted over the period's spans): its byte's field, or its planes' fields from their words, joined.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private int Entry(byte* period, int e)
+        {
+            if (!entryWide)
+            {
+                return period[entryAt[e]] >> entryShift[e] & entryMask;
+            }
+
+            uint index = 0;
+            for (int p = 0, at = e * Planes; p < Planes; p++, at++)
+            {
+                index |= (Unsafe.ReadUnaligned<uint>(period + entryAt[at]) >> entryShift[at] & entryMasks[p]) << entryLows[p];
+            }
+
+            return (int)index;
         }
 
         // Vector factor f's masks of a span's 32 values (0xFF where the value is negated): each of its groups' index read from
@@ -9351,8 +9442,9 @@ internal sealed partial class CpuBackend
 
                     factorTables[f] = table;
                 }
-                else if (HalfOf(type) is { } half && factor.Pieces is null)
+                else if (HalfOf(type) is { } half)
                 {
+                    // (Its bits from their pieces where it has them: Read joins them before reading them as a 16-bit float.)
                     reads[f] = FactorRead.Half;
                     factorHalves[f] = half;
                 }
@@ -9473,10 +9565,30 @@ internal sealed partial class CpuBackend
                         return OneByOne(period, span);
                 }
 
+                if (planeRadix[p] != 0)
+                {
+                    v = DigitsOf(v, digitTimes[at], planeRadix[p]);
+                }
+
                 code |= Vector256.ShiftLeft((v & planeMask[p]).AsUInt16(), planeLow[p]).AsByte();
             }
 
             return code;
+        }
+
+        // A plane of digits' planes' radix (0: bits), and per span and plane each byte's power of the radix (its run's digit).
+        private int* planeRadix;
+        private Vector256<byte>* digitTimes;
+
+        // Each byte's digit: ⌊radix · ((byte · times) mod 256) / 256⌋ (CodePlane.Digit), over 16-bit lanes.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private static Vector256<byte> DigitsOf(Vector256<byte> bytes, Vector256<byte> times, int radix)
+        {
+            var (low, high) = Vector256.Widen(bytes);
+            var (lowTimes, highTimes) = Vector256.Widen(times);
+            var mask = Vector256.Create((ushort)0xFF);
+            var r = Vector256.Create((ushort)radix);
+            return Vector256.Narrow(Vector256.ShiftRightLogical((low * lowTimes & mask) * r, 8), Vector256.ShiftRightLogical((high * highTimes & mask) * r, 8));
         }
 
         // A span's run kind for a bit stream (Spans; Raw reads it by StreamLoad).
