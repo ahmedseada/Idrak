@@ -30,7 +30,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: scales on x's columns (a stored weight's scales shared by every output: a scale a column, a run of 32 columns, one for the whole tensor) are applied to x once a call, then the product with no scales: under the generic and measured routes the product of x and the weight's values times their columns' scales (q4_0, int8, bfloat16, int2; 1, 3, 9 and 70 rows; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesColumnScales),
         ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and IDRAK_ROUTE_LANES all, described and written (any case, blank is all), each refusing anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
         ("product routes: ggml's q4_1, q5_0, q5_1, iq4_xs, tq1_0, tq2_0, iq2_xs, iq2_s, iq3_s, iq1_s and iq1_m described as data (a minimum added, fifth bits a stream, 6-bit scales in two pieces, base-3 digits of a byte read as a fraction, codebook indices of 9 to 12 bits over two or three planes and listed fields, the delta folded into IQ1's codebook, a float16 scale in four pieces) decode random blocks to ggml's values bit for bit, and the CPU's described lane, by the integer arithmetic and every instruction set that runs here, gives the product of those values (1, 3, 4, 5, 9 and 70 rows; within float32's bound for k terms and x's rounding to int8 a block of 32); CUDA's described lane gives it too where it reads the type, and where it does not says why", ProductRoutesGgufDescribed),
-        ("product routes: every described type is written from float32 by its description alone (ggml's q8_0, q4_0, q4_1, q5_0, q5_1, iq4_nl, iq4_xs, q2_k, q3_k, q4_k, q5_k, q6_k, tq1_0 (base-3 digits), tq2_0, iq2_xxs, iq2_xs, iq2_s, iq3_xxs, iq3_s, iq1_s (a delta sign its sub-block's codes share) and iq1_m, int2, mxfp4, the per-element types of up to 16 bits and the types made of a description alone: two planes, a table, fp6, a bit stream, a scale shared by a group of blocks): the stored values read back through the type's own conversion, through its description and through the CPU's described lane are the values the encoder chose; the per-element types round as their own conversions do (to nearest, ties to even, a zero's sign kept, past the range as their specials say; float8_e8m0's own takes the power of two at or below); rows of zeros, of one value, with an outlier, all negative, with NaN and infinities and of tiny and large values are written; the same bytes again", ProductRoutesDescribedWriting),
+        ("product routes: every described type is written from float32 by its description alone (ggml's q8_0, q4_0, q4_1, q5_0, q5_1, iq4_nl, iq4_xs, q2_k, q3_k, q4_k, q5_k, q6_k, tq1_0 (base-3 digits), tq2_0, iq2_xxs, iq2_xs, iq2_s, iq3_xxs, iq3_s, iq1_s (a delta sign its sub-block's codes share) and iq1_m, int2, mxfp4, the per-element types of up to 16 bits and the types made of a description alone: two planes, a table, fp6, a bit stream, a scale shared by a group of blocks): the stored values read back through the type's own conversion, through its description and through the CPU's described lane are the values the encoder chose; the per-element types round as their own conversions do (to nearest, ties to even, a zero's sign kept, past the range as their specials say); rows of zeros, of one value, with an outlier, all negative, with NaN and infinities and of tiny and large values are written; the same bytes again", ProductRoutesDescribedWriting),
     ];
 
     private static readonly string[] RouteFormats = ["bfloat16", "float16", "int8", "q8_0", "q4_0", "iq4_nl"];
@@ -804,10 +804,10 @@ internal abstract partial class DesktopTests : Tests
             }
 
             // A block type's values are finite; a per-element float type's are its own rounding (NaN for NaN, past its range its
-            // infinity or NaN), the same as its own conversion's (but float8_e8m0's, which takes the power of two at or below).
+            // infinity or NaN), the same as its own conversion's.
             bool perElement = d.UnitValues == 1 || d.Scales is null or [] && d.Mins is null or [];
             Check(perElement || chosen.All(float.IsFinite), $"{name}: a chosen value is not finite");
-            if (perElement && type.FromFloat32 is { } own && own.Target != encoder && name != "float8_e8m0")
+            if (perElement && type.FromFloat32 is { } own && own.Target != encoder)
             {
                 var ownBytes = new byte[n * rowBytes];
                 own(values, ownBytes);
@@ -907,7 +907,7 @@ internal abstract partial class DesktopTests : Tests
 
         string[] expected = ["q8_0", "q4_0", "iq4_nl", "q2_k", "q3_k", "q4_k", "q5_k", "q6_k", "iq2_xxs", "iq3_xxs", "int2", "mxfp4",
             "q4_1", "q5_0", "q5_1", "iq4_xs", "tq1_0", "tq2_0", "iq2_xs", "iq2_s", "iq3_s", "iq1_s", "iq1_m"];
-        string[] ownRounding = ["bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int8", "uint8", "int4", "int16", "uint16", "uint2", "float4_e2m1"];
+        string[] ownRounding = ["bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int8", "uint8", "int4", "int16", "uint16", "uint2", "float4_e2m1", "float8_e8m0"];
         Check(expected.All(written.Contains) && expected.All(laned.Contains) && expected.All(e => ElementTypes.Get(e).FromFloat32 is not null) && ownRounding.All(rounded.Contains)
               && DescribedOnlyTypes().Concat(DescribedLayoutTypes()).Count(t => written.Contains(t.Name)) == DescribedOnlyTypes().Length + DescribedLayoutTypes().Length - 1,
             $"written by their descriptions: {string.Join(", ", written)}; through the described lane: {string.Join(", ", laned)}; rounded as their own conversions: {string.Join(", ", rounded)} "

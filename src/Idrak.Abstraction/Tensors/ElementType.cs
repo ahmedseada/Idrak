@@ -2155,14 +2155,36 @@ internal static class ElementConversions
         }
     }
 
-    // The power of two at or below |x| (floor(log2 |x|)), clamped to [2^-127, 2^127]; NaN and the infinities as NaN (0xFF),
-    // 0 and below as the smallest (2^-127: E8M0 has no zero).
+    // The nearest power of two, as every float rounds (its description's rounding): between 2^e and 2^(e + 1) the one nearer
+    // x (past 1.5 · 2^e the larger), a tie to the even code; 0, below and −∞ the smallest (2^-127: E8M0 has no zero), as is
+    // anything under it; NaN, +∞ and past the largest by half its next step (1.5 · 2^127) NaN (0xFF), as a float with a NaN
+    // and no infinity overflows.
     public static void E8M0FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
     {
         for (int i = 0; i < source.Length; i++)
         {
             float x = source[i];
-            destination[i] = (byte)(!float.IsFinite(x) ? 255 : x <= 0f ? 0 : Math.Clamp(MathF.ILogB(x) + 127, 0, 254));
+            int code;
+            if (float.IsNaN(x) || float.IsPositiveInfinity(x))
+            {
+                code = 255;
+            }
+            else if (x <= 0f || x < MathF.ScaleB(1f, -127))
+            {
+                code = 0;
+            }
+            else
+            {
+                int e = MathF.ILogB(x);                                     // 2^e <= x < 2^(e + 1), e from −127 to 127
+                float middle = MathF.ScaleB(1.5f, e);                       // exact: a float32 holds 1.5 · 2^e here
+                code = e + 127;
+                if (x > middle || x == middle && (code & 1) != 0)
+                {
+                    code++;                                                 // 255 past 1.5 · 2^127: NaN
+                }
+            }
+
+            destination[i] = (byte)code;
         }
     }
 
