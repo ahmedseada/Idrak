@@ -5,7 +5,7 @@ namespace Idrak.Abstraction.Modules;
 
 /// <summary>
 /// A linear layer as its adapter (<see cref="ILinearAdapter"/>) sees it: the sizes, the frozen weight's values and the
-/// product with that weight, however the layer stores it (float, packed int8/int4/bfloat16, FP8 for training).
+/// product with that weight, however the layer stores it.
 /// </summary>
 public interface ILinearLayer
 {
@@ -15,7 +15,7 @@ public interface ILinearLayer
     /// <summary>The output features (the weight's columns).</summary>
     int OutFeatures { get; }
 
-    /// <summary>The weight's values as floats, [in, out] row-major, on the host (packed weights expanded).</summary>
+    /// <summary>The weight's values as floats, [in, out] row-major, on the host.</summary>
     float[] WeightValues();
 
     /// <summary><paramref name="input"/> [..., in] times the layer's own weight, without bias or adapter: [..., out].</summary>
@@ -119,7 +119,7 @@ public interface ILinearAdapter
 /// <c>(x·W + s·x·A·B) ⊙ m / ‖W + s·A·B‖ + b</c>. As in the paper (section 4.3) and peft, the norm is treated as a constant
 /// in the backward pass (no gradient through it), which saves memory and changes the gradients only slightly. The norm
 /// is computed each forward pass without forming W + s·A·B: ‖W‖² (once, the base is frozen) + 2s·Σ_r B ⊙ (Aᵀ·W) +
-/// s²·Σ_r B ⊙ (AᵀA·B), so a packed base (a frozen int4 or int8 one, QLoRA-style) is read through its own product, never expanded. The magnitude starts as
+/// s²·Σ_r B ⊙ (AᵀA·B), so the base is read through its own product, never expanded. The magnitude starts as
 /// ‖W‖ and B at zero, so adding the adapter does not change the outputs.
 /// </summary>
 public sealed class DoraAdapter : IPeftAdapter, IDisposable

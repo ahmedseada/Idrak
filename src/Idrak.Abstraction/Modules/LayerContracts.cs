@@ -26,32 +26,6 @@ public interface IAdaptableLinear : ILinearLayer
 }
 
 /// <summary>
-/// A linear layer whose weight can be held in the built-in packed formats (<see cref="PackedFormat"/>): <c>QuantizeInt8</c>,
-/// <c>QuantizeInt4</c>, <c>ToBFloat16</c>, <c>ToFloat32</c> and <c>DequantizeInt8</c> convert the layers they choose, and
-/// <c>ModuleFiles</c> saves them packed and makes room for them before a load, counting the layers in model order.
-/// </summary>
-public interface IPackableLinear : ILinearLayer
-{
-    /// <summary>The layer's name in its parent (q, k, v, o, gate, up, down, head): what conversion targets match.</summary>
-    string? Name { get; }
-
-    /// <summary>The packed weights the layer holds (a built-in format, <see cref="IKernelPackedWeight"/>, or one of one's own), else null (float weights).</summary>
-    IPackedWeight? PackedWeight { get; }
-
-    /// <summary>Holds the weight in <paramref name="format"/>, converted from what the layer holds now; nothing when it holds that format already.</summary>
-    void Pack(PackedFormat format);
-
-    /// <summary>Holds float32 weights again (the rounding stays), trainable or not; nothing when the weights are float already.</summary>
-    void Unpack(bool trainable);
-
-    /// <summary>
-    /// Makes room for weights in <paramref name="format"/> that a load then fills (allocated, not computed from the
-    /// weights the layer holds, which it lets go of); nothing when it holds that format already.
-    /// </summary>
-    void Reserve(PackedFormat format);
-}
-
-/// <summary>
 /// A module whose forward pass is recomputed in the backward pass instead of keeping its activations when a training
 /// loop or a pipeline stage checkpoints (a transformer block: many activations, of which only its output is kept).
 /// </summary>
