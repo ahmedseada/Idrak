@@ -1113,7 +1113,7 @@ public sealed class ElementType : IKind
         Scaled = new ScaledBlock(32, 10, 2, SignedCodes: true, CodeBias: 0, new FloatBits(5, 10), ScaleOffset: 0, CodeOffset: 2),
         Description = new TypeDescription(32, 10, NumberType.Integer(2, signed: true), [new CodePlane(2, 2, 4)],
             Scales: [new BlockScale(NumberType.Floating(5, 10), 32, 0)]),
-        ToFloat32 = ElementConversions.Int2ToFloat32, FromFloat32 = ElementConversions.Int2FromFloat32,
+        ToFloat32 = ElementConversions.Int2ToFloat32,
     };
 
     /// <summary>A truth value, one byte each (0 or 1, as PyTorch's bool).</summary>
@@ -1207,7 +1207,7 @@ public sealed class ElementType : IKind
         Scaled = new ScaledBlock(32, 17, 4, SignedCodes: false, CodeBias: 0, new FloatBits(8, 0), ScaleOffset: 0, CodeOffset: 1, NibblesSplit: true,
             CodeType: Float4E2M1, ScaleType: Float8E8M0),
         Description = new TypeDescription(32, 17, Float4E2M1.Description!.Code, [new CodePlane(1, 4, 32)], Scales: [new BlockScale(Float8E8M0.Description!.Code, 32, 0)]),
-        ToFloat32 = ElementConversions.MxFp4ToFloat32, FromFloat32 = ElementConversions.MxFp4FromFloat32,
+        ToFloat32 = ElementConversions.MxFp4ToFloat32,
     };
 
     /// <inheritdoc />
@@ -1325,8 +1325,36 @@ public sealed class ElementType : IKind
     /// <summary>Its widening to float32 on the CPU, or null when it has none.</summary>
     public ElementDecoder? ToFloat32 { get; init; }
 
-    /// <summary>Its storing from float32 on the CPU, or null when it has none (a format read only, such as most of ggml's).</summary>
-    public ElementEncoder? FromFloat32 { get; init; }
+    /// <summary>
+    /// Its storing from float32 on the CPU: its own conversion, else the writer of its description (any described type is
+    /// written by its <see cref="Description"/> alone: the codes, scales and minimums closest to the values, searched by
+    /// measured error), else null (a type that describes nothing it could be written by).
+    /// </summary>
+    public ElementEncoder? FromFloat32
+    {
+        get
+        {
+            if (!_encoderKnown)
+            {
+                if (field is null && DescribedEncoder.Of(Description) is { } written)
+                {
+                    field = written.Encode;
+                }
+
+                _encoderKnown = true;
+            }
+
+            return field;
+        }
+
+        init
+        {
+            field = value;
+            _encoderKnown = value is not null;
+        }
+    }
+
+    private bool _encoderKnown;
 
     /// <summary>The bytes <paramref name="values"/> values take: whole blocks, a last partial byte rounded up.</summary>
     /// <exception cref="ArgumentException">A block format given a count that is not whole blocks.</exception>
@@ -2072,87 +2100,6 @@ internal static class ElementConversions
         }
     }
 
-    /// <summary>
-    /// int2's blocks from float32 values: per block of 32, the float16 scale d whose codes clamp(round(x / d), −2, 1) give the
-    /// least squared error among candidates (the codes reach twice as far below zero as above, so d's sign puts the value
-    /// of largest magnitude on −2 or on 1: d = −xmax / t for t in 1.5, 2, 2.5, 3, and d = xmax / t for t in 1, 1.25, 1.5,
-    /// each refined once by least squares over its codes), then the codes rounded again with d as stored. A block of zeros
-    /// has d = 0 and every code 0.
-    /// </summary>
-    public static void Int2FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
-    {
-        ReadOnlySpan<float> below = [1.5f, 2f, 2.5f, 3f], above = [1f, 1.25f, 1.5f];
-        for (int b = 0; b < source.Length / 32; b++)
-        {
-            var x = source.Slice(b * 32, 32);
-            var block = destination.Slice(b * 10, 10);
-            float xmax = 0f;
-            foreach (float v in x)
-            {
-                if (MathF.Abs(v) > MathF.Abs(xmax))
-                {
-                    xmax = v;
-                }
-            }
-
-            float best = 0f;
-            double bestError = double.MaxValue;
-            if (xmax != 0f && float.IsFinite(xmax))
-            {
-                foreach (float t in below)
-                {
-                    Try(x, -xmax / t, ref best, ref bestError);
-                }
-
-                foreach (float t in above)
-                {
-                    Try(x, xmax / t, ref best, ref bestError);
-                }
-            }
-
-            var d = (Half)best;
-            System.Buffers.Binary.BinaryPrimitives.WriteHalfLittleEndian(block, d);
-            float stored = (float)d, inverse = stored != 0f ? 1f / stored : 0f;
-            for (int i = 0; i < 8; i++)
-            {
-                int bits = 0;
-                for (int j = 0; j < 4; j++)
-                {
-                    bits |= (Code(x[4 * i + j] * inverse) & 3) << (2 * j);
-                }
-
-                block[2 + i] = (byte)bits;
-            }
-        }
-
-        static int Code(float t) => float.IsNaN(t) ? 0 : (int)Math.Clamp(MathF.Round(t), -2f, 1f);
-
-        // The squared error of the codes for scale d, and of their least-squares scale; the better kept in (best, error).
-        static void Try(ReadOnlySpan<float> x, float d, ref float best, ref double error)
-        {
-            for (int pass = 0; pass < 2 && d != 0f && float.IsFinite(d); pass++)
-            {
-                double xq = 0, qq = 0, e = 0;
-                float inverse = 1f / d;
-                foreach (float v in x)
-                {
-                    int q = Code(v * inverse);
-                    xq += (double)v * q;
-                    qq += q * q;
-                    double r = v - (double)q * d;
-                    e += r * r;
-                }
-
-                if (e < error)
-                {
-                    (best, error) = (d, e);
-                }
-
-                d = qq > 0 ? (float)(xq / qq) : 0f;
-            }
-        }
-    }
-
     // fp4 E2M1's 16 codes' values: the sign in bit 3, then 2 exponent bits and one mantissa bit (exponent 0: 0 or 0.5).
     private static readonly float[] E2M1 = [0f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 6f, -0f, -0.5f, -1f, -1.5f, -2f, -3f, -4f, -6f];
 
@@ -2221,37 +2168,6 @@ internal static class ElementConversions
 
     // MXFP4's blocks, by their description (ScaledToFloat32: each E2M1 code's value times the E8M0 scale).
     public static void MxFp4ToFloat32(ReadOnlySpan<byte> source, Span<float> destination) => ScaledToFloat32(ElementType.MXFP4.Scaled!, source, destination);
-
-    /// <summary>
-    /// MXFP4's blocks from float32 values, as OCP's conversion makes them: per block of 32, the shared exponent
-    /// floor(log2(max |v|)) − 2 (E2M1's largest exponent), clamped to E8M0's range (a block of zeros: 2^-127), and each value
-    /// over 2^exponent rounded to the nearest E2M1 value (ties to even), saturated to ±6; the scale byte, then value i in
-    /// byte i's low half and value i + 16 in its high half.
-    /// </summary>
-    public static void MxFp4FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
-    {
-        for (int b = 0; b < source.Length / 32; b++)
-        {
-            var values = source.Slice(b * 32, 32);
-            var block = destination.Slice(b * 17, 17);
-            float amax = 0f;
-            foreach (float v in values)
-            {
-                if (float.IsFinite(v))
-                {
-                    amax = MathF.Max(amax, MathF.Abs(v));
-                }
-            }
-
-            int shared = amax > 0f ? Math.Clamp(MathF.ILogB(amax) - 2, -127, 127) : -127;
-            block[0] = (byte)(shared + 127);
-            float inverse = MathF.ScaleB(1f, -shared);
-            for (int j = 0; j < 16; j++)
-            {
-                block[1 + j] = (byte)(E2M1Code(values[j] * inverse) | E2M1Code(values[16 + j] * inverse) << 4);
-            }
-        }
-    }
 
     public static void BoolToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
     {
@@ -2619,4 +2535,1453 @@ internal static class ElementConversions
 
     private static ArgumentException PastFloat(long value, int at) =>
         new($"Index {value} (element {at}) is past 2^24: a kernel that reads indices as float32 cannot read it exactly (that device's integer index kernel is not built yet; run it on a device whose index type is int32, such as the CPU).");
+}
+
+/// <summary>
+/// The writer of any described type (<see cref="TypeDescription"/>): float32 values stored by the type's description alone,
+/// with no code of the type's own (<see cref="ElementType.FromFloat32"/> of a type that gives none). Per group of blocks it
+/// searches, by measured squared error, for every number the description stores:
+/// 1. each unit (the values the finest scale or minimum covers) its own continuous scale, and minimum where there are
+///    minimums, with its codes: candidate scales putting the unit's extremes at the codes' extremes and at half steps of the
+///    codes' numbers inside and past them, each candidate's codes the nearest and their least-squares scale (and minimum),
+///    the best refined by quantizing again with it;
+/// 2. the levels of scales from the units' scales: the finest level's numbers and their parent's continuous value by the
+///    same search over the finest level's numbers (weighted by how much a unit's error moves with its scale), level by level
+///    up to the coarsest, which is rounded to its number type; then each finer level's number the nearest its target over
+///    the levels stored above it; the minimums' own levels alike from the units' minimums (a minimum stored in a scale's own
+///    bits taking that scale's number);
+/// 3. each value's code given the stored levels: its number type's nearest number, or a codebook's nearest entry (a vector
+///    factor's entry, as a sign mask, chosen first from the targets' signs, then again given the entries);
+/// 4. each level's numbers searched again, the finest first: each chunk's least-squares number given the codes, rounded, and
+///    its neighbours, the codes chosen again for each and the error measured, the best kept.
+/// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added), each
+/// field written where the description places it (planes, pieces, levels shared over a group of blocks). The same bytes on
+/// every CPU: scalar arithmetic in a fixed order.
+/// </summary>
+internal sealed class DescribedEncoder
+{
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TypeDescription, object> Made = new();
+
+    // A unit's candidate scales put its value of largest magnitude at the codes' extreme moved by these half steps of the
+    // extreme's step (outward positive; past the extreme clips the largest values, which the error may favour); with a
+    // minimum, also its range over the codes' range moved by these half steps. A codebook's entries cost a nearest-entry
+    // search each, and its search tries fewer (BookSteps, BookNeighbours, BookPasses; measured on a real model's weights:
+    // the same error within 0.2% at twice the speed).
+    private static readonly float[] ScaleSteps = [-2f, -1f, 0f, 1f, 2f, 4f, 6f, 8f];
+    private static readonly float[] BookSteps = [-1f, 0f, 1f, 2f];
+    private static readonly float[] RangeSteps = [-2f, -1f, 0f, 1f, 2f, 4f];
+
+    // Times a search quantizes again with its best scale; the levels' numbers searched again by neighbours this far either
+    // side (a level of at most SmallGrid numbers), in this many passes (a codebook's fewer, as BookSteps).
+    private const int Refinements = 4, SmallGrid = 256, Neighbours = 4, Passes = 2, BookNeighbours = 2, BookPasses = 1;
+
+    private readonly int n, size, unit, units, slots, codeWidth, neighbours, passes;
+    private readonly Grid? codeGrid;
+    private readonly Book? codeBook;
+    private readonly FactorLevel? factor;
+    private readonly Level[] scales, mins, free, all;
+    private readonly bool minsAdded, negativeScale;
+    private readonly int minSign;
+    private readonly Fields codes;
+    private readonly double top, bottom, topStep, bottomStep;
+
+    private DescribedEncoder(TypeDescription d)
+    {
+        n = d.UnitValues;
+        size = d.UnitBytes;
+        codeWidth = d.Code.Width;
+        slots = n / codeWidth;
+        if (codeWidth == 1)
+        {
+            codeGrid = Grid.Of(d.Code, d.CodeOffset) ?? throw Unwritten(d, "its codes' numbers are not a table, an integer or a float of up to 16 bits");
+        }
+        else
+        {
+            codeBook = Book.Of(d.Code, d.CodeOffset) ?? throw Unwritten(d, "its codebook is not a table of up to 16 bits");
+        }
+
+        var scaleLevels = new List<Level>();
+        foreach (var s in d.Scales ?? [])
+        {
+            if (s.Type.Width > 1)
+            {
+                if (factor is not null || s.Values != s.Type.Width)
+                {
+                    throw Unwritten(d, "it has more than one level of vector factors");
+                }
+
+                factor = new FactorLevel(Book.Of(s.Type, s.Bias) ?? throw Unwritten(d, "a vector factor is not a table of up to 16 bits"), s.Values, FieldsOf(d, s, n / s.Values));
+                continue;
+            }
+
+            scaleLevels.Add(LevelOf(d, s, scale: true));
+        }
+
+        var minLevels = new List<Level>();
+        var freeLevels = new List<Level>();
+        foreach (var m in d.Mins ?? [])
+        {
+            if (m.Type.Width > 1)
+            {
+                throw Unwritten(d, "a minimum is a vector of factors");
+            }
+
+            if (scaleLevels.Find(s => SameField(s.Source, m)) is { } tied)
+            {
+                tied.Min = true;                                            // stored in a scale's own bits: that scale's number
+                minLevels.Add(tied);
+                continue;
+            }
+
+            var level = LevelOf(d, m, scale: false);
+            minLevels.Add(level);
+            freeLevels.Add(level);
+        }
+
+        scales = [.. scaleLevels.OrderByDescending(l => l.Values)];
+        mins = [.. minLevels.OrderByDescending(l => l.Values)];
+        free = [.. freeLevels.OrderByDescending(l => l.Values)];
+        all = [.. scales.Concat(free).OrderBy(l => l.Values)];
+        for (int i = 0; i < all.Length; i++)
+        {
+            all[i].Index = i;
+        }
+
+        if (!Nested(scales) || !Nested(free))
+        {
+            throw Unwritten(d, "its levels do not nest (each level's values a whole number of the next finer level's)");
+        }
+
+        unit = Math.Min(scales.Length > 0 ? scales[^1].Values : n, mins.Length > 0 ? mins[^1].Values : n);
+        if (unit % codeWidth != 0 || factor is { } f && unit % f.Values != 0 || n % unit != 0 || all.Any(l => l.Values % unit != 0))
+        {
+            throw Unwritten(d, "its codes, factors and levels do not share whole units");
+        }
+
+        units = n / unit;
+        neighbours = codeBook is null ? Neighbours : BookNeighbours;
+        passes = codeBook is null ? Passes : BookPasses;
+        minsAdded = d.MinsAdded;
+        negativeScale = scales.Length > 0 && scales[^1].Grid.HasNegative;
+        if (mins.Length == 0 || mins.Any(l => l.Values == mins[^1].Values && l.Grid.HasNegative && l.Grid.HasPositive))
+        {
+            minSign = 0;                                                    // a unit's minimum of either sign
+        }
+        else if (mins.All(l => !(l.Grid.HasNegative && l.Grid.HasPositive)))
+        {
+            int sign = mins.Aggregate(1, (s, l) => l.Grid.HasNegative ? -s : s);
+            minSign = minsAdded ? sign : -sign;                             // the one sign the levels allow
+        }
+        else
+        {
+            minSign = 2;                                                    // a sign shared by the group's units
+        }
+
+        // Each code slot's planes (the lowest bits first) at its place in its block.
+        var start = new int[slots + 1];
+        var bits = new List<int>();
+        var widths = new List<int>();
+        for (int s = 0; s < slots; s++)
+        {
+            int v = s * codeWidth, block = d.BlockStart(v), entry = v % d.Values / codeWidth;
+            foreach (var plane in d.Planes)
+            {
+                var (at, shift) = plane.Place(entry);
+                bits.Add(8 * (block + at) + shift);
+                widths.Add(plane.Bits);
+            }
+
+            start[s + 1] = bits.Count;
+        }
+
+        codes = new Fields(start, [.. bits], [.. widths]);
+
+        // No two fields share a bit (a minimum stored in a scale's bits is that scale's level).
+        var owned = new bool[8 * size];
+        if (!codes.Claim(owned) || all.Any(l => !l.Fields.Claim(owned)) || factor is { } owner && !owner.Fields.Claim(owned))
+        {
+            throw Unwritten(d, "two of its fields share bits");
+        }
+
+        // The codes' numbers (times a vector factor's): their extremes and the steps beside them.
+        double[] numbers = codeGrid?.Values ?? codeBook!.Levels;
+        if (factor is { } vector)
+        {
+            numbers = [.. vector.Book.Levels.SelectMany(p => numbers.Select(q => p * q)).Distinct().Order()];
+        }
+
+        top = numbers[^1];
+        bottom = numbers[0];
+        topStep = numbers.Length > 1 ? numbers[^1] - numbers[^2] : 1;
+        bottomStep = numbers.Length > 1 ? numbers[1] - numbers[0] : 1;
+    }
+
+    /// <summary>The writer of <paramref name="d"/>, or null where its description is one it does not write (said by <see cref="Why"/>).</summary>
+    public static DescribedEncoder? Of(TypeDescription? d) => d is null ? null : Made.GetValue(d, static x => Make(x)) as DescribedEncoder;
+
+    /// <summary>Why <paramref name="d"/> has no writer, or null where it has one.</summary>
+    public static string? Why(TypeDescription d) => Made.GetValue(d, static x => Make(x)) as string;
+
+    private static object Make(TypeDescription d)
+    {
+        if (!d.Valid)
+        {
+            return "its description does not hold together";
+        }
+
+        try
+        {
+            return new DescribedEncoder(d);
+        }
+        catch (NotSupportedException e)
+        {
+            return e.Message;
+        }
+    }
+
+    private static NotSupportedException Unwritten(TypeDescription d, string why) => new($"A type of {d.Values}-value blocks in {d.Bytes} bytes is not written from its description: {why}.");
+
+    // Whether a minimum is stored in a scale's own bits as the same number.
+    private static bool SameField(BlockScale a, BlockScale b) => a.Values == b.Values && a.Offset == b.Offset && a.Bias == b.Bias && SameType(a.Type, b.Type)
+        && (a.Pieces is null ? b.Pieces is null : b.Pieces is not null && a.Pieces.Count == b.Pieces.Count && a.Pieces.Zip(b.Pieces).All(p => p.First.SequenceEqual(p.Second)));
+
+    private static bool SameType(NumberType a, NumberType b) => a with { Table = null } == b with { Table = null }
+        && (a.Table is null ? b.Table is null : b.Table is not null && a.Table.SequenceEqual(b.Table));
+
+    private static bool Nested(Level[] levels)
+    {
+        for (int i = 1; i < levels.Length; i++)
+        {
+            if (levels[i - 1].Values % levels[i].Values != 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private Level LevelOf(TypeDescription d, BlockScale s, bool scale)
+    {
+        var grid = Grid.Of(s.Type, s.Bias) ?? throw Unwritten(d, "a scale or minimum is not a table, an integer or a float of up to 16 bits");
+        return new Level(s, grid, s.Values, n / s.Values, FieldsOf(d, s, n / s.Values)) { Scale = scale, Min = !scale };
+    }
+
+    // Each chunk's bits of a scale or minimum in a group (its pieces', or its run of bits from its offset).
+    private static Fields FieldsOf(TypeDescription d, BlockScale s, int chunks)
+    {
+        var start = new int[chunks + 1];
+        var bits = new List<int>();
+        var widths = new List<int>();
+        for (int j = 0; j < chunks; j++)
+        {
+            int v = j * s.Values, at = d.ScaleBase(s, v), index = d.ScaleIndex(s, v);
+            if (s.Pieces is { } pieces)
+            {
+                foreach (var piece in pieces[index])
+                {
+                    bits.Add(8 * (at + piece.Offset) + piece.Shift);
+                    widths.Add(piece.Bits);
+                }
+            }
+            else
+            {
+                bits.Add(8 * (at + s.Offset) + index * s.Type.Bits);
+                widths.Add(s.Type.Bits);
+            }
+
+            start[j + 1] = bits.Count;
+        }
+
+        return new Fields(start, [.. bits], [.. widths]);
+    }
+
+    /// <summary>Stores whole groups of <paramref name="source"/> into <paramref name="destination"/>.</summary>
+    public void Encode(ReadOnlySpan<float> source, Span<byte> destination) => Encode(source, destination, []);
+
+    /// <summary>
+    /// <see cref="Encode(ReadOnlySpan{float}, Span{byte})"/>, and where <paramref name="chosen"/> is not empty, the value it
+    /// chose for each (its stored numbers' scale times its code's number plus its minimum, in float32).
+    /// </summary>
+    internal void Encode(ReadOnlySpan<float> source, Span<byte> destination, Span<float> chosen)
+    {
+        if (source.Length % n != 0)
+        {
+            throw new ArgumentException($"The type stores whole groups of {n} values; {source.Length} is not.", nameof(source));
+        }
+
+        var w = Work.For(this);
+        for (int g = 0; g < source.Length / n; g++)
+        {
+            EncodeGroup(source.Slice(g * n, n), destination.Slice(g * size, size), w);
+            if (!chosen.IsEmpty)
+            {
+                for (int u = 0; u < units; u++)
+                {
+                    UnitFactors(w, u, out float a, out float c);
+                    for (int v = u * unit; v < (u + 1) * unit; v++)
+                    {
+                        chosen[g * n + v] = a * w.G[v] + c;
+                    }
+                }
+            }
+        }
+    }
+
+    private void EncodeGroup(ReadOnlySpan<float> source, Span<byte> group, Work w)
+    {
+        for (int v = 0; v < n; v++)
+        {
+            w.X[v] = float.IsFinite(source[v]) ? source[v] : 0f;
+        }
+
+        // 1. Each unit's own scale and minimum (a sign shared by the group's units: the units' majority, the rest again).
+        for (int u = 0; u < units; u++)
+        {
+            SolveUnit(w, u, minSign == 2 ? 0 : minSign);
+        }
+
+        if (minSign == 2)
+        {
+            double sum = 0;
+            for (int u = 0; u < units; u++)
+            {
+                sum += w.C[u];
+            }
+
+            int sign = sum >= 0 ? 1 : -1;
+            for (int u = 0; u < units; u++)
+            {
+                if (w.C[u] * sign < 0)
+                {
+                    SolveUnit(w, u, sign);
+                }
+            }
+        }
+
+        // 2. The levels from the units' scales, then the minimums' own levels over what the scales' levels give them.
+        if (scales.Length > 0)
+        {
+            Factor(w, scales, w.A, w.WA);
+        }
+
+        if (free.Length > 0)
+        {
+            for (int u = 0; u < units; u++)
+            {
+                double tied = 1;
+                foreach (var level in mins)
+                {
+                    if (level.Scale)
+                    {
+                        tied *= level.Grid.Values[w.Ranks[level.Index][u * unit / level.Values]];
+                    }
+                }
+
+                double target = minsAdded ? w.C[u] : -w.C[u];
+                w.T[u] = tied != 0 ? (float)(target / tied) : 0f;
+                w.Wt[u] = (float)(w.WC[u] * tied * tied);
+            }
+
+            Factor(w, free, w.T, w.Wt);
+        }
+
+        // 3. The codes given the stored levels.
+        for (int u = 0; u < units; u++)
+        {
+            UnitFactors(w, u, out float a, out float c);
+            w.Error[u] = QuantizeUnit(w, u, a, c, w.G, w.Codes, w.Factors);
+        }
+
+        // 4. Each level's numbers searched again by measured error, the finest first.
+        for (int pass = 0; pass < passes; pass++)
+        {
+            foreach (var level in all)
+            {
+                for (int j = 0; j < level.Chunks; j++)
+                {
+                    Search(w, level, j);
+                }
+            }
+        }
+
+        Write(w, group);
+    }
+
+    // Unit u's own scale a and minimum c (the value a · g + c) and codes: Solve over its values.
+    private void SolveUnit(Work w, int u, int sign)
+    {
+        var y = w.X.AsSpan(u * unit, unit);
+        var g = w.TryG.AsSpan(0, unit);
+        var best = w.BestG.AsSpan(0, unit);
+        if (scales.Length == 0)
+        {
+            // No scale: the codes' numbers are the values, less a minimum where there is one.
+            float c = 0f;
+            for (int r = 0; r < Refinements; r++)
+            {
+                w.Quantizer.Run(y, 1f, c, g);
+                if (mins.Length == 0)
+                {
+                    break;
+                }
+
+                double s = 0;
+                for (int i = 0; i < unit; i++)
+                {
+                    s += y[i] - g[i];
+                }
+
+                c = (float)(s / unit);
+                if (sign != 0 && c * sign < 0)
+                {
+                    c = 0f;
+                }
+            }
+
+            w.A[u] = 1f;
+            w.C[u] = c;
+            w.WA[u] = unit;
+            w.WC[u] = unit;
+            return;
+        }
+
+        Solve(w.Quantizer, y, w.Ones.AsSpan(0, unit), negativeScale, mins.Length > 0, sign, g, best, out float a, out float m);
+        double sgg = 0;
+        for (int i = 0; i < unit; i++)
+        {
+            sgg += (double)best[i] * best[i];
+        }
+
+        w.A[u] = a;
+        w.C[u] = m;
+        w.WA[u] = (float)sgg;
+        w.WC[u] = unit;
+    }
+
+    // The numbers of `levels` (coarse to fine, each nested in the one before) whose products come closest to the units'
+    // targets t (weights wt): the finest level's chunks' targets the weighted means of their units'; bottom up, each parent's
+    // continuous number and its children's numbers by Solve over the children's targets and the child level's numbers; the
+    // coarsest rounded to its own; top down, each finer level's number nearest its target over the stored levels above it.
+    private void Factor(Work w, Level[] levels, ReadOnlySpan<float> t, ReadOnlySpan<float> wt)
+    {
+        int last = levels.Length - 1;
+        var leaf = levels[last];
+        int per = leaf.Values / unit;
+        var leafTargets = w.LevelTargets[leaf.Index];
+        var leafWeights = w.LevelWeights[leaf.Index];
+        for (int j = 0; j < leaf.Chunks; j++)
+        {
+            double sw = 0, swt = 0, st = 0;
+            for (int u = j * per; u < (j + 1) * per; u++)
+            {
+                sw += wt[u];
+                swt += (double)wt[u] * t[u];
+                st += t[u];
+            }
+
+            leafTargets[j] = (float)(sw > 0 ? swt / sw : st / per);
+            leafWeights[j] = (float)sw;
+        }
+
+        for (int i = last; i >= 1; i--)
+        {
+            var child = levels[i];
+            var parent = levels[i - 1];
+            int k = parent.Values / child.Values;
+            bool negative = false;
+            for (int l = 0; l < i; l++)
+            {
+                negative |= levels[l].Grid.HasNegative;
+            }
+
+            var childTargets = w.LevelTargets[child.Index];
+            var childWeights = w.LevelWeights[child.Index];
+            var ranks = w.Ranks[child.Index];
+            for (int p = 0; p < parent.Chunks; p++)
+            {
+                var ys = childTargets.AsSpan(p * k, k);
+                var ws = childWeights.AsSpan(p * k, k);
+                var best = w.BestG.AsSpan(0, k);
+                Solve(child.Quantizer, ys, ws, negative, false, 0, w.TryG.AsSpan(0, k), best, out float lambda, out _);
+                double weight = 0;
+                for (int c = 0; c < k; c++)
+                {
+                    weight += (double)ws[c] * best[c] * best[c];
+                    ranks[p * k + c] = child.Grid.Nearest(best[c]);
+                }
+
+                w.LevelTargets[parent.Index][p] = lambda;
+                w.LevelWeights[parent.Index][p] = (float)weight;
+            }
+        }
+
+        var coarsest = levels[0];
+        for (int p = 0; p < coarsest.Chunks; p++)
+        {
+            w.Ranks[coarsest.Index][p] = coarsest.Grid.Nearest(w.LevelTargets[coarsest.Index][p]);
+        }
+
+        for (int i = 1; i <= last; i++)
+        {
+            var level = levels[i];
+            var targets = w.LevelTargets[level.Index];
+            var ranks = w.Ranks[level.Index];
+            for (int j = 0; j < level.Chunks; j++)
+            {
+                double above = 1;
+                for (int l = 0; l < i; l++)
+                {
+                    above *= levels[l].Grid.Values[w.Ranks[levels[l].Index][j * level.Values / levels[l].Values]];
+                }
+
+                if (above != 0)
+                {
+                    ranks[j] = level.Grid.Nearest(targets[j] / above);
+                }
+            }
+        }
+    }
+
+    // The scale a (and, `affine`, the added c) and codes making a · g + c closest to y under weights w, g the numbers q gives
+    // for its targets: the targets of candidate scales putting y's largest at the codes' largest number and y's smallest at
+    // their smallest (and, `negative`, the other way round), moved by half steps (ScaleSteps); with `affine`, y's range over
+    // the codes' range so moved (RangeSteps); each candidate's codes the nearest, their least-squares a and c (Fit), the best
+    // refined by quantizing again with it. Returns the weighted squared error; `best` holds the best codes' numbers.
+    private static double Solve(Quantizer q, ReadOnlySpan<float> y, ReadOnlySpan<float> w, bool negative, bool affine, int sign,
+        Span<float> g, Span<float> best, out float a, out float c)
+    {
+        float ymax = float.MinValue, ymin = float.MaxValue;
+        double sxx = 0;
+        for (int i = 0; i < y.Length; i++)
+        {
+            ymax = MathF.Max(ymax, y[i]);
+            ymin = MathF.Min(ymin, y[i]);
+            sxx += (double)w[i] * y[i] * y[i];
+        }
+
+        var s = new Candidates { Q = q, Y = y, W = w, G = g, Best = best, Negative = negative, Affine = affine, Sign = sign, Sxx = sxx, Error = double.PositiveInfinity };
+        s.Try(0f, 0f);                                                       // every target 0
+        foreach (float k in q.Steps)
+        {
+            if (ymax > 0 && q.Top > 0)
+            {
+                s.Try((float)((q.Top + k * q.TopStep / 2) / ymax), 0f);
+            }
+
+            if (ymin < 0 && q.Bottom < 0)
+            {
+                s.Try((float)((q.Bottom - k * q.BottomStep / 2) / ymin), 0f);
+            }
+
+            if (negative && ymax > 0 && q.Bottom < 0)
+            {
+                s.Try((float)((q.Bottom - k * q.BottomStep / 2) / ymax), 0f);
+            }
+
+            if (negative && ymin < 0 && q.Top > 0)
+            {
+                s.Try((float)((q.Top + k * q.TopStep / 2) / ymin), 0f);
+            }
+        }
+
+        if (affine && ymax > ymin && q.Top > q.Bottom)
+        {
+            foreach (float k in RangeSteps)
+            {
+                double t = (q.Top - q.Bottom + k * (q.TopStep + q.BottomStep) / 4) / (ymax - ymin);
+                if (t > 0)
+                {
+                    s.Try((float)t, (float)(ymin - q.Bottom / t));
+                }
+            }
+        }
+
+        for (int r = 0; r < Refinements && s.A != 0f; r++)
+        {
+            double before = s.Error;
+            s.Try(1f / s.A, s.C);
+            if (!(s.Error < before))
+            {
+                break;
+            }
+        }
+
+        a = s.A;
+        c = s.C;
+        return s.Error;
+    }
+
+    // A candidate scale's codes and their fit, the best kept (Solve).
+    private ref struct Candidates
+    {
+        public Quantizer Q;
+        public ReadOnlySpan<float> Y, W;
+        public Span<float> G, Best;
+        public bool Negative, Affine;
+        public int Sign;
+        public double Sxx, Error;
+        public float A, C;
+
+        // The targets (y − c0) · t, their codes, the codes' least-squares a and c.
+        public void Try(float t, float c0)
+        {
+            if (!float.IsFinite(t) || !float.IsFinite(c0))
+            {
+                return;
+            }
+
+            Q.Run(Y, t, c0, G);
+            double e = Fit(Y, W, G, Negative, Affine, Sign, Sxx, out float a, out float c);
+            if (e < Error)
+            {
+                Error = e;
+                A = a;
+                C = c;
+                G.CopyTo(Best);
+            }
+        }
+    }
+
+    // The least-squares a (and, `affine`, c) of y over the codes' numbers g under weights w (c of `sign` or 0; a not negative
+    // unless `negative`), and the weighted squared error of a · g + c.
+    private static double Fit(ReadOnlySpan<float> y, ReadOnlySpan<float> w, ReadOnlySpan<float> g, bool negative, bool affine, int sign, double sxx, out float a, out float c)
+    {
+        double sw = 0, sg = 0, sgg = 0, sy = 0, syg = 0;
+        for (int i = 0; i < y.Length; i++)
+        {
+            double wi = w[i], gi = g[i], yi = y[i];
+            sw += wi;
+            sg += wi * gi;
+            sgg += wi * gi * gi;
+            sy += wi * yi;
+            syg += wi * yi * gi;
+        }
+
+        double aa = sgg > 0 ? syg / sgg : 0, cc = 0;
+        if (affine)
+        {
+            double det = sw * sgg - sg * sg;
+            if (det > 1e-9 * sw * sgg)
+            {
+                aa = (sw * syg - sy * sg) / det;
+                cc = (sy - aa * sg) / sw;
+            }
+
+            if (sign != 0 && cc * sign < 0)
+            {
+                cc = 0;
+                aa = sgg > 0 ? syg / sgg : 0;
+            }
+        }
+
+        if (!negative && aa < 0)
+        {
+            aa = 0;
+            cc = affine && sw > 0 && sy * sign >= 0 ? sy / sw : 0;
+        }
+
+        a = (float)aa;
+        c = (float)cc;
+        return sxx - 2 * aa * syg - 2 * cc * sy + aa * aa * sgg + 2 * aa * cc * sg + cc * cc * sw;
+    }
+
+    // Unit u's stored scale (the product of its scale levels' numbers) and minimum (∓ the product of its minimum levels').
+    private void UnitFactors(Work w, int u, out float a, out float c)
+    {
+        float scale = 1f, min = 1f;
+        foreach (var level in scales)
+        {
+            scale *= level.Grid.Floats[w.Ranks[level.Index][u * unit / level.Values]];
+        }
+
+        foreach (var level in mins)
+        {
+            min *= level.Grid.Floats[w.Ranks[level.Index][u * unit / level.Values]];
+        }
+
+        a = scale;
+        c = mins.Length == 0 ? 0f : minsAdded ? min : -min;
+    }
+
+    // Unit u's codes for scale a and minimum c, each nearest its target (x − c) / a: numbers into g, codes and factors into
+    // their slots (the unit's part of each); the squared error.
+    private double QuantizeUnit(Work w, int u, float a, float c, Span<float> g, Span<int> codeSlots, Span<int> factorSlots)
+    {
+        var y = w.X.AsSpan(u * unit, unit);
+        var numbers = g.Slice(u * unit, unit);
+        w.Quantizer.Run(y, a != 0f ? 1f / a : 0f, c, numbers);
+        w.Quantizer.Codes.AsSpan(0, unit / codeWidth).CopyTo(codeSlots.Slice(u * unit / codeWidth));
+        if (factor is { } f)
+        {
+            w.Quantizer.Factors.AsSpan(0, unit / f.Values).CopyTo(factorSlots.Slice(u * unit / f.Values));
+        }
+
+        double error = 0;
+        for (int i = 0; i < unit; i++)
+        {
+            float r = y[i] - (a * numbers[i] + c);
+            error += (double)r * r;
+        }
+
+        return error;
+    }
+
+    // Chunk j of a level searched again: its least-squares number given the codes (each value λ · α + β, λ its number),
+    // rounded, and (a grid of few numbers) its neighbours, the codes chosen again for each and the error measured.
+    private void Search(Work w, Level level, int j)
+    {
+        int per = level.Values / unit, u0 = j * per;
+        var ranks = w.Ranks[level.Index];
+        int r0 = ranks[j];
+        double current = 0, saa = 0, sab = 0;
+        double sign = minsAdded ? 1 : -1;
+        for (int u = u0; u < u0 + per; u++)
+        {
+            current += w.Error[u];
+            double scaleOthers = 1, minOthers = 1, scale = 1, min = 1;
+            foreach (var other in scales)
+            {
+                double value = other.Grid.Values[w.Ranks[other.Index][u * unit / other.Values]];
+                scale *= value;
+                scaleOthers *= other == level ? 1 : value;
+            }
+
+            foreach (var other in mins)
+            {
+                double value = other.Grid.Values[w.Ranks[other.Index][u * unit / other.Values]];
+                min *= value;
+                minOthers *= other == level ? 1 : value;
+            }
+
+            double c = mins.Length == 0 ? 0 : sign * min;
+            for (int v = u * unit; v < (u + 1) * unit; v++)
+            {
+                double g = w.G[v];
+                double alpha = (level.Scale ? scaleOthers * g : 0) + (level.Min ? sign * minOthers : 0);
+                double beta = (level.Scale ? 0 : scale * g) + (level.Min ? 0 : c);
+                saa += alpha * alpha;
+                sab += (w.X[v] - beta) * alpha;
+            }
+        }
+
+        Span<int> candidates = stackalloc int[1 + 2 * Neighbours];
+        int count = Add(candidates, 0, saa > 0 ? level.Grid.Nearest(sab / saa) : r0, r0, level.Grid.Count);
+        if (level.Grid.Count <= SmallGrid)
+        {
+            for (int step = 1; step <= neighbours; step++)
+            {
+                count = Add(candidates, count, r0 - step, r0, level.Grid.Count);
+                count = Add(candidates, count, r0 + step, r0, level.Grid.Count);
+            }
+        }
+
+        double best = current;
+        int bestRank = r0;
+        int first = u0 * unit, values = per * unit, slotFirst = first / codeWidth, slotCount = values / codeWidth;
+        int factorWidth = factor?.Values ?? 1, factorFirst = factor is null ? 0 : first / factorWidth, factorCount = factor is null ? 0 : values / factorWidth;
+        for (int i = 0; i < count; i++)
+        {
+            ranks[j] = candidates[i];
+            double e = 0;
+            for (int u = u0; u < u0 + per && e < best; u++)
+            {
+                UnitFactors(w, u, out float a, out float c);
+                w.TryError[u] = QuantizeUnit(w, u, a, c, w.TryG, w.TryCodes, w.TryFactors);
+                e += w.TryError[u];
+            }
+
+            if (e < best)
+            {
+                best = e;
+                bestRank = candidates[i];
+                w.TryG.AsSpan(first, values).CopyTo(w.BestG.AsSpan(first, values));
+                w.TryCodes.AsSpan(slotFirst, slotCount).CopyTo(w.BestCodes.AsSpan(slotFirst, slotCount));
+                w.TryFactors.AsSpan(factorFirst, factorCount).CopyTo(w.BestFactors.AsSpan(factorFirst, factorCount));
+                w.TryError.AsSpan(u0, per).CopyTo(w.BestError.AsSpan(u0, per));
+            }
+        }
+
+        ranks[j] = bestRank;
+        if (bestRank != r0)
+        {
+            w.BestG.AsSpan(first, values).CopyTo(w.G.AsSpan(first, values));
+            w.BestCodes.AsSpan(slotFirst, slotCount).CopyTo(w.Codes.AsSpan(slotFirst, slotCount));
+            w.BestFactors.AsSpan(factorFirst, factorCount).CopyTo(w.Factors.AsSpan(factorFirst, factorCount));
+            w.BestError.AsSpan(u0, per).CopyTo(w.Error.AsSpan(u0, per));
+        }
+    }
+
+    // A rank added to a search's candidates: within the grid, not the current one, not listed already.
+    private static int Add(Span<int> list, int count, int rank, int current, int ranks)
+    {
+        if (rank >= 0 && rank < ranks && rank != current && !list[..count].Contains(rank))
+        {
+            list[count++] = rank;
+        }
+
+        return count;
+    }
+
+    // The group's bytes: each code slot's planes, each level's chunks, each factor's chunks.
+    private void Write(Work w, Span<byte> group)
+    {
+        group.Clear();
+        for (int s = 0; s < slots; s++)
+        {
+            codes.Write(group, s, codeGrid is { } grid ? grid.Codes[w.Codes[s]] : (ulong)w.Codes[s]);
+        }
+
+        foreach (var level in all)
+        {
+            var ranks = w.Ranks[level.Index];
+            for (int j = 0; j < level.Chunks; j++)
+            {
+                level.Fields.Write(group, j, level.Grid.Codes[ranks[j]]);
+            }
+        }
+
+        if (factor is { } f)
+        {
+            for (int c = 0; c < n / f.Values; c++)
+            {
+                f.Fields.Write(group, c, (ulong)w.Factors[c]);
+            }
+        }
+    }
+
+    // Fields of bits in a group: field f's pieces at [start[f], start[f + 1]), each its first bit and width, the lowest bits
+    // of a field's number first.
+    private sealed class Fields(int[] start, int[] bits, int[] widths)
+    {
+        public void Write(Span<byte> group, int field, ulong value)
+        {
+            for (int p = start[field]; p < start[field + 1]; p++)
+            {
+                int b = bits[p];
+                for (int i = 0; i < widths[p]; i++, b++, value >>= 1)
+                {
+                    if ((value & 1) != 0)
+                    {
+                        group[b >> 3] |= (byte)(1 << (b & 7));
+                    }
+                }
+            }
+        }
+
+        // Marks the fields' bits as owned; false where a bit is owned already or past the group.
+        public bool Claim(bool[] owned)
+        {
+            for (int p = 0; p < bits.Length; p++)
+            {
+                for (int b = bits[p]; b < bits[p] + widths[p]; b++)
+                {
+                    if (b < 0 || b >= owned.Length || owned[b])
+                    {
+                        return false;
+                    }
+
+                    owned[b] = true;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    // A level of scales or minimums (a minimum stored in a scale's bits is that scale's level, both Scale and Min).
+    private sealed class Level(BlockScale source, Grid grid, int values, int chunks, Fields fields)
+    {
+        public BlockScale Source { get; } = source;
+
+        public Grid Grid { get; } = grid;
+
+        public GridQuantizer Quantizer { get; } = new(grid);
+
+        public int Values { get; } = values;
+
+        public int Chunks { get; } = chunks;
+
+        public Fields Fields { get; } = fields;
+
+        public int Index { get; set; }
+
+        public bool Scale { get; set; }
+
+        public bool Min { get; set; }
+    }
+
+    // A level of vector factors (a codebook scale: a sign mask a group of values, say).
+    private sealed class FactorLevel(Book book, int values, Fields fields)
+    {
+        public Book Book { get; } = book;
+
+        public int Values { get; } = values;
+
+        public Fields Fields { get; } = fields;
+    }
+
+    /// <summary>The distinct finite numbers of a number type of up to 16 bits, its bias added, ascending, each with a code giving it.</summary>
+    internal sealed class Grid
+    {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Bias), Grid?> Made = new();
+
+        private readonly int[] ranks;
+        private readonly double[] mids;
+        private readonly bool uniform, half;
+        private readonly double first, step, inverse;
+
+        private Grid(NumberType type, double bias, List<(double Value, ulong Code)> numbers)
+        {
+            numbers.Sort((p, q) => p.Value != q.Value ? p.Value.CompareTo(q.Value) : p.Code.CompareTo(q.Code));
+            var values = new List<double>();
+            var codes = new List<ulong>();
+            foreach (var (value, code) in numbers)
+            {
+                if (values.Count == 0 || value != values[^1])
+                {
+                    values.Add(value);
+                    codes.Add(code);
+                }
+            }
+
+            Values = [.. values];
+            Floats = [.. values.Select(v => (float)v)];
+            Codes = [.. codes];
+            mids = [.. Values.Zip(Values.Skip(1), (p, q) => (p + q) / 2)];
+            ranks = new int[1 << type.Bits];
+            ranks.AsSpan().Fill(-1);
+            foreach (var (value, code) in numbers)
+            {
+                ranks[code] = Array.BinarySearch(Values, value);
+            }
+
+            first = Values[0];
+            step = Values.Length > 1 ? Values[1] - Values[0] : 1;
+            inverse = 1 / step;
+            uniform = Values.Length > 1 && Values.Select((v, i) => v == first + i * step).All(x => x);
+            half = bias == 0 && type is { Kind: NumberKind.Float, Bits: 16, Exponent: 5, Mantissa: 10, ExponentBias: 15, Signed: true, Subnormals: true, Specials: FloatSpecials.Ieee };
+        }
+
+        public double[] Values { get; }
+
+        public float[] Floats { get; }
+
+        public ulong[] Codes { get; }
+
+        public int Count => Values.Length;
+
+        public bool HasNegative => Values[0] < 0;
+
+        public bool HasPositive => Values[^1] > 0;
+
+        /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/>, or null (not one number of up to 16 bits, or no finite number).</summary>
+        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid
+            ? Made.GetOrAdd((type, bias), static key =>
+            {
+                var numbers = new List<(double, ulong)>();
+                for (ulong code = 0; code < 1UL << key.Type.Bits; code++)
+                {
+                    double value = key.Type.Value(code) + key.Bias;
+                    if (double.IsFinite(value))
+                    {
+                        numbers.Add((value, code));
+                    }
+                }
+
+                return numbers.Count == 0 ? null : new Grid(key.Type, key.Bias, numbers);
+            })
+            : null;
+
+        /// <summary>The rank of the number nearest <paramref name="x"/> (NaN as 0).</summary>
+        public int Nearest(double x)
+        {
+            if (double.IsNaN(x))
+            {
+                x = 0;
+            }
+
+            if (half)
+            {
+                var h = (Half)x;
+                return Half.IsInfinity(h) ? (x > 0 ? Count - 1 : 0) : ranks[BitConverter.HalfToUInt16Bits(h)];
+            }
+
+            if (uniform)
+            {
+                double q = (x - first) * inverse;
+                return q <= 0 ? 0 : q >= Count - 1 ? Count - 1 : (int)Math.Round(q);
+            }
+
+            int lo = 0, hi = Count - 1;
+            while (lo < hi)
+            {
+                int m = (lo + hi) >> 1;
+                if (x > mids[m])
+                {
+                    lo = m + 1;
+                }
+                else
+                {
+                    hi = m;
+                }
+            }
+
+            return lo;
+        }
+
+        /// <summary>
+        /// Each target (y − c0) · t's nearest number into <paramref name="numbers"/> and its rank into <paramref name="ranks"/>
+        /// (none where empty): <see cref="Nearest"/> a value, evenly spaced numbers by their step in one loop.
+        /// </summary>
+        public void Quantize(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers, Span<int> ranks)
+        {
+            bool keep = !ranks.IsEmpty;
+            if (uniform)
+            {
+                int last = Count - 1;
+                var floats = Floats;
+                for (int i = 0; i < y.Length; i++)
+                {
+                    double q = ((y[i] - c0) * t - first) * inverse;
+                    int r = !(q > 0) ? 0 : q >= last ? last : (int)Math.Round(q);
+                    numbers[i] = floats[r];
+                    if (keep)
+                    {
+                        ranks[i] = r;
+                    }
+                }
+
+                return;
+            }
+
+            for (int i = 0; i < y.Length; i++)
+            {
+                int r = Nearest((y[i] - c0) * t);
+                numbers[i] = Floats[r];
+                if (keep)
+                {
+                    ranks[i] = r;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A codebook of up to 16-bit codes (its offset added to each entry's numbers): each code's vector of Width numbers, and
+    /// the entry nearest a target vector under weights. Where the patterns of the codebook's numbers (each value one of the
+    /// numbers any entry holds) are few, each pattern's nearest entries are listed once, and a target's nearest is the best
+    /// of its own pattern's list (the target's values each rounded to the nearest number); otherwise every entry is measured.
+    /// </summary>
+    internal sealed class Book
+    {
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Offset), Book?> Made = new();
+
+        // Entries listed a pattern, and the most patterns listed.
+        private const int Listed = 16, PatternLimit = 1 << 16;
+
+        private readonly float[] levelMids;
+        private readonly int listed;
+        private readonly long patterns;
+        private int[]? lists;
+
+        private Book(NumberType type, double offset)
+        {
+            Entries = 1 << type.Bits;
+            Width = type.Width;
+            Table = [.. type.Table!.Take(Entries * Width).Select(v => (float)(v + offset))];
+            Levels = [.. Table.Select(v => (double)v).Distinct().Order()];
+            levelMids = [.. Levels.Zip(Levels.Skip(1), (p, q) => (float)((p + q) / 2))];
+            listed = Math.Min(Entries, Listed);
+            double count = Math.Pow(Levels.Length, Width);
+            patterns = Entries > listed && count <= PatternLimit ? (long)count : 0;
+        }
+
+        public int Entries { get; }
+
+        public int Width { get; }
+
+        /// <summary>Entry e's number i at e · Width + i.</summary>
+        public float[] Table { get; }
+
+        /// <summary>The distinct numbers the entries hold, ascending.</summary>
+        public double[] Levels { get; }
+
+        /// <summary>The codebook of <paramref name="type"/> plus <paramref name="offset"/>, or null (not a table of up to 16 bits).</summary>
+        public static Book? Of(NumberType type, double offset) => type is { Kind: NumberKind.Table, Bits: <= 16, Table: not null } && type.Valid
+            ? Made.GetOrAdd((type, offset), static key => new Book(key.Type, key.Offset))
+            : null;
+
+        /// <summary>The entry nearest <paramref name="target"/> (Width values) under <paramref name="weight"/>: the least Σ w (t − e)².</summary>
+        public int Nearest(ReadOnlySpan<float> target, ReadOnlySpan<float> weight)
+        {
+            if (patterns == 0)
+            {
+                return Best(target, weight, null, 0, Entries);
+            }
+
+            var list = Volatile.Read(ref lists) ?? List();
+            int pattern = 0, scale = 1;
+            for (int i = 0; i < Width; i++)
+            {
+                pattern += Level(target[i]) * scale;
+                scale *= Levels.Length;
+            }
+
+            return Best(target, weight, list, pattern * listed, listed);
+        }
+
+        // The best of `count` entries (from list[at], or entries at..at + count).
+        private int Best(ReadOnlySpan<float> target, ReadOnlySpan<float> weight, int[]? list, int at, int count)
+        {
+            int best = 0;
+            float bestDistance = float.PositiveInfinity;
+            for (int c = 0; c < count; c++)
+            {
+                int e = list is null ? at + c : list[at + c];
+                var entry = Table.AsSpan(e * Width, Width);
+                float distance = 0f;
+                for (int i = 0; i < Width && distance < bestDistance; i++)
+                {
+                    float r = target[i] - entry[i];
+                    distance += weight[i] * r * r;
+                }
+
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    best = e;
+                }
+            }
+
+            return best;
+        }
+
+        // The index of the number nearest x.
+        private int Level(float x)
+        {
+            int lo = 0, hi = Levels.Length - 1;
+            while (lo < hi)
+            {
+                int m = (lo + hi) >> 1;
+                if (x > levelMids[m])
+                {
+                    lo = m + 1;
+                }
+                else
+                {
+                    hi = m;
+                }
+            }
+
+            return lo;
+        }
+
+        // Each pattern's nearest entries (by squared distance, then index), made once.
+        private int[] List()
+        {
+            var made = new int[patterns * listed];
+            Parallel.For(0, patterns, ComputeResources.ParallelOptions, () => (new float[Width], new float[listed], new int[listed]), (p, _, scratch) =>
+            {
+                var (point, distances, indices) = scratch;
+                long rest = p;
+                for (int i = 0; i < Width; i++, rest /= Levels.Length)
+                {
+                    point[i] = (float)Levels[rest % Levels.Length];
+                }
+
+                int held = 0;
+                for (int e = 0; e < Entries; e++)
+                {
+                    float distance = 0f;
+                    for (int i = 0; i < Width; i++)
+                    {
+                        float r = point[i] - Table[e * Width + i];
+                        distance += r * r;
+                    }
+
+                    if (held == listed && distance >= distances[held - 1])
+                    {
+                        continue;
+                    }
+
+                    int at = held == listed ? held - 1 : held++;
+                    while (at > 0 && distances[at - 1] > distance)
+                    {
+                        distances[at] = distances[at - 1];
+                        indices[at] = indices[at - 1];
+                        at--;
+                    }
+
+                    distances[at] = distance;
+                    indices[at] = e;
+                }
+
+                indices.AsSpan(0, listed).CopyTo(made.AsSpan((int)(p * listed), listed));
+                return scratch;
+            }, static _ => { });
+            Volatile.Write(ref lists, made);
+            return made;
+        }
+    }
+
+    // What a search quantizes with: targets to the nearest codes' numbers, and the numbers' extremes and steps beside them.
+    private abstract class Quantizer
+    {
+        public double Top { get; protected init; }
+
+        public double Bottom { get; protected init; }
+
+        public double TopStep { get; protected init; }
+
+        public double BottomStep { get; protected init; }
+
+        // The candidates' half steps from the extremes (Solve).
+        public float[] Steps { get; protected init; } = ScaleSteps;
+
+        // Each target (y − c0) · t to its nearest codes' number in g.
+        public abstract void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g);
+    }
+
+    // A level's numbers (the factoring's children).
+    private sealed class GridQuantizer : Quantizer
+    {
+        private readonly Grid grid;
+
+        public GridQuantizer(Grid grid)
+        {
+            this.grid = grid;
+            var v = grid.Values;
+            Top = v[^1];
+            Bottom = v[0];
+            TopStep = v.Length > 1 ? v[^1] - v[^2] : 1;
+            BottomStep = v.Length > 1 ? v[1] - v[0] : 1;
+        }
+
+        public override void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g) => grid.Quantize(y, t, c0, g, []);
+    }
+
+    // A unit's codes (a thread's own: it keeps the codes it chose): a grid's nearest numbers, or a codebook's nearest entries
+    // (with vector factors: each factor's entry nearest the targets' signs, each code's entry nearest the targets over the
+    // factors, then each factor's again given the entries and the entries again, kept where nearer).
+    private sealed class CodeQuantizer : Quantizer
+    {
+        private readonly DescribedEncoder e;
+        private readonly int[] savedCodes, savedFactors;
+        private readonly float[] targets, saved, target, weight;
+
+        public CodeQuantizer(DescribedEncoder encoder)
+        {
+            e = encoder;
+            Top = e.top;
+            Bottom = e.bottom;
+            TopStep = e.topStep;
+            BottomStep = e.bottomStep;
+            Steps = e.codeBook is null ? ScaleSteps : BookSteps;
+            Codes = new int[e.unit];
+            Factors = new int[e.unit];
+            savedCodes = new int[e.unit];
+            savedFactors = new int[e.unit];
+            targets = new float[e.unit];
+            saved = new float[e.unit];
+            int width = Math.Max(e.codeWidth, e.factor?.Values ?? 1);
+            target = new float[width];
+            weight = new float[width];
+        }
+
+        // The last run's codes (a value's rank, or an entry's index, a slot each) and factors (a chunk each).
+        public int[] Codes { get; }
+
+        public int[] Factors { get; }
+
+        public override void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g)
+        {
+            if (e.codeGrid is { } grid)
+            {
+                grid.Quantize(y, t, c0, g, Codes);
+                return;
+            }
+
+            var z = targets.AsSpan(0, y.Length);
+            for (int i = 0; i < y.Length; i++)
+            {
+                z[i] = (y[i] - c0) * t;
+            }
+
+            var book = e.codeBook!;
+            if (e.factor is not { } f)
+            {
+                Entries(book, null, z, g);
+                return;
+            }
+
+            var factors = f.Book;
+            int fw = factors.Width, width = book.Width;
+            for (int c = 0; c < z.Length / fw; c++)
+            {
+                for (int i = 0; i < fw; i++)
+                {
+                    float zi = z[c * fw + i];
+                    target[i] = zi < 0 ? -1f : 1f;
+                    weight[i] = zi * zi;
+                }
+
+                Factors[c] = factors.Nearest(target.AsSpan(0, fw), weight.AsSpan(0, fw));
+            }
+
+            double first = Entries(book, factors, z, g);
+            bool changed = false;
+            for (int c = 0; c < z.Length / fw; c++)
+            {
+                for (int i = 0; i < fw; i++)
+                {
+                    int v = c * fw + i;
+                    float number = book.Table[Codes[v / width] * width + v % width];
+                    target[i] = number != 0f ? z[v] / number : 0f;
+                    weight[i] = number * number;
+                }
+
+                int k = factors.Nearest(target.AsSpan(0, fw), weight.AsSpan(0, fw));
+                if (k != Factors[c])
+                {
+                    if (!changed)
+                    {
+                        Codes.AsSpan(0, z.Length / width).CopyTo(savedCodes);
+                        Factors.AsSpan(0, z.Length / fw).CopyTo(savedFactors);
+                        g.CopyTo(saved);
+                        changed = true;
+                    }
+
+                    Factors[c] = k;
+                }
+            }
+
+            if (changed && !(Entries(book, factors, z, g) < first))
+            {
+                savedCodes.AsSpan(0, z.Length / width).CopyTo(Codes);
+                savedFactors.AsSpan(0, z.Length / fw).CopyTo(Factors);
+                saved.AsSpan(0, z.Length).CopyTo(g);
+            }
+        }
+
+        // Each entry's code nearest its targets over the factors (none: 1); numbers into g; the squared distance to z.
+        private double Entries(Book book, Book? factors, ReadOnlySpan<float> z, Span<float> g)
+        {
+            int width = book.Width, fw = factors?.Width ?? 1;
+            double total = 0;
+            for (int s = 0; s < z.Length / width; s++)
+            {
+                for (int i = 0; i < width; i++)
+                {
+                    int v = s * width + i;
+                    float phi = factors is null ? 1f : factors.Table[Factors[v / fw] * fw + v % fw];
+                    target[i] = phi != 0f ? z[v] / phi : 0f;
+                    weight[i] = phi * phi;
+                }
+
+                int k = book.Nearest(target.AsSpan(0, width), weight.AsSpan(0, width));
+                Codes[s] = k;
+                for (int i = 0; i < width; i++)
+                {
+                    int v = s * width + i;
+                    float phi = factors is null ? 1f : factors.Table[Factors[v / fw] * fw + v % fw];
+                    g[v] = phi * book.Table[k * width + i];
+                    float r = z[v] - g[v];
+                    total += (double)r * r;
+                }
+            }
+
+            return total;
+        }
+    }
+
+    // A thread's working arrays for one encoder.
+    private sealed class Work
+    {
+        [ThreadStatic]
+        private static Work? last;
+
+        private Work(DescribedEncoder e)
+        {
+            Owner = e;
+            int n = e.n;
+            X = new float[n];
+            G = new float[n];
+            TryG = new float[n];
+            BestG = new float[n];
+            Ones = new float[n];
+            Ones.AsSpan().Fill(1f);
+            Codes = new int[n];
+            TryCodes = new int[n];
+            BestCodes = new int[n];
+            Factors = new int[n];
+            TryFactors = new int[n];
+            BestFactors = new int[n];
+            A = new float[e.units];
+            C = new float[e.units];
+            WA = new float[e.units];
+            WC = new float[e.units];
+            T = new float[e.units];
+            Wt = new float[e.units];
+            Error = new double[e.units];
+            TryError = new double[e.units];
+            BestError = new double[e.units];
+            Ranks = [.. e.all.Select(l => new int[l.Chunks])];
+            LevelTargets = [.. e.all.Select(l => new float[l.Chunks])];
+            LevelWeights = [.. e.all.Select(l => new float[l.Chunks])];
+            Quantizer = new CodeQuantizer(e);
+        }
+
+        public DescribedEncoder Owner { get; }
+
+        public float[] X { get; }
+
+        public float[] G { get; }
+
+        public float[] TryG { get; }
+
+        public float[] BestG { get; }
+
+        public float[] Ones { get; }
+
+        public int[] Codes { get; }
+
+        public int[] TryCodes { get; }
+
+        public int[] BestCodes { get; }
+
+        public int[] Factors { get; }
+
+        public int[] TryFactors { get; }
+
+        public int[] BestFactors { get; }
+
+        public float[] A { get; }
+
+        public float[] C { get; }
+
+        public float[] WA { get; }
+
+        public float[] WC { get; }
+
+        public float[] T { get; }
+
+        public float[] Wt { get; }
+
+        public double[] Error { get; }
+
+        public double[] TryError { get; }
+
+        public double[] BestError { get; }
+
+        public int[][] Ranks { get; }
+
+        public float[][] LevelTargets { get; }
+
+        public float[][] LevelWeights { get; }
+
+        public CodeQuantizer Quantizer { get; }
+
+        public static Work For(DescribedEncoder e) => last is { } w && w.Owner == e ? w : last = new Work(e);
+    }
 }
