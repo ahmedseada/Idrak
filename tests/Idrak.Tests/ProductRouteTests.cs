@@ -29,6 +29,7 @@ internal abstract partial class DesktopTests : Tests
         ("product routes: every described super-block and grid type (Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ2_XXS, IQ3_XXS; random blocks as ggml stores them) by the CUDA tensor rows, decoding the values as each tile loads and over widened rows, 128- and 64-row tiles, gives the product of x and the values as ggml decodes them, both rounded to bfloat16 (70 rows; within float32's bound for k terms)", ProductRoutesEveryBlockType),
         ("product routes: scales on x's columns (a stored weight's scales shared by every output: a scale a column, a run of 32 columns, one for the whole tensor) are applied to x once a call, then the product with no scales: under the generic and measured routes the product of x and the weight's values times their columns' scales (q4_0, int8, bfloat16, int2; 1, 3, 9 and 70 rows; within float32's bound for k terms, and x's rounding where an integer lane takes the shape)", ProductRoutesColumnScales),
         ("product routes: IDRAK_ROUTES reads name, generic and measured (any case, blank is name) and IDRAK_ROUTE_LANES all, described and written (any case, blank is all), each refusing anything else naming the variable; the measured route records its choice", ProductRoutesSetting),
+        ("product routes: IDRAK_CPU_VECTORS (ComputeResources.CpuVectors) narrows the CPU's lanes over stored weights: auto every lane that runs here; native the platform's intrinsics alone (a kind's portable lanes only where it has none here); portable the portable lanes and their 128-bit twins; scalar each kind's portable lane alone; each lane listed under a setting runs and gives the bits it gives under auto (q4_0, q4_k, bfloat16, int2, iq4_xs and tq1_0; 9 rows)", ProductRoutesCpuVectors),
         ("product routes: ggml's q4_1, q5_0, q5_1, iq4_xs, tq1_0, tq2_0, iq2_xs, iq2_s, iq3_s, iq1_s and iq1_m described as data (a minimum added, fifth bits a stream, 6-bit scales in two pieces, base-3 digits of a byte read as a fraction, codebook indices of 9 to 12 bits over two or three planes and listed fields, the delta folded into IQ1's codebook, a float16 scale in four pieces) decode random blocks to ggml's values bit for bit, and the CPU's described lane, by the integer arithmetic and every instruction set that runs here, gives the product of those values (1, 3, 4, 5, 9 and 70 rows; within float32's bound for k terms and x's rounding to int8 a block of 32); CUDA's described lane gives it too where it reads the type, and where it does not says why", ProductRoutesGgufDescribed),
         ("product routes: every described type is written from float32 by its description alone (ggml's q8_0, q4_0, q4_1, q5_0, q5_1, iq4_nl, iq4_xs, q2_k, q3_k, q4_k, q5_k, q6_k, tq1_0 (base-3 digits), tq2_0, iq2_xxs, iq2_xs, iq2_s, iq3_xxs, iq3_s, iq1_s (a delta sign its sub-block's codes share) and iq1_m, int2, mxfp4, the per-element types of up to 16 bits and the types made of a description alone: two planes, a table, fp6, a bit stream, a scale shared by a group of blocks): the stored values read back through the type's own conversion, through its description and through the CPU's described lane are the values the encoder chose; the per-element types round as their own conversions do (to nearest, ties to even, a zero's sign kept, past the range as their specials say); rows of zeros, of one value, with an outlier, all negative, with NaN and infinities and of tiny and large values are written; the same bytes again", ProductRoutesDescribedWriting),
     ];
@@ -524,6 +525,8 @@ internal abstract partial class DesktopTests : Tests
             Check(w.All(float.IsFinite), $"{name}: its random values are not all finite");
             string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
             Check(arithmetic is not null, $"the described lane does not read {name} ({d})");
+            var spans = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedSpans(type, k);
+            Check(spans is not { OneByOne: > 0 }, $"the described lane reads {spans?.OneByOne} of {name}'s spans one value at a time ({spans})");
             foreach (int m in new[] { 1, 4, 5, 9 })
             {
                 var x = RouteValues(random, (long)m * k);
@@ -569,6 +572,89 @@ internal abstract partial class DesktopTests : Tests
 
         Check(ran == made.Length * 4, $"the described lane ran {ran} of {made.Length * 4} products of types made of a description alone");
     }
+
+    // The CPU's lanes over stored weights under each vector-path setting (ComputeResources.CpuVectors): the lanes listed
+    // (StoredLanesOf, DescribedLanesOf) follow the setting's rule against auto's, and each gives auto's bits (the same lane).
+    private static void ProductRoutesCpuVectors(Device device)
+    {
+        if (device.Backend is not Idrak.Abstraction.Devices.Cpu.CpuBackend)
+        {
+            Skip($"the lanes over stored weights are the CPU's (not {device})");
+            return;
+        }
+
+        var saved = ComputeResources.CpuVectors;
+        int ran = 0;
+        try
+        {
+            foreach (var (format, k, n) in new[] { ("q4_0", 320, 37), ("q4_k", 512, 37), ("bfloat16", 520, 37), ("int2", 320, 37), ("iq4_xs", 512, 37), ("tq1_0", 256, 37) })
+            {
+                var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
+                var random = new Random(LaneBitsSeed(format));
+                var bytes = DescribedFiniteBytes(type.Description ?? throw new InvalidOperationException($"{format} has no description"), k, n, random);
+                var words = new float[(bytes.Length + 3) / 4];
+                Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+                int m = 9;
+                var x = RouteValues(random, (long)m * k);
+                ComputeResources.CpuVectors = CpuVectorPaths.Automatic;
+                var auto = Outputs();
+                Check(auto.Count >= 2, $"{format}: {auto.Count} lanes under auto");
+                foreach (var paths in new[] { CpuVectorPaths.Native, CpuVectorPaths.Portable, CpuVectorPaths.Scalar })
+                {
+                    ComputeResources.CpuVectors = paths;
+                    var lanes = Outputs();
+                    var expected = paths switch
+                    {
+                        CpuVectorPaths.Portable => auto.Keys.Where(l => !Intrinsic(l)),
+                        CpuVectorPaths.Scalar => auto.Keys.Where(l => !Intrinsic(l) && !l.Contains("128-bit", StringComparison.Ordinal)),
+                        _ => auto.Keys.GroupBy(Kind).SelectMany(kind => kind.Any(Intrinsic) ? kind.Where(Intrinsic) : kind),
+                    };
+                    Check(lanes.Keys.ToHashSet().SetEquals(expected), $"{format} under {paths}: the lanes {string.Join("; ", lanes.Keys)}, expected {string.Join("; ", expected)}");
+                    foreach (var (lane, y) in lanes)
+                    {
+                        Check(auto.TryGetValue(lane, out var under) && y.AsSpan().SequenceEqual(under), $"{format} under {paths}: the {lane} does not give its bits under auto");
+                        ran++;
+                    }
+                }
+
+                // Each lane's output by name, every lane listed under the current setting.
+                Dictionary<string, byte[]> Outputs()
+                {
+                    var outputs = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+                    var written = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredLanesOf(type, k);
+                    var described = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
+                    for (int lane = 0; lane < written.Count + described.Count; lane++)
+                    {
+                        var y = new float[m * n];
+                        bool ok = lane < written.Count
+                            ? Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane, type, words, words.Length, x, y, m, n, k)
+                            : Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane - written.Count, type, words, words.Length, x, y, m, n, k);
+                        string name = lane < written.Count ? written[lane].Lane : described[lane - written.Count];
+                        Check(ok, $"{format} under {ComputeResources.CpuVectors}: its {name} does not run, though listed");
+                        outputs[name] = System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()).ToArray();
+                    }
+
+                    return outputs;
+                }
+            }
+        }
+        finally
+        {
+            ComputeResources.CpuVectors = saved;
+        }
+
+        Check(ran > 0, "no lane ran under a vector-path setting");
+        Console.WriteLine($"{ran} lanes run under the native, portable and scalar settings, each its bits under auto");
+
+        // A lane by an instruction set of the platform's own (its name's " by AVX2 and FMA", " by AVX-VNNI", " by NEON", " by
+        // Arm's dot products"); its kind (the name before the set or the 128-bit twin's words).
+        static bool Intrinsic(string lane) => LaneSets.Any(set => lane.Contains(set, StringComparison.Ordinal));
+
+        static string Kind(string lane) => lane.Split([.. LaneSets, ", four rows"], StringSplitOptions.None)[0];
+    }
+
+    // The instruction sets' words in a lane's name (CpuBackend.LaneName).
+    private static readonly string[] LaneSets = [" by AVX2 and FMA", " by AVX-VNNI", " by NEON", " by Arm's dot products"];
 
     // ggml's types described as data alone (GgufElementTypes.Descriptions), each with the row length it is multiplied with.
     private static readonly (string Format, int K)[] GgufDescribedFormats =
@@ -640,6 +726,8 @@ internal abstract partial class DesktopTests : Tests
             Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
             string? arithmetic = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedArithmetic(type, k);
             Check(arithmetic == "integer", $"the described lane reads {format} by {arithmetic ?? "nothing"}, not the integer arithmetic ({d})");
+            var spans = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedSpans(type, k);
+            Check(spans is { OneByOne: 0 }, $"the described lane reads {spans?.OneByOne} of {format}'s spans one value at a time ({spans})");
             var lanes = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
             foreach (int m in new[] { 1, 3, 4, 5, 9, 70 })
             {

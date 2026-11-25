@@ -833,38 +833,54 @@ internal sealed partial class CpuBackend
         /// pair of products saturates), so its AVX2 lane is one, as are its NEON lane (16-bit products of signed bytes) and
         /// its DotProd lane (Arm's signed dot products of its codes as they are; else two a step: DotProdWide). Then the
         /// kind's 128-bit twins (NarrowLane): by the portable instructions on any CPU, and by NEON and Arm's dot products as
-        /// the kind takes them where the CPU has them.
+        /// the kind takes them where the CPU has them. The vector paths allowed (ComputeResources.CpuVectors,
+        /// IDRAK_CPU_VECTORS) narrow them: native, the platform's intrinsics alone (the portable lanes only for a kind with
+        /// none here); portable, the portable lane and its 128-bit twin; scalar, the portable lane alone.
         /// </summary>
         public LaneList WithKind(int kind, bool dots = false, bool pairs = true)
         {
-            var list = With(LaneOf(kind, Instructions.Portable));
-            if (s_avx2Lanes && (!dots || pairs))
+            var paths = ComputeResources.CpuVectors;
+            bool intrinsics = paths is CpuVectorPaths.Automatic or CpuVectorPaths.Native;
+            bool avx2 = intrinsics && s_avx2Lanes && (!dots || pairs), neon = intrinsics && s_neonLanes && (!dots || pairs),
+                dotProd = intrinsics && dots && s_dotProdLanes, vnni = intrinsics && dots && s_vnniLanes;
+            bool portable = paths != CpuVectorPaths.Native || !(avx2 || neon || dotProd || vnni);
+            var list = this;
+            if (portable)
+            {
+                list = list.With(LaneOf(kind, Instructions.Portable));
+            }
+
+            if (avx2)
             {
                 list = list.With(LaneOf(kind, Instructions.Avx2));
             }
 
-            if (s_neonLanes && (!dots || pairs))
+            if (neon)
             {
                 list = list.With(LaneOf(kind, Instructions.Neon));
             }
 
-            if (dots && s_dotProdLanes)
+            if (dotProd)
             {
                 list = list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide));
             }
 
-            if (dots && s_vnniLanes)
+            if (vnni)
             {
                 list = list.With(LaneOf(kind, Instructions.Vnni));
             }
 
-            list = list.With(LaneOf(kind, Instructions.Portable, narrow: true));
-            if (s_neonLanes && (!dots || pairs))
+            if (portable && paths != CpuVectorPaths.Scalar)
+            {
+                list = list.With(LaneOf(kind, Instructions.Portable, narrow: true));
+            }
+
+            if (neon)
             {
                 list = list.With(LaneOf(kind, Instructions.Neon, narrow: true));
             }
 
-            return dots && s_dotProdLanes ? list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide, narrow: true)) : list;
+            return dotProd ? list.With(LaneOf(kind, pairs ? Instructions.DotProd : Instructions.DotProdWide, narrow: true)) : list;
         }
 
         /// <summary>
@@ -3586,7 +3602,15 @@ internal sealed partial class CpuBackend
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int Measure<TC>(TC product, int m, int n, int k) where TC : struct, ILaneChoice
     {
-        int count = Math.Clamp(product.Count, 1, MostCandidates), best = count > 1 ? product.Unmeasured : product.Candidate(0);
+        // The unmeasured lane where it is among the candidates (the vector paths allowed may leave it out), else the first.
+        int count = Math.Clamp(product.Count, 1, MostCandidates);
+        bool listed = false;
+        for (int c = 0; c < count; c++)
+        {
+            listed |= product.Candidate(c) == product.Unmeasured;
+        }
+
+        int best = count > 1 && listed ? product.Unmeasured : product.Candidate(0);
         if (count == 1)
         {
             ProductRoutes.Chose("cpu", string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{product.Name} {m}x{k}->{n}"), $"{LaneName(best)} (the only candidate)");
@@ -3631,10 +3655,17 @@ internal sealed partial class CpuBackend
 
         private LaneList WrittenLanes => hasWritten ? written.Lanes.ForRows(m) : default;
 
+        // (The vector paths allowed are part of a shape's name, so a choice made under one setting is not taken under another.)
         public string Name => lane.Type.Name + ProductRoutes.Lanes switch
         {
             RouteLanes.Described => " (described lane)",
             RouteLanes.Written => " (written kernels)",
+            _ => "",
+        } + ComputeResources.CpuVectors switch
+        {
+            CpuVectorPaths.Native => " (native vectors)",
+            CpuVectorPaths.Portable => " (portable vectors)",
+            CpuVectorPaths.Scalar => " (scalar vectors)",
             _ => "",
         };
 
@@ -3820,6 +3851,14 @@ internal sealed partial class CpuBackend
 
     /// <summary>The arithmetic the described lane takes for <paramref name="type"/>'s rows of <paramref name="k"/> values ("integer", "float32", "float64"), or null where it does not read the type here. For tests.</summary>
     internal static string? DescribedArithmetic(ElementType type, int k) => DescribedFormat.Reads(type, k, out var described) ? described.Arithmetic : null;
+
+    /// <summary>
+    /// How the described lane makes each span of 32 values of <paramref name="type"/>'s period (its integer and float32
+    /// lanes over codes of at most 8 bits): the spans in runs, from two windows, as a stream, by a codebook's entries, and
+    /// one value at a time; null where it does not read the type so. For tests.
+    /// </summary>
+    internal static (int Runs, int Windows, int Streams, int Codebook, int OneByOne)? DescribedSpans(ElementType type, int k) =>
+        DescribedFormat.Reads(type, k, out var described) ? described.Spans() : null;
 
     // The product by one lane (FormatMany with one part).
     private static void FormatProduct<TF, TK>(TF format, int laneId, StoredLane lane, float[] x, float[] y, int m, int n, int k)
@@ -8852,6 +8891,10 @@ internal sealed partial class CpuBackend
             GroupStepBytes = P > 1 ? T * 32 : T * 32 + (Mins ? 64 : 32);
             PlaneMask0 = planeMask == null ? default : planeMask[0];
             MapVector = Map == CodeMap.Flip ? Flip : Shuffle;
+            if (Mode == DescribedMode.Integer && P == 1 && UniformRuns == 0)
+            {
+                GatherSteps();                                              // false: the spans made and transposed (Steps)
+            }
         }
 
         // The lanes' one value where every lane's is the same, else −1.
@@ -9034,9 +9077,12 @@ internal sealed partial class CpuBackend
 
                 if (!vector)
                 {
+                    // Not in runs: in value order from two windows of 16 bytes where every plane's fields fit them (Windows),
+                    // else one value at a time.
+                    bool windows = Windows(r);
                     for (int p = 0; p < Planes; p++)
                     {
-                        runKind[r * Planes + p] = 0;
+                        runKind[r * Planes + p] = windows ? WindowRuns : (byte)0;
                     }
                 }
             }
@@ -9044,6 +9090,142 @@ internal sealed partial class CpuBackend
             Identity = Enumerable.Range(0, Period).All(v => Order[v] == v);
             Shuffles();
             return true;
+        }
+
+        // A span's run kind made from two windows of 16 bytes (Spans; Raw reads it by WindowLoad).
+        private const byte WindowRuns = 17;
+
+        /// <summary>The period's spans by how their codes are made: in runs, from two windows, as a stream, by a codebook's entries, one value at a time (tests).</summary>
+        public (int Runs, int Windows, int Streams, int Codebook, int OneByOne) SpanKinds()
+        {
+            int spans = Period / 32;
+            if (Map == CodeMap.Codebook)
+            {
+                return (0, 0, 0, spans, 0);
+            }
+
+            int runs = 0, windows = 0, streams = 0, one = 0;
+            for (int r = 0; runKind != null && r < spans; r++)
+            {
+                var kinds = new ReadOnlySpan<byte>(runKind + r * Planes, Planes);
+                if (kinds.Contains((byte)0))
+                {
+                    one++;
+                }
+                else if (kinds.Contains(WindowRuns))
+                {
+                    windows++;
+                }
+                else if (kinds.Contains(StreamRuns))
+                {
+                    streams++;
+                }
+                else
+                {
+                    runs++;
+                }
+            }
+
+            return (runs, windows, streams, 0, one);
+        }
+
+        // Per span and plane: its two windows' first bytes (from the period's first), the byte shuffles taking each value's
+        // byte from them (0x80: from the other), and the 16-bit multipliers making its field of the byte (its low 16 values'
+        // and its high 16's): ((byte · first) mod 256) · second >> 8.
+        private int* windowAt;
+        private Vector256<byte>* windowShuffle;
+        private Vector256<ushort>* windowTimes;
+
+        // Whether span r's 32 values' fields lie, in every plane, in two windows of 16 bytes of the period (a field within its
+        // byte: bits at a shift, or a radix's digit): then each plane's span is two loads, two byte shuffles into value order,
+        // and one multiply-mask-multiply per byte (a field of bits at shift s: times 1, then 2^(8 − s); a digit i of a radix
+        // r: times r^i, then r), so the span is made in registers like the runs, in value order as one value at a time.
+        private bool Windows(int r)
+        {
+            var d = D;
+            if (PeriodBytes < 16)
+            {
+                return false;
+            }
+
+            if (windowAt == null)
+            {
+                int spans = Period / 32;
+                windowAt = Pin<int>(2 * spans * Planes);
+                windowShuffle = Pin<Vector256<byte>>(2 * spans * Planes);
+                windowTimes = Pin<Vector256<ushort>>(4 * spans * Planes);
+            }
+
+            Span<int> at = stackalloc int[32];
+            Span<int> shift = stackalloc int[32];
+            Span<byte> first = stackalloc byte[32], second = stackalloc byte[32];
+            Span<ushort> times = stackalloc ushort[32], then = stackalloc ushort[32];
+            for (int p = 0; p < Planes; p++)
+            {
+                var plane = d.Planes[p];
+                if (plane.Stream)
+                {
+                    return false;
+                }
+
+                int lo = int.MaxValue, hi = int.MinValue;
+                for (int t = 0; t < 32; t++)
+                {
+                    int v = 32 * r + t;
+                    var (b, s) = plane.Place(v % d.Values);
+                    if (plane.Radix == 0 && s + plane.Bits > 8)
+                    {
+                        return false;
+                    }
+
+                    (at[t], shift[t]) = (v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b, s);
+                    (lo, hi) = (Math.Min(lo, at[t]), Math.Max(hi, at[t]));
+                }
+
+                int a = Math.Min(lo, PeriodBytes - 16), c = Math.Clamp(hi - 15, 0, PeriodBytes - 16);
+                for (int t = 0; t < 32; t++)
+                {
+                    bool fromA = at[t] - a is >= 0 and < 16, fromC = !fromA && at[t] - c is >= 0 and < 16;
+                    if (!fromA && !fromC)
+                    {
+                        return false;
+                    }
+
+                    first[t] = fromA ? (byte)(at[t] - a) : (byte)0x80;
+                    second[t] = fromC ? (byte)(at[t] - c) : (byte)0x80;
+                    int power = 1;
+                    for (int e = 0; plane.Radix != 0 && e < shift[t]; e++)
+                    {
+                        power *= plane.Radix;
+                    }
+
+                    (times[t], then[t]) = plane.Radix != 0 ? ((ushort)power, (ushort)plane.Radix) : ((ushort)1, (ushort)(256 >> shift[t]));
+                }
+
+                int i = r * Planes + p;
+                (windowAt[2 * i], windowAt[2 * i + 1]) = (a, c);
+                windowShuffle[2 * i] = Vector256.Create<byte>(first);
+                windowShuffle[2 * i + 1] = Vector256.Create<byte>(second);
+                windowTimes[4 * i] = Vector256.Create<ushort>(times[..16]);
+                windowTimes[4 * i + 1] = Vector256.Create<ushort>(times[16..]);
+                windowTimes[4 * i + 2] = Vector256.Create<ushort>(then[..16]);
+                windowTimes[4 * i + 3] = Vector256.Create<ushort>(then[16..]);
+            }
+
+            return true;
+        }
+
+        // A plane's span from its two windows (Windows), its 32 fields as bytes in value order.
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        private Vector256<byte> WindowLoad<TI>(byte* period, int i) where TI : struct, IInstructions
+        {
+            var a = Vector128.Load(period + windowAt[2 * i]);
+            var c = Vector128.Load(period + windowAt[2 * i + 1]);
+            var bytes = TI.ShuffleBytes(Vector256.Create(a, a), windowShuffle[2 * i]) | TI.ShuffleBytes(Vector256.Create(c, c), windowShuffle[2 * i + 1]);
+            var (low, high) = Vector256.Widen(bytes);
+            var mask = Vector256.Create((ushort)0xFF);
+            Vector256<ushort>* times = windowTimes + 4 * i;
+            return Vector256.Narrow(Vector256.ShiftRightLogical((low * times[0] & mask) * times[2], 8), Vector256.ShiftRightLogical((high * times[1] & mask) * times[3], 8));
         }
 
         // A codebook's spans, in value order: each span's entries' index fields and each vector factor's index pieces of each
@@ -9110,6 +9292,7 @@ internal sealed partial class CpuBackend
             }
 
             vectorCount = vectors.Count;
+            vectorFactors = vectors;
             vectorWidth = new int[vectorCount];
             vectorMasks = new byte*[vectorCount];
             var (start, offset, shift, mask, place) = (new List<int>(), new List<int>(), new List<int>(), new List<int>(), new List<int>());
@@ -9561,6 +9744,9 @@ internal sealed partial class CpuBackend
                     case StreamRuns:
                         v = StreamLoad(period, at, D.Planes[p].Bits);
                         break;
+                    case WindowRuns:
+                        code |= Vector256.ShiftLeft((WindowLoad<TI>(period, at) & planeMask[p]).AsUInt16(), planeLow[p]).AsByte();
+                        continue;
                     default:
                         return OneByOne(period, span);
                 }
@@ -9685,6 +9871,12 @@ internal sealed partial class CpuBackend
         public void Steps<TI>(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
             out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions
         {
+            if (stepsGathered)
+            {
+                GroupSteps<TI>(period, gp, out s0, out s1, out s2, out s3, out s4, out s5, out s6, out s7);
+                return;
+            }
+
             int span = gp * (GroupValues / 32);
             if (C == 32)
             {
@@ -9695,6 +9887,471 @@ internal sealed partial class CpuBackend
 
             Transpose4<TI>(Codes<TI>(period, span), Codes<TI>(period, span + 1), Codes<TI>(period, span + 2), Codes<TI>(period, span + 3), out s0, out s1, out s2, out s3);
             s4 = s5 = s6 = s7 = default;
+        }
+
+        // Steps gathered straight into the dot products' lanes (GatherSteps), where the spans do not load alike: step s of a
+        // group (lane l: 4 bytes of chunk l, its positions 4s..4s + 3) by one gather a plane of the 8 chunks' fields and a
+        // fixed reading of each, no span made and no transpose. Per plane its reading (StepRead), per step of the period and
+        // plane the 8 lanes' dwords' first bytes (from the period's first) and their shifts, a digit plane's multipliers;
+        // for a codebook per step each lane's dword within its entry, and per vector factor its index's dwords, shifts and
+        // dword within the vector.
+        private bool stepsGathered;
+        private StepRead[] stepRead = [];
+        private int* stepOffset;
+        private Vector256<uint>* stepShift;
+        private Vector256<ushort>* stepTimes;
+        private Vector256<uint>[] stepMask = [], stepField = [];
+        private Vector256<int>* bookWithin;
+        private int* vectorOffset;
+        private Vector256<uint>* vectorShift;
+        private Vector256<int>* vectorWithin;
+        private uint[] vectorIndexMask = [];
+        private List<BlockScale> vectorFactors = [];
+
+        // How a plane's 4 fields of a step's lane come out of its dword: 4 bytes at one shift; a stream of fields from a bit,
+        // spread a byte each; 4 bytes' digits of one place; a codebook's index field.
+        private enum StepRead : byte
+        {
+            Bytes,
+            Stream,
+            Digits,
+            Index,
+        }
+
+        // Whether the integer lane's steps can be gathered (codes of one byte plane: every plane's fields of each step's lane
+        // within one dword read alike, or a codebook of entries of 4 or 8 values whose index fields and vector factors' fields
+        // each lie within a dword): then the plan's per-step places, false otherwise (the spans made and transposed).
+        private bool GatherSteps()
+        {
+            var d = D;
+            int groups = Period / GroupValues, steps = groups * T;
+            bool book = Map == CodeMap.Codebook;
+            if (Mode != DescribedMode.Integer || P != 1 || PeriodBytes < 4 || book && (entryWidth is not (4 or 8) || vectorWidth.Any(w => w is not (4 or 8))))
+            {
+                return false;
+            }
+
+            stepRead = new StepRead[Planes];
+            stepMask = new Vector256<uint>[Planes];
+            stepField = new Vector256<uint>[Planes];
+            stepOffset = Pin<int>(8 * steps * Planes);
+            stepShift = Pin<Vector256<uint>>(steps * Planes);
+            stepTimes = Pin<Vector256<ushort>>(steps * Planes);
+            Span<int> offsets = stackalloc int[8];
+            Span<uint> shifts = stackalloc uint[8];
+            Span<ushort> times = stackalloc ushort[16];
+            Span<int> current = stackalloc int[8];
+            for (int p = 0; p < Planes; p++)
+            {
+                var plane = d.Planes[p];
+                int bits = plane.Bits;
+                if (book)
+                {
+                    stepRead[p] = StepRead.Index;
+                }
+                else
+                {
+                    // The plane's reading: the first that every step's every lane takes.
+                    var reads = plane.Radix != 0 ? [StepRead.Digits] : new[] { StepRead.Bytes, StepRead.Stream };
+                    int found = Array.FindIndex(reads, read => Enumerable.Range(0, steps * 8).All(i => StepPlace(plane, i / 8, i % 8, read, out _, out _)));
+                    if (found < 0)
+                    {
+                        return false;
+                    }
+
+                    stepRead[p] = reads[found];
+                }
+
+                stepMask[p] = Vector256.Create(stepRead[p] == StepRead.Index ? (1u << bits) - 1 : 0x01010101u * (uint)((1 << bits) - 1));
+                stepField[p] = Vector256.Create((uint)((1 << bits) - 1));
+                int width = stepRead[p] == StepRead.Index ? bits : 4 * bits;
+                for (int s = 0; s < steps; s++)
+                {
+                    int i = s * Planes + p;
+                    for (int l = 0; l < 8; l++)
+                    {
+                        if (!StepPlace(plane, s, l, stepRead[p], out offsets[l], out int shift))
+                        {
+                            return false;
+                        }
+
+                        // An index's or a stream's fields from the dword an earlier step of the group reads where they fit it.
+                        if (stepRead[p] is StepRead.Index or StepRead.Stream && !Keep(current, l, s % T == 0, 8L * offsets[l] + shift, width, out offsets[l], out shift))
+                        {
+                            return false;
+                        }
+
+                        // (A digit plane's "shift" is its digit: its bytes unshifted, times the radix to the digit.)
+                        shifts[l] = stepRead[p] == StepRead.Digits ? 0u : (uint)shift;
+                        int power = 1;
+                        for (int e = 0; stepRead[p] == StepRead.Digits && e < shift; e++)
+                        {
+                            power *= plane.Radix;
+                        }
+
+                        times[2 * l] = times[2 * l + 1] = (ushort)power;
+                    }
+
+                    offsets.CopyTo(new Span<int>(stepOffset + 8 * i, 8));
+                    stepShift[i] = Vector256.Create<uint>(shifts);
+                    stepTimes[i] = Vector256.Create<ushort>(times);
+                }
+            }
+
+            if (book)
+            {
+                // Each lane's dword within its entry; each vector factor's index (one field within a dword) and dword within its vector.
+                bookWithin = Pin<Vector256<int>>(steps);
+                vectorOffset = Pin<int>(8 * steps * Math.Max(1, vectorCount));
+                vectorShift = Pin<Vector256<uint>>(steps * Math.Max(1, vectorCount));
+                vectorWithin = Pin<Vector256<int>>(steps * Math.Max(1, vectorCount));
+                vectorIndexMask = new uint[vectorCount];
+                Span<int> within = stackalloc int[8];
+                Span<int> factorCurrent = stackalloc int[8 * Math.Max(1, vectorCount)];
+                for (int s = 0; s < steps; s++)
+                {
+                    for (int l = 0; l < 8; l++)
+                    {
+                        within[l] = StepValue(s, l) % entryWidth / 4;
+                    }
+
+                    bookWithin[s] = Vector256.Create<int>(within);
+                    for (int f = 0; f < vectorCount; f++)
+                    {
+                        var factor = vectorFactors[f];
+                        int i = s * vectorCount + f, bitsOf = 0;
+                        for (int l = 0; l < 8; l++)
+                        {
+                            int v = StepValue(s, l), index = d.ScaleIndex(factor, v), origin = v / d.UnitValues * d.UnitBytes + d.ScaleBase(factor, v);
+                            long bit;
+                            if (factor.Pieces is { } pieces)
+                            {
+                                // Its pieces one run of bits (each after the last), or no gather.
+                                var own = pieces[index];
+                                bit = 8L * (origin + own[0].Offset) + own[0].Shift;
+                                bitsOf = 0;
+                                foreach (var piece in own)
+                                {
+                                    if (8L * (origin + piece.Offset) + piece.Shift != bit + bitsOf)
+                                    {
+                                        return false;
+                                    }
+
+                                    bitsOf += piece.Bits;
+                                }
+                            }
+                            else
+                            {
+                                (bit, bitsOf) = (8L * (origin + factor.Offset) + (long)index * factor.Type.Bits, factor.Type.Bits);
+                            }
+
+                            if (!Keep(factorCurrent.Slice(8 * f, 8), l, s % T == 0, bit, bitsOf, out int kept, out int shift))
+                            {
+                                return false;
+                            }
+
+                            (offsets[l], shifts[l], within[l]) = (kept, (uint)shift, v % vectorWidth[f] / 4);
+                        }
+
+                        vectorIndexMask[f] = bitsOf >= 32 ? uint.MaxValue : (1u << bitsOf) - 1;
+                        offsets.CopyTo(new Span<int>(vectorOffset + 8 * i, 8));
+                        vectorShift[i] = Vector256.Create<uint>(shifts);
+                        vectorWithin[i] = Vector256.Create<int>(within);
+                    }
+                }
+            }
+
+            // The kernels' constants pinned: per plane its reading, mask, field mask, bits (then its radix), place in the code;
+            // per vector factor its index mask, its masks' table and its dwords an entry.
+            stepReads = Pin<byte>(Planes);
+            stepMasks = Pin<Vector256<uint>>(Planes);
+            stepFields = Pin<Vector256<uint>>(Planes);
+            stepBits = Pin<int>(2 * Planes);
+            stepLows = Pin<int>(Planes);
+            for (int p = 0; p < Planes; p++)
+            {
+                (stepReads[p], stepMasks[p], stepFields[p]) = ((byte)stepRead[p], stepMask[p], stepField[p]);
+                (stepBits[p], stepBits[Planes + p]) = (d.Planes[p].Bits, d.Planes[p].Radix);
+                stepLows[p] = book ? entryLows[p] : planeLow[p];
+            }
+
+            vectorIndexMasks = Pin<Vector256<uint>>(vectorCount);
+            vectorMaskTables = Pin<nint>(vectorCount);
+            vectorDwords = Pin<int>(vectorCount);
+            vectorFromBits = Pin<byte>(vectorCount);
+            for (int f = 0; f < vectorCount; f++)
+            {
+                (vectorIndexMasks[f], vectorMaskTables[f], vectorDwords[f]) = (Vector256.Create(vectorIndexMask[f]), (nint)vectorMasks[f], vectorWidth[f] / 4);
+                // Whether the vectors are the index's bits (entry s's value j −1 exactly where bit j of s is set).
+                var table = vectorFactors[f].Type;
+                int width = vectorWidth[f];
+                vectorFromBits[f] = (byte)(table.Bits == width && Enumerable.Range(0, table.Table!.Count).All(e => table.Table[e] == ((e / width >> e % width & 1) != 0 ? -1d : 1d)) ? 1 : 0);
+            }
+
+            // Each group's distinct dword vectors (its planes' and vector factors' over its steps), gathered once a group:
+            // each step's plane and factor reads one of them (its index from the group's first).
+            var words = new List<int[]>();
+            var known = new Dictionary<(int, int, int, int, int, int, int, int), int>();
+            groupWordStart = Pin<int>(groups + 1);
+            stepWord = Pin<int>(steps * Planes);
+            vectorWord = Pin<int>(steps * Math.Max(1, vectorCount));
+            for (int gp = 0; gp < groups; gp++)
+            {
+                known.Clear();
+                int start = words.Count;
+                for (int s = gp * T; s < (gp + 1) * T; s++)
+                {
+                    for (int p = 0; p < Planes; p++)
+                    {
+                        stepWord[s * Planes + p] = Word(stepOffset + 8 * (s * Planes + p)) - start;
+                    }
+
+                    for (int f = 0; f < vectorCount; f++)
+                    {
+                        vectorWord[s * vectorCount + f] = Word(vectorOffset + 8 * (s * vectorCount + f)) - start;
+                    }
+                }
+
+                groupWordStart[gp + 1] = words.Count;
+                MostGroupWords = Math.Max(MostGroupWords, words.Count - start);
+            }
+
+            wordOffsets = Pin<int>(8 * Math.Max(1, words.Count));
+            for (int u = 0; u < words.Count; u++)
+            {
+                words[u].CopyTo(new Span<int>(wordOffsets + 8 * u, 8));
+            }
+
+            stepsGathered = true;
+            return true;
+
+            // The dword lane l reads a field of `width` bits from `bit` from: its current one where the field fits it (not at
+            // a group's first step), else the field's own (kept within the period); false where the field does not fit it.
+            bool Keep(Span<int> lanes, int l, bool groupStart, long bit, int width, out int kept, out int shift)
+            {
+                if (groupStart || bit < 8L * lanes[l] || bit - 8L * lanes[l] + width > 32)
+                {
+                    lanes[l] = (int)Math.Clamp(bit / 8, 0, PeriodBytes - 4);
+                }
+
+                (kept, shift) = (lanes[l], (int)(bit - 8L * lanes[l]));
+                return shift >= 0 && shift + width <= 32;
+            }
+
+            int Word(int* lanes)
+            {
+                var key = (lanes[0], lanes[1], lanes[2], lanes[3], lanes[4], lanes[5], lanes[6], lanes[7]);
+                if (!known.TryGetValue(key, out int at))
+                {
+                    known[key] = at = words.Count;
+                    words.Add(new ReadOnlySpan<int>(lanes, 8).ToArray());
+                }
+
+                return at;
+            }
+        }
+
+        // GatheredStep's constants (GatherSteps): per plane its reading, mask, field mask, bits and radix, place; per vector
+        // factor its index mask, masks' table and dwords an entry.
+        private byte* stepReads;
+        private Vector256<uint>* stepMasks;
+        private Vector256<uint>* stepFields;
+        private int* stepBits;
+        private int* stepLows;
+        private Vector256<uint>* vectorIndexMasks;
+        private nint* vectorMaskTables;
+        private int* vectorDwords;
+        private byte* vectorFromBits;
+
+        // Byte 0 of each dword to its 4 bytes (within each 128-bit half, as the byte shuffles take it).
+        private static readonly Vector256<byte> LowBytes = Vector256.Create((byte)0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12, 0, 0, 0, 0, 4, 4, 4, 4, 8, 8, 8, 8, 12, 12, 12, 12);
+
+        // The gathered steps' dword vectors: each group's (from groupWordStart[gp], 8 offsets each in wordOffsets), and per
+        // step and plane (and vector factor) the one it reads; the most a group gathers.
+        private int* groupWordStart;
+        private int* wordOffsets;
+        private int* stepWord;
+        private int* vectorWord;
+
+        /// <summary>The most dword vectors a group of the gathered steps gathers (GatherSteps).</summary>
+        public int MostGroupWords { get; private set; }
+
+        /// <summary>Whether the integer lane's steps are gathered (GatherSteps: GatheredOne, GatheredRowSteps).</summary>
+        public bool StepsGathered => stepsGathered;
+
+        /// <summary>Group <paramref name="gp"/>'s distinct dword vectors of the period at <paramref name="period"/> into <paramref name="words"/> (GatherSteps).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public void GatherWords<TI>(byte* period, int gp, Vector256<uint>* words) where TI : struct, IInstructions
+        {
+            int start = groupWordStart[gp], count = groupWordStart[gp + 1] - start;
+            int* offsets = wordOffsets + 8 * start;
+            for (int u = 0; u < count; u++)
+            {
+                words[u] = TI.Gather(period, offsets + 8 * u).AsUInt32();
+            }
+        }
+
+        /// <summary>
+        /// Group <paramref name="gp"/>'s steps gathered (GatherSteps): its distinct dword vectors gathered once (on the stack,
+        /// not cleared: each written before it is read), each step made from the ones it reads. T = 4: s4..s7 not written.
+        /// </summary>
+        [SkipLocalsInit]
+        [MethodImpl(MethodImplOptions.NoInlining | MethodImplOptions.AggressiveOptimization)]
+        private void GroupSteps<TI>(byte* period, int gp, out Vector256<byte> s0, out Vector256<byte> s1, out Vector256<byte> s2, out Vector256<byte> s3,
+            out Vector256<byte> s4, out Vector256<byte> s5, out Vector256<byte> s6, out Vector256<byte> s7) where TI : struct, IInstructions
+        {
+            int start = groupWordStart[gp], count = groupWordStart[gp + 1] - start, first = gp * T;
+            Vector256<uint>* words = stackalloc Vector256<uint>[Math.Max(1, count)];
+            for (int u = 0; u < count; u++)
+            {
+                words[u] = TI.Gather(period, wordOffsets + 8 * (start + u)).AsUInt32();
+            }
+
+            s0 = GatheredStep<TI>(words, first);
+            s1 = GatheredStep<TI>(words, first + 1);
+            s2 = GatheredStep<TI>(words, first + 2);
+            s3 = GatheredStep<TI>(words, first + 3);
+            if (T == 8)
+            {
+                s4 = GatheredStep<TI>(words, first + 4);
+                s5 = GatheredStep<TI>(words, first + 5);
+                s6 = GatheredStep<TI>(words, first + 6);
+                s7 = GatheredStep<TI>(words, first + 7);
+                return;
+            }
+
+            s4 = s5 = s6 = s7 = default;
+        }
+
+        // The value at position 4s of step s's lane l (the step counted over the period: its group s / T; the lane's chunk).
+        private int StepValue(int s, int l) => Order[((s / T) * Cg + l) * C + 4 * (s % T)];
+
+        // Where step s's lane l of `plane` reads its 4 fields (positions 4s..4s + 3 of its chunk, in its span's order) by
+        // `read`: 4 bytes' or digits' first byte and their shift (a digit plane: the digit); an index's or a stream's first
+        // field's byte and bit in it (GatherSteps picks the dword it is read from); false where the 4 fields do not lie so.
+        private bool StepPlace(CodePlane plane, int s, int l, StepRead read, out int offset, out int shift)
+        {
+            var d = D;
+            (offset, shift) = (0, 0);
+            int position = ((s / T) * Cg + l) * C + 4 * (s % T);
+            if (read == StepRead.Index)
+            {
+                // A codebook entry's index (entries of 4 or 8 values: the 4 positions one entry's).
+                int v = Order[position];
+                var (b, sh) = plane.Place(v % d.Values / d.Code.Width);
+                (offset, shift) = (v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b, sh);
+                return true;
+            }
+
+            long first = 0;
+            for (int q = 0; q < 4; q++)
+            {
+                int v = Order[position + q];
+                var (b, sh) = plane.Place(v % d.Values);
+                int at = v / d.UnitValues * d.UnitBytes + d.BlockStart(v) + b;
+                long bit = 8L * at + sh;
+                if (q == 0)
+                {
+                    (first, offset, shift) = (bit, at, sh);
+                }
+
+                bool fits = read switch
+                {
+                    StepRead.Bytes => at == offset + q && sh == shift && sh + plane.Bits <= 8,
+                    StepRead.Digits => at == offset + q && sh == shift,
+                    _ => bit == first + (long)q * plane.Bits,
+                };
+                if (!fits)
+                {
+                    return false;
+                }
+            }
+
+            if (read == StepRead.Stream)
+            {
+                (offset, shift) = ((int)(first / 8), (int)(first % 8));
+                return true;
+            }
+
+            return offset + 4 <= PeriodBytes;
+        }
+
+        /// <summary>
+        /// Step <paramref name="s"/> of the period (counted over the period) made from its group's gathered dword vectors
+        /// (<paramref name="words"/>: GroupSteps): the integer lane's bytes.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+        public Vector256<byte> GatheredStep<TI>(Vector256<uint>* words, int s) where TI : struct, IInstructions
+        {
+            // (Every constant from the plan's pinned arrays: no description, list or bounds check on this path.)
+            Vector256<uint> code = default;
+            for (int p = 0, i = s * Planes; p < Planes; p++, i++)
+            {
+                var word = TI.ShiftRight(words[stepWord[i]], stepShift[i]);
+                Vector256<uint> v;
+                switch (stepReads[p])
+                {
+                    case (byte)StepRead.Bytes:
+                    case (byte)StepRead.Index:
+                        v = word & stepMasks[p];
+                        break;
+                    case (byte)StepRead.Stream:
+                        int bits = stepBits[p];
+                        var field = stepFields[p];
+                        v = (word & field) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, bits) & field, 8)
+                            | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 2 * bits) & field, 16) | Vector256.ShiftLeft(Vector256.ShiftRightLogical(word, 3 * bits) & field, 24);
+                        break;
+                    default:
+                        // Digits: each byte times its place's power of the radix, mod 256, times the radix, its top byte; even
+                        // and odd bytes a 16-bit lane each.
+                        var low = Vector256.Create(0x00FF00FFu);
+                        var times = stepTimes[i];
+                        var radix = Vector256.Create((ushort)stepBits[Planes + p]);
+                        var even = Vector256.ShiftRightLogical(((word & low).AsUInt16() * times & low.AsUInt16()) * radix, 8);
+                        var odd = Vector256.ShiftRightLogical(((Vector256.ShiftRightLogical(word, 8) & low).AsUInt16() * times & low.AsUInt16()) * radix, 8);
+                        v = even.AsUInt32() | Vector256.ShiftLeft(odd.AsUInt32(), 8);
+                        break;
+                }
+
+                code |= Vector256.ShiftLeft(v, stepLows[p]);
+            }
+
+            if (Map == CodeMap.Codebook)
+            {
+                // The index's entry dword (each lane's within its entry), the vector factors' -1s applied, the least added back.
+                var entries = TI.Gather((float*)entryBytes, code.AsInt32() * (entryWidth / 4) + bookWithin[s]).AsByte();
+                for (int f = 0; f < vectorCount; f++)
+                {
+                    int i = s * vectorCount + f;
+                    var index = TI.ShiftRight(words[vectorWord[i]], vectorShift[i]) & vectorIndexMasks[f];
+                    Vector256<byte> m;
+                    if (vectorFromBits[f] != 0)
+                    {
+                        // The index's bits are the signs (bit j set: value j negative): this lane's 4 bits, its dword's low
+                        // byte copied to its 4 bytes, each byte's own bit tested.
+                        var bits = TI.ShiftRight(index, Vector256.ShiftLeft(vectorWithin[i], 2).AsUInt32()).AsByte();
+                        var one = Vector256.Create(0x08040201u).AsByte();
+                        m = Vector256.Equals(TI.ShuffleBytes(bits, LowBytes) & one, one);
+                    }
+                    else
+                    {
+                        m = TI.Gather((float*)vectorMaskTables[f], index.AsInt32() * vectorDwords[f] + vectorWithin[i]).AsByte();
+                    }
+
+                    entries = (entries ^ m) - m;
+                }
+
+                return entries + leastBytes;
+            }
+
+            var bytes = code.AsByte();
+            return Map switch
+            {
+                CodeMap.Flip => bytes ^ Flip,
+                CodeMap.Shuffle => TI.ShuffleBytes(Shuffle, bytes),
+                CodeMap.Table => Through(bytes),
+                _ => bytes,
+            };
         }
 
         /// <summary>
@@ -9922,6 +10579,9 @@ internal sealed partial class CpuBackend
         public int Unmeasured => DescribedLaneId;
 
         public int InputOf(int lane) => 0;
+
+        /// <summary>The plan's spans by how their codes are made (DescribedPlan.SpanKinds; tests).</summary>
+        public (int Runs, int Windows, int Streams, int Codebook, int OneByOne) Spans() => plan.SpanKinds();
 
         /// <summary>The arithmetic the plan took: "integer", "float32" or "float64".</summary>
         public string Arithmetic => plan.Mode switch
@@ -10985,6 +11645,11 @@ internal sealed partial class CpuBackend
             };
         }
 
+        if (plan.StepsGathered)
+        {
+            return GatheredOne<TI>(plan, row, tail, full, groups, chunks, x, lanes);
+        }
+
         return plan.P switch
         {
             1 => MadeOne<EightChunks, TI>(plan, row, tail, full, groups, chunks, x, lanes),
@@ -11022,6 +11687,12 @@ internal sealed partial class CpuBackend
 
         if (plan.UniformRuns == 0)
         {
+            if (plan.StepsGathered)
+            {
+                GatheredRowSteps<TI>(plan, row, tail, full, groups, chunks, into);
+                return;
+            }
+
             DescribedRowSteps<TI>(plan, row, tail, full, groups, chunks, into);
             return;
         }
@@ -11253,6 +11924,76 @@ internal sealed partial class CpuBackend
     private static unsafe Vector256<byte> GatheredStep<TM, TI>(Vector256<uint> words, Vector256<uint>* shifts, int* one, int q, Vector256<byte> mask, Vector256<byte> table)
         where TM : struct, ICodeMap where TI : struct, IInstructions =>
         TM.Map<TI>((TI.ShiftsByLane || one[q] < 0 ? TI.ShiftRight(words, shifts[q]) : Vector256.ShiftRightLogical(words, one[q])).AsByte() & mask, table);
+
+    // MadeOne for a plan whose steps are gathered (DescribedPlan.GatherSteps): each group's dword vectors gathered into one
+    // scratch made once a call, each step made from them straight into its dot product.
+    [SkipLocalsInit]
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe float GatheredOne<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, sbyte* x, float* lanes) where TI : struct, IInstructions
+    {
+        int gpp = plan.GroupsPerPeriod, t = plan.T, groupValues = plan.GroupValues, laneFloats = plan.LaneFloats, periodBytes = plan.PeriodBytes;
+        bool mins = plan.Mins, eight = t == 8;
+        Vector256<uint>* words = stackalloc Vector256<uint>[Math.Max(1, plan.MostGroupWords)];
+        Vector256<float> f = default;
+        for (int g = 0; g < groups; g++)
+        {
+            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp, first = gp * t;
+            byte* at = period < full ? row + (nint)period * periodBytes : tail;
+            plan.GatherWords<TI>(at, gp, words);
+            sbyte* xg = x + (nint)g * groupValues;
+            float* lg = lanes + (nint)g * laneFloats;
+            var i = Vector256.Load((int*)(lg + 8));
+            i = TI.Dot(i, plan.GatheredStep<TI>(words, first), Vector256.Load(xg));
+            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 1), Vector256.Load(xg + 32));
+            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 2), Vector256.Load(xg + 64));
+            i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 3), Vector256.Load(xg + 96));
+            if (eight)
+            {
+                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 4), Vector256.Load(xg + 128));
+                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 5), Vector256.Load(xg + 160));
+                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 6), Vector256.Load(xg + 192));
+                i = TI.Dot(i, plan.GatheredStep<TI>(words, first + 7), Vector256.Load(xg + 224));
+            }
+
+            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            f = TI.Fused(Vector256.ConvertToSingle(i), scale * Vector256.Load(lg), f);
+            if (mins)
+            {
+                f = TI.Fused(min, Vector256.Load(lg + 16), f);
+            }
+        }
+
+        return Vector256.Sum(f);
+    }
+
+    // DescribedRowSteps for a plan whose steps are gathered (GatherSteps): each group's dword vectors gathered into one
+    // scratch made once a call, its steps, scales and minimums stored.
+    [SkipLocalsInit]
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
+    private static unsafe void GatheredRowSteps<TI>(DescribedPlan plan, byte* row, byte* tail, int full, int groups, int chunks, byte* into) where TI : struct, IInstructions
+    {
+        int gpp = plan.GroupsPerPeriod, t = plan.T, stepBytes = plan.GroupStepBytes, periodBytes = plan.PeriodBytes;
+        bool mins = plan.Mins;
+        Vector256<uint>* words = stackalloc Vector256<uint>[Math.Max(1, plan.MostGroupWords)];
+        for (int g = 0; g < groups; g++)
+        {
+            int period = gpp == 1 ? g : g / gpp, gp = g - period * gpp, first = gp * t;
+            byte* at = period < full ? row + (nint)period * periodBytes : tail;
+            byte* to = into + (nint)g * stepBytes;
+            plan.GatherWords<TI>(at, gp, words);
+            for (int s = 0; s < t; s++)
+            {
+                plan.GatheredStep<TI>(words, first + s).Store(to + 32 * s);
+            }
+
+            plan.Factor<TI>(at, gp, Math.Min(8, chunks - g * 8), out var scale, out var min);
+            scale.Store((float*)(to + 32 * t));
+            if (mins)
+            {
+                min.Store((float*)(to + 32 * t + 32));
+            }
+        }
+    }
 
     // MadeOne for a plan with uniform runs (P = 1), its load and map as type parameters.
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
