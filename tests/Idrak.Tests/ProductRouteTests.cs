@@ -610,7 +610,7 @@ internal abstract partial class DesktopTests : Tests
                 continue;
             }
 
-            var bytes = GgufDescribedBytes(d, k, n, random);
+            var bytes = DescribedFiniteBytes(d, k, n, random);
             float[] exact = new float[n * k], described = new float[n * k];
             type.Decode(bytes, exact);                                                         // ggml's values: row j's value r at j · k + r
             d.Decode(bytes, described);
@@ -683,42 +683,72 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    // n rows of k values of description d as stored: random bytes, each 16-bit float scale and minimum (at its offset or
-    // from its pieces) set to a finite value of either sign, magnitude in [2^-4, 2^0).
-    private static byte[] GgufDescribedBytes(TypeDescription d, int k, int n, Random random)
+    // n rows of k values of description d as stored, made from the description alone (never bytes an encoder wrote):
+    // random bytes, then every float field whose type has codes that are not finite values (a value's code, a scale, a
+    // minimum: IEEE's floats, E4M3's, E8M0's; at its planes' places, its offset or its pieces) set to a finite value of
+    // either sign (an unsigned type's: positive), magnitude in [2^-4, 1): its exponent from its bias − 4 to its bias − 1, a
+    // random mantissa. Every other field (integers, tables, codebook indices, floats with every code finite) stays random.
+    private static byte[] DescribedFiniteBytes(TypeDescription d, int k, int n, Random random)
     {
-        var bytes = new byte[n * (k / d.Values) * d.Bytes];
+        var bytes = new byte[n * (k / d.UnitValues) * d.UnitBytes];
         random.NextBytes(bytes);
-        for (int at = 0; at < bytes.Length; at += d.Bytes)
+        var factors = (d.Scales ?? []).Concat(d.Mins ?? []).Where(s => Bounded(s.Type)).ToArray();
+        for (int at = 0; at < bytes.Length; at += d.UnitBytes)
         {
-            var block = bytes.AsSpan(at, d.Bytes);
-            foreach (var scale in (d.Scales ?? []).Concat(d.Mins ?? []).Where(s => s.Type is { Kind: NumberKind.Float, Bits: 16 }))
+            var unit = bytes.AsSpan(at, d.UnitBytes);
+            for (int v = 0; v < d.UnitValues && Bounded(d.Code); v += d.Code.Width)
             {
-                for (int index = 0; index < d.Values / scale.Values; index++)
+                ulong bits = FiniteBits(d.Code, random);
+                int start = d.BlockStart(v), entry = v % d.Values / d.Code.Width;
+                foreach (var plane in d.Planes)
                 {
-                    int bits = random.Next(2) << 15 | random.Next(11, 15) << 10 | random.Next(1 << 10);
-                    if (scale.Pieces is { } pieces)
-                    {
-                        foreach (var piece in pieces[index])
-                        {
-                            int mask = (1 << piece.Bits) - 1;
-                            block[piece.Offset] = (byte)(block[piece.Offset] & ~(mask << piece.Shift) | (bits & mask) << piece.Shift);
-                            bits >>= piece.Bits;
-                        }
+                    var (b, s) = plane.Place(entry);
+                    Put(unit, 8L * (start + b) + s, plane.Bits, bits);
+                    bits >>= plane.Bits;
+                }
+            }
 
+            foreach (var scale in factors)
+            {
+                for (int v = 0; v < d.UnitValues; v += scale.Values)
+                {
+                    ulong bits = FiniteBits(scale.Type, random);
+                    int origin = d.ScaleBase(scale, v), index = d.ScaleIndex(scale, v);
+                    if (scale.Pieces is null)
+                    {
+                        Put(unit, 8L * (origin + scale.Offset) + (long)index * scale.Type.Bits, scale.Type.Bits, bits);
                         continue;
                     }
 
-                    for (int b = 0; b < 16; b++)
+                    foreach (var piece in scale.Pieces[index])
                     {
-                        long bit = 8L * scale.Offset + 16L * index + b;
-                        block[(int)(bit >> 3)] = (byte)(block[(int)(bit >> 3)] & ~(1 << (int)(bit & 7)) | (bits >> b & 1) << (int)(bit & 7));
+                        Put(unit, 8L * (origin + piece.Offset) + piece.Shift, piece.Bits, bits);
+                        bits >>= piece.Bits;
                     }
                 }
             }
         }
 
         return bytes;
+
+        static bool Bounded(NumberType t) => t is { Kind: NumberKind.Float, Width: 1 } && t.Specials != FloatSpecials.None;
+
+        static ulong FiniteBits(NumberType t, Random random)
+        {
+            int low = Math.Max(t.Subnormals ? 1 : 0, t.ExponentBias - 4), high = Math.Max(low, t.ExponentBias - 1);
+            ulong bits = (ulong)random.Next(low, high + 1) << t.Mantissa | (ulong)random.NextInt64() & ((1UL << t.Mantissa) - 1);
+            return t.Signed && random.Next(2) == 1 ? bits | 1UL << (t.Exponent + t.Mantissa) : bits;
+        }
+
+        // `count` low bits of `value` at bit `bit` of `into` (little-endian), the other bits kept.
+        static void Put(Span<byte> into, long bit, int count, ulong value)
+        {
+            for (int i = 0; i < count; i++, bit++)
+            {
+                int mask = 1 << (int)(bit & 7);
+                into[(int)(bit >> 3)] = (byte)((value >> i & 1) != 0 ? into[(int)(bit >> 3)] | mask : into[(int)(bit >> 3)] & ~mask);
+            }
+        }
     }
 
     // Every described type written from float32 values by its description alone (DescribedEncoder; the registered types'
@@ -862,13 +892,14 @@ internal abstract partial class DesktopTests : Tests
         Console.WriteLine($"{written.Count} types written by their descriptions ({string.Join(", ", written)}), {laned.Count} of them read back through the described lane");
     }
 
-    // The bits of the CPU's lanes over stored weights on fixed operands: each format's weights packed from seeded values, x
-    // seeded, 1, 3, 4, 5, 9 and 70 rows; per format and kind of lane the SHA-256 (its first 16 hex digits) of every output's
-    // bits, and of the packed weights' bytes; the types made of a description alone (DescribedOnlyTypes) by the described
-    // lane. Every lane that runs here is hashed on its own (each kind by the portable instructions and by each instruction
-    // set the CPU has), and each must give its kind's bits: a lane computes alike on every CPU, whatever its instructions,
-    // so one list holds (LaneBitsRecorded). A lane that does not run here, or a hash not in the list, fails naming it, and
-    // the hashes made here are listed to compare.
+    // The bits of the CPU's lanes over stored weights on fixed operands: each format's stored bytes made from its
+    // description alone (DescribedFiniteBytes: seeded bytes, its float fields finite; never bytes an encoder wrote, so only
+    // a change in a lane's arithmetic moves a hash), x seeded, 1, 3, 4, 5, 9 and 70 rows; per format and kind of lane the
+    // SHA-256 (its first 16 hex digits) of every output's bits, and of the stored bytes; the types made of a description
+    // alone (DescribedOnlyTypes) by the described lane. Every lane that runs here is hashed on its own (each kind by the
+    // portable instructions and by each instruction set the CPU has), and each must give its kind's bits: a lane computes
+    // alike on every CPU, whatever its instructions, so one list holds (LaneBitsRecorded). A lane that does not run here, or
+    // a hash not in the list, fails naming it, and the hashes made here are listed to compare.
     private static void ProductRoutesLaneBits(Device device)
     {
         if (device.Backend is not Idrak.Abstraction.Devices.Cpu.CpuBackend)
@@ -877,7 +908,6 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        var random = new Random(97);
         var hashes = new Dictionary<(string Key, string Lane), System.Security.Cryptography.IncrementalHash>();
         var order = new List<(string Key, string Lane)>();
         void Add(string key, string lane, ReadOnlySpan<byte> bytes)
@@ -894,19 +924,21 @@ internal abstract partial class DesktopTests : Tests
         int[] rows = [1, 3, 4, 5, 9, 70];
         UnderRoute(ProductRoute.Measured, () =>
         {
-            foreach (var (format, k, n) in new[] { ("q4_k", 512, 37), ("q4_0", 320, 37), ("mxfp4", 320, 37), ("q6_k", 768, 37), ("bfloat16", 520, 37), ("bfloat16", 4200, 9),
-                ("int64", 544, 37), ("float64", 2600, 9), ("int2", 320, 37) })
+            // Each operand set from its own seed (its name's), so no type's bytes or x move when another is added or
+            // removed; int64 with a float32 scale an output row (its weights' layout: codes of the full range).
+            foreach (var (format, k, n, rowScaled) in new[] { ("q4_k", 512, 37, false), ("q4_0", 320, 37, false), ("mxfp4", 320, 37, false), ("q6_k", 768, 37, false),
+                ("bfloat16", 520, 37, false), ("bfloat16", 4200, 9, false), ("int64", 544, 37, true), ("float64", 2600, 9, false), ("int2", 320, 37, false) })
             {
                 var type = ElementTypes.Find(format) ?? throw new InvalidOperationException($"{format} is not registered");
-                var values = RouteValues(random, (long)k * n);
-                using var weight = (StoredWeight)PackedWeightFormats.Pack(format, values, k, n, device);
-                var storage = weight.StoredValues.Storage;
-                var words = Idrak.Abstraction.Devices.Cpu.CpuBackend.D(storage);
-                var rowScales = weight.Scales is { } held ? Idrak.Abstraction.Devices.Cpu.CpuBackend.D(held.Storage) : null;
-                Add($"{format} packed", "", System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan(0, storage.Length)));
+                var random = new Random(LaneBitsSeed($"{format} [{k}, {n}]"));
+                var bytes = DescribedFiniteBytes(type.Description ?? throw new InvalidOperationException($"{format} has no description"), k, n, random);
+                var words = new float[(bytes.Length + 3) / 4];
+                Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+                var rowScales = rowScaled ? Enumerable.Range(0, n).Select(_ => MathF.ScaleB(0.5f + random.NextSingle(), -63)).ToArray() : null;
+                Add($"{format} stored", "", bytes);
                 if (rowScales is not null)
                 {
-                    Add($"{format} packed", "", System.Runtime.InteropServices.MemoryMarshal.AsBytes(rowScales.AsSpan()));
+                    Add($"{format} stored", "", System.Runtime.InteropServices.MemoryMarshal.AsBytes(rowScales.AsSpan()));
                 }
 
                 var written = Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredLanesOf(type, k);
@@ -918,7 +950,7 @@ internal abstract partial class DesktopTests : Tests
                     for (int lane = 0; lane < written.Count; lane++)
                     {
                         var y = new float[m * n];
-                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane, type, words, storage.Length, x, y, m, n, k, rowScales),
+                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.StoredRowLane(lane, type, words, words.Length, x, y, m, n, k, rowScales),
                             $"{format} [{k}, {n}], {m} rows: its {written[lane].Lane} does not run here");
                         Add($"{format} {(written[lane].Second ? "second" : "first")}", written[lane].Lane, System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
                     }
@@ -926,7 +958,7 @@ internal abstract partial class DesktopTests : Tests
                     for (int lane = 0; lane < described.Count; lane++)
                     {
                         var y = new float[m * n];
-                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane, type, words, storage.Length, x, y, m, n, k, rowScales),
+                        Check(Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedRowLane(lane, type, words, words.Length, x, y, m, n, k, rowScales),
                             $"{format} [{k}, {n}], {m} rows: its {described[lane]} does not run here");
                         Add($"{format} described", described[lane], System.Runtime.InteropServices.MemoryMarshal.AsBytes(y.AsSpan()));
                     }
@@ -936,9 +968,11 @@ internal abstract partial class DesktopTests : Tests
             foreach (var (name, type, d, k) in DescribedOnlyTypes())
             {
                 int n = 37;
-                var bytes = DescribedOnlyBytes(d, k, n, random);
+                var random = new Random(LaneBitsSeed(name));
+                var bytes = DescribedFiniteBytes(d, k, n, random);
                 var words = new float[(bytes.Length + 3) / 4];
                 Buffer.BlockCopy(bytes, 0, words, 0, bytes.Length);
+                Add($"{name} stored", "", bytes);
                 var described = Idrak.Abstraction.Devices.Cpu.CpuBackend.DescribedLanesOf(type, k);
                 Check(described.Count >= 1, $"{name}: no described lane runs here");
                 foreach (int m in rows)
@@ -973,47 +1007,65 @@ internal abstract partial class DesktopTests : Tests
         Console.WriteLine($"{order.Count} lanes hashed (each kind of lane by every instruction set that runs here), every one the recorded bits of its kind");
     }
 
+    // An operand set's seed from its name (FNV-1a over its characters: the same on every run and every machine).
+    private static int LaneBitsSeed(string name)
+    {
+        uint hash = 2166136261;
+        foreach (char c in name)
+        {
+            hash = (hash ^ c) * 16777619;
+        }
+
+        return (int)(hash & int.MaxValue);
+    }
+
     // The hashes ProductRoutesLaneBits makes, recorded (the CPU's lanes give these bits on any CPU).
     private static readonly Dictionary<string, string> LaneBitsRecorded = new(StringComparer.Ordinal)
     {
-        ["16-bit integers described"] = "AA650437BFD4B7EC",
-        ["16-bit integers plus 0.5 described"] = "C758FF37AA9881B3",
-        ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values described"] = "266CB3932659C6D5",
-        ["32-bit integers described"] = "BEF4122A2A5C359A",
-        ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values described"] = "B2EFD9742133B719",
-        ["bfloat16 described"] = "1F14D9DAE9B8DFDF",
-        ["bfloat16 first"] = "1F14D9DAE9B8DFDF",
-        ["bfloat16 packed"] = "B2B8ADDE868D62F8",
-        ["bfloat16 second"] = "A2C47570E1FE4008",
-        ["float64 described"] = "C151C31D72C6C283",
-        ["float64 first"] = "C151C31D72C6C283",
-        ["float64 packed"] = "B09057F69C11D882",
-        ["float64 second"] = "C151C31D72C6C283",
-        ["fp6 E2M3 in a 4-bit and a 2-bit plane, an E8M0 scale a 32 values described"] = "275089C20C16CCD2",
-        ["int2 described"] = "FE1997D420F2F0B5",
-        ["int2 first"] = "EF89C8D5D469457E",
-        ["int2 packed"] = "FECCDAD4E9820FD6",
-        ["int2 second"] = "FE1997D420F2F0B5",
-        ["int64 described"] = "21F1BA49477B8C02",
-        ["int64 first"] = "2CD5D31DFF2540CE",
-        ["int64 packed"] = "ECBA01AB8ED13831",
-        ["int64 second"] = "21F1BA49477B8C02",
-        ["mxfp4 described"] = "59891480E42EB979",
-        ["mxfp4 first"] = "397FBF12E45C405B",
-        ["mxfp4 packed"] = "519975C002E6EE15",
-        ["mxfp4 second"] = "59891480E42EB979",
-        ["q4_0 described"] = "26E3D38B95157453",
-        ["q4_0 first"] = "B3AC8AB4564AABEC",
-        ["q4_0 packed"] = "A88B1A03BBECF0F1",
-        ["q4_0 second"] = "26E3D38B95157453",
-        ["q4_k described"] = "E2250E23C9980780",
-        ["q4_k first"] = "6BD5F4FF765E457B",
-        ["q4_k packed"] = "DB04AFAD337D9E14",
-        ["q4_k second"] = "73B5CB35011381A0",
-        ["q6_k described"] = "B84CAC1B6EDF8A05",
-        ["q6_k first"] = "86CECF4BE22CF98C",
-        ["q6_k packed"] = "3323FCCABFBB7200",
-        ["q6_k second"] = "594857F369832239",
+        ["16-bit integers described"] = "0AD092E40E7B6807",
+        ["16-bit integers plus 0.5 described"] = "FA7F6C3A35719AF7",
+        ["16-bit integers plus 0.5 stored"] = "DDFA6AEA60DCB501",
+        ["16-bit integers stored"] = "31418B4D8B89086B",
+        ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values described"] = "C5324487544045EC",
+        ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values stored"] = "29A6BA49DF85CA69",
+        ["32-bit integers described"] = "98069D2D957CA29D",
+        ["32-bit integers stored"] = "63B5B7D922004311",
+        ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values described"] = "BE2AA77B3342A1D3",
+        ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values stored"] = "592ACEBFC8208E4C",
+        ["bfloat16 described"] = "BC5B9EE8B5F7CE6C",
+        ["bfloat16 first"] = "BC5B9EE8B5F7CE6C",
+        ["bfloat16 second"] = "DBA8DD8835DF8F6B",
+        ["bfloat16 stored"] = "12F3BE79F0791B5E",
+        ["float64 described"] = "EA0FB746D0C4EF70",
+        ["float64 first"] = "EA0FB746D0C4EF70",
+        ["float64 second"] = "EA0FB746D0C4EF70",
+        ["float64 stored"] = "93B42CD81DA75319",
+        ["fp6 E2M3 in a 4-bit and a 2-bit plane, an E8M0 scale a 32 values described"] = "0FFE8FC7F31DA651",
+        ["fp6 E2M3 in a 4-bit and a 2-bit plane, an E8M0 scale a 32 values stored"] = "11D168686B5532DA",
+        ["int2 described"] = "C97696BC06D308F5",
+        ["int2 first"] = "38D0DD8EB832EB23",
+        ["int2 second"] = "C97696BC06D308F5",
+        ["int2 stored"] = "B9A90C0EB7780762",
+        ["int64 described"] = "C3E5EE427F48DFCC",
+        ["int64 first"] = "9386780385B2140B",
+        ["int64 second"] = "C3E5EE427F48DFCC",
+        ["int64 stored"] = "69E8A4F4C497BEBE",
+        ["mxfp4 described"] = "1595EB830B310EBE",
+        ["mxfp4 first"] = "C8760E48CDD27206",
+        ["mxfp4 second"] = "1595EB830B310EBE",
+        ["mxfp4 stored"] = "049001E9829624B5",
+        ["q4_0 described"] = "F9E0B7D12B7D7562",
+        ["q4_0 first"] = "EA5183AC0DB8EDB4",
+        ["q4_0 second"] = "F9E0B7D12B7D7562",
+        ["q4_0 stored"] = "2E9C5934D1D6F910",
+        ["q4_k described"] = "F842F6266EE5BA9A",
+        ["q4_k first"] = "3E6557A880FF2960",
+        ["q4_k second"] = "9474767BB41C4AC9",
+        ["q4_k stored"] = "882CDABBE2B2BC5E",
+        ["q6_k described"] = "71B0B16E2747CB5B",
+        ["q6_k first"] = "49ECD379F9B27D5B",
+        ["q6_k second"] = "9D9A6E9E452B9208",
+        ["q6_k stored"] = "00ED6D2AADE10493",
     };
 
     // CUDA's described lane run alone (no written kernel) over q4_k, q4_0, bfloat16, q6_k, int64 (a scale an output row),
