@@ -68,7 +68,7 @@ public interface IKeyValueLayout : IKind
 /// <summary>
 /// A key/value cache format whose rows each have a scale: the cache then holds <see cref="KeyValueCache.KeyScales"/> and
 /// <see cref="KeyValueCache.ValueScales"/>, [rows, capacity], which the format's <see cref="IKeyValueLayout.Write"/> fills
-/// and its reads use. The built-in int8 format is one.
+/// and its reads use.
 /// </summary>
 public interface IScaledLayout : IKeyValueLayout;
 
@@ -125,13 +125,9 @@ public interface IMergedHeadsLayout : IKeyValueLayout
 
 /// <summary>
 /// A key/value cache format the fused projection kernel (norms, rotary positions, head layout) may write keys and values
-/// straight into. The built-in float32 and bfloat16 formats are.
+/// straight into. The built-in float32 format is.
 /// </summary>
-public interface IFusedWriteLayout : IKeyValueLayout
-{
-    /// <summary>Whether values are stored as bfloat16 pairs (two per element), which the kernel then writes.</summary>
-    bool HalfWords { get; }
-}
+public interface IFusedWriteLayout : IKeyValueLayout;
 
 /// <summary>
 /// A base for a key/value cache format of one's own (<see cref="IKeyValueLayout"/>): it implements
@@ -150,7 +146,7 @@ public interface IFusedWriteLayout : IKeyValueLayout
 /// </example>
 public abstract class KeyValueLayout : IKeyValueLayout
 {
-    /// <summary>The format's name (the built-ins: "float32", "int8", "bfloat16").</summary>
+    /// <summary>The format's name (the built-in: "float32").</summary>
     public abstract string Name { get; }
 
     /// <summary>One line for listings: the name unless the format says more.</summary>
@@ -176,8 +172,7 @@ public abstract class KeyValueLayout : IKeyValueLayout
     /// The cached keys (<paramref name="keys"/> true) or values of the first <paramref name="positions"/> slots as float32,
     /// [rows, at least <paramref name="positions"/>, headDim]: what attention over a prefix of the cache reads (an image
     /// prefill step, whose key ranges end at the step's last position), without a float32 copy of every slot. The
-    /// default is <see cref="Expand"/> (every slot); the built-in float32 cache is read in place, bfloat16 and int8 caches
-    /// expand only those slots. Only read, never changed or disposed (it may be the cache's own tensor).
+    /// default is <see cref="Expand"/> (every slot); the built-in float32 cache is read in place. Only read, never changed or disposed (it may be the cache's own tensor).
     /// </summary>
     /// <param name="cache">The cache.</param>
     /// <param name="keys">Keys (true) or values.</param>
@@ -237,8 +232,8 @@ public abstract class KeyValueLayout : IKeyValueLayout
 /// padded on the left, <see cref="DecodingContext.RowStarts"/>): a layout implements it to take part in batched
 /// generation of such rows (<see cref="KeyValueCache.RowStartsLayout"/> holds it); a layout that does not is replaced by
 /// float32 for those batches. The rows' keys and values reach the cache through the layout's own
-/// <see cref="IKeyValueLayout.Write"/>; this contract reads them back. The built-in float32 and bfloat16 formats
-/// implement it (through <c>Backend.AttentionRows</c> and <c>Backend.AttentionRowsBFloat16</c>).
+/// <see cref="IKeyValueLayout.Write"/>; this contract reads them back. The built-in float32 format implements it
+/// (through <c>Backend.AttentionRows</c>).
 /// </summary>
 public interface IRowStartsLayout : IKeyValueLayout
 {
@@ -259,26 +254,26 @@ public interface IRowStartsLayout : IKeyValueLayout
     Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow, AttentionVariant variant);
 }
 
-/// <summary>Which key/value cache format a run uses and how it was chosen (<see cref="KeyValueLayouts.Choose"/>, plan 37 T2).</summary>
+/// <summary>Which key/value cache format a run uses and how it was chosen (<see cref="KeyValueLayouts.Choose"/>).</summary>
 /// <param name="Layout">The format.</param>
-/// <param name="Picked">Whether "auto" picked it (from the run's element type), else the user selected it.</param>
+/// <param name="Picked">Whether "auto" picked it, else the user selected it.</param>
 /// <param name="Source">Where the user's choice came from ("--kv", "IDRAK_KV_CACHE_TYPE"), else null.</param>
-/// <param name="How">"picked by auto: the run computes in bfloat16", or "selected by the user (--kv)".</param>
+/// <param name="How">"picked by auto", or "selected by the user (--kv)".</param>
 public sealed record KeyValueLayoutChoice(IKeyValueLayout Layout, bool Picked, string? Source, string How)
 {
-    /// <summary>"kv cache: bfloat16 (picked by auto: the run computes in bfloat16)".</summary>
+    /// <summary>"kv cache: float32 (picked by auto)".</summary>
     public override string ToString() => $"kv cache: {Layout.Name} ({How})";
 }
 
 /// <summary>
-/// The key/value cache formats by name: "float32", "int8" and "bfloat16" (the built-in <see cref="KeyValueFormat"/>s) are
-/// registered; add formats of one's own with <see cref="Register"/>, so options and tools can choose them by name. A run's
-/// format is chosen by <see cref="Choose"/>: the user's (<c>--kv</c>, IDRAK_KV_CACHE_TYPE), else the run's compute type.
+/// The key/value cache formats by name: "float32" (the built-in <see cref="KeyValueFormat"/>) is registered; add formats of
+/// one's own with <see cref="Register"/>, so options and tools can choose them by name. A run's format is chosen by
+/// <see cref="Choose"/>: the user's (<c>--kv</c>, IDRAK_KV_CACHE_TYPE), else float32.
 /// </summary>
 public static class KeyValueLayouts
 {
     // The built-ins, indexed by their format.
-    private static readonly IKeyValueLayout[] BuiltIn = [new Float32Layout(), new Int8Layout(), new BFloat16Layout()];
+    private static readonly IKeyValueLayout[] BuiltIn = [new Float32Layout()];
 
     private static readonly KindTable<IKeyValueLayout> Registry = Layouts();
 
@@ -296,7 +291,7 @@ public static class KeyValueLayouts
 
     /// <summary>The built-in layout storing <paramref name="format"/>.</summary>
     public static IKeyValueLayout For(KeyValueFormat format) =>
-        format is >= KeyValueFormat.Float32 and <= KeyValueFormat.BFloat16 ? BuiltIn[(int)format]
+        format == KeyValueFormat.Float32 ? BuiltIn[(int)format]
             : throw new ArgumentException($"{format} is not a built-in format; pass the layout itself (or its name to KeyValueLayouts.Get).", nameof(format));
 
     /// <summary>The built-in format <paramref name="layout"/> stores, or <see cref="KeyValueFormat.Custom"/> for a format of one's own.</summary>
@@ -334,23 +329,19 @@ public static class KeyValueLayouts
     /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    /// <summary>The variable naming a run's key/value cache type (plan 37, T2): "IDRAK_KV_CACHE_TYPE".</summary>
+    /// <summary>The variable naming a run's key/value cache format: "IDRAK_KV_CACHE_TYPE".</summary>
     public const string EnvironmentVariable = "IDRAK_KV_CACHE_TYPE";
 
-    /// <summary>The cache type that keeps the run's compute type (the default): the format named as that element type, where one is registered.</summary>
+    /// <summary>The cache format the library picks (the default): float32.</summary>
     public const string Auto = "auto";
 
     /// <summary>
-    /// The key/value cache format of a run computing in <paramref name="computeType"/> (plan 37, T2):
-    /// <paramref name="asked"/> (a run's option, named <paramref name="source"/>) when given, else
-    /// <see cref="EnvironmentVariable"/>, else <see cref="Auto"/>, which keeps the compute type (the format registered under
-    /// its name: bfloat16 for a bfloat16 run, float32 for a float32 one; float32 where none is). A name is a registered
-    /// format's or an element type's (short names too: bf16, f32).
+    /// The key/value cache format of a run: <paramref name="asked"/> (a run's option, named <paramref name="source"/>) when
+    /// given, else <see cref="EnvironmentVariable"/>, else <see cref="Auto"/> (float32). A name is a registered format's.
     /// </summary>
     /// <exception cref="NotRegisteredException">No format of the name is registered (the message names the source and the registered ones).</exception>
-    public static KeyValueLayoutChoice Choose(string? asked, ElementType computeType, string source = "--kv")
+    public static KeyValueLayoutChoice Choose(string? asked, string source = "--kv")
     {
-        ArgumentNullException.ThrowIfNull(computeType);
         string? value = asked, from = source;
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -360,14 +351,11 @@ public static class KeyValueLayouts
 
         if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals(Auto, StringComparison.OrdinalIgnoreCase))
         {
-            return Registry.Find(computeType.Name) is { } kept
-                ? new KeyValueLayoutChoice(kept, Picked: true, Source: null, $"picked by auto: the run computes in {computeType.Name}")
-                : new KeyValueLayoutChoice(BuiltIn[(int)KeyValueFormat.Float32], Picked: true, Source: null,
-                    $"picked by auto: the run computes in {computeType.Name}, which has no cache format registered");
+            return new KeyValueLayoutChoice(BuiltIn[(int)KeyValueFormat.Float32], Picked: true, Source: null, "picked by auto");
         }
 
         var name = value.AsSpan().Trim();
-        var layout = Registry.Find(name) ?? (ElementTypes.Find(name) is { } type ? Registry.Find(type.Name) : null)
+        var layout = Registry.Find(name)
             ?? throw new NotRegisteredException(nameof(KeyValueLayouts), name.ToString(), Registry.Names,
                 $"{from} '{value}': no key/value cache format of that name is registered ({Auto}, {string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
         return new KeyValueLayoutChoice(layout, Picked: false, Source: from, $"selected by the user ({from})");
@@ -386,8 +374,6 @@ public static class KeyValueLayouts
         public override string Summary => "32-bit floats (exact)";
 
         public override int RowWidth(int headDim) => headDim;
-
-        public bool HalfWords => false;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -435,134 +421,4 @@ public static class KeyValueLayouts
                 : null;
         }
     }
-
-    private sealed class Int8Layout : KeyValueLayout, IScaledLayout, IRecordableLayout, ISlidingWindowLayout, IMergedHeadsLayout
-    {
-        public override string Name => "int8";
-
-        public override string Summary => "one signed byte per value and a float scale per cached row";
-
-        public override int RowWidth(int headDim) => (headDim + 3) / 4;
-
-        public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
-        {
-            Tensor.WriteKeyValuesInt8(keys, cache.Keys, cache.KeyScales!, position);
-            Tensor.WriteKeyValuesInt8(values, cache.Values, cache.ValueScales!, position);
-        }
-
-        // The bytes as floats (each row's bytes are a weight row with unit column scales), times each row's scale.
-        public override Tensor Expand(KeyValueCache cache, bool keys) =>
-            Expanded(keys ? cache.Keys : cache.Values, keys ? cache.KeyScales! : cache.ValueScales!, cache.HeadDim);
-
-        // Only the first slots: the packed rows and their scales narrowed first (a copy of the prefix's bytes).
-        public override Tensor ExpandPrefix(KeyValueCache cache, bool keys, int positions)
-        {
-            var packed = keys ? cache.Keys : cache.Values;
-            positions = Math.Clamp(positions, 1, packed.Shape[1]);
-            if (positions == packed.Shape[1])
-            {
-                return Expand(cache, keys);
-            }
-
-            using var prefix = packed.Narrow(1, 0, positions);
-            using var scales = (keys ? cache.KeyScales! : cache.ValueScales!).Narrow(1, 0, positions);
-            return Expanded(prefix, scales, cache.HeadDim);
-        }
-
-        private static Tensor Expanded(Tensor packed, Tensor scales, int dim)
-        {
-            int rows = packed.Shape[0], capacity = packed.Shape[1];
-            using var ones = Tensor.Ones([dim], packed.Device);
-            using var bytes = Tensor.Empty([rows, capacity, dim], packed.Device);
-            using var wide = Tensor.Empty([rows, capacity, dim], packed.Device, zeroed: true);
-            packed.Backend.Int8Dequantize(packed.Storage, ones.Storage, bytes.Storage, rows * capacity, dim);
-            packed.Backend.BroadcastAxis(scales.Storage, wide.Storage, rows * capacity, dim, 1, 1f);   // each row's scale along it
-            return bytes * wide;
-        }
-
-        public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels)
-        {
-            if (cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim)
-            {
-                return Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8);   // only the filled positions
-            }
-
-            var weights = Tensor.AttentionScoresInt8(q, cache).ScaleMaskSoftmax(scale, context.MaskOf(cache));
-            return Tensor.AttentionContextInt8(weights, cache);
-        }
-
-        public Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
-            cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim
-                ? Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant)
-                : null;
-
-        public Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant) =>
-            steps >= 8 && cache.HeadDim <= q.Backend.Capabilities.DecodeAttentionHeadDim && Merges(q, Operations.Ops.AttentionInt8, cache, kvHeads, variant)
-                ? Tensor.AttentionInt8(q, cache, context.PositionOf(cache), steps, scale, tiled: true, variant with { Merged = kvHeads })
-                : null;
-    }
-
-    private sealed class BFloat16Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout, IMergedHeadsLayout
-    {
-        public override string Name => "bfloat16";
-
-        public override string Summary => "bfloat16 values, half the memory of float32";
-
-        public override int RowWidth(int headDim) => (headDim + 1) / 2;
-
-        public bool HalfWords => true;
-
-        public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
-        {
-            Tensor.WriteKeyValuesBFloat16(keys, cache.Keys, position, cache.HeadDim);
-            Tensor.WriteKeyValuesBFloat16(values, cache.Values, position, cache.HeadDim);
-        }
-
-        // Each cached row is a row of bfloat16 pairs, as packed weights hold them.
-        public override Tensor Expand(KeyValueCache cache, bool keys)
-        {
-            var packed = keys ? cache.Keys : cache.Values;
-            int rows = packed.Shape[0], capacity = packed.Shape[1];
-            var y = Tensor.Empty([rows, capacity, cache.HeadDim], packed.Device);
-            packed.Backend.BFloat16Dequantize(packed.Storage, y.Storage, rows * capacity, cache.HeadDim);
-            return y;
-        }
-
-        // Only the first slots: the packed words of the prefix copied out, then expanded.
-        public override Tensor ExpandPrefix(KeyValueCache cache, bool keys, int positions)
-        {
-            var packed = keys ? cache.Keys : cache.Values;
-            int rows = packed.Shape[0];
-            positions = Math.Clamp(positions, 1, packed.Shape[1]);
-            if (positions == packed.Shape[1])
-            {
-                return Expand(cache, keys);
-            }
-
-            using var prefix = packed.Narrow(1, 0, positions);
-            var y = Tensor.Empty([rows, positions, cache.HeadDim], packed.Device);
-            packed.Backend.BFloat16Dequantize(prefix.Storage, y.Storage, rows * positions, cache.HeadDim);
-            return y;
-        }
-
-        // Decoder models read the halves directly. The multi-head attention layer gets the products over every slot: in one
-        // pass over the halves where the device has one (no float32 copy of the cache per step), else over the expanded cache.
-        public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels) =>
-            decoderKernels
-                ? Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8)   // only the filled positions
-                : Tensor.AttentionMaskedBFloat16(q, cache, context.MaskOf(cache), scale) ?? base.Attend(q, cache, context, steps, scale, decoderKernels);
-
-        public Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
-            Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant);
-
-        public Tensor? AttendMerged(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, int kvHeads, AttentionVariant variant) =>
-            steps >= 8 && Merges(q, Operations.Ops.AttentionBFloat16, cache, kvHeads, variant)
-                ? Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: true, variant with { Merged = kvHeads })
-                : null;
-
-        public Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
-            AttentionVariant variant) =>
-            Tensor.AttentionRowsBFloat16(q, cache, position, steps, scale, starts, headsPerRow, variant);
-    }
-
 }

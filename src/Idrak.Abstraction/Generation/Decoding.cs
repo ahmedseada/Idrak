@@ -13,19 +13,6 @@ public enum KeyValueFormat
     Float32,
 
     /// <summary>
-    /// One signed byte per value plus one float scale per cached row (a head at one position): about a quarter of the
-    /// memory, so longer contexts or larger batches fit; attention reads the bytes directly.
-    /// </summary>
-    Int8,
-
-    /// <summary>
-    /// bfloat16 values (float32's range, about 3 significant digits): half the memory of <see cref="Float32"/> and nearly
-    /// the same results; decoder models (<c>DecoderSpec</c>) read the halves directly, the multi-head attention
-    /// layer expands them to float32.
-    /// </summary>
-    BFloat16,
-
-    /// <summary>
     /// A format of one's own (an <see cref="IKeyValueLayout"/> registered with <see cref="KeyValueLayouts.Register"/>): what
     /// <see cref="KeyValueCache.Format"/> and <see cref="DecodingContext.Format"/> report for it. Not a format to choose;
     /// pass the layout itself.
@@ -34,10 +21,8 @@ public enum KeyValueFormat
 }
 
 /// <summary>
-/// Keys and values of one attention layer for every position decoded so far, [batch·heads, capacity, headDim]. With
-/// <see cref="KeyValueFormat.Int8"/>, <see cref="Keys"/> and <see cref="Values"/> hold packed bytes
-/// ([batch·heads, capacity, ceil(headDim / 4)] elements of four bytes) and <see cref="KeyScales"/>/<see cref="ValueScales"/>
-/// one scale per row. A format of one's own (<see cref="IKeyValueLayout"/>) chooses its row width and scales.
+/// Keys and values of one attention layer for every position decoded so far, [batch·heads, capacity, headDim]. A format of
+/// one's own (<see cref="IKeyValueLayout"/>) chooses its row width and scales (<see cref="KeyScales"/>, <see cref="ValueScales"/>).
 /// </summary>
 public sealed class KeyValueCache : IDisposable
 {
@@ -107,18 +92,18 @@ public sealed class KeyValueCache : IDisposable
     public IMergedHeadsLayout? MergedHeadsLayout { get; }
 
     /// <summary>
-    /// Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16; a format of one's
+    /// Cached keys, [batch·heads, capacity, headDim] (a format of one's
     /// own: [batch·heads, capacity, <see cref="IKeyValueLayout.RowWidth"/>]).
     /// </summary>
     public Tensor Keys { get; private set; }
 
-    /// <summary>Cached values, [batch·heads, capacity, headDim] (packed bytes for int8).</summary>
+    /// <summary>Cached values, [batch·heads, capacity, headDim].</summary>
     public Tensor Values { get; private set; }
 
-    /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached key row, [batch·heads, capacity].</summary>
+    /// <summary>For an <see cref="IScaledLayout"/>: the scale of each cached key row, [batch·heads, capacity].</summary>
     public Tensor? KeyScales { get; private set; }
 
-    /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached value row, [batch·heads, capacity].</summary>
+    /// <summary>For an <see cref="IScaledLayout"/>: the scale of each cached value row, [batch·heads, capacity].</summary>
     public Tensor? ValueScales { get; private set; }
 
     /// <summary>Device memory used, in bytes.</summary>
@@ -377,7 +362,7 @@ public sealed partial class DecodingContext : IDisposable
     /// <param name="device">Where caches and counters live (the model's device).</param>
     /// <param name="batch">Sequences decoded together.</param>
     /// <param name="capacity">Maximum positions (the model's context length).</param>
-    /// <param name="format">How the attention layers' keys and values are cached (int8: about a quarter of the memory).</param>
+    /// <param name="format">How the attention layers' keys and values are cached.</param>
     public DecodingContext(Device device, int batch, int capacity, KeyValueFormat format = KeyValueFormat.Float32)
         : this(device, batch, capacity, KeyValueLayouts.For(format))
     {
@@ -640,7 +625,7 @@ public sealed partial class DecodingContext : IDisposable
     /// <summary>
     /// Reorders the rows of every cache: row b takes the positions of row <paramref name="sources"/>[b] (a beam search
     /// keeping the best beams; a row may be taken by several). Every format's rows are copied as they are packed (keys,
-    /// values and scales), so it works for the int8 and bfloat16 formats and one's own. Between steps only; the
+    /// values and scales), so it works for one's own formats too. Between steps only; the
     /// cross-attention memories, the same for every row, are not touched.
     /// </summary>
     /// <exception cref="ArgumentException">Not one source per row, or a source outside the batch.</exception>
@@ -903,82 +888,11 @@ public sealed partial class DecodingContext : IDisposable
     /// <summary>With <see cref="RowStarts"/>: each new token's row start, [batch · newSteps] (a one-token step: the starts uploaded once by <see cref="SetRowStarts"/>).</summary>
     public Tensor? TokenStarts { get; private set; }
 
-    /// <summary>
-    /// <see cref="Positions"/> in the element type the device's gathers read indices in (plan 37, T1b): what a learned
-    /// position table is read by (<see cref="Tensor.EmbeddingLookup(Tensor)"/>), so the lookup takes no conversion. Made
-    /// on first use in a step: a one-token step's on the device from <see cref="Position"/> into a buffer the context keeps
-    /// (a recorded step converts the position it is replayed at); a step of several positions' from the host. The
-    /// positions themselves stay float32, as the rotary, cache and mask kernels read them. Null outside a step.
-    /// </summary>
-    public Tensor? PositionIndices
-    {
-        get
-        {
-            var type = IndexType;
-            if (!InStep || Positions is not { } positions || ReferenceEquals(positions.ElementType, type))
-            {
-                return InStep ? Positions : null;
-            }
+    /// <summary>The positions a learned position table is read by (<see cref="Tensor.EmbeddingLookup(Tensor)"/>): <see cref="Positions"/>; null outside a step.</summary>
+    public Tensor? PositionIndices => InStep ? Positions : null;
 
-            if (_steps == 1)
-            {
-                return Converted(positions, type, ref _positionIndices);
-            }
-
-            if (_stepPositionIndices is null)
-            {
-                var values = new int[_steps];
-                for (int t = 0; t < values.Length; t++)
-                {
-                    values[t] = Length + t;
-                }
-
-                _stepPositionIndices = Tensor.Empty([_steps], Device, type, track: false);   // freed with the step, not by a scope
-                _stepPositionIndices.LoadIndices(values);
-            }
-
-            return _stepPositionIndices;
-        }
-    }
-
-    /// <summary>
-    /// <see cref="TokenPositions"/> in the element type the device's gathers read indices in (plan 37, T1b), as
-    /// <see cref="PositionIndices"/>: converted on the device, into a buffer the context keeps for a one-token step (so it
-    /// records) and into the step's own otherwise. Null without <see cref="RowStarts"/> or outside a step.
-    /// </summary>
-    public Tensor? TokenPositionIndices
-    {
-        get
-        {
-            var type = IndexType;
-            if (!InStep || TokenPositions is not { } positions || ReferenceEquals(positions.ElementType, type))
-            {
-                return InStep ? TokenPositions : null;
-            }
-
-            return _steps == 1 ? Converted(positions, type, ref _tokenPositionIndices) : Converted(positions, type, ref _stepTokenPositionIndices);
-        }
-    }
-
-    // The positions in the index type: kept for one-token steps (a recorded step writes into the same buffer when replayed),
-    // and the current step's when it has several positions (freed with the step).
-    private Tensor? _positionIndices, _tokenPositionIndices, _stepPositionIndices, _stepTokenPositionIndices;
-
-    // The element type the device's gathers read indices in.
-    private ElementType IndexType => Device.Backend.IndexTypeOf(Operations.Ops.Gather);
-
-    // `source`'s elements converted on its device into `buffer` (made, or made again for another size, untracked).
-    private static Tensor Converted(Tensor source, ElementType type, ref Tensor? buffer)
-    {
-        if (buffer is null || buffer.Size != source.Size)
-        {
-            buffer?.Dispose();
-            buffer = Tensor.Empty(source.Shape, source.Device, type, track: false);
-        }
-
-        source.Backend.ConvertElements(source.Storage, buffer.Storage);
-        return buffer;
-    }
+    /// <summary><see cref="TokenPositions"/>, as <see cref="PositionIndices"/>: null without <see cref="RowStarts"/> or outside a step.</summary>
+    public Tensor? TokenPositionIndices => InStep ? TokenPositions : null;
 
     /// <summary>
     /// For a decoder with several rotary axes (<see cref="RopeSettings.Sections"/>) after a prompt whose image tokens were
@@ -1304,9 +1218,6 @@ public sealed partial class DecodingContext : IDisposable
         RotaryPositions = null;
         InStep = false;
         Positions = null;
-        _stepPositionIndices?.Dispose();
-        _stepTokenPositionIndices?.Dispose();
-        (_stepPositionIndices, _stepTokenPositionIndices) = (null, null);
     }
 
     /// <summary>Replays a step recorded with <see cref="CaptureStep"/> and advances the host-side length.</summary>
@@ -1579,8 +1490,6 @@ public sealed partial class DecodingContext : IDisposable
         _rotaryOffset?.Dispose();
         _rowStarts?.Dispose();
         _rowPositions?.Dispose();
-        _positionIndices?.Dispose();
-        _tokenPositionIndices?.Dispose();
         Position.Dispose();
         if (_mirrors is { } mirrors)
         {

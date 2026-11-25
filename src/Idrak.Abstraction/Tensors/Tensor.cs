@@ -121,11 +121,8 @@ public sealed partial class Tensor : IDisposable
         return Traced("contiguous", y, start);
     }
 
-    // Whether views are made on this tensor's device: on (TensorViews.Enabled) where its kernels read strides, except while
-    // recorded activations are kept as bfloat16 (ActivationMemory.CompressToBFloat16): there a copy is packed to half its
-    // size, where a view would keep its source's float values for as long as it lives.
-    internal bool MakesViews => TensorViews.Enabled && !(ActivationMemory.BFloat16 && Autograd.IsEnabled) && IsFloat32
-        && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.StridedCopy);
+    // Whether views are made on this tensor's device: on (TensorViews.Enabled) where its kernels read strides.
+    internal bool MakesViews => TensorViews.Enabled && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.StridedCopy);
 
     // A view of this tensor's elements through `layout` (over the storage this tensor's elements sit in); not tracked for
     // gradients here (the caller records its backward step).
@@ -282,16 +279,6 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>The total number of elements.</summary>
     public int Size { get; }
-
-    /// <summary>
-    /// What the elements are (plan 37, T0): float32 for every tensor an operation makes; int32 or int64 for index tensors
-    /// (<see cref="Indices(ReadOnlySpan{int}, Device)"/>, a top-k's indices, a sampler's ids), which the operations that
-    /// take indices read. Float operations read float32 tensors; <see cref="ToArray"/> gives any type's values as floats.
-    /// </summary>
-    public ElementType ElementType => _storage.ElementType;
-
-    // Whether the elements are float32 (what every float operation reads).
-    internal bool IsFloat32 => ReferenceEquals(_storage.ElementType, ElementType.Float32);
 
     /// <summary>
     /// Whether gradients flow back to this tensor. Set it on inputs you want to differentiate with
@@ -489,31 +476,6 @@ public sealed partial class Tensor : IDisposable
         return new Tensor(shape.ToArray(), device.Backend.Allocate(size, zeroed), device, track);
     }
 
-    /// <summary>
-    /// <see cref="Empty(ReadOnlySpan{int}, Device, bool, bool)"/> of elements of <paramref name="type"/> (plan 37, T0): the
-    /// storage holds them in its words (<see cref="Backend.Allocate(ElementType, int, bool)"/>).
-    /// </summary>
-    public static Tensor Empty(ReadOnlySpan<int> shape, Device device, ElementType type, bool zeroed = false, bool track = true)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        ArgumentNullException.ThrowIfNull(type);
-        int size = ElementCount(shape);
-        return new Tensor(shape.ToArray(), device.Backend.Allocate(type, size, zeroed), device, track);
-    }
-
-    // A tensor of `shape` over `storage`, which it takes (its one reference), made by the device outside Allocate (a file's
-    // mapping, plan 37 W3: IMappedStorageBackend.MapStorage); not tracked by a scope.
-    internal static Tensor OverStorage(Storage storage, ReadOnlySpan<int> shape, Device device)
-    {
-        if (storage.ElementCount != ElementCount(shape))
-        {
-            storage.Release();
-            throw new ArgumentException($"A storage of {storage.ElementCount} {storage.ElementType.Name} elements cannot hold {FormatShape(shape)}.", nameof(shape));
-        }
-
-        return new Tensor(shape.ToArray(), storage, device, track: false);
-    }
-
     private static int ElementCount(ReadOnlySpan<int> shape)
     {
         int size = 1;
@@ -532,11 +494,6 @@ public sealed partial class Tensor : IDisposable
     public float[] ToArray()
     {
         ThrowIfDisposed();
-        if (!IsFloat32)
-        {
-            return Widened(0, Size);                                       // another type's values as floats (plan 37, T0)
-        }
-
         var result = GC.AllocateUninitializedArray<float>(Size);
         var storage = ReadStorage(out var scratch);
         try
@@ -574,11 +531,6 @@ public sealed partial class Tensor : IDisposable
         }
 
         ThrowIfDisposed();
-        if (!IsFloat32)
-        {
-            return Widened(0, 1)[0];
-        }
-
         Span<float> value = stackalloc float[1];
         var storage = ReadStorage(out var scratch);
         try
@@ -605,11 +557,6 @@ public sealed partial class Tensor : IDisposable
             return this;
         }
 
-        if (!IsFloat32)
-        {
-            return FromBytes(ToBytes(), ElementType, _shape, device);       // the same elements, of the same type
-        }
-
         return From(ToArray(), _shape, device, RequiresGrad && IsLeaf);
     }
 
@@ -617,11 +564,11 @@ public sealed partial class Tensor : IDisposable
     public Tensor Clone()
     {
         ThrowIfDisposed();
-        var t = IsFloat32 ? Empty(_shape, Device) : Empty(_shape, Device, ElementType);
+        var t = Empty(_shape, Device);
         var storage = ReadStorage(out var scratch);
         try
         {
-            Backend.Copy(storage, t.Storage, t.Storage.Length);            // Size floats, or a typed tensor's words
+            Backend.Copy(storage, t.Storage, t.Storage.Length);            // Size floats
         }
         finally
         {

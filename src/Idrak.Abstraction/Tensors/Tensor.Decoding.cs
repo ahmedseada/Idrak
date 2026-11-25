@@ -18,12 +18,6 @@ public sealed partial class Tensor
             throw new ArgumentOutOfRangeException(nameof(offset), $"[{offset}, {offset + destination.Length}) is outside a tensor of {Size} elements.");
         }
 
-        if (!IsFloat32)
-        {
-            Widened(offset, destination.Length).CopyTo(destination);       // another type's values as floats (plan 37, T0)
-            return;
-        }
-
         Backend.DownloadRange(Storage, offset, destination);
     }
 
@@ -107,13 +101,6 @@ public sealed partial class Tensor
         }
 
         source.Backend.KeyValueWrite(source.Storage, cache.Storage, position.Storage, heads, steps, cache._shape[1], dim);
-    }
-
-    /// <summary>Quantizes <paramref name="source"/> [rows, steps, dim] into an int8 cache at the device position.</summary>
-    internal static void WriteKeyValuesInt8(Tensor source, Tensor cache, Tensor scales, Tensor position)
-    {
-        int heads = source._shape[0], steps = source._shape[1], dim = source._shape[2];
-        source.Backend.KeyValueWriteInt8(source.Storage, cache.Storage, scales.Storage, position.Storage, heads, steps, cache._shape[1], dim);
     }
 
     /// <summary>
@@ -296,13 +283,6 @@ public sealed partial class Tensor
         }
 
         return Traced("attention_rows", y, start);
-    }
-
-    /// <summary>Writes [heads, steps, dim] keys or values into a bfloat16 cache at the device-side position.</summary>
-    internal static void WriteKeyValuesBFloat16(Tensor source, Tensor cache, Tensor position, int dim)
-    {
-        int heads = source._shape[0], steps = source._shape[1];
-        source.Backend.KeyValueWriteBFloat16(source.Storage, cache.Storage, position.Storage, heads, steps, cache._shape[1], dim);
     }
 
     /// <summary>Adds <paramref name="value"/> to every element in place (not recorded by autograd).</summary>

@@ -398,45 +398,6 @@ public readonly record struct DeviceFailed(string Device, string? Operation, str
 public readonly record struct HostFallback(string Device, string Operation, string? KernelsUnavailable = null);
 
 /// <summary>
-/// Published each time the dispatcher converts an operation's storage to the element type the device's kernel for it
-/// takes (plan 37, T0 and T1: float32 indices for an int32 index kernel, int32 ones for a device that still reads them as
-/// float32), to the hooks listening at <c>TelemetryLevel.Devices</c>. <c>ElementTypes.Conversions</c> counts them all.
-/// </summary>
-/// <param name="Device">The kind of device ("cpu", "vulkan", …).</param>
-/// <param name="Operation">The operation (as <c>Operation.Name</c>).</param>
-/// <param name="From">The storage's element type.</param>
-/// <param name="To">The type the kernel takes.</param>
-/// <param name="Elements">The elements converted.</param>
-public readonly record struct ElementsConverted(string Device, string Operation, string From, string To, long Elements);
-
-/// <summary>
-/// Published when a load chooses a type on a device (plan 37, T0 and T2): the element type its run computes in, the type
-/// its ids are stored in, or an operation's sum type, and how it was chosen, "picked by auto" (with what the device
-/// reported or what was measured) or "selected by the user" (naming the option or variable), at
-/// <c>TelemetryLevel.Devices</c>; one for each device and role.
-/// </summary>
-/// <param name="Device">The device the run computes on.</param>
-/// <param name="ElementType">The type's name.</param>
-/// <param name="How">"picked by auto: …" (with what the device reported or what was measured) or "selected by the user (…)".</param>
-/// <param name="Native">What the device reported (plan 37, T2): the types it computes natively and why ("bfloat16, float32 natively (…)").</param>
-/// <param name="Role">What the type is for: "element type", "id type" or "sum type for MatMul" (<c>ElementTypeChoice.Role</c>).</param>
-public readonly record struct ElementTypeChosen(string Device, string ElementType, string How, string Native = "", string Role = "element type");
-
-/// <summary>
-/// Published when a load has placed weights stored in a format of their own (plan 37, Q0): how many matrices it kept as
-/// stored and their bytes, how many it expanded to float32 and their bytes, the formats and why it expanded, at
-/// <c>TelemetryLevel.Devices</c>.
-/// </summary>
-/// <param name="Device">The device the weights are on.</param>
-/// <param name="Kept">Matrices kept as stored.</param>
-/// <param name="KeptBytes">Their bytes in memory.</param>
-/// <param name="Expanded">Matrices expanded to float32.</param>
-/// <param name="ExpandedBytes">Their bytes in memory.</param>
-/// <param name="Formats">The stored formats, comma-separated.</param>
-/// <param name="Why">Why some were expanded, or null.</param>
-public readonly record struct WeightsKept(string Device, int Kept, long KeptBytes, int Expanded, long ExpandedBytes, string Formats, string? Why);
-
-/// <summary>
 /// A device measured the candidates of an operation at a shape class it had not seen and kept the fastest
 /// (<c>TelemetryLevel.Devices</c>). The choice is kept for the class (and in the device's tuning cache file), so the time
 /// is paid once per class and device: a run whose batches keep landing in new classes (a new batch count or padded length

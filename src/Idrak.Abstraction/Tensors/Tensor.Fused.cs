@@ -5,7 +5,7 @@ using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction;
 
-// Training building blocks that run as few passes as possible on bfloat16 tensor cores (MixedPrecision.BFloat16):
+// Training building blocks that run as few passes as possible on the device:
 // the query/key/value projections into one packed tensor, attention reading its heads in place, and a GELU
 // feed-forward block with the activation inside the products. Each returns null when the device cannot run it, and
 // callers then use the composed operations.

@@ -36,7 +36,6 @@ public sealed partial class RMSNorm
         var yq = Tensor.Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
         Tensor? yk = null, yv = null;
         int capacity = t, stride = dim;
-        bool bfloat16 = cache is { FusedWriteLayout.HalfWords: true };
         if (cache is null)
         {
             yk = Tensor.Empty([n * kvHeads, t, dim], q.Device);
@@ -45,13 +44,13 @@ public sealed partial class RMSNorm
         else
         {
             capacity = cache.Keys.Shape[1];
-            stride = bfloat16 ? 2 * cache.Keys.Shape[2] : cache.Keys.Shape[2];
+            stride = cache.Keys.Shape[2];
         }
 
         if (!q.Backend.NormRopeHeads(q.Storage, k.Storage, v.Storage, n, t, heads, kvHeads, dim, queryNorm?.Gain.Storage, queryNorm?.Epsilon ?? 0f,
             queryNorm?.Offset ?? 0f, keyNorm?.Gain.Storage, keyNorm?.Epsilon ?? 0f, keyNorm?.Offset ?? 0f, cos?.Storage, sin?.Storage, positions.Storage,
             cos?.Shape[1] ?? 0, interleaved, yq.Storage, (yk ?? cache!.Keys).Storage, (yv ?? cache!.Values).Storage, position?.Storage, capacity, stride,
-            bfloat16))
+            false))
         {
             yq.Dispose();
             yk?.Dispose();
