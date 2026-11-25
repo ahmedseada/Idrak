@@ -8470,6 +8470,9 @@ internal sealed partial class CpuBackend
         /// <summary>The float lanes' table of each code's number (2^bits floats: the number plus the code offset).</summary>
         public float* CodeValues { get; private set; }
 
+        /// <summary>Whether the type has no scales or minimums (a code's number its value: the float lanes skip the factors).</summary>
+        public bool Plain => factors == 0;
+
         /// <summary>The 16-bit float reading: its sign shift, magnitude mask, mantissa shift, the power of two it is times, and where its specials start (0: none).</summary>
         public (int SignShift, int Magnitude, int Shift, float Times, int Special) Half16 { get; private set; }
 
@@ -12698,6 +12701,7 @@ internal sealed partial class CpuBackend
     {
         int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
         float* table = plan.CodeValues;
+        bool plain = plan.Plain;                                            // no factors: the numbers as they are (x · 1 + 0 is x)
         Vector256<float> a0 = default, a1 = default, a2 = default, a3 = default;
         for (int g = 0; g < groups; g++)
         {
@@ -12710,7 +12714,8 @@ internal sealed partial class CpuBackend
                 for (int e = 0; e < 4; e++)
                 {
                     int lane = (32 * s + 8 * e) / c;
-                    var w = TI.Fused(TI.Gather(table, TI.Widen(EightAt(codes, e), false)), TI.Broadcast(scale, lane), TI.Broadcast(min, lane));
+                    var g8 = TI.Gather(table, TI.Widen(EightAt(codes, e), false));
+                    var w = plain ? g8 : TI.Fused(g8, TI.Broadcast(scale, lane), TI.Broadcast(min, lane));
                     float* xp = x + (nint)g * plan.GroupValues + 32 * s + 8 * e;
                     a0 = TI.Fused(w, Vector256.Load(xp), a0);
                     a1 = TI.Fused(w, Vector256.Load(xp + stride), a1);
@@ -12794,6 +12799,7 @@ internal sealed partial class CpuBackend
     {
         int gpp = plan.GroupsPerPeriod, spans = plan.GroupValues / 32, c = plan.C;
         float* table = plan.CodeValues;
+        bool plain = plan.Plain;
         Vector256<float> a = default, b = default;
         for (int g = 0; g < groups; g++)
         {
@@ -12807,8 +12813,10 @@ internal sealed partial class CpuBackend
                 for (int e = 0; e < 4; e += 2)
                 {
                     int lane = (32 * s + 8 * e) / c, next = (32 * s + 8 * e + 8) / c;
-                    a = TI.Fused(TI.Fused(TI.Gather(table, TI.Widen(EightAt(codes, e), false)), TI.Broadcast(scale, lane), TI.Broadcast(min, lane)), Vector256.Load(xp + 8 * e), a);
-                    b = TI.Fused(TI.Fused(TI.Gather(table, TI.Widen(EightAt(codes, e + 1), false)), TI.Broadcast(scale, next), TI.Broadcast(min, next)), Vector256.Load(xp + 8 * e + 8), b);
+                    var g0 = TI.Gather(table, TI.Widen(EightAt(codes, e), false));
+                    var g1 = TI.Gather(table, TI.Widen(EightAt(codes, e + 1), false));
+                    a = TI.Fused(plain ? g0 : TI.Fused(g0, TI.Broadcast(scale, lane), TI.Broadcast(min, lane)), Vector256.Load(xp + 8 * e), a);
+                    b = TI.Fused(plain ? g1 : TI.Fused(g1, TI.Broadcast(scale, next), TI.Broadcast(min, next)), Vector256.Load(xp + 8 * e + 8), b);
                 }
             }
         }
