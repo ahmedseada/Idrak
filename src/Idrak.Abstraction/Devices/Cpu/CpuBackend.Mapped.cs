@@ -7,9 +7,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 
 // A storage over a file's mapping (plan 37, W3): a weight's stored bytes read where the file's pages lie, so the CPU's own
 // memory holds no copy of them (the system's page cache holds them once, shared with every reader of the file). Not
-// pooled and not counted in the CPU's memory use; released, it closes its mapping. The stored-weight kernels read it in
-// place (StoredRows); a download or a copy out of it is counted (MappedWeights), and a write into it makes the pages it
-// touches private (the mapping is copy-on-write), counted too.
+// pooled and not counted in the CPU's memory use; released, it closes its mapping. A download or a copy out of it is
+// counted (MappedWeights), and a write into it makes the pages it touches private (the mapping is copy-on-write), counted
+// too.
 internal sealed class MappedStorage(CpuBackend backend, FileMapping mapping, int words) : Storage(backend, words)
 {
     public FileMapping Mapping { get; } = mapping;
@@ -17,21 +17,21 @@ internal sealed class MappedStorage(CpuBackend backend, FileMapping mapping, int
 
 internal sealed partial class CpuBackend : IMappedStorageBackend
 {
-    public Storage MapStorage(FileMapping mapping, ElementType type, long count)
+    public Storage MapStorage(FileMapping mapping, TypeDescription description, long count)
     {
         ArgumentNullException.ThrowIfNull(mapping);
         try
         {
-            ArgumentNullException.ThrowIfNull(type);
+            ArgumentNullException.ThrowIfNull(description);
             ThrowIfDisposed();
-            long bytes = type.ByteCount(count), words = type.StorageWords(count);
+            long bytes = (count + description.UnitValues - 1) / description.UnitValues * description.UnitBytes, words = (bytes + sizeof(float) - 1) / sizeof(float);
             if (bytes != mapping.Length || words > int.MaxValue)
             {
-                throw new ArgumentException($"{count} {type.Name} elements take {bytes} bytes; the mapping {mapping} holds {mapping.Length}.", nameof(mapping));
+                throw new ArgumentException($"{count} described values take {bytes} bytes; the mapping {mapping} holds {mapping.Length}.", nameof(mapping));
             }
 
             var storage = new MappedStorage(this, mapping, (int)words);
-            storage.SetType(type, count);
+            storage.SetDescription(description, count);
             MappedWeights.CountMapped(bytes);
             return storage;
         }
