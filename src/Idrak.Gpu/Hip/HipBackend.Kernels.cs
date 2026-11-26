@@ -127,8 +127,8 @@ internal sealed unsafe partial class HipBackend
 
     /// <summary>
     /// Why no GCN code can be written for the target <paramref name="reported"/> by <paramref name="device"/> (null when a
-    /// registered family handles it, given in <paramref name="target"/>): not a target string Idrak reads, or one no family
-    /// handles ("not registered", naming it).
+    /// family of the fixed list handles it, given in <paramref name="target"/>): not a target string Idrak reads, or one no
+    /// family handles (naming it).
     /// </summary>
     internal static string? TargetUnavailable(string device, string reported, out GcnIsaVersion isa, out IGcnTarget? target)
     {
@@ -196,7 +196,7 @@ internal sealed unsafe partial class HipBackend
     /// (every kernel present, its arguments within <see cref="MostArgumentBytes"/>); loaded by the runtime, each function
     /// looked up. A cached object that does not read or that the runtime refuses is deleted and assembled again; one
     /// assembled is kept. Returns null with <paramref name="unavailable"/> when no code can be written for the device (an
-    /// unread or unregistered target, a format setting refused, kernels that do not assemble). Not installed: the caller
+    /// unread target or one no family handles, a format setting refused, kernels that do not assemble). Not installed: the caller
     /// owns it (the bench loads sets of its own to time cold and warm loads).
     /// </summary>
     /// <exception cref="HipException">The runtime refused the code object in every format; the message names the target,

@@ -84,8 +84,6 @@ internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegment
         _ => (0, 0),
     };
 
-    // ---- IFusedPackedKernels ---------------------------------------------------------------------------------------
-
     // ---- IRowAttentionBackend, ISegmentedAttentionBackend ----------------------------------------------------------
 
     // The head sizes and variants the CPU takes: the kernels take those up to GcnKernels.AttentionMaxDim, the host the rest.

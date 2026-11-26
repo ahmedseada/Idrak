@@ -3,7 +3,7 @@
 
 namespace Idrak.Gpu.Abstractions;
 
-// The library's GCN target families (the registry itself is in src/Idrak.Gpu/Abstractions/IGcnTarget.cs) and what they
+// The library's GCN target families (the fixed list itself is in src/Idrak.Gpu/Abstractions/IGcnTarget.cs) and what they
 // share: the processors' machine values (GcnTargets.MachineValues.cs) and the ELF flags made of them. Each family lives
 // in a file of its own (GcnTargets.Gfx9.cs). These files are the only ones that name processors in code.
 public static partial class GcnTargets

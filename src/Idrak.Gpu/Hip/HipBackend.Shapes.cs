@@ -6,8 +6,8 @@ using System.Globalization;
 namespace Idrak.Gpu.Hip;
 
 // HIP's shape operations on its own GCN kernels (GcnKernels.Shapes.cs), where CUDA overrides them and with CUDA's
-// arguments: the key/value cache writes (float32, bfloat16, int8), the decoder mask, the gathers (float32, bfloat16 rows
-// and columns), the permute and the adding strided copy (the plain one stays the runtime's 2-D copy, HipBackend.cs). Each
+// arguments: the key/value cache write, the decoder mask, the gather, the permute and the adding strided copy (the
+// plain one stays the runtime's 2-D copy, HipBackend.cs). Each
 // kernel walks its elements grid-stride, one a work-item, so its grid fills the device as an element-wise launch's does
 // (PointwiseBlocks over the elements, rule 81); each launch is labelled for --profile with its kernel, its count and its
 // floating-point operations (Cost). The host fallback takes over when the kernels are unavailable or a buffer the kernel

@@ -152,7 +152,7 @@ internal sealed unsafe partial class HipBackend : IKernelLauncher<GcnKernel>
     /// once (KernelsLoaded).
     /// </summary>
     /// <exception cref="HipException">
-    /// No GCN code can be written for the device (its target unread or not registered), the text does not assemble for it
+    /// No GCN code can be written for the device (its target unread or one no family handles), the text does not assemble for it
     /// (the assembler's line and column), or the runtime refused the code object in every format.
     /// </exception>
     internal GcnFunction LoadPlugin(GcnKernel kernel, HipKernelCache cache)

@@ -24,7 +24,7 @@ internal sealed unsafe partial class VulkanBackend
     /// <summary>
     /// Tests and diagnostics: kernels whose pipelines backends started afterwards treat as refused (VK_ERROR_UNKNOWN)
     /// without asking the driver: a kernel name, or "name:sized" to refuse it only with its subgroup-size request (the
-    /// retry without it then builds). IDRAK_VULKAN_REFUSE_KERNELS sets it for a process ("int8_gemv_8,softmax_rows:sized").
+    /// retry without it then builds). IDRAK_VULKAN_REFUSE_KERNELS sets it for a process ("batched_matmul_tile,batched_matmul:sized").
     /// </summary>
     internal static IReadOnlyList<string>? RefuseKernels { get; set; } = ParseRefusals(Environment.GetEnvironmentVariable("IDRAK_VULKAN_REFUSE_KERNELS"));
 
@@ -54,7 +54,7 @@ internal sealed unsafe partial class VulkanBackend
 
         public KernelUnavailableException Error { get; } = error;
 
-        // What ran instead ("Int8MatMul: the host", "the packed products: int8_gemv_4"), in the order found; guarded by itself.
+        // What ran instead ("BatchedMatMul: the host"), in the order found; guarded by itself.
         public List<string> Instead { get; } = [];
     }
 

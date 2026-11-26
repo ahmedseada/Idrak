@@ -7,7 +7,7 @@ namespace Idrak.Gpu.Abstractions;
 
 public static partial class GcnTargets
 {
-    /// <summary>The gfx11 family (RDNA 3), registered by the library (plan 35, G8a).</summary>
+    /// <summary>The gfx11 family (RDNA 3), one of the library's fixed list (plan 35, G8a).</summary>
     internal static IGcnTarget Gfx11Family => Families.Gfx11;
 
     /// <summary>

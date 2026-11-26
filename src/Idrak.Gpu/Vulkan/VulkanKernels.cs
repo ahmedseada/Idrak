@@ -19,11 +19,10 @@ namespace Idrak.Gpu.Vulkan;
 /// <c>sum_squares_partials</c>) take a number of groups fixed by n;</item>
 /// <item>the tiled products (<c>batched_matmul</c>, <c>batched_matmul_tile</c>) take one group per block of c along x and
 /// y and the batches along z;</item>
-/// <item>the packed products (<c>int8_gemv_R</c>, …) take column blocks × splits of k × row blocks, and the attention
-/// kernels query rows × splits of the positions (see their comments); their splits are added by a second pass.</item>
+/// <item>the attention kernels take query rows × splits of the positions (see their comments); their splits are added by
+/// a second pass.</item>
 /// </list>
-/// Integers that tensors hold as values (indices, positions) are read as floats and converted, as the CPU does; packed
-/// words (int8, int4, bfloat16) are read as bits.
+/// Integers that tensors hold as values (indices, positions) are read as floats and converted, as the CPU does.
 /// </summary>
 internal static partial class VulkanKernels
 {

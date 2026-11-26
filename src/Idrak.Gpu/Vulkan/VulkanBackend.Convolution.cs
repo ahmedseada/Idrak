@@ -6,7 +6,7 @@ namespace Idrak.Gpu.Vulkan;
 // Convolutions, average pooling and image resampling as generated kernels (VulkanKernels.Convolution.cs).
 //
 // A convolution or one of its gradients runs one of: the composed path (patches unfolded by im2col and the measured float32
-// product, or the cooperative-matrix one under MixedPrecision: Backend.Convolution.cs), an implicit product that reads the
+// product: Backend.Convolution.cs), an implicit product that reads the
 // operands where they lie (register-blocked or one output per invocation, at a candidate width; the weight gradient also
 // at 1 to 64 splits of its sum, ConvSplitPlan), the weight gradient's unfolded product (im2col's patches read by the
 // weight gradient's product, at a width and a split count), or the depthwise kernels (one input channel per group). Which

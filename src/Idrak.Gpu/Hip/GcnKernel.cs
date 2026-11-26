@@ -144,10 +144,8 @@ public sealed class GcnKernel : IDeviceKernel
 
     /// <summary>
     /// Why GCN kernels cannot run on <paramref name="backend"/> (null when they can): it does not launch GCN kernels, or
-    /// it is a HIP device whose reported target no registered GCN family handles ("not registered", naming it). A plug-in
-    /// registers its kernel with the requirement <c>b =&gt; GcnKernel.UnavailableReason(b) is null</c>, so such a device
-    /// runs the operation's default kernel instead of failing. IDRAK_HIP_KERNELS does not make a reason: it turns off the
-    /// library's own kernels only.
+    /// it is a HIP device whose reported target no GCN family of <see cref="GcnTargets"/> handles (naming
+    /// it). IDRAK_HIP_KERNELS does not make a reason: it turns off the library's own kernels only.
     /// </summary>
     public static string? UnavailableReason(Backend backend)
     {

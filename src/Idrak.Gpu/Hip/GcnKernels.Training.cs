@@ -818,7 +818,7 @@ internal static partial class GcnKernels
     }
 
     // The gated activation's values at gate g and up u for `kind`: act(g) and its slope, the up side (u, or sigmoid(u) for
-    // kind 3) and its slope; shared by the gradient and the packed forward (gated_act_bf16_f32, plan 35's HIP parity).
+    // kind 3) and its slope, for the gradient.
     private static (string Value, string Slope, string UpValue, string UpSlope) GatedValues(PointwiseWriter w, string label, string g, string u, string kind)
     {
         const float K = 0.7978845608f, C = 0.044715f;

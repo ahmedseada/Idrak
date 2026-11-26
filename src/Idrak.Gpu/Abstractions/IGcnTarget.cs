@@ -148,7 +148,7 @@ public readonly record struct GcnDescriptorBits(uint Rsrc1, uint Rsrc3, ushort C
 /// </summary>
 public interface IGcnTarget
 {
-    /// <summary>The family's name, e.g. "gfx9" (its registry key).</summary>
+    /// <summary>The family's name, e.g. "gfx9".</summary>
     string Family { get; }
 
     /// <summary>The wave sizes the family runs, the default first.</summary>
