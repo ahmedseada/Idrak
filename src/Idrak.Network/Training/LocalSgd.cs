@@ -8,7 +8,7 @@ using Idrak.Networking.Compression;
 
 namespace Idrak.Networking.Training;
 
-/// <summary>"local-sgd" in <see cref="GradientSyncs"/>: each rank steps on its own gradients; the weights are averaged every k steps.</summary>
+/// <summary>"local-sgd": each rank steps on its own gradients; the weights are averaged every k steps.</summary>
 internal sealed class LocalSgdProvider : IGradientSyncProvider
 {
     public string Name => "local-sgd";

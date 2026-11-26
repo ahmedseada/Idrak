@@ -8,7 +8,7 @@ using Idrak.Networking.Compression;
 
 namespace Idrak.Networking.Training;
 
-/// <summary>"sharded" in <see cref="GradientSyncs"/>: ZeRO-style data parallel, each rank owning its share of the trained parameters (plan 23, phase C6).</summary>
+/// <summary>"sharded": ZeRO-style data parallel, each rank owning its share of the trained parameters (plan 23, phase C6).</summary>
 internal sealed class ShardedSyncProvider : IGradientSyncProvider
 {
     public string Name => "sharded";
@@ -24,7 +24,7 @@ internal sealed class ShardedSyncProvider : IGradientSyncProvider
 /// members (Sharding.cs) are <see cref="IShardedGradientSync"/>'s.
 /// </summary>
 internal sealed class ShardedGradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options)
-    : GradientReduction(collectives, optimizer, options, sharded: true), IShardedGradientSync;
+    : GradientReduction(collectives, optimizer, options, compression: null, sharded: true), IShardedGradientSync;
 
 /// <summary>
 /// Which rank owns each trained parameter in a sharded run (plan 23, phase C6): the largest first, each to the rank that
@@ -119,7 +119,6 @@ internal partial class GradientReduction
 
     protected override void Began(bool present)
     {
-        ArmAdvice(present);
         if (present && _mode != ShardMode.None)
         {
             EnsurePartitioned();

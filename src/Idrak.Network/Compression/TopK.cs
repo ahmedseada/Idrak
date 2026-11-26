@@ -8,7 +8,7 @@ using Idrak.Networking.Training;
 namespace Idrak.Networking.Compression;
 
 /// <summary>
-/// "top-k" in <see cref="GradientCompressions"/>: each rank sends only the largest share (<see cref="ClusterOptions.TopK"/>)
+/// "top-k": each rank sends only the largest share (<see cref="ClusterOptions.TopK"/>)
 /// of each bucket's values by magnitude, as (index, value) pairs every rank gathers; with error feedback
 /// (<see cref="ClusterOptions.ErrorFeedback"/>) what a rank left out is added to its next step's values, so nothing is lost,
 /// only late.

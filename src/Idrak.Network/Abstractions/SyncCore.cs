@@ -112,8 +112,8 @@ internal abstract class SyncCore : IGradientSync
             // last step (SimulationOptions.ReplayStep, every rank alike) as ClusterRank.BeginStep has it.
             CurrentStep = step;
             _fixedPresent = Options.Simulation.ReplayStep is not { } last || step <= last;
-            // A launcher's pause, resume and stop (phase C9), unless the trainer takes them at its own boundaries (Plan 27, R11).
-            if (_fixedPresent && Options.Simulation.Control is { } control && !RunSteerings.Steered(Collectives))
+            // A launcher's pause, resume and stop (phase C9).
+            if (_fixedPresent && Options.Simulation.Control is { } control)
             {
                 Steer(control, step);
             }

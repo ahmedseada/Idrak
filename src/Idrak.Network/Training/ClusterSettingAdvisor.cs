@@ -6,7 +6,7 @@ using System.Globalization;
 namespace Idrak.Networking.Training;
 
 /// <summary>
-/// The library's "cluster" advisor (plan 23, decision 4; <see cref="SettingAdvisors"/>): from what a data-parallel run
+/// The library's "cluster" advisor (plan 23, decision 4; asked directly by the gradient reduction's measurement): from what a data-parallel run
 /// measured over its first warm steps (<see cref="ClusterStepMeasure"/>), how to send less when the network takes more of
 /// a step than <see cref="ClusterOptions.SuggestShare"/>. Each suggestion names its figures and how to set it; none is
 /// applied. Nothing is suggested at or under the share.

@@ -9,8 +9,9 @@ using Idrak.Networking.Compression;
 
 namespace Idrak.Networking.Training;
 
-/// <summary>"all-reduce" in <see cref="GradientSyncs"/>: every step's gradients summed across the ranks, a bucket at a time, each sent while the backward pass goes on.</summary>
-internal sealed class AllReduceSyncProvider : IGradientSyncProvider
+/// <summary>"all-reduce": every step's gradients summed across the ranks, a bucket at a time, each sent while the backward pass goes on.</summary>
+/// <param name="compression">How each bucket is compressed on its way (it was looked up by the options' name).</param>
+internal sealed class AllReduceSyncProvider(IGradientCompression compression) : IGradientSyncProvider
 {
     public string Name => "all-reduce";
 
@@ -18,7 +19,7 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 
     public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
         options.Shard == ShardMode.None
-            ? new GradientReduction(collectives, optimizer, options)
+            ? new GradientReduction(collectives, optimizer, options, compression)
             : throw new ArgumentException($"all-reduce keeps every rank's state whole; IDRAK_CLUSTER_SHARD={options.Shard.ToString().ToLowerInvariant()} needs the sharded "
                                           + "synchronisation (leave IDRAK_CLUSTER_GRADIENT_SYNC unset, or name sharded).", nameof(options));
 }
@@ -27,7 +28,7 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 /// The gradient all-reduce of data-parallel training (plan 23, phases C2 and C4). The gradients are addressed as
 /// (parameter, offset, count) pieces packed into buckets in reverse parameter order (<see cref="BucketLayout"/>), never a
 /// packed copy on the device. Each bucket is this rank's values times its tokens (its rows; 1 when the losses are already
-/// the step's shares), summed across the ranks through the run's compression (<see cref="GradientCompressions"/>: none,
+/// the step's shares), summed across the ranks through the run's compression (<see cref="IGradientCompression"/>: none,
 /// top-k), then divided by the step's tokens over every rank, which a small header collective of float32 values
 /// gives (the tokens, the loss and which parameters have a gradient on any rank). So the sum is token-weighted: the
 /// gradient one process would compute on every rank's rows.
@@ -110,7 +111,10 @@ internal partial class GradientReduction : SyncCore
     private List<(int At, int Count)>?[] _zeros = [];
     private long _launchTicks, _stagingWaitTicks;
 
-    public GradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options, bool sharded = false)
+    // compression: how each bucket is compressed (an all-reduce run's; a sharded one reduce-scatters float32). stop: the
+    // ranks' stop agreement whose flag rides in the header (null: none carried); both were looked up by name.
+    public GradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options, IGradientCompression? compression, bool sharded = false,
+                             ICarriedStopAgreement? stop = null)
         : base(collectives, optimizer, options)
     {
         _present = new bool[Parameters.Count];
@@ -131,12 +135,13 @@ internal partial class GradientReduction : SyncCore
         }
         else
         {
-            _compressor = GradientCompressions.Create(collectives, Parameters, options);
+            _compressor = (compression ?? throw new ArgumentNullException(nameof(compression), "An all-reduce run's buckets go through a compression."))
+                .Create(collectives, Parameters, options);
         }
 
         _sized = options.BucketBytes is not null;
         _layout = NewLayout(ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
-        if (collectives.WorldSize > 1 && StopAgreements.For(collectives, options) is ICarriedStopAgreement stop)
+        if (collectives.WorldSize > 1)
         {
             _stop = stop;
         }
@@ -283,10 +288,6 @@ internal partial class GradientReduction : SyncCore
         }
 
         bool advising = AdviceStep;
-        if (advising && StepsInGroup == 1L + _meter!.Warm && _meter.SliceCount == 0)
-        {
-            _meter.Capture = true;                             // the slice from the last measured step's own values (unless taken during its backward pass)
-        }
 
         HostGradients?.DownloadGradients();
         long started = Stopwatch.GetTimestamp();
@@ -624,11 +625,6 @@ internal partial class GradientReduction : SyncCore
     // rank's piece of it its own parameters' values.
     private void ReduceBucket(int bucket, Span<float> values, float weight)
     {
-        if (bucket == 0 && _meter is { Capture: true } meter)
-        {
-            CaptureSlice(meter, values, weight);
-        }
-
         if (!_layout.Sharded)
         {
             _compressor.Reduce(values, weight, _layout.Pieces(bucket));

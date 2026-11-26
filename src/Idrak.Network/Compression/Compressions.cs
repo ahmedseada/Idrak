@@ -7,7 +7,7 @@ using Idrak.Networking.Training;
 
 namespace Idrak.Networking.Compression;
 
-/// <summary>"none" in <see cref="GradientCompressions"/>: every value, as float32.</summary>
+/// <summary>"none": every value, as float32.</summary>
 internal sealed class PlainCompression : IGradientCompression
 {
     public string Name => "none";

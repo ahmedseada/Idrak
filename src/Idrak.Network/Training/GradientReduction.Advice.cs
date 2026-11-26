@@ -13,18 +13,17 @@ namespace Idrak.Networking.Training;
 /// the reduction times its first warm steps (the first, cold step aside, rule 76; <see cref="ClusterOptions.SuggestSteps"/>
 /// of them): each step's time from one step's end to the next, with the wall time of its reduction replaced by the network
 /// time the step waited for (the virtual clock's on a simulated transport, so a simulated step is the cluster's), the
-/// network's time and the backward pass's. On the last of them it copies a sample slice of its own gradient values (the
-/// first bucket's, <see cref="ClusterOptions.SuggestSliceValues"/> at most, weighted as the step weights them) and, as the
-/// step ends, reduces the slice over a float32 wire, with its figures beside it so
-/// every rank gets the means over the ranks; rank 0 asks the advisors (<see cref="SettingAdvisors.Publish"/>) and the
-/// measurement ends for the run. Nothing a run computes changes: the slice is a copy, reduced after the step's own
-/// reduction. Off, the cost is one field read a step. A group that changes (a fault) ends the measurement on every member.
+/// network's time and the backward pass's. As the last of them ends, it reduces its figures so every rank gets the means
+/// over the ranks; rank 0 asks the "cluster" advisor (<see cref="ClusterSettingAdvisor"/>, reached directly: the advisors'
+/// registry is gone) and the measurement ends for the run. Nothing a run computes changes: the figures are reduced after
+/// the step's own reduction. Off, the cost is one field read a step. A group that changes (a fault) ends the measurement on
+/// every member.
 /// <para>
-/// Every rank must decide alike (the slice's collectives are taken by all or none): an in-process run resolves the setting
+/// Every rank must decide alike (the figures' collective is taken by all or none): an in-process run resolves the setting
 /// once as it starts (<c>InProcessCluster.Run</c>: set, or whether someone listens then) and every rank takes it, with its
-/// warm steps and slice, from its context; collectives without that context decide once per run whichever rank comes
+/// warm steps, from its context; collectives without that context decide once per run whichever rank comes
 /// first (keyed by the run's options instance); ranks in processes of their own agree in one collective as they start.
-/// Each suggestion is published once a run (the published set is the run's too). The slice's two collectives are network
+/// Each suggestion is published once a run (the published set is the run's too). The figures' collective is network
 /// traffic, on a simulated transport's clock like any other: the event log's header keeps the setting and a replay from
 /// the log (<c>ClusterReplay.Run</c> with it, <c>idrak cluster replay --from</c>) measures alike.
 /// </para>
@@ -47,13 +46,9 @@ internal partial class GradientReduction
     private sealed class AdviceMeter
     {
         public int Warm;                                                      // the warm steps measured (the run's setting)
-        public int SliceLimit;                                                // the slice's values at most
         public int Steps;
         public double Step, Exposed, Network, Backward;                     // seconds, summed over the measured steps
         public bool Simulated;
-        public bool Capture;                                                  // copy the first bucket's values as it is reduced
-        public float[]? Slice;
-        public int SliceCount;
         public (TimeSpan Exposed, TimeSpan Network, TimeSpan Backward, TimeSpan ReduceWall, bool OnClock)? Pending;   // the step's, until it ends
     }
 
@@ -64,7 +59,7 @@ internal partial class GradientReduction
     private bool AdviceStep => _meter is { } meter && StepsInGroup >= 2 && StepsInGroup <= 1L + meter.Warm;
 
     // The run's setting where the run resolved it (an in-process run does as it starts, and a replay takes its log's): the
-    // decision, its warm steps and its slice; else the synchronisation's own options.
+    // decision and its warm steps; else the synchronisation's own options.
     private ClusterOptions? RunSetting => Collectives.Context?.Options is { Suggest: not null } run ? run : null;
 
     private RunAdvice Run => Collectives.Context?.Options is { } run ? Runs.GetValue(run, static _ => new RunAdvice()) : _own ??= new RunAdvice();
@@ -88,7 +83,7 @@ internal partial class GradientReduction
     private void StartAdvice(bool on)
     {
         var setting = RunSetting ?? Options;
-        _meter = on && World > 1 ? new AdviceMeter { Warm = setting.SuggestSteps, SliceLimit = setting.SuggestSliceValues } : null;
+        _meter = on && World > 1 ? new AdviceMeter { Warm = setting.SuggestSteps } : null;
     }
 
     private void StopAdvice() => _meter = null;
@@ -99,26 +94,6 @@ internal partial class GradientReduction
         Span<float> wanted = [AdviceWanted ? 1f : 0f];
         Values.AllReduce(wanted, ReduceOp.Max);
         return wanted[0] > 0f;
-    }
-
-    // As the last measured step begins, its first bucket's values are copied as they are reduced (during the backward pass
-    // when the bucket goes then).
-    private void ArmAdvice(bool present)
-    {
-        if (present && _meter is { } meter && StepsInGroup == meter.Warm)
-        {
-            meter.Capture = true;
-        }
-    }
-
-    private void CaptureSlice(AdviceMeter meter, ReadOnlySpan<float> values, float weight)
-    {
-        meter.Capture = false;
-        int n = Math.Min(values.Length, meter.SliceLimit);
-        meter.Slice ??= ArrayPool<float>.Shared.Rent(Math.Max(1, n));
-        values[..n].CopyTo(meter.Slice);
-        DenseCompressor.Scale(meter.Slice.AsSpan(0, n), weight);
-        meter.SliceCount = n;
     }
 
     protected override void StepTimed(TimeSpan wall)
@@ -143,44 +118,18 @@ internal partial class GradientReduction
             }
             finally
             {
-                if (meter.Slice is { } slice)
-                {
-                    ArrayPool<float>.Shared.Return(slice);
-                }
-
                 _meter = null;                                 // measured once a run
             }
         }
     }
 
-    // The slice over both wires (the figures ride with the float32 one), then rank 0 asks the advisors.
+    // The figures' means over the ranks, then rank 0 asks the advisor.
     private void Advise(AdviceMeter meter)
     {
-        int n = Math.Min(_layout.Size(0), meter.SliceLimit);   // the same on every rank: the layout and the setting are
-        var exact = ArrayPool<float>.Shared.Rent(n + 4);
-        double step, exposed, network, backward;
-        try
-        {
-            var mine = exact.AsSpan(0, n);
-            mine.Clear();
-            if (meter.Slice is { } slice)
-            {
-                slice.AsSpan(0, Math.Min(n, meter.SliceCount)).CopyTo(mine);
-            }
-
-            exact[n] = (float)meter.Step;
-            exact[n + 1] = (float)meter.Exposed;
-            exact[n + 2] = (float)meter.Network;
-            exact[n + 3] = (float)meter.Backward;
-            Values.AllReduce(exact.AsSpan(0, n + 4));
-
-            double count = (double)World * Math.Max(1, meter.Steps);
-            (step, exposed, network, backward) = (exact[n] / count, exact[n + 1] / count, exact[n + 2] / count, exact[n + 3] / count);
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(exact);
-        }
+        Span<float> figures = [(float)meter.Step, (float)meter.Exposed, (float)meter.Network, (float)meter.Backward];
+        Values.AllReduce(figures);
+        double count = (double)World * Math.Max(1, meter.Steps);
+        double step = figures[0] / count, exposed = figures[1] / count, network = figures[2] / count, backward = figures[3] / count;
 
         if (Collectives.Rank != 0)
         {
@@ -190,11 +139,22 @@ internal partial class GradientReduction
         string compression = _layout.Sharded ? "none" : _compressor.Name;
         var measure = new ClusterStepMeasure(Options, Name, Collectives.Name, compression, World, Collectives.Context?.Topology.Nodes.Count ?? 1, meter.Steps,
             TimeSpan.FromSeconds(step), TimeSpan.FromSeconds(exposed), TimeSpan.FromSeconds(network), TimeSpan.FromSeconds(backward),
-            (long)_layout.Total * sizeof(float), (long)_layout.BucketValues * sizeof(float), _layout.Count, meter.Simulated, null, 0);
+            (long)_layout.Total * sizeof(float), (long)_layout.BucketValues * sizeof(float), _layout.Count, meter.Simulated);
+        if (!Telemetry.IsEnabled(TelemetryLevel.Suggestions))
+        {
+            return;
+        }
+
         var published = Run.Published;
         lock (published)
         {
-            SettingAdvisors.Publish(new AdviceSituation(Collectives.Device, measure, null), published);
+            foreach (var suggestion in new ClusterSettingAdvisor().Suggest(new AdviceSituation(Collectives.Device, measure, null), measure))
+            {
+                if (published.Add((suggestion.Setting, suggestion.Value)))
+                {
+                    Telemetry.Suggestion(in suggestion);
+                }
+            }
         }
     }
 }

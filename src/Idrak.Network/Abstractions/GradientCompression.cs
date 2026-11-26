@@ -40,7 +40,7 @@ public interface IGradientCompressor : IDisposable
     }
 }
 
-/// <summary>One kind of gradient compression, registered by name in <see cref="GradientCompressions"/>.</summary>
+/// <summary>One kind of gradient compression ("none", "top-k").</summary>
 public interface IGradientCompression
 {
     /// <summary>The name ("none", "top-k").</summary>
@@ -54,66 +54,3 @@ public interface IGradientCompression
     IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options);
 }
 
-/// <summary>
-/// The gradient compressions, by name (plan 23, phase C4): "none" (float32) and "top-k" (the largest share of each
-/// bucket's values, by magnitude, with the rest kept for the next step: error feedback). A run names one with <see cref="ClusterOptions.Compression"/>
-/// (<c>IDRAK_CLUSTER_COMPRESSION</c>).
-/// </summary>
-public static class GradientCompressions
-{
-    private static readonly SlotTable<string, IGradientCompression> Table = BuiltIn();
-
-    private static SlotTable<string, IGradientCompression> BuiltIn()
-    {
-        var table = new SlotTable<string, IGradientCompression>(nameof(GradientCompressions), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a compression's values are summed with every other rank's in the same form, so another cannot answer for one rank");
-        table.RegisterDefault("none", new Compression.PlainCompression());
-        table.RegisterDefault("top-k", new Compression.TopKCompression());
-        return table;
-    }
-
-    /// <summary>The registered compressions, in registration order.</summary>
-    public static IReadOnlyList<IGradientCompression> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="compression"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IGradientCompression compression)
-    {
-        ArgumentNullException.ThrowIfNull(compression);
-        ArgumentException.ThrowIfNullOrWhiteSpace(compression.Name);
-        Table.Register(compression.Name, compression, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's compression of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The compression of that name, or null.</summary>
-    public static IGradientCompression? Find(string name) => Table.Find(name);
-
-    /// <summary>The compression of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IGradientCompression Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(GradientCompressions), name, Table.Keys,
-            $"Gradient compression '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add one with GradientCompressions.Register (IDRAK_CLUSTER_COMPRESSION names it).");
-
-    /// <summary>The library's compression of that name, or null.</summary>
-    public static IGradientCompression? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the compression of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each compression as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(c => $"{c.Name}: {c.Summary}"));
-
-    /// <summary>The compressor <paramref name="options"/> names (<see cref="ClusterOptions.CompressionName"/>).</summary>
-    public static IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(collectives);
-        ArgumentNullException.ThrowIfNull(parameters);
-        ArgumentNullException.ThrowIfNull(options);
-        return Get(options.CompressionName).Create(collectives, parameters, options);
-    }
-}
