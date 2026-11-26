@@ -144,7 +144,7 @@ internal abstract partial class DesktopTests : Tests
             string[] c = ["--cache", cache];
             string hf = TestData("gguf/tiny-llama-hf"), gguf = TestData("gguf/tiny-qwen3-q8.gguf");
             var show = ModelsJson(["show", hf, .. c]);
-            Check((long)show["parameters"]! == 91_200 && (int)show["spec"]!["layers"]! == 2 && (string?)show["toolCallFormat"] == "json", $"show: {show}");
+            Check((long)show["parameters"]! == 91_200 && (int)show["spec"]!["layers"]! == 2, $"show: {show}");
             var showGguf = ModelsCli(["show", gguf, .. c]);
             Check(showGguf.Code == 0 && showGguf.Out.Contains("Qwen3ForCausalLM", StringComparison.Ordinal) && showGguf.Out.Contains("gguf Q8_0", StringComparison.Ordinal)
                   && showGguf.Out.Contains("query/key norms", StringComparison.Ordinal), $"show gguf: {showGguf.Out}");

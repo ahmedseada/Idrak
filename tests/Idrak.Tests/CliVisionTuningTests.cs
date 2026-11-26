@@ -32,7 +32,6 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        RegisterGemma3Vision();
         string folder = TempFolder();
         try
         {
@@ -40,10 +39,10 @@ internal abstract partial class DesktopTests : Tests
             string train = WriteShareGpt(folder, "gemma3", "train.json");
             string validation = WriteShareGpt(folder, "gemma3", "val.json", records: 2);
 
-            // Images from a folder: LoRA and the projector, a transform and a vision option saved, cer every step, -v's plan.
+            // Images from a folder: LoRA and the projector, a vision option saved, cer every step, -v's plan.
             string adapter = Path.Combine(folder, "adapter");
             var tuned = TrainCli(["tune", "-b", VlmModel, "--data", train, "--eval", validation, "--images", images, "--train-projector",
-                "--image-transform", "contrast=1.5", "--vision", "do_pan_and_scan=false", "--metric", "cer", "--metric-every", "1", "--epochs", "3",
+                "--vision", "do_pan_and_scan=false", "--metric", "cer", "--metric-every", "1", "--epochs", "3",
                 "-o", adapter, "-v", .. TinyTuning]);
             string text = tuned.Out.ReplaceLineEndings("\n");
             Check(tuned.Code == 0, $"tune with images: {tuned.Code}\n{tuned.Out}\n{tuned.Err}");
@@ -68,7 +67,7 @@ internal abstract partial class DesktopTests : Tests
             }
 
             var preparation = TuningImages.Read(adapter)!;
-            Check(preparation.Transforms.ToString() == "contrast=1.5" && preparation.VisionOptions.ToString() == "do_pan_and_scan=false"
+            Check(preparation.VisionOptions.ToString() == "do_pan_and_scan=false"
                   && preparation.Family == Gemma3VisionFamily.Architecture, $"tuning_images.json: {preparation.ToJson()}");
             Check(TuningManifest.Read(adapter)?.BaseModel == Path.GetFullPath(VlmModel), "idrak-tuning.json names the base model");
 
@@ -91,7 +90,6 @@ internal abstract partial class DesktopTests : Tests
             Check(lines.Length == 2 && JsonNode.Parse(lines[0])!["adapter adapter"]!["cer"] is not null, $"tune evaluate -o: {string.Join("\n", lines)}");
 
             // The tiny LLaVA (the test plug-in): the same command line, another family.
-            Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
             string llava = Path.Combine(folder, "llava");
             string llavaTrain = WriteShareGpt(folder, "llava", "llava.json");
             var other = TrainCli(["tune", "-b", TestData("vlm-llava/tiny-llava"), "--data", llavaTrain, "--images", zip, "--train-projector", "--epochs", "2", "-o", llava, .. TinyTuning]);
@@ -119,10 +117,10 @@ internal abstract partial class DesktopTests : Tests
         string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "12", "-j"];
         var (code, text, error) = RunIdrakOn(Device.Cpu, null, ["run", VlmModel, "--image", png, "What is in this image?", "--adapter", adapter, .. greedy]);
         var json = JsonOf(text, "run --adapter");
-        Check(code == 0 && (string?)json["image_transforms"] == "contrast=1.5" && (string?)json["vision_options"]?["do_pan_and_scan"] == "false",
+        Check(code == 0 && (string?)json["vision_options"]?["do_pan_and_scan"] == "false",
             $"run --adapter takes the saved preparation: {code} {text} {error}");
 
-        // The library with the same adapter: its encoder with the trained projector, the saved transforms and options.
+        // The library with the same adapter: its encoder with the trained projector, the saved options.
         using var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu, MergeAdapter = adapter });
         var vision = model.Vision!;
         using var trained = model.CreateVisionEncoder();
@@ -133,8 +131,8 @@ internal abstract partial class DesktopTests : Tests
             "the trained projector changes the image features");
         string Generate(IVisionEncoder encoder)
         {
-            var chat = model.CreateChat(Idrak.Abstraction.Generation.KeyValueLayouts.Get("float32"), 4096);
-            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, vision.PromptFormat, vision.Attention) { Transforms = preparation.Pipeline } };
+            var chat = model.CreateChat(Idrak.Abstraction.Generation.KeyValueLayouts.For(KeyValueFormat.Float32), 4096);
+            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, vision.PromptFormat, vision.Attention) };
             var request = new ChatRequest([new ChatMessage("system", "Read the scan."), new ChatMessage("user", [ChatImage.FromFile(png), new ChatText("What is in this image?")])],
                 Options: new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = 12, NumCtx = 4096 }) { VisionOptions = preparation.VisionOptions };
             return withImages.Chat(request).Message!.Content;
@@ -142,10 +140,6 @@ internal abstract partial class DesktopTests : Tests
 
         string expected = Generate(trained);
         Check((string?)json["text"] == expected, $"run --adapter answers as the library with the trained projector: '{json["text"]}', expected '{expected}' (frozen projector: '{Generate(frozen)}')");
-
-        // The command line's transforms replace the adapter's.
-        (code, text, _) = RunIdrakOn(Device.Cpu, null, ["run", VlmModel, "--image", png, "What is in this image?", "--adapter", adapter, "--image-transform", "none", .. greedy]);
-        Check(code == 0 && (string?)JsonOf(text, "run --adapter --image-transform none")["image_transforms"] == "", $"--image-transform over the adapter's: {text}");
     }
 
     private static void CliVisionTuningRefusals(Device device)
@@ -185,23 +179,12 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        RegisterGemma3Vision();
         string folder = TempFolder();
         try
         {
-            // tune init -P with a plug-in that registers a vision family: the vision example, the plug-in kept.
-            string plugin = typeof(Gemma3VisionPlugin).Assembly.Location;
-            string settings = Path.Combine(folder, "tune.json");
-            var init = TrainCli("tune", "init", "-P", plugin, "-b", VlmModel, "-o", settings);
-            string written = File.ReadAllText(settings).ReplaceLineEndings("\n");
-            Check(init.Code == 0 && written.Contains("\"data\": [\"train.json\"]", StringComparison.Ordinal) && written.Contains("\"eval\": \"val.json\"", StringComparison.Ordinal)
-                  && written.Contains("\"metric\": \"cer\"", StringComparison.Ordinal) && written.Contains("\"train-projector\": false", StringComparison.Ordinal)
-                  && written.Contains(Gemma3VisionFamily.Architecture, StringComparison.Ordinal) && written.Contains("\"plugins\": [", StringComparison.Ordinal),
-                $"tune init -P: {init.Out} {init.Err}\n{written}");
-            Check(JsonNode.Parse(written, documentOptions: new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip })!["plugins"]![0]!.ToString()
-                  == Path.GetFullPath(plugin), "the plug-in's full path kept");
+            // tune init: the text example.
             var plain = TrainCli("tune", "init", "-b", VlmModel, "-o", Path.Combine(folder, "text.json"));
-            Check(plain.Code == 0 && !File.ReadAllText(Path.Combine(folder, "text.json")).Contains("\"metric\"", StringComparison.Ordinal), "without -P: the text example");
+            Check(plain.Code == 0 && !File.ReadAllText(Path.Combine(folder, "text.json")).Contains("\"metric\"", StringComparison.Ordinal), "the text example");
 
             // A tune.json with the image keys as the plan writes them (underscores, "format" naming the data's, "vision" an
             // object, "parts" a list) and the disk feature cache under --cache.
@@ -212,13 +195,13 @@ internal abstract partial class DesktopTests : Tests
             File.WriteAllText(config, new JsonObject
             {
                 ["format"] = "sharegpt", ["command"] = "train", ["model"] = VlmModel, ["data"] = new JsonArray(train), ["out"] = adapter,
-                ["images"] = images, ["image_transform"] = "max_width=64", ["vision"] = new JsonObject { ["do_pan_and_scan"] = "false" },
+                ["images"] = images, ["vision"] = new JsonObject { ["do_pan_and_scan"] = "false" },
                 ["parts"] = new JsonArray("projector"), ["feature_cache"] = "disk", ["epochs"] = 2,
             }.ToJsonString());
             string cache = Path.Combine(folder, "cache");
             var tuned = TrainCli(["tune", "--config", config, "--cache", cache, .. TinyTuning]);
             var preparation = TuningImages.Read(adapter);
-            Check(tuned.Code == 0 && preparation?.Transforms.ToString() == "max_width=64" && preparation.VisionOptions.ToString() == "do_pan_and_scan=false"
+            Check(tuned.Code == 0 && preparation?.VisionOptions.ToString() == "do_pan_and_scan=false"
                   && JsonNode.Parse(File.ReadAllText(Path.Combine(adapter, "adapter_config.json")))!["modules_to_save"] is JsonArray { Count: 1 },
                 $"tune --config with image keys: {tuned.Code} {tuned.Out} {tuned.Err}");
             Check(Directory.Exists(Path.Combine(cache, "features")) && Directory.EnumerateFiles(Path.Combine(cache, "features"), "*", SearchOption.AllDirectories).Count() == 2,

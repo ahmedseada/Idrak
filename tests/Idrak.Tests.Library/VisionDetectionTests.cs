@@ -15,13 +15,13 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] VisionDetectionGroup =
     [
-        ("vision detection: IoU, GIoU, DIoU and CIoU box losses match torchvision's (losses and gradients, the same box, boxes apart, one inside the other), through VisionLosses with every reduction", BoxLossesMatchTorchvision),
+        ("vision detection: IoU, GIoU, DIoU and CIoU box losses match torchvision's (losses and gradients, the same box, boxes apart, one inside the other), with every reduction", BoxLossesMatchTorchvision),
         ("vision detection: smooth L1 and L1, sigmoid focal (α 0.25 γ 2, no α γ 0.5) and soft dice match PyTorch, gradients included", DenseLossesMatchPyTorch),
-        ("vision detection: gradient: every registered loss against finite differences; the testing kit's loss suite passes for each and fails a wrong one", VisionLossGradients),
+        ("vision detection: gradient: every loss against finite differences; the testing kit's loss suite passes for each and fails a wrong one", VisionLossGradients),
         ("vision detection: Hungarian matching matches SciPy's linear_sum_assignment, threshold matching torchvision's Matcher (with and without low-quality matches); the kit's matcher suites pass", MatchingMatchesReferences),
         ("vision detection: COCO mAP (0.5:0.95, 50, 75, small, medium, large, AR100) matches pycocotools, VOC AP (all points and 11) the devkit's voc_eval, mean IoU numpy's confusion matrix; the kit's metric suites pass", MetricsMatchReferences),
-        ("vision detection: registries: VisionLosses, BoxMatchers and VisionMetrics name their built-ins and refuse unknown names; an app's loss falls back or is shadowed; RLE counts match pycocotools'", VisionDetectionRegistries),
-        ("vision detection: DetectionObjective: matched, background and ignored candidates scored as written (with and without objectness), gradients against finite differences, Hungarian matching, an image without objects; DetectionHeads refuses an unregistered head", DetectionObjectiveScores),
+        ("vision detection: RLE counts match pycocotools'", VisionDetectionRegistries),
+        ("vision detection: DetectionObjective: matched, background and ignored candidates scored as written (with and without objectness), gradients against finite differences, Hungarian matching, an image without objects", DetectionObjectiveScores),
     ];
 
     internal static readonly Lazy<JsonObject> DetectionReference = new(() => JsonNode.Parse(File.ReadAllText(
@@ -34,18 +34,18 @@ internal abstract partial class Tests
         var c = DetectionReference.Value["box_losses"]!;
         float[] predicted = FloatArray(c["predicted"]), target = FloatArray(c["target"]);
         int n = predicted.Length / 4;
-        foreach (string name in new[] { "iou", "giou", "diou", "ciou" })
+        foreach (var (name, overlap) in new[] { ("iou", BoxOverlap.IoU), ("giou", BoxOverlap.GIoU), ("diou", BoxOverlap.DIoU), ("ciou", BoxOverlap.CIoU) })
         {
             using var scope = new TensorScope();
             var p = Tensor.From(predicted, [n, 4], device, requiresGrad: true);
             var t = Tensor.From(target, [n, 4], device);
-            var losses = VisionLosses.Compute(name, p, t, new VisionLossOptions { Reduction = LossReduction.None });
+            var losses = DetectionLosses.BoxIou(p, t, overlap, LossReduction.None);
             AssertClose(FloatArray(c[name]!["losses"]), losses.ToArray(), 1e-5f, $"{name} losses");
             losses.Sum().Backward();
             AssertClose(FloatArray(c[name]!["grad"]), p.Grad!.ToArray(), 1e-4f, $"{name} gradient");
             float sum = FloatArray(c[name]!["losses"]).Sum();
-            Check(MathF.Abs(VisionLosses.Compute(name, p, t, new VisionLossOptions { Reduction = LossReduction.Sum }).Item() - sum) <= 1e-4f * Math.Max(1, sum)
-                  && MathF.Abs(VisionLosses.Compute(name, p, t).Item() - sum / n) <= 1e-5f, $"{name}: sum and mean");
+            Check(MathF.Abs(DetectionLosses.BoxIou(p, t, overlap, LossReduction.Sum).Item() - sum) <= 1e-4f * Math.Max(1, sum)
+                  && MathF.Abs(DetectionLosses.BoxIou(p, t, overlap).Item() - sum / n) <= 1e-5f, $"{name}: sum and mean");
         }
 
         // [..., 4] boxes keep their leading shape; the losses are [...] with gradients there too.
@@ -68,16 +68,15 @@ internal abstract partial class Tests
         AssertClose(FloatArray(s["beta1"]), smooth.ToArray(), 1e-6f, "smooth L1, β 1");
         smooth.Sum().Backward();
         AssertClose(FloatArray(s["grad_beta1"]), a.Grad!.ToArray(), 1e-6f, "smooth L1 gradient");
-        AssertClose(FloatArray(s["beta05"]), VisionLosses.Compute("smooth-l1", a, b, new() { Beta = 0.5f, Reduction = LossReduction.None }).ToArray(), 1e-6f, "smooth L1, β 0.5");
-        AssertClose(FloatArray(s["l1"]), VisionLosses.Compute("l1", a, b, new() { Reduction = LossReduction.None }).ToArray(), 1e-6f, "L1");
+        AssertClose(FloatArray(s["beta05"]), DetectionLosses.SmoothL1(a, b, 0.5f, LossReduction.None).ToArray(), 1e-6f, "smooth L1, β 0.5");
+        AssertClose(FloatArray(s["l1"]), DetectionLosses.SmoothL1(a, b, 0f, LossReduction.None).ToArray(), 1e-6f, "L1");
 
         var f = r["focal"]!;
         float[] logits = FloatArray(f["logits"]), targets = FloatArray(f["targets"]);
         foreach (string key in new[] { "a025_g2", "none_g05" })
         {
             var x = Tensor.From(logits, [5, 7], device, requiresGrad: true);
-            var options = new VisionLossOptions { Alpha = (float)f[key]!["alpha"]!, Gamma = (float)f[key]!["gamma"]!, Reduction = LossReduction.None };
-            var losses = VisionLosses.Compute("focal", x, Tensor.From(targets, [5, 7], device), options);
+            var losses = DetectionLosses.Focal(x, Tensor.From(targets, [5, 7], device), (float)f[key]!["alpha"]!, (float)f[key]!["gamma"]!, LossReduction.None);
             AssertClose(FloatArray(f[key]!["losses"]), losses.ToArray(), 1e-5f, $"focal {key}");
             losses.Mean().Backward();
             AssertClose(FloatArray(f[key]!["grad_mean"]), x.Grad!.ToArray(), 1e-5f, $"focal {key} gradient");
@@ -90,7 +89,7 @@ internal abstract partial class Tests
         AssertClose(FloatArray(d["losses"]), dice.ToArray(), 1e-5f, "dice losses [N, classes]");
         dice.Mean().Backward();
         AssertClose(FloatArray(d["grad_logits_mean"]), z.Grad!.ToArray(), 1e-5f, "dice gradient through the softmax");
-        var batch = VisionLosses.Compute("dice", probabilities, Tensor.From(FloatArray(d["targets"]), [2, 3, 4, 5], device), new() { Batch = true, Reduction = LossReduction.None });
+        var batch = SegmentationLosses.Dice(probabilities, Tensor.From(FloatArray(d["targets"]), [2, 3, 4, 5], device), 1f, true, LossReduction.None);
         Check(batch.Shape.SequenceEqual([3]), $"batch dice per class: {Tensor.FormatShape(batch.Shape)}");
     }
 
@@ -110,28 +109,38 @@ internal abstract partial class Tests
 
         var random = new Random(5);
         float[] target = Boxes(random, 6), start = Boxes(random, 6);
-        foreach (string name in new[] { "iou", "giou", "diou", "ciou", "l1", "smooth-l1" })
+        // Each loss with its reduction (the mean unless none is asked).
+        var losses = new (string Name, VisionLossInput Input, Func<Tensor, Tensor, LossReduction, Tensor> Loss)[]
         {
-            GradCheckAt(device, start, [6, 4], x => VisionLosses.Compute(name, x, Tensor.From(target, [6, 4], device)), $"{name} gradient");
+            ("iou", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.BoxIou(p, t, BoxOverlap.IoU, r)),
+            ("giou", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.BoxIou(p, t, BoxOverlap.GIoU, r)),
+            ("diou", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.BoxIou(p, t, BoxOverlap.DIoU, r)),
+            ("ciou", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.BoxIou(p, t, BoxOverlap.CIoU, r)),
+            ("l1", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.SmoothL1(p, t, 0f, r)),
+            ("smooth-l1", VisionLossInput.Boxes, (p, t, r) => DetectionLosses.SmoothL1(p, t, 1f, r)),
+            ("focal", VisionLossInput.Logits, (p, t, r) => DetectionLosses.Focal(p, t, reduction: r)),
+            ("dice", VisionLossInput.Probabilities, (p, t, r) => SegmentationLosses.Dice(p, t, reduction: r)),
+        };
+        foreach (var (name, _, loss) in losses.Take(6))
+        {
+            GradCheckAt(device, start, [6, 4], x => loss(x, Tensor.From(target, [6, 4], device), LossReduction.Mean), $"{name} gradient");
         }
 
         var labels = Enumerable.Range(0, 24).Select(i => i % 5 == 0 ? 1f : 0f).ToArray();
-        GradCheckAt(device, [.. Enumerable.Range(0, 24).Select(i => MathF.Sin(i) * 3)], [4, 6], x => VisionLosses.Compute("focal", x, Tensor.From(labels, [4, 6], device)), "focal gradient");
+        GradCheckAt(device, [.. Enumerable.Range(0, 24).Select(i => MathF.Sin(i) * 3)], [4, 6], x => DetectionLosses.Focal(x, Tensor.From(labels, [4, 6], device)), "focal gradient");
         var onehot = Enumerable.Range(0, 2 * 3 * 4).Select(i => i / 4 % 3 == i % 4 % 3 ? 1f : 0f).ToArray();
         GradCheckAt(device, [.. Enumerable.Range(0, 24).Select(i => MathF.Cos(i))], [2, 3, 2, 2],
-            x => VisionLosses.Compute("dice", x.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2), Tensor.From(onehot, [2, 3, 2, 2], device)), "dice gradient");
+            x => SegmentationLosses.Dice(x.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2), Tensor.From(onehot, [2, 3, 2, 2], device)), "dice gradient");
 
         // The kit's suite: every library loss passes it against itself as the reference; a loss that is off fails.
-        foreach (var (name, input) in new[] { ("iou", VisionLossInput.Boxes), ("giou", VisionLossInput.Boxes), ("diou", VisionLossInput.Boxes), ("ciou", VisionLossInput.Boxes),
-                     ("l1", VisionLossInput.Boxes), ("smooth-l1", VisionLossInput.Boxes), ("focal", VisionLossInput.Logits), ("dice", VisionLossInput.Probabilities) })
+        foreach (var (_, input, each) in losses)
         {
-            Func<Tensor, Tensor, Tensor> loss = (p, t) => VisionLosses.Get(name).Compute(p, t, new() { Reduction = LossReduction.None });
-            Func<Tensor, Tensor, Tensor> library = (p, t) => VisionLosses.Default(name)!.Compute(p, t, new() { Reduction = LossReduction.None });
-            Conformance.Check(loss, new VisionLossSuite(input, library), new ContractCheckOptions { RandomCases = 6 }).ThrowIfFailed();
+            Func<Tensor, Tensor, Tensor> loss = (p, t) => each(p, t, LossReduction.None);
+            Conformance.Check(loss, new VisionLossSuite(input, loss), new ContractCheckOptions { RandomCases = 6 }).ThrowIfFailed();
         }
 
-        Func<Tensor, Tensor, Tensor> off = (p, t) => VisionLosses.Get("giou").Compute(p, t, new() { Reduction = LossReduction.None }) * 1.01f;
-        var report = Conformance.Check(off, new VisionLossSuite(VisionLossInput.Boxes, (p, t) => VisionLosses.Get("giou").Compute(p, t, new() { Reduction = LossReduction.None })),
+        Func<Tensor, Tensor, Tensor> off = (p, t) => DetectionLosses.BoxIou(p, t, BoxOverlap.GIoU, LossReduction.None) * 1.01f;
+        var report = Conformance.Check(off, new VisionLossSuite(VisionLossInput.Boxes, (p, t) => DetectionLosses.BoxIou(p, t, BoxOverlap.GIoU, LossReduction.None)),
             new ContractCheckOptions { RandomCases = 2 });
         Check(!report.Passed && report.Failures.Any(f => f.Check.Contains("reference", StringComparison.Ordinal)), $"a loss 1% off passes:\n{report}");
     }
@@ -168,7 +177,7 @@ internal abstract partial class Tests
             int rows = (int)c!["rows"]!, columns = (int)c["columns"]!;
             double[] cost = [.. c["cost"]!.AsArray().Select(v => (double)v!)];
             float[] quality = [.. cost.Select(v => (float)-v)];
-            var matches = BoxMatchers.Match(BoxMatchers.Hungarian, quality, rows, columns);
+            var matches = BoxMatching.MatchOneToOne(quality, rows, columns, new BoxMatchOptions());
             int[] rowInd = [.. c["row_ind"]!.AsArray().Select(v => (int)v!)], colInd = [.. c["col_ind"]!.AsArray().Select(v => (int)v!)];
             var expected = Enumerable.Repeat(BoxMatchers.Negative, rows).ToArray();
             for (int k = 0; k < rowInd.Length; k++)
@@ -186,7 +195,7 @@ internal abstract partial class Tests
         float[] iou = FloatArray(m["quality"]);
         foreach (var (key, low) in new[] { ("plain", false), ("low_quality", true) })
         {
-            var matches = BoxMatchers.Match(BoxMatchers.Threshold, iou, predictions, truths, new BoxMatchOptions { AllowLowQuality = low });
+            var matches = BoxMatching.MatchByThreshold(iou, predictions, truths, new BoxMatchOptions { AllowLowQuality = low });
             int[] expected = [.. m[key]!.AsArray().Select(v => (int)v!)];
             Check(matches.SequenceEqual(expected), $"threshold matching ({key}): [{string.Join(", ", matches)}], torchvision [{string.Join(", ", expected)}]");
         }
@@ -201,15 +210,15 @@ internal abstract partial class Tests
         var probabilities = new float[] { 0.9f, 0.1f, 0.2f, 0.8f };
         var set = BoxMatching.SetPredictionQuality(probabilities, 2, [new BoundingBox(0, 0, 10, 10), new BoundingBox(50, 50, 10, 10)], [1, 0],
             [new BoundingBox(50, 50, 10, 10), new BoundingBox(0, 0, 10, 10)], scale: 100);
-        Check(BoxMatchers.Match(BoxMatchers.Hungarian, set, 2, 2).SequenceEqual([1, 0]), "set prediction quality pairs each output with its object");
-        Check(BoxMatchers.Match(BoxMatchers.Hungarian, new[] { float.NegativeInfinity, 0.5f, float.NegativeInfinity, float.NegativeInfinity }, 2, 2).SequenceEqual([1, -1]),
+        Check(BoxMatching.MatchOneToOne(set, 2, 2, new BoxMatchOptions()).SequenceEqual([1, 0]), "set prediction quality pairs each output with its object");
+        Check(BoxMatching.MatchOneToOne(new[] { float.NegativeInfinity, 0.5f, float.NegativeInfinity, float.NegativeInfinity }, 2, 2, new BoxMatchOptions()).SequenceEqual([1, -1]),
             "forbidden pairs stay unmatched");
 
-        Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Hungarian).Match(q, p, g, new()),
+        Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatching.MatchOneToOne(q, p, g, new()),
             new BoxMatcherSuite(BoxMatcherExpectation.Optimal)).ThrowIfFailed();
         foreach (bool low in new[] { false, true })
         {
-            Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Threshold).Match(q, p, g, new() { AllowLowQuality = low }),
+            Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatching.MatchByThreshold(q, p, g, new() { AllowLowQuality = low }),
                 new BoxMatcherSuite(new BoxMatcherExpectation(false, 0.5f, 0.4f, low))).ThrowIfFailed();
         }
 
@@ -260,7 +269,7 @@ internal abstract partial class Tests
             var b = FloatArray(d!["bbox"]);
             return new Detection(new BoundingBox(b[0], b[1], b[2], b[3]), categories.IndexOf((int)d["category_id"]!), (float)d["score"]!);
         }).ToList());
-        var metric = VisionMetrics.Detection("coco");
+        var metric = new CocoAveragePrecision();
         foreach (int image in gt["images"]!.AsArray().Select(i => (int)i!["id"]!))
         {
             metric.Add(detectionsByImage.GetValueOrDefault(image, []), truthsByImage.GetValueOrDefault(image, []));
@@ -279,9 +288,9 @@ internal abstract partial class Tests
 
         // VOC: the devkit's voc_eval per class, every recall point and 11 points.
         var voc = DetectionReference.Value["voc"]!;
-        foreach (var (name, key) in new[] { ("voc", "all_points"), ("voc07", "eleven_points") })
+        foreach (var (name, key, elevenPoints) in new[] { ("voc", "all_points", false), ("voc07", "eleven_points", true) })
         {
-            var m = VisionMetrics.Detection(name);
+            var m = new VocAveragePrecision(elevenPoints: elevenPoints);
             foreach (var image in voc["images"]!.AsArray())
             {
                 var truths = image!["objects"]!.AsArray().Select(o =>
@@ -311,7 +320,7 @@ internal abstract partial class Tests
         var s = DetectionReference.Value["miou"]!;
         int classes = (int)s["classes"]!, w = (int)s["width"]!, h = (int)s["height"]!;
         int[] truth = [.. s["truth"]!.AsArray().Select(v => (int)v!)], predicted = [.. s["predicted"]!.AsArray().Select(v => (int)v!)];
-        var miou = VisionMetrics.Segmentation("miou", new VisionMetricOptions { Classes = classes, IgnoreClass = 255 });
+        var miou = new SegmentationMetrics(classes, 255);
         for (int i = 0; i < truth.Length / (w * h); i++)
         {
             // The masks' classes are counted by the metric's own; 255 is outside them, so the mask is given a larger class count.
@@ -327,12 +336,12 @@ internal abstract partial class Tests
         double[] classIou = [.. s["iou"]!.AsArray().Select(v => (double)v!)];
         Check(Enumerable.Range(0, classes).All(c => Math.Abs(scores[$"iou/{c}"] - classIou[c]) < 1e-12), "per-class IoU");
 
-        // The kit's suites, each metric against itself as the reference (through the registry).
-        foreach (string name in new[] { "coco", "voc", "voc07" })
+        // The kit's suites, each metric against itself as the reference.
+        foreach (var make in new Func<IDetectionMetric>[] { () => new CocoAveragePrecision(), () => new VocAveragePrecision(), () => new VocAveragePrecision(elevenPoints: true) })
         {
-            double Run(IReadOnlyList<DetectionImage> images, IVisionMetricKind kind)
+            double Run(IReadOnlyList<DetectionImage> images, Func<IDetectionMetric> made)
             {
-                var metric = (IDetectionMetric)kind.Create(new VisionMetricOptions());
+                var metric = made();
                 foreach (var image in images)
                 {
                     metric.Add([.. image.Predictions.Select(p => new Detection(p.Box, p.Class, p.Score))], image.Truths);
@@ -341,13 +350,13 @@ internal abstract partial class Tests
                 return metric.Compute()["map"];
             }
 
-            Conformance.Check<Func<IReadOnlyList<DetectionImage>, double>>(images => Run(images, VisionMetrics.Get(name)),
-                new DetectionMetricSuite(images => Run(images, VisionMetrics.Default(name)!)), new ContractCheckOptions { RandomCases = 8 }).ThrowIfFailed();
+            Conformance.Check<Func<IReadOnlyList<DetectionImage>, double>>(images => Run(images, make),
+                new DetectionMetricSuite(images => Run(images, make)), new ContractCheckOptions { RandomCases = 8 }).ThrowIfFailed();
         }
 
         Conformance.Check<Func<IReadOnlyList<SegmentationImage>, double>>(images =>
         {
-            var metric = VisionMetrics.Segmentation("miou", new VisionMetricOptions { Classes = images[0].Classes });
+            var metric = new SegmentationMetrics(images[0].Classes);
             foreach (var image in images)
             {
                 metric.Add(new SegmentationMask(image.Predicted, image.Width, image.Height, image.Classes), new SegmentationMask(image.Expected, image.Width, image.Height, image.Classes));
@@ -368,65 +377,7 @@ internal abstract partial class Tests
 
     internal static void VisionDetectionRegistries(Device device)
     {
-        Check(new[] { "iou", "giou", "diou", "ciou", "l1", "smooth-l1", "focal", "dice" }.All(VisionLosses.Names.Contains), $"losses: {string.Join(", ", VisionLosses.Names)}");
-        Check(BoxMatchers.Names.Contains("iou-threshold") && BoxMatchers.Names.Contains("hungarian"), $"matchers: {string.Join(", ", BoxMatchers.Names)}");
-        Check(new[] { "coco", "voc", "voc07", "miou" }.All(VisionMetrics.Names.Contains), $"metrics: {string.Join(", ", VisionMetrics.Names)}");
-        foreach (var (what, act) in new (string, Action)[]
-                 {
-                     ("loss", () => VisionLosses.Get("yolo-box")), ("matcher", () => BoxMatchers.Get("sinkhorn")), ("metric", () => VisionMetrics.Create("lvis")),
-                 })
-        {
-            try
-            {
-                act();
-                throw new Exception($"an unknown {what} was found");
-            }
-            catch (NotSupportedException e)
-            {
-                Check(e.Message.Contains("is registered", StringComparison.Ordinal), $"unknown {what}: {e.Message}");
-            }
-        }
-
-        Check(VisionMetrics.Detection("coco") is CocoAveragePrecision && VisionMetrics.Segmentation("miou", new() { Classes = 3 }) is SegmentationMetrics, "metric kinds");
-        try
-        {
-            VisionMetrics.Segmentation("coco", new() { Classes = 3 });
-            throw new Exception("coco measured masks");
-        }
-        catch (ArgumentException)
-        {
-        }
-
-        // An app's loss over a library name: Throw by default, FallBack answers with the library's, Shadow compares.
-        using var scope = new TensorScope();
-        var p = Tensor.From(new float[] { 0, 0, 4, 4 }, [1, 4], device);
-        var t = Tensor.From(new float[] { 1, 1, 5, 5 }, [1, 4], device);
-        float expected = VisionLosses.Compute("giou", p, t).Item();
-        VisionLosses.Register(TestKinds.VisionLoss("giou", VisionLossTarget.Boxes, (_, _, _) => throw new InvalidOperationException("app loss broke")));
-        try
-        {
-            Check(VisionLosses.Origin("giou") != Overrides.Library, "the app's loss shadows the library's");
-            try
-            {
-                VisionLosses.Compute("giou", p, t);
-                throw new Exception("a failing app loss did not throw");
-            }
-            catch (InvalidOperationException)
-            {
-            }
-
-            VisionLosses.SetPolicy("giou", SlotPolicy.FallBack);
-            Check(MathF.Abs(VisionLosses.Compute("giou", p, t).Item() - expected) < 1e-6f, "FallBack answers with the library's loss");
-            VisionLosses.SetPolicy("giou", SlotPolicy.Shadow, 1);
-            Check(MathF.Abs(VisionLosses.Compute("giou", p, t).Item() - expected) < 1e-6f, "Shadow answers with the library's loss");
-        }
-        finally
-        {
-            VisionLosses.SetPolicy("giou", SlotPolicy.Throw);
-            VisionLosses.Unregister("giou");
-        }
-
-        Check(VisionLosses.Origin("giou") == Overrides.Library && MathF.Abs(VisionLosses.Compute("giou", p, t).Item() - expected) < 1e-6f, "Unregister brings the library's loss back");
+        _ = device;
 
         // COCO's run-length codec.
         foreach (var c in DetectionReference.Value["rle"]!.AsArray())
@@ -456,8 +407,7 @@ internal abstract partial class Tests
         {
             using var scope = new TensorScope();
             float[] target = row == 0 && !background ? [0, 1] : [0, 0];
-            return VisionLosses.Compute("focal", Tensor.From(logits[(2 * row)..(2 * row + 2)], [1, 2], device), Tensor.From(target, [1, 2], device),
-                new VisionLossOptions { Reduction = LossReduction.Sum }).Item();
+            return DetectionLosses.Focal(Tensor.From(logits[(2 * row)..(2 * row + 2)], [1, 2], device), Tensor.From(target, [1, 2], device), reduction: LossReduction.Sum).Item();
         }
 
         double box = 1 - 0.9;                                                   // GIoU = IoU: the enclosing box is the union
@@ -492,14 +442,5 @@ internal abstract partial class Tests
             truths, labels), "the objective's gradient on the class logits");
         GradCheckAt(device, objectness, [1, 3], o => DetectionObjective.Loss(new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), Tensor.From(logits, [1, 3, 2], device), o),
             truths, labels), "the objective's gradient on the objectness");
-
-        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.CreateHead("nobody", new DetectionDecoderRequest(0, 0, null, [])), "Detection decoder 'nobody' is not registered",
-            "an unregistered decoder has no head");
-        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.CreateHead(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(0, 0, null, [])), "has no training head",
-            "the library's decoder has no head (it is no IDetectionHeadKind)");
-        Check(!DetectionDecoders.Trainable(DetectionDecoders.BoxesScores), "the library registers no head");
-        Check(VisionLosses.Get("dice").Target == VisionLossTarget.Masks && VisionLosses.Get("focal").Target == VisionLossTarget.Classes && VisionLosses.Get("giou").Target == VisionLossTarget.Boxes,
-            "each loss says what it scores");
-        Check(VisionMetrics.Get("coco").Task == ImageTask.Detection && VisionMetrics.Get("miou").Task == ImageTask.Segmentation, "each metric's task, known without making one");
     }
 }

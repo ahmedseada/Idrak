@@ -18,13 +18,13 @@ internal abstract partial class DesktopTests : Tests
     [
         ("vision sequence: CTC loss matches PyTorch (none, sum, mean, zero infinity, an impossible sequence, batch first, blank 4) and so does its gradient on the logits", CtcMatchesPyTorch),
         ("vision sequence: gradient: CTC loss against finite differences (time-major and batch-first, padded and concatenated targets, sum and mean)", CtcGradient),
-        ("vision sequence: CTC decoding: greedy best path, prefix beam search against every path listed, pruning, batches; the CtcDecoders registry", CtcDecoding),
+        ("vision sequence: CTC decoding: greedy best path, prefix beam search against every path listed, pruning", CtcDecoding),
         ("vision sequence: Conv2d with rectangular kernels, strides, padding, dilation and groups (depthwise) matches PyTorch; the square constructor is the same layer", ConvMatchesPyTorch),
         ("vision sequence: gradient: Conv2d rectangular, dilated, grouped and depthwise (input and weights)", ConvGradients),
         ("vision sequence: MaxPool2d and AvgPool2d with rectangular windows match PyTorch (padding counted and not); gradient: their gradients", PoolsMatchPyTorch),
         ("vision sequence: bidirectional two-layer LSTM and GRU (with the candidate bias) match PyTorch's outputs and last states through LoadGateWeights", RecurrentMatchesPyTorch),
         ("vision sequence: gradient: bidirectional stacked LSTM and GRU (inputs and weights)", RecurrentGradients),
-        ("vision sequence: builder steps replay from JSON, layer types describe and create, weights save and load; square and one-direction layers are described as before", VisionLayersDescribed),
+        ("vision sequence: builder steps replay from JSON; square steps are written as before", VisionLayersDescribed),
         ("vision sequence: ONNX: a convolutional recurrent network exports (ONNX Runtime matches) and imports again; PyTorch's exports of the new layers import and match", VisionLayersOnnx),
     ];
 
@@ -134,7 +134,7 @@ internal abstract partial class DesktopTests : Tests
             }
         }
 
-        var greedy = CtcDecoders.Decode(rows, path.Length, 3);
+        var greedy = CtcDecoding.Greedy(rows, path.Length, 3, new CtcDecodeOptions());
         Check(greedy is [{ Labels: [1, 2, 1, 2] } best] && MathF.Abs(best.LogProbability - path.Length * MathF.Log(0.8f)) < 1e-4f,
             $"greedy: [{string.Join(",", greedy[0].Labels)}] {greedy[0].LogProbability}");
 
@@ -174,7 +174,7 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var ranked = exact.OrderByDescending(p => p.Value).Take(3).ToList();
-        var beam = CtcDecoders.Decode(logProbs, steps, classes, CtcDecoders.Beam, new CtcDecodeOptions { BeamWidth = 1000, Results = 3 });
+        var beam = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3 });
         for (int i = 0; i < 3; i++)
         {
             Check(string.Join(",", beam[i].Labels) == ranked[i].Key && Math.Abs(beam[i].LogProbability - Math.Log(ranked[i].Value)) < 1e-4,
@@ -182,48 +182,10 @@ internal abstract partial class DesktopTests : Tests
         }
 
         // Pruning that keeps every class changes nothing; a narrow beam still returns readings, the best first.
-        var pruned = CtcDecoders.Decode(logProbs, steps, classes, CtcDecoders.Beam, new CtcDecodeOptions { BeamWidth = 1000, Results = 3, TopClasses = 3, MinLogProbability = -100f });
+        var pruned = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3, TopClasses = 3, MinLogProbability = -100f });
         Check(pruned.Select(h => string.Join(",", h.Labels)).SequenceEqual(beam.Select(h => string.Join(",", h.Labels))), "pruning that keeps every class");
-        var narrow = CtcDecoders.Decode(logProbs, steps, classes, CtcDecoders.Beam, new CtcDecodeOptions { BeamWidth = 2, Results = 2, TopClasses = 2 });
+        var narrow = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 2, Results = 2, TopClasses = 2 });
         Check(narrow.Count == 2 && narrow[0].LogProbability >= narrow[1].LogProbability, "a narrow beam");
-
-        // Batches from a tensor, time-major or batch-first, with lengths.
-        using var batch = Tensor.From([.. logProbs, .. logProbs], [2, steps, classes], device);
-        var decoded = CtcDecoders.Decode(batch, [steps, 3], CtcDecoders.Beam, new CtcDecodeOptions { BeamWidth = 1000 }, batchFirst: true);
-        var shorter = CtcDecoders.Decode(logProbs.AsMemory(0, 3 * classes), 3, classes, CtcDecoders.Beam, new CtcDecodeOptions { BeamWidth = 1000 });
-        Check(decoded[0][0].Labels.SequenceEqual(beam[0].Labels) && decoded[1][0].Labels.SequenceEqual(shorter[0].Labels), "batch decoding with lengths");
-        using var timeMajor = batch.Permute(1, 0, 2);
-        var greedyBatch = CtcDecoders.Decode(timeMajor);
-        Check(greedyBatch.Length == 2 && greedyBatch[0][0].Labels.SequenceEqual(greedyBatch[1][0].Labels), "time-major batch");
-
-        // The registry: built-ins, an app's decoder, a replaced built-in and its fallback, errors that name the registered.
-        Check(CtcDecoders.Names.Contains(CtcDecoders.Greedy) && CtcDecoders.Names.Contains(CtcDecoders.Beam), "built-in decoders");
-        try
-        {
-            CtcDecoders.Register(TestKinds.CtcDecoder("first-class", (values, n, k, _) => [new CtcHypothesis([1], 0f)]));
-            Check(CtcDecoders.Decode(logProbs, steps, classes, "first-class")[0].Labels is [1], "an app's decoder");
-            CtcDecoders.Register(TestKinds.CtcDecoder(CtcDecoders.Greedy, (_, _, _, _) => throw new InvalidOperationException("broken")));
-            Check(CtcDecoders.Origin(CtcDecoders.Greedy) != Overrides.Library && CtcDecoders.Default(CtcDecoders.Greedy) is not null, "replaced greedy");
-            CtcDecoders.SetPolicy(CtcDecoders.Greedy, SlotPolicy.FallBack);
-            Check(CtcDecoders.Decode(rows, path.Length, 3)[0].Labels.SequenceEqual([1, 2, 1, 2]), "falls back to the library's greedy");
-        }
-        finally
-        {
-            CtcDecoders.SetPolicy(CtcDecoders.Greedy, SlotPolicy.Throw);
-            CtcDecoders.Unregister("first-class");
-            CtcDecoders.Unregister(CtcDecoders.Greedy);
-        }
-
-        Check(CtcDecoders.Origin(CtcDecoders.Greedy) == Overrides.Library, "greedy back");
-        try
-        {
-            CtcDecoders.Get("lexicon");
-            Check(false, "an unknown decoder");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("greedy") && e.Message.Contains("beam"), e.Message);
-        }
     }
 
     private static Conv2d ConvFromCase(JsonObject c, Device device)
@@ -391,30 +353,6 @@ internal abstract partial class DesktopTests : Tests
         var square = Network.Image(1, 8, 8).Conv2d(4, 3, padding: 1).MaxPool2d(2).ToJson()["steps"]!.AsArray();
         Check(square[0]!.ToJsonString() == """{"op":"conv2d","out":4,"kernel":3,"stride":1,"padding":1,"bias":true}""" && square[1]!.ToJsonString() == """{"op":"maxpool2d","kernel":2,"padding":0}""",
             $"square steps: {square.ToJsonString()}");
-
-        // Layer types: rectangular, dilated, grouped, pooled and recurrent layers describe themselves and are created again.
-        Module[] layers =
-        [
-            new Conv2d(4, 6, (3, 2), (1, 2), (2, 1), (2, 3), groups: 2, device: device, random: new Random(73)), new MaxPool2d((3, 2), (2, 1), (1, 0)),
-            new AvgPool2d((2, 3), (2, 1), (1, 1), countIncludePad: false), new LSTM(3, 4, true, true, 2, device, new Random(74)),
-            new GRU(3, 4, false, true, 2, candidateBias: true, device: device, random: new Random(75)),
-        ];
-        foreach (var layer in layers)
-        {
-            var description = LayerTypes.Describe(layer);
-            using var created = LayerTypes.Create(description, device);
-            Check(LayerTypes.Describe(created).ToJsonString() == description.ToJsonString() && created.ToString() == layer.ToString(), $"{layer}: {description.ToJsonString()}");
-            using var stream = new MemoryStream();
-            layer.Save(stream);
-            stream.Position = 0;
-            created.Load(stream);
-            var input = layer is RecurrentModule ? Tensor.From(RandomArray(new Random(76), 2 * 5 * 3), [2, 5, 3], device) : Tensor.From(RandomArray(new Random(76), 2 * 4 * 9 * 8), [2, 4, 9, 8], device);
-            AssertClose(layer.Forward(input).ToArray(), created.Forward(input).ToArray(), 0f, $"{layer} saved and loaded");
-        }
-
-        Check(LayerTypes.Describe(new Conv2d(1, 2, 3)).ToJsonString() == """{"type":"conv2d","in":1,"out":2,"kernel":3,"stride":1,"padding":0,"bias":true}"""
-              && LayerTypes.Describe(new LSTM(3, 4)).ToJsonString() == """{"type":"lstm","in":3,"hidden":4,"sequences":false}"""
-              && LayerTypes.Describe(new MaxPool2d(2)).ToJsonString() == """{"type":"maxpool2d","kernel":2,"stride":2,"padding":0}""", "square and one-direction descriptions");
     }
 
     private static void VisionLayersOnnx(Device device)

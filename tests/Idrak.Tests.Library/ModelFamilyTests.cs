@@ -10,6 +10,8 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text.Plugins.Gemma;
 using Idrak.Text.Plugins.Llama;
+using Idrak.Text.Plugins.Mistral;
+using Idrak.Text.Plugins.Qwen;
 
 // Model families beyond the plain decoder: RoPE scaling methods, sliding-window attention, soft-capping, families read
 // from config.json (Mistral, Qwen2, Gemma 2 and 3) and families that build their own network.
@@ -17,9 +19,8 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ModelFamilyGroup =
     [
-        ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas; registered methods; unknown types list the registered ones", RopeScalingMethods),
-        ("rope scaling: a decoder uses the registered method (frequencies, attention factor, per-position frequencies) as the reference computes it", RopeScalingDecoders),
-        ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads; a family with its own Build", ModelFamilyConfigs),
+        ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas", RopeScalingMethods),
+        ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads", ModelFamilyConfigs),
         ("gguf: YaRN scaling keys are read and match the Hugging Face config with the same rope_scaling", GgufYarn),
         ("pretrained: Gemma3ForConditionalGeneration loads in its three tensor layouts and both config formats; a text prompt gives transformers' logits; the vision part is read as data", Gemma3VisionLanguageLoads),
     ];
@@ -32,7 +33,7 @@ internal abstract partial class Tests
         const int dim = 64;
         double[] Base() => [.. Enumerable.Range(0, dim / 2).Select(i => 1.0 / PortableMath.Pow(theta, 2.0 * i / dim))];   // the library's own pow (rule 70)
         var linear = Base().Select(f => f / 2.0).ToArray();
-        Check(new RopeSettings((float)theta, Scaling: RopeScaling.Linear(2)).Frequencies(dim).SequenceEqual(linear), "linear unchanged");
+        Check(RopeScalings.Linear(new RopeSettings((float)theta).Frequencies(dim), 2).Frequencies.SequenceEqual(linear), "linear unchanged");
         var llama3 = Base();
         {
             double factor = 8, low = 1, high = 4, original = 8192, lowWavelength = original / low, highWavelength = original / high;
@@ -51,7 +52,7 @@ internal abstract partial class Tests
             }
         }
 
-        var llamaScaled = new RopeSettings((float)theta, Scaling: LlamaRopeScaling.Create(8)).Scaled(dim);
+        var llamaScaled = LlamaRopeScaling.Scale(new RopeSettings((float)theta).Frequencies(dim), 8);
         Check(llamaScaled.Frequencies.SequenceEqual(llama3) && llamaScaled.AttentionFactor == 1 && llamaScaled.FrequenciesAt is null, "llama3 unchanged");
 
         // YaRN, from the formulas of transformers' _compute_yarn_parameters written out independently.
@@ -87,27 +88,26 @@ internal abstract partial class Tests
             return (frequencies, attention);
         }
 
-        void CheckYarn(string what, RopeScaling scaling, (double[] Frequencies, double Attention) expected)
+        void CheckYarn(string what, RopeScalingResult actual, (double[] Frequencies, double Attention) expected)
         {
-            var actual = new RopeSettings(10000f, Scaling: scaling).Scaled(dim);
             Check(actual.Frequencies.Length == expected.Frequencies.Length
                   && actual.Frequencies.Zip(expected.Frequencies).All(p => Math.Abs(p.First - p.Second) <= 1e-12 * p.Second)
                   && Math.Abs(actual.AttentionFactor - expected.Attention) < 1e-12,
                 $"yarn {what}: [{string.Join(", ", actual.Frequencies.Take(4))} …] × {actual.AttentionFactor}, expected [{string.Join(", ", expected.Frequencies.Take(4))} …] × {expected.Attention}");
         }
 
-        CheckYarn("defaults", RopeScaling.Yarn(4, 2048), Yarn(10000, dim, 4, 2048, null, null, null, 32, 1, true));
-        CheckYarn("betas, attention factor", RopeScaling.Yarn(8, 4096, attentionFactor: 1.2, betaFast: 16, betaSlow: 2), Yarn(10000, dim, 8, 4096, 1.2, null, null, 16, 2, true));
-        CheckYarn("mscale, no truncation, max_position_embeddings", new RopeScaling("yarn", new JsonObject
-        {
-            ["factor"] = 40, ["max_position_embeddings"] = 4096, ["mscale"] = 1.0, ["mscale_all_dim"] = 0.707, ["truncate"] = false,
-        }), Yarn(10000, dim, 40, 4096, null, 1.0, 0.707, 32, 1, false));
-        var yarnFrequencies = new RopeSettings(10000f, Scaling: RopeScaling.Yarn(4, 2048)).Frequencies(dim);
-        var unscaled = new RopeSettings(10000f).Frequencies(dim);
+        double[] Unscaled() => new RopeSettings(10000f).Frequencies(dim);
+        CheckYarn("defaults", RopeScalings.Yarn(Unscaled(), 10000, dim, 4, 2048), Yarn(10000, dim, 4, 2048, null, null, null, 32, 1, true));
+        CheckYarn("betas, attention factor", RopeScalings.Yarn(Unscaled(), 10000, dim, 8, 4096, betaFast: 16, betaSlow: 2, attentionFactor: 1.2),
+            Yarn(10000, dim, 8, 4096, 1.2, null, null, 16, 2, true));
+        CheckYarn("mscale, no truncation, max_position_embeddings", RopeScalings.Yarn(Unscaled(), 10000, dim, 40, 4096, truncate: false, mscale: 1.0, mscaleAllDim: 0.707),
+            Yarn(10000, dim, 40, 4096, null, 1.0, 0.707, 32, 1, false));
+        var yarnFrequencies = RopeScalings.Yarn(Unscaled(), 10000, dim, 4, 2048).Frequencies;
+        var unscaled = Unscaled();
         Check(yarnFrequencies[0] == unscaled[0] && Math.Abs(yarnFrequencies[^1] - unscaled[^1] / 4) < 1e-15, "yarn keeps the fastest pair and stretches the slowest");
 
         // Dynamic NTK: unchanged within max_position_embeddings; beyond, b' = b · (factor · s / M - (factor - 1))^(d / (d - 2)).
-        var dynamic = new RopeSettings(10000f, Scaling: RopeScaling.Dynamic(2, 16)).Scaled(8);
+        var dynamic = RopeScalings.Dynamic(new RopeSettings(10000f).Frequencies(8), 8, 2, 16);
         var plain = new RopeSettings(10000f).Frequencies(8);
         Check(dynamic.FrequenciesAt is not null && dynamic.Frequencies.SequenceEqual(plain) && dynamic.FrequenciesAt.At(15).SequenceEqual(plain), "dynamic: unchanged within the context");
         foreach (int position in new[] { 16, 40 })
@@ -116,88 +116,6 @@ internal abstract partial class Tests
             var expected = Enumerable.Range(0, 4).Select(i => 1 / Math.Pow(grownBase, 2.0 * i / 8)).ToArray();
             var actual = dynamic.FrequenciesAt!.At(position);
             Check(actual.Zip(expected).All(p => Math.Abs(p.First - p.Second) <= 1e-12 * p.Second), $"dynamic at {position}: [{string.Join(", ", actual)}], expected [{string.Join(", ", expected)}]");
-        }
-
-        // Registered, replaced, removed; names ignore case; unknown types list the registered ones.
-        RopeScalings.Register(TestKinds.RopeScaling("Test-Halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)], 1.5)));
-        try
-        {
-            var halved = new RopeSettings(10000f, Scaling: new RopeScaling("test-halve")).Scaled(8);
-            Check(halved.Frequencies.SequenceEqual(plain.Select(f => f / 2)) && halved.AttentionFactor == 1.5 && RopeScalings.Names.Contains("Test-Halve"), "a registered method");
-        }
-        finally
-        {
-            Check(RopeScalings.Unregister("test-halve") && !RopeScalings.Contains("Test-Halve"), "unregistered");
-        }
-
-        try
-        {
-            new RopeSettings(10000f, Scaling: new RopeScaling("no-such-scaling")).Frequencies(8);
-            Check(false, "an unknown scaling is rejected");
-        }
-        catch (NotSupportedException ex)
-        {
-            Check(ex.Message.Contains("no-such-scaling") && ex.Message.Contains("yarn") && ex.Message.Contains("dynamic") && ex.Message.Contains("RopeScalings.Register"), ex.Message);
-        }
-
-        // config.json: the parameters are forwarded with the model's context length added; unknown types list the names.
-        var config = FamilyConfig("LlamaForCausalLM");
-        config["rope_scaling"] = new JsonObject { ["rope_type"] = "yarn", ["factor"] = 4.0, ["original_max_position_embeddings"] = 8 };
-        var spec = PretrainedFamilies.CommonSpec(Parsed(config), []);
-        var parameters = spec.Rope!.Scaling!.Parameters;
-        Check(spec.Rope.Scaling.Type == "yarn" && (double)parameters["factor"]! == 4 && (int)parameters["original_max_position_embeddings"]! == 8
-              && (int)parameters["max_position_embeddings"]! == 32 && parameters["rope_type"] is null, $"yarn from config.json: {spec.Rope.Scaling}");
-        config["rope_scaling"] = new JsonObject { ["type"] = "dynamic", ["factor"] = 2.0 };
-        Check(PretrainedFamilies.CommonSpec(Parsed(config), []).Rope!.Scaling == RopeScaling.Dynamic(2, 32), "dynamic from config.json (the older 'type' key)");
-        config["rope_scaling"] = new JsonObject { ["rope_type"] = "longrope", ["factor"] = 2.0 };
-        try
-        {
-            PretrainedFamilies.CommonSpec(Parsed(config), []);
-            Check(false, "an unregistered rope_type is rejected");
-        }
-        catch (NotSupportedException ex)
-        {
-            Check(ex.Message.Contains("longrope") && ex.Message.Contains("llama3") && ex.Message.Contains("yarn"), ex.Message);
-        }
-
-        // Specs keep the scaling through JSON; specs written before the registry still read.
-        var withYarn = SmallSpec with { Rope = new RopeSettings(500f, Scaling: RopeScaling.Yarn(4, 8)) };
-        Check(DecoderSpec.FromJson(withYarn.ToJson()) == withYarn, "a YaRN spec round-trips through JSON");
-        var old = SmallSpec.ToJson();
-        old["rope"]!["scaling"] = new JsonObject { ["type"] = "llama3", ["factor"] = 8.0, ["lowFrequencyFactor"] = 1.0, ["highFrequencyFactor"] = 4.0, ["originalMaxPositions"] = 8 };
-        Check(DecoderSpec.FromJson(old).Rope!.Scaling == LlamaRopeScaling.Create(8, 1, 4, 8), "the earlier JSON form of llama3 reads");
-    }
-
-    internal static void RopeScalingDecoders(Device device)
-    {
-        int[] ids = [3, 17, 5, 5, 22, 0, 9, 13, 2, 8, 19, 1];
-        using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
-        RopeScalings.Register(TestKinds.RopeScaling("test-halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)])));
-        RopeScalings.Register(TestKinds.RopeScaling("test-loud", input => new RopeScalingResult(input.Frequencies, 1.25)));
-        try
-        {
-            // A registered method makes the same tables as the built-in it imitates.
-            using var halved = (SmallSpec with { Rope = new RopeSettings(500f, Scaling: new RopeScaling("test-halve")) }).Build(new RandomWeights(81), new DecoderBuildOptions { Device = device });
-            using var linear = (SmallSpec with { Rope = new RopeSettings(500f, Scaling: RopeScaling.Linear(2)) }).Build(new RandomWeights(81), new DecoderBuildOptions { Device = device });
-            Check(halved.Predict(input).ToArray().SequenceEqual(linear.Predict(input).ToArray()), "a registered scaling is used by the decoder");
-
-            foreach (var (name, rope) in new[]
-            {
-                ("attention factor of a registered method", new RopeSettings(500f, Scaling: new RopeScaling("test-loud"))),
-                ("yarn", new RopeSettings(500f, Scaling: RopeScaling.Yarn(4, 8))),
-                ("dynamic NTK beyond the context", new RopeSettings(500f, Scaling: RopeScaling.Dynamic(2, 6))),
-            })
-            {
-                var spec = SmallSpec with { Rope = rope };
-                var weights = new RandomWeights(82);
-                using var model = spec.Build(weights, new DecoderBuildOptions { Device = device });
-                AssertClose(ReferenceDecoder(spec, weights, ids), model.Predict(input).ToArray(), 1e-3f, name);
-            }
-        }
-        finally
-        {
-            RopeScalings.Unregister("test-halve");
-            RopeScalings.Unregister("test-loud");
         }
     }
 
@@ -216,28 +134,27 @@ internal abstract partial class Tests
 
     internal static void ModelFamilyConfigs(Device device)
     {
-        GemmaPlugin.Register();                      // Gemma 2 and 3 are Idrak.Text.Plugins' family
-        DecoderSpec Read(JsonObject config) => PretrainedArchitectures.Get((string)config["architectures"]![0]!).Spec(Parsed(config), []);
+        static DecoderSpec Read(IPretrainedArchitecture architecture, JsonObject config) => architecture.Spec(Parsed(config), []);
 
         // Mistral: the window in every layer (none when null).
         var mistral = FamilyConfig("MistralForCausalLM");
         mistral["sliding_window"] = 3;
-        var spec = Read(mistral);
+        var spec = Read(MistralArchitectures.Mistral(), mistral);
         Check(spec.SlidingWindow == 3 && spec.SlidingWindowLayers is null && spec.IsWindowed(0) && spec.IsWindowed(1), "Mistral: window in every layer");
         mistral["sliding_window"] = null;
-        Check(Read(mistral).SlidingWindow is null, "Mistral: no window");
+        Check(Read(MistralArchitectures.Mistral(), mistral).SlidingWindow is null, "Mistral: no window");
 
         // Qwen2: only with use_sliding_window, from max_window_layers on; layer_types when given.
         var qwen = FamilyConfig("Qwen2ForCausalLM");
         qwen["sliding_window"] = 4;
         qwen["max_window_layers"] = 1;
         qwen["use_sliding_window"] = false;
-        Check(Read(qwen).SlidingWindow is null, "Qwen2: use_sliding_window false");
+        Check(Read(QwenArchitectures.Qwen2(), qwen).SlidingWindow is null, "Qwen2: use_sliding_window false");
         qwen["use_sliding_window"] = true;
-        spec = Read(qwen);
+        spec = Read(QwenArchitectures.Qwen2(), qwen);
         Check(spec.SlidingWindow == 4 && !spec.IsWindowed(0) && spec.IsWindowed(1), "Qwen2: windows from max_window_layers on");
         qwen["layer_types"] = new JsonArray("sliding_attention", "full_attention");
-        spec = Read(qwen);
+        spec = Read(QwenArchitectures.Qwen2(), qwen);
         Check(spec.IsWindowed(0) && !spec.IsWindowed(1), "layer_types decide");
 
         // Gemma 2: transformers' defaults; Gemma 3: q/k norm, local base, five windowed layers in six.
@@ -246,14 +163,14 @@ internal abstract partial class Tests
         gemma2.Remove("hidden_act");
         gemma2["query_pre_attn_scalar"] = 16;
         gemma2["sliding_window"] = 3;
-        spec = Read(gemma2);
+        spec = Read(GemmaArchitectures.Gemma2(), gemma2);
         Check(spec is { AttentionSoftcap: 50f, LogitSoftcap: 30f, AttentionScale: 0.25f, SlidingWindow: 3, PostNorms: true, NormOffset: 1f, TieEmbeddings: true, QkNorm: false }
               && spec.Activation == FeedForwardActivation.Gelu && spec.IsWindowed(0) && !spec.IsWindowed(1), $"Gemma 2 spec: {spec.ToJson().ToJsonString()}");
         var gemma3 = FamilyConfig("Gemma3ForCausalLM");
         gemma3["num_hidden_layers"] = 7;
         gemma3["rope_local_base_freq"] = 10.0;
         gemma3["attn_logit_softcapping"] = null;
-        spec = Read(gemma3);
+        spec = Read(GemmaArchitectures.Gemma3(), gemma3);
         Check(spec is { QkNorm: true, AttentionSoftcap: null, LogitSoftcap: null, SlidingWindow: 4096 } && spec.SlidingWindowRope!.Theta == 10f
               && Enumerable.Range(0, 7).Count(spec.IsWindowed) == 6 && !spec.IsWindowed(5), $"Gemma 3 spec: {spec.ToJson().ToJsonString()}");
 
@@ -261,7 +178,7 @@ internal abstract partial class Tests
         gemma2["sliding_window"] = 3;
         gemma2["attn_logit_softcapping"] = 2.0;
         gemma2["final_logit_softcapping"] = 3.0;
-        var gemmaSpec = Read(gemma2);
+        var gemmaSpec = Read(GemmaArchitectures.Gemma2(), gemma2);
         var weights = new RandomWeights(85);
         using var reference = gemmaSpec.Build(weights, new DecoderBuildOptions { Device = device });
         int[] ids = [2, 9, 14, 3, 7, 1, 20];
@@ -289,37 +206,11 @@ internal abstract partial class Tests
                 Check(model.Notes.Count == 0, string.Join("; ", model.Notes));
                 AssertClose(expected, model.Network.Predict(input).ToArray(), 1e-4f, "Gemma 2 checkpoint");
             }
-
-            // A family building its own network: here the spec's network with logits capped at 1, so the result shows it was used.
-            PretrainedBuildContext? seen = null;
-            PretrainedArchitectures.Register("TestOwnBuildForCausalLM", TestKinds.BuildingArchitecture(
-                (config, notes) => GemmaSpecOf(config, notes),
-                GemmaArchitectures.TensorName,
-                context =>
-                {
-                    seen = context;
-                    context.Notes.Add("built by the test family");
-                    return (context.Spec with { LogitSoftcap = 1f }).Build(context.Weights, context.Options);
-                }));
-            try
-            {
-                using var own = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Architecture = "TestOwnBuildForCausalLM", MaxPositions = 16 });
-                var logits = own.Network.Predict(input).ToArray();
-                Check(seen is { Options.MaxPositions: 16 } && seen.Checkpoint.Contains("model.embed_tokens.weight") && own.Notes.Contains("built by the test family"),
-                    "the build delegate receives the config, weights, checkpoint and options");
-                Check(logits.All(v => MathF.Abs(v) < 1f) && expected.Any(v => MathF.Abs(v) > 1f), "the network built by the family is the one loaded");
-            }
-            finally
-            {
-                Check(PretrainedArchitectures.Unregister("TestOwnBuildForCausalLM") && !PretrainedArchitectures.Names.Contains("TestOwnBuildForCausalLM"), "unregistered");
-            }
         }
         finally
         {
             Directory.Delete(folder, recursive: true);
         }
-
-        static DecoderSpec GemmaSpecOf(JsonObject config, List<string> notes) => PretrainedArchitectures.Get("Gemma2ForCausalLM").Spec(config, notes);
     }
 
     internal static void GgufYarn(Device device)
@@ -378,9 +269,7 @@ internal abstract partial class Tests
 
             using var fromGguf = PretrainedModel.Load(GgufModel.Prepare(file, cache), new PretrainedOptions { Device = device });
             using var fromHf = PretrainedModel.Load(hf, new PretrainedOptions { Device = device });
-            var scaling = fromGguf.Spec.Rope!.Scaling;
-            Check(scaling is { Type: "yarn" } && scaling == fromHf.Spec.Rope!.Scaling && fromGguf.Spec.MaxPositions == fromHf.Spec.MaxPositions,
-                $"yarn read from GGUF: {scaling} vs {fromHf.Spec.Rope!.Scaling}");
+            Check(fromGguf.Spec.MaxPositions == fromHf.Spec.MaxPositions, $"the context from GGUF: {fromGguf.Spec.MaxPositions} vs {fromHf.Spec.MaxPositions}");
             int[] ids = [.. fromHf.Tokenizer!.Encode("the answer is in the thin rain, and then another answer")];
             using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
             AssertClose(fromHf.Network.Predict(input).ToArray(), fromGguf.Network.Predict(input).ToArray(), 1e-3f, "logits from GGUF and from the Hugging Face copy");

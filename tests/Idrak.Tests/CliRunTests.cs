@@ -333,7 +333,7 @@ internal abstract partial class DesktopTests : Tests
 
         (code, text, _) = RunIdrakOn(device, null, "template", CliModel, "-j");
         json = JsonOf(text, "template --json");
-        Check(code == 0 && ((string)json["source"]!).Contains("im_start") && ((string)json["sample"]!).Contains("Cairo") && json["tool_call_format"] is JsonValue, "template");
+        Check(code == 0 && ((string)json["source"]!).Contains("im_start") && ((string)json["sample"]!).Contains("Cairo"), "template");
         (code, text, _) = RunIdrakOn(device, null, "template", CliModel, "--source");
         Check(code == 0 && text.StartsWith("{%-", StringComparison.Ordinal), "template --source");
 

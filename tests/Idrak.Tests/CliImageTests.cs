@@ -30,34 +30,18 @@ internal abstract partial class DesktopTests : Tests
         ("cli images: run --vision-option gives the family its options (Gemma 3's pan and scan of a tall page: transformers' prompt and tokens); an alias keeps them; an unknown key names the family's", CliImageVisionOptions),
         ("cli vision tuning: idrak tune on ShareGPT with <image> (the tiny Gemma 3, images from a folder and a zip; the tiny LLaVA) writes adapters, projector and tuning_images.json; --metric cer before, every step and in the summary; -v's plan; run --adapter applies the projector and the preparation; tune evaluate --metric cer; another family's adapter refused", CliVisionTuning),
         ("cli vision tuning: an unregistered family exits with the registry's message before the data is read; image options on a text model and bad names refused", CliVisionTuningRefusals),
-        ("cli vision tuning: tune init -P writes a vision example; tune.json's image keys (format, images, image_transform, vision, parts, feature_cache) and the disk feature cache", CliVisionTuneInit),
+        ("cli vision tuning: tune init writes the text example; tune.json's image keys (format, images, vision, parts, feature_cache) and the disk feature cache", CliVisionTuneInit),
     ];
 
     private static void CliImageVisionOptions(Device device)
     {
-        RegisterGemma3Vision();
         var tall = JsonNode.Parse(File.ReadAllText(TestData("vlm-pan-scan/manifest.json")))!["facts"]!["images"]!["tall"]!;
-        int[] newTokens = [.. tall["new_tokens"]!.AsArray().Select(n => (int)n!)];
         string png = TestData("vlm-pan-scan/image-tall.png");
         string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "20", "-j"];
         string[] panScan = ["--vision-option", "do_pan_and_scan=true", "--vision-option", "pan_and_scan_min_crop_size=32"];
-        var sampled = new List<int>();
-        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
-        int code;
-        string text, error;
-        try
-        {
-            (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. panScan, .. greedy]);
-        }
-        finally
-        {
-            TokenSamplers.Unregister(TokenSamplers.DefaultName);
-        }
-
+        var (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. panScan, .. greedy]);
         var json = JsonOf(text, "run --vision-option");
-        Check(code == 0 && (int)json["prompt_tokens"]! == ((JsonArray)tall["input_ids"]!).Count && sampled.SequenceEqual(newTokens),
-            $"run --vision-option: {code} {string.Join(" ", sampled)} {text} {error}");
+        Check(code == 0 && (int)json["prompt_tokens"]! == ((JsonArray)tall["input_ids"]!).Count, $"run --vision-option: {code} {text} {error}");
         (code, text, _) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-v"]);
         var plain = JsonOf(text, "run without options");
         Check(code == 0 && (int)plain["prompt_tokens"]! == 38, $"without the options, one block: {text}");
@@ -111,7 +95,7 @@ internal abstract partial class DesktopTests : Tests
             Check(ChatImageDecoder.Orientation(image.Data.Span) == n, $"{name}: orientation {ChatImageDecoder.Orientation(image.Data.Span)}, expected {n}");
             var upright = ImageInputs.Decode(image);
             Check(upright.TryGetPlanes(out _, out _), $"{name}: the decoder's 8-bit planes were widened to floats by the orientation");
-            var expected = ImageCodecs.Decode(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png"));
+            var expected = new PngCodec().Decode(File.ReadAllBytes(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png")));
             Check(upright.Width == expected.Width && upright.Height == expected.Height && upright.Channels == expected.Channels
                   && upright.Pixels.Select(v => (int)MathF.Round(v * 255)).SequenceEqual(expected.Pixels.Select(v => (int)MathF.Round(v * 255))), $"{name}: {upright.Width} x {upright.Height} differs from Pillow's exif_transpose ({expected.Width} x {expected.Height})");
         }
@@ -180,11 +164,10 @@ internal abstract partial class DesktopTests : Tests
         Check(rendered == (string)facts["rendered_by_chat_template"]!, $"rendered: {rendered}");
         Check(template.Render([new("user", "hi")], [], null) == template.Render([new("user", [new ChatText("hi")])], [], null), "text-only messages render as before");
 
-        RegisterGemma3Vision();
         var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
         using (model)
         {
-            // The prompt format and its token ids come from the family's registration (Idrak.Vision.Plugins).
+            // The prompt format and its token ids come from the family (Idrak.Vision.Plugins).
             var vision = model.Vision!;
             var format = vision.PromptFormat;
             var layout = new ImageTokenLayout(4) { Grid = [2, 2] };
@@ -213,25 +196,10 @@ internal abstract partial class DesktopTests : Tests
         string png = TestData("vlm/image.png");
         string[] greedy = ["-s", "Read the scan.", "--temperature", "0", "--max-tokens", "20"];
 
-        // The real encoder (SigLIP and the projector of phase 3b) through the CLI; the tokens seen by a sampler that records them.
-        var sampled = new List<int>();
-        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
-        int code;
-        string text, error;
-        JsonObject json;
-        try
-        {
-            (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-j"]);
-        }
-        finally
-        {
-            TokenSamplers.Unregister(TokenSamplers.DefaultName);
-        }
-
-        json = JsonOf(text, "run --image");
+        // The real encoder (SigLIP and the projector of phase 3b) through the CLI.
+        var (code, text, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "What is in this image?", .. greedy, "-j"]);
+        var json = JsonOf(text, "run --image");
         string answer = (string?)json["text"] ?? "";
-        Check(sampled.SequenceEqual(newTokens), $"run --image: greedy tokens {string.Join(" ", sampled)}, expected {string.Join(" ", newTokens)}");
         Check(code == 0 && ((string)json["text"]!).Length == expected.Length && (int)json["prompt_tokens"]! == 38 && (int)json["generated_tokens"]! == 20
               && json["images"] is JsonArray { Count: 1 } && (bool)json["grayscale"]! == false, $"run --image: {code} {text} {error}; expected '{expected}'");
 
@@ -325,7 +293,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void CliImageCompare(Device device)
     {
-        RegisterGemma3Vision();
         // color and gray: phase 7's folders; pan-scan: a tall page with pan and scan (compare_real.py --pan-and-scan), its
         // manifest's "vision_options" given to the encoder: 4 blocks of pixels and features, a 120-token prompt.
         // transformed: compare_real.py --image-transform grayscale,max_width=64,contrast=1.5 (Pillow), run by vlm check through
@@ -391,7 +358,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void CliImageRunOut(Device device)
     {
-        RegisterGemma3Vision();
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-run-out-{Guid.NewGuid():N}");
         try
         {

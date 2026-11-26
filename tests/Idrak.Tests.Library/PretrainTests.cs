@@ -8,6 +8,9 @@ using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Plugins.Gemma;
+using Idrak.Text.Plugins.Llama;
+using Idrak.Text.Plugins.Mistral;
+using Idrak.Text.Plugins.Qwen;
 
 // Plan 19: language models made from scratch (phase A1: a model from a spec, saved as a folder; A3: the pretraining loop).
 internal abstract partial class Tests
@@ -17,7 +20,7 @@ internal abstract partial class Tests
         ("pretrain: every Llama-style family writes a spec as config.json and reads the same spec back; a spec a family cannot say, and a family that reads checkpoints only, are refused", PretrainConfigRoundTrip),
         ("pretrain: a model made from a spec is a folder of the family's checkpoint (the tensors' names and shapes of transformers' own), seeded, loading and chatting like any model; the created template takes images", PretrainCreate),
         ("pretrain: making a model refuses an unknown architecture, a tokenizer larger than the vocabulary, a missing token and a folder that holds files", PretrainCreateRefusals),
-        ("pretrain: a loaded model saved as a checkpoint writes transformers' tensors back value for value, LayerNorm and learned positions included, and saves over its own folder", PretrainSaveCheckpoint),
+        ("pretrain: a loaded model saved as a checkpoint writes transformers' tensors back value for value, and saves over its own folder", PretrainSaveCheckpoint),
         ("pretrain: every parameter trains: the first step's loss and gradients, three SGD steps' losses and weights, and three AdamW steps' are transformers'", PretrainReferenceSteps),
         ("pretrain: a run stopped after its second step and resumed from the checkpoint gives the uninterrupted run's losses bit for bit (the optimizer's moments, the data order and the rate restored)", PretrainResume),
         ("pretrain: a stage trains only its parts, sources are drawn by their weights, records train their answers, telemetry sees every step and the loss of the tiny model falls", PretrainStagesAndSources),
@@ -255,7 +258,6 @@ internal abstract partial class Tests
             Throws<FileNotFoundException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [new PretrainingSource("tokens", [PretrainData("missing.bin")])] }] }, folder), "a missing file");
             using var packed = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = Device.Cpu });
             Throws<InvalidOperationException>(() => Pretrainer.Train(packed, good, folder), "int8 weights");
-            Check(PretrainingSources.Names.Contains("tokens") && PretrainingSources.Names.Contains("records") && PretrainingSources.Origin("tokens") == Idrak.Abstraction.Overrides.Library, "the library's source kinds");
         }
         finally
         {
@@ -268,7 +270,7 @@ internal abstract partial class Tests
     internal static DecoderSpec TinyLlamaSpec()
     {
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(TinyLlama, "config.json")))!.AsObject();
-        return PretrainedArchitectures.Get("LlamaForCausalLM").Spec(config, []);
+        return LlamaArchitectures.Llama().Spec(config, []);
     }
 
     internal static ModelFiles TinyFiles() => new()
@@ -294,41 +296,36 @@ internal abstract partial class Tests
             return;
         }
 
-        GemmaPlugin.Register();                      // GemmaForCausalLM and Gemma3ForCausalLM are Idrak.Text.Plugins' family
         var llama = TinyLlamaSpec();
-        var specs = new (string Architecture, DecoderSpec Spec)[]
+        var specs = new (string Architecture, IPretrainedArchitecture Family, DecoderSpec Spec)[]
         {
-            ("LlamaForCausalLM", llama),
-            ("LlamaForCausalLM", llama with { TieEmbeddings = false, QkvBias = true, OutputBias = true, Rope = new RopeSettings(500000f, 4, Scaling: new RopeScaling("llama3", new JsonObject
-            {
-                ["factor"] = 8.0, ["low_freq_factor"] = 1.0, ["high_freq_factor"] = 4.0, ["original_max_position_embeddings"] = 32, ["max_position_embeddings"] = 64,
-            })) }),
-            ("MistralForCausalLM", llama with { SlidingWindow = 16 }),
-            ("Qwen2ForCausalLM", llama with { QkvBias = true, SlidingWindow = 16, SlidingWindowLayers = [false, true] }),
-            ("Qwen3ForCausalLM", llama with { QkNorm = true }),
-            ("GemmaForCausalLM", llama with { NormOffset = 1f, EmbeddingScale = MathF.Sqrt(llama.Dim), TieEmbeddings = true, Activation = FeedForwardActivation.Gelu }),
+            ("LlamaForCausalLM", LlamaArchitectures.Llama(), llama),
+            ("LlamaForCausalLM", LlamaArchitectures.Llama(), llama with { TieEmbeddings = false, QkvBias = true, OutputBias = true, Rope = new RopeSettings(500000f, 4) }),
+            ("MistralForCausalLM", MistralArchitectures.Mistral(), llama with { SlidingWindow = 16 }),
+            ("Qwen2ForCausalLM", QwenArchitectures.Qwen2(), llama with { QkvBias = true, SlidingWindow = 16, SlidingWindowLayers = [false, true] }),
+            ("Qwen3ForCausalLM", QwenArchitectures.Qwen3(), llama with { QkNorm = true }),
+            ("GemmaForCausalLM", GemmaArchitectures.Gemma(), llama with { NormOffset = 1f, EmbeddingScale = MathF.Sqrt(llama.Dim), TieEmbeddings = true, Activation = FeedForwardActivation.Gelu }),
         };
-        foreach (var (name, spec) in specs)
+        foreach (var (name, family, spec) in specs)
         {
-            var family = PretrainedArchitectures.Get(name);
             Check(family is IConfigWritingArchitecture, $"{name} writes configurations");
             var config = ((IConfigWritingArchitecture)family).Config(spec);
             var back = family.Spec(config, []);
             Check(JsonNode.DeepEquals(back.ToJson(), spec.ToJson()), $"{name}: the spec reads back the same\n{spec.ToJson()}\n{back.ToJson()}");
         }
 
-        foreach (var (name, spec, what) in new (string, DecoderSpec, string)[]
+        foreach (var (family, spec, what) in new (IPretrainedArchitecture, DecoderSpec, string)[]
         {
-            ("LlamaForCausalLM", llama with { Norm = DecoderNorm.Layer }, "layer normalization"),
-            ("LlamaForCausalLM", llama with { QkNorm = true }, "q/k norms in Llama"),
-            ("LlamaForCausalLM", llama with { QkvBias = true, OutputBias = false }, "biases Llama's one key cannot say"),
-            ("Qwen2ForCausalLM", llama, "Qwen2 without its q/k/v biases"),
+            (LlamaArchitectures.Llama(), llama with { Norm = DecoderNorm.Layer }, "layer normalization"),
+            (LlamaArchitectures.Llama(), llama with { QkNorm = true }, "q/k norms in Llama"),
+            (LlamaArchitectures.Llama(), llama with { QkvBias = true, OutputBias = false }, "biases Llama's one key cannot say"),
+            (QwenArchitectures.Qwen2(), llama, "Qwen2 without its q/k/v biases"),
         })
         {
-            Throws<NotSupportedException>(() => ((IConfigWritingArchitecture)PretrainedArchitectures.Get(name)).Config(spec), what);
+            Throws<NotSupportedException>(() => ((IConfigWritingArchitecture)family).Config(spec), what);
         }
 
-        Check(PretrainedArchitectures.Get("Gemma3ForCausalLM") is not IConfigWritingArchitecture && PretrainedArchitectures.Get("MixtralForCausalLM") is not IConfigWritingArchitecture,
+        Check(GemmaArchitectures.Gemma3() is not IConfigWritingArchitecture && MistralArchitectures.Mixtral() is not IConfigWritingArchitecture,
             "families read from checkpoints only write no configuration");
         var template = JsonNode.Parse(File.ReadAllText(Path.Combine(TinyLlama, "tokenizer_config.json")))!["chat_template"]!.GetValue<string>();
         Check(template == ModelFiles.ChatMLWithParts, "the created models' template is the reference's");
@@ -389,7 +386,6 @@ internal abstract partial class Tests
             return;
         }
 
-        GemmaPlugin.Register();                      // Gemma3ForCausalLM below is refused for reading checkpoints only, not for being unknown
         string folder = TempFolder("pretrain-refusals");
         try
         {
@@ -430,36 +426,6 @@ internal abstract partial class Tests
             }
 
             Check(ReadTensors(Path.Combine(folder, "model.safetensors")).All(t => expected[t.Key].Values.AsSpan().SequenceEqual(t.Value.Values)), "saved over its own folder");
-
-            // A GPT-style spec (layer normalization, learned positions) is written and read back by a family of the test's own.
-            var gpt = new DecoderSpec
-            {
-                Vocabulary = 64, Dim = 16, Layers = 1, Heads = 2, KvHeads = 2, HeadDim = 8, FfDim = 32, MaxPositions = 16,
-                Norm = DecoderNorm.Layer, Gated = false, Activation = FeedForwardActivation.Gelu, Rope = null, LearnedPositions = true,
-                QkvBias = true, OutputBias = true, FeedForwardBias = true, TieEmbeddings = true,
-            };
-            const string Name = "TestGptForCausalLM";
-            PretrainedArchitectures.Register(Name, TestKinds.ConfigArchitecture(
-                (config, _) => DecoderSpec.FromJson(config["idrak_spec"]!.AsObject()),
-                name => name,
-                spec => new JsonObject { ["model_type"] = "test-gpt" }));
-            try
-            {
-                string gptFolder = Path.Combine(folder, "gpt");
-                var files = new ModelFiles { Tokenizer = BpeTokenizer.Load(PretrainData("tokenizer")) };
-                Throws<ArgumentException>(() => PretrainedModel.Create(gptFolder, gpt, Name, files), "a 512-token tokenizer for a 64-token vocabulary");
-                using var created = PretrainedModel.Create(gptFolder, gpt with { Vocabulary = 512 }, Name, files, new CreateOptions { Device = device, Seed = 3 });
-                var tensors = ReadTensors(Path.Combine(gptFolder, "model.safetensors"));
-                Check(tensors.ContainsKey("pos.weight") && tensors.ContainsKey("layers.0.attn_norm.bias") && tensors.ContainsKey("norm.bias"), $"learned positions and layer norms written: {string.Join(", ", tensors.Keys.Order())}");
-                string resaved = Path.Combine(folder, "gpt-saved");
-                created.SaveHuggingFace(resaved);
-                var back = ReadTensors(Path.Combine(resaved, "model.safetensors"));
-                Check(back.All(t => tensors[t.Key].Values.AsSpan().SequenceEqual(t.Value.Values)), "and read back value for value");
-            }
-            finally
-            {
-                PretrainedArchitectures.Unregister(Name);
-            }
         }
         finally
         {
