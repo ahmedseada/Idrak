@@ -21,8 +21,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // measured once on the real operands (Chosen).
 internal sealed partial class CpuBackend
 {
-    // A stored weight's words, k, the bytes of a row and where the rows' read part starts in each (bytes).
-    private sealed record StoredLane(float[] Words, int Length, int K, long RowBytes, int Offset = 0);
+    // A stored weight's words, k, the bytes of a row and where the rows' read part starts in each (bytes): a value made on
+    // every product, on the stack (nothing allocated a call).
+    private readonly record struct StoredLane(float[] Words, int Length, int K, long RowBytes, int Offset = 0);
 
     // The bytes of a row of k values of a description (whole groups of blocks).
     private static long RowBytesOf(TypeDescription d, int k) => (long)k / d.UnitValues * d.UnitBytes;
@@ -5135,19 +5136,30 @@ internal sealed partial class CpuBackend
     }
 
     // x rounded to int8 for the described lane's integer arithmetic, row by row (RoundDescribedRow), over the threads where
-    // x is large.
+    // x is large (a row a chunk, CpuRanges: no closure or task allocated a call, as the rows alone ran before).
     private static void RoundDescribedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int m, int k) where TI : struct, IInstructions
     {
-        int groups = plan.Groups(k), xRow = groups * plan.GroupValues, lRow = groups * plan.LaneFloats;
+        var rows = new RoundedRows<TI>(plan, x, codes, lanes, k);
         if (m > 1 && (long)m * k >= 1 << 16)
         {
-            Parallel.For(0, m, ComputeResources.ParallelOptions, i => RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow)));
+            CpuRanges.Run(m, 1, m, Math.Max(1, ComputeResources.MaxCpuThreads), ref rows);   // `rows` is this frame's, on the stack
             return;
         }
 
-        for (int i = 0; i < m; i++)
+        rows.Run(0, m);
+    }
+
+    // RoundDescribedRows' rows [first, last), each rounded on its own (the same bytes whichever thread rounds it).
+    private readonly struct RoundedRows<TI>(DescribedPlan plan, float[] x, sbyte[] codes, float[] lanes, int k) : IRangeBody where TI : struct, IInstructions
+    {
+        private readonly int xRow = plan.Groups(k) * plan.GroupValues, lRow = plan.Groups(k) * plan.LaneFloats;
+
+        public void Run(int first, int last)
         {
-            RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow));
+            for (int i = first; i < last; i++)
+            {
+                RoundDescribedRow<TI>(plan, x.AsSpan(i * k, k), codes.AsSpan(i * xRow, xRow), lanes.AsSpan(i * lRow, lRow));
+            }
         }
     }
 
