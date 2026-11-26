@@ -98,11 +98,24 @@ internal sealed class TracedFontMaker : IFontMaker
     }
 
     // The outline tracers were registered (OutlineTracers) and picked by name; a font map was applied through the mapper
-    // the font maps named (FontMaps, FontMappers): not on the new design yet.
-    private static IOutlineTracer TracerNamed(string name) => throw new NotSupportedException($"The outline tracer '{name}' by name is not on the new design yet.");
+    // the font maps named (FontMaps, FontMappers): not on the new design yet. The defaults are reached directly: the
+    // "contour" tracer (FontMakerRequest.Tracer's default) and the "opentype" mapper (FontMaps.Mapper's default); another
+    // name stops.
+    private static readonly ContourTracer Contour = new();
 
+    private static readonly OpenTypeFontMapper OpenType = new();
+
+    private static IOutlineTracer TracerNamed(string name) =>
+        name.Equals(OutlineTracers.Contour, StringComparison.OrdinalIgnoreCase) ? Contour
+        : throw new NotSupportedException($"The outline tracer '{name}' by name is not on the new design yet.");
+
+    // The face the map makes of the made face, given for it (no detection), as FontMaps applied a map: the glyphs it lacks
+    // drawn as FontMaps.Drawing says.
     private static IFontFace Apply(IFontFace face, FontMap map) =>
-        throw new NotSupportedException($"{map.Source}: applying a font map through the registered font mapper is not on the new design yet.");
+        !FontMaps.Mapper.Equals(FontMappers.OpenType, StringComparison.OrdinalIgnoreCase)
+            ? throw new NotSupportedException($"{map.Source}: applying a font map through the font mapper '{FontMaps.Mapper}' by name is not on the new design yet.")
+            : OpenType.Map(face, map, detect: false, FontMaps.Drawing)
+              ?? throw new InvalidDataException($"{map.Source}: none of the map's {map.Letters.Count} letters is in the font {face.Family} {face.Style}.");
 
     /// <inheritdoc/>
     public MadeFont Make(FontMakerRequest request)
