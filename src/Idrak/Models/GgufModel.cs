@@ -371,6 +371,15 @@ public static class GgufModel
 
         public int[] ShapeOf(string name) => _names[name].Shape;
 
+        // A tensor read as the file stores it (a whole tensor, nothing added, its rows in order): its own type; any other
+        // is float32 values made from it.
+        public IElementType TypeOf(string name) => _names[name] is { Expert: < 0, Offset: 0 } source && Permuted(source.Gguf) is null
+            ? _file.TypeOf(source.Gguf) : Abstraction.Types.F32.Type;
+
+        public byte[] ReadStored(string name) => TypeOf(name).Native == NativeKind.Float32
+            ? System.Runtime.InteropServices.MemoryMarshal.AsBytes(Read(name).AsSpan()).ToArray()
+            : _file.ReadStored(_names[name].Gguf);
+
         public float[] Read(string name)
         {
             var source = _names[name];

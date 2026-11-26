@@ -84,6 +84,12 @@ public static class DecoderBuilder
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
                 var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
+                // A weight its checkpoint stores in a type of its own: kept as stored, [out, in], never widened.
+                if (tiedTable is null && weights?.ReadStored($"{name}.weight", [outputs, inputs], device) is { } stored)
+                {
+                    return Linear.FromStored(stored, b);
+                }
+
                 return Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 
@@ -103,7 +109,9 @@ public static class DecoderBuilder
             float[] EmbeddingValues() => embeddingValues ??= weights!.Read("embed.weight", [spec.Vocabulary, spec.Dim])
                 ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
 
-            var embedding = Embedding.FromWeights(Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
+            // A table its checkpoint stores in a type of its own stays as stored (a tied head then multiplies by it as stored).
+            var embedding = Embedding.FromWeights(weights?.ReadStored("embed.weight", [spec.Vocabulary, spec.Dim], device)
+                ?? Idrak.Abstraction.Tensor.Persistent(EmbeddingValues(), [spec.Vocabulary, spec.Dim], device, requiresGrad: true));
             embedding.Name = "embed";
             created.Add(embedding);
 

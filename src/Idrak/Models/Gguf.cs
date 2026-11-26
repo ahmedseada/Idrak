@@ -9,7 +9,7 @@ namespace Idrak.Models;
 
 /// <summary>A tensor's entry in a GGUF file.</summary>
 /// <param name="Name">Its name (llama.cpp's naming, e.g. blk.0.attn_q.weight).</param>
-/// <param name="Type">The ggml type id the file stores it in (0 is float32, the one type read).</param>
+/// <param name="Type">The ggml type id the file stores it in (GGUF's own table, <see cref="GgufFile.TypeOfId"/>, says which type it is).</param>
 /// <param name="Dimensions">Sizes, innermost first (ggml's ne: [columns, rows, …]).</param>
 /// <param name="Offset">Byte offset of its data in the file.</param>
 public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, long Offset)
@@ -19,11 +19,16 @@ public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, lo
 
     /// <summary>The shape outermost first, as PyTorch / safetensors write it ([rows, columns]).</summary>
     public int[] Shape => [.. Dimensions.Reverse().Select(d => checked((int)d))];
+
+    /// <summary>The type its ggml type id names (<see cref="GgufFile.TypeOfId"/>), or null for an id GGUF's table here does not hold.</summary>
+    public IElementType? ElementType => GgufFile.TypeOfId(Type);
 }
 
 /// <summary>
-/// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and the float32
-/// tensors. A tensor stored in any other type is refused: its type is not on the new design yet.
+/// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and the tensors,
+/// each as the type its ggml type id names (GGUF's own table, <see cref="TypeOfId"/>): its stored bytes as they lie
+/// (<see cref="ReadStored"/>, never widened), or its values read through its type as float32 (<see cref="Read"/>). An id
+/// the table does not hold is refused when read.
 /// </summary>
 public sealed class GgufFile : IDisposable
 {
@@ -98,13 +103,73 @@ public sealed class GgufFile : IDisposable
         }
     }
 
-    /// <summary>The float32 tensor <paramref name="name"/> (row-major, as stored).</summary>
-    /// <exception cref="NotSupportedException">The tensor is stored in another type: not on the new design yet.</exception>
+    /// <summary>
+    /// The type ggml's type id <paramref name="id"/> names (GGUF's own table: 0 F32, 1 F16, 2 Q4_0, 3 Q4_1, 6 Q5_0, 7 Q5_1,
+    /// 8 Q8_0, 10 Q2_K, 11 Q3_K, 12 Q4_K, 13 Q5_K, 14 Q6_K, 16 IQ2_XXS, 17 IQ2_XS, 18 IQ3_XXS, 19 IQ1_S, 20 IQ4_NL, 21 IQ3_S,
+    /// 22 IQ2_S, 23 IQ4_XS, 24 I8, 25 I16, 26 I32, 27 I64, 28 F64, 29 IQ1_M, 30 BF16, 34 TQ1_0, 35 TQ2_0, 39 MXFP4), or null.
+    /// </summary>
+    public static IElementType? TypeOfId(int id) => id switch
+    {
+        0 => Abstraction.Types.F32.Type,
+        1 => Abstraction.Types.F16.Type,
+        2 => Types.Q4_0.Type,
+        3 => Types.Q4_1.Type,
+        6 => Types.Q5_0.Type,
+        7 => Types.Q5_1.Type,
+        8 => Types.Q8_0.Type,
+        10 => Types.Q2_K.Type,
+        11 => Types.Q3_K.Type,
+        12 => Types.Q4_K.Type,
+        13 => Types.Q5_K.Type,
+        14 => Types.Q6_K.Type,
+        16 => Types.IQ2_XXS.Type,
+        17 => Types.IQ2_XS.Type,
+        18 => Types.IQ3_XXS.Type,
+        19 => Types.IQ1_S.Type,
+        20 => Types.IQ4_NL.Type,
+        21 => Types.IQ3_S.Type,
+        22 => Types.IQ2_S.Type,
+        23 => Types.IQ4_XS.Type,
+        24 => Abstraction.Types.I8.Type,
+        25 => Abstraction.Types.I16.Type,
+        26 => Abstraction.Types.I32.Type,
+        27 => Abstraction.Types.I64.Type,
+        28 => Abstraction.Types.F64.Type,
+        29 => Types.IQ1_M.Type,
+        30 => Abstraction.Types.BF16.Type,
+        34 => Types.TQ1_0.Type,
+        35 => Types.TQ2_0.Type,
+        39 => Types.MXFP4.Type,
+        _ => null,
+    };
+
+    /// <summary>The type the tensor <paramref name="name"/> is stored in (<see cref="TypeOfId"/> of its id).</summary>
+    public IElementType TypeOf(string name) => Typed(name).Type;
+
+    /// <summary>The tensor <paramref name="name"/>'s values as its type stores them: its bytes as they lie, never widened.</summary>
+    public byte[] ReadStored(string name)
+    {
+        var (info, type) = Typed(name);
+        var bytes = GC.AllocateUninitializedArray<byte>(checked((int)type.ByteCount(info.Count)));
+        ReadAt(bytes, info.Offset);
+        return bytes;
+    }
+
+    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored; another type read through its type).</summary>
+    /// <exception cref="NotSupportedException">The tensor's ggml type id is not one GGUF's table here holds.</exception>
     public float[] Read(string name)
     {
-        var info = Float32Entry(name);
+        var (info, type) = Typed(name);
         var values = GC.AllocateUninitializedArray<float>(checked((int)info.Count));
-        ReadFloats(values, info.Offset);
+        if (info.Type == 0)
+        {
+            ReadFloats(values, info.Offset);
+        }
+        else
+        {
+            type.Read(ReadStored(name), values);
+        }
+
         return values;
     }
 
@@ -114,22 +179,32 @@ public sealed class GgufFile : IDisposable
     /// </summary>
     internal void ReadRows(string name, long firstRow, Span<float> values)
     {
-        var info = Float32Entry(name);
+        var (info, type) = Typed(name);
         long columns = info.Dimensions[0];
         if (columns == 0 || values.Length % columns != 0)
         {
             throw new InvalidDataException($"{name}: {values.Length} values are not whole rows of {columns}.");
         }
 
-        ReadFloats(values, info.Offset + firstRow * columns * sizeof(float));
+        if (info.Type == 0)
+        {
+            ReadFloats(values, info.Offset + firstRow * columns * sizeof(float));
+            return;
+        }
+
+        // Rows of another type: their bytes (each row whole groups of the type's blocks, as ggml stores rows).
+        long rowBytes = type.ByteCount(columns);
+        var bytes = new byte[checked((int)(rowBytes * (values.Length / columns)))];
+        ReadAt(bytes, info.Offset + firstRow * rowBytes);
+        type.Read(bytes, values);
     }
 
-    // The entry of the tensor name, stored as float32; any other stored type is refused.
-    private GgufTensorInfo Float32Entry(string name)
+    // The entry of the tensor name and its type; an id GGUF's table here does not hold is refused.
+    private (GgufTensorInfo Info, IElementType Type) Typed(string name)
     {
         var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}' in {Path}.");
-        return info.Type == 0 ? info
-            : throw new NotSupportedException($"{name} in {Path} is stored as ggml type #{info.Type}: type not on the new design yet.");
+        return info.ElementType is { } type ? (info, type)
+            : throw new NotSupportedException($"{name} in {Path} is stored as ggml type #{info.Type}, an id GGUF's table here does not hold.");
     }
 
     // Little-endian float32 values from the file at offset into values.

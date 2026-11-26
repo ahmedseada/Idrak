@@ -77,7 +77,9 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     public int OutFeatures { get; }
 
     /// <summary>The [inFeatures, outFeatures] weight matrix.</summary>
-    public Tensor Weight => _weight ?? throw new InvalidOperationException($"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight.");
+    public Tensor Weight => _weight ?? throw new InvalidOperationException(_stored is not null
+        ? $"{this} holds its weight as stored ([out, in] of its type); use Stored."
+        : $"{this} reads the embedding table of {_tiedTo} (transposed); use TiedTo.Weight.");
 
     private Tensor? _weight;
 
@@ -193,7 +195,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     {
         foreach (var l in layers)
         {
-            if (l.TiedTo is not null || l.Adapter is not null || l.InFeatures != k || (long)l.OutFeatures * k < 1 << 16)
+            if (l._weight is null || l.TiedTo is not null || l.Adapter is not null || l.InFeatures != k || (long)l.OutFeatures * k < 1 << 16)
             {
                 return false;
             }
@@ -234,7 +236,8 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     /// <inheritdoc />
     /// <remarks>"weight" [in, out] and "bias" when the layer has one; nothing for a tied layer (the embedding stores the table).</remarks>
     IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() =>
-        _tiedTo is not null ? [] : Bias is { } bias ? [("weight", Weight), ("bias", bias)] : [("weight", Weight)];
+        _tiedTo is not null ? [] : _stored is { } stored ? (Bias is { } b ? [("stored", stored), ("bias", b)] : [("stored", stored)])
+        : Bias is { } bias ? [("weight", Weight), ("bias", bias)] : [("weight", Weight)];
 
     /// <inheritdoc />
     IEnumerable<Tensor> IOffloadableLayer.StagedParameters() => Parameters();
@@ -242,7 +245,8 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     /// <inheritdoc />
     IEnumerable<Tensor> IOffloadableLayer.StagedBuffers() => Buffers();
 
-    internal Tensor BaseProduct(Tensor input) => _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
+    internal Tensor BaseProduct(Tensor input) => _stored is { } stored ? StoredProduct(input, stored)
+        : _tiedTo is { } e ? (StoredTable(e.Weight) ? StoredProduct(input, e.Weight) : TiedProduct(input, e.Weight)) : input.MatMul(Weight);
 
     // The tied head (x · Eᵀ), the table read as stored.
     private static Tensor TiedProduct(Tensor input, Tensor table) => input.MatMul(table, transposeB: true);
@@ -267,10 +271,14 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
         return Adapter is { } a ? own.Concat(a.Parameters) : own;
     }
 
-    // The float weight values.
-    internal float[] WeightValues() => _tiedTo is not null ? TiedValues() : Weight.ToArray();
+    /// <inheritdoc />
+    /// <remarks>The weight as stored (<see cref="FromStored"/>), which takes no gradient.</remarks>
+    public override IEnumerable<Tensor> Buffers() => _stored is { } stored ? [stored] : [];
 
-    internal Device Device => _tiedTo?.Device ?? _weight!.Device;
+    // The float weight values.
+    internal float[] WeightValues() => _tiedTo is not null ? TiedValues() : _stored is { } stored ? HostParallel.Transpose(stored.ToArray(), OutFeatures, InFeatures) : Weight.ToArray();
+
+    internal Device Device => _tiedTo?.Device ?? _weight?.Device ?? _stored!.Device;
 
     // The tied table transposed to [in, out] on the host.
     private float[] TiedValues() => HostParallel.Transpose(_tiedTo!.WeightValues(), OutFeatures, InFeatures);
@@ -313,6 +321,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     protected override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
+        _stored = _stored is null ? null : MoveTensor(_stored, device);
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {
@@ -322,5 +331,5 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
 
     /// <inheritdoc />
     public override string ToString() =>
-        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_tiedTo is null ? "" : ", tied")}{Adapter switch { null => "", LoraAdapter a => $", LoRA rank {a.Rank}", DoraAdapter d => $", DoRA rank {d.Rank}", var other => $", {other.GetType().Name}" }}{(_softcap is { } c ? $", softcap {c}" : "")})";
+        $"Linear({InFeatures} -> {OutFeatures}{(Bias is null ? ", no bias" : "")}{(_tiedTo is null ? "" : ", tied")}{(_stored is { } st ? $", stored {st.Type.Name}" : "")}{Adapter switch { null => "", LoraAdapter a => $", LoRA rank {a.Rank}", DoraAdapter d => $", DoRA rank {d.Rank}", var other => $", {other.GetType().Name}" }}{(_softcap is { } c ? $", softcap {c}" : "")})";
 }

@@ -5,17 +5,29 @@ using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
-// A model folder with safetensors weights (one file, or shards named by model.safetensors.index.json).
-internal sealed class SafeTensorsCheckpointFormat : ICheckpointFormat
+/// <summary>A model folder with safetensors weights (one file, or shards named by model.safetensors.index.json), each tensor read as its dtype's type.</summary>
+public sealed class SafeTensorsCheckpointFormat : ICheckpointFormat
 {
+    /// <summary>The format.</summary>
+    public static ICheckpointFormat Format { get; } = new SafeTensorsCheckpointFormat();
+
+    private SafeTensorsCheckpointFormat()
+    {
+    }
+
+    /// <inheritdoc />
     public string Name => "safetensors";
 
+    /// <inheritdoc />
     public bool CanOpen(string path) => Directory.Exists(path);
 
+    /// <inheritdoc />
     public string Prepare(string path) => path;
 
+    /// <inheritdoc />
     public ITensorStore Open(string folder) => SafeTensorsReader.Open(folder);
 
+    /// <inheritdoc />
     public IEnumerable<string> Notes(string folder) => [];
 }
 

@@ -14,6 +14,17 @@ public interface IWeightSource
     float[]? Read(string name, IReadOnlyList<int> shape);
 
     /// <summary>
+    /// The tensor <paramref name="name"/> as its source stores it, a tensor of its stored type on <paramref name="device"/>
+    /// (its bytes as they lie, never widened), where its stored layout is <paramref name="stored"/> (a projection's
+    /// [out, in] rows, as a product of stored weights reads them; a table's [rows, columns]) and its type is not the
+    /// device's own float32; null otherwise (the default: the caller reads its float32 values with <see cref="Read"/>).
+    /// </summary>
+    /// <param name="name">The tensor's name.</param>
+    /// <param name="stored">Its shape in the stored layout.</param>
+    /// <param name="device">Where the tensor goes.</param>
+    Tensor? ReadStored(string name, IReadOnlyList<int> stored, Device device) => null;
+
+    /// <summary>
     /// Reads rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the matrix
     /// <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it) into
     /// <paramref name="destination"/>: the values <see cref="Read"/> gives for those rows. So a large matrix (an embedding

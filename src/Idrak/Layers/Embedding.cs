@@ -37,7 +37,11 @@ public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
         Weight = weight;
     }
 
-    /// <summary>A lookup table around existing weights [vocabulary, dim]; the layer takes ownership.</summary>
+    /// <summary>
+    /// A lookup table around existing weights [vocabulary, dim]: float32, or a table of another type as its checkpoint
+    /// stores it (<see cref="Tensor.Stored(IElementType, ReadOnlySpan{byte}, ReadOnlySpan{int}, Device?)"/>, never widened; each
+    /// row looked up read through its type, for inference). The layer takes ownership.
+    /// </summary>
     public static Embedding FromWeights(Tensor weight) =>
         weight.Rank == 2 ? new Embedding(weight) : throw new ArgumentException($"Embedding weights must be [vocabulary, dim], got {Tensor.FormatShape(weight.Shape)}.");
 
@@ -57,10 +61,48 @@ public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
     private Tensor? _weight;
 
     /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => Weight.EmbeddingLookup(input);
+    protected override Tensor ForwardCore(Tensor input) => Stored ? StoredLookup(input) : Weight.EmbeddingLookup(input);
+
+    // Whether the table is stored in a type of its own.
+    private bool Stored => _weight is { } w && w.Storage.Typed && w.Type.Native != NativeKind.Float32;
+
+    // The rows of a table stored in its own type: each id's row read from the table's words and through its type (each
+    // row whole words of whole groups of the type's blocks).
+    private Tensor StoredLookup(Tensor input)
+    {
+        var table = Weight;
+        var type = table.Type;
+        long rowBytes = type.ByteCount(Dim);
+        if (rowBytes % sizeof(float) != 0 || type.ByteCount(2L * Dim) != 2 * rowBytes)
+        {
+            throw new NotSupportedException($"{this}: a row of {Dim} values of {type.Name} is not whole words of whole groups; its rows are not read one by one.");
+        }
+
+        int words = (int)(rowBytes / sizeof(float));
+        var ids = input.ToArray();
+        var values = new float[ids.Length * Dim];
+        var row = new float[words];
+        for (int i = 0; i < ids.Length; i++)
+        {
+            int id = (int)ids[i];
+            if (id < 0 || id >= Vocabulary || id != ids[i])
+            {
+                throw new ArgumentOutOfRangeException(nameof(input), $"Id {ids[i]} (element {i}) is not one of the {Vocabulary} rows.");
+            }
+
+            table.Backend.DownloadRange(table.Storage, id * words, row);
+            type.Read(System.Runtime.InteropServices.MemoryMarshal.AsBytes(row.AsSpan()), values.AsSpan(i * Dim, Dim));
+        }
+
+        return Tensor.From(values, [.. input.Shape, Dim], table.Device);
+    }
 
     /// <inheritdoc />
-    public override IEnumerable<Tensor> Parameters() => _weight is null ? [] : [_weight];
+    public override IEnumerable<Tensor> Parameters() => _weight is null || Stored ? [] : [_weight];
+
+    /// <inheritdoc />
+    /// <remarks>A table stored in its own type, which takes no gradient.</remarks>
+    public override IEnumerable<Tensor> Buffers() => Stored ? [_weight!] : [];
 
     internal Device Device => Weight.Device;
 

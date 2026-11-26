@@ -139,8 +139,29 @@ public sealed record PretrainedOptions
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
-    /// <summary>The architecture to use instead of the one named in config.json.</summary>
+    /// <summary>The architecture's name to use instead of the one config.json names (picking an architecture by its name is not on the new design yet: give <see cref="Family"/>).</summary>
     public string? Architecture { get; init; }
+
+    /// <summary>
+    /// The architecture that reads the checkpoint (its configuration keys and tensor names), handed over directly (a
+    /// family's own, such as Idrak.Text.Plugins' <c>QwenArchitectures.Qwen3()</c>); null: picking it by config.json's name,
+    /// which is not on the new design yet.
+    /// </summary>
+    public IPretrainedArchitecture? Family { get; init; }
+
+    /// <summary>
+    /// The format the checkpoint is read by, handed over directly; null: the library's safetensors format
+    /// (<see cref="SafeTensorsCheckpointFormat"/>) for a folder it opens. Each tensor is read as the type its format names, a
+    /// projection's weight kept as stored (never widened).
+    /// </summary>
+    public ICheckpointFormat? Format { get; init; }
+
+    /// <summary>
+    /// The type every projection's weight and the token table are written as, by that type's encoder (a model's weights
+    /// written to any type: <c>Idrak.Types.Q4_K.Type</c>, a type of one's own); null keeps each as its checkpoint stores it.
+    /// A weight whose rows are not whole groups of the type's blocks keeps its stored type.
+    /// </summary>
+    public IElementType? Weights { get; init; }
 
     /// <summary>How the tokenizer is read (which file, its piece cache); null takes the variables, then the defaults.</summary>
     public TokenizerOptions? Tokenizer { get; init; }
@@ -348,13 +369,14 @@ public sealed class PretrainedModel : IDisposable
             throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without a merged adapter.", nameof(options));
         }
 
-        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder}");
+        var format = options.Format ?? (SafeTensorsCheckpointFormat.Format.CanOpen(folder) ? SafeTensorsCheckpointFormat.Format
+            : NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {folder} (give PretrainedOptions.Format)"));
         folder = format.Prepare(folder);                            // a .gguf file: config, tokenizer and template from its metadata
 
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
-        var architecture = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{name}' by its name");
+        var architecture = options.Family ?? NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{name}' by its name (give PretrainedOptions.Family)");
         // A vision-language checkpoint (one with a vision_config) is read by its own vision family, by the same name.
         var visionFamily = config["vision_config"] is JsonObject ? NotOnTheNewDesign.Yet<IVisionFamily>($"Picking the vision family '{name}' by its name") : null;
 
@@ -428,7 +450,7 @@ public sealed class PretrainedModel : IDisposable
         }
 
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
-        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
+        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress), Writes = options.Weights };
         weights.Progress?.Begin();
         var buildDevice = options.Deferred ? NotOnTheNewDesign.Yet<Device>("The deferred device (picked by its name)") : options.Device;
         // W2: layers built on first use (the checkpoint kept open for them), and layers following the memory at step boundaries.
@@ -442,7 +464,7 @@ public sealed class PretrainedModel : IDisposable
         bool follow = placement is not null && placedRequest is not null && plan is { Stream: false } && mayLeaveDevice && !buildsOwnNetwork
             && placedRequest.DeviceLayers is null && (options.FollowMemory ?? WeightPlacements.DefaultGrow);
         var lazyReader = lazy ? format.Open(folder) : null;
-        var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
+        var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) { Writes = options.Weights } : weights;
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
             LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, MaxPositions = maxPositions };
         long building = Stopwatch.GetTimestamp();

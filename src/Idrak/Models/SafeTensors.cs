@@ -7,11 +7,12 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Types;
 
 namespace Idrak.Models;
 
-/// <summary>A float32 tensor's entry in a safetensors file: its shape and byte range.</summary>
-public sealed record SafeTensorInfo(string Name, int[] Shape, long Offset, long Length, string File)
+/// <summary>A tensor's entry in a safetensors file: its shape, byte range and type (its dtype's, <see cref="SafeTensorsReader.TypeOfDtype"/>).</summary>
+public sealed record SafeTensorInfo(string Name, int[] Shape, long Offset, long Length, string File, IElementType Type)
 {
     /// <summary>Number of elements.</summary>
     public long Count => Shape.Aggregate(1L, (a, b) => a * b);
@@ -19,8 +20,10 @@ public sealed record SafeTensorInfo(string Name, int[] Shape, long Offset, long 
 
 /// <summary>
 /// Reads safetensors weights: one file, or a sharded checkpoint (<c>model.safetensors.index.json</c> naming the file of
-/// each tensor). Float32 tensors are read one at a time, straight from disk. A tensor stored in any other type is left out
-/// (<see cref="LeftOut"/>) and refused when read: its type is not on the new design yet.
+/// each tensor). Each tensor is read one at a time, straight from disk, as the type its dtype names (the format's own
+/// table, <see cref="TypeOfDtype"/>): its stored bytes as they lie (<see cref="ReadStored"/>, never widened), or its values
+/// read through its type as float32 (<see cref="Read"/>). A tensor of a dtype the table does not hold is left out
+/// (<see cref="LeftOut"/>) and refused when read.
 /// </summary>
 public sealed class SafeTensorsReader : IDisposable, ITensorStore
 {
@@ -38,12 +41,12 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
     {
     }
 
-    /// <summary>The float32 tensors, by name.</summary>
+    /// <summary>The tensors, by name.</summary>
     public IReadOnlyDictionary<string, SafeTensorInfo> Tensors => _tensors;
 
     /// <summary>
-    /// The tensors stored in any type but float32, by name with their stored type ("BF16", "I64", ...): not among
-    /// <see cref="Tensors"/>, and refused when read (their type is not on the new design yet).
+    /// The tensors of a dtype the format's table does not hold, by name with their dtype: not among <see cref="Tensors"/>, and
+    /// refused when read.
     /// </summary>
     public IReadOnlyDictionary<string, string> LeftOut => _leftOut;
 
@@ -90,16 +93,64 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         }
     }
 
-    /// <summary>Whether a float32 tensor named <paramref name="name"/> exists.</summary>
+    /// <summary>
+    /// The type safetensors' dtype <paramref name="dtype"/> names (the format's own table: F64, F32, F16, BF16, F8_E4M3,
+    /// F8_E5M2, F8_E8M0, I64, I32, I16, I8, U64, U32, U16, U8, BOOL), or null for a dtype it does not hold.
+    /// </summary>
+    public static IElementType? TypeOfDtype(string dtype) => dtype switch
+    {
+        "F64" => F64.Type,
+        "F32" => F32.Type,
+        "F16" => F16.Type,
+        "BF16" => BF16.Type,
+        "F8_E4M3" => F8E4M3.Type,
+        "F8_E5M2" => F8E5M2.Type,
+        "F8_E8M0" => F8E8M0.Type,
+        "I64" => I64.Type,
+        "I32" => I32.Type,
+        "I16" => I16.Type,
+        "I8" => I8.Type,
+        "U64" => U64.Type,
+        "U32" => U32.Type,
+        "U16" => U16.Type,
+        "U8" => U8.Type,
+        "BOOL" => Bool.Type,
+        _ => null,
+    };
+
+    /// <inheritdoc cref="ITensorStore.TypeOf"/>
+    public IElementType TypeOf(string name) => (_tensors.TryGetValue(name, out var t) ? t : throw Missing(name)).Type;
+
+    /// <inheritdoc cref="ITensorStore.ReadStored"/>
+    public byte[] ReadStored(string name)
+    {
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw Missing(name);
+        var bytes = GC.AllocateUninitializedArray<byte>(checked((int)info.Length));
+        ReadBytes(_files[info.File].SafeFileHandle, bytes, info.Offset);
+        return bytes;
+    }
+
+    // Whether a tensor is stored as float32 values (read straight into floats).
+    private static bool Floats(SafeTensorInfo info) => info.Type.Native == NativeKind.Float32;
+
+    /// <summary>Whether a tensor named <paramref name="name"/> exists.</summary>
     public bool Contains(string name) => _tensors.ContainsKey(name);
 
-    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored).</summary>
+    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored; another type read through its type).</summary>
     public float[] Read(string name)
     {
         var info = _tensors.TryGetValue(name, out var t) ? t : throw Missing(name);
         // A positional read (no shared stream position, so tensors can be read concurrently) straight into the result.
         var values = GC.AllocateUninitializedArray<float>(checked((int)info.Count));
-        ReadFloats(_files[info.File].SafeFileHandle, values, info.Offset);
+        if (Floats(info))
+        {
+            ReadFloats(_files[info.File].SafeFileHandle, values, info.Offset);
+        }
+        else
+        {
+            info.Type.Read(ReadStored(name), values);
+        }
+
         return values;
     }
 
@@ -120,7 +171,31 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         }
 
         int values = checked((int)(rowValues * count));
-        ReadFloats(_files[info.File].SafeFileHandle, destination[..values], info.Offset + first * rowValues * sizeof(float));
+        if (Floats(info))
+        {
+            ReadFloats(_files[info.File].SafeFileHandle, destination[..values], info.Offset + first * rowValues * sizeof(float));
+            return true;
+        }
+
+        // Rows of another type: their bytes, where each row is whole groups of the type's blocks.
+        long rowBytes = info.Type.ByteCount(rowValues);
+        if (info.Type.ByteCount(2 * rowValues) != 2 * rowBytes)
+        {
+            return false;
+        }
+
+        var bytes = System.Buffers.ArrayPool<byte>.Shared.Rent(checked((int)(rowBytes * count)));
+        try
+        {
+            var span = bytes.AsSpan(0, (int)(rowBytes * count));
+            ReadBytes(_files[info.File].SafeFileHandle, span, info.Offset + first * rowBytes);
+            info.Type.Read(span, destination[..values]);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(bytes);
+        }
+
         return true;
     }
 
@@ -134,7 +209,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         }
 
         var file = new FileInfo(info.File);
-        return string.Create(CultureInfo.InvariantCulture, $"safetensors|{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}|{info.Offset}|{info.Length}");
+        return string.Create(CultureInfo.InvariantCulture, $"safetensors|{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}|{info.Offset}|{info.Length}|{info.Type.Name}");
     }
 
     /// <inheritdoc cref="ITensorStore.SameValues"/>
@@ -149,6 +224,11 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         if (!a.Shape.AsSpan().SequenceEqual(b.Shape))
         {
             return false;
+        }
+
+        if (!Floats(a) || !Floats(b))
+        {
+            return a.Type == b.Type ? ReadStored(first).AsSpan().SequenceEqual(ReadStored(second)) : Read(first).AsSpan().SequenceEqual(Read(second));
         }
 
         const int ChunkValues = 1 << 20;
@@ -189,8 +269,13 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             throw new ArgumentException($"'{name}' is [{string.Join(", ", info.Shape)}], not a matrix.", nameof(name));
         }
 
-        // Chunks of stored rows are read through one pooled buffer and scattered into the transposed result.
         int rows = info.Shape[0], columns = info.Shape[1];
+        if (!Floats(info))
+        {
+            return HostParallel.Transpose(Read(name), rows, columns);   // another type: its values read through it, then transposed
+        }
+
+        // Chunks of stored rows are read through one pooled buffer and scattered into the transposed result.
         var handle = _files[info.File].SafeFileHandle;
         var values = GC.AllocateUninitializedArray<float>(checked(rows * columns));
         int chunkRows = Math.Max(1, (1 << 22) / Math.Max(1, columns));
@@ -253,6 +338,15 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
 
     long? ITensorStore.BytesRead => BytesRead;
 
+    // Bytes at offset, the time and the bytes counted as ReadFloats counts them.
+    private void ReadBytes(Microsoft.Win32.SafeHandles.SafeFileHandle handle, Span<byte> destination, long offset)
+    {
+        long start = Stopwatch.GetTimestamp();
+        ReadAt(handle, destination, offset);
+        Interlocked.Add(ref _readTicks, Stopwatch.GetTimestamp() - start);
+        Interlocked.Add(ref _bytesRead, destination.Length);
+    }
+
     private static void ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle handle, Span<byte> destination, long offset)
     {
         while (!destination.IsEmpty)
@@ -296,21 +390,27 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
             }
 
             string dtype = (string)node!["dtype"]!;
-            if (dtype != "F32")
+            if (TypeOfDtype(dtype) is not { } type)
             {
-                _leftOut[name] = dtype;                                     // not on the new design yet: refused when read
+                _leftOut[name] = dtype;                                     // a dtype the table does not hold: refused when read
                 continue;
             }
 
             int[] shape = [.. node["shape"]!.AsArray().Select(d => (int)d!)];
             var offsets = node["data_offsets"]!.AsArray();
             long begin = (long)offsets[0]!, end = (long)offsets[1]!;
-            _tensors[name] = new SafeTensorInfo(name, shape, dataStart + begin, end - begin, file);
+            long count = shape.Aggregate(1L, (a, b) => a * b);
+            if (end - begin != type.ByteCount(count))
+            {
+                throw new InvalidDataException($"{file}: '{name}' [{string.Join(", ", shape)}] of {dtype} takes {type.ByteCount(count)} bytes; its entry holds {end - begin}.");
+            }
+
+            _tensors[name] = new SafeTensorInfo(name, shape, dataStart + begin, end - begin, file, type);
         }
     }
 
     private Exception Missing(string name) => _leftOut.TryGetValue(name, out string? type)
-        ? new NotSupportedException($"The tensor '{name}' is stored as {type}: type not on the new design yet.")
+        ? new NotSupportedException($"The tensor '{name}' is stored as {type}, a dtype safetensors' table here does not hold.")
         : new KeyNotFoundException($"No tensor named '{name}'.");
 
     /// <inheritdoc />

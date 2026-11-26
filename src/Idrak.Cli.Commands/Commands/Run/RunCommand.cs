@@ -46,7 +46,7 @@ internal sealed class RunCommand : Command
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights as they are read; one tuned on images
                                  (idrak tune) brings its trained projector and image preparation too
-        """ + "\n" + ModelChoices.DeviceLayersHelp + "\n" + """
+        """ + "\n" + ModelChoices.WeightsHelp + "\n" + ModelChoices.DeviceLayersHelp + "\n" + """
               --schema FILE     ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
               --mcp SERVER       let the model call an MCP server's tools (an http(s) URL or a command; repeatable)
               --mcp-token TOKEN  the bearer token sent to http(s) MCP servers (idrak mcp serve --transport http prints it)
@@ -66,13 +66,13 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.WeightsOption, ModelChoices.DeviceLayersOption, ModelChoices.MoeExpertsOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
         Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
+        new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-w", ModelChoices.WeightsOption)).Append(KeyValuePair.Create("-i", "--input")).Append(KeyValuePair.Create("-o", "--out")));
 
     public override int Run(CommandContext context)
     {

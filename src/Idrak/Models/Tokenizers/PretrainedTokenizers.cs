@@ -6,21 +6,28 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// Reads the tokenizer of a model folder (or a tokenizer file), whatever kind it is. Finding the file's reader and
-/// building the model type it names are not on the new design yet: each reader and each model's class reads and builds
-/// its own.
+/// Reads the tokenizer of a model folder (or a tokenizer file): a Hugging Face tokenizer.json, reached directly, its model
+/// built from the file's own model type (tokenizer.json's table: BPE, Unigram, WordPiece). Finding any other file's
+/// reader is not on the new design yet.
 /// </summary>
 public static class PretrainedTokenizers
 {
     /// <summary>
-    /// The tokenizer file at <paramref name="path"/> (a model folder, or a file) and its reader: picking the reader by
+    /// The tokenizer file at <paramref name="path"/> (a model folder, or a file) and its reader: a tokenizer.json, read by
+    /// the tokenizer.json reader directly; null where there is none. Picking another reader by
     /// <see cref="TokenizerOptions.Format"/>'s name, or asking each reader, is not on the new design yet.
     /// </summary>
-    /// <exception cref="NotSupportedException">Always: not on the new design yet.</exception>
+    /// <exception cref="NotSupportedException">The options name another format: not on the new design yet.</exception>
     public static (string File, ITokenizerFileReader Reader)? Find(string path, TokenizerOptions? options = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the tokenizer at {path}");
+        var json = new TokenizerJsonReader();
+        if (options?.ResolvedFormat() is { } format && format != json.Name)
+        {
+            return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the {format} tokenizer at {path}");
+        }
+
+        return json.Find(path) is { } file ? (file, json) : null;
     }
 
     /// <summary>Whether <paramref name="path"/> holds (or is) a tokenizer file a reader reads.</summary>
@@ -41,7 +48,7 @@ public static class PretrainedTokenizers
     public static IPretrainedTokenizer Load(string path, TokenizerOptions? options = null)
     {
         options ??= new TokenizerOptions();
-        return Create(Read(path, options));
+        return Create(Read(path, options), options);
     }
 
     /// <summary>The tokenizer at <paramref name="path"/> (see <see cref="Load"/>), or null when no reader finds a tokenizer file there.</summary>
@@ -49,12 +56,17 @@ public static class PretrainedTokenizers
     public static IPretrainedTokenizer? TryLoad(string path, TokenizerOptions? options = null)
     {
         options ??= new TokenizerOptions();
-        return Find(path, options) is var (file, reader) ? Create(WithConfig(reader.Read(file, options), file)) : null;
+        return Find(path, options) is var (file, reader) ? Create(WithConfig(reader.Read(file, options), file), options) : null;
     }
 
-    // The tokenizer of the model type a definition names: picked by that name, not on the new design yet.
-    private static IPretrainedTokenizer Create(TokenizerDefinition definition) =>
-        NotOnTheNewDesign.Yet<IPretrainedTokenizer>($"{definition.Source}: building the tokenizer model '{definition.ModelType}' by its name");
+    // The tokenizer of the model type a tokenizer.json names (the format's own table of its model types).
+    private static IPretrainedTokenizer Create(TokenizerDefinition definition, TokenizerOptions options) => definition.ModelType switch
+    {
+        "BPE" => BpeTokenizer.FromDefinition(definition, options),
+        "Unigram" => UnigramTokenizer.FromDefinition(definition, options),
+        "WordPiece" => WordPieceTokenizer.FromDefinition(definition, options),
+        _ => NotOnTheNewDesign.Yet<IPretrainedTokenizer>($"{definition.Source}: building the tokenizer model '{definition.ModelType}'"),
+    };
 
     // What the model's tokenizer_config.json beside the file says of the decoded text's spaces (clean_up_tokenization_spaces),
     // unless the reader set it.

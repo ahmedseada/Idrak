@@ -163,7 +163,9 @@ public abstract class Module : ITensorOwner
 
         // A deferred tensor (plan 23, C8b) is read from its source here, or stays unread on the device inside
         // DeferredTensors.StayDeferred.
-        var moved = Idrak.Abstraction.Devices.DeferredTensors.TryMove(tensor, device) ?? Tensor.Persistent(tensor.ToArray(), tensor.Shape, device, tensor.RequiresGrad);
+        // A tensor of a stored type moves as its stored bytes (never widened).
+        var moved = Idrak.Abstraction.Devices.DeferredTensors.TryMove(tensor, device)
+            ?? (tensor.Storage.Typed ? Tensor.Stored(tensor.Type, tensor.ToBytes(), tensor.Shape, device) : Tensor.Persistent(tensor.ToArray(), tensor.Shape, device, tensor.RequiresGrad));
         tensor.Dispose();
         return moved;
     }

@@ -20,8 +20,20 @@ public interface ITensorStore : IDisposable
     /// <summary>The shape of the tensor <paramref name="name"/>, outermost first ([rows, columns]).</summary>
     int[] ShapeOf(string name);
 
-    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored).</summary>
+    /// <summary>The tensor <paramref name="name"/> as float32 values (row-major, as stored; a tensor of another type read through its type).</summary>
     float[] Read(string name);
+
+    /// <summary>
+    /// The type the tensor <paramref name="name"/> is stored in, the store's own format saying it (a safetensors dtype, a
+    /// GGUF type id): float32 (<see cref="Types.F32"/>) by default, for a store of float32 values.
+    /// </summary>
+    IElementType TypeOf(string name) => Types.F32.Type;
+
+    /// <summary>
+    /// The tensor <paramref name="name"/>'s values as its type (<see cref="TypeOf"/>) stores them: its bytes as they lie,
+    /// never widened. The default gives <see cref="Read"/>'s float32 values' bytes, for a store of float32 values.
+    /// </summary>
+    byte[] ReadStored(string name) => System.Runtime.InteropServices.MemoryMarshal.AsBytes(Read(name).AsSpan()).ToArray();
 
     /// <summary>
     /// Whether the tensors <paramref name="first"/> and <paramref name="second"/> have the same shape and the same float32

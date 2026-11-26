@@ -367,6 +367,9 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
     /// </summary>
     public bool Deferred { get; init; }
 
+    /// <summary>The type the stored weights are written as (<see cref="PretrainedOptions.Weights"/>), or null: kept as stored.</summary>
+    public IElementType? Writes { get; init; }
+
     public float[]? Read(string name, IReadOnlyList<int> shape)
     {
         if (Stored(name, shape) is not { } stored)
@@ -392,6 +395,44 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         }
 
         return values;
+    }
+
+    public Tensor? ReadStored(string name, IReadOnlyList<int> stored, Device device)
+    {
+        if (Deferred || architecture.TensorName(name) is not { } storedName || !reader.Contains(storedName) || !reader.ShapeOf(storedName).SequenceEqual(stored)
+            || Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]))
+        {
+            return null;                                                    // read as float32 values (an adapter merges into those)
+        }
+
+        // The type it is kept as: the one asked (where its rows are whole groups of that type's blocks), else its own.
+        var type = reader.TypeOf(storedName);
+        long columns = stored[^1], values = stored.Aggregate(1L, (a, b) => a * b);
+        var target = Writes is { } asked && asked.ByteCount(2 * columns) == 2 * asked.ByteCount(columns) ? asked : type;
+        if (target.Native == NativeKind.Float32)
+        {
+            return null;                                                    // the device's own float32: read as values
+        }
+
+        if (Used.Add(storedName))
+        {
+            Progress?.Read(storedName);
+        }
+
+        long start = Stopwatch.GetTimestamp();
+        byte[] bytes;
+        if (target == type)
+        {
+            bytes = reader.ReadStored(storedName);
+        }
+        else
+        {
+            bytes = new byte[target.ByteCount(values)];
+            target.Write(reader.Read(storedName), bytes);                   // written as the type asked, by its encoder
+        }
+
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        return Tensor.Stored(target, bytes, [.. stored], device);
     }
 
     // A tensor read as stored (no transposition, no adapter adding to it): its rows are the store's rows.

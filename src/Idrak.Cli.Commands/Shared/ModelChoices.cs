@@ -45,6 +45,16 @@ internal static class ModelChoices
     /// </summary>
     public const string MoeExpertsOption = "--moe-experts";
 
+    /// <summary>The option giving the type every projection's weight is written as (a built-in type's name, matched where the text comes in).</summary>
+    public const string WeightsOption = "--weights";
+
+    /// <summary>Help lines for <see cref="WeightsOption"/>, aligned as the commands' options are.</summary>
+    public const string WeightsHelp = """
+          -w, --weights TYPE     every projection's weight written as TYPE by its type's encoder (a built-in type's
+                                 name: q4_k, q8_0, bfloat16, float8_e4m3, ...; the alias's "weights"); kept as its
+                                 checkpoint stores it when not given
+    """;
+
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
 
@@ -83,13 +93,16 @@ internal static class ModelChoices
 
         /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts"), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
         public string? MoeExperts { get; init; }
+
+        /// <summary>The type every projection's weight is written as (<c>--weights</c>, or the alias's "weights"), or null: kept as stored.</summary>
+        public IElementType? Weights { get; init; }
     }
 
     /// <summary>The model named by <paramref name="name"/> with the command's options applied over the alias's settings.</summary>
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? kv = null, deviceLayers = null, moeExperts = null;
+        string? kv = null, deviceLayers = null, moeExperts = null, weights = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
@@ -98,6 +111,7 @@ internal static class ModelChoices
             kv = (string?)alias["kv"];
             deviceLayers = alias["device_layers"]?.ToString();
             moeExperts = (string?)alias["moe_experts"];
+            weights = (string?)alias["weights"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
             {
@@ -126,7 +140,27 @@ internal static class ModelChoices
             AdapterImages = tuned,
             DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
             MoeExperts = MoeExpertsOf(context.Option(MoeExpertsOption) ?? moeExperts),
+            Weights = WeightsOf(context.Option(WeightsOption) ?? weights),
         };
+    }
+
+    // The built-in type a person's text names: the list walked, each type's own name compared (no table of names).
+    private static IElementType? WeightsOf(string? name)
+    {
+        if (name is null)
+        {
+            return null;
+        }
+
+        foreach (var type in Idrak.BuiltInTypes.All.Types)
+        {
+            if (string.Equals(type.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return type;
+            }
+        }
+
+        throw new UsageException($"{WeightsOption} {name}: no built-in type has that name ({string.Join(", ", Idrak.BuiltInTypes.All.Types.Select(t => t.Name))}).");
     }
 
     // An expert placement's name, or null when none is given: picking it by name is not on the new design yet.
@@ -274,6 +308,7 @@ internal static class ModelChoices
                 AutoWeightsContext = choice.Context ?? DefaultContext,
                 DeviceLayers = choice.DeviceLayers,
                 ExpertPlacement = choice.MoeExperts,
+                Weights = choice.Weights,
             });
             progress.Clear();
         }

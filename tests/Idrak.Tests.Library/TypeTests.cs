@@ -3,7 +3,11 @@
 
 using System.Globalization;
 using Idrak;
+using System.Text.Json.Nodes;
 using Idrak.Abstraction.Types;
+using Idrak.Layers;
+using Idrak.Models;
+using Idrak.Text.Plugins.Qwen;
 
 // The type abstraction (IElementType): every type, the library's and any other, read and written through the interface's
 // defaults from its description alone. The proofs: alien descriptions (a generator of types no file uses) read bit for bit
@@ -20,6 +24,8 @@ internal abstract partial class Tests
         ("types: 32- and 64-bit machine formats written from float64 and read back without narrowing", TypesNoNarrowing),
         ("types: a type defined outside the library is read, written and multiplied through the interface alone", TypesOutside),
         ("types: a typed tensor holds its type's bytes and reads back through its type", TypesTypedTensors),
+        ("types: safetensors tensors read as their dtypes' types, their bytes as stored", TypesSafetensors),
+        ("types: a Qwen3 checkpoint in bfloat16 loads its projections and table as stored, or written as any type", TypesLoadTyped),
     ];
 
     // A type given by a description (the aliens below, and the type defined outside the library): the interface's two
@@ -492,4 +498,152 @@ internal abstract partial class Tests
         using var plain = Tensor.From([1f, 2f], [2], device);
         Check(plain.Type == F32.Type && !plain.Storage.Typed && plain.Storage.Description is null, "an operation's tensor is the device's own float32");
     }
+
+    // A safetensors file of float32 tensors written again with each tensor stored as `type` (safetensors' dtype `dtype`).
+    private static void RewriteSafetensors(string file, string dtype, IElementType type)
+    {
+        var bytes = File.ReadAllBytes(file);
+        long length = BitConverter.ToInt64(bytes, 0);
+        var header = JsonNode.Parse(bytes.AsSpan(8, (int)length))!.AsObject();
+        var rewritten = new JsonObject();
+        var data = new List<byte[]>();
+        long offset = 0;
+        foreach (var (name, node) in header)
+        {
+            if (name == "__metadata__")
+            {
+                rewritten[name] = node!.DeepClone();
+                continue;
+            }
+
+            var offsets = node!["data_offsets"]!.AsArray();
+            long begin = (long)offsets[0]!, end = (long)offsets[1]!;
+            var values = new float[(end - begin) / 4];
+            Buffer.BlockCopy(bytes, (int)(8 + length + begin), values, 0, (int)(end - begin));
+            var stored = new byte[type.ByteCount(values.Length)];
+            type.Write(values, stored);
+            data.Add(stored);
+            rewritten[name] = new JsonObject { ["dtype"] = dtype, ["shape"] = node["shape"]!.DeepClone(), ["data_offsets"] = new JsonArray(offset, offset + stored.Length) };
+            offset += stored.Length;
+        }
+
+        var json = System.Text.Encoding.UTF8.GetBytes(rewritten.ToJsonString());
+        using var output = File.Create(file);
+        output.Write(BitConverter.GetBytes((long)json.Length));
+        output.Write(json);
+        foreach (var part in data)
+        {
+            output.Write(part);
+        }
+    }
+
+    private static void TypesSafetensors(Device device)
+    {
+        CpuOnly(device);
+        string folder = TempFolder();
+        try
+        {
+            var random = new Random(8);
+            string file = Path.Combine(folder, "model.safetensors");
+            var values = Enumerable.Range(0, 64).Select(_ => (float)(random.NextDouble() * 4 - 2)).ToArray();
+            foreach (var (dtype, type) in new (string, IElementType)[] { ("BF16", BF16.Type), ("F16", F16.Type), ("F8_E4M3", F8E4M3.Type), ("I8", I8.Type), ("I64", I64.Type), ("BOOL", Bool.Type), ("F64", F64.Type) })
+            {
+                SafeTensorsWriter.Write(file, [("w", [8, 8], values)]);
+                RewriteSafetensors(file, dtype, type);
+                using var reader = SafeTensorsReader.Open(file);
+                var expected = new byte[type.ByteCount(values.Length)];
+                type.Write(values, expected);
+                var decoded = new float[values.Length];
+                type.Read(expected, decoded);
+                Check(reader.TypeOf("w") == type && SafeTensorsReader.TypeOfDtype(dtype) == type, $"{dtype}: the dtype's type");
+                Check(reader.ReadStored("w").AsSpan().SequenceEqual(expected), $"{dtype}: the bytes as stored");
+                Check(reader.Read("w").AsSpan().SequenceEqual(decoded), $"{dtype}: the values read through the type");
+                var rows = new float[16];
+                Check(reader.ReadRows("w", 3, 2, rows) && rows.AsSpan().SequenceEqual(decoded.AsSpan(24, 16)), $"{dtype}: rows read through the type");
+                Check(((Idrak.Abstraction.Formats.ITensorStore)reader).TypeOf("w") == type, $"{dtype}: the store presents the type");
+            }
+
+            Console.WriteLine("  BF16, F16, F8_E4M3, I8, I64, BOOL and F64 tensors read as their types: bytes as stored, values and rows through the type");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    private static void TypesLoadTyped(Device device)
+    {
+        CpuOnly(device);
+        var spec = TinyChatSpec();
+        string folder = WriteChatModel(spec);
+        try
+        {
+            string file = Path.Combine(folder, "model.safetensors");
+            RewriteSafetensors(file, "BF16", BF16.Type);
+            using var stored = SafeTensorsReader.Open(file);
+
+            using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Family = QwenArchitectures.Qwen3() });
+            Check(model.Tokenizer is not null && model.Tokenizer.Encode("hi").Count > 0, "the tokenizer read from tokenizer.json directly");
+            var linears = Linears(model.Network).ToList();
+            var projections = linears.Where(l => l.TiedTo is null).ToList();
+            Check(projections.Count == spec.Layers * 7 && projections.All(l => l.Stored is { } w && w.Type == BF16.Type && w.Storage.ByteLength == 2L * w.Size),
+                $"every projection kept as stored, bfloat16 (2 bytes a value): {string.Join(", ", projections.Select(l => l.ToString()))}");
+            var q = projections[0];
+            Check(q.Stored!.ToBytes().AsSpan().SequenceEqual(stored.ReadStored("model.layers.0.self_attn.q_proj.weight")), "the first projection's bytes are the file's");
+            var head = linears.Single(l => l.TiedTo is not null);
+            Check(head.TiedTo!.Weight.Type == BF16.Type, "the token table kept as stored; the tied head multiplies by it as stored");
+
+            // The stored projection and the table run: x · Wᵀ against the weight read through its type, a row looked up.
+            var random = new Random(2);
+            var xs = Enumerable.Range(0, 2 * spec.Dim).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
+            using var x = Tensor.From(xs, [2, spec.Dim], device);
+            var w = q.Stored.ToArray();
+            using (var y = q.Forward(x))
+            {
+                var got = y.ToArray();
+                int n = q.OutFeatures;
+                double worst = 0;
+                for (int i = 0; i < 2; i++)
+                {
+                    for (int j = 0; j < n; j++)
+                    {
+                        double reference = 0, scale = 0;
+                        for (int p = 0; p < spec.Dim; p++)
+                        {
+                            reference += (double)xs[i * spec.Dim + p] * w[j * spec.Dim + p];
+                            scale += Math.Abs((double)xs[i * spec.Dim + p] * w[j * spec.Dim + p]);
+                        }
+
+                        worst = Math.Max(worst, Math.Abs(got[i * n + j] - reference) / Math.Max(scale, 1e-30));
+                    }
+                }
+
+                Check(worst < 1e-5, $"the stored bfloat16 projection's product: worst error {worst} of the magnitudes");
+            }
+
+            using (var ids = Tensor.Indices([5, 0, 259], device))
+            using (var rows = head.TiedTo.Forward(ids))
+            {
+                var table = head.TiedTo.Weight.ToArray();
+                var got = rows.ToArray();
+                Check(rows.Shape.SequenceEqual([3, spec.Dim]) && got.AsSpan(0, spec.Dim).SequenceEqual(table.AsSpan(5 * spec.Dim, spec.Dim))
+                      && got.AsSpan(2 * spec.Dim, spec.Dim).SequenceEqual(table.AsSpan(259 * spec.Dim, spec.Dim)), "rows looked up through the table's type");
+            }
+
+            // Written as any type: every projection (and the table) by that type's encoder.
+            using var written = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Family = QwenArchitectures.Qwen3(), Weights = Idrak.Types.Q8_0.Type });
+            var writtenLinears = Linears(written.Network).ToList();
+            Check(writtenLinears.Where(l => l.TiedTo is null).All(l => l.Stored?.Type == Idrak.Types.Q8_0.Type) && writtenLinears.Single(l => l.TiedTo is not null).TiedTo!.Weight.Type == Idrak.Types.Q8_0.Type,
+                "written as q8_0 by its encoder");
+            Console.WriteLine($"  {projections.Count} projections and the table loaded as bfloat16 as stored (2 bytes a value, the file's bytes), run, looked up; written as q8_0 too");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // Every linear layer of a network, depth first.
+    private static IEnumerable<Linear> Linears(Module module) =>
+        module is Linear linear ? [linear] : module.Children().SelectMany(Linears);
 }
