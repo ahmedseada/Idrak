@@ -922,9 +922,13 @@ internal static class PdfFieldAppearances
         return lines.Count == 0 ? new SetLine(text, 0f, []) : new SetLine(lines[0].Text, lines[0].Width, lines[0].Runs);
     }
 
-    // The text setters were registered (DocumentTextSetters) and looked up by name: not on the new design yet.
+    // The text setters were registered (DocumentTextSetters) and looked up by name: not on the new design yet. The
+    // default, "shaped" (Idrak.Imaging's ShapedTextSetter), is reached directly; another name stops.
+    private static readonly Idrak.Imaging.ShapedTextSetter Shaped = new();
+
     private static IDocumentTextSetter SetterNamed(string name) =>
-        throw new NotSupportedException($"The text setter '{name}' by name is not on the new design yet.");
+        name.Equals(DocumentTextSetters.Shaped, StringComparison.OrdinalIgnoreCase) ? Shaped
+        : throw new NotSupportedException($"The text setter '{name}' by name is not on the new design yet.");
 
     // A text's lines wrapped to `width`: a simple font's words broken greedily at spaces (inside a word too long for a line);
     // faces' through the text setter.

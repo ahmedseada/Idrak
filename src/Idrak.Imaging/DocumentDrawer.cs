@@ -205,9 +205,17 @@ internal sealed class DrawContext(DocumentDrawOptions options)
     public DocumentDrawOptions Options { get; } = options;
 
     // The rasterizers and pens were registered (OutlineRasterizers, Pens) and picked by name: not on the new design yet.
-    private static IOutlineRasterizer RasterizerNamed(string name) => throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
+    // The defaults, the "coverage" rasterizer and the "ideal" pen, are reached directly; another name stops.
+    private static readonly CoverageRasterizer Coverage = new();
 
-    private static IPen PenNamed(string name) => throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+    private static readonly IdealPen Ideal = new();
+
+    private static IOutlineRasterizer RasterizerNamed(string name) =>
+        name.Equals(OutlineRasterizers.Coverage, StringComparison.OrdinalIgnoreCase) ? Coverage
+        : throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
+
+    private static IPen PenNamed(string name) =>
+        name.Equals(Pens.Ideal, StringComparison.OrdinalIgnoreCase) ? Ideal : throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
 
     public IOutlineRasterizer Rasterizer { get; } = RasterizerNamed(options.Rasterizer);
 

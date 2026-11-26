@@ -25,10 +25,17 @@ internal sealed class PdfWriterFont
     public const string ProgramWriter = "truetype";
 
     // The reading orders and the font writers were registered (ReadingOrders, FontWriters) and looked up by name: not on
-    // the new design yet.
-    private static IReadingOrder OrderNamed(string name) => throw new NotSupportedException($"The reading order '{name}' by name is not on the new design yet.");
+    // the new design yet. The ones the writer uses are reached directly: the "bidi" order (Idrak.Imaging's
+    // BidiReadingOrder) and the "truetype" font writer (Idrak.Imaging's TrueTypeWriter); another name stops.
+    private static readonly Idrak.Imaging.Shaping.BidiReadingOrder Bidi = new();
 
-    private static IFontWriter WriterNamed(string name) => throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
+    private static readonly Idrak.Imaging.TrueTypeWriter TrueType = new();
+
+    private static IReadingOrder OrderNamed(string name) =>
+        name.Equals(ReadingOrders.Bidi, StringComparison.OrdinalIgnoreCase) ? Bidi : throw new NotSupportedException($"The reading order '{name}' by name is not on the new design yet.");
+
+    private static IFontWriter WriterNamed(string name) =>
+        name.Equals(ProgramWriter, StringComparison.OrdinalIgnoreCase) ? TrueType : throw new NotSupportedException($"The font writer '{name}' by name is not on the new design yet.");
 
     // How far ahead a glyph looks for its character when aligning a run.
     private const int Window = 8;

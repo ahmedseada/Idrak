@@ -211,8 +211,17 @@ internal sealed partial class PdfDocument : IDocument
         }
     }
 
-    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) =>
-        throw new NotSupportedException($"Page {index}: drawing through the page drawers by name (DocumentPageDrawers) is not on the new design yet.");
+    // The page drawers were registered (DocumentPageDrawers) and picked by the options' name: not on the new design yet.
+    // The default, "coverage" (Idrak.Imaging's CoverageDocumentDrawer), is reached directly; another name stops.
+    private static readonly Idrak.Imaging.CoverageDocumentDrawer Coverage = new();
+
+    public DocumentDrawing DrawPage(int index, DocumentDrawOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return options.Drawer.Equals(DocumentPageDrawers.Coverage, StringComparison.OrdinalIgnoreCase)
+            ? Coverage.Draw(ReadPage(index, DocumentPageDrawers.PartsFor(options)), options)
+            : throw new NotSupportedException($"Page {index}: the page drawer '{options.Drawer}' by name (DocumentPageDrawers) is not on the new design yet.");
+    }
 
     /// <summary>
     /// Opens the document <paramref name="stream"/> holds (an encrypted one with <see cref="DocumentOptions.Password"/>, as

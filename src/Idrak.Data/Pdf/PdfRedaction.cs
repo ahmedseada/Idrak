@@ -1348,10 +1348,6 @@ internal sealed partial class PdfContentReader
         return Math.Min(hi, areaHi) - Math.Max(lo, areaLo) > Math.Max(1e-6, extent * 0.01);
     }
 
-    // A stored image was decoded through the image codecs by name (DocumentImage.Decode): not on the new design yet.
-    private static ImageData Decode(DocumentImage image) =>
-        throw new NotSupportedException($"A stored document image: decoding it through the image codecs is not on the new design yet.");
-
     // An image just drawn (`name`, or inline when null): drawn from a copy whose pixels with their centre inside an area
     // take its fill (an image mask's are left unpainted), its mask kept with its own pixels under an area made opaque;
     // false when no pixel of it or its mask lies inside an area (or it cannot be decoded: drawn as it was).
@@ -1396,7 +1392,7 @@ internal sealed partial class PdfContentReader
                         ImageData decoded;
                         try
                         {
-                            decoded = Decode(image);
+                            decoded = image.Decode();
                         }
                         catch (Exception e) when (e is NotSupportedException or InvalidDataException)
                         {
@@ -1466,7 +1462,7 @@ internal sealed partial class PdfContentReader
         {
             try
             {
-                var decoded = Decode(image);
+                var decoded = image.Decode();
                 (pixels, channels) = (decoded.Pixels, decoded.Channels);
             }
             catch (Exception e) when (e is NotSupportedException or InvalidDataException)

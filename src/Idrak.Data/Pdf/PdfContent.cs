@@ -1422,8 +1422,13 @@ internal sealed partial class PdfContentReader : IDisposable
     }
 
     // The text layouts were registered (DocumentTextLayouts) and picked by the options' name: not on the new design yet.
+    // The default, "lines" with the bidirectional reading order (Idrak.Imaging's BidiReadingOrder, the reading order's
+    // default), is reached directly; another layout by name ("content", "tagged", one of an app's) stops.
+    private static readonly LinesLayout Lines = new(new Idrak.Imaging.Shaping.BidiReadingOrder());
+
     private static DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options) =>
-        throw new NotSupportedException($"The text layout '{options.Layout}' by name is not on the new design yet.");
+        options.Layout.Equals(DocumentTextLayouts.Lines, StringComparison.OrdinalIgnoreCase) ? Lines.Arrange(runs, width, height, options)
+        : throw new NotSupportedException($"The text layout '{options.Layout}' by name is not on the new design yet.");
 
     /// <summary>
     /// The page's lines and text through the layout the options name. The layout is given the runs as pieces in the frame

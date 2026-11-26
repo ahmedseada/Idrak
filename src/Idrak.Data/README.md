@@ -1,6 +1,6 @@
 # Idrak.Data
 
-Datasets for Idrak (no dependencies beyond Idrak): read JSON Lines, JSON, CSV, text and Parquet files, archives and compressed files; download and cache from URLs, Hugging Face, GitHub, Kaggle and Zenodo; filter, map, shuffle, deduplicate, split, mix and turn rows into chat transcripts for fine-tuning, or columns into training samples (`TableSamples`).
+Datasets for Idrak (no dependencies beyond Idrak and Idrak.Imaging): read JSON Lines, JSON, CSV, text and Parquet files, archives and compressed files; download and cache from URLs, Hugging Face, GitHub, Kaggle and Zenodo; filter, map, shuffle, deduplicate, split, mix and turn rows into chat transcripts for fine-tuning, or columns into training samples (`TableSamples`).
 
 And documents: PDF read, written, edited, signed and drawn, in C# with no outside program or package; forms,
 annotations, bookmarks and redaction (below). Office formats (Word, Excel, PowerPoint) are to come as a plug-in in

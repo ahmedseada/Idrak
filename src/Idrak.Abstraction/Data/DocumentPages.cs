@@ -508,8 +508,8 @@ public sealed class DocumentImage
     /// <param name="pixelHeight">Its height in pixels.</param>
     /// <param name="bytes">Reads its stored bytes (called on each <see cref="Bytes"/>; thread-safe).</param>
     /// <param name="decode">
-    /// Decodes it when the format does so itself (raw pixels, a colour space to convert); null to decode the stored bytes
-    /// with the image codec named as the encoding.
+    /// Decodes it when the format does so itself (raw pixels, a colour space to convert); null when it gives no decoder
+    /// (<see cref="Decode"/> then stops: an image codec by the encoding's name is not on the new design yet).
     /// </param>
     /// <param name="mask">Reads its mask as grey (see <see cref="Mask"/>), or null when it has none; null when the format reads none.</param>
     public DocumentImage(string encoding, int pixelWidth, int pixelHeight, Func<ReadOnlyMemory<byte>> bytes, Func<ImageData>? decode = null, Func<ImageData?>? mask = null)
@@ -562,6 +562,16 @@ public sealed class DocumentImage
 
     /// <summary>The stored bytes, read now.</summary>
     public ReadOnlyMemory<byte> Bytes() => _bytes();
+
+    /// <summary>The pixels, as the document's format decodes them (raw pixels, a colour space to convert).</summary>
+    /// <exception cref="NotSupportedException">The format gives no decoder, or the image is in an encoding an image codec
+    /// reads (JPEG, JPEG 2000, CCITT, JBIG2): an image codec picked by the encoding's name is not on the new design yet
+    /// (<see cref="Bytes"/> gives the data as stored).</exception>
+    /// <exception cref="InvalidDataException">The stored bytes are damaged.</exception>
+    public ImageData Decode() =>
+        _decode is not null ? _decode()
+        : string.Equals(Encoding, Raw, StringComparison.OrdinalIgnoreCase) ? throw new NotSupportedException($"A {Raw} image is decoded by its document's format, and this one gives no decoder.")
+        : throw new NotSupportedException($"An image in '{Encoding}': an image codec by the encoding's name is not on the new design yet (DocumentImage.Bytes gives its data as stored).");
 
     /// <summary>
     /// The image's mask (a stencil, a soft mask or a colour key) as grey at its own size (spread over the image's place

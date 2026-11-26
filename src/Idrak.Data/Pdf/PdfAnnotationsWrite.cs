@@ -30,10 +30,6 @@ internal sealed class PdfAnnotationDraft
     /// <summary>Its page's points to the page's user space.</summary>
     public PdfMatrix ToUser { get; }
 
-    // A stored image was decoded through the image codecs by name (DocumentImage.Decode): not on the new design yet.
-    private static ImageData Decode(DocumentImage image) =>
-        throw new NotSupportedException($"A stored document image: decoding it through the image codecs is not on the new design yet.");
-
     /// <summary>
     /// <paramref name="annotation"/> for page <paramref name="index"/> of <paramref name="width"/> x
     /// <paramref name="height"/> points (<paramref name="frame"/> from its points to its user space; null: a new page's),
@@ -71,7 +67,7 @@ internal sealed class PdfAnnotationDraft
             {
                 if (picture.Box is { Width: > 0, Height: > 0 } placed)
                 {
-                    builder.Image(Decode(picture), placed, DocumentImageEncoding.Flate);
+                    builder.Image(picture.Decode(), placed, DocumentImageEncoding.Flate);
                 }
             }
 

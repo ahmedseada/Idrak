@@ -58,19 +58,26 @@ public static class DocumentTextLayouts
     public const string Tagged = "tagged";
 }
 
-// "lines": runs grouped into lines by baseline and size; each line's direction from its first strong character (the
-// reading order's RightToLeft over its runs in content order), a line with none taking the page's; its runs ordered by
-// their places in that direction, a space where the gap between two passes the word gap; the text met that way (the
-// columns, read in the line's direction) put in logical order by the reading order. Runs without a place (an empty box)
-// are lines of their own, in content order, after the placed ones. It allocates what it gives back (the lines, each
-// line's runs and text, the page's text) and the strings the reading order is asked about; its working space (the runs'
-// sort keys, the lines' starts, the text being built) comes from the shared array pools.
-internal sealed class LinesLayout(IReadingOrder order) : IDocumentTextLayout
+/// <summary>
+/// "lines" (<see cref="DocumentTextLayouts.Lines"/>), the default text layout: runs grouped into lines by baseline and
+/// size; each line's direction from its first strong character (the reading order's RightToLeft over its runs in content
+/// order), a line with none taking the page's; its runs ordered by their places in that direction, a space where the gap
+/// between two passes the word gap; the text met that way (the columns, read in the line's direction) put in logical order
+/// by the reading order. Runs without a place (an empty box) are lines of their own, in content order, after the placed
+/// ones. It allocates what it gives back (the lines, each line's runs and text, the page's text) and the strings the
+/// reading order is asked about; its working space (the runs' sort keys, the lines' starts, the text being built) comes
+/// from the shared array pools. Safe to use from several threads at once.
+/// </summary>
+/// <param name="order">The reading order a line's text is put in logical order by (the library's default: Idrak.Imaging's "bidi").</param>
+public sealed class LinesLayout(IReadingOrder order) : IDocumentTextLayout
 {
+    /// <summary>"lines".</summary>
     public string Name => DocumentTextLayouts.Lines;
 
+    /// <summary>One line on what it does.</summary>
     public string Summary => "runs grouped into lines by baseline and size, ordered by their places in each line's direction (its first strong character), words split at gaps, then the reading order";
 
+    /// <inheritdoc/>
     public DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options)
     {
         ArgumentNullException.ThrowIfNull(runs);

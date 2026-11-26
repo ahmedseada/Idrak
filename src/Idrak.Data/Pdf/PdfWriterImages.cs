@@ -29,8 +29,12 @@ internal static class PdfWriterImages
     /// <summary>The name of the image encoder JPEG images are written with.</summary>
     public const string JpegEncoder = "jpeg";
 
-    // The image encoders were registered (ImageEncoders) and looked up by name: not on the new design yet.
-    private static IImageEncoder EncoderNamed(string name) => throw new NotSupportedException($"The image encoder '{name}' by name is not on the new design yet.");
+    // The image encoders were registered (ImageEncoders) and looked up by name: not on the new design yet. The one JPEG
+    // images are written with, "jpeg" (Idrak.Imaging's JpegImageEncoder), is reached directly; another name stops.
+    private static readonly Idrak.Imaging.JpegImageEncoder Jpeg = new();
+
+    private static IImageEncoder EncoderNamed(string name) =>
+        name.Equals(JpegEncoder, StringComparison.OrdinalIgnoreCase) ? Jpeg : throw new NotSupportedException($"The image encoder '{name}' by name is not on the new design yet.");
 
     // The predictor is kept when its rows' residuals sum to less than this share of the plain rows' (a row's best of five
     // filters is a little smaller than its plain sum even on noise, by chance: a fifth smaller is a predictor that pays).
@@ -42,7 +46,6 @@ internal static class PdfWriterImages
     /// <paramref name="softMask"/> above 0 names the grey image object it shows through. The encoding written.
     /// </summary>
     /// <exception cref="ArgumentException">The image is neither grey nor RGB.</exception>
-    /// <exception cref="NotSupportedException">JPEG was asked: the image encoder "jpeg" by name is not on the new design yet.</exception>
     public static DocumentImageEncoding Write(PdfFileWriter file, int number, ImageData image, DocumentImageEncoding requested, DocumentWriteOptions options, int softMask = 0)
     {
         if (image.Channels is not (1 or 3))
