@@ -2,8 +2,9 @@
 
 Every operation of the device contract is a method `NameKernel` on `Backend`
 (src/Idrak.Abstraction/Devices/Backend.cs, then the partial files in SOURCES): the device's own kernel. Most are
-virtual, with a default body that is a composition of other operations, or none (it returns false, or throws that
-the device has no kernel for it). The operations of a capability interface (plan 33: IRecurrentKernels, ...) are not virtual: their body starts by forwarding to the interface,
+virtual, with a default body that is the host fallback (a HostCall running the CPU backend's own operation on the
+storages mirrored to the CPU), a composition of other operations, or none (it returns false, or throws that the device has
+no kernel for it). The operations of a capability interface (plan 33: IRecurrentKernels, ...) are not virtual: their body starts by forwarding to the interface,
 `=> _field is { } own && own.Name(...);` (no kernel otherwise) or `if (_field is { } own) { return own.Name(...); }`
 followed by the default. From those declarations and their documentation this script writes
 
@@ -140,10 +141,12 @@ def capability(text):
 
 
 def fallback(text):
-    """What a default body does: KernelSource.None (false, zero or no kernel) or Composed."""
+    """What a default body does: KernelSource.None (false, zero or no kernel), Host (a HostCall) or Composed."""
     if text.startswith("=>"):
         return "None" if re.fullmatch(r"=>\s*(false|0|throw NoKernel\(nameof\(\w+\)\))\s*;", text) else "Composed"
-    return "None" if re.fullmatch(r"\{\s*throw NoKernel\(nameof\(\w+\)\);\s*\}", text) else "Composed"
+    if re.fullmatch(r"\{\s*throw NoKernel\(nameof\(\w+\)\);\s*\}", text):
+        return "None"
+    return "Host" if "new HostCall(" in text else "Composed"
 
 
 def operations(source):
@@ -307,12 +310,14 @@ def generate():
     o.append("}")
 
     d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]
-    d.append("// Name(...) runs the device's own NameKernel. An operation the device has no kernel for runs its default: a composition")
-    d.append("// of other operations, or none (false, or it throws that the device has no kernel for it).")
+    d.append("// Name(...) runs the device's own NameKernel. An operation the device has no kernel for runs its default: the host")
+    d.append("// fallback (the CPU backend's own operation on the storages mirrored to the CPU, HostCall), a composition of other")
+    d.append("// operations, or none (false, or it throws that the device has no kernel for it).")
     d.append("// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.")
     d.append("// On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a")
-    d.append("// KernelUnavailableException) a refused kernel falls back: a composed operation runs NameComposed (a copy of its")
-    d.append("// default body), one with no kernel returns its \"none\" value so the caller takes its own path (a void one rethrows);")
+    d.append("// KernelUnavailableException) a refused kernel falls back: an operation with a host fallback runs NameOnHost, a")
+    d.append("// composed one NameComposed (each a copy of its default body), one with no kernel returns its \"none\" value so the")
+    d.append("// caller takes its own path (a void one rethrows);")
     d.append("// other errors reach the caller. Its calls take a third path, NameGuarded (the device's kernel in a try region, free")
     d.append("// until it throws), straight from Name(...) when nothing else takes them off the fast path (its slots are")
     d.append("// s_guardedKernels), else from NameScoped; which operations the device owns is looked up only when a kernel is")
@@ -351,8 +356,8 @@ def generate():
         # A composed operation falls back to a copy of its default body, one with no kernel otherwise to its "none".
         ret = "" if returns == "void" else "return "
         composed = default == "Composed"
-        fallback_call = f"{op}Composed({arguments})" if composed else "default"
-        where = "its composed path" if composed else "the caller's path"
+        fallback_call = f"{op}OnHost({arguments})" if default == "Host" else f"{op}Composed({arguments})" if composed else "default"
+        where = "the host" if default == "Host" else "its composed path" if composed else "the caller's path"
         d.append(f"        Traced(OperationIndex.{op});")
         choose(d, returns, guarded, own, "        ", last=True)
         d.append("    }")
@@ -378,7 +383,13 @@ def generate():
             d.append(f"            {'' if returns == 'void' else 'return '}{fallback_call};")
             d.append("        }")
             d.append("    }")
-        if default == "Composed":
+        if default == "Host":
+            # The default body of NameKernel: the host fallback a refused kernel of the device's own falls back to.
+            d.append("")
+            d.append(f"    // The host fallback of {op} (the default body of {method}Kernel), for a refused kernel (BuildsKernelsWhenUsed).")
+            d.append(f"    private {returns} {op}OnHost({plain})")
+            d.extend(f"    {line}" if j == 0 else line.rstrip() for j, line in enumerate(bodies[op].split("\n")))
+        elif default == "Composed":
             # The default body of NameKernel: what a refused kernel of the device's own falls back to.
             d.append("")
             d.append(f"    // The composed path of {op} (the default body of {method}Kernel), for a refused kernel (BuildsKernelsWhenUsed).")

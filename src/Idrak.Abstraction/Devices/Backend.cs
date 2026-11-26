@@ -945,73 +945,161 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     public virtual IReadOnlyList<LiveStorage> LiveStorages(Func<Storage, string?>? name = null) => StorageTracking.List(this, name);
 
     /// <summary>y[i] = value for i &lt; n.</summary>
-    public virtual void FillKernel(Storage y, int n, float value) => throw NoKernel(nameof(Fill));
+    public virtual void FillKernel(Storage y, int n, float value)
+    {
+        using var h = new HostCall(this, nameof(Fill));
+        Cpu.CpuBackend.Instance.Fill(h[y], n, value);
+    }
 
     /// <summary>y[i] = x[i] for i &lt; n (a copy within the device).</summary>
-    public virtual void Copy(Storage x, Storage y, int n) => throw NoKernel(nameof(Copy));
+    public virtual void Copy(Storage x, Storage y, int n)
+    {
+        using var h = new HostCall(this, nameof(Copy));
+        Cpu.CpuBackend.Instance.Copy(h[x], h[y], n);
+    }
 
     /// <summary>y = op(x).</summary>
-    public virtual void UnaryKernel(UnaryOp op, Storage x, Storage y, int n) => throw NoKernel(nameof(Unary));
+    public virtual void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
+    {
+        using var h = new HostCall(this, nameof(Unary));
+        Cpu.CpuBackend.Instance.Unary(op, h[x], h[y], n);
+    }
 
     /// <summary>dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.</summary>
-    public virtual void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n) => throw NoKernel(nameof(UnaryBackward));
+    public virtual void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
+        using var h = new HostCall(this, nameof(UnaryBackward));
+        Cpu.CpuBackend.Instance.UnaryBackward(op, h[x], h[y], h[dy], h[dx], n);
+    }
 
     /// <summary>c = a op b, element-wise.</summary>
-    public virtual void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n) => throw NoKernel(nameof(Binary));
+    public virtual void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, nameof(Binary));
+        Cpu.CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
+    }
 
     /// <summary>
     /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
     /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
     /// </summary>
-    public virtual void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n) => throw NoKernel(nameof(ExtremumBackward));
+    public virtual void ExtremumBackwardKernel(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, nameof(ExtremumBackward));
+        Cpu.CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
+    }
 
     /// <summary>y = x^exponent, element-wise.</summary>
-    public virtual void PowKernel(Storage x, Storage y, int n, float exponent) => throw NoKernel(nameof(Pow));
+    public virtual void PowKernel(Storage x, Storage y, int n, float exponent)
+    {
+        using var h = new HostCall(this, nameof(Pow));
+        Cpu.CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
+    }
 
     /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
-    public virtual void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent) => throw NoKernel(nameof(PowBackward));
+    public virtual void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        using var h = new HostCall(this, nameof(PowBackward));
+        Cpu.CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
+    }
 
     /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
-    public virtual void ClampKernel(Storage x, Storage y, int n, float min, float max) => throw NoKernel(nameof(Clamp));
+    public virtual void ClampKernel(Storage x, Storage y, int n, float min, float max)
+    {
+        using var h = new HostCall(this, nameof(Clamp));
+        Cpu.CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
+    }
 
     /// <summary>dx += dy where min ≤ x ≤ max.</summary>
-    public virtual void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max) => throw NoKernel(nameof(ClampBackward));
+    public virtual void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        using var h = new HostCall(this, nameof(ClampBackward));
+        Cpu.CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
+    }
 
     /// <summary>y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).</summary>
-    public virtual void LeakyReluKernel(Storage x, Storage y, int n, float slope) => throw NoKernel(nameof(LeakyRelu));
+    public virtual void LeakyReluKernel(Storage x, Storage y, int n, float slope)
+    {
+        using var h = new HostCall(this, nameof(LeakyRelu));
+        Cpu.CpuBackend.Instance.LeakyRelu(h[x], h[y], n, slope);
+    }
 
     /// <summary>dx += dy where x &gt; 0, slope · dy elsewhere.</summary>
-    public virtual void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope) => throw NoKernel(nameof(LeakyReluBackward));
+    public virtual void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var h = new HostCall(this, nameof(LeakyReluBackward));
+        Cpu.CpuBackend.Instance.LeakyReluBackward(h[x], h[dy], h[dx], n, slope);
+    }
 
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
-    public virtual void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n) => throw NoKernel(nameof(Where));
+    public virtual void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        using var h = new HostCall(this, nameof(Where));
+        Cpu.CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
+    }
 
     /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
-    public virtual void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n) => throw NoKernel(nameof(WhereBackward));
+    public virtual void WhereBackwardKernel(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, nameof(WhereBackward));
+        Cpu.CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
+    }
 
     /// <summary>y = alpha * x + beta.</summary>
-    public virtual void AffineKernel(Storage x, Storage y, int n, float alpha, float beta) => throw NoKernel(nameof(Affine));
+    public virtual void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        using var h = new HostCall(this, nameof(Affine));
+        Cpu.CpuBackend.Instance.Affine(h[x], h[y], n, alpha, beta);
+    }
 
     /// <summary>y += alpha * x.</summary>
-    public virtual void AxpyKernel(Storage x, Storage y, int n, float alpha) => throw NoKernel(nameof(Axpy));
+    public virtual void AxpyKernel(Storage x, Storage y, int n, float alpha)
+    {
+        using var h = new HostCall(this, nameof(Axpy));
+        Cpu.CpuBackend.Instance.Axpy(h[x], h[y], n, alpha);
+    }
 
     /// <summary>c += a * b, element-wise.</summary>
-    public virtual void MulAddKernel(Storage a, Storage b, Storage c, int n) => throw NoKernel(nameof(MulAdd));
+    public virtual void MulAddKernel(Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, nameof(MulAdd));
+        Cpu.CpuBackend.Instance.MulAdd(h[a], h[b], h[c], n);
+    }
 
     /// <summary>c[r, j] = a[r, j] + v[j].</summary>
-    public virtual void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols) => throw NoKernel(nameof(AddRowVector));
+    public virtual void AddRowVectorKernel(Storage a, Storage v, Storage c, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(AddRowVector));
+        Cpu.CpuBackend.Instance.AddRowVector(h[a], h[v], h[c], rows, cols);
+    }
 
     /// <summary>y[j] += sum over r of x[r, j].</summary>
-    public virtual void SumRowsKernel(Storage x, Storage y, int rows, int cols) => throw NoKernel(nameof(SumRows));
+    public virtual void SumRowsKernel(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(SumRows));
+        Cpu.CpuBackend.Instance.SumRows(h[x], h[y], rows, cols);
+    }
 
     /// <summary>result[0] = scale * sum(x).</summary>
-    public virtual void SumKernel(Storage x, Storage result, int n, float scale) => throw NoKernel(nameof(Sum));
+    public virtual void SumKernel(Storage x, Storage result, int n, float scale)
+    {
+        using var h = new HostCall(this, nameof(Sum));
+        Cpu.CpuBackend.Instance.Sum(h[x], h[result], n, scale);
+    }
 
     /// <summary>y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).</summary>
-    public virtual void AxpyAtKernel(Storage x, Storage y, int offset, float alpha) => throw NoKernel(nameof(AxpyAt));
+    public virtual void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
+    {
+        using var h = new HostCall(this, nameof(AxpyAt));
+        Cpu.CpuBackend.Instance.AxpyAt(h[x], h[y], offset, alpha);
+    }
 
     /// <summary>y[i] += scale * s[0].</summary>
-    public virtual void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale) => throw NoKernel(nameof(AddBroadcastScalar));
+    public virtual void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
+    {
+        using var h = new HostCall(this, nameof(AddBroadcastScalar));
+        Cpu.CpuBackend.Instance.AddBroadcastScalar(h[s], h[y], n, scale);
+    }
 
     /// <summary>
     /// c[m, n] = op(a) * op(b) + beta * c, where op(a) is [m, k] and op(b) is [k, n].
@@ -1043,7 +1131,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     public virtual bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k) => false;
 
     /// <summary>y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).</summary>
-    public virtual void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols) => throw NoKernel(nameof(SumColumns));
+    public virtual void SumColumnsKernel(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(SumColumns));
+        Cpu.CpuBackend.Instance.SumColumns(h[x], offset, ld, h[y], rows, cols);
+    }
 
     /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
     public virtual void AddDropoutKernel(Storage residual, Storage x, Storage output, int n, float p, uint seed)
@@ -1053,18 +1145,34 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     }
 
     /// <summary><see cref="MatMul"/> for <paramref name="batch"/> independent, contiguous matrix triples.</summary>
-    public virtual void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta) => throw NoKernel(nameof(BatchedMatMul));
+    public virtual void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var h = new HostCall(this, nameof(BatchedMatMul));
+        Cpu.CpuBackend.Instance.BatchedMatMul(h[a], h[b], h[c], batch, m, n, k, transA, transB, beta);
+    }
 
     /// <summary>Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).</summary>
-    public virtual void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log) => throw NoKernel(nameof(Softmax));
+    public virtual void SoftmaxKernel(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, nameof(Softmax));
+        Cpu.CpuBackend.Instance.Softmax(h[x], h[y], rows, cols, log);
+    }
 
     /// <summary>
     /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
     /// </summary>
-    public virtual void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log) => throw NoKernel(nameof(SoftmaxBackward));
+    public virtual void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, nameof(SoftmaxBackward));
+        Cpu.CpuBackend.Instance.SoftmaxBackward(h[y], h[dy], h[dx], rows, cols, log);
+    }
 
     /// <summary>y[r] = index of the largest element of row r.</summary>
-    public virtual void ArgMaxKernel(Storage x, Storage y, int rows, int cols) => throw NoKernel(nameof(ArgMax));
+    public virtual void ArgMaxKernel(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(ArgMax));
+        Cpu.CpuBackend.Instance.ArgMax(h[x], h[y], rows, cols);
+    }
 
     /// <summary>
     /// The best k log-probabilities of each row of x [rows, cols] and their columns (a beam search's candidates, read back
@@ -1075,69 +1183,137 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// NaN or a +∞ one has a NaN shift, so none. The CPU sums in double (its shift rounded to float32 once); a device's sum
     /// may differ from it by float rounding.
     /// </summary>
-    public virtual void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k) => throw NoKernel(nameof(LogSoftmaxTopK));
+    public virtual void LogSoftmaxTopKKernel(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var h = new HostCall(this, nameof(LogSoftmaxTopK));
+        Cpu.CpuBackend.Instance.LogSoftmaxTopK(h[x], h[values], h[indices], rows, cols, k);
+    }
 
     /// <summary>
     /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
     /// otherwise argmax(p) == argmax(t).
     /// </summary>
-    public virtual void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold) => throw NoKernel(nameof(ClassMatch));
+    public virtual void ClassMatchKernel(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
+        using var h = new HostCall(this, nameof(ClassMatch));
+        Cpu.CpuBackend.Instance.ClassMatch(h[predictions], h[targets], h[y], rows, cols, threshold);
+    }
 
     // Grouped normalization. Data is viewed as [outer, groups, inner]; group g holds the M = outer * inner
     // elements x[o, g, i]. BatchNorm uses groups = channels; LayerNorm uses outer = 1, groups = rows, inner = features.
 
     /// <summary>Per-group mean, (biased) variance and 1 / sqrt(variance + eps).</summary>
-    public virtual void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps) => throw NoKernel(nameof(NormStats));
+    public virtual void NormStatsKernel(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        using var h = new HostCall(this, nameof(NormStats));
+        Cpu.CpuBackend.Instance.NormStats(h[x], h[mean], h[variance], h[invStd], outer, groups, inner, eps);
+    }
 
     /// <summary>y = (x - mean[g]) * invStd[g].</summary>
-    public virtual void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner) => throw NoKernel(nameof(NormApply));
+    public virtual void NormApplyKernel(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(NormApply));
+        Cpu.CpuBackend.Instance.NormApply(h[x], h[mean], h[invStd], h[y], outer, groups, inner);
+    }
 
     /// <summary>dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).</summary>
-    public virtual void NormBackwardKernel(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner) => throw NoKernel(nameof(NormBackward));
+    public virtual void NormBackwardKernel(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(NormBackward));
+        Cpu.CpuBackend.Instance.NormBackward(h[dxhat], h[xhat], h[sum1], h[sum2], h[invStd], h[dx], outer, groups, inner);
+    }
 
     /// <summary>
     /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
     /// </summary>
-    public virtual void GroupScaleShiftKernel(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate) => throw NoKernel(nameof(GroupScaleShift));
+    public virtual void GroupScaleShiftKernel(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(GroupScaleShift));
+        Cpu.CpuBackend.Instance.GroupScaleShift(h[x], h.Maybe(scale), h.Maybe(shift), h[y], n, groups, inner, accumulate);
+    }
 
     /// <summary>sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.</summary>
-    public virtual void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner) => throw NoKernel(nameof(GroupReduce));
+    public virtual void GroupReduceKernel(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(GroupReduce));
+        Cpu.CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
+    }
 
     /// <summary>
     /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
     /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
     /// </summary>
-    public virtual void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns) => throw NoKernel(nameof(WeightNorm));
+    public virtual void WeightNormKernel(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var h = new HostCall(this, nameof(WeightNorm));
+        Cpu.CpuBackend.Instance.WeightNorm(h[gain], h[direction], h[weight], rows, columns);
+    }
 
     /// <summary>
     /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
     /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
     /// </summary>
-    public virtual void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns) => throw NoKernel(nameof(WeightNormBackward));
+    public virtual void WeightNormBackwardKernel(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var h = new HostCall(this, nameof(WeightNormBackward));
+        Cpu.CpuBackend.Instance.WeightNormBackward(h[gain], h[direction], h[dweight], h.Maybe(dgain), h.Maybe(ddirection), rows, columns);
+    }
 
     /// <summary>y = 1 / sqrt(x + eps).</summary>
-    public virtual void InvSqrtKernel(Storage x, Storage y, int n, float eps) => throw NoKernel(nameof(InvSqrt));
+    public virtual void InvSqrtKernel(Storage x, Storage y, int n, float eps)
+    {
+        using var h = new HostCall(this, nameof(InvSqrt));
+        Cpu.CpuBackend.Instance.InvSqrt(h[x], h[y], n, eps);
+    }
 
     /// <summary>Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.</summary>
-    public virtual void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary) => throw NoKernel(nameof(Gather));
+    public virtual void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, nameof(Gather));
+        Cpu.CpuBackend.Instance.Gather(h[table], h[indices], h[y], count, dim, vocabulary);
+    }
 
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
-    public virtual void OneHotKernel(Storage indices, Storage y, int count, int classes) => throw NoKernel(nameof(OneHot));
+    public virtual void OneHotKernel(Storage indices, Storage y, int count, int classes)
+    {
+        using var h = new HostCall(this, nameof(OneHot));
+        Cpu.CpuBackend.Instance.OneHot(h[indices], h[y], count, classes);
+    }
 
     /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
-    public virtual void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary) => throw NoKernel(nameof(ScatterAdd));
+    public virtual void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, nameof(ScatterAdd));
+        Cpu.CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
+    }
 
     /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).</summary>
-    public virtual void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g) => throw NoKernel(nameof(Im2Col));
+    public virtual void Im2ColKernel(Storage x, Storage cols, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(Im2Col));
+        Cpu.CpuBackend.Instance.Im2Col(h[x], h[cols], g);
+    }
 
     /// <summary>The adjoint of <see cref="Im2Col"/>: dx += fold(dcols).</summary>
-    public virtual void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g) => throw NoKernel(nameof(Col2Im));
+    public virtual void Col2ImKernel(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(Col2Im));
+        Cpu.CpuBackend.Instance.Col2Im(h[dcols], h[dx], g);
+    }
 
     /// <summary>Max pooling; argmax receives the flat input index of each maximum (as raw int bits).</summary>
-    public virtual void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g) => throw NoKernel(nameof(MaxPool));
+    public virtual void MaxPoolKernel(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(MaxPool));
+        Cpu.CpuBackend.Instance.MaxPool(h[x], h[y], h[argmax], g);
+    }
 
     /// <summary>dx[argmax[i]] += dy[i].</summary>
-    public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count) => throw NoKernel(nameof(MaxPoolBackward));
+    public virtual void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        using var h = new HostCall(this, nameof(MaxPoolBackward));
+        Cpu.CpuBackend.Instance.MaxPoolBackward(h[dy], h[argmax], h[dx], count);
+    }
 
     /// <summary>
     /// dx[argmax[i]] += dy[i] for the windows of <paramref name="g"/> (count = N * C * OH * OW): the same as the overload
@@ -1178,13 +1354,21 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
     /// window covers (at least 1).
     /// </summary>
-    public virtual void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight) => throw NoKernel(nameof(AvgPool));
+    public virtual void AvgPoolKernel(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, nameof(AvgPool));
+        Cpu.CpuBackend.Instance.AvgPool(h[x], h[y], g, countIncludePad, padBottom, padRight);
+    }
 
     /// <summary>
     /// The gradient of <see cref="AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
     /// cover the element, in window order (the divisor as the forward pass takes it).
     /// </summary>
-    public virtual void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight) => throw NoKernel(nameof(AvgPoolBackward));
+    public virtual void AvgPoolBackwardKernel(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, nameof(AvgPoolBackward));
+        Cpu.CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], g, countIncludePad, padBottom, padRight);
+    }
 
     /// <summary>
     /// Image resampling and per-channel normalization in one pass. Each of <paramref name="planes"/> planes of x ([planes,
@@ -1199,7 +1383,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// <c>ImagingResample</c>), and y = values[256·c + value].
     /// </summary>
     public virtual void ResizeNormalizeKernel(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width,
-        int outHeight, int outWidth, int xTaps, int yTaps, bool bytes) => throw NoKernel(nameof(ResizeNormalize));
+        int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        using var h = new HostCall(this, nameof(ResizeNormalize));
+        Cpu.CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+    }
 
     /// <summary>
     /// Resamples each of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] as PyTorch's
@@ -1209,27 +1397,47 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// size over the output size; with alignCorners (input - 1) / (output - 1)).
     /// </summary>
     public virtual void Interpolate2dKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
-        bool alignCorners, float scaleHeight, float scaleWidth) => throw NoKernel(nameof(Interpolate2d));
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, nameof(Interpolate2d));
+        Cpu.CpuBackend.Instance.Interpolate2d(h[x], h[y], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
 
     /// <summary>The gradient of <see cref="Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.</summary>
     public virtual void Interpolate2dBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode,
-        bool alignCorners, float scaleHeight, float scaleWidth) => throw NoKernel(nameof(Interpolate2dBackward));
+        bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, nameof(Interpolate2dBackward));
+        Cpu.CpuBackend.Instance.Interpolate2dBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+    }
 
     /// <summary>
     /// Adaptive average pooling of <paramref name="planes"/> [height, width] planes to [outHeight, outWidth] (PyTorch's
     /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
     /// ceil((o + 1) · height / outHeight); columns likewise.
     /// </summary>
-    public virtual void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth) => throw NoKernel(nameof(AdaptiveAvgPool));
+    public virtual void AdaptiveAvgPoolKernel(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveAvgPool));
+        Cpu.CpuBackend.Instance.AdaptiveAvgPool(h[x], h[y], planes, height, width, outHeight, outWidth);
+    }
 
     /// <summary>The gradient of <see cref="AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.</summary>
-    public virtual void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth) => throw NoKernel(nameof(AdaptiveAvgPoolBackward));
+    public virtual void AdaptiveAvgPoolBackwardKernel(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveAvgPoolBackward));
+        Cpu.CpuBackend.Instance.AdaptiveAvgPoolBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth);
+    }
 
     /// <summary>
     /// Adaptive max pooling over the windows of <see cref="AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
     /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
     /// </summary>
-    public virtual void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth) => throw NoKernel(nameof(AdaptiveMaxPool));
+    public virtual void AdaptiveMaxPoolKernel(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveMaxPool));
+        Cpu.CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
+    }
 
     /// <summary>
     /// The gradient of <see cref="AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
@@ -1248,7 +1456,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// infinite loss, or 0 with <paramref name="zeroInfinity"/>.
     /// </summary>
     public virtual void CtcLossKernel(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths,
-        ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity) => throw NoKernel(nameof(CtcLoss));
+        ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, nameof(CtcLoss));
+        Cpu.CpuBackend.Instance.CtcLoss(h[logProbs], h[targets], h[losses], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+    }
 
     /// <summary>
     /// The gradient of <see cref="CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
@@ -1256,7 +1468,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// sequence of infinite loss gets nothing either).
     /// </summary>
     public virtual void CtcLossBackwardKernel(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths,
-        ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity) => throw NoKernel(nameof(CtcLossBackward));
+        ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, nameof(CtcLossBackward));
+        Cpu.CpuBackend.Instance.CtcLossBackward(h[logProbs], h[targets], h[lossGrads], h[dLogProbs], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+    }
 
     /// <summary>
     /// One time step of a long short-term memory cell (PyTorch's gate order: input, forget, cell, output), for every row n
@@ -1413,51 +1629,95 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// (DIoU), plus α·v with v the aspect-ratio term and α = v / (1 - IoU + v + eps) taken as a constant (CIoU).
     /// <paramref name="eps"/> keeps the divisions finite (torchvision's 1e-7).
     /// </summary>
-    public virtual void BoxIouLossKernel(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps) => throw NoKernel(nameof(BoxIouLoss));
+    public virtual void BoxIouLossKernel(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, nameof(BoxIouLoss));
+        Cpu.CpuBackend.Instance.BoxIouLoss(h[predicted], h[target], h[losses], count, overlap, eps);
+    }
 
     /// <summary>
     /// The gradient of <see cref="BoxIouLossKernel"/> with respect to the predicted corners: dPredicted[i] += lossGrads[i] ·
     /// ∂losses[i] / ∂predicted[i] (the targets are constants; a tie of a minimum or maximum shares the gradient in halves,
     /// as PyTorch's).
     /// </summary>
-    public virtual void BoxIouLossBackwardKernel(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps) => throw NoKernel(nameof(BoxIouLossBackward));
+    public virtual void BoxIouLossBackwardKernel(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, nameof(BoxIouLossBackward));
+        Cpu.CpuBackend.Instance.BoxIouLossBackward(h[predicted], h[target], h[lossGrads], h[dPredicted], count, overlap, eps);
+    }
 
     /// <summary>
     /// Sigmoid focal loss (Lin et al. 2017), torchvision's formula, element by element over <paramref name="count"/> logits:
     /// losses = α_t · (1 - p_t)^γ · BCE(logits, targets), p = σ(logits), p_t = p·t + (1 - p)(1 - t),
     /// α_t = α·t + (1 - α)(1 - t), with no α weighting when <paramref name="alpha"/> is negative. Targets in [0, 1].
     /// </summary>
-    public virtual void SigmoidFocalLossKernel(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma) => throw NoKernel(nameof(SigmoidFocalLoss));
+    public virtual void SigmoidFocalLossKernel(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, nameof(SigmoidFocalLoss));
+        Cpu.CpuBackend.Instance.SigmoidFocalLoss(h[logits], h[targets], h[losses], count, alpha, gamma);
+    }
 
     /// <summary>The gradient of <see cref="SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).</summary>
-    public virtual void SigmoidFocalLossBackwardKernel(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma) => throw NoKernel(nameof(SigmoidFocalLossBackward));
+    public virtual void SigmoidFocalLossBackwardKernel(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, nameof(SigmoidFocalLossBackward));
+        Cpu.CpuBackend.Instance.SigmoidFocalLossBackward(h[logits], h[targets], h[lossGrads], h[dLogits], count, alpha, gamma);
+    }
 
     /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <paramref name="outShape"/> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>
-    public virtual void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate) => throw NoKernel(nameof(Permute));
+    public virtual void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(Permute));
+        Cpu.CpuBackend.Instance.Permute(h[x], h[y], outShape, inStrides, accumulate);
+    }
 
     /// <summary>
     /// Strided block copy: dst[dstOffset + r*dstStride + c] (+)= src[srcOffset + r*srcStride + c] for r &lt; rows, c &lt; cols.
     /// Implements narrow, concatenation and their gradients.
     /// </summary>
-    public virtual void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate) => throw NoKernel(nameof(Copy2D));
+    public virtual void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(Copy2D));
+        Cpu.CpuBackend.Instance.Copy2D(h[src], srcOffset, srcStride, h[dst], dstOffset, dstStride, rows, cols, accumulate);
+    }
 
     /// <summary>y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.</summary>
-    public virtual void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate) => throw NoKernel(nameof(SumAxis));
+    public virtual void SumAxisKernel(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(SumAxis));
+        Cpu.CpuBackend.Instance.SumAxis(h[x], h[y], outer, dim, inner, scale, accumulate);
+    }
 
     /// <summary>dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="SumAxis"/>).</summary>
-    public virtual void BroadcastAxisKernel(Storage dy, Storage dx, int outer, int dim, int inner, float scale) => throw NoKernel(nameof(BroadcastAxis));
+    public virtual void BroadcastAxisKernel(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
+        using var h = new HostCall(this, nameof(BroadcastAxis));
+        Cpu.CpuBackend.Instance.BroadcastAxis(h[dy], h[dx], outer, dim, inner, scale);
+    }
 
     /// <summary>SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).</summary>
-    public virtual void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum) => throw NoKernel(nameof(SgdStep));
+    public virtual void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
+        using var h = new HostCall(this, nameof(SgdStep));
+        Cpu.CpuBackend.Instance.SgdStep(h[p], h[g], h.Maybe(v), n, lr, momentum);
+    }
 
     /// <summary>Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.</summary>
-    public virtual void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) => throw NoKernel(nameof(AdamStep));
+    public virtual void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        using var h = new HostCall(this, nameof(AdamStep));
+        Cpu.CpuBackend.Instance.AdamStep(h[p], h[g], h[m], h[v], n, lr, beta1, beta2, eps);
+    }
 
     /// <summary>total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).</summary>
-    public virtual void SumSquaresKernel(Storage x, Storage total, int n) => throw NoKernel(nameof(SumSquares));
+    public virtual void SumSquaresKernel(Storage x, Storage total, int n)
+    {
+        using var h = new HostCall(this, nameof(SumSquares));
+        Cpu.CpuBackend.Instance.SumSquares(h[x], h[total], n);
+    }
 
     /// <summary>
     /// AdamW over many tensors in a few passes: the global gradient norm clipped to <paramref name="maxNorm"/> (0: no
@@ -1473,13 +1733,25 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
     /// gradients are, so clipping needs no host read of the norm.
     /// </summary>
-    public virtual void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm) => throw NoKernel(nameof(ClipFactor));
+    public virtual void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm)
+    {
+        using var h = new HostCall(this, nameof(ClipFactor));
+        Cpu.CpuBackend.Instance.ClipFactor(h[sumSquares], h[factor], maxNorm);
+    }
 
     /// <summary>Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.</summary>
-    public virtual void DropoutKernel(Storage x, Storage y, int n, float p, uint seed) => throw NoKernel(nameof(Dropout));
+    public virtual void DropoutKernel(Storage x, Storage y, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, nameof(Dropout));
+        Cpu.CpuBackend.Instance.Dropout(h[x], h[y], n, p, seed);
+    }
 
     /// <summary>dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.</summary>
-    public virtual void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed) => throw NoKernel(nameof(DropoutBackward));
+    public virtual void DropoutBackwardKernel(Storage dy, Storage dx, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, nameof(DropoutBackward));
+        Cpu.CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
+    }
 
     /// <summary>Waits until every kernel and copy issued so far has finished.</summary>
     public abstract void Synchronize();
@@ -1487,47 +1759,91 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     // ---------------------------------------------------------------- fused inference kernels
 
     /// <summary>y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).</summary>
-    public virtual void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale) => throw NoKernel(nameof(ScaleMaskSoftmax));
+    public virtual void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        using var h = new HostCall(this, nameof(ScaleMaskSoftmax));
+        Cpu.CpuBackend.Instance.ScaleMaskSoftmax(h[x], h.Maybe(mask), h[y], rows, cols, maskRows, scale);
+    }
 
     /// <summary>y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.</summary>
-    public virtual void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps) => throw NoKernel(nameof(LayerNormFused));
+    public virtual void LayerNormFusedKernel(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(LayerNormFused));
+        Cpu.CpuBackend.Instance.LayerNormFused(h[x], h[gamma], h[beta], h[y], rows, cols, eps);
+    }
 
     /// <summary><see cref="LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).</summary>
-    public virtual void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps) => throw NoKernel(nameof(LayerNormTrain));
+    public virtual void LayerNormTrainKernel(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(LayerNormTrain));
+        Cpu.CpuBackend.Instance.LayerNormTrain(h[x], h[gamma], h[beta], h[y], h[stats], rows, cols, eps);
+    }
 
     /// <summary>
     /// Gradients of <see cref="LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
     /// </summary>
-    public virtual void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols) => throw NoKernel(nameof(LayerNormBackward));
+    public virtual void LayerNormBackwardKernel(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(LayerNormBackward));
+        Cpu.CpuBackend.Instance.LayerNormBackward(h[x], h[gamma], h[dy], h[stats], h.Maybe(dx), h.Maybe(dgamma), h.Maybe(dbeta), rows, cols);
+    }
 
     /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
-    public virtual void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols) => throw NoKernel(nameof(BiasGelu));
+    public virtual void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        using var h = new HostCall(this, nameof(BiasGelu));
+        Cpu.CpuBackend.Instance.BiasGelu(h[x], h[bias], h[y], n, cols);
+    }
 
     /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
-    public virtual void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps) => throw NoKernel(nameof(RmsNorm));
+    public virtual void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(RmsNorm));
+        Cpu.CpuBackend.Instance.RmsNorm(h[x], h[y], h[inv], rows, cols, eps);
+    }
 
     /// <summary>dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.</summary>
-    public virtual void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols) => throw NoKernel(nameof(RmsNormBackward));
+    public virtual void RmsNormBackwardKernel(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(RmsNormBackward));
+        Cpu.CpuBackend.Instance.RmsNormBackward(h[dy], h[y], h[inv], h[dx], rows, cols);
+    }
 
     /// <summary>
     /// Rotary position embedding of x [rows = batch·steps·heads, dim] into y (which must already hold x): pair p of a row at
     /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
     /// else (p, p + half). sign = -1 rotates backwards (the gradient).
     /// </summary>
-    public virtual void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign) => throw NoKernel(nameof(Rope));
+    public virtual void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
+        using var h = new HostCall(this, nameof(Rope));
+        Cpu.CpuBackend.Instance.Rope(h[x], h[y], h[cos], h[sin], h[positions], rows, heads, steps, dim, half, interleaved, sign);
+    }
 
     /// <summary>y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).</summary>
-    public virtual void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset) => throw NoKernel(nameof(RmsNormAffine));
+    public virtual void RmsNormAffineKernel(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, nameof(RmsNormAffine));
+        Cpu.CpuBackend.Instance.RmsNormAffine(h[x], h[gain], h[y], rows, cols, eps, offset);
+    }
 
     /// <summary>sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).</summary>
-    public virtual void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset) => throw NoKernel(nameof(AddRmsNormAffine));
+    public virtual void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, nameof(AddRmsNormAffine));
+        Cpu.CpuBackend.Instance.AddRmsNormAffine(h[a], h[b], h[sum], h[gain], h[y], rows, cols, eps, offset);
+    }
 
     /// <summary>
     /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Rope"/> with
     /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
     /// </summary>
     public virtual void RmsNormRopeKernel(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols,
-        float eps, float offset, int heads, int steps, int half, bool interleaved) => throw NoKernel(nameof(RmsNormRope));
+        float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
+        using var h = new HostCall(this, nameof(RmsNormRope));
+        Cpu.CpuBackend.Instance.RmsNormRope(h[x], h[gain], h[cos], h[sin], h[positions], h[y], rows, cols, eps, offset, heads, steps, half, interleaved);
+    }
 
     /// <summary>
     /// <see cref="RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
@@ -1558,13 +1874,25 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
     /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
     /// </summary>
-    public virtual void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) => throw NoKernel(nameof(SoftmaxCrossEntropyRows));
+    public virtual void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        using var h = new HostCall(this, nameof(SoftmaxCrossEntropyRows));
+        Cpu.CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
+    }
 
     /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).</summary>
-    public virtual void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind) => throw NoKernel(nameof(GatedActivation));
+    public virtual void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        using var h = new HostCall(this, nameof(GatedActivation));
+        Cpu.CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
+    }
 
     /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).</summary>
-    public virtual void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) => throw NoKernel(nameof(GatedActivationBackward));
+    public virtual void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var h = new HostCall(this, nameof(GatedActivationBackward));
+        Cpu.CpuBackend.Instance.GatedActivationBackward(h[gate], h[up], h[dy], h[dgate], h[dup], n, kind, flags);
+    }
 
     /// <summary>
     /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
@@ -1575,7 +1903,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// attention method below takes one; the default is plain causal attention).
     /// </summary>
     public virtual void AttentionDecodeKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, AttentionVariant variant = default) => throw NoKernel(nameof(AttentionDecode));
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        using var h = new HostCall(this, nameof(AttentionDecode));
+        Cpu.CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
 
     /// <summary>
     /// Gradient of <see cref="AttentionTiled"/> with causal offset 0 (training): given the output, each row's log-sum-exp
@@ -1583,7 +1915,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// are recomputed, never stored.
     /// </summary>
     public virtual void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) => throw NoKernel(nameof(AttentionTiledBackward));
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledBackward));
+        Cpu.CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
 
     /// <summary>
     /// Causal attention over packed sequences (training): as <see cref="AttentionTiled"/> with offset 0 and keys and values
@@ -1659,7 +1995,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
     /// </summary>
     public virtual void AttentionSpansKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
-        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default) => throw NoKernel(nameof(AttentionSpans));
+        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
+    {
+        using var h = new HostCall(this, nameof(AttentionSpans));
+        Cpu.CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+    }
 
     /// <summary>
     /// <see cref="AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
@@ -1730,7 +2070,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// </summary>
     public virtual void AttentionSpansBackwardKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp,
         Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale,
-        AttentionVariant variant = default) => throw NoKernel(nameof(AttentionSpansBackward));
+        AttentionVariant variant = default)
+    {
+        using var h = new HostCall(this, nameof(AttentionSpansBackward));
+        Cpu.CpuBackend.Instance.AttentionSpansBackward(h[q], h[keys], h[values], h[starts], h[ends], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+    }
 
     /// <summary>
     /// True when attention over key ranges runs faster on this device composed — the full scores [heads, rows, keyRows]
@@ -1804,10 +2148,18 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     // ---------------------------------------------------------------- incremental decoding (positions live on the device)
 
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
-    public virtual void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity) => throw NoKernel(nameof(DecoderMask));
+    public virtual void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
+    {
+        using var h = new HostCall(this, nameof(DecoderMask));
+        Cpu.CpuBackend.Instance.DecoderMask(h[position], h[mask], rows, capacity);
+    }
 
     /// <summary>cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].</summary>
-    public virtual void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim) => throw NoKernel(nameof(KeyValueWrite));
+    public virtual void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, nameof(KeyValueWrite));
+        Cpu.CpuBackend.Instance.KeyValueWrite(h[source], h[cache], h[position], heads, steps, capacity, dim);
+    }
 
     /// <summary>
     /// Draws one token per row from softmax(logits / temperature), restricted in turn to the top-k scores (topK &gt; 0),
@@ -1825,7 +2177,11 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// </para>
     /// </summary>
     public virtual void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
-        int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed) => throw NoKernel(nameof(SampleRows));
+        int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        using var h = new HostCall(this, nameof(SampleRows));
+        Cpu.CpuBackend.Instance.SampleRows(h[logits], h[ids], h[stats], h[step], rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+    }
 
     /// <summary>
     /// Copies each row's logits (row r at r * rowStride + rowOffset) to work[r, :] and applies repetition penalties for
@@ -1834,10 +2190,18 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     /// x -= presence + frequency * (occurrences in the window).
     /// </summary>
     public virtual void PenalizeRowsKernel(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary,
-        int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency) => throw NoKernel(nameof(PenalizeRows));
+        int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
+        using var h = new HostCall(this, nameof(PenalizeRows));
+        Cpu.CpuBackend.Instance.PenalizeRows(h[logits], h[work], h[history], h[length], rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+    }
 
     /// <summary>history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).</summary>
-    public virtual void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity) => throw NoKernel(nameof(HistoryPush));
+    public virtual void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
+        using var h = new HostCall(this, nameof(HistoryPush));
+        Cpu.CpuBackend.Instance.HistoryPush(h[ids], h[history], h[length], rows, capacity);
+    }
 }
 
 /// <summary>Stateless counter-based random numbers shared by every backend (the sampler's random stream).</summary>

@@ -12,5 +12,9 @@ public abstract partial class Backend
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <paramref name="weight"/>: n rows of k values read by its description
     /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
-    public virtual void StoredMatMulKernel(Storage x, Storage weight, Storage y, int m, int n, int k) => throw NoKernel(nameof(StoredMatMul));
+    public virtual void StoredMatMulKernel(Storage x, Storage weight, Storage y, int m, int n, int k)
+    {
+        using var h = new HostCall(this, nameof(StoredMatMul));
+        Cpu.CpuBackend.Instance.StoredMatMul(h[x], h[weight], h[y], m, n, k);
+    }
 }

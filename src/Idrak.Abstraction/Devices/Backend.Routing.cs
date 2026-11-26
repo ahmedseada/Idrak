@@ -25,7 +25,11 @@ public abstract partial class Backend
     /// index type (int32 where the device's kernels read int32, exact past 2²⁴ rows).
     /// </summary>
     public virtual void RouteTopKKernel(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k,
-        bool normalize) => throw NoKernel(nameof(RouteTopK));
+        bool normalize)
+    {
+        using var h = new HostCall(this, nameof(RouteTopK));
+        Cpu.CpuBackend.Instance.RouteTopK(h[probabilities], h[weights], h[offsets], h[tokenOfRow], h[slotRow], tokens, experts, k, normalize);
+    }
 
     /// <summary>
     /// The gate and up projections of a mixture's experts over rows grouped by expert, and their gated activation: for
@@ -36,7 +40,17 @@ public abstract partial class Backend
     /// over just those rows give, bit for bit.
     /// </summary>
     public virtual void ExpertGatedPairKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden,
-        int rows, int k, int n, int activation) => throw NoKernel(nameof(ExpertGatedPair));
+        int rows, int k, int n, int activation)
+    {
+        using var h = new HostCall(this, nameof(ExpertGatedPair));
+        var onExperts = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[experts.Length];
+        for (int i = 0; i < experts.Length; i++)
+        {
+            onExperts[i] = (h[experts[i].Gate], h.Maybe(experts[i].GateBias), h[experts[i].Up], h.Maybe(experts[i].UpBias));
+        }
+
+        Cpu.CpuBackend.Instance.ExpertGatedPair(h[x], h[offsets], onExperts, h[hidden], rows, k, n, activation);
+    }
 
     /// <summary>
     /// The products of a mixture's experts over rows grouped by expert: for each expert e, rows offsets[e] to
@@ -44,7 +58,17 @@ public abstract partial class Backend
     /// rows of y [rows, n] = x·weight_e + bias_e, with weight_e [k, n] and bias_e [n] or null. Each expert's rows hold what
     /// its own product (<see cref="MatMul"/>, then the bias added) over just those rows gives, bit for bit.
     /// </summary>
-    public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n) => throw NoKernel(nameof(ExpertMatMul));
+    public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
+    {
+        using var h = new HostCall(this, nameof(ExpertMatMul));
+        var onExperts = new (Storage Weight, Storage? Bias)[experts.Length];
+        for (int i = 0; i < experts.Length; i++)
+        {
+            onExperts[i] = (h[experts[i].Weight], h.Maybe(experts[i].Bias));
+        }
+
+        Cpu.CpuBackend.Instance.ExpertMatMul(h[x], h[offsets], onExperts, h[y], rows, k, n);
+    }
 
     /// <summary>
     /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/> and <see cref="ExpertMatMul"/>) with kernels of its own. Where it does not, a mixture-of-experts layer reads its routing back and routes on

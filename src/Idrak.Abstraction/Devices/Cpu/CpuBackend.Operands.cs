@@ -94,17 +94,20 @@ internal sealed unsafe partial class CpuBackend
             return true;
         }
 
-        foreach (var s in d.Scales ?? [])
+        // By index (no enumerator made): asked on every call of an operation.
+        var scales = d.Scales;
+        for (int i = 0; scales is not null && i < scales.Count; i++)
         {
-            if (Wide(s.Type))
+            if (Wide(scales[i].Type))
             {
                 return true;
             }
         }
 
-        foreach (var s in d.Mins ?? [])
+        var mins = d.Mins;
+        for (int i = 0; mins is not null && i < mins.Count; i++)
         {
-            if (Wide(s.Type))
+            if (Wide(mins[i].Type))
             {
                 return true;
             }

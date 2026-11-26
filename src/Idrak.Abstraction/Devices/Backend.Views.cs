@@ -18,5 +18,9 @@ public abstract partial class Backend
     /// position as <see cref="KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
     /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
     /// </summary>
-    public virtual void KeyValueWriteStridedKernel(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim) => throw NoKernel(nameof(KeyValueWriteStrided));
+    public virtual void KeyValueWriteStridedKernel(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, nameof(KeyValueWriteStrided));
+        Cpu.CpuBackend.Instance.KeyValueWriteStrided(h[source], sourceLayout, h[cache], h[position], heads, steps, capacity, dim);
+    }
 }

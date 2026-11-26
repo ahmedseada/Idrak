@@ -1166,108 +1166,108 @@ public static partial class Ops
     /// <summary>
     /// y[i] = value for i &lt; n.
     /// </summary>
-    public static readonly Operation<OperationKernels.Fill> Fill = new("Fill", OperationIndex.Fill, KernelSource.None);
+    public static readonly Operation<OperationKernels.Fill> Fill = new("Fill", OperationIndex.Fill, KernelSource.Host);
 
     /// <summary>
     /// y = op(x).
     /// </summary>
-    public static readonly Operation<OperationKernels.Unary> Unary = new("Unary", OperationIndex.Unary, KernelSource.None);
+    public static readonly Operation<OperationKernels.Unary> Unary = new("Unary", OperationIndex.Unary, KernelSource.Host);
 
     /// <summary>
     /// dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.
     /// </summary>
-    public static readonly Operation<OperationKernels.UnaryBackward> UnaryBackward = new("UnaryBackward", OperationIndex.UnaryBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.UnaryBackward> UnaryBackward = new("UnaryBackward", OperationIndex.UnaryBackward, KernelSource.Host);
 
     /// <summary>
     /// c = a op b, element-wise.
     /// </summary>
-    public static readonly Operation<OperationKernels.Binary> Binary = new("Binary", OperationIndex.Binary, KernelSource.None);
+    public static readonly Operation<OperationKernels.Binary> Binary = new("Binary", OperationIndex.Binary, KernelSource.Host);
 
     /// <summary>
     /// dx += dy where a wins (<see cref="BinaryOp.Maximum"/>: a ≥ b; <see cref="BinaryOp.Minimum"/>: a ≤ b), db += dy
     /// elsewhere: the backward step of c = max(a, b) or min(a, b). A null gradient is skipped.
     /// </summary>
-    public static readonly Operation<OperationKernels.ExtremumBackward> ExtremumBackward = new("ExtremumBackward", OperationIndex.ExtremumBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.ExtremumBackward> ExtremumBackward = new("ExtremumBackward", OperationIndex.ExtremumBackward, KernelSource.Host);
 
     /// <summary>
     /// y = x^exponent, element-wise.
     /// </summary>
-    public static readonly Operation<OperationKernels.Pow> Pow = new("Pow", OperationIndex.Pow, KernelSource.None);
+    public static readonly Operation<OperationKernels.Pow> Pow = new("Pow", OperationIndex.Pow, KernelSource.Host);
 
     /// <summary>
     /// dx += dy · exponent · x^(exponent - 1).
     /// </summary>
-    public static readonly Operation<OperationKernels.PowBackward> PowBackward = new("PowBackward", OperationIndex.PowBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.PowBackward> PowBackward = new("PowBackward", OperationIndex.PowBackward, KernelSource.Host);
 
     /// <summary>
     /// y = x limited to [min, max] (either may be infinite).
     /// </summary>
-    public static readonly Operation<OperationKernels.Clamp> Clamp = new("Clamp", OperationIndex.Clamp, KernelSource.None);
+    public static readonly Operation<OperationKernels.Clamp> Clamp = new("Clamp", OperationIndex.Clamp, KernelSource.Host);
 
     /// <summary>
     /// dx += dy where min ≤ x ≤ max.
     /// </summary>
-    public static readonly Operation<OperationKernels.ClampBackward> ClampBackward = new("ClampBackward", OperationIndex.ClampBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.ClampBackward> ClampBackward = new("ClampBackward", OperationIndex.ClampBackward, KernelSource.Host);
 
     /// <summary>
     /// y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).
     /// </summary>
-    public static readonly Operation<OperationKernels.LeakyRelu> LeakyRelu = new("LeakyRelu", OperationIndex.LeakyRelu, KernelSource.None);
+    public static readonly Operation<OperationKernels.LeakyRelu> LeakyRelu = new("LeakyRelu", OperationIndex.LeakyRelu, KernelSource.Host);
 
     /// <summary>
     /// dx += dy where x &gt; 0, slope · dy elsewhere.
     /// </summary>
-    public static readonly Operation<OperationKernels.LeakyReluBackward> LeakyReluBackward = new("LeakyReluBackward", OperationIndex.LeakyReluBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.LeakyReluBackward> LeakyReluBackward = new("LeakyReluBackward", OperationIndex.LeakyReluBackward, KernelSource.Host);
 
     /// <summary>
     /// y = condition ≠ 0 ? a : b, element-wise.
     /// </summary>
-    public static readonly Operation<OperationKernels.Where> Where = new("Where", OperationIndex.Where, KernelSource.None);
+    public static readonly Operation<OperationKernels.Where> Where = new("Where", OperationIndex.Where, KernelSource.Host);
 
     /// <summary>
     /// da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).
     /// </summary>
-    public static readonly Operation<OperationKernels.WhereBackward> WhereBackward = new("WhereBackward", OperationIndex.WhereBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.WhereBackward> WhereBackward = new("WhereBackward", OperationIndex.WhereBackward, KernelSource.Host);
 
     /// <summary>
     /// y = alpha * x + beta.
     /// </summary>
-    public static readonly Operation<OperationKernels.Affine> Affine = new("Affine", OperationIndex.Affine, KernelSource.None);
+    public static readonly Operation<OperationKernels.Affine> Affine = new("Affine", OperationIndex.Affine, KernelSource.Host);
 
     /// <summary>
     /// y += alpha * x.
     /// </summary>
-    public static readonly Operation<OperationKernels.Axpy> Axpy = new("Axpy", OperationIndex.Axpy, KernelSource.None);
+    public static readonly Operation<OperationKernels.Axpy> Axpy = new("Axpy", OperationIndex.Axpy, KernelSource.Host);
 
     /// <summary>
     /// c += a * b, element-wise.
     /// </summary>
-    public static readonly Operation<OperationKernels.MulAdd> MulAdd = new("MulAdd", OperationIndex.MulAdd, KernelSource.None);
+    public static readonly Operation<OperationKernels.MulAdd> MulAdd = new("MulAdd", OperationIndex.MulAdd, KernelSource.Host);
 
     /// <summary>
     /// c[r, j] = a[r, j] + v[j].
     /// </summary>
-    public static readonly Operation<OperationKernels.AddRowVector> AddRowVector = new("AddRowVector", OperationIndex.AddRowVector, KernelSource.None);
+    public static readonly Operation<OperationKernels.AddRowVector> AddRowVector = new("AddRowVector", OperationIndex.AddRowVector, KernelSource.Host);
 
     /// <summary>
     /// y[j] += sum over r of x[r, j].
     /// </summary>
-    public static readonly Operation<OperationKernels.SumRows> SumRows = new("SumRows", OperationIndex.SumRows, KernelSource.None);
+    public static readonly Operation<OperationKernels.SumRows> SumRows = new("SumRows", OperationIndex.SumRows, KernelSource.Host);
 
     /// <summary>
     /// result[0] = scale * sum(x).
     /// </summary>
-    public static readonly Operation<OperationKernels.Sum> Sum = new("Sum", OperationIndex.Sum, KernelSource.None);
+    public static readonly Operation<OperationKernels.Sum> Sum = new("Sum", OperationIndex.Sum, KernelSource.Host);
 
     /// <summary>
     /// y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).
     /// </summary>
-    public static readonly Operation<OperationKernels.AxpyAt> AxpyAt = new("AxpyAt", OperationIndex.AxpyAt, KernelSource.None);
+    public static readonly Operation<OperationKernels.AxpyAt> AxpyAt = new("AxpyAt", OperationIndex.AxpyAt, KernelSource.Host);
 
     /// <summary>
     /// y[i] += scale * s[0].
     /// </summary>
-    public static readonly Operation<OperationKernels.AddBroadcastScalar> AddBroadcastScalar = new("AddBroadcastScalar", OperationIndex.AddBroadcastScalar, KernelSource.None);
+    public static readonly Operation<OperationKernels.AddBroadcastScalar> AddBroadcastScalar = new("AddBroadcastScalar", OperationIndex.AddBroadcastScalar, KernelSource.Host);
 
     /// <summary>
     /// Several products sharing one input: y_j = a · w_j (+ bias_j) for a [m, k] and w_j [k, n_j] (the query, key and
@@ -1284,7 +1284,7 @@ public static partial class Ops
     /// <summary>
     /// y[j] += Σ_r x[offset + r·ld + j] for j &lt; cols (column sums of a strided block; the bias gradient of a slice).
     /// </summary>
-    public static readonly Operation<OperationKernels.SumColumns> SumColumns = new("SumColumns", OperationIndex.SumColumns, KernelSource.None);
+    public static readonly Operation<OperationKernels.SumColumns> SumColumns = new("SumColumns", OperationIndex.SumColumns, KernelSource.Host);
 
     /// <summary>
     /// output = residual + dropout(x) (the mask of <see cref="Backend.Dropout"/> with <c>seed</c>).
@@ -1294,22 +1294,22 @@ public static partial class Ops
     /// <summary>
     /// <see cref="Backend.MatMul"/> for <c>batch</c> independent, contiguous matrix triples.
     /// </summary>
-    public static readonly Operation<OperationKernels.BatchedMatMul> BatchedMatMul = new("BatchedMatMul", OperationIndex.BatchedMatMul, KernelSource.None);
+    public static readonly Operation<OperationKernels.BatchedMatMul> BatchedMatMul = new("BatchedMatMul", OperationIndex.BatchedMatMul, KernelSource.Host);
 
     /// <summary>
     /// Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).
     /// </summary>
-    public static readonly Operation<OperationKernels.Softmax> Softmax = new("Softmax", OperationIndex.Softmax, KernelSource.None);
+    public static readonly Operation<OperationKernels.Softmax> Softmax = new("Softmax", OperationIndex.Softmax, KernelSource.Host);
 
     /// <summary>
     /// Softmax: dx += y * (dy - Σ dy·y). Log-softmax: dx += dy - exp(y) * Σ dy. Sums are per row; y is the forward output.
     /// </summary>
-    public static readonly Operation<OperationKernels.SoftmaxBackward> SoftmaxBackward = new("SoftmaxBackward", OperationIndex.SoftmaxBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.SoftmaxBackward> SoftmaxBackward = new("SoftmaxBackward", OperationIndex.SoftmaxBackward, KernelSource.Host);
 
     /// <summary>
     /// y[r] = index of the largest element of row r.
     /// </summary>
-    public static readonly Operation<OperationKernels.ArgMax> ArgMax = new("ArgMax", OperationIndex.ArgMax, KernelSource.None);
+    public static readonly Operation<OperationKernels.ArgMax> ArgMax = new("ArgMax", OperationIndex.ArgMax, KernelSource.Host);
 
     /// <summary>
     /// The best k log-probabilities of each row of x [rows, cols] and their columns (a beam search's candidates, read back
@@ -1320,90 +1320,90 @@ public static partial class Ops
     /// NaN or a +∞ one has a NaN shift, so none. The CPU sums in double (its shift rounded to float32 once); a device's sum
     /// may differ from it by float rounding.
     /// </summary>
-    public static readonly Operation<OperationKernels.LogSoftmaxTopK> LogSoftmaxTopK = new("LogSoftmaxTopK", OperationIndex.LogSoftmaxTopK, KernelSource.None);
+    public static readonly Operation<OperationKernels.LogSoftmaxTopK> LogSoftmaxTopK = new("LogSoftmaxTopK", OperationIndex.LogSoftmaxTopK, KernelSource.Host);
 
     /// <summary>
     /// y[r] = 1 when the prediction in row r is right, else 0. For one column: (p ≥ threshold) == (t ≥ 0.5);
     /// otherwise argmax(p) == argmax(t).
     /// </summary>
-    public static readonly Operation<OperationKernels.ClassMatch> ClassMatch = new("ClassMatch", OperationIndex.ClassMatch, KernelSource.None);
+    public static readonly Operation<OperationKernels.ClassMatch> ClassMatch = new("ClassMatch", OperationIndex.ClassMatch, KernelSource.Host);
 
     /// <summary>
     /// Per-group mean, (biased) variance and 1 / sqrt(variance + eps).
     /// </summary>
-    public static readonly Operation<OperationKernels.NormStats> NormStats = new("NormStats", OperationIndex.NormStats, KernelSource.None);
+    public static readonly Operation<OperationKernels.NormStats> NormStats = new("NormStats", OperationIndex.NormStats, KernelSource.Host);
 
     /// <summary>
     /// y = (x - mean[g]) * invStd[g].
     /// </summary>
-    public static readonly Operation<OperationKernels.NormApply> NormApply = new("NormApply", OperationIndex.NormApply, KernelSource.None);
+    public static readonly Operation<OperationKernels.NormApply> NormApply = new("NormApply", OperationIndex.NormApply, KernelSource.Host);
 
     /// <summary>
     /// dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).
     /// </summary>
-    public static readonly Operation<OperationKernels.NormBackward> NormBackward = new("NormBackward", OperationIndex.NormBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.NormBackward> NormBackward = new("NormBackward", OperationIndex.NormBackward, KernelSource.Host);
 
     /// <summary>
     /// y (+)= x * scale[g] + shift[g] with g = (i / inner) % groups; a null scale means 1, a null shift means 0.
     /// </summary>
-    public static readonly Operation<OperationKernels.GroupScaleShift> GroupScaleShift = new("GroupScaleShift", OperationIndex.GroupScaleShift, KernelSource.None);
+    public static readonly Operation<OperationKernels.GroupScaleShift> GroupScaleShift = new("GroupScaleShift", OperationIndex.GroupScaleShift, KernelSource.Host);
 
     /// <summary>
     /// sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.
     /// </summary>
-    public static readonly Operation<OperationKernels.GroupReduce> GroupReduce = new("GroupReduce", OperationIndex.GroupReduce, KernelSource.None);
+    public static readonly Operation<OperationKernels.GroupReduce> GroupReduce = new("GroupReduce", OperationIndex.GroupReduce, KernelSource.Host);
 
     /// <summary>
     /// Weight normalization along the first axis: weight[r, :] = gain[r] · direction[r, :] / ‖direction[r, :]‖ over rows rows
     /// of columns elements (the row norm and the scaling in one pass; no squared copy or row sums kept).
     /// </summary>
-    public static readonly Operation<OperationKernels.WeightNorm> WeightNorm = new("WeightNorm", OperationIndex.WeightNorm, KernelSource.None);
+    public static readonly Operation<OperationKernels.WeightNorm> WeightNorm = new("WeightNorm", OperationIndex.WeightNorm, KernelSource.Host);
 
     /// <summary>
     /// The gradients of WeightNormKernel from dweight: with n = ‖direction[r, :]‖ and dot = Σ dweight · direction over row r,
     /// dgain[r] += dot / n and ddirection[r, :] += gain[r] / n · (dweight − direction · dot / n²). Either gradient may be null.
     /// </summary>
-    public static readonly Operation<OperationKernels.WeightNormBackward> WeightNormBackward = new("WeightNormBackward", OperationIndex.WeightNormBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.WeightNormBackward> WeightNormBackward = new("WeightNormBackward", OperationIndex.WeightNormBackward, KernelSource.Host);
 
     /// <summary>
     /// y = 1 / sqrt(x + eps).
     /// </summary>
-    public static readonly Operation<OperationKernels.InvSqrt> InvSqrt = new("InvSqrt", OperationIndex.InvSqrt, KernelSource.None);
+    public static readonly Operation<OperationKernels.InvSqrt> InvSqrt = new("InvSqrt", OperationIndex.InvSqrt, KernelSource.Host);
 
     /// <summary>
     /// Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.
     /// </summary>
-    public static readonly Operation<OperationKernels.Gather> Gather = new("Gather", OperationIndex.Gather, KernelSource.None);
+    public static readonly Operation<OperationKernels.Gather> Gather = new("Gather", OperationIndex.Gather, KernelSource.Host);
 
     /// <summary>
     /// One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.
     /// </summary>
-    public static readonly Operation<OperationKernels.OneHot> OneHot = new("OneHot", OperationIndex.OneHot, KernelSource.None);
+    public static readonly Operation<OperationKernels.OneHot> OneHot = new("OneHot", OperationIndex.OneHot, KernelSource.Host);
 
     /// <summary>
     /// dtable[indices[i], :] += dy[i, :].
     /// </summary>
-    public static readonly Operation<OperationKernels.ScatterAdd> ScatterAdd = new("ScatterAdd", OperationIndex.ScatterAdd, KernelSource.None);
+    public static readonly Operation<OperationKernels.ScatterAdd> ScatterAdd = new("ScatterAdd", OperationIndex.ScatterAdd, KernelSource.Host);
 
     /// <summary>
     /// Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).
     /// </summary>
-    public static readonly Operation<OperationKernels.Im2Col> Im2Col = new("Im2Col", OperationIndex.Im2Col, KernelSource.None);
+    public static readonly Operation<OperationKernels.Im2Col> Im2Col = new("Im2Col", OperationIndex.Im2Col, KernelSource.Host);
 
     /// <summary>
     /// The adjoint of <see cref="Backend.Im2Col"/>: dx += fold(dcols).
     /// </summary>
-    public static readonly Operation<OperationKernels.Col2Im> Col2Im = new("Col2Im", OperationIndex.Col2Im, KernelSource.None);
+    public static readonly Operation<OperationKernels.Col2Im> Col2Im = new("Col2Im", OperationIndex.Col2Im, KernelSource.Host);
 
     /// <summary>
     /// Max pooling; argmax receives the flat input index of each maximum (as raw int bits).
     /// </summary>
-    public static readonly Operation<OperationKernels.MaxPool> MaxPool = new("MaxPool", OperationIndex.MaxPool, KernelSource.None);
+    public static readonly Operation<OperationKernels.MaxPool> MaxPool = new("MaxPool", OperationIndex.MaxPool, KernelSource.Host);
 
     /// <summary>
     /// dx[argmax[i]] += dy[i].
     /// </summary>
-    public static readonly Operation<OperationKernels.MaxPoolBackward> MaxPoolBackward = new("MaxPoolBackward", OperationIndex.MaxPoolBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.MaxPoolBackward> MaxPoolBackward = new("MaxPoolBackward", OperationIndex.MaxPoolBackward, KernelSource.Host);
 
     /// <summary>
     /// dx[argmax[i]] += dy[i] for the windows of <c>g</c> (count = N * C * OH * OW): the same as the overload
@@ -1440,13 +1440,13 @@ public static partial class Ops
     /// divisor counts, which a ceil-mode geometry's PadBottom and PadRight may pass), else by the input positions the
     /// window covers (at least 1).
     /// </summary>
-    public static readonly Operation<OperationKernels.AvgPool> AvgPool = new("AvgPool", OperationIndex.AvgPool, KernelSource.None);
+    public static readonly Operation<OperationKernels.AvgPool> AvgPool = new("AvgPool", OperationIndex.AvgPool, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.AvgPoolKernel"/>: dx[n, c, ih, iw] += Σ dy[n, c, oh, ow] / divisor over the windows that
     /// cover the element, in window order (the divisor as the forward pass takes it).
     /// </summary>
-    public static readonly Operation<OperationKernels.AvgPoolBackward> AvgPoolBackward = new("AvgPoolBackward", OperationIndex.AvgPoolBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.AvgPoolBackward> AvgPoolBackward = new("AvgPoolBackward", OperationIndex.AvgPoolBackward, KernelSource.Host);
 
     /// <summary>
     /// Image resampling and per-channel normalization in one pass. Each of <c>planes</c> planes of x ([planes,
@@ -1460,7 +1460,7 @@ public static partial class Ops
     /// each pass sums 2^21 and its products as integers, shifts right by 22 and clips to [0, 255] (Pillow's
     /// <c>ImagingResample</c>), and y = values[256·c + value].
     /// </summary>
-    public static readonly Operation<OperationKernels.ResizeNormalize> ResizeNormalize = new("ResizeNormalize", OperationIndex.ResizeNormalize, KernelSource.None);
+    public static readonly Operation<OperationKernels.ResizeNormalize> ResizeNormalize = new("ResizeNormalize", OperationIndex.ResizeNormalize, KernelSource.Host);
 
     /// <summary>
     /// Resamples each of <c>planes</c> [height, width] planes to [outHeight, outWidth] as PyTorch's
@@ -1469,30 +1469,30 @@ public static partial class Ops
     /// distance; columns likewise. The scales are input positions per output position (1 / the scale factor, or the input
     /// size over the output size; with alignCorners (input - 1) / (output - 1)).
     /// </summary>
-    public static readonly Operation<OperationKernels.Interpolate2d> Interpolate2d = new("Interpolate2d", OperationIndex.Interpolate2d, KernelSource.None);
+    public static readonly Operation<OperationKernels.Interpolate2d> Interpolate2d = new("Interpolate2d", OperationIndex.Interpolate2d, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.
     /// </summary>
-    public static readonly Operation<OperationKernels.Interpolate2dBackward> Interpolate2dBackward = new("Interpolate2dBackward", OperationIndex.Interpolate2dBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.Interpolate2dBackward> Interpolate2dBackward = new("Interpolate2dBackward", OperationIndex.Interpolate2dBackward, KernelSource.Host);
 
     /// <summary>
     /// Adaptive average pooling of <c>planes</c> [height, width] planes to [outHeight, outWidth] (PyTorch's
     /// <c>AdaptiveAvgPool2d</c>): output row o averages input rows floor(o · height / outHeight) up to, not including,
     /// ceil((o + 1) · height / outHeight); columns likewise.
     /// </summary>
-    public static readonly Operation<OperationKernels.AdaptiveAvgPool> AdaptiveAvgPool = new("AdaptiveAvgPool", OperationIndex.AdaptiveAvgPool, KernelSource.None);
+    public static readonly Operation<OperationKernels.AdaptiveAvgPool> AdaptiveAvgPool = new("AdaptiveAvgPool", OperationIndex.AdaptiveAvgPool, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.
     /// </summary>
-    public static readonly Operation<OperationKernels.AdaptiveAvgPoolBackward> AdaptiveAvgPoolBackward = new("AdaptiveAvgPoolBackward", OperationIndex.AdaptiveAvgPoolBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.AdaptiveAvgPoolBackward> AdaptiveAvgPoolBackward = new("AdaptiveAvgPoolBackward", OperationIndex.AdaptiveAvgPoolBackward, KernelSource.Host);
 
     /// <summary>
     /// Adaptive max pooling over the windows of <see cref="Backend.AdaptiveAvgPoolKernel"/>; argmax receives the flat input index of
     /// each maximum (as raw int bits, the first in row order), so <see cref="Backend.MaxPoolBackward(Storage, Storage, Storage, int)"/> is its gradient.
     /// </summary>
-    public static readonly Operation<OperationKernels.AdaptiveMaxPool> AdaptiveMaxPool = new("AdaptiveMaxPool", OperationIndex.AdaptiveMaxPool, KernelSource.None);
+    public static readonly Operation<OperationKernels.AdaptiveMaxPool> AdaptiveMaxPool = new("AdaptiveMaxPool", OperationIndex.AdaptiveMaxPool, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.AdaptiveMaxPoolKernel"/>: dx[argmax[i]] += dy[i] for its planes · outHeight · outWidth outputs,
@@ -1509,14 +1509,14 @@ public static partial class Ops
     /// sequence n are targets[targetOffsets[n] ..] (targetLengths[n] ids as floats). A sequence no alignment fits has an
     /// infinite loss, or 0 with <c>zeroInfinity</c>.
     /// </summary>
-    public static readonly Operation<OperationKernels.CtcLoss> CtcLoss = new("CtcLoss", OperationIndex.CtcLoss, KernelSource.None);
+    public static readonly Operation<OperationKernels.CtcLoss> CtcLoss = new("CtcLoss", OperationIndex.CtcLoss, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.CtcLossKernel"/>: dLogProbs += lossGrads[n] · ∂losses[n] / ∂logProbs for every sequence n
     /// (steps past inputLengths[n] and classes outside the labels get nothing; with <c>zeroInfinity</c> a
     /// sequence of infinite loss gets nothing either).
     /// </summary>
-    public static readonly Operation<OperationKernels.CtcLossBackward> CtcLossBackward = new("CtcLossBackward", OperationIndex.CtcLossBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.CtcLossBackward> CtcLossBackward = new("CtcLossBackward", OperationIndex.CtcLossBackward, KernelSource.Host);
 
     /// <summary>
     /// One time step of a long short-term memory cell (PyTorch's gate order: input, forget, cell, output), for every row n
@@ -1648,57 +1648,57 @@ public static partial class Ops
     /// (DIoU), plus α·v with v the aspect-ratio term and α = v / (1 - IoU + v + eps) taken as a constant (CIoU).
     /// <c>eps</c> keeps the divisions finite (torchvision's 1e-7).
     /// </summary>
-    public static readonly Operation<OperationKernels.BoxIouLoss> BoxIouLoss = new("BoxIouLoss", OperationIndex.BoxIouLoss, KernelSource.None);
+    public static readonly Operation<OperationKernels.BoxIouLoss> BoxIouLoss = new("BoxIouLoss", OperationIndex.BoxIouLoss, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.BoxIouLossKernel"/> with respect to the predicted corners: dPredicted[i] += lossGrads[i] ·
     /// ∂losses[i] / ∂predicted[i] (the targets are constants; a tie of a minimum or maximum shares the gradient in halves,
     /// as PyTorch's).
     /// </summary>
-    public static readonly Operation<OperationKernels.BoxIouLossBackward> BoxIouLossBackward = new("BoxIouLossBackward", OperationIndex.BoxIouLossBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.BoxIouLossBackward> BoxIouLossBackward = new("BoxIouLossBackward", OperationIndex.BoxIouLossBackward, KernelSource.Host);
 
     /// <summary>
     /// Sigmoid focal loss (Lin et al. 2017), torchvision's formula, element by element over <c>count</c> logits:
     /// losses = α_t · (1 - p_t)^γ · BCE(logits, targets), p = σ(logits), p_t = p·t + (1 - p)(1 - t),
     /// α_t = α·t + (1 - α)(1 - t), with no α weighting when <c>alpha</c> is negative. Targets in [0, 1].
     /// </summary>
-    public static readonly Operation<OperationKernels.SigmoidFocalLoss> SigmoidFocalLoss = new("SigmoidFocalLoss", OperationIndex.SigmoidFocalLoss, KernelSource.None);
+    public static readonly Operation<OperationKernels.SigmoidFocalLoss> SigmoidFocalLoss = new("SigmoidFocalLoss", OperationIndex.SigmoidFocalLoss, KernelSource.Host);
 
     /// <summary>
     /// The gradient of <see cref="Backend.SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).
     /// </summary>
-    public static readonly Operation<OperationKernels.SigmoidFocalLossBackward> SigmoidFocalLossBackward = new("SigmoidFocalLossBackward", OperationIndex.SigmoidFocalLossBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.SigmoidFocalLossBackward> SigmoidFocalLossBackward = new("SigmoidFocalLossBackward", OperationIndex.SigmoidFocalLossBackward, KernelSource.Host);
 
     /// <summary>
     /// y (+)= x permuted: output element at coordinates (c0..c[r-1]) of <c>outShape</c> comes from
     /// input offset Σ c_k * inStrides[k] (the input strides already reordered by the permutation). Rank ≤ 6.
     /// </summary>
-    public static readonly Operation<OperationKernels.Permute> Permute = new("Permute", OperationIndex.Permute, KernelSource.None);
+    public static readonly Operation<OperationKernels.Permute> Permute = new("Permute", OperationIndex.Permute, KernelSource.Host);
 
     /// <summary>
     /// y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.
     /// </summary>
-    public static readonly Operation<OperationKernels.SumAxis> SumAxis = new("SumAxis", OperationIndex.SumAxis, KernelSource.None);
+    public static readonly Operation<OperationKernels.SumAxis> SumAxis = new("SumAxis", OperationIndex.SumAxis, KernelSource.Host);
 
     /// <summary>
     /// dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="Backend.SumAxis"/>).
     /// </summary>
-    public static readonly Operation<OperationKernels.BroadcastAxis> BroadcastAxis = new("BroadcastAxis", OperationIndex.BroadcastAxis, KernelSource.None);
+    public static readonly Operation<OperationKernels.BroadcastAxis> BroadcastAxis = new("BroadcastAxis", OperationIndex.BroadcastAxis, KernelSource.Host);
 
     /// <summary>
     /// SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).
     /// </summary>
-    public static readonly Operation<OperationKernels.SgdStep> SgdStep = new("SgdStep", OperationIndex.SgdStep, KernelSource.None);
+    public static readonly Operation<OperationKernels.SgdStep> SgdStep = new("SgdStep", OperationIndex.SgdStep, KernelSource.Host);
 
     /// <summary>
     /// Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.
     /// </summary>
-    public static readonly Operation<OperationKernels.AdamStep> AdamStep = new("AdamStep", OperationIndex.AdamStep, KernelSource.None);
+    public static readonly Operation<OperationKernels.AdamStep> AdamStep = new("AdamStep", OperationIndex.AdamStep, KernelSource.Host);
 
     /// <summary>
     /// total[0] += Σ x² over <c>n</c> elements (a gradient norm without temporary tensors).
     /// </summary>
-    public static readonly Operation<OperationKernels.SumSquares> SumSquares = new("SumSquares", OperationIndex.SumSquares, KernelSource.None);
+    public static readonly Operation<OperationKernels.SumSquares> SumSquares = new("SumSquares", OperationIndex.SumSquares, KernelSource.Host);
 
     /// <summary>
     /// AdamW over many tensors in a few passes: the global gradient norm clipped to <c>maxNorm</c> (0: no
@@ -1713,75 +1713,75 @@ public static partial class Ops
     /// factor[0] = min(1, maxNorm / √sumSquares[0]) (1 when the sum is 0): the gradient-clipping factor computed where the
     /// gradients are, so clipping needs no host read of the norm.
     /// </summary>
-    public static readonly Operation<OperationKernels.ClipFactor> ClipFactor = new("ClipFactor", OperationIndex.ClipFactor, KernelSource.None);
+    public static readonly Operation<OperationKernels.ClipFactor> ClipFactor = new("ClipFactor", OperationIndex.ClipFactor, KernelSource.Host);
 
     /// <summary>
     /// Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.
     /// </summary>
-    public static readonly Operation<OperationKernels.Dropout> Dropout = new("Dropout", OperationIndex.Dropout, KernelSource.None);
+    public static readonly Operation<OperationKernels.Dropout> Dropout = new("Dropout", OperationIndex.Dropout, KernelSource.Host);
 
     /// <summary>
     /// dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.
     /// </summary>
-    public static readonly Operation<OperationKernels.DropoutBackward> DropoutBackward = new("DropoutBackward", OperationIndex.DropoutBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.DropoutBackward> DropoutBackward = new("DropoutBackward", OperationIndex.DropoutBackward, KernelSource.Host);
 
     /// <summary>
     /// y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).
     /// </summary>
-    public static readonly Operation<OperationKernels.ScaleMaskSoftmax> ScaleMaskSoftmax = new("ScaleMaskSoftmax", OperationIndex.ScaleMaskSoftmax, KernelSource.None);
+    public static readonly Operation<OperationKernels.ScaleMaskSoftmax> ScaleMaskSoftmax = new("ScaleMaskSoftmax", OperationIndex.ScaleMaskSoftmax, KernelSource.Host);
 
     /// <summary>
     /// y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.
     /// </summary>
-    public static readonly Operation<OperationKernels.LayerNormFused> LayerNormFused = new("LayerNormFused", OperationIndex.LayerNormFused, KernelSource.None);
+    public static readonly Operation<OperationKernels.LayerNormFused> LayerNormFused = new("LayerNormFused", OperationIndex.LayerNormFused, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).
     /// </summary>
-    public static readonly Operation<OperationKernels.LayerNormTrain> LayerNormTrain = new("LayerNormTrain", OperationIndex.LayerNormTrain, KernelSource.None);
+    public static readonly Operation<OperationKernels.LayerNormTrain> LayerNormTrain = new("LayerNormTrain", OperationIndex.LayerNormTrain, KernelSource.Host);
 
     /// <summary>
     /// Gradients of <see cref="Backend.LayerNormTrain"/> given dy: adds to dx (when given), dgamma += Σ_r dy ∘ x̂ and dbeta += Σ_r dy.
     /// </summary>
-    public static readonly Operation<OperationKernels.LayerNormBackward> LayerNormBackward = new("LayerNormBackward", OperationIndex.LayerNormBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.LayerNormBackward> LayerNormBackward = new("LayerNormBackward", OperationIndex.LayerNormBackward, KernelSource.Host);
 
     /// <summary>
     /// y[i] = gelu(x[i] + bias[i % cols]).
     /// </summary>
-    public static readonly Operation<OperationKernels.BiasGelu> BiasGelu = new("BiasGelu", OperationIndex.BiasGelu, KernelSource.None);
+    public static readonly Operation<OperationKernels.BiasGelu> BiasGelu = new("BiasGelu", OperationIndex.BiasGelu, KernelSource.Host);
 
     /// <summary>
     /// y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).
     /// </summary>
-    public static readonly Operation<OperationKernels.RmsNorm> RmsNorm = new("RmsNorm", OperationIndex.RmsNorm, KernelSource.None);
+    public static readonly Operation<OperationKernels.RmsNorm> RmsNorm = new("RmsNorm", OperationIndex.RmsNorm, KernelSource.Host);
 
     /// <summary>
     /// dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.
     /// </summary>
-    public static readonly Operation<OperationKernels.RmsNormBackward> RmsNormBackward = new("RmsNormBackward", OperationIndex.RmsNormBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.RmsNormBackward> RmsNormBackward = new("RmsNormBackward", OperationIndex.RmsNormBackward, KernelSource.Host);
 
     /// <summary>
     /// Rotary position embedding of x [rows = batch·steps·heads, dim] into y (which must already hold x): pair p of a row at
     /// step t rotates by the angle whose cos/sin are cos/sin[positions[t], p]. Pairs are (2p, 2p+1) when interleaved,
     /// else (p, p + half). sign = -1 rotates backwards (the gradient).
     /// </summary>
-    public static readonly Operation<OperationKernels.Rope> Rope = new("Rope", OperationIndex.Rope, KernelSource.None);
+    public static readonly Operation<OperationKernels.Rope> Rope = new("Rope", OperationIndex.Rope, KernelSource.Host);
 
     /// <summary>
     /// y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).
     /// </summary>
-    public static readonly Operation<OperationKernels.RmsNormAffine> RmsNormAffine = new("RmsNormAffine", OperationIndex.RmsNormAffine, KernelSource.None);
+    public static readonly Operation<OperationKernels.RmsNormAffine> RmsNormAffine = new("RmsNormAffine", OperationIndex.RmsNormAffine, KernelSource.Host);
 
     /// <summary>
     /// sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).
     /// </summary>
-    public static readonly Operation<OperationKernels.AddRmsNormAffine> AddRmsNormAffine = new("AddRmsNormAffine", OperationIndex.AddRmsNormAffine, KernelSource.None);
+    public static readonly Operation<OperationKernels.AddRmsNormAffine> AddRmsNormAffine = new("AddRmsNormAffine", OperationIndex.AddRmsNormAffine, KernelSource.Host);
 
     /// <summary>
     /// RMS normalization with gain of each row (a head's vector), then the rotary embedding as <see cref="Backend.Rope"/> with
     /// sign 1 (rows are batch·steps·heads; dimensions beyond 2·half are only normalized). Inference.
     /// </summary>
-    public static readonly Operation<OperationKernels.RmsNormRope> RmsNormRope = new("RmsNormRope", OperationIndex.RmsNormRope, KernelSource.None);
+    public static readonly Operation<OperationKernels.RmsNormRope> RmsNormRope = new("RmsNormRope", OperationIndex.RmsNormRope, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.RmsNormRope"/> for two tensors sharing the positions and rotary tables (queries and keys): rows1 rows
@@ -1804,17 +1804,17 @@ public static partial class Ops
     /// weight w_r (0 masks the row): losses[r] = w_r · (logsumexp(x_r) - x_r[t_r]); the logits are overwritten with their
     /// gradient scale · w_r · (softmax(x_r) - onehot(t_r)). Targets and weights are float arrays of rows.
     /// </summary>
-    public static readonly Operation<OperationKernels.SoftmaxCrossEntropyRows> SoftmaxCrossEntropyRows = new("SoftmaxCrossEntropyRows", OperationIndex.SoftmaxCrossEntropyRows, KernelSource.None);
+    public static readonly Operation<OperationKernels.SoftmaxCrossEntropyRows> SoftmaxCrossEntropyRows = new("SoftmaxCrossEntropyRows", OperationIndex.SoftmaxCrossEntropyRows, KernelSource.Host);
 
     /// <summary>
     /// y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).
     /// </summary>
-    public static readonly Operation<OperationKernels.GatedActivation> GatedActivation = new("GatedActivation", OperationIndex.GatedActivation, KernelSource.None);
+    public static readonly Operation<OperationKernels.GatedActivation> GatedActivation = new("GatedActivation", OperationIndex.GatedActivation, KernelSource.Host);
 
     /// <summary>
     /// dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).
     /// </summary>
-    public static readonly Operation<OperationKernels.GatedActivationBackward> GatedActivationBackward = new("GatedActivationBackward", OperationIndex.GatedActivationBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.GatedActivationBackward> GatedActivationBackward = new("GatedActivationBackward", OperationIndex.GatedActivationBackward, KernelSource.Host);
 
     /// <summary>
     /// Attention over a key/value cache filled up to the device position: for head h and row i of q [heads, rowsPerHead,
@@ -1824,14 +1824,14 @@ public static partial class Ops
     /// <c>variant</c>, each row starts at its window's first position and its scores are soft-capped (every
     /// attention method below takes one; the default is plain causal attention).
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionDecode> AttentionDecode = new("AttentionDecode", OperationIndex.AttentionDecode, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionDecode> AttentionDecode = new("AttentionDecode", OperationIndex.AttentionDecode, KernelSource.Host);
 
     /// <summary>
     /// Gradient of <see cref="Backend.AttentionTiled"/> with causal offset 0 (training): given the output, each row's log-sum-exp
     /// and dOutput, adds to dq [heads, rowsPerHead, dim] and dkeys, dvalues [heads, capacity, dim]. The attention weights
     /// are recomputed, never stored.
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionTiledBackward> AttentionTiledBackward = new("AttentionTiledBackward", OperationIndex.AttentionTiledBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionTiledBackward> AttentionTiledBackward = new("AttentionTiledBackward", OperationIndex.AttentionTiledBackward, KernelSource.Host);
 
     /// <summary>
     /// Causal attention over packed sequences (training): as <see cref="Backend.AttentionTiled"/> with offset 0 and keys and values
@@ -1875,7 +1875,7 @@ public static partial class Ops
     /// not plainly causal (bidirectional, causal, sliding window, packed sequences, image blocks: <c>KeySpans</c>). The
     /// scores are never stored whole: the cost in memory follows rows + keys, not rows · keys.
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionSpans> AttentionSpans = new("AttentionSpans", OperationIndex.AttentionSpans, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionSpans> AttentionSpans = new("AttentionSpans", OperationIndex.AttentionSpans, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.AttentionSpans"/> of a self-attention layer read in place from rows [batch, rows, *] (its packed
@@ -1896,17 +1896,17 @@ public static partial class Ops
     /// and dvalues [kvHeads, keyRows, dim] the matching terms (the query heads of a group add into their key/value head).
     /// The weights are recomputed, never stored; rows with an empty range add nothing.
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionSpansBackward> AttentionSpansBackward = new("AttentionSpansBackward", OperationIndex.AttentionSpansBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionSpansBackward> AttentionSpansBackward = new("AttentionSpansBackward", OperationIndex.AttentionSpansBackward, KernelSource.Host);
 
     /// <summary>
     /// mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.
     /// </summary>
-    public static readonly Operation<OperationKernels.DecoderMask> DecoderMask = new("DecoderMask", OperationIndex.DecoderMask, KernelSource.None);
+    public static readonly Operation<OperationKernels.DecoderMask> DecoderMask = new("DecoderMask", OperationIndex.DecoderMask, KernelSource.Host);
 
     /// <summary>
     /// cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].
     /// </summary>
-    public static readonly Operation<OperationKernels.KeyValueWrite> KeyValueWrite = new("KeyValueWrite", OperationIndex.KeyValueWrite, KernelSource.None);
+    public static readonly Operation<OperationKernels.KeyValueWrite> KeyValueWrite = new("KeyValueWrite", OperationIndex.KeyValueWrite, KernelSource.Host);
 
     /// <summary>
     /// Draws one token per row from softmax(logits / temperature), restricted in turn to the top-k scores (topK &gt; 0),
@@ -1923,7 +1923,7 @@ public static partial class Ops
     /// and no alternatives, which the sampler reading them reports as an error.
     /// </para>
     /// </summary>
-    public static readonly Operation<OperationKernels.SampleRows> SampleRows = new("SampleRows", OperationIndex.SampleRows, KernelSource.None);
+    public static readonly Operation<OperationKernels.SampleRows> SampleRows = new("SampleRows", OperationIndex.SampleRows, KernelSource.Host);
 
     /// <summary>
     /// Copies each row's logits (row r at r * rowStride + rowOffset) to work[r, :] and applies repetition penalties for
@@ -1931,12 +1931,12 @@ public static partial class Ops
     /// memory). Each distinct token in the window is penalized once: repeat (x &gt; 0 ? x / repeat : x * repeat), then
     /// x -= presence + frequency * (occurrences in the window).
     /// </summary>
-    public static readonly Operation<OperationKernels.PenalizeRows> PenalizeRows = new("PenalizeRows", OperationIndex.PenalizeRows, KernelSource.None);
+    public static readonly Operation<OperationKernels.PenalizeRows> PenalizeRows = new("PenalizeRows", OperationIndex.PenalizeRows, KernelSource.Host);
 
     /// <summary>
     /// history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).
     /// </summary>
-    public static readonly Operation<OperationKernels.HistoryPush> HistoryPush = new("HistoryPush", OperationIndex.HistoryPush, KernelSource.None);
+    public static readonly Operation<OperationKernels.HistoryPush> HistoryPush = new("HistoryPush", OperationIndex.HistoryPush, KernelSource.Host);
 
     /// <summary>
     /// The mixture-of-experts routing of <c>tokens</c> rows of router probabilities [tokens, experts]: each
@@ -1948,7 +1948,7 @@ public static partial class Ops
     /// row) and <c>slotRow</c>[slot] (the row of that slot); indices and offsets are written in the device's
     /// index type (int32 where the device's kernels read int32, exact past 2²⁴ rows).
     /// </summary>
-    public static readonly Operation<OperationKernels.RouteTopK> RouteTopK = new("RouteTopK", OperationIndex.RouteTopK, KernelSource.None);
+    public static readonly Operation<OperationKernels.RouteTopK> RouteTopK = new("RouteTopK", OperationIndex.RouteTopK, KernelSource.Host);
 
     /// <summary>
     /// The gate and up projections of a mixture's experts over rows grouped by expert, and their gated activation: for
@@ -1958,7 +1958,7 @@ public static partial class Ops
     /// <c>activation</c>. Each expert's rows hold what its own projections and <see cref="Backend.GatedActivation"/>
     /// over just those rows give, bit for bit.
     /// </summary>
-    public static readonly Operation<OperationKernels.ExpertGatedPair> ExpertGatedPair = new("ExpertGatedPair", OperationIndex.ExpertGatedPair, KernelSource.None);
+    public static readonly Operation<OperationKernels.ExpertGatedPair> ExpertGatedPair = new("ExpertGatedPair", OperationIndex.ExpertGatedPair, KernelSource.Host);
 
     /// <summary>
     /// The products of a mixture's experts over rows grouped by expert: for each expert e, rows offsets[e] to
@@ -1966,14 +1966,14 @@ public static partial class Ops
     /// rows of y [rows, n] = x·weight_e + bias_e, with weight_e [k, n] and bias_e [n] or null. Each expert's rows hold what
     /// its own product (<see cref="Backend.MatMul"/>, then the bias added) over just those rows gives, bit for bit.
     /// </summary>
-    public static readonly Operation<OperationKernels.ExpertMatMul> ExpertMatMul = new("ExpertMatMul", OperationIndex.ExpertMatMul, KernelSource.None);
+    public static readonly Operation<OperationKernels.ExpertMatMul> ExpertMatMul = new("ExpertMatMul", OperationIndex.ExpertMatMul, KernelSource.Host);
 
     /// <summary>
     /// y[i] = x[offset + Σₖ iₖ·strides[k]] for every index i of <c>shape</c> in row-major order: a strided
     /// view of <c>x</c> (a permutation, a slice, a broadcast with stride 0) copied to the contiguous
     /// <c>y</c> of shape's elements. Every element is copied as it is.
     /// </summary>
-    public static readonly Operation<OperationKernels.StridedCopy> StridedCopy = new("StridedCopy", OperationIndex.StridedCopy, KernelSource.None);
+    public static readonly Operation<OperationKernels.StridedCopy> StridedCopy = new("StridedCopy", OperationIndex.StridedCopy, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.BatchedMatMul"/> with each operand read through its layout (plan 37, V1b): the elements of
@@ -1983,7 +1983,7 @@ public static partial class Ops
     /// for bit. A device that reads strides in its products lists this operation in
     /// <see cref="BackendCapabilities.StridedInputs"/>.
     /// </summary>
-    public static readonly Operation<OperationKernels.BatchedMatMulStrided> BatchedMatMulStrided = new("BatchedMatMulStrided", OperationIndex.BatchedMatMulStrided, KernelSource.None);
+    public static readonly Operation<OperationKernels.BatchedMatMulStrided> BatchedMatMulStrided = new("BatchedMatMulStrided", OperationIndex.BatchedMatMulStrided, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.AttentionTiled"/> with q, keys and values read through their layouts (plan 37, V1b): row r of q
@@ -1992,20 +1992,20 @@ public static partial class Ops
     /// values [heads, capacity, dim]; y is contiguous. Each layout holds its rows one after another
     /// (its last dimension a multiple of dim, stride 1). The results are <see cref="Backend.AttentionTiled"/>'s, bit for bit.
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionTiledStrided> AttentionTiledStrided = new("AttentionTiledStrided", OperationIndex.AttentionTiledStrided, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionTiledStrided> AttentionTiledStrided = new("AttentionTiledStrided", OperationIndex.AttentionTiledStrided, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.AttentionTiledBackward"/> with q, keys and values read through their layouts as
     /// <see cref="Backend.AttentionTiledStrided"/> reads them; output, dOutput and the gradients dq, dkeys, dvalues are contiguous.
     /// The results are <see cref="Backend.AttentionTiledBackward"/>'s, bit for bit.
     /// </summary>
-    public static readonly Operation<OperationKernels.AttentionTiledStridedBackward> AttentionTiledStridedBackward = new("AttentionTiledStridedBackward", OperationIndex.AttentionTiledStridedBackward, KernelSource.None);
+    public static readonly Operation<OperationKernels.AttentionTiledStridedBackward> AttentionTiledStridedBackward = new("AttentionTiledStridedBackward", OperationIndex.AttentionTiledStridedBackward, KernelSource.Host);
 
     /// <summary>
     /// y [m, n] = x [m, k] · Wᵀ, W stored as <c>weight</c>: n rows of k values read by its description
     /// (<see cref="Storage.Description"/>) alone.
     /// </summary>
-    public static readonly Operation<OperationKernels.StoredMatMul> StoredMatMul = new("StoredMatMul", OperationIndex.StoredMatMul, KernelSource.None);
+    public static readonly Operation<OperationKernels.StoredMatMul> StoredMatMul = new("StoredMatMul", OperationIndex.StoredMatMul, KernelSource.Host);
 
     /// <summary>
     /// <see cref="Backend.KeyValueWrite"/> with the source read through its layout (plan 37, V1b): row r (of
@@ -2015,7 +2015,7 @@ public static partial class Ops
     /// position as <see cref="Backend.KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
     /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
     /// </summary>
-    public static readonly Operation<OperationKernels.KeyValueWriteStrided> KeyValueWriteStrided = new("KeyValueWriteStrided", OperationIndex.KeyValueWriteStrided, KernelSource.None);
+    public static readonly Operation<OperationKernels.KeyValueWriteStrided> KeyValueWriteStrided = new("KeyValueWriteStrided", OperationIndex.KeyValueWriteStrided, KernelSource.Host);
 
     /// <summary>
     /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:

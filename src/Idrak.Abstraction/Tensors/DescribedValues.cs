@@ -20,7 +20,7 @@ internal sealed class DescribedReader
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, DescribedReader> Made = new();
 
     private readonly TypeDescription d;
-    private readonly int n, size, planes, width;
+    private readonly int n, size, planes, width, most;
     private readonly NativeKind native;
     private readonly int[] placeByte, placeShift;
     private readonly int[] planeBits, planeLow, planeRadix;
@@ -79,6 +79,11 @@ internal sealed class DescribedReader
         scales = [.. (d.Scales ?? []).Select(s => new Factor(d, s))];
         mins = [.. (d.Mins ?? []).Select(s => new Factor(d, s))];
         minsAdded = d.MinsAdded;
+        foreach (var f in scales.Concat(mins))
+        {
+            most = Math.Max(most, f.Chunks);                                // a factor's chunks at most: a group's numbers
+        }
+
         if (codeNumbers is not null && scales.Length == 0 && mins.Length == 0)
         {
             plainFloats = [.. codeNumbers.Select(v => (float)v)];
@@ -231,70 +236,67 @@ internal sealed class DescribedReader
         }
     }
 
-    // The values group by group (floats or doubles, whichever is given), each as ValueOf reads it.
+    // A group's factors' numbers a call holds at most on the stack (beyond it, the thread's own buffer).
+    private const int StackNumbers = 256;
+
+    // Each thread's buffer for a group's factors' numbers past StackNumbers, grown as asked and kept for the thread.
+    [ThreadStatic]
+    private static double[]? t_numbers;
+
+    // The values group by group (floats or doubles, whichever is given), each as ValueOf reads it. A group's factors'
+    // numbers (most a factor, the plan's) are held on the stack or in the thread's own buffer: nothing allocated a call.
     private void Units(ReadOnlySpan<byte> stored, int count, Span<float> floats, Span<double> doubles)
     {
-        int most = 0;
-        foreach (var f in scales.Concat(mins))
+        int need = Math.Max(1, most * (scales.Length + mins.Length));
+        Span<double> chunk = need <= StackNumbers ? stackalloc double[StackNumbers]
+            : (t_numbers is { } kept && kept.Length >= need ? kept : t_numbers = new double[need]);
+        for (int g = 0; g * n < count; g++)
         {
-            most = Math.Max(most, f.Chunks);
-        }
-
-        double[] chunk = ArrayPool<double>.Shared.Rent(Math.Max(1, most * (scales.Length + mins.Length)));
-        try
-        {
-            for (int g = 0; g * n < count; g++)
+            var unit = stored.Slice(g * size, size);
+            for (int f = 0; f < scales.Length + mins.Length; f++)
             {
-                var unit = stored.Slice(g * size, size);
-                for (int f = 0; f < scales.Length + mins.Length; f++)
+                var factor = f < scales.Length ? scales[f] : mins[f - scales.Length];
+                factor.Numbers(unit, chunk.Slice(f * most, factor.Chunks));
+            }
+
+            int values = Math.Min(n, count - g * n);
+            for (int v = 0; v < values; v++)
+            {
+                ulong code = 0;
+                for (int p = 0; p < planes; p++)
                 {
-                    var factor = f < scales.Length ? scales[f] : mins[f - scales.Length];
-                    factor.Numbers(unit, chunk.AsSpan(f * most, factor.Chunks));
+                    int at = placeByte[v * planes + p], shift = placeShift[v * planes + p];
+                    code |= (planeRadix[p] != 0 ? (ulong)planeOf[p].Digit(unit[at], shift) : Field(unit, at, shift, planeBits[p])) << planeLow[p];
                 }
 
-                int values = Math.Min(n, count - g * n);
-                for (int v = 0; v < values; v++)
+                int within = v % width;
+                double value = codeNumbers is { } table ? table[(int)code * width + within] : d.Code.Value(code, within);
+                value = codeNumbers is not null || d.CodeOffset == 0 ? value : value + d.CodeOffset;
+                for (int f = 0; f < scales.Length; f++)
                 {
-                    ulong code = 0;
-                    for (int p = 0; p < planes; p++)
+                    value *= scales[f].Number(unit, chunk, f * most, v);
+                }
+
+                if (mins.Length > 0)
+                {
+                    double min = 1;
+                    for (int f = 0; f < mins.Length; f++)
                     {
-                        int at = placeByte[v * planes + p], shift = placeShift[v * planes + p];
-                        code |= (planeRadix[p] != 0 ? (ulong)planeOf[p].Digit(unit[at], shift) : Field(unit, at, shift, planeBits[p])) << planeLow[p];
+                        min *= mins[f].Number(unit, chunk, (scales.Length + f) * most, v);
                     }
 
-                    int within = v % width;
-                    double value = codeNumbers is { } table ? table[(int)code * width + within] : d.Code.Value(code, within);
-                    value = codeNumbers is not null || d.CodeOffset == 0 ? value : value + d.CodeOffset;
-                    for (int f = 0; f < scales.Length; f++)
-                    {
-                        value *= scales[f].Number(unit, chunk, f * most, v);
-                    }
+                    value = minsAdded ? value + min : value - min;
+                }
 
-                    if (mins.Length > 0)
-                    {
-                        double min = 1;
-                        for (int f = 0; f < mins.Length; f++)
-                        {
-                            min *= mins[f].Number(unit, chunk, (scales.Length + f) * most, v);
-                        }
-
-                        value = minsAdded ? value + min : value - min;
-                    }
-
-                    if (doubles.IsEmpty)
-                    {
-                        floats[g * n + v] = (float)value;
-                    }
-                    else
-                    {
-                        doubles[g * n + v] = value;
-                    }
+                if (doubles.IsEmpty)
+                {
+                    floats[g * n + v] = (float)value;
+                }
+                else
+                {
+                    doubles[g * n + v] = value;
                 }
             }
-        }
-        finally
-        {
-            ArrayPool<double>.Shared.Return(chunk);
         }
     }
 
@@ -344,7 +346,7 @@ internal sealed class DescribedReader
         }
 
         // The number value v of the group takes (BlockScale.Value's: the type's number of its bits, plus the bias).
-        public double Number(ReadOnlySpan<byte> unit, double[] chunk, int first, int v)
+        public double Number(ReadOnlySpan<byte> unit, ReadOnlySpan<double> chunk, int first, int v)
         {
             int j = v / s.Values;
             return s.Type.Width == 1 ? chunk[first + j] : s.Type.Value(BitConverter.DoubleToUInt64Bits(chunk[first + j]), v % s.Values % s.Type.Width) + s.Bias;

@@ -11,12 +11,14 @@ using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices;
 
-// Name(...) runs the device's own NameKernel. An operation the device has no kernel for runs its default: a composition
-// of other operations, or none (false, or it throws that the device has no kernel for it).
+// Name(...) runs the device's own NameKernel. An operation the device has no kernel for runs its default: the host
+// fallback (the CPU backend's own operation on the storages mirrored to the CPU, HostCall), a composition of other
+// operations, or none (false, or it throws that the device has no kernel for it).
 // On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.
 // On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a
-// KernelUnavailableException) a refused kernel falls back: a composed operation runs NameComposed (a copy of its
-// default body), one with no kernel returns its "none" value so the caller takes its own path (a void one rethrows);
+// KernelUnavailableException) a refused kernel falls back: an operation with a host fallback runs NameOnHost, a
+// composed one NameComposed (each a copy of its default body), one with no kernel returns its "none" value so the
+// caller takes its own path (a void one rethrows);
 // other errors reach the caller. Its calls take a third path, NameGuarded (the device's kernel in a try region, free
 // until it throws), straight from Name(...) when nothing else takes them off the fast path (its slots are
 // s_guardedKernels), else from NameScoped; which operations the device owns is looked up only when a kernel is
@@ -57,11 +59,26 @@ public abstract partial class Backend
         }
     }
 
-    // Fill on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Fill on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void FillGuarded(Storage y, int n, float value)
     {
-        FillKernel(y, n, value);
+        try
+        {
+            FillKernel(y, n, value);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Fill))
+        {
+            FellBack(Ops.Fill.Name, refused, "the host");
+            FillOnHost(y, n, value);
+        }
+    }
+
+    // The host fallback of Fill (the default body of FillKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void FillOnHost(Storage y, int n, float value)
+    {
+        using var h = new HostCall(this, nameof(Fill));
+        Cpu.CpuBackend.Instance.Fill(h[y], n, value);
     }
 
     /// <summary>y = op(x).</summary>
@@ -98,11 +115,26 @@ public abstract partial class Backend
         }
     }
 
-    // Unary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Unary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnaryGuarded(UnaryOp op, Storage x, Storage y, int n)
     {
-        UnaryKernel(op, x, y, n);
+        try
+        {
+            UnaryKernel(op, x, y, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Unary))
+        {
+            FellBack(Ops.Unary.Name, refused, "the host");
+            UnaryOnHost(op, x, y, n);
+        }
+    }
+
+    // The host fallback of Unary (the default body of UnaryKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void UnaryOnHost(UnaryOp op, Storage x, Storage y, int n)
+    {
+        using var h = new HostCall(this, nameof(Unary));
+        Cpu.CpuBackend.Instance.Unary(op, h[x], h[y], n);
     }
 
     /// <summary>dx += dy * op'(x), where y = op(x) is passed in for ops whose derivative is cheaper from y.</summary>
@@ -139,11 +171,26 @@ public abstract partial class Backend
         }
     }
 
-    // UnaryBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // UnaryBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void UnaryBackwardGuarded(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
-        UnaryBackwardKernel(op, x, y, dy, dx, n);
+        try
+        {
+            UnaryBackwardKernel(op, x, y, dy, dx, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.UnaryBackward))
+        {
+            FellBack(Ops.UnaryBackward.Name, refused, "the host");
+            UnaryBackwardOnHost(op, x, y, dy, dx, n);
+        }
+    }
+
+    // The host fallback of UnaryBackward (the default body of UnaryBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void UnaryBackwardOnHost(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
+        using var h = new HostCall(this, nameof(UnaryBackward));
+        Cpu.CpuBackend.Instance.UnaryBackward(op, h[x], h[y], h[dy], h[dx], n);
     }
 
     /// <summary>c = a op b, element-wise.</summary>
@@ -180,11 +227,26 @@ public abstract partial class Backend
         }
     }
 
-    // Binary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Binary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BinaryGuarded(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
-        BinaryKernel(op, a, b, c, n);
+        try
+        {
+            BinaryKernel(op, a, b, c, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Binary))
+        {
+            FellBack(Ops.Binary.Name, refused, "the host");
+            BinaryOnHost(op, a, b, c, n);
+        }
+    }
+
+    // The host fallback of Binary (the default body of BinaryKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BinaryOnHost(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, nameof(Binary));
+        Cpu.CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
     }
 
     /// <summary>
@@ -224,11 +286,26 @@ public abstract partial class Backend
         }
     }
 
-    // ExtremumBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ExtremumBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ExtremumBackwardGuarded(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
-        ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+        try
+        {
+            ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ExtremumBackward))
+        {
+            FellBack(Ops.ExtremumBackward.Name, refused, "the host");
+            ExtremumBackwardOnHost(op, a, b, dy, da, db, n);
+        }
+    }
+
+    // The host fallback of ExtremumBackward (the default body of ExtremumBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ExtremumBackwardOnHost(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, nameof(ExtremumBackward));
+        Cpu.CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = x^exponent, element-wise.</summary>
@@ -265,11 +342,26 @@ public abstract partial class Backend
         }
     }
 
-    // Pow on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Pow on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PowGuarded(Storage x, Storage y, int n, float exponent)
     {
-        PowKernel(x, y, n, exponent);
+        try
+        {
+            PowKernel(x, y, n, exponent);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Pow))
+        {
+            FellBack(Ops.Pow.Name, refused, "the host");
+            PowOnHost(x, y, n, exponent);
+        }
+    }
+
+    // The host fallback of Pow (the default body of PowKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void PowOnHost(Storage x, Storage y, int n, float exponent)
+    {
+        using var h = new HostCall(this, nameof(Pow));
+        Cpu.CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
     }
 
     /// <summary>dx += dy · exponent · x^(exponent - 1).</summary>
@@ -306,11 +398,26 @@ public abstract partial class Backend
         }
     }
 
-    // PowBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // PowBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PowBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
-        PowBackwardKernel(x, dy, dx, n, exponent);
+        try
+        {
+            PowBackwardKernel(x, dy, dx, n, exponent);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PowBackward))
+        {
+            FellBack(Ops.PowBackward.Name, refused, "the host");
+            PowBackwardOnHost(x, dy, dx, n, exponent);
+        }
+    }
+
+    // The host fallback of PowBackward (the default body of PowBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void PowBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        using var h = new HostCall(this, nameof(PowBackward));
+        Cpu.CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
     }
 
     /// <summary>y = x limited to [min, max] (either may be infinite).</summary>
@@ -347,11 +454,26 @@ public abstract partial class Backend
         }
     }
 
-    // Clamp on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Clamp on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClampGuarded(Storage x, Storage y, int n, float min, float max)
     {
-        ClampKernel(x, y, n, min, max);
+        try
+        {
+            ClampKernel(x, y, n, min, max);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Clamp))
+        {
+            FellBack(Ops.Clamp.Name, refused, "the host");
+            ClampOnHost(x, y, n, min, max);
+        }
+    }
+
+    // The host fallback of Clamp (the default body of ClampKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ClampOnHost(Storage x, Storage y, int n, float min, float max)
+    {
+        using var h = new HostCall(this, nameof(Clamp));
+        Cpu.CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
     }
 
     /// <summary>dx += dy where min ≤ x ≤ max.</summary>
@@ -388,11 +510,26 @@ public abstract partial class Backend
         }
     }
 
-    // ClampBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ClampBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClampBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
-        ClampBackwardKernel(x, dy, dx, n, min, max);
+        try
+        {
+            ClampBackwardKernel(x, dy, dx, n, min, max);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClampBackward))
+        {
+            FellBack(Ops.ClampBackward.Name, refused, "the host");
+            ClampBackwardOnHost(x, dy, dx, n, min, max);
+        }
+    }
+
+    // The host fallback of ClampBackward (the default body of ClampBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ClampBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        using var h = new HostCall(this, nameof(ClampBackward));
+        Cpu.CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
     /// <summary>y = x where x &gt; 0, slope · x elsewhere: the leaky ReLU, for a slope in [0, 1).</summary>
@@ -429,11 +566,26 @@ public abstract partial class Backend
         }
     }
 
-    // LeakyRelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LeakyRelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LeakyReluGuarded(Storage x, Storage y, int n, float slope)
     {
-        LeakyReluKernel(x, y, n, slope);
+        try
+        {
+            LeakyReluKernel(x, y, n, slope);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LeakyRelu))
+        {
+            FellBack(Ops.LeakyRelu.Name, refused, "the host");
+            LeakyReluOnHost(x, y, n, slope);
+        }
+    }
+
+    // The host fallback of LeakyRelu (the default body of LeakyReluKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LeakyReluOnHost(Storage x, Storage y, int n, float slope)
+    {
+        using var h = new HostCall(this, nameof(LeakyRelu));
+        Cpu.CpuBackend.Instance.LeakyRelu(h[x], h[y], n, slope);
     }
 
     /// <summary>dx += dy where x &gt; 0, slope · dy elsewhere.</summary>
@@ -470,11 +622,26 @@ public abstract partial class Backend
         }
     }
 
-    // LeakyReluBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LeakyReluBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LeakyReluBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float slope)
     {
-        LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        try
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LeakyReluBackward))
+        {
+            FellBack(Ops.LeakyReluBackward.Name, refused, "the host");
+            LeakyReluBackwardOnHost(x, dy, dx, n, slope);
+        }
+    }
+
+    // The host fallback of LeakyReluBackward (the default body of LeakyReluBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LeakyReluBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        using var h = new HostCall(this, nameof(LeakyReluBackward));
+        Cpu.CpuBackend.Instance.LeakyReluBackward(h[x], h[dy], h[dx], n, slope);
     }
 
     /// <summary>y = condition ≠ 0 ? a : b, element-wise.</summary>
@@ -511,11 +678,26 @@ public abstract partial class Backend
         }
     }
 
-    // Where on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Where on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WhereGuarded(Storage condition, Storage a, Storage b, Storage y, int n)
     {
-        WhereKernel(condition, a, b, y, n);
+        try
+        {
+            WhereKernel(condition, a, b, y, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Where))
+        {
+            FellBack(Ops.Where.Name, refused, "the host");
+            WhereOnHost(condition, a, b, y, n);
+        }
+    }
+
+    // The host fallback of Where (the default body of WhereKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void WhereOnHost(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        using var h = new HostCall(this, nameof(Where));
+        Cpu.CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
     }
 
     /// <summary>da += dy where condition ≠ 0, db += dy elsewhere (a null gradient is skipped).</summary>
@@ -552,11 +734,26 @@ public abstract partial class Backend
         }
     }
 
-    // WhereBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // WhereBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WhereBackwardGuarded(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
-        WhereBackwardKernel(condition, dy, da, db, n);
+        try
+        {
+            WhereBackwardKernel(condition, dy, da, db, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WhereBackward))
+        {
+            FellBack(Ops.WhereBackward.Name, refused, "the host");
+            WhereBackwardOnHost(condition, dy, da, db, n);
+        }
+    }
+
+    // The host fallback of WhereBackward (the default body of WhereBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void WhereBackwardOnHost(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        using var h = new HostCall(this, nameof(WhereBackward));
+        Cpu.CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
     /// <summary>y = alpha * x + beta.</summary>
@@ -593,11 +790,26 @@ public abstract partial class Backend
         }
     }
 
-    // Affine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Affine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AffineGuarded(Storage x, Storage y, int n, float alpha, float beta)
     {
-        AffineKernel(x, y, n, alpha, beta);
+        try
+        {
+            AffineKernel(x, y, n, alpha, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Affine))
+        {
+            FellBack(Ops.Affine.Name, refused, "the host");
+            AffineOnHost(x, y, n, alpha, beta);
+        }
+    }
+
+    // The host fallback of Affine (the default body of AffineKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AffineOnHost(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        using var h = new HostCall(this, nameof(Affine));
+        Cpu.CpuBackend.Instance.Affine(h[x], h[y], n, alpha, beta);
     }
 
     /// <summary>y += alpha * x.</summary>
@@ -634,11 +846,26 @@ public abstract partial class Backend
         }
     }
 
-    // Axpy on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Axpy on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AxpyGuarded(Storage x, Storage y, int n, float alpha)
     {
-        AxpyKernel(x, y, n, alpha);
+        try
+        {
+            AxpyKernel(x, y, n, alpha);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Axpy))
+        {
+            FellBack(Ops.Axpy.Name, refused, "the host");
+            AxpyOnHost(x, y, n, alpha);
+        }
+    }
+
+    // The host fallback of Axpy (the default body of AxpyKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AxpyOnHost(Storage x, Storage y, int n, float alpha)
+    {
+        using var h = new HostCall(this, nameof(Axpy));
+        Cpu.CpuBackend.Instance.Axpy(h[x], h[y], n, alpha);
     }
 
     /// <summary>c += a * b, element-wise.</summary>
@@ -675,11 +902,26 @@ public abstract partial class Backend
         }
     }
 
-    // MulAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // MulAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MulAddGuarded(Storage a, Storage b, Storage c, int n)
     {
-        MulAddKernel(a, b, c, n);
+        try
+        {
+            MulAddKernel(a, b, c, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MulAdd))
+        {
+            FellBack(Ops.MulAdd.Name, refused, "the host");
+            MulAddOnHost(a, b, c, n);
+        }
+    }
+
+    // The host fallback of MulAdd (the default body of MulAddKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void MulAddOnHost(Storage a, Storage b, Storage c, int n)
+    {
+        using var h = new HostCall(this, nameof(MulAdd));
+        Cpu.CpuBackend.Instance.MulAdd(h[a], h[b], h[c], n);
     }
 
     /// <summary>c[r, j] = a[r, j] + v[j].</summary>
@@ -716,11 +958,26 @@ public abstract partial class Backend
         }
     }
 
-    // AddRowVector on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AddRowVector on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddRowVectorGuarded(Storage a, Storage v, Storage c, int rows, int cols)
     {
-        AddRowVectorKernel(a, v, c, rows, cols);
+        try
+        {
+            AddRowVectorKernel(a, v, c, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddRowVector))
+        {
+            FellBack(Ops.AddRowVector.Name, refused, "the host");
+            AddRowVectorOnHost(a, v, c, rows, cols);
+        }
+    }
+
+    // The host fallback of AddRowVector (the default body of AddRowVectorKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AddRowVectorOnHost(Storage a, Storage v, Storage c, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(AddRowVector));
+        Cpu.CpuBackend.Instance.AddRowVector(h[a], h[v], h[c], rows, cols);
     }
 
     /// <summary>y[j] += sum over r of x[r, j].</summary>
@@ -757,11 +1014,26 @@ public abstract partial class Backend
         }
     }
 
-    // SumRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SumRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumRowsGuarded(Storage x, Storage y, int rows, int cols)
     {
-        SumRowsKernel(x, y, rows, cols);
+        try
+        {
+            SumRowsKernel(x, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumRows))
+        {
+            FellBack(Ops.SumRows.Name, refused, "the host");
+            SumRowsOnHost(x, y, rows, cols);
+        }
+    }
+
+    // The host fallback of SumRows (the default body of SumRowsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SumRowsOnHost(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(SumRows));
+        Cpu.CpuBackend.Instance.SumRows(h[x], h[y], rows, cols);
     }
 
     /// <summary>result[0] = scale * sum(x).</summary>
@@ -798,11 +1070,26 @@ public abstract partial class Backend
         }
     }
 
-    // Sum on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Sum on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumGuarded(Storage x, Storage result, int n, float scale)
     {
-        SumKernel(x, result, n, scale);
+        try
+        {
+            SumKernel(x, result, n, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Sum))
+        {
+            FellBack(Ops.Sum.Name, refused, "the host");
+            SumOnHost(x, result, n, scale);
+        }
+    }
+
+    // The host fallback of Sum (the default body of SumKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SumOnHost(Storage x, Storage result, int n, float scale)
+    {
+        using var h = new HostCall(this, nameof(Sum));
+        Cpu.CpuBackend.Instance.Sum(h[x], h[result], n, scale);
     }
 
     /// <summary>y[offset] += alpha * x[0] (used to accumulate scalar losses without leaving the device).</summary>
@@ -839,11 +1126,26 @@ public abstract partial class Backend
         }
     }
 
-    // AxpyAt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AxpyAt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AxpyAtGuarded(Storage x, Storage y, int offset, float alpha)
     {
-        AxpyAtKernel(x, y, offset, alpha);
+        try
+        {
+            AxpyAtKernel(x, y, offset, alpha);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AxpyAt))
+        {
+            FellBack(Ops.AxpyAt.Name, refused, "the host");
+            AxpyAtOnHost(x, y, offset, alpha);
+        }
+    }
+
+    // The host fallback of AxpyAt (the default body of AxpyAtKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AxpyAtOnHost(Storage x, Storage y, int offset, float alpha)
+    {
+        using var h = new HostCall(this, nameof(AxpyAt));
+        Cpu.CpuBackend.Instance.AxpyAt(h[x], h[y], offset, alpha);
     }
 
     /// <summary>y[i] += scale * s[0].</summary>
@@ -880,11 +1182,26 @@ public abstract partial class Backend
         }
     }
 
-    // AddBroadcastScalar on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AddBroadcastScalar on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddBroadcastScalarGuarded(Storage s, Storage y, int n, float scale)
     {
-        AddBroadcastScalarKernel(s, y, n, scale);
+        try
+        {
+            AddBroadcastScalarKernel(s, y, n, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddBroadcastScalar))
+        {
+            FellBack(Ops.AddBroadcastScalar.Name, refused, "the host");
+            AddBroadcastScalarOnHost(s, y, n, scale);
+        }
+    }
+
+    // The host fallback of AddBroadcastScalar (the default body of AddBroadcastScalarKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AddBroadcastScalarOnHost(Storage s, Storage y, int n, float scale)
+    {
+        using var h = new HostCall(this, nameof(AddBroadcastScalar));
+        Cpu.CpuBackend.Instance.AddBroadcastScalar(h[s], h[y], n, scale);
     }
 
     /// <summary>
@@ -1020,11 +1337,26 @@ public abstract partial class Backend
         }
     }
 
-    // SumColumns on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SumColumns on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumColumnsGuarded(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
-        SumColumnsKernel(x, offset, ld, y, rows, cols);
+        try
+        {
+            SumColumnsKernel(x, offset, ld, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumColumns))
+        {
+            FellBack(Ops.SumColumns.Name, refused, "the host");
+            SumColumnsOnHost(x, offset, ld, y, rows, cols);
+        }
+    }
+
+    // The host fallback of SumColumns (the default body of SumColumnsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SumColumnsOnHost(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(SumColumns));
+        Cpu.CpuBackend.Instance.SumColumns(h[x], offset, ld, h[y], rows, cols);
     }
 
     /// <summary>output = residual + dropout(x) (the mask of <see cref="Dropout"/> with <paramref name="seed"/>).</summary>
@@ -1117,11 +1449,26 @@ public abstract partial class Backend
         }
     }
 
-    // BatchedMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BatchedMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BatchedMatMulGuarded(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+        try
+        {
+            BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BatchedMatMul))
+        {
+            FellBack(Ops.BatchedMatMul.Name, refused, "the host");
+            BatchedMatMulOnHost(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    // The host fallback of BatchedMatMul (the default body of BatchedMatMulKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BatchedMatMulOnHost(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var h = new HostCall(this, nameof(BatchedMatMul));
+        Cpu.CpuBackend.Instance.BatchedMatMul(h[a], h[b], h[c], batch, m, n, k, transA, transB, beta);
     }
 
     /// <summary>Row-wise softmax (or log-softmax) over the last dimension: y[r, :] = softmax(x[r, :]).</summary>
@@ -1158,11 +1505,26 @@ public abstract partial class Backend
         }
     }
 
-    // Softmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Softmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxGuarded(Storage x, Storage y, int rows, int cols, bool log)
     {
-        SoftmaxKernel(x, y, rows, cols, log);
+        try
+        {
+            SoftmaxKernel(x, y, rows, cols, log);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Softmax))
+        {
+            FellBack(Ops.Softmax.Name, refused, "the host");
+            SoftmaxOnHost(x, y, rows, cols, log);
+        }
+    }
+
+    // The host fallback of Softmax (the default body of SoftmaxKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SoftmaxOnHost(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, nameof(Softmax));
+        Cpu.CpuBackend.Instance.Softmax(h[x], h[y], rows, cols, log);
     }
 
     /// <summary>
@@ -1201,11 +1563,26 @@ public abstract partial class Backend
         }
     }
 
-    // SoftmaxBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SoftmaxBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxBackwardGuarded(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
-        SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+        try
+        {
+            SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SoftmaxBackward))
+        {
+            FellBack(Ops.SoftmaxBackward.Name, refused, "the host");
+            SoftmaxBackwardOnHost(y, dy, dx, rows, cols, log);
+        }
+    }
+
+    // The host fallback of SoftmaxBackward (the default body of SoftmaxBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SoftmaxBackwardOnHost(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
+        using var h = new HostCall(this, nameof(SoftmaxBackward));
+        Cpu.CpuBackend.Instance.SoftmaxBackward(h[y], h[dy], h[dx], rows, cols, log);
     }
 
     /// <summary>y[r] = index of the largest element of row r.</summary>
@@ -1242,11 +1619,26 @@ public abstract partial class Backend
         }
     }
 
-    // ArgMax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ArgMax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ArgMaxGuarded(Storage x, Storage y, int rows, int cols)
     {
-        ArgMaxKernel(x, y, rows, cols);
+        try
+        {
+            ArgMaxKernel(x, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ArgMax))
+        {
+            FellBack(Ops.ArgMax.Name, refused, "the host");
+            ArgMaxOnHost(x, y, rows, cols);
+        }
+    }
+
+    // The host fallback of ArgMax (the default body of ArgMaxKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ArgMaxOnHost(Storage x, Storage y, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(ArgMax));
+        Cpu.CpuBackend.Instance.ArgMax(h[x], h[y], rows, cols);
     }
 
     /// <summary>
@@ -1291,11 +1683,26 @@ public abstract partial class Backend
         }
     }
 
-    // LogSoftmaxTopK on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LogSoftmaxTopK on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LogSoftmaxTopKGuarded(Storage x, Storage values, Storage indices, int rows, int cols, int k)
     {
-        LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        try
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LogSoftmaxTopK))
+        {
+            FellBack(Ops.LogSoftmaxTopK.Name, refused, "the host");
+            LogSoftmaxTopKOnHost(x, values, indices, rows, cols, k);
+        }
+    }
+
+    // The host fallback of LogSoftmaxTopK (the default body of LogSoftmaxTopKKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LogSoftmaxTopKOnHost(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        using var h = new HostCall(this, nameof(LogSoftmaxTopK));
+        Cpu.CpuBackend.Instance.LogSoftmaxTopK(h[x], h[values], h[indices], rows, cols, k);
     }
 
     /// <summary>
@@ -1335,11 +1742,26 @@ public abstract partial class Backend
         }
     }
 
-    // ClassMatch on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ClassMatch on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClassMatchGuarded(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
-        ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+        try
+        {
+            ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClassMatch))
+        {
+            FellBack(Ops.ClassMatch.Name, refused, "the host");
+            ClassMatchOnHost(predictions, targets, y, rows, cols, threshold);
+        }
+    }
+
+    // The host fallback of ClassMatch (the default body of ClassMatchKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ClassMatchOnHost(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
+        using var h = new HostCall(this, nameof(ClassMatch));
+        Cpu.CpuBackend.Instance.ClassMatch(h[predictions], h[targets], h[y], rows, cols, threshold);
     }
 
     /// <summary>Per-group mean, (biased) variance and 1 / sqrt(variance + eps).</summary>
@@ -1376,11 +1798,26 @@ public abstract partial class Backend
         }
     }
 
-    // NormStats on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // NormStats on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormStatsGuarded(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
-        NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+        try
+        {
+            NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormStats))
+        {
+            FellBack(Ops.NormStats.Name, refused, "the host");
+            NormStatsOnHost(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+    }
+
+    // The host fallback of NormStats (the default body of NormStatsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void NormStatsOnHost(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        using var h = new HostCall(this, nameof(NormStats));
+        Cpu.CpuBackend.Instance.NormStats(h[x], h[mean], h[variance], h[invStd], outer, groups, inner, eps);
     }
 
     /// <summary>y = (x - mean[g]) * invStd[g].</summary>
@@ -1417,11 +1854,26 @@ public abstract partial class Backend
         }
     }
 
-    // NormApply on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // NormApply on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormApplyGuarded(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
-        NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+        try
+        {
+            NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormApply))
+        {
+            FellBack(Ops.NormApply.Name, refused, "the host");
+            NormApplyOnHost(x, mean, invStd, y, outer, groups, inner);
+        }
+    }
+
+    // The host fallback of NormApply (the default body of NormApplyKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void NormApplyOnHost(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(NormApply));
+        Cpu.CpuBackend.Instance.NormApply(h[x], h[mean], h[invStd], h[y], outer, groups, inner);
     }
 
     /// <summary>dx += invStd[g] / M * (M * dxhat - sum1[g] - xhat * sum2[g]).</summary>
@@ -1458,11 +1910,26 @@ public abstract partial class Backend
         }
     }
 
-    // NormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // NormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void NormBackwardGuarded(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
-        NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        try
+        {
+            NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormBackward))
+        {
+            FellBack(Ops.NormBackward.Name, refused, "the host");
+            NormBackwardOnHost(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+    }
+
+    // The host fallback of NormBackward (the default body of NormBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void NormBackwardOnHost(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(NormBackward));
+        Cpu.CpuBackend.Instance.NormBackward(h[dxhat], h[xhat], h[sum1], h[sum2], h[invStd], h[dx], outer, groups, inner);
     }
 
     /// <summary>
@@ -1501,11 +1968,26 @@ public abstract partial class Backend
         }
     }
 
-    // GroupScaleShift on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // GroupScaleShift on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GroupScaleShiftGuarded(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
-        GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+        try
+        {
+            GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GroupScaleShift))
+        {
+            FellBack(Ops.GroupScaleShift.Name, refused, "the host");
+            GroupScaleShiftOnHost(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+    }
+
+    // The host fallback of GroupScaleShift (the default body of GroupScaleShiftKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void GroupScaleShiftOnHost(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(GroupScaleShift));
+        Cpu.CpuBackend.Instance.GroupScaleShift(h[x], h.Maybe(scale), h.Maybe(shift), h[y], n, groups, inner, accumulate);
     }
 
     /// <summary>sumA[g] += Σ a; sumAB[g] += Σ a·b over each group (see NormStats for the layout). b/sumAB may be null.</summary>
@@ -1542,11 +2024,26 @@ public abstract partial class Backend
         }
     }
 
-    // GroupReduce on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // GroupReduce on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GroupReduceGuarded(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
-        GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+        try
+        {
+            GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GroupReduce))
+        {
+            FellBack(Ops.GroupReduce.Name, refused, "the host");
+            GroupReduceOnHost(a, b, sumA, sumAB, outer, groups, inner);
+        }
+    }
+
+    // The host fallback of GroupReduce (the default body of GroupReduceKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void GroupReduceOnHost(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        using var h = new HostCall(this, nameof(GroupReduce));
+        Cpu.CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
     /// <summary>
@@ -1586,11 +2083,26 @@ public abstract partial class Backend
         }
     }
 
-    // WeightNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // WeightNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WeightNormGuarded(Storage gain, Storage direction, Storage weight, int rows, int columns)
     {
-        WeightNormKernel(gain, direction, weight, rows, columns);
+        try
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WeightNorm))
+        {
+            FellBack(Ops.WeightNorm.Name, refused, "the host");
+            WeightNormOnHost(gain, direction, weight, rows, columns);
+        }
+    }
+
+    // The host fallback of WeightNorm (the default body of WeightNormKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void WeightNormOnHost(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        using var h = new HostCall(this, nameof(WeightNorm));
+        Cpu.CpuBackend.Instance.WeightNorm(h[gain], h[direction], h[weight], rows, columns);
     }
 
     /// <summary>
@@ -1630,11 +2142,26 @@ public abstract partial class Backend
         }
     }
 
-    // WeightNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // WeightNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void WeightNormBackwardGuarded(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
     {
-        WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        try
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WeightNormBackward))
+        {
+            FellBack(Ops.WeightNormBackward.Name, refused, "the host");
+            WeightNormBackwardOnHost(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+    }
+
+    // The host fallback of WeightNormBackward (the default body of WeightNormBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void WeightNormBackwardOnHost(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        using var h = new HostCall(this, nameof(WeightNormBackward));
+        Cpu.CpuBackend.Instance.WeightNormBackward(h[gain], h[direction], h[dweight], h.Maybe(dgain), h.Maybe(ddirection), rows, columns);
     }
 
     /// <summary>y = 1 / sqrt(x + eps).</summary>
@@ -1671,11 +2198,26 @@ public abstract partial class Backend
         }
     }
 
-    // InvSqrt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // InvSqrt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void InvSqrtGuarded(Storage x, Storage y, int n, float eps)
     {
-        InvSqrtKernel(x, y, n, eps);
+        try
+        {
+            InvSqrtKernel(x, y, n, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.InvSqrt))
+        {
+            FellBack(Ops.InvSqrt.Name, refused, "the host");
+            InvSqrtOnHost(x, y, n, eps);
+        }
+    }
+
+    // The host fallback of InvSqrt (the default body of InvSqrtKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void InvSqrtOnHost(Storage x, Storage y, int n, float eps)
+    {
+        using var h = new HostCall(this, nameof(InvSqrt));
+        Cpu.CpuBackend.Instance.InvSqrt(h[x], h[y], n, eps);
     }
 
     /// <summary>Embedding lookup: y[i, :] = table[indices[i], :] for count indices of width dim.</summary>
@@ -1712,11 +2254,26 @@ public abstract partial class Backend
         }
     }
 
-    // Gather on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Gather on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatherGuarded(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        GatherKernel(table, indices, y, count, dim, vocabulary);
+        try
+        {
+            GatherKernel(table, indices, y, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Gather))
+        {
+            FellBack(Ops.Gather.Name, refused, "the host");
+            GatherOnHost(table, indices, y, count, dim, vocabulary);
+        }
+    }
+
+    // The host fallback of Gather (the default body of GatherKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void GatherOnHost(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, nameof(Gather));
+        Cpu.CpuBackend.Instance.Gather(h[table], h[indices], h[y], count, dim, vocabulary);
     }
 
     /// <summary>One-hot rows: y[i, :] = 0 except y[i, indices[i]] = 1, for count indices over classes columns.</summary>
@@ -1753,11 +2310,26 @@ public abstract partial class Backend
         }
     }
 
-    // OneHot on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // OneHot on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void OneHotGuarded(Storage indices, Storage y, int count, int classes)
     {
-        OneHotKernel(indices, y, count, classes);
+        try
+        {
+            OneHotKernel(indices, y, count, classes);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.OneHot))
+        {
+            FellBack(Ops.OneHot.Name, refused, "the host");
+            OneHotOnHost(indices, y, count, classes);
+        }
+    }
+
+    // The host fallback of OneHot (the default body of OneHotKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void OneHotOnHost(Storage indices, Storage y, int count, int classes)
+    {
+        using var h = new HostCall(this, nameof(OneHot));
+        Cpu.CpuBackend.Instance.OneHot(h[indices], h[y], count, classes);
     }
 
     /// <summary>dtable[indices[i], :] += dy[i, :].</summary>
@@ -1794,11 +2366,26 @@ public abstract partial class Backend
         }
     }
 
-    // ScatterAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ScatterAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScatterAddGuarded(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+        try
+        {
+            ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ScatterAdd))
+        {
+            FellBack(Ops.ScatterAdd.Name, refused, "the host");
+            ScatterAddOnHost(dy, indices, dtable, count, dim, vocabulary);
+        }
+    }
+
+    // The host fallback of ScatterAdd (the default body of ScatterAddKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ScatterAddOnHost(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        using var h = new HostCall(this, nameof(ScatterAdd));
+        Cpu.CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
     /// <summary>Unfolds image patches: cols[(n, oh, ow), (c, kh, kw)] = x[n, c, oh*sh - ph + kh*dh, ow*sw - pw + kw*dw] (0 outside; dh, dw the dilation).</summary>
@@ -1835,11 +2422,26 @@ public abstract partial class Backend
         }
     }
 
-    // Im2Col on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Im2Col on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Im2ColGuarded(Storage x, Storage cols, in ConvGeometry g)
     {
-        Im2ColKernel(x, cols, in g);
+        try
+        {
+            Im2ColKernel(x, cols, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Im2Col))
+        {
+            FellBack(Ops.Im2Col.Name, refused, "the host");
+            Im2ColOnHost(x, cols, in g);
+        }
+    }
+
+    // The host fallback of Im2Col (the default body of Im2ColKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void Im2ColOnHost(Storage x, Storage cols, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(Im2Col));
+        Cpu.CpuBackend.Instance.Im2Col(h[x], h[cols], g);
     }
 
     /// <summary>The adjoint of <see cref="Im2Col"/>: dx += fold(dcols).</summary>
@@ -1876,11 +2478,26 @@ public abstract partial class Backend
         }
     }
 
-    // Col2Im on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Col2Im on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Col2ImGuarded(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        Col2ImKernel(dcols, dx, in g);
+        try
+        {
+            Col2ImKernel(dcols, dx, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Col2Im))
+        {
+            FellBack(Ops.Col2Im.Name, refused, "the host");
+            Col2ImOnHost(dcols, dx, in g);
+        }
+    }
+
+    // The host fallback of Col2Im (the default body of Col2ImKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void Col2ImOnHost(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(Col2Im));
+        Cpu.CpuBackend.Instance.Col2Im(h[dcols], h[dx], g);
     }
 
     /// <summary>Max pooling; argmax receives the flat input index of each maximum (as raw int bits).</summary>
@@ -1917,11 +2534,26 @@ public abstract partial class Backend
         }
     }
 
-    // MaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // MaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MaxPoolGuarded(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
-        MaxPoolKernel(x, y, argmax, in g);
+        try
+        {
+            MaxPoolKernel(x, y, argmax, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MaxPool))
+        {
+            FellBack(Ops.MaxPool.Name, refused, "the host");
+            MaxPoolOnHost(x, y, argmax, in g);
+        }
+    }
+
+    // The host fallback of MaxPool (the default body of MaxPoolKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void MaxPoolOnHost(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
+        using var h = new HostCall(this, nameof(MaxPool));
+        Cpu.CpuBackend.Instance.MaxPool(h[x], h[y], h[argmax], g);
     }
 
     /// <summary>dx[argmax[i]] += dy[i].</summary>
@@ -1958,11 +2590,26 @@ public abstract partial class Backend
         }
     }
 
-    // MaxPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // MaxPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void MaxPoolBackwardGuarded(Storage dy, Storage argmax, Storage dx, int count)
     {
-        MaxPoolBackwardKernel(dy, argmax, dx, count);
+        try
+        {
+            MaxPoolBackwardKernel(dy, argmax, dx, count);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MaxPoolBackward))
+        {
+            FellBack(Ops.MaxPoolBackward.Name, refused, "the host");
+            MaxPoolBackwardOnHost(dy, argmax, dx, count);
+        }
+    }
+
+    // The host fallback of MaxPoolBackward (the default body of MaxPoolBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void MaxPoolBackwardOnHost(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        using var h = new HostCall(this, nameof(MaxPoolBackward));
+        Cpu.CpuBackend.Instance.MaxPoolBackward(h[dy], h[argmax], h[dx], count);
     }
 
     /// <summary>
@@ -2237,11 +2884,26 @@ public abstract partial class Backend
         }
     }
 
-    // AvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AvgPoolGuarded(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        try
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AvgPool))
+        {
+            FellBack(Ops.AvgPool.Name, refused, "the host");
+            AvgPoolOnHost(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    // The host fallback of AvgPool (the default body of AvgPoolKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AvgPoolOnHost(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, nameof(AvgPool));
+        Cpu.CpuBackend.Instance.AvgPool(h[x], h[y], g, countIncludePad, padBottom, padRight);
     }
 
     /// <summary>
@@ -2281,11 +2943,26 @@ public abstract partial class Backend
         }
     }
 
-    // AvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AvgPoolBackwardGuarded(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        try
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AvgPoolBackward))
+        {
+            FellBack(Ops.AvgPoolBackward.Name, refused, "the host");
+            AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+    }
+
+    // The host fallback of AvgPoolBackward (the default body of AvgPoolBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AvgPoolBackwardOnHost(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        using var h = new HostCall(this, nameof(AvgPoolBackward));
+        Cpu.CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], g, countIncludePad, padBottom, padRight);
     }
 
     /// <summary>
@@ -2333,11 +3010,26 @@ public abstract partial class Backend
         }
     }
 
-    // ResizeNormalize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ResizeNormalize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ResizeNormalizeGuarded(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
-        ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        try
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ResizeNormalize))
+        {
+            FellBack(Ops.ResizeNormalize.Name, refused, "the host");
+            ResizeNormalizeOnHost(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+    }
+
+    // The host fallback of ResizeNormalize (the default body of ResizeNormalizeKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ResizeNormalizeOnHost(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        using var h = new HostCall(this, nameof(ResizeNormalize));
+        Cpu.CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
     }
 
     /// <summary>
@@ -2380,11 +3072,26 @@ public abstract partial class Backend
         }
     }
 
-    // Interpolate2d on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Interpolate2d on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Interpolate2dGuarded(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        try
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Interpolate2d))
+        {
+            FellBack(Ops.Interpolate2d.Name, refused, "the host");
+            Interpolate2dOnHost(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    // The host fallback of Interpolate2d (the default body of Interpolate2dKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void Interpolate2dOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, nameof(Interpolate2d));
+        Cpu.CpuBackend.Instance.Interpolate2d(h[x], h[y], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
     }
 
     /// <summary>The gradient of <see cref="Interpolate2dKernel"/>: dx += each output position's dy, spread over the input positions it read with their weights.</summary>
@@ -2421,11 +3128,26 @@ public abstract partial class Backend
         }
     }
 
-    // Interpolate2dBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Interpolate2dBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Interpolate2dBackwardGuarded(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        try
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Interpolate2dBackward))
+        {
+            FellBack(Ops.Interpolate2dBackward.Name, refused, "the host");
+            Interpolate2dBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+    }
+
+    // The host fallback of Interpolate2dBackward (the default body of Interpolate2dBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void Interpolate2dBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        using var h = new HostCall(this, nameof(Interpolate2dBackward));
+        Cpu.CpuBackend.Instance.Interpolate2dBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
     }
 
     /// <summary>
@@ -2466,11 +3188,26 @@ public abstract partial class Backend
         }
     }
 
-    // AdaptiveAvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AdaptiveAvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveAvgPoolGuarded(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
-        AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        try
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveAvgPool))
+        {
+            FellBack(Ops.AdaptiveAvgPool.Name, refused, "the host");
+            AdaptiveAvgPoolOnHost(x, y, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // The host fallback of AdaptiveAvgPool (the default body of AdaptiveAvgPoolKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AdaptiveAvgPoolOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveAvgPool));
+        Cpu.CpuBackend.Instance.AdaptiveAvgPool(h[x], h[y], planes, height, width, outHeight, outWidth);
     }
 
     /// <summary>The gradient of <see cref="AdaptiveAvgPoolKernel"/>: dx += dy of each window that covers the position, divided by the window's size.</summary>
@@ -2507,11 +3244,26 @@ public abstract partial class Backend
         }
     }
 
-    // AdaptiveAvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AdaptiveAvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveAvgPoolBackwardGuarded(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
-        AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        try
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveAvgPoolBackward))
+        {
+            FellBack(Ops.AdaptiveAvgPoolBackward.Name, refused, "the host");
+            AdaptiveAvgPoolBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // The host fallback of AdaptiveAvgPoolBackward (the default body of AdaptiveAvgPoolBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AdaptiveAvgPoolBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveAvgPoolBackward));
+        Cpu.CpuBackend.Instance.AdaptiveAvgPoolBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth);
     }
 
     /// <summary>
@@ -2551,11 +3303,26 @@ public abstract partial class Backend
         }
     }
 
-    // AdaptiveMaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AdaptiveMaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdaptiveMaxPoolGuarded(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
-        AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        try
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveMaxPool))
+        {
+            FellBack(Ops.AdaptiveMaxPool.Name, refused, "the host");
+            AdaptiveMaxPoolOnHost(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+    }
+
+    // The host fallback of AdaptiveMaxPool (the default body of AdaptiveMaxPoolKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AdaptiveMaxPoolOnHost(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        using var h = new HostCall(this, nameof(AdaptiveMaxPool));
+        Cpu.CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
     }
 
     /// <summary>
@@ -2657,11 +3424,26 @@ public abstract partial class Backend
         }
     }
 
-    // CtcLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // CtcLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void CtcLossGuarded(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        try
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.CtcLoss))
+        {
+            FellBack(Ops.CtcLoss.Name, refused, "the host");
+            CtcLossOnHost(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    // The host fallback of CtcLoss (the default body of CtcLossKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void CtcLossOnHost(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, nameof(CtcLoss));
+        Cpu.CpuBackend.Instance.CtcLoss(h[logProbs], h[targets], h[losses], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
     }
 
     /// <summary>
@@ -2702,11 +3484,26 @@ public abstract partial class Backend
         }
     }
 
-    // CtcLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // CtcLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void CtcLossBackwardGuarded(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        try
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.CtcLossBackward))
+        {
+            FellBack(Ops.CtcLossBackward.Name, refused, "the host");
+            CtcLossBackwardOnHost(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+    }
+
+    // The host fallback of CtcLossBackward (the default body of CtcLossBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void CtcLossBackwardOnHost(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        using var h = new HostCall(this, nameof(CtcLossBackward));
+        Cpu.CpuBackend.Instance.CtcLossBackward(h[logProbs], h[targets], h[lossGrads], h[dLogProbs], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
     }
 
     /// <summary>
@@ -3208,11 +4005,26 @@ public abstract partial class Backend
         }
     }
 
-    // BoxIouLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BoxIouLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BoxIouLossGuarded(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
-        BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        try
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BoxIouLoss))
+        {
+            FellBack(Ops.BoxIouLoss.Name, refused, "the host");
+            BoxIouLossOnHost(predicted, target, losses, count, overlap, eps);
+        }
+    }
+
+    // The host fallback of BoxIouLoss (the default body of BoxIouLossKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BoxIouLossOnHost(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, nameof(BoxIouLoss));
+        Cpu.CpuBackend.Instance.BoxIouLoss(h[predicted], h[target], h[losses], count, overlap, eps);
     }
 
     /// <summary>
@@ -3253,11 +4065,26 @@ public abstract partial class Backend
         }
     }
 
-    // BoxIouLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BoxIouLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BoxIouLossBackwardGuarded(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
-        BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        try
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BoxIouLossBackward))
+        {
+            FellBack(Ops.BoxIouLossBackward.Name, refused, "the host");
+            BoxIouLossBackwardOnHost(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+    }
+
+    // The host fallback of BoxIouLossBackward (the default body of BoxIouLossBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BoxIouLossBackwardOnHost(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        using var h = new HostCall(this, nameof(BoxIouLossBackward));
+        Cpu.CpuBackend.Instance.BoxIouLossBackward(h[predicted], h[target], h[lossGrads], h[dPredicted], count, overlap, eps);
     }
 
     /// <summary>
@@ -3298,11 +4125,26 @@ public abstract partial class Backend
         }
     }
 
-    // SigmoidFocalLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SigmoidFocalLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SigmoidFocalLossGuarded(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
-        SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        try
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SigmoidFocalLoss))
+        {
+            FellBack(Ops.SigmoidFocalLoss.Name, refused, "the host");
+            SigmoidFocalLossOnHost(logits, targets, losses, count, alpha, gamma);
+        }
+    }
+
+    // The host fallback of SigmoidFocalLoss (the default body of SigmoidFocalLossKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SigmoidFocalLossOnHost(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, nameof(SigmoidFocalLoss));
+        Cpu.CpuBackend.Instance.SigmoidFocalLoss(h[logits], h[targets], h[losses], count, alpha, gamma);
     }
 
     /// <summary>The gradient of <see cref="SigmoidFocalLossKernel"/>: dLogits[i] += lossGrads[i] · ∂losses[i] / ∂logits[i] (the targets are constants).</summary>
@@ -3339,11 +4181,26 @@ public abstract partial class Backend
         }
     }
 
-    // SigmoidFocalLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SigmoidFocalLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SigmoidFocalLossBackwardGuarded(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
-        SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        try
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SigmoidFocalLossBackward))
+        {
+            FellBack(Ops.SigmoidFocalLossBackward.Name, refused, "the host");
+            SigmoidFocalLossBackwardOnHost(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+    }
+
+    // The host fallback of SigmoidFocalLossBackward (the default body of SigmoidFocalLossBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SigmoidFocalLossBackwardOnHost(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        using var h = new HostCall(this, nameof(SigmoidFocalLossBackward));
+        Cpu.CpuBackend.Instance.SigmoidFocalLossBackward(h[logits], h[targets], h[lossGrads], h[dLogits], count, alpha, gamma);
     }
 
     /// <summary>
@@ -3383,11 +4240,26 @@ public abstract partial class Backend
         }
     }
 
-    // Permute on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Permute on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PermuteGuarded(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
-        PermuteKernel(x, y, outShape, inStrides, accumulate);
+        try
+        {
+            PermuteKernel(x, y, outShape, inStrides, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Permute))
+        {
+            FellBack(Ops.Permute.Name, refused, "the host");
+            PermuteOnHost(x, y, outShape, inStrides, accumulate);
+        }
+    }
+
+    // The host fallback of Permute (the default body of PermuteKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void PermuteOnHost(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(Permute));
+        Cpu.CpuBackend.Instance.Permute(h[x], h[y], outShape, inStrides, accumulate);
     }
 
     /// <summary>y[o, i] (+)= scale * Σ_d x[o, d, i] for a [outer, dim, inner] view.</summary>
@@ -3424,11 +4296,26 @@ public abstract partial class Backend
         }
     }
 
-    // SumAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SumAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumAxisGuarded(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
-        SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+        try
+        {
+            SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumAxis))
+        {
+            FellBack(Ops.SumAxis.Name, refused, "the host");
+            SumAxisOnHost(x, y, outer, dim, inner, scale, accumulate);
+        }
+    }
+
+    // The host fallback of SumAxis (the default body of SumAxisKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SumAxisOnHost(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        using var h = new HostCall(this, nameof(SumAxis));
+        Cpu.CpuBackend.Instance.SumAxis(h[x], h[y], outer, dim, inner, scale, accumulate);
     }
 
     /// <summary>dx[o, d, i] += scale * dy[o, i] (the gradient of <see cref="SumAxis"/>).</summary>
@@ -3465,11 +4352,26 @@ public abstract partial class Backend
         }
     }
 
-    // BroadcastAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BroadcastAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BroadcastAxisGuarded(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
-        BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+        try
+        {
+            BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BroadcastAxis))
+        {
+            FellBack(Ops.BroadcastAxis.Name, refused, "the host");
+            BroadcastAxisOnHost(dy, dx, outer, dim, inner, scale);
+        }
+    }
+
+    // The host fallback of BroadcastAxis (the default body of BroadcastAxisKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BroadcastAxisOnHost(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
+        using var h = new HostCall(this, nameof(BroadcastAxis));
+        Cpu.CpuBackend.Instance.BroadcastAxis(h[dy], h[dx], outer, dim, inner, scale);
     }
 
     /// <summary>SGD with optional momentum: v = momentum * v + g; p -= lr * v (v is null when momentum is 0).</summary>
@@ -3506,11 +4408,26 @@ public abstract partial class Backend
         }
     }
 
-    // SgdStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SgdStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SgdStepGuarded(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
-        SgdStepKernel(p, g, v, n, lr, momentum);
+        try
+        {
+            SgdStepKernel(p, g, v, n, lr, momentum);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SgdStep))
+        {
+            FellBack(Ops.SgdStep.Name, refused, "the host");
+            SgdStepOnHost(p, g, v, n, lr, momentum);
+        }
+    }
+
+    // The host fallback of SgdStep (the default body of SgdStepKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SgdStepOnHost(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
+        using var h = new HostCall(this, nameof(SgdStep));
+        Cpu.CpuBackend.Instance.SgdStep(h[p], h[g], h.Maybe(v), n, lr, momentum);
     }
 
     /// <summary>Adam: m, v moments updated in place; p -= lr * m / (sqrt(v) + eps). lr is already bias-corrected.</summary>
@@ -3547,11 +4464,26 @@ public abstract partial class Backend
         }
     }
 
-    // AdamStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AdamStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AdamStepGuarded(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
-        AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+        try
+        {
+            AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdamStep))
+        {
+            FellBack(Ops.AdamStep.Name, refused, "the host");
+            AdamStepOnHost(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+    }
+
+    // The host fallback of AdamStep (the default body of AdamStepKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AdamStepOnHost(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        using var h = new HostCall(this, nameof(AdamStep));
+        Cpu.CpuBackend.Instance.AdamStep(h[p], h[g], h[m], h[v], n, lr, beta1, beta2, eps);
     }
 
     /// <summary>total[0] += Σ x² over <paramref name="n"/> elements (a gradient norm without temporary tensors).</summary>
@@ -3588,11 +4520,26 @@ public abstract partial class Backend
         }
     }
 
-    // SumSquares on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SumSquares on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SumSquaresGuarded(Storage x, Storage total, int n)
     {
-        SumSquaresKernel(x, total, n);
+        try
+        {
+            SumSquaresKernel(x, total, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumSquares))
+        {
+            FellBack(Ops.SumSquares.Name, refused, "the host");
+            SumSquaresOnHost(x, total, n);
+        }
+    }
+
+    // The host fallback of SumSquares (the default body of SumSquaresKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SumSquaresOnHost(Storage x, Storage total, int n)
+    {
+        using var h = new HostCall(this, nameof(SumSquares));
+        Cpu.CpuBackend.Instance.SumSquares(h[x], h[total], n);
     }
 
     /// <summary>
@@ -3669,11 +4616,26 @@ public abstract partial class Backend
         }
     }
 
-    // ClipFactor on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ClipFactor on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ClipFactorGuarded(Storage sumSquares, Storage factor, float maxNorm)
     {
-        ClipFactorKernel(sumSquares, factor, maxNorm);
+        try
+        {
+            ClipFactorKernel(sumSquares, factor, maxNorm);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClipFactor))
+        {
+            FellBack(Ops.ClipFactor.Name, refused, "the host");
+            ClipFactorOnHost(sumSquares, factor, maxNorm);
+        }
+    }
+
+    // The host fallback of ClipFactor (the default body of ClipFactorKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ClipFactorOnHost(Storage sumSquares, Storage factor, float maxNorm)
+    {
+        using var h = new HostCall(this, nameof(ClipFactor));
+        Cpu.CpuBackend.Instance.ClipFactor(h[sumSquares], h[factor], maxNorm);
     }
 
     /// <summary>Inverted dropout: y = keep(i) ? x / (1 - p) : 0, where keep(i) comes from <see cref="DropoutMask"/>.</summary>
@@ -3710,11 +4672,26 @@ public abstract partial class Backend
         }
     }
 
-    // Dropout on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Dropout on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DropoutGuarded(Storage x, Storage y, int n, float p, uint seed)
     {
-        DropoutKernel(x, y, n, p, seed);
+        try
+        {
+            DropoutKernel(x, y, n, p, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Dropout))
+        {
+            FellBack(Ops.Dropout.Name, refused, "the host");
+            DropoutOnHost(x, y, n, p, seed);
+        }
+    }
+
+    // The host fallback of Dropout (the default body of DropoutKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void DropoutOnHost(Storage x, Storage y, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, nameof(Dropout));
+        Cpu.CpuBackend.Instance.Dropout(h[x], h[y], n, p, seed);
     }
 
     /// <summary>dx += keep(i) ? dy / (1 - p) : 0, regenerating the same mask from the seed.</summary>
@@ -3751,11 +4728,26 @@ public abstract partial class Backend
         }
     }
 
-    // DropoutBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // DropoutBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DropoutBackwardGuarded(Storage dy, Storage dx, int n, float p, uint seed)
     {
-        DropoutBackwardKernel(dy, dx, n, p, seed);
+        try
+        {
+            DropoutBackwardKernel(dy, dx, n, p, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.DropoutBackward))
+        {
+            FellBack(Ops.DropoutBackward.Name, refused, "the host");
+            DropoutBackwardOnHost(dy, dx, n, p, seed);
+        }
+    }
+
+    // The host fallback of DropoutBackward (the default body of DropoutBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void DropoutBackwardOnHost(Storage dy, Storage dx, int n, float p, uint seed)
+    {
+        using var h = new HostCall(this, nameof(DropoutBackward));
+        Cpu.CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
     }
 
     /// <summary>y[r, :] = softmax(scale * x[r, :] + mask[r % maskRows, :]) (mask optional).</summary>
@@ -3792,11 +4784,26 @@ public abstract partial class Backend
         }
     }
 
-    // ScaleMaskSoftmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ScaleMaskSoftmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ScaleMaskSoftmaxGuarded(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
-        ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+        try
+        {
+            ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ScaleMaskSoftmax))
+        {
+            FellBack(Ops.ScaleMaskSoftmax.Name, refused, "the host");
+            ScaleMaskSoftmaxOnHost(x, mask, y, rows, cols, maskRows, scale);
+        }
+    }
+
+    // The host fallback of ScaleMaskSoftmax (the default body of ScaleMaskSoftmaxKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ScaleMaskSoftmaxOnHost(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        using var h = new HostCall(this, nameof(ScaleMaskSoftmax));
+        Cpu.CpuBackend.Instance.ScaleMaskSoftmax(h[x], h.Maybe(mask), h[y], rows, cols, maskRows, scale);
     }
 
     /// <summary>y[r, :] = (x[r, :] - mean) / sqrt(var + eps) * gamma + beta over the last dimension.</summary>
@@ -3833,11 +4840,26 @@ public abstract partial class Backend
         }
     }
 
-    // LayerNormFused on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LayerNormFused on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormFusedGuarded(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
-        LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+        try
+        {
+            LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormFused))
+        {
+            FellBack(Ops.LayerNormFused.Name, refused, "the host");
+            LayerNormFusedOnHost(x, gamma, beta, y, rows, cols, eps);
+        }
+    }
+
+    // The host fallback of LayerNormFused (the default body of LayerNormFusedKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LayerNormFusedOnHost(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(LayerNormFused));
+        Cpu.CpuBackend.Instance.LayerNormFused(h[x], h[gamma], h[beta], h[y], rows, cols, eps);
     }
 
     /// <summary><see cref="LayerNormFused"/> that also stores each row's mean (stats[r]) and 1 / sqrt(var + eps) (stats[rows + r]).</summary>
@@ -3874,11 +4896,26 @@ public abstract partial class Backend
         }
     }
 
-    // LayerNormTrain on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LayerNormTrain on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormTrainGuarded(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
-        LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+        try
+        {
+            LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormTrain))
+        {
+            FellBack(Ops.LayerNormTrain.Name, refused, "the host");
+            LayerNormTrainOnHost(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+    }
+
+    // The host fallback of LayerNormTrain (the default body of LayerNormTrainKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LayerNormTrainOnHost(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(LayerNormTrain));
+        Cpu.CpuBackend.Instance.LayerNormTrain(h[x], h[gamma], h[beta], h[y], h[stats], rows, cols, eps);
     }
 
     /// <summary>
@@ -3917,11 +4954,26 @@ public abstract partial class Backend
         }
     }
 
-    // LayerNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // LayerNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void LayerNormBackwardGuarded(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
-        LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        try
+        {
+            LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormBackward))
+        {
+            FellBack(Ops.LayerNormBackward.Name, refused, "the host");
+            LayerNormBackwardOnHost(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+    }
+
+    // The host fallback of LayerNormBackward (the default body of LayerNormBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void LayerNormBackwardOnHost(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(LayerNormBackward));
+        Cpu.CpuBackend.Instance.LayerNormBackward(h[x], h[gamma], h[dy], h[stats], h.Maybe(dx), h.Maybe(dgamma), h.Maybe(dbeta), rows, cols);
     }
 
     /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
@@ -3958,11 +5010,26 @@ public abstract partial class Backend
         }
     }
 
-    // BiasGelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BiasGelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BiasGeluGuarded(Storage x, Storage bias, Storage y, int n, int cols)
     {
-        BiasGeluKernel(x, bias, y, n, cols);
+        try
+        {
+            BiasGeluKernel(x, bias, y, n, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BiasGelu))
+        {
+            FellBack(Ops.BiasGelu.Name, refused, "the host");
+            BiasGeluOnHost(x, bias, y, n, cols);
+        }
+    }
+
+    // The host fallback of BiasGelu (the default body of BiasGeluKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BiasGeluOnHost(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        using var h = new HostCall(this, nameof(BiasGelu));
+        Cpu.CpuBackend.Instance.BiasGelu(h[x], h[bias], h[y], n, cols);
     }
 
     /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
@@ -3999,11 +5066,26 @@ public abstract partial class Backend
         }
     }
 
-    // RmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // RmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormGuarded(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
-        RmsNormKernel(x, y, inv, rows, cols, eps);
+        try
+        {
+            RmsNormKernel(x, y, inv, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNorm))
+        {
+            FellBack(Ops.RmsNorm.Name, refused, "the host");
+            RmsNormOnHost(x, y, inv, rows, cols, eps);
+        }
+    }
+
+    // The host fallback of RmsNorm (the default body of RmsNormKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RmsNormOnHost(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
+        using var h = new HostCall(this, nameof(RmsNorm));
+        Cpu.CpuBackend.Instance.RmsNorm(h[x], h[y], h[inv], rows, cols, eps);
     }
 
     /// <summary>dx += inv[r] · (dy - y · mean(dy · y)) per row, where y is the normalized forward output.</summary>
@@ -4040,11 +5122,26 @@ public abstract partial class Backend
         }
     }
 
-    // RmsNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // RmsNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormBackwardGuarded(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
-        RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+        try
+        {
+            RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormBackward))
+        {
+            FellBack(Ops.RmsNormBackward.Name, refused, "the host");
+            RmsNormBackwardOnHost(dy, y, inv, dx, rows, cols);
+        }
+    }
+
+    // The host fallback of RmsNormBackward (the default body of RmsNormBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RmsNormBackwardOnHost(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        using var h = new HostCall(this, nameof(RmsNormBackward));
+        Cpu.CpuBackend.Instance.RmsNormBackward(h[dy], h[y], h[inv], h[dx], rows, cols);
     }
 
     /// <summary>
@@ -4085,11 +5182,26 @@ public abstract partial class Backend
         }
     }
 
-    // Rope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // Rope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RopeGuarded(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
-        RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        try
+        {
+            RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Rope))
+        {
+            FellBack(Ops.Rope.Name, refused, "the host");
+            RopeOnHost(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+    }
+
+    // The host fallback of Rope (the default body of RopeKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RopeOnHost(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
+        using var h = new HostCall(this, nameof(Rope));
+        Cpu.CpuBackend.Instance.Rope(h[x], h[y], h[cos], h[sin], h[positions], rows, heads, steps, dim, half, interleaved, sign);
     }
 
     /// <summary>y = x · inv · (gain[c] + offset) per row with inv = 1 / sqrt(mean(x²) + eps): normalization and gain in one pass (inference).</summary>
@@ -4126,11 +5238,26 @@ public abstract partial class Backend
         }
     }
 
-    // RmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // RmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormAffineGuarded(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+        try
+        {
+            RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormAffine))
+        {
+            FellBack(Ops.RmsNormAffine.Name, refused, "the host");
+            RmsNormAffineOnHost(x, gain, y, rows, cols, eps, offset);
+        }
+    }
+
+    // The host fallback of RmsNormAffine (the default body of RmsNormAffineKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RmsNormAffineOnHost(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, nameof(RmsNormAffine));
+        Cpu.CpuBackend.Instance.RmsNormAffine(h[x], h[gain], h[y], rows, cols, eps, offset);
     }
 
     /// <summary>sum = a + b and y = RMS-normalized sum · (gain[c] + offset) per row, in one pass (inference).</summary>
@@ -4167,11 +5294,26 @@ public abstract partial class Backend
         }
     }
 
-    // AddRmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AddRmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AddRmsNormAffineGuarded(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+        try
+        {
+            AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddRmsNormAffine))
+        {
+            FellBack(Ops.AddRmsNormAffine.Name, refused, "the host");
+            AddRmsNormAffineOnHost(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+    }
+
+    // The host fallback of AddRmsNormAffine (the default body of AddRmsNormAffineKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AddRmsNormAffineOnHost(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        using var h = new HostCall(this, nameof(AddRmsNormAffine));
+        Cpu.CpuBackend.Instance.AddRmsNormAffine(h[a], h[b], h[sum], h[gain], h[y], rows, cols, eps, offset);
     }
 
     /// <summary>
@@ -4211,11 +5353,26 @@ public abstract partial class Backend
         }
     }
 
-    // RmsNormRope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // RmsNormRope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RmsNormRopeGuarded(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        try
+        {
+            RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormRope))
+        {
+            FellBack(Ops.RmsNormRope.Name, refused, "the host");
+            RmsNormRopeOnHost(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+    }
+
+    // The host fallback of RmsNormRope (the default body of RmsNormRopeKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RmsNormRopeOnHost(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
+        using var h = new HostCall(this, nameof(RmsNormRope));
+        Cpu.CpuBackend.Instance.RmsNormRope(h[x], h[gain], h[cos], h[sin], h[positions], h[y], rows, cols, eps, offset, heads, steps, half, interleaved);
     }
 
     /// <summary>
@@ -4353,11 +5510,26 @@ public abstract partial class Backend
         }
     }
 
-    // SoftmaxCrossEntropyRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SoftmaxCrossEntropyRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SoftmaxCrossEntropyRowsGuarded(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
-        SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+        try
+        {
+            SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SoftmaxCrossEntropyRows))
+        {
+            FellBack(Ops.SoftmaxCrossEntropyRows.Name, refused, "the host");
+            SoftmaxCrossEntropyRowsOnHost(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+    }
+
+    // The host fallback of SoftmaxCrossEntropyRows (the default body of SoftmaxCrossEntropyRowsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SoftmaxCrossEntropyRowsOnHost(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        using var h = new HostCall(this, nameof(SoftmaxCrossEntropyRows));
+        Cpu.CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
     }
 
     /// <summary>y = act(gate) · up element-wise; kind 0 = SiLU, 1 = GELU (tanh approximation), 2 = ReLU, 3 = tanh(gate) · sigmoid(up) (the up side through its own function).</summary>
@@ -4394,11 +5566,26 @@ public abstract partial class Backend
         }
     }
 
-    // GatedActivation on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // GatedActivation on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationGuarded(Storage gate, Storage up, Storage y, int n, int kind)
     {
-        GatedActivationKernel(gate, up, y, n, kind);
+        try
+        {
+            GatedActivationKernel(gate, up, y, n, kind);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivation))
+        {
+            FellBack(Ops.GatedActivation.Name, refused, "the host");
+            GatedActivationOnHost(gate, up, y, n, kind);
+        }
+    }
+
+    // The host fallback of GatedActivation (the default body of GatedActivationKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void GatedActivationOnHost(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        using var h = new HostCall(this, nameof(GatedActivation));
+        Cpu.CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
     }
 
     /// <summary>dgate += dy · up · act'(gate) when flags has bit 0, dup += dy · act(gate) when it has bit 1 (kind 3: up read as sigmoid(up), and dup += dy · tanh(gate) · sigmoid'(up)); bits 2 and 3 write dgate and dup (= instead of +=).</summary>
@@ -4435,11 +5622,26 @@ public abstract partial class Backend
         }
     }
 
-    // GatedActivationBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // GatedActivationBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void GatedActivationBackwardGuarded(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
-        GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+        try
+        {
+            GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivationBackward))
+        {
+            FellBack(Ops.GatedActivationBackward.Name, refused, "the host");
+            GatedActivationBackwardOnHost(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+    }
+
+    // The host fallback of GatedActivationBackward (the default body of GatedActivationBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void GatedActivationBackwardOnHost(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        using var h = new HostCall(this, nameof(GatedActivationBackward));
+        Cpu.CpuBackend.Instance.GatedActivationBackward(h[gate], h[up], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
     /// <summary>
@@ -4483,11 +5685,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionDecode on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionDecode on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionDecodeGuarded(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        try
+        {
+            AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionDecode))
+        {
+            FellBack(Ops.AttentionDecode.Name, refused, "the host");
+            AttentionDecodeOnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionDecode (the default body of AttentionDecodeKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionDecodeOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionDecode));
+        Cpu.CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -4528,11 +5745,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionTiledBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionTiledBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionTiledBackwardGuarded(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        try
+        {
+            AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledBackward))
+        {
+            FellBack(Ops.AttentionTiledBackward.Name, refused, "the host");
+            AttentionTiledBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionTiledBackward (the default body of AttentionTiledBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionTiledBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledBackward));
+        Cpu.CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -4750,11 +5982,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionSpans on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionSpans on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionSpansGuarded(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
-        AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        try
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSpans))
+        {
+            FellBack(Ops.AttentionSpans.Name, refused, "the host");
+            AttentionSpansOnHost(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionSpans (the default body of AttentionSpansKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionSpansOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionSpans));
+        Cpu.CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
     }
 
     /// <summary>
@@ -4905,11 +6152,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionSpansBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionSpansBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionSpansBackwardGuarded(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
-        AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        try
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSpansBackward))
+        {
+            FellBack(Ops.AttentionSpansBackward.Name, refused, "the host");
+            AttentionSpansBackwardOnHost(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionSpansBackward (the default body of AttentionSpansBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionSpansBackwardOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionSpansBackward));
+        Cpu.CpuBackend.Instance.AttentionSpansBackward(h[q], h[keys], h[values], h[starts], h[ends], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
     }
 
     /// <summary>mask[i, j] = j ≤ position + i ? 0 : -1e9 for a [rows, capacity] mask; position is read from device memory.</summary>
@@ -4946,11 +6208,26 @@ public abstract partial class Backend
         }
     }
 
-    // DecoderMask on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // DecoderMask on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void DecoderMaskGuarded(Storage position, Storage mask, int rows, int capacity)
     {
-        DecoderMaskKernel(position, mask, rows, capacity);
+        try
+        {
+            DecoderMaskKernel(position, mask, rows, capacity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.DecoderMask))
+        {
+            FellBack(Ops.DecoderMask.Name, refused, "the host");
+            DecoderMaskOnHost(position, mask, rows, capacity);
+        }
+    }
+
+    // The host fallback of DecoderMask (the default body of DecoderMaskKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void DecoderMaskOnHost(Storage position, Storage mask, int rows, int capacity)
+    {
+        using var h = new HostCall(this, nameof(DecoderMask));
+        Cpu.CpuBackend.Instance.DecoderMask(h[position], h[mask], rows, capacity);
     }
 
     /// <summary>cache[bh, position + t, :] = source[bh, t, :] for [heads, steps, dim] → [heads, capacity, dim].</summary>
@@ -4987,11 +6264,26 @@ public abstract partial class Backend
         }
     }
 
-    // KeyValueWrite on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // KeyValueWrite on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void KeyValueWriteGuarded(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+        try
+        {
+            KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWrite))
+        {
+            FellBack(Ops.KeyValueWrite.Name, refused, "the host");
+            KeyValueWriteOnHost(source, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // The host fallback of KeyValueWrite (the default body of KeyValueWriteKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void KeyValueWriteOnHost(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, nameof(KeyValueWrite));
+        Cpu.CpuBackend.Instance.KeyValueWrite(h[source], h[cache], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>
@@ -5042,11 +6334,26 @@ public abstract partial class Backend
         }
     }
 
-    // SampleRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // SampleRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void SampleRowsGuarded(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        try
+        {
+            SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SampleRows))
+        {
+            FellBack(Ops.SampleRows.Name, refused, "the host");
+            SampleRowsOnHost(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+    }
+
+    // The host fallback of SampleRows (the default body of SampleRowsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void SampleRowsOnHost(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        using var h = new HostCall(this, nameof(SampleRows));
+        Cpu.CpuBackend.Instance.SampleRows(h[logits], h[ids], h[stats], h[step], rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
     }
 
     /// <summary>
@@ -5088,11 +6395,26 @@ public abstract partial class Backend
         }
     }
 
-    // PenalizeRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // PenalizeRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void PenalizeRowsGuarded(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
-        PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        try
+        {
+            PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PenalizeRows))
+        {
+            FellBack(Ops.PenalizeRows.Name, refused, "the host");
+            PenalizeRowsOnHost(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+    }
+
+    // The host fallback of PenalizeRows (the default body of PenalizeRowsKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void PenalizeRowsOnHost(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
+        using var h = new HostCall(this, nameof(PenalizeRows));
+        Cpu.CpuBackend.Instance.PenalizeRows(h[logits], h[work], h[history], h[length], rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
     }
 
     /// <summary>history[r, length % capacity] = ids[r] for every row (length read from device memory, not advanced).</summary>
@@ -5129,11 +6451,26 @@ public abstract partial class Backend
         }
     }
 
-    // HistoryPush on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // HistoryPush on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void HistoryPushGuarded(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
-        HistoryPushKernel(ids, history, length, rows, capacity);
+        try
+        {
+            HistoryPushKernel(ids, history, length, rows, capacity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.HistoryPush))
+        {
+            FellBack(Ops.HistoryPush.Name, refused, "the host");
+            HistoryPushOnHost(ids, history, length, rows, capacity);
+        }
+    }
+
+    // The host fallback of HistoryPush (the default body of HistoryPushKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void HistoryPushOnHost(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
+        using var h = new HostCall(this, nameof(HistoryPush));
+        Cpu.CpuBackend.Instance.HistoryPush(h[ids], h[history], h[length], rows, capacity);
     }
 
     /// <summary>
@@ -5179,11 +6516,26 @@ public abstract partial class Backend
         }
     }
 
-    // RouteTopK on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // RouteTopK on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void RouteTopKGuarded(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
     {
-        RouteTopKKernel(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        try
+        {
+            RouteTopKKernel(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RouteTopK))
+        {
+            FellBack(Ops.RouteTopK.Name, refused, "the host");
+            RouteTopKOnHost(probabilities, weights, offsets, tokenOfRow, slotRow, tokens, experts, k, normalize);
+        }
+    }
+
+    // The host fallback of RouteTopK (the default body of RouteTopKKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void RouteTopKOnHost(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k, bool normalize)
+    {
+        using var h = new HostCall(this, nameof(RouteTopK));
+        Cpu.CpuBackend.Instance.RouteTopK(h[probabilities], h[weights], h[offsets], h[tokenOfRow], h[slotRow], tokens, experts, k, normalize);
     }
 
     /// <summary>
@@ -5227,11 +6579,32 @@ public abstract partial class Backend
         }
     }
 
-    // ExpertGatedPair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ExpertGatedPair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ExpertGatedPairGuarded(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
     {
-        ExpertGatedPairKernel(x, offsets, experts, hidden, rows, k, n, activation);
+        try
+        {
+            ExpertGatedPairKernel(x, offsets, experts, hidden, rows, k, n, activation);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ExpertGatedPair))
+        {
+            FellBack(Ops.ExpertGatedPair.Name, refused, "the host");
+            ExpertGatedPairOnHost(x, offsets, experts, hidden, rows, k, n, activation);
+        }
+    }
+
+    // The host fallback of ExpertGatedPair (the default body of ExpertGatedPairKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ExpertGatedPairOnHost(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden, int rows, int k, int n, int activation)
+    {
+        using var h = new HostCall(this, nameof(ExpertGatedPair));
+        var onExperts = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[experts.Length];
+        for (int i = 0; i < experts.Length; i++)
+        {
+            onExperts[i] = (h[experts[i].Gate], h.Maybe(experts[i].GateBias), h[experts[i].Up], h.Maybe(experts[i].UpBias));
+        }
+
+        Cpu.CpuBackend.Instance.ExpertGatedPair(h[x], h[offsets], onExperts, h[hidden], rows, k, n, activation);
     }
 
     /// <summary>
@@ -5273,11 +6646,32 @@ public abstract partial class Backend
         }
     }
 
-    // ExpertMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // ExpertMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void ExpertMatMulGuarded(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
     {
-        ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
+        try
+        {
+            ExpertMatMulKernel(x, offsets, experts, y, rows, k, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ExpertMatMul))
+        {
+            FellBack(Ops.ExpertMatMul.Name, refused, "the host");
+            ExpertMatMulOnHost(x, offsets, experts, y, rows, k, n);
+        }
+    }
+
+    // The host fallback of ExpertMatMul (the default body of ExpertMatMulKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void ExpertMatMulOnHost(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
+    {
+        using var h = new HostCall(this, nameof(ExpertMatMul));
+        var onExperts = new (Storage Weight, Storage? Bias)[experts.Length];
+        for (int i = 0; i < experts.Length; i++)
+        {
+            onExperts[i] = (h[experts[i].Weight], h.Maybe(experts[i].Bias));
+        }
+
+        Cpu.CpuBackend.Instance.ExpertMatMul(h[x], h[offsets], onExperts, h[y], rows, k, n);
     }
 
     /// <summary>
@@ -5318,11 +6712,26 @@ public abstract partial class Backend
         }
     }
 
-    // StridedCopy on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // StridedCopy on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void StridedCopyGuarded(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
     {
-        StridedCopyKernel(x, offset, shape, strides, y);
+        try
+        {
+            StridedCopyKernel(x, offset, shape, strides, y);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StridedCopy))
+        {
+            FellBack(Ops.StridedCopy.Name, refused, "the host");
+            StridedCopyOnHost(x, offset, shape, strides, y);
+        }
+    }
+
+    // The host fallback of StridedCopy (the default body of StridedCopyKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void StridedCopyOnHost(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
+    {
+        using var h = new HostCall(this, nameof(StridedCopy));
+        Cpu.CpuBackend.Instance.StridedCopy(h[x], offset, shape, strides, h[y]);
     }
 
     /// <summary>
@@ -5366,11 +6775,26 @@ public abstract partial class Backend
         }
     }
 
-    // BatchedMatMulStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // BatchedMatMulStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void BatchedMatMulStridedGuarded(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        try
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BatchedMatMulStrided))
+        {
+            FellBack(Ops.BatchedMatMulStrided.Name, refused, "the host");
+            BatchedMatMulStridedOnHost(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    // The host fallback of BatchedMatMulStrided (the default body of BatchedMatMulStridedKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void BatchedMatMulStridedOnHost(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var h = new HostCall(this, nameof(BatchedMatMulStrided));
+        Cpu.CpuBackend.Instance.BatchedMatMulStrided(h[a], aLayout, h[b], bLayout, h[c], batch, m, n, k, transA, transB, beta);
     }
 
     /// <summary>
@@ -5413,11 +6837,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionTiledStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionTiledStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionTiledStridedGuarded(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        try
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledStrided))
+        {
+            FellBack(Ops.AttentionTiledStrided.Name, refused, "the host");
+            AttentionTiledStridedOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionTiledStrided (the default body of AttentionTiledStridedKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionTiledStridedOnHost(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledStrided));
+        Cpu.CpuBackend.Instance.AttentionTiledStrided(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[position], h[y], h.Maybe(logSumExp), heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -5458,11 +6897,26 @@ public abstract partial class Backend
         }
     }
 
-    // AttentionTiledStridedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // AttentionTiledStridedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void AttentionTiledStridedBackwardGuarded(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        try
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledStridedBackward))
+        {
+            FellBack(Ops.AttentionTiledStridedBackward.Name, refused, "the host");
+            AttentionTiledStridedBackwardOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionTiledStridedBackward (the default body of AttentionTiledStridedBackwardKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void AttentionTiledStridedBackwardOnHost(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledStridedBackward));
+        Cpu.CpuBackend.Instance.AttentionTiledStridedBackward(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     /// <summary>
@@ -5502,11 +6956,26 @@ public abstract partial class Backend
         }
     }
 
-    // StoredMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // StoredMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void StoredMatMulGuarded(Storage x, Storage weight, Storage y, int m, int n, int k)
     {
-        StoredMatMulKernel(x, weight, y, m, n, k);
+        try
+        {
+            StoredMatMulKernel(x, weight, y, m, n, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.StoredMatMul))
+        {
+            FellBack(Ops.StoredMatMul.Name, refused, "the host");
+            StoredMatMulOnHost(x, weight, y, m, n, k);
+        }
+    }
+
+    // The host fallback of StoredMatMul (the default body of StoredMatMulKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void StoredMatMulOnHost(Storage x, Storage weight, Storage y, int m, int n, int k)
+    {
+        using var h = new HostCall(this, nameof(StoredMatMul));
+        Cpu.CpuBackend.Instance.StoredMatMul(h[x], h[weight], h[y], m, n, k);
     }
 
     /// <summary>
@@ -5550,11 +7019,26 @@ public abstract partial class Backend
         }
     }
 
-    // KeyValueWriteStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    // KeyValueWriteStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void KeyValueWriteStridedGuarded(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        try
+        {
+            KeyValueWriteStridedKernel(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWriteStrided))
+        {
+            FellBack(Ops.KeyValueWriteStrided.Name, refused, "the host");
+            KeyValueWriteStridedOnHost(source, sourceLayout, cache, position, heads, steps, capacity, dim);
+        }
+    }
+
+    // The host fallback of KeyValueWriteStrided (the default body of KeyValueWriteStridedKernel), for a refused kernel (BuildsKernelsWhenUsed).
+    private void KeyValueWriteStridedOnHost(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        using var h = new HostCall(this, nameof(KeyValueWriteStrided));
+        Cpu.CpuBackend.Instance.KeyValueWriteStrided(h[source], sourceLayout, h[cache], h[position], heads, steps, capacity, dim);
     }
 
     /// <summary>
