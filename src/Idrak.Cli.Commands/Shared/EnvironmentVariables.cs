@@ -117,7 +117,7 @@ internal static class EnvironmentVariables
     // (cluster sim from phase C2; cluster start and --cluster on the training commands from C5 and C8; reinforce from Plan 27, R3c).
     private static readonly string[] ClusterRun =
     [
-        "cluster sim", "cluster start", "cluster bench", "cluster ui", "cluster replay", "cluster calibrate", "cluster inspect", "transports", "pretrain", "train", "tune",
+        "cluster sim", "cluster start", "cluster bench", "cluster ui", "cluster replay", "cluster calibrate", "cluster inspect", "pretrain", "train", "tune",
         "resume", "distill", "reinforce", "profile", "tuning show", "test",
     ];
 
@@ -131,8 +131,6 @@ internal static class EnvironmentVariables
         new("IDRAK_DISABLE_VULKAN", Devices, "not set", "1 or true: Vulkan devices are not looked for", OnDevice),
         new("IDRAK_DISABLE_HIP", Devices, "not set", "1 or true: HIP devices are not looked for", OnDevice),
         new("IDRAK_VULKAN_REFUSE_KERNELS", Vulkan, "none", "Kernels the Vulkan backend treats as refused by the driver (tests and diagnostics): names, or name:sized for the subgroup-size request only", OnDevice),
-        new("IDRAK_VULKAN_DEFAULT", Devices, "not set", "1: a Vulkan GPU may be the default device (otherwise only by name until its kernels are tuned)", OnDevice),
-        new("IDRAK_HIP_DEFAULT", Devices, "not set", "1: a HIP GPU may be the default device (after CUDA, before Vulkan)", OnDevice),
         new("IDRAK_HIP_WAIT", Devices, "poll", "block: waits for a HIP GPU use the runtime's blocking synchronize (which may sleep in timer steps) instead of polling", OnDevice),
         new("IDRAK_CUDA_DEBUG", Devices, "not set", "1: synchronize after every CUDA kernel and name the one that failed (slow)", OnDevice),
         new("IDRAK_STFT_PATH", Devices, "auto (the host on the CPU, composed device operations elsewhere)", "host or composed: how the short-time Fourier transform of audio features is computed, over the options' auto", ["transcribe", "data mel"]),
@@ -404,6 +402,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured on the first step (kept in the tuning cache over a real transport)", "The size of a gradient bucket: gradients are reduced a bucket at a time, each sent once the backward pass finished it (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_MESSAGE_COST", Cluster, "measured on this machine", "Seconds one collective's messages cost beyond their bytes, which the measured bucket size counts", ClusterRun),
         new("IDRAK_CLUSTER_OVERLAP", Cluster, "1", "1 or 0: gradient buckets are reduced while the backward pass continues (the same result either way)", ClusterRun),
+        new("IDRAK_CLUSTER_COMPRESSION", Cluster, "top-k with IDRAK_CLUSTER_TOPK, else none", "How gradient buckets are compressed on their way: none or top-k", ClusterRun),
         new("IDRAK_CLUSTER_TOPK", Cluster, "0 (every value)", "The share of gradient values sent, largest first, from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_ERROR_FEEDBACK", Cluster, "1", "1 or 0: what a compression did not send (values top-k leaves out) is added to the next step's values", ClusterRun),
         new("IDRAK_CLUSTER_LOCAL_SGD", Cluster, "0 (every step)", "Local SGD: each rank steps on its own gradients and the weights are averaged every this many steps", ClusterRun),
@@ -466,6 +465,7 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_DIVERGENCE", Reinforcement, "reverse", "The on-policy distillation divergence: forward, reverse or jsd (TeacherDivergences)", OnPolicyRun),
         new("IDRAK_RL_WORKSPACES", Reinforcement, "the CPU threads, fewer when the free disk holds fewer than two copies of a task's workspace each", "The most coding episodes running tools, builds and tests at once (the coding environment's workspaces)", ReinforcementRun),
         new("IDRAK_RL_KEEP_WORKSPACES", Reinforcement, "false", "true: the coding environment keeps every episode's workspace (and the prepared copies) for inspection instead of deleting them", ReinforcementRun),
+        new("IDRAK_SANDBOX", Sandbox, "process", "The sandbox the coding tools run commands in: process (a plain process: programs allowed, time, output and memory limits); another by name is not on the new design yet", SandboxRun),
         new("IDRAK_SANDBOX_PROGRAM", Sandbox, "docker, else podman, found on the PATH", "The container sandbox's program (a path, or a name on the PATH)", SandboxRun),
         new("IDRAK_SANDBOX_IMAGE", Sandbox, "none: the container sandbox refuses", "The image the container sandbox runs every command in (it holds the programs the commands start)", SandboxRun),
         new("IDRAK_SANDBOX_NETWORK", Sandbox, "off", "The container sandbox's network: off (none), on (the program's default network), or a network's name", SandboxRun),

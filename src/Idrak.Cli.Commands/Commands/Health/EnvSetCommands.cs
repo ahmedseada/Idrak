@@ -94,7 +94,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
     // The variables offered first in the questions: the ones a run or a test usually needs.
     internal static readonly string[] Common =
     [
-        "IDRAK_DEVICES", "IDRAK_FILTER", "IDRAK_CUDA_DEBUG", "IDRAK_WINDOW_KERNELS", "IDRAK_VULKAN_DEFAULT", "IDRAK_CACHE", "IDRAK_PORT",
+        "IDRAK_DEVICES", "IDRAK_FILTER", "IDRAK_CUDA_DEBUG", "IDRAK_WINDOW_KERNELS", "IDRAK_CACHE", "IDRAK_PORT",
         "IDRAK_TIMEOUT", "IDRAK_TRACE", "IDRAK_LANG", "IDRAK_LANG_RENDER",
     ];
 
