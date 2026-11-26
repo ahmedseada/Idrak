@@ -142,9 +142,9 @@ internal static class ModelChoices
         };
     }
 
-    // A registered expert placement's name (refused at once, naming the registered ones), or null when none is given.
+    // An expert placement's name, or null when none is given: picking it by name is not on the new design yet.
     private static string? MoeExpertsOf(string? name) => name is null ? null
-        : Parsed(() => Idrak.Models.Abstractions.ExpertPlacements.Get(name.Trim()).Name, MoeExpertsOption);
+        : throw new UsageException($"{MoeExpertsOption} {name}: picking an expert placement by its name is not on the new design yet.");
 
     /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>
     public static TuningImages? AdapterImages(string? adapter)
@@ -237,7 +237,7 @@ internal static class ModelChoices
             throw new InvalidOperationException($"{model} is not in the cache ({context.CacheFolder}) and --offline allows no download; run 'idrak pull {model}' while online.");
         }
 
-        if (ModelSources.For(model) is null || ModelSource.IsModelId(model) && model.Contains(':'))
+        if (ModelSource.IsModelId(model) && model.Contains(':'))
         {
             // A GGUF file of a repository (owner/name/FILE.gguf, owner/name:TAG) is fetched by pull, not by loading.
             throw new InvalidOperationException($"{model} is not in the cache ({context.CacheFolder}). Download it first: idrak pull {model}");
@@ -265,8 +265,8 @@ internal static class ModelChoices
         if (choice.AdapterImages?.Family is not null && Path.Combine(folder, "config.json") is var configFile && File.Exists(configFile)
             && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(configFile)) is System.Text.Json.Nodes.JsonObject config)
         {
-            // Before reading any weight: a vision family is registered under its architecture's name (VisionFamilies).
-            CheckAdapterFamily(choice, Idrak.Models.Abstractions.VisionFamilies.HasVision(config) ? (string?)config["architectures"]?[0] : null);
+            // Before reading any weight: a vision family is the one of its architecture's name.
+            CheckAdapterFamily(choice, config["vision_config"] is System.Text.Json.Nodes.JsonObject ? (string?)config["architectures"]?[0] : null);
         }
 
         var watch = Stopwatch.StartNew();

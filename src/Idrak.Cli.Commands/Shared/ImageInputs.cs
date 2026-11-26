@@ -15,7 +15,7 @@ namespace Idrak.Cli.Shared;
 /// the files as chat image parts, decoded by the library's codecs and turned upright by their EXIF orientation
 /// (<see cref="ChatImageDecoder"/>, shared with the server's uploads and data URLs) as transformers' <c>load_image</c>
 /// does for a path (<c>ImageOps.exif_transpose</c>). What a model does with them is its vision family's
-/// (<see cref="PretrainedModel.Vision"/>, a <see cref="VisionFamilies"/> registration: a plug-in given with <c>-P</c>).
+/// (<see cref="PretrainedModel.Vision"/>, read by its <see cref="Idrak.Models.Abstractions.IVisionFamily"/>).
 /// </summary>
 internal static class ImageInputs
 {

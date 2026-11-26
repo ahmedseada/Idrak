@@ -43,16 +43,8 @@ internal static class Seq2SeqRun
             return null;
         }
 
-        try
-        {
-            return JsonNode.Parse(File.ReadAllText(file)) is JsonObject config && config["architectures"] is JsonArray { Count: > 0 } names
-                   && names[0] is JsonValue value && value.GetValueKind() == JsonValueKind.String && PretrainedSeq2Seq.Find(value.GetValue<string>()) is not null
-                ? value.GetValue<string>() : null;
-        }
-        catch (JsonException)
-        {
-            return null;                                                    // read (and reported) by the decoder's loader
-        }
+        // Whether the architecture is an encoder-decoder family's: finding the family by name is not on the new design yet, so none is.
+        return null;
     }
 
     /// <summary>The beam settings of the command line: the beams (1 when not given) and the length penalty.</summary>

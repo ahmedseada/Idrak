@@ -71,7 +71,7 @@ internal sealed class ShowCommand : Command
         if (info.Config["vision_config"] is JsonObject visionConfig)
         {
             string? architecture = info.Config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;
-            bool registered = architecture is not null && VisionFamilies.Find(architecture) is not null;
+            bool registered = false;                                    // finding its vision family by name: not on the new design yet
             vision = new JsonObject
             {
                 ["modelType"] = (string?)visionConfig["model_type"], ["family"] = architecture, ["registered"] = registered,

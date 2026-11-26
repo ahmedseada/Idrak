@@ -26,6 +26,6 @@ internal static class ModelCommands
         new VerifyCommand(),
         new ConvertCommand(),
         new DiffCommand(),
-        new FamiliesCommand(),
+
     ];
 }

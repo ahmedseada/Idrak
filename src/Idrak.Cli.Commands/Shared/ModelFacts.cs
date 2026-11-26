@@ -70,7 +70,7 @@ internal sealed class ModelFacts
         string? problem = null;
         try
         {
-            spec = PretrainedArchitectures.Get(architecture).Spec(config, notes);
+            spec = NotOnTheNewDesign.Yet<IPretrainedArchitecture>($"Picking the architecture '{architecture}' by its name").Spec(config, notes);
         }
         catch (Exception e) when (e is NotSupportedException or KeyNotFoundException or InvalidDataException or InvalidOperationException or NullReferenceException or FormatException)
         {

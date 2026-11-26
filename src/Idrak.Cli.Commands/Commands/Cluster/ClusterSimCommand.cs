@@ -463,8 +463,7 @@ internal sealed class ClusterSimCommand : Command
         try
         {
             var topology = ClusterTopology.Load(path);
-            _ = Collectives.Get(options.CollectiveFor(topology));
-            _ = FailureModels.Get(options.Simulation.Failures ?? topology.Simulation.Failures);
+
             if (options.Stages is { } count && topology.WorldSize % count != 0)
             {
                 throw new UsageException($"--stages {count} does not divide the {topology.WorldSize} rank(s) of {path}.");

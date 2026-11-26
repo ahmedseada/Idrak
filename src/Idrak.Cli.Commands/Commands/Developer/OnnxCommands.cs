@@ -299,11 +299,10 @@ internal sealed class OnnxCheckCommand : Command
     }
 
     /// <summary>
-    /// The ONNX runtime the check compares with: the first one registered in <see cref="OnnxRuntimeLoaders"/>
-    /// (Idrak.Onnx.Runtime's "onnxruntime", there when its assembly is next to the tool, referenced, or loaded with
-    /// --plugin); null when none is.
+    /// The ONNX runtime the check compares with: none, since finding the registered runtime loaders is not on the new
+    /// design yet.
     /// </summary>
-    internal static IOnnxRuntimeLoader? RuntimeLoader() => OnnxRuntimeLoaders.Registered is [var first, ..] ? first : null;
+    internal static IOnnxRuntimeLoader? RuntimeLoader() => null;
 
     // The model run by the runtime; null, with the reason, when the runtime cannot load it (the runtime's own library
     // missing, a model it does not take: whatever it throws).

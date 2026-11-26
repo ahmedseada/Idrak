@@ -329,9 +329,8 @@ internal sealed class TuneTool(ToolConsole console)
         tuning = tuning with
         {
             WeightDecay = weightDecay,
-            Optimizer = optimizerName == "adamw" ? null : OptimizerKinds.Find(optimizerName) is not null
-                ? OptimizerKinds.Factory(optimizerName, new OptimizerSettings(tuning.LearningRate, weightDecay, momentum))
-                : throw new ArgumentException($"--optimizer {optimizerName}: use {string.Join(", ", OptimizerKinds.Names)}."),
+            Optimizer = optimizerName == "adamw" ? null
+                : throw new ArgumentException($"--optimizer {optimizerName}: picking an optimizer other than the default (adamw) by its name is not on the new design yet."),
             Scheduler = scheduleName == "cosine" ? null : LearningRateSchedules.Find(scheduleName) is not null
                 ? LearningRateSchedules.Factory(scheduleName, new LearningRateScheduleSettings(tuning.WarmupFraction, tuning.MinLearningRate, decayFraction))
                 : throw new ArgumentException($"--schedule {scheduleName}: use {string.Join(", ", LearningRateSchedules.Names)}."),
@@ -514,8 +513,7 @@ internal sealed class TuneTool(ToolConsole console)
                                        or ResourceLimitExceededException or HttpRequestException)
         {
             console.Clear();
-            bool family = ex is NotRegisteredException { Registry: nameof(Idrak.Models.Abstractions.VisionFamilies) };
-            _error.WriteLine($"error: {ex.Message}{(family ? " Load its plug-in with -P (--plugin)." : "")}");
+            _error.WriteLine($"error: {ex.Message}");
             return 1;
         }
     }

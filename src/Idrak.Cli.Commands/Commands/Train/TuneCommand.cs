@@ -318,7 +318,7 @@ internal sealed class TuneInitCommand : Command
         // A plug-in given with -P that registers a vision family: the example tunes on images (LlamaFactory's ShareGPT
         // train.json and val.json), and the plug-in is kept so idrak tune --config loads it again.
         var plugins = context.Options("--plugin").Select(Path.GetFullPath).ToList();
-        var families = plugins.Count > 0 ? Idrak.Models.Abstractions.VisionFamilies.Names.Order(StringComparer.Ordinal).ToList() : [];
+        List<string> families = [];                                     // the registered vision families: listing them is not on the new design yet
         bool images = families.Count > 0 && loss == "sft";
         var data = context.Options("--data").Count > 0 ? context.Options("--data") : [images ? "train.json" : loss == "sft" ? "chats.jsonl" : "preferences.jsonl"];
         string name = Path.GetFileName(Path.TrimEndingDirectorySeparator(model.Replace(':', '-'))).ToLowerInvariant();

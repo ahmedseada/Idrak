@@ -166,8 +166,7 @@ internal sealed class VerifyCommand : Command
         {
             string arch = file.Get("general.architecture", "");
             add(Path.GetFileName(path), true, $"GGUF version {file.Version}, {file.Tensors.Count} tensors, {Units.Bytes(new FileInfo(path).Length)}");
-            add("architecture", GgufArchitectures.Names.Contains(arch, StringComparer.OrdinalIgnoreCase),
-                GgufArchitectures.Names.Contains(arch, StringComparer.OrdinalIgnoreCase) ? arch : $"'{arch}' is not registered (supported: {string.Join(", ", GgufArchitectures.Names)})");
+            add("architecture", false, $"'{arch}': picking a GGUF architecture by its name is not on the new design yet");
             if (read)
             {
                 bool ok = Read(file.Tensors.Keys, file.Read, out string detail);

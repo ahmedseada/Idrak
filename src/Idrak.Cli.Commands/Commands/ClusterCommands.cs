@@ -17,7 +17,7 @@ internal static class ClusterCommands
         new ClusterBenchCommand(),
         new ClusterReplayCommand(),
         new ClusterCalibrateCommand(),
-        new TransportsCommand(),
+
         new ClusterUiCommand(),
     ];
 }

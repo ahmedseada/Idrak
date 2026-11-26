@@ -30,8 +30,7 @@ namespace Idrak.Cli.Commands.Serve;
 internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, IChatTemplate? Template, JsonObject? Config)
 {
     /// <summary>Whether its chat takes images.</summary>
-    public bool ReadsImages => Config is not null && VisionFamilies.HasVision(Config) && Architecture(Config) is { } architecture
-        && VisionFamilies.Find(architecture) is not null && Template?.PartKinds.Contains(ChatParts.Image) == true;
+    public bool ReadsImages => false;                                   // finding its vision family by name: not on the new design yet
 
     /// <summary>Whether its chat takes sounds: an audio-language model whose audio family is registered and whose template renders sounds.</summary>
     public bool ReadsAudio => Config is not null && Idrak.Audio.Abstractions.AudioFamilies.HasAudio(Config) && Architecture(Config) is { } architecture
@@ -387,15 +386,18 @@ internal static class ServeOptions
             }
 
             string path = ModelChoices.Resolve(context, choice.Model);
-            string folder = CheckpointFormats.For(path).Prepare(path);
+            string folder = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {path}").Prepare(path);
             var tokenizer = PretrainedTokenizers.TryLoad(folder);
             var template = JinjaChatTemplate.Load(folder, tokenizer);
             string configFile = System.IO.Path.Combine(folder, "config.json");
             var config = File.Exists(configFile) ? JsonNode.Parse(File.ReadAllText(configFile)) as JsonObject : null;
             try
             {
-                // A vision-language model is read by its own registered vision family (-P PLUGIN): none fails now, not on the first request.
-                _ = config is not null && ServedModel.Architecture(config) is { } architecture ? VisionFamilies.For(architecture, config) : null;
+                // A vision-language model is read by its own vision family: finding it by name is not on the new design yet, so it fails now, not on the first request.
+                if (config?["vision_config"] is JsonObject && ServedModel.Architecture(config) is { } architecture)
+                {
+                    throw new NotSupportedException($"Picking the vision family '{architecture}' by its name is not on the new design yet.");
+                }
             }
             catch (NotSupportedException e)
             {

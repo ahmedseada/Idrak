@@ -69,8 +69,9 @@ internal sealed class SearchCommand : Command
         bool all = context.Flag("--all");
         var found = Shared.Hub.SearchAsync(query, Math.Min(1000, all ? limit : Math.Max(50, limit * 5)), Shared.Hub.Token(context), ModelCache.Downloader(context))
             .GetAwaiter().GetResult();
-        var families = PretrainedArchitectures.Names.ToHashSet(StringComparer.Ordinal);
-        var ggufArchitectures = GgufArchitectures.Names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // The registered families and GGUF architectures: listing them is not on the new design yet, so none is known.
+        var families = new HashSet<string>(StringComparer.Ordinal);
+        var ggufArchitectures = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var rows = new List<Result>();
         foreach (var item in found.OfType<JsonObject>())
         {

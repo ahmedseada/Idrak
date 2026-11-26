@@ -259,16 +259,7 @@ internal sealed class DataTokenizerCommand : Command
             ExpectedCountFloor = Number(context, "--expected-floor", defaults.ExpectedCountFloor),
             UnknownPenalty = Number(context, "--unknown-penalty", defaults.UnknownPenalty),
         };
-        ITokenizerTrainer trainer;
-        try
-        {
-            trainer = TokenizerTrainers.Get(name);
-        }
-        catch (NotSupportedException e)
-        {
-            context.Error(Messages.T("{0} Load its plug-in with -P (--plugin).", e.Message));
-            return ExitCodes.Failed;
-        }
+        var trainer = NotOnTheNewDesign.Yet<ITokenizerTrainer>($"Picking the tokenizer trainer '{name}' by its name");
 
         // Bad settings are refused before any file is read, named as the command line names them.
         try

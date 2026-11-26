@@ -288,9 +288,7 @@ internal sealed class DashboardServer : IClusterDashboard
         }
 
         string mode = (string?)body["mode"] ?? "in-process";
-        _ = Collectives.Get(options.CollectiveFor(topology));
         string model = options.Simulation.Failures ?? topology.Simulation.Failures;
-        _ = FailureModels.Get(model);
         bool paused = body["paused"]?.GetValue<bool>() ?? false;
         DashboardRun run;
         switch (mode)

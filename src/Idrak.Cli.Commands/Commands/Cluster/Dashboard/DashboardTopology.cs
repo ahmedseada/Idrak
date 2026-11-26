@@ -30,12 +30,10 @@ internal static class DashboardTopology
         {
             ["device"] = d.Device, ["type"] = d.Type.ToString(), ["memory"] = d.MemoryBytes, ["name"] = d.Name, ["card"] = d.CardKey,
         })]),
-        ["links"] = new JsonArray([.. LinkProfiles.Names.Order(StringComparer.Ordinal).Select(n => LinkProfiles.Find(n)).Where(p => p is not null).Select(p => (JsonNode)new JsonObject
-        {
-            ["name"] = p!.Name, ["bandwidth"] = p.BandwidthBytesPerSecond, ["latency_us"] = p.Latency.TotalMicroseconds,
-        })]),
-        ["failure_models"] = new JsonArray([.. FailureModels.Names.Order(StringComparer.Ordinal).Select(n => (JsonNode)n)]),
-        ["collectives"] = new JsonArray([.. Collectives.Names.Order(StringComparer.Ordinal).Select(n => (JsonNode)n)]),
+        // The registered link profiles, failure models and collectives: listing them is not on the new design yet.
+        ["links"] = new JsonArray(),
+        ["failure_models"] = new JsonArray(),
+        ["collectives"] = new JsonArray(),
         ["fault_kinds"] = new JsonArray([.. Enum.GetNames<FaultKind>().Select(n => (JsonNode)n)]),
         ["topology"] = settings.Topology is { } path ? Path.GetFullPath(path) : null,
         ["lang"] = settings.Language,

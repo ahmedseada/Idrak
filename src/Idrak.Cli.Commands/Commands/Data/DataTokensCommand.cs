@@ -58,7 +58,7 @@ internal sealed class DataTokensCommand : Command
             throw new UsageException("Give the text files to encode.");
         }
 
-        var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
+        var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath}.");
         var documents = (context.Option("--documents") ?? "blocks").ToLowerInvariant() switch
         {
             "blocks" => TokenDocuments.Blocks,

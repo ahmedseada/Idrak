@@ -103,7 +103,7 @@ internal sealed class AgentCommand : Command
                 Commands = context.Option("--commands") is { } commands ? commands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : options.Commands,
             });
         }
-        catch (NotRegisteredException e) when (e.Registry is nameof(CodingLanguages) or nameof(CommandSandboxes))
+        catch (NotSupportedException e)
         {
             throw new UsageException(e.Message);
         }

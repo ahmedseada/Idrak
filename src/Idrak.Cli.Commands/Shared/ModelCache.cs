@@ -244,10 +244,10 @@ internal static class ModelCache
         return null;
     }
 
-    /// <summary>The checkpoint's tensors by Hugging Face name (safetensors or GGUF), with their shapes.</summary>
+    /// <summary>The checkpoint's tensors by Hugging Face name (safetensors or GGUF): picking the path's checkpoint format is not on the new design yet.</summary>
     public static ITensorStore OpenTensors(string path)
     {
-        var format = CheckpointFormats.For(path);
+        var format = NotOnTheNewDesign.Yet<ICheckpointFormat>($"Picking the checkpoint format of {path}");
         return format.Open(format.Prepare(path));
     }
 

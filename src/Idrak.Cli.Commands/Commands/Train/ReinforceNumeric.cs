@@ -507,8 +507,7 @@ internal static class ReinforceNumeric
     private static string Schedule(string name) => LearningRateSchedules.Find(name) is not null ? name
         : throw new UsageException($"The schedule {name}: use {string.Join(", ", LearningRateSchedules.Names)} (LearningRateSchedules).");
 
-    private static string Optimizer(string name) => OptimizerKinds.Find(name) is not null ? name
-        : throw new UsageException($"The optimizer {name}: use {string.Join(", ", OptimizerKinds.Names)} (OptimizerKinds).");
+    private static string Optimizer(string name) => throw new UsageException($"The optimizer {name}: picking an optimizer by its name is not on the new design yet.");
 
     // Options of the other path (or of a language model), refused naming them.
     private static void Refuse(CommandContext context, IEnumerable<string> options, string why)

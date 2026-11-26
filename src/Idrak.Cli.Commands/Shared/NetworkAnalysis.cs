@@ -88,9 +88,9 @@ internal sealed class NetworkAnalysis
             {
                 var step = node as JsonObject ?? throw new InvalidDataException("Each network step is a JSON object.");
                 string op = (string?)step["op"] ?? throw new InvalidDataException("A network step has no \"op\".");
-                if (!NetworkOps.Contains(op))
+                if (op.Length > 0)
                 {
-                    throw new InvalidDataException($"Unknown network step '{op}' (registered: {string.Join(", ", NetworkOps.Names)}); load the plug-in that adds it with --plugin.");
+                    throw new NotSupportedException($"Replaying the network step '{op}' is not on the new design yet.");
                 }
 
                 int[] before = [.. builder.CurrentShape];
