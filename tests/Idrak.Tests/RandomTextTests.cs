@@ -14,7 +14,7 @@ internal abstract partial class DesktopTests : Tests
     [
         ("random text: pages, lines or words as asked, each line its number of words within the range, the same seed the same text and another seed other text", RandomTextUnits),
         ("random text: the Arabic source writes every letter, its own digits at their share, marks only when asked and never after a letter that takes none", RandomTextArabic),
-        ("random text: any language from a pools file or a word list, registered under its tag; English built in; bad pools are refused", RandomTextLanguages),
+        ("random text: any language from a pools file or a word list; English built in; bad pools are refused", RandomTextLanguages),
         ("random text: the written file is the plain text synthetic pages read, a document a page; idrak data text writes it by -n, --unit and -l, refusing what it cannot do", RandomTextFile),
     ];
 
@@ -22,7 +22,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void RandomTextUnits(Device device)
     {
-        var arabic = RandomTextSources.Get("ar");
+        var arabic = PooledTextSource.Embedded("random-text.ar.json");
         var options = new RandomTextOptions { Count = 40, PageLines = (3, 5), LineWords = (4, 7), Seed = 2 };
         var pages = RandomText.Documents(arabic, options).ToList();
         Check(pages.Count == 40 && pages.All(p => p.Split('\n').Length is >= 3 and <= 5), $"{pages.Count} pages of 3 to 5 lines");
@@ -43,7 +43,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void RandomTextArabic(Device device)
     {
-        var arabic = RandomTextSources.Get("ar");
+        var arabic = PooledTextSource.Embedded("random-text.ar.json");
         string text = string.Join("\n", RandomText.Documents(arabic, new RandomTextOptions { Count = 150, Seed = 5 }));
         var missing = ArabicLetters.Where(c => !text.Contains(c)).ToList();
         Check(missing.Count == 0, $"every letter written; missing: {string.Join(" ", missing)}");
@@ -65,27 +65,16 @@ internal abstract partial class DesktopTests : Tests
 
     private static void RandomTextLanguages(Device device)
     {
-        Check(RandomTextSources.Names.Contains("ar") && RandomTextSources.Names.Contains("en"), $"built in: {string.Join(", ", RandomTextSources.Names)}");
-        string english = string.Join(" ", RandomText.Documents(RandomTextSources.Get("en"), new RandomTextOptions { Count = 20 }));
+        string english = string.Join(" ", RandomText.Documents(PooledTextSource.Embedded("random-text.en.json"), new RandomTextOptions { Count = 20 }));
         Check(english.Any(char.IsAsciiLetter) && !english.Any(c => c is >= '؀' and <= 'ۿ'), "English is English");
-        Throws<NotSupportedException>(() => RandomTextSources.Get("xx"), "an unknown language");
 
         var french = PooledTextSource.FromJson(JsonNode.Parse("""
             {"name": "fr", "pools": {"nom": ["rapport", "réunion", "projet"], "verbe": ["publie", "prépare"]},
              "patterns": [["=le", "nom", "verbe"], ["#date"]], "punctuation": [","], "years": [2000, 2010]}
             """)!.AsObject());
-        RandomTextSources.Register(french);
-        try
-        {
-            var lines = RandomText.Documents(RandomTextSources.Get("fr"), new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 20, LineWords = (3, 6) }).ToList();
-            Check(lines.All(l => l.Split(' ').All(w => w.TrimEnd(',', '.') is "le" or "rapport" or "réunion" or "projet" or "publie" or "prépare" || w.Contains('/'))),
-                $"French from its pools: {lines[0]}");
-            Check(RandomTextSources.Get("ar").Name == "ar", "and Arabic as it was");
-        }
-        finally
-        {
-            RandomTextSources.Unregister("fr");
-        }
+        var lines = RandomText.Documents(french, new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 20, LineWords = (3, 6) }).ToList();
+        Check(lines.All(l => l.Split(' ').All(w => w.TrimEnd(',', '.') is "le" or "rapport" or "réunion" or "projet" or "publie" or "prépare" || w.Contains('/'))),
+            $"French from its pools: {lines[0]}");
 
         var listed = PooledTextSource.FromWords("de", ["Gericht Urteil", "", "Klage"]);
         var german = RandomText.Documents(listed, new RandomTextOptions { Unit = RandomTextUnit.Lines, Count = 10 }).SelectMany(l => l.Split(' ')).ToHashSet();
@@ -113,12 +102,12 @@ internal abstract partial class DesktopTests : Tests
         try
         {
             string path = Path.Combine(folder, "pages.txt");
-            var result = RandomText.Write(path, RandomTextSources.Get("ar"), new RandomTextOptions { Count = 6, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 });
-            var records = SyntheticRecordFormats.Detect(path).Read(path, "Read it.", "full_text_extract").ToList();
-            Check(SyntheticRecordFormats.Detect(path).Name == "text" && records.Count == 6 && result.Documents == 6, $"{records.Count} documents read back");
+            var result = RandomText.Write(path, PooledTextSource.Embedded("random-text.ar.json"), new RandomTextOptions { Count = 6, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 });
+            var records = new TextSyntheticRecords().Read(path, "Read it.", "full_text_extract").ToList();
+            Check(records.Count == 6 && result.Documents == 6, $"{records.Count} documents read back");
             Check(!File.ReadAllText(path).Contains('\r') && records[0].Answer.Contains("full_text_extract", StringComparison.Ordinal), "'\\n' lines, answers under the key");
             var page = SyntheticPages.Make(records[0].Answer, new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] });
-            Check(page.Text == string.Join("\n", RandomText.Documents(RandomTextSources.Get("ar"), new RandomTextOptions { Count = 1, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 }).Single().Split('\n')),
+            Check(page.Text == string.Join("\n", RandomText.Documents(PooledTextSource.Embedded("random-text.ar.json"), new RandomTextOptions { Count = 1, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 }).Single().Split('\n')),
                 "the first document drawn as a page, its text the answer");
 
             var (code, output, error) = SynthCli(["data", "text", "-n", "4", "--unit", "lines", "-l", "en", "-o", Path.Combine(folder, "en.txt"), "--seed", "3", "-j"]);

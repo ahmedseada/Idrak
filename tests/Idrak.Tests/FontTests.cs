@@ -3,6 +3,7 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Imaging;
+using Idrak.Imaging.Shaping;
 
 // Plan 18, phase 1: the library's OpenType reader and outline rasterizer, checked against fontTools' reading of a DejaVu
 // Sans subset and FreeType's unhinted renders of its glyphs (tools/fonts/make_font_references.py, tests/Idrak.Tests/data/fonts).
@@ -14,7 +15,7 @@ internal abstract partial class DesktopTests : Tests
         ("fonts: glyphs drawn by the coverage rasterizer match FreeType's unhinted renders (Latin, a composite, Arabic, digits; 24 and 48 pixels per em)", FontRasterMatchesFreeType),
         ("fonts: exact coverage of a square at fractional positions, ink over ink where outlines overlap, clipping at the image's edges", FontRasterCoverage),
         ("fonts: CFF outlines (Type 2 charstrings with local and global subroutines) give fontTools' glyph bounds, the TrueType font's renders (and FreeType's within its coarser cubic flattening), and the same character map and shaping as the TrueType font", FontCffMatches),
-        ("fonts: a CFF2 font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
+        ("fonts: a CFF2 font and a damaged file are refused with the reason", FontRefusals),
         ("fonts: a font's layout features for a script (Amiri's joining forms, rlig, mark); idrak data fonts checks characters, features and every line against HarfBuzz's references, and says what a font lacks or cannot read", FontCheckCommand),
         ("fonts: legacy fonts (FS_Hand_Style, MCS-HAND, mohareb-hand) are found by the library's PUA layout and mapped: every letter in every form it gives, through the made GSUB; mohareb's khaa falls back to its final form; FS_Hand_Style's glyph names give the same forms and lam-alefs", LegacyFontsMapped),
         ("fonts: legacy fonts shape joined Arabic: initial, medial and final forms, each lam-alef one ligature, Arabic-Indic digits, marks with no width placed on their base's ink (the font's own marks kept, inkless ones drawn)", LegacyFontsShape),
@@ -72,7 +73,7 @@ internal abstract partial class DesktopTests : Tests
         Check(face.Table("GSUB").Length > 0 && face.Table("GPOS").Length > 0 && face.Table("GDEF").Length > 0 && face.Table("CFF ").IsEmpty,
             "the layout tables are there, a missing table is empty");
 
-        var pair2 = FontFormats.Read(FontData("dejavu-sans-pair.ttc"));
+        var pair2 = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("dejavu-sans-pair.ttc")), "dejavu-sans-pair");
         Check(pair2.Count == 2 && pair2[0].Family == "DejaVu Sans" && pair2[1].Family == "DejaVu Sans" && pair2[0].Style != pair2[1].Style
               && pair2[1].Style.Contains("Bold", StringComparison.Ordinal) && pair2[0].Glyph('ب') > 0 && pair2[1].Glyph('ب') > 0,
             $"collection: {string.Join(", ", pair2.Select(f => $"{f.Family} {f.Style}"))}");
@@ -82,7 +83,7 @@ internal abstract partial class DesktopTests : Tests
     private static void FontRasterMatchesFreeType(Device device)
     {
         var face = SubsetFace();
-        var rasterizer = OutlineRasterizers.Get();
+        var rasterizer = new CoverageRasterizer();
         var renders = JsonNode.Parse(File.ReadAllText(FontData("freetype.json")))!.AsArray();
         Check(renders.Count >= 12, $"{renders.Count} renders");
         double worstMean = 0, worstMax = 0;
@@ -120,7 +121,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void FontRasterCoverage(Device device)
     {
-        var rasterizer = OutlineRasterizers.Get(OutlineRasterizers.Coverage);
+        var rasterizer = new CoverageRasterizer();
         // A 2 x 2 unit square (y up, from (0, 0) to (2, 2)) at scale 1 with its origin at (1.5, 3.5): it covers x 1.5..3.5,
         // y 1.5..3.5 (y down), so the corner pixels hold a quarter, the edge pixels a half, the middle one all.
         var square = new GlyphOutline([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], [0, 0, 2, 0, 2, 2, 0, 2]);
@@ -166,7 +167,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void FontCffMatches(Device device)
     {
-        var face = FontFormats.Read(FontData("dejavu-sans-cff.otf")).Single();
+        var face = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("dejavu-sans-cff.otf")), "dejavu-sans-cff").Single();
         var expected = JsonNode.Parse(File.ReadAllText(FontData("cff.json")))!;
         Check(face.GlyphCount == (int)expected["glyphCount"]! && (int)expected["globalSubrs"]! > 0 && (int)expected["localSubrs"]! > 0,
             $"{face.GlyphCount} glyphs; the fixture has {expected["globalSubrs"]} global and {expected["localSubrs"]} local subroutines");
@@ -190,7 +191,7 @@ internal abstract partial class DesktopTests : Tests
                   && Math.Abs(maxY - (double)box[3]!) <= 0.01, $"glyph {g}: control bounds ({minX}, {minY}, {maxX}, {maxY}), fontTools {box.ToJsonString()}");
         }
 
-        var rasterizer = OutlineRasterizers.Get();
+        var rasterizer = new CoverageRasterizer();
         double worstMean = 0, worstMax = 0;
         foreach (var render in expected["renders"]!.AsArray())
         {
@@ -227,17 +228,13 @@ internal abstract partial class DesktopTests : Tests
         // The same text shapes alike from the TrueType and the CFF font (the layout tables are the same).
         var trueType = SubsetFace();
         string arabic = "بسم الله الرحمن الرحيم";
-        var a = TextShapers.Shape(trueType, arabic, new TextRun(0, arabic.Length, "Arab", true));
-        var b = TextShapers.Shape(face, arabic, new TextRun(0, arabic.Length, "Arab", true));
+        var a = new ArabicShaper().Shape(trueType, arabic, new TextRun(0, arabic.Length, "Arab", true));
+        var b = new ArabicShaper().Shape(face, arabic, new TextRun(0, arabic.Length, "Arab", true));
         Check(a.Select(x => (x.XAdvance, x.XOffset, x.YOffset)).SequenceEqual(b.Select(x => (x.XAdvance, x.XOffset, x.YOffset))), "shaping from the CFF font");
     }
 
     private static void FontRefusals(Device device)
     {
-        Check(FontFormats.Names.Contains("opentype", StringComparer.OrdinalIgnoreCase) && FontFormats.Extensions.Contains(".ttc")
-              && OutlineRasterizers.Names.Contains("coverage", StringComparer.OrdinalIgnoreCase),
-            $"formats {string.Join(", ", FontFormats.Names)}; rasterizers {string.Join(", ", OutlineRasterizers.Names)}");
-
         // The CFF test font with its CFF table renamed CFF2: a variable font's outlines, refused.
         byte[] cff2 = File.ReadAllBytes(FontData("dejavu-sans-cff.otf"));
         int tables = cff2[4] << 8 | cff2[5];
@@ -251,7 +248,7 @@ internal abstract partial class DesktopTests : Tests
 
         try
         {
-            FontFormats.Read(cff2, "cff2");
+            new OpenTypeFormat().Read(cff2, "cff2");
             Check(false, "a CFF2 font must be refused");
         }
         catch (NotSupportedException ex)
@@ -259,20 +256,10 @@ internal abstract partial class DesktopTests : Tests
             Check(ex.Message.Contains("CFF2", StringComparison.Ordinal) && ex.Message.Contains("variable", StringComparison.Ordinal), ex.Message);
         }
 
-        try
-        {
-            FontFormats.Read(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 }, "noise");
-            Check(false, "bytes that are no font must be refused");
-        }
-        catch (InvalidDataException ex)
-        {
-            Check(ex.Message.Contains("not a font of the registered formats", StringComparison.Ordinal), ex.Message);
-        }
-
         byte[] cut = File.ReadAllBytes(FontData("dejavu-sans-subset.ttf"))[..2000];
         try
         {
-            FontFormats.Read(cut, "cut");
+            new OpenTypeFormat().Read(cut, "cut");
             Check(false, "a damaged font must be refused");
         }
         catch (InvalidDataException ex)
@@ -283,7 +270,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void FontCheckCommand(Device device)
     {
-        var amiri = FontFormats.Read(FontData("arabic/amiri.ttf")).Single();
+        var amiri = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("arabic/amiri.ttf")), "amiri").Single();
         var (substitution, positioning) = Idrak.Imaging.OpenTypeFeatures.Of(amiri, "Arab", "ar");
         Check(new[] { "init", "medi", "fina", "rlig" }.All(substitution.Contains) && new[] { "mark", "mkmk" }.All(positioning.Contains),
             $"GSUB {string.Join(" ", substitution)}; GPOS {string.Join(" ", positioning)}");

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
 using Idrak.Abstraction.Generation;
+using Idrak.Imaging;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 
@@ -20,7 +21,6 @@ internal abstract partial class DesktopTests : Tests
         ("synthetic data: plain text documents and chat messages records are read, and written with one image each", SyntheticFormats),
         ("synthetic data: page parts fill their slots (digits, number, pick, field, date, hijri, line), drop a line whose field is missing, use the language's digits when drawn, keep a part out at chance 0; unknown keys and slots are refused", SyntheticParts),
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
-        ("synthetic data: the record formats and slots by name; an app's slot replaces the library's of its name only", SyntheticRegistries),
         ("synthetic data: page settings text sets the style's sizes and chances and the shapes layout's options (pen, binding and their keys), refusing unknown keys (naming every valid one) and values out of range; shape profiles are drawn per page and checked first; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
         ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans, shapes and page settings given; a missing records file or font folder, or a bad setting or shape profile, is a usage error", SyntheticCli),
         ("synthetic data: handwriting habits are an option, off by default (the same bytes and labels); at chance 1 the label is the drawn text (label=drawn) or the source's (label=source) over the same image; habit.NAME, rules files, bad settings refused; the habits contract", SyntheticHabits),
@@ -47,7 +47,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static SyntheticPageOptions SyntheticOptions(string folder, int variants = 2, int workers = 2, int seed = 7) => new()
     {
-        Style = new PageStyle { Fonts = [SubsetFace(), FontFormats.Read(FontData("features.ttf")).Single()], Width = 620, Height = 877, BodySize = (14, 18) },
+        Style = new PageStyle { Fonts = [SubsetFace(), new OpenTypeFormat().Read(File.ReadAllBytes(FontData("features.ttf")), "features").Single()], Width = 620, Height = 877, BodySize = (14, 18) },
         Parts = SyntheticPageParts.FromJson(JsonNode.Parse(PartsJson)!.AsObject(), folder),
         Variants = variants, Workers = workers, Seed = seed, Scans = ["office", "none"],
     };
@@ -124,7 +124,7 @@ internal abstract partial class DesktopTests : Tests
             foreach (var transcript in transcripts)
             {
                 var images = transcript.Messages.SelectMany(m => m.Parts).OfType<ChatImage>().ToList();
-                var decoded = ImageCodecs.Get("jpeg").Decode(images.Single().Data.Span);
+                var decoded = new JpegCodec().Decode(images.Single().Data.Span);
                 Check(decoded.Width == 620 && decoded.Height >= 877, $"its page decodes, {decoded.Width}x{decoded.Height}");
             }
         }
@@ -177,7 +177,6 @@ internal abstract partial class DesktopTests : Tests
         {
             string text = Path.Combine(folder, "letters.txt");
             File.WriteAllText(text, "الحمد لله وحده\nوبعد فهذا قرار.\n---\n\n---\nSecond document, in English.\n", new UTF8Encoding(false));
-            Check(SyntheticRecordFormats.Detect(text).Name == "text", "a .txt is plain text");
             var options = SyntheticOptions(folder, variants: 1) with { Parts = SyntheticPageParts.Empty, AnswerKey = "text", Prompt = "Read the page." };
             var result = SyntheticPages.Write(text, Path.Combine(folder, "from-text.jsonl"), options);
             Check(result.Records == 2 && result.Pages == 2, $"two documents (the empty one passed over): {result.Records} records, {result.Pages} pages");
@@ -192,7 +191,6 @@ internal abstract partial class DesktopTests : Tests
                     new JsonObject { ["role"] = "user", ["content"] = new JsonArray(new JsonObject { ["type"] = "image", ["path"] = "a.png" }, new JsonObject { ["type"] = "text", ["text"] = "Read it." }) },
                     new JsonObject { ["role"] = "assistant", ["content"] = "Plain answer line one.\nLine two." }),
             }) + "\n", new UTF8Encoding(false));
-            Check(SyntheticRecordFormats.Detect(chat).Name == "messages", "a messages record");
             var written = SyntheticPages.Write(chat, Path.Combine(folder, "from-chat.jsonl"), options with { AnswerKey = null });
             var transcript = TuningDataFormats.Read(written.Data).Single();
             var parts = transcript.Messages[0].Parts;
@@ -292,37 +290,6 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static void SyntheticRegistries(Device device)
-    {
-        Check(new[] { "sharegpt", "messages", "text" }.All(SyntheticRecordFormats.Names.Contains), $"formats {string.Join(", ", SyntheticRecordFormats.Names)}");
-        Check(new[] { "digits", "number", "pick", "field", "line", "date", "hijri" }.All(PagePartFillers.Names.Contains), $"slots {string.Join(", ", PagePartFillers.Names)}");
-        Throws<NotSupportedException>(() => SyntheticRecordFormats.Get("nope"), "an unknown format");
-
-        PagePartFillers.Register(new FixedFiller());
-        try
-        {
-            var parts = SyntheticPageParts.FromJson(JsonNode.Parse("""{"footers": [["{pick:a} {digits:2}"]]}""")!.AsObject());
-            var page = SyntheticPages.Make("Body.", SyntheticOptions(".", variants: 1) with { Parts = parts, Scans = ["none"] });
-            string footer = page.Text.Split('\n')[^1];
-            Check(footer.StartsWith("PICKED ", StringComparison.Ordinal) && footer.Length == "PICKED ".Length + 2, $"the app's pick, the library's digits: {footer}");
-        }
-        finally
-        {
-            PagePartFillers.Unregister("pick");
-        }
-
-        Check(PagePartFillers.Get("pick").Summary.StartsWith("{pick:", StringComparison.Ordinal), "unregistered: the library's pick again");
-    }
-
-    private sealed class FixedFiller : IPagePartFiller
-    {
-        public string Name => "pick";
-
-        public string Summary => "always PICKED";
-
-        public string? Fill(string? argument, PagePartContext context) => "PICKED";
-    }
-
     private static void SyntheticStyle(Device device)
     {
         var style = SyntheticPages.Style(new PageStyle { Fonts = [SubsetFace()] }, "width=800, size=20..30, spacing=1.2, rule=0, stamp=1, color=false");
@@ -399,7 +366,6 @@ internal abstract partial class DesktopTests : Tests
         Throws<ArgumentException>(() => SyntheticPages.Make(Short, shapes with { Shapes = [] }), "no profile");
         Throws<ArgumentException>(() => SyntheticPages.Make(Short, shapes with { Style = shapes.Style with { Options = new Dictionary<string, string> { ["pen-wobble"] = "x", ["pen"] = "ballpoint" } } }),
             "a bad pen setting given in code, refused before the first page");
-
     }
 
     private static (int Code, string Out, string Err) SynthCli(params string[] args)
@@ -462,7 +428,6 @@ internal abstract partial class DesktopTests : Tests
                     $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
             }
 
-            Throws<FileNotFoundException>(() => SyntheticRecordFormats.Detect(Path.Combine(folder, "gone.txt")), "the library says a missing file is missing");
         }
         finally
         {

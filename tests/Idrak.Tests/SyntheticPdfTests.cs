@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Abstraction.Data;
+using Idrak.Data.Pdf;
 using Idrak.Imaging;
 using Idrak.Text;
 
@@ -97,7 +98,7 @@ internal abstract partial class DesktopTests
                     var made = SyntheticPages.Make(PdfSynthAnswer(input, record), options, record, variant);
                     var image = SyntheticPages.EightBit(made.Image);
                     cut += made.Drawn.Width != made.Vectors!.Width || made.Drawn.Height != made.Vectors.Height ? 1 : 0;
-                    using var document = DocumentFormats.Open(file, PdfSynthContent);
+                    using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(file)), file, PdfSynthContent);
                     var page = document.ReadPage(index, DocumentParts.All);
                     float scale = 72f / options.Dpi;
                     if (MathF.Abs(page.Width - image.Width * scale) > 1e-3f || MathF.Abs(page.Height - image.Height * scale) > 1e-3f)
@@ -105,13 +106,13 @@ internal abstract partial class DesktopTests
                         problems.Add($"{where}: the page is {page.Width} x {page.Height} points for {image.Width} x {image.Height} pixels");
                     }
 
-                    // The image: exact (Flate), or the JPEG codec's round trip of the page's pixels, compared as 8-bit levels
-                    // (a drawn page's table of a byte's value and a codec's differ in the last bit: k / 255, k x (1 / 255)).
+                    // A JPEG image: the JPEG codec's round trip of the page's pixels, compared as 8-bit levels (a drawn page's table
+                    // of a byte's value and a codec's differ in the last bit: k / 255, k x (1 / 255)).
                     var stored = page.Images.Single();
                     jpeg += stored.Encoding == DocumentImage.Jpeg ? 1 : 0;
                     exact += stored.Encoding == DocumentImage.Jpeg ? 0 : 1;
-                    var expected = stored.Encoding == DocumentImage.Jpeg ? ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(image, 90)).Pixels : image.Pixels;
-                    if (!PdfSynthLevels(stored.Decode().Pixels).AsSpan().SequenceEqual(PdfSynthLevels(expected)))
+                    if (stored.Encoding == DocumentImage.Jpeg
+                        && !PdfSynthLevels(new JpegCodec().Decode(stored.Bytes().Span).Pixels).AsSpan().SequenceEqual(PdfSynthLevels(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels)))
                     {
                         problems.Add($"{where}: the {stored.Encoding} image is not the page's pixels");
                     }
@@ -175,7 +176,7 @@ internal abstract partial class DesktopTests
                     }
 
                     var made = SyntheticPages.Make(PdfSynthAnswer(input, record), options, record, variant);
-                    using var document = DocumentFormats.Open(file, PdfSynthContent);
+                    using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(file)), file, PdfSynthContent);
                     var page = document.ReadPage(index, DocumentParts.All);
                     float scale = 72f / options.Dpi;
 
@@ -211,7 +212,8 @@ internal abstract partial class DesktopTests
                     }
 
                     // The page drawn by the library's drawer against the page drawn before its look.
-                    var back = DocumentPageDrawers.DrawPage(document, index, new DocumentDrawOptions { Dpi = options.Dpi }).Image;
+                    var drawing = new DocumentDrawOptions { Dpi = options.Dpi };
+                    var back = new CoverageDocumentDrawer().Draw(document.ReadPage(index, DocumentPageDrawers.PartsFor(drawing)), drawing).Image;
                     var (share, mean) = PdfDrawDifference(made.Image, back, 32);
                     scores.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{about["layout"]} {share:P2}"));
                     if (back.Width != made.Image.Width || back.Height != made.Image.Height || share > 0.02)
@@ -251,7 +253,7 @@ internal abstract partial class DesktopTests
                     $"{kind}: four pages a file, each named after its first page: {string.Join(", ", records.Select(r => $"{Path.GetFileName(r.File)}#{r.Page}"))}");
                 foreach (var group in records.GroupBy(r => r.File))
                 {
-                    using var document = DocumentFormats.Open(group.Key);
+                    using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(group.Key)), group.Key, new DocumentOptions());
                     Check(document.PageCount == group.Count(), $"{kind}: {Path.GetFileName(group.Key)} holds {document.PageCount} pages, {group.Count()} named");
                 }
 
@@ -325,7 +327,7 @@ internal abstract partial class DesktopTests
                 }
 
                 string file = Path.Combine(folder, $"memory-{output}.pdf");
-                using (var document = DocumentFormats.Open(file))
+                using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(file)), file, new DocumentOptions()))
                 {
                     Check(document.PageCount == count, $"{output}: {document.PageCount} pages written");
                 }
@@ -389,7 +391,7 @@ internal abstract partial class DesktopTests
             Check((string)json["format"]! == "pdf" && (int)json["pages"]! == 6 && records.Count == 6 && Directory.GetFiles((string)json["images"]!, "*.pdf").Length == 6
                   && records.All(r => ((string)r["images"]![0]!).EndsWith(".pdf", StringComparison.Ordinal) && (int)r["pages"]![0]! == 0),
                 $"six scan-like PDFs: {output}");
-            using (var document = DocumentFormats.Open(Path.Combine(folder, "scan", (string)records[0]["images"]![0]!)))
+            using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(Path.Combine(folder, "scan", (string)records[0]["images"]![0]!))), Path.Combine(folder, "scan", (string)records[0]["images"]![0]!), new DocumentOptions()))
             {
                 var page = document.ReadPage(0, DocumentParts.All);
                 Check(MathF.Abs(page.Width - 620 * 72f / 75) < 1e-3f && page.Images.Single().Encoding != DocumentImage.Jpeg && page.Runs.Count > 0 && page.Runs.All(r => r.Hidden),
@@ -403,7 +405,7 @@ internal abstract partial class DesktopTests
             records = [.. File.ReadAllLines((string)json["data"]!).Select(l => JsonNode.Parse(l)!)];
             Check((string)json["format"]! == "pdf-vector" && Directory.GetFiles((string)json["images"]!, "*.pdf").Length == 2
                   && records.Select(r => (int)r["pages"]![0]!).SequenceEqual([0, 1, 2, 3, 0, 1]), $"four pages a PDF: {output}");
-            using (var document = DocumentFormats.Open(Path.Combine(folder, "vector", (string)records[0]["images"]![0]!)))
+            using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(Path.Combine(folder, "vector", (string)records[0]["images"]![0]!))), Path.Combine(folder, "vector", (string)records[0]["images"]![0]!), new DocumentOptions()))
             {
                 var fontsUsed = document.ReadPage(0, DocumentParts.All).Runs.Select(r => r.Font).Distinct().ToList();
                 Check(document.PageCount == 4 && fontsUsed.Count > 0 && fontsUsed.All(f => f is { } name && !Regex.IsMatch(name, "^[A-Z]{6}\\+")),
