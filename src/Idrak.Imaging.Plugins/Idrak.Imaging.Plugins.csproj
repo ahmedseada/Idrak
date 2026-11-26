@@ -10,8 +10,8 @@
   </PropertyGroup>
 
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. Plan 28,
-       decision 21: it builds on Idrak.Imaging, whose "opentype" reader and "truetype" writer it reaches through the
-       FontFormats and FontWriters registries at run time, never by type. -->
+       decision 21: it builds on Idrak.Imaging, whose "opentype" reader (OpenTypeFormat) and "truetype" writer
+       (TrueTypeWriter) it reaches directly. -->
   <ItemGroup>
     <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
   </ItemGroup>

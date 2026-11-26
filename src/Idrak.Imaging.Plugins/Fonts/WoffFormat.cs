@@ -11,9 +11,10 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// <summary>
 /// "woff": WOFF 1.0 fonts (.woff; the W3C Recommendation of 2012), an sfnt font (TrueType or OpenType) whose tables are
 /// each zlib-compressed or stored as they are. <see cref="Read"/> unpacks the font inside (<see cref="Decode"/>) and
-/// hands it to the first other format of <c>FontFormats</c> that accepts it (the library's "opentype", reached
-/// through the registry), so a face read from a WOFF is that font's face: the same glyphs, outlines, advances, characters
-/// and tables, and its <see cref="IFontFace.Format"/> names the reader of the font inside. Inflating goes through
+/// reads it as the WOFF header's flavor says: TrueType (0x00010000 or true) and OpenType with CFF outlines (OTTO) by the
+/// library's OpenType reader (<see cref="OpenTypeFormat"/>, reached directly), another flavor refused; so a face read
+/// from a WOFF is that font's face: the same glyphs, outlines, advances, characters and tables, and its
+/// <see cref="IFontFace.Format"/> names the reader of the font inside ("opentype"). Inflating goes through
 /// <see cref="ZLibStream"/> (the base library's zlib, on every platform).
 /// <para>
 /// A WOFF file is untrusted input. Every offset and length is checked before anything is inflated: the header's file
@@ -36,6 +37,13 @@ public sealed class WoffFormat : IFontFormat
     // deflate gives at most 1,032 bytes for one (a 258-byte match coded in two bits): a table that claims more from the
     // bytes it stores cannot be, and is refused before anything is inflated.
     private const long MostInflated = 1032;
+
+    // The flavors of the fonts a WOFF 1.0 file holds: TrueType (0x00010000, or Apple's "true") and OpenType with CFF
+    // outlines ("OTTO").
+    private const uint TrueTypeFlavor = 0x00010000, AppleTrueTypeFlavor = 0x74727565, CffFlavor = 0x4F54544F;
+
+    // The reader of the font inside, whatever its flavor: the library's OpenType reader, reached directly.
+    private static readonly OpenTypeFormat OpenType = new();
 
     private readonly long _maxFontBytes = WoffSettings.Bytes(MaxFontBytesVariable) ?? 0;
 
@@ -62,17 +70,21 @@ public sealed class WoffFormat : IFontFormat
     public bool Accepts(ReadOnlySpan<byte> header) => header.Length >= 4 && BinaryPrimitives.ReadUInt32BigEndian(header) == WoffSettings.Woff;
 
     /// <inheritdoc/>
-    /// <exception cref="InvalidDataException">The file is damaged or hostile (the message says how).</exception>
-    /// <exception cref="NotSupportedException">Always after the unpacking for now: the font inside is read through the
-    /// registered font formats, which are not on the new design yet.</exception>
+    /// <exception cref="InvalidDataException">The file is damaged or hostile (the message says how), or its flavor is not a
+    /// font WOFF 1.0 holds (TrueType, 0x00010000 or true; OpenType with CFF outlines, OTTO).</exception>
+    /// <exception cref="NotSupportedException">The font inside is one the OpenType reader does not read (CFF2 outlines, no
+    /// Unicode character map: the message says which).</exception>
     public IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name)
     {
         ArgumentNullException.ThrowIfNull(name);
         byte[] sfnt = Decode(file, name);
-        // The font inside was read by the first other registered font format that accepts it (FontFormats): not on the new
-        // design yet.
-        string flavor = WoffSettings.Tag(BinaryPrimitives.ReadUInt32BigEndian(sfnt));
-        throw new NotSupportedException($"{name}: the font inside the WOFF (flavor {flavor}) is read through the registered font formats, which are not on the new design yet.");
+        // The header's flavor, the font inside's sfnt version, says what it is: TrueType outlines (0x00010000, or "true")
+        // and CFF outlines ("OTTO") are both read by the library's OpenType reader, reached directly. The faces keep the
+        // unpacked font, not copied.
+        uint flavor = BinaryPrimitives.ReadUInt32BigEndian(sfnt);
+        return flavor is TrueTypeFlavor or AppleTrueTypeFlavor or CffFlavor
+            ? OpenType.Read(sfnt, name)
+            : throw Damaged(name, $"the WOFF's flavor is {WoffSettings.Tag(flavor)}: not a font WOFF 1.0 holds (TrueType, 0x00010000 or true; OpenType with CFF outlines, OTTO)");
     }
 
     /// <summary>
