@@ -1431,10 +1431,11 @@ internal sealed class TuneTool(ToolConsole console)
         var model = PretrainedModel.Load(folder, new PretrainedOptions
         {
             Device = device, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
-            WeightPlacement = training ? offload ? Idrak.Models.Abstractions.WeightPlacements.Stream : Idrak.Models.Abstractions.WeightPlacements.AllOnDevice : null,
+            WeightPlacement = training ? offload ? new Idrak.Models.Abstractions.WeightPlacements.StreamPlacement() : new Idrak.Models.Abstractions.WeightPlacements.DevicePlacement() : null,
             DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
             // Training moves no expert between memories: every expert stays resident (plan 37, R1).
-            ExpertPlacement = training ? Idrak.Models.Abstractions.ExpertPlacements.Resident : moeExperts,
+            ExpertPlacement = training ? new Idrak.Models.Abstractions.ExpertPlacements.ResidentPlacement()
+                : moeExperts is null ? null : Idrak.Models.Abstractions.ExpertPlacements.Named(moeExperts, "--moe-experts"),     // by its own name
             Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All,
             ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
         });

@@ -72,6 +72,9 @@ public sealed record WeightPlan(string Placement, int DeviceLayers, int Layers, 
 /// <summary>A weight placement (<see cref="WeightPlacements"/>): how a decoder's layers are shared between the device and the CPU.</summary>
 public interface IWeightPlacement
 {
+    /// <summary>The placement's own name ("device", "split", "stream", "auto"), what a person's or a variable's text is matched against.</summary>
+    string Name { get; }
+
     /// <summary>The plan for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The placement cannot run on the request's device (stream without offload support).</exception>
     WeightPlan Place(WeightPlacementRequest request);
@@ -94,7 +97,9 @@ public interface IWeightPlacement
 /// <see cref="StreamPlacement"/> (<see cref="Stream"/>: every layer on the device, what does not fit kept in system memory
 /// and staged per pass: <see cref="ComputeResources.OffloadToHostMemory"/>) and <see cref="AutoPlacement"/>
 /// (<see cref="Auto"/>: the device when the model fits, else split or stream, whichever the bus and the CPU measured at
-/// load make faster). Picking a placement by its name is not on the new design yet.
+/// load make faster), each its own class stating its name, in one fixed list (<see cref="All"/>). A person's or a
+/// variable's text (IDRAK_WEIGHT_PLACEMENT) is matched against their names where it comes in (<see cref="Named"/>); with
+/// none, the default (<see cref="Default"/>) is reached directly.
 /// </summary>
 public static class WeightPlacements
 {
@@ -109,6 +114,38 @@ public static class WeightPlacements
 
     /// <summary>The device when the model fits, else split or stream by what the bus and the CPU measure.</summary>
     public const string Auto = "auto";
+
+    /// <summary>The variable naming the placement a load takes when none is handed over: "IDRAK_WEIGHT_PLACEMENT".</summary>
+    public const string PlacementVariable = "IDRAK_WEIGHT_PLACEMENT";
+
+    /// <summary>The library's placements, one immutable list in source: device, split, stream, auto.</summary>
+    public static IReadOnlyList<IWeightPlacement> All { get; } = Array.AsReadOnly<IWeightPlacement>([new DevicePlacement(), new SplitPlacement(), new StreamPlacement(), new AutoPlacement()]);
+
+    /// <summary>
+    /// The placement a load takes when none is handed over: the one of <see cref="All"/> that IDRAK_WEIGHT_PLACEMENT names,
+    /// else <see cref="AutoPlacement"/>, reached directly.
+    /// </summary>
+    public static IWeightPlacement Default => Environment.GetEnvironmentVariable(PlacementVariable) is { Length: > 0 } name ? Named(name, PlacementVariable) : All[3];
+
+    /// <summary>
+    /// The placement of <paramref name="placements"/> (<see cref="All"/> when null) whose own name is <paramref name="name"/>
+    /// (ignoring case and spaces around it): the list walked where a person's or a variable's text comes in.
+    /// </summary>
+    /// <exception cref="ArgumentException">No placement has the name (the message names <paramref name="where"/> and theirs).</exception>
+    public static IWeightPlacement Named(string name, string where, IReadOnlyList<IWeightPlacement>? placements = null)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        placements ??= All;
+        foreach (var placement in placements)
+        {
+            if (placement.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return placement;
+            }
+        }
+
+        throw new ArgumentException($"{where} {name}: no weight placement has that name ({string.Join(", ", placements.Select(p => p.Name))}).", nameof(name));
+    }
 
 
     /// <summary>The variable giving the layers on the device (a count, or "auto" to size them): "IDRAK_DEVICE_LAYERS".</summary>
@@ -276,6 +313,9 @@ public static class WeightPlacements
     public sealed class DevicePlacement : IWeightPlacement
     {
         /// <inheritdoc />
+        public string Name => AllOnDevice;
+
+        /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request) =>
             new(AllOnDevice, request.Layers, request.Layers, false, $"every layer on {request.Device}");
     }
@@ -283,6 +323,9 @@ public static class WeightPlacements
     /// <summary>The first layers on the device as its free memory allows (or IDRAK_DEVICE_LAYERS), the rest computed by the CPU from system memory.</summary>
     public sealed class SplitPlacement : IWeightPlacement
     {
+        /// <inheritdoc />
+        public string Name => Split;
+
         /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request) => SplitPlan(request, Split);
 
@@ -293,6 +336,9 @@ public static class WeightPlacements
     /// <summary>Every layer on the device; what does not fit kept in system memory and staged each pass (offload).</summary>
     public sealed class StreamPlacement : IWeightPlacement
     {
+        /// <inheritdoc />
+        public string Name => Stream;
+
         /// <inheritdoc />
         public WeightPlan Place(WeightPlacementRequest request) => request.CanStream
             ? new(Stream, request.Layers, request.Layers, true,
@@ -305,6 +351,9 @@ public static class WeightPlacements
     /// <summary>The device when the model fits; else split or stream, whichever the bus and the CPU measured at load make faster.</summary>
     public sealed class AutoPlacement : IWeightPlacement
     {
+        /// <inheritdoc />
+        public string Name => Auto;
+
         /// <inheritdoc />
         public int Adjust(WeightPlacementRequest request, int current) => Follow(request, current);
 

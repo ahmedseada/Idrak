@@ -225,12 +225,13 @@ public sealed record PretrainedOptions
     public long? AutoWeightsBudget { get; init; }
 
     /// <summary>
-    /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1), by name:
-    /// "device", "split", "stream" or "auto". Picking a placement by its name is not on the new design yet; null (the
-    /// default) places none, so every layer goes on the device. The free memory is <see cref="AutoWeightsBudget"/> when
-    /// given, else what the device reports. <see cref="PretrainedModel.Placement"/> says what was chosen.
+    /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1): the placement
+    /// itself, handed over (one of <see cref="WeightPlacements.All"/>: device, split, stream, auto; or one of one's own); null
+    /// takes <see cref="WeightPlacements.Default"/> (IDRAK_WEIGHT_PLACEMENT's, else auto). The free memory is
+    /// <see cref="AutoWeightsBudget"/> when given, else what the device reports. <see cref="PretrainedModel.Placement"/> says
+    /// what was chosen.
     /// </summary>
-    public string? WeightPlacement { get; init; }
+    public IWeightPlacement? WeightPlacement { get; init; }
 
     /// <summary>
     /// The decoder layers on the device for a split (<see cref="WeightPlacement"/> split or auto): a count, or null for
@@ -239,12 +240,13 @@ public sealed record PretrainedOptions
     public int? DeviceLayers { get; init; }
 
     /// <summary>
-    /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1), by name: "resident",
-    /// "offload" or "auto". Picking a placement by its name is not on the new design yet; null (the default) places none,
-    /// so every expert stays where its layer is. With <see cref="LazyLayers"/>, each expert is read the first time the
-    /// router picks it. <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
+    /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1): the placement itself,
+    /// handed over (one of <see cref="ExpertPlacements.All"/>: resident, offload, auto; or one of one's own); null takes
+    /// <see cref="ExpertPlacements.Default"/> (IDRAK_MOE_EXPERTS's, else auto). On the CPU every expert stays resident. With
+    /// <see cref="LazyLayers"/>, each expert is read the first time the router picks it.
+    /// <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
     /// </summary>
-    public string? ExpertPlacement { get; init; }
+    public IExpertPlacement? ExpertPlacement { get; init; }
 
     /// <summary>
     /// The bytes of experts an offloading <see cref="ExpertPlacement"/> keeps on the device, or null for
@@ -459,8 +461,7 @@ public sealed class PretrainedModel : IDisposable
 
         // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit.
         var placementTarget = options.Device ?? Idrak.Abstraction.Device.Default;
-        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu && options.WeightPlacement is { } placementName
-            ? NotOnTheNewDesign.Yet<IWeightPlacement>($"Picking the weight placement '{placementName}' by its name") : null;
+        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? options.WeightPlacement ?? WeightPlacements.Default : null;
         bool mayLeaveDevice = placement is not null and not WeightPlacements.DevicePlacement;
 
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
@@ -468,11 +469,11 @@ public sealed class PretrainedModel : IDisposable
         ExpertPlan? expertPlan = null;
         int loadContext = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
         ExpertPlacementRequest? expertRequest = null;
-        if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture && options.ExpertPlacement is { } expertPlacementName)
+        if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture)
         {
             expertRequest = AutoWeights.ExpertRequest(spec, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceExpertBytes ?? ExpertPlacements.DefaultCacheBytes, options.ColdExpertsOnCpu ?? ExpertPlacements.DefaultColdOnCpu, options.AutoWeightsHeadroom);
-            expertPlan = NotOnTheNewDesign.Yet<IExpertPlacement>($"Picking the expert placement '{expertPlacementName}' by its name").Place(expertRequest);
+            expertPlan = (options.ExpertPlacement ?? ExpertPlacements.Default).Place(expertRequest);
             if (expertPlan.Offload && placementTarget.Type == DeviceType.Cpu)
             {
                 expertPlan = expertPlan with { Offload = false, DeviceExperts = spec.Experts, Reason = $"every expert on {placementTarget} (the CPU's memory is the system's)" };

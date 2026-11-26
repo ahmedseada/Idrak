@@ -92,8 +92,8 @@ internal static class ModelChoices
         /// <summary>The decoder layers kept on the device (<c>--device-layers</c>, or the alias's "device_layers"), or null to size them (auto).</summary>
         public int? DeviceLayers { get; init; }
 
-        /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts"), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
-        public string? MoeExperts { get; init; }
+        /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts", by the placement's own name), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
+        public Idrak.Models.Abstractions.IExpertPlacement? MoeExperts { get; init; }
 
         /// <summary>The type every projection's weight is written as (<c>--weights</c>, or the alias's "weights"), or null: kept as stored.</summary>
         public IElementType? Weights { get; init; }
@@ -164,9 +164,18 @@ internal static class ModelChoices
         throw new UsageException($"{WeightsOption} {name}: no built-in type has that name ({string.Join(", ", Idrak.BuiltInTypes.All.Types.Select(t => t.Name))}).");
     }
 
-    // An expert placement's name, or null when none is given: picking it by name is not on the new design yet.
-    private static string? MoeExpertsOf(string? name) => name is null ? null
-        : throw new UsageException($"{MoeExpertsOption} {name}: picking an expert placement by its name is not on the new design yet.");
+    // The expert placement a person's text names: the library's list walked, each placement's own name compared.
+    private static Idrak.Models.Abstractions.IExpertPlacement? MoeExpertsOf(string? name)
+    {
+        try
+        {
+            return name is null ? null : Idrak.Models.Abstractions.ExpertPlacements.Named(name, MoeExpertsOption);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new UsageException(ex.Message);
+        }
+    }
 
     /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>
     public static TuningImages? AdapterImages(string? adapter)

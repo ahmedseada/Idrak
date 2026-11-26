@@ -67,6 +67,9 @@ public sealed record ExpertPlan(string Placement, bool Offload, int DeviceExpert
 /// <summary>An expert placement (<see cref="ExpertPlacements"/>): where a mixture-of-experts model's experts live.</summary>
 public interface IExpertPlacement
 {
+    /// <summary>The placement's own name ("resident", "offload", "auto"), what a person's or a variable's text is matched against.</summary>
+    string Name { get; }
+
     /// <summary>The plan for <paramref name="request"/>.</summary>
     ExpertPlan Place(ExpertPlacementRequest request);
 }
@@ -80,7 +83,9 @@ public interface IExpertPlacement
 ///   it, or computed by the CPU (<see cref="ColdVariable"/>), as llama.cpp's <c>--cpu-moe</c> does.
 /// - <see cref="AutoPlacement"/> (<see cref="Auto"/>): resident when the model fits the measured free device memory, else
 ///   offload.
-/// Picking a placement by its name is not on the new design yet.
+/// Each is its own class stating its name, in one fixed list (<see cref="All"/>); a person's or a variable's text
+/// (IDRAK_MOE_EXPERTS) is matched against their names where it comes in (<see cref="Named"/>), and with none the default
+/// (<see cref="Default"/>) is reached directly.
 /// </summary>
 public static class ExpertPlacements
 {
@@ -89,6 +94,35 @@ public static class ExpertPlacements
 
     /// <summary>Cold experts in system memory, the most used in a device cache.</summary>
     public const string Offload = "offload";
+
+    /// <summary>The variable naming the placement a load takes when none is handed over: "IDRAK_MOE_EXPERTS".</summary>
+    public const string PlacementVariable = "IDRAK_MOE_EXPERTS";
+
+    /// <summary>The library's placements, one immutable list in source: resident, offload, auto.</summary>
+    public static IReadOnlyList<IExpertPlacement> All { get; } = Array.AsReadOnly<IExpertPlacement>([new ResidentPlacement(), new OffloadPlacement(), new AutoPlacement()]);
+
+    /// <summary>The placement a load takes when none is handed over: the one of <see cref="All"/> IDRAK_MOE_EXPERTS names, else <see cref="AutoPlacement"/>, reached directly.</summary>
+    public static IExpertPlacement Default => Environment.GetEnvironmentVariable(PlacementVariable) is { Length: > 0 } name ? Named(name, PlacementVariable) : All[2];
+
+    /// <summary>
+    /// The placement of <paramref name="placements"/> (<see cref="All"/> when null) whose own name is <paramref name="name"/>
+    /// (ignoring case and spaces around it): the list walked where a person's or a variable's text comes in.
+    /// </summary>
+    /// <exception cref="ArgumentException">No placement has the name (the message names <paramref name="where"/> and theirs).</exception>
+    public static IExpertPlacement Named(string name, string where, IReadOnlyList<IExpertPlacement>? placements = null)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        placements ??= All;
+        foreach (var placement in placements)
+        {
+            if (placement.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return placement;
+            }
+        }
+
+        throw new ArgumentException($"{where} {name}: no expert placement has that name ({string.Join(", ", placements.Select(p => p.Name))}).", nameof(name));
+    }
 
     /// <summary>Resident when the model fits the device's free memory, else offload.</summary>
     public const string Auto = "auto";
@@ -156,6 +190,9 @@ public static class ExpertPlacements
     public sealed class ResidentPlacement : IExpertPlacement
     {
         /// <inheritdoc />
+        public string Name => Resident;
+
+        /// <inheritdoc />
         public ExpertPlan Place(ExpertPlacementRequest request) =>
             new(Resident, false, request.Experts, false, $"every expert on {request.Device}");
     }
@@ -167,12 +204,18 @@ public static class ExpertPlacements
     public sealed class OffloadPlacement : IExpertPlacement
     {
         /// <inheritdoc />
+        public string Name => Offload;
+
+        /// <inheritdoc />
         public ExpertPlan Place(ExpertPlacementRequest request) => OffloadPlan(request, Offload);
     }
 
     /// <summary>Every expert on the device when the model fits its measured free memory, else offload.</summary>
     public sealed class AutoPlacement : IExpertPlacement
     {
+        /// <inheritdoc />
+        public string Name => Auto;
+
         /// <inheritdoc />
         public ExpertPlan Place(ExpertPlacementRequest request) => request.Fits && request.CacheBytes is null
             ? new(Auto, false, request.Experts, false, $"every expert on {request.Device} (it fits)")

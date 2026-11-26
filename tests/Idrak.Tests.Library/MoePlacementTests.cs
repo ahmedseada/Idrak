@@ -98,6 +98,14 @@ internal abstract partial class Tests
         Check(limited is { Offload: true, DeviceExperts: 2, ColdOnCpu: true }, $"a limit of 4 MB: 2 a layer, cold ones on the CPU ({limited})");
         Check(none is { Offload: true, DeviceExperts: 1 }, $"no room: still one a layer ({none})");
         Check(new ExpertPlacements.ResidentPlacement().Place(Request(1 * Mb)) is { Offload: false, DeviceExperts: 8 }, "resident keeps every expert on the device");
+
+        // Each placement states its own name; a person's text is matched against them where it comes in, and with none the
+        // default (auto, or IDRAK_MOE_EXPERTS's) is reached directly.
+        Check(ExpertPlacements.All.Select(p => p.Name).SequenceEqual([ExpertPlacements.Resident, ExpertPlacements.Offload, ExpertPlacements.Auto])
+              && ExpertPlacements.Named(" Offload ", "--moe-experts") is ExpertPlacements.OffloadPlacement
+              && (Environment.GetEnvironmentVariable(ExpertPlacements.PlacementVariable) is { Length: > 0 } || ExpertPlacements.Default is ExpertPlacements.AutoPlacement),
+            "the placements by their own names, auto by default");
+        ThrowsNaming<ArgumentException>(() => ExpertPlacements.Named("gpu", "--moe-experts"), "an expert placement no placement names", "resident, offload, auto");
         Check(ExpertPlacements.ParseCacheMegabytes("64", "x") == 64 * Mb && ExpertPlacements.ParseCacheMegabytes(" ", "x") is null
               && !ExpertPlacements.ParseCold(null, "x") && !ExpertPlacements.ParseCold("copy", "x") && ExpertPlacements.ParseCold("CPU", "x"), "the settings' values");
         foreach (var (bad, parse) in new (string, Action)[] { ("-3", () => ExpertPlacements.ParseCacheMegabytes("-3", "IDRAK_MOE_DEVICE_EXPERTS_MB")), ("gpu", () => ExpertPlacements.ParseCold("gpu", "IDRAK_MOE_COLD")) })
