@@ -51,7 +51,7 @@ internal static class ReinforceNumeric
     // A language model's options: refused here, naming them.
     private static readonly string[] LanguageModelOnly =
     [
-        "--base", "--data", "--suite", "--reward", "--rounds", "--sandbox", "--max-new", "--no-think", "--teacher", "--teacher-device", "--teacher-weights", "--teacher-weight",
+        "--base", "--data", "--suite", "--reward", "--rounds", "--sandbox", "--max-new", "--no-think", "--teacher", "--teacher-device", "--teacher-weight",
         "--divergence", "--beta", "--mix", "--weights",
         .. TuneTool.SessionValueOptions.Where(o => !SharedSession.Contains(o)), .. TuneTool.SessionFlags,
     ];

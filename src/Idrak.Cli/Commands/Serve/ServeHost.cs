@@ -360,7 +360,7 @@ internal sealed class ServeHost
         long before = ComputeResources.GetMemoryUsage(device).InUse;
         var watch = Stopwatch.StartNew();
         var pretrained = ModelChoices.Load(_context, model.Choice with { Model = model.Path });
-        var generator = pretrained.CreateGenerator(ModelChoices.CacheLayout(model.Choice, pretrained), model.Choice.Context);   // --kv, else the run's type
+        var generator = pretrained.CreateGenerator(ModelChoices.CacheLayout(model.Choice), model.Choice.Context);   // --kv, else the run's type
         _loaded.AddOrUpdate(generator, pretrained);
         _memory[model.Name] = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
         Print($"loaded {model.Name} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
@@ -378,7 +378,7 @@ internal sealed class ServeHost
         try
         {
             // Auto keeps the run's type: an encoder-decoder load computes in float32 (its weights take no element type choice yet).
-            generator = loaded.CreateGenerator(cacheLayout: ModelChoices.CacheLayout(model.Choice, Idrak.Abstraction.ElementType.Float32));
+            generator = loaded.CreateGenerator(cacheLayout: ModelChoices.CacheLayout(model.Choice));
         }
         catch
         {

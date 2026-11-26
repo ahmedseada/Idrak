@@ -86,13 +86,12 @@ internal sealed class PerplexityCommand : Command
         }
 
         var result = Measure(model, ids, window, context.Device, (done, total) => context.Detail($"  {done} of {total} tokens"));
-        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {context.Device}, weights {choice.Weights ?? "as stored"}: perplexity {result.Perplexity:F3}"));
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {context.Device}: perplexity {result.Perplexity:F3}"));
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{result.Scored} tokens scored in {result.Windows} window(s) of up to {window} · mean negative log-likelihood {result.MeanNll:F4} · {result.Seconds:F1} s"));
         context.WriteJson(new JsonObject
         {
             ["model"] = choice.Model,
             ["device"] = context.Device.ToString(),
-            ["weights"] = choice.Weights,
             ["file"] = file,
             ["perplexity"] = result.Perplexity,
             ["mean_nll"] = result.MeanNll,

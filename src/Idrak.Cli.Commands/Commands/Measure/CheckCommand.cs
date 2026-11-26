@@ -62,7 +62,6 @@ internal sealed class CheckCommand : Command
         // The reference's logits are float32: products stay float32 unless the weights are packed anyway.
         var precision = MixedPrecision.Chosen;
         MixedPrecision.Default = MatMulPrecision.Float32;
-        choice = choice with { Dtype = choice.Dtype ?? "float32", DtypeSource = choice.Dtype is null ? "check: the reference is float32" : null };
         try
         {
             using var model = ModelChoices.Load(context, choice);
@@ -82,9 +81,8 @@ internal sealed class CheckCommand : Command
         int failures = 0;
         // --kv, else the cache in the run's type (float32, which check selects unless --dtype names another). The reference
         // is float32: weights, a run or a cache held in another type match it only to its top token.
-        var cache = ModelChoices.CacheLayout(choice, model);
-        bool packedWeights = choice.Weights is not null and not ("float32" or "f32");
-        bool approximate = packedWeights || !ReferenceEquals(model.ElementType.Type, ElementType.Float32) || cache.Name != ElementType.Float32.Name;
+        var cache = ModelChoices.CacheLayout(choice);
+        bool approximate = cache.Name != "float32";
 
         // 1. Tokenizer: the same ids, and decoding gives the text back.
         context.Write("Tokenizer");
@@ -191,7 +189,7 @@ internal sealed class CheckCommand : Command
             }
 
             bool greedySame = text == expectedText;
-            bool logitsClose = packedWeights || maxDiff <= 2e-3f * Math.Max(1f, scale);
+            bool logitsClose = maxDiff <= 2e-3f * Math.Max(1f, scale);
             bool ok = encodes && top1 && logitsClose && (greedySame || approximate);
             failures += ok ? 0 : 1;
             context.Write(string.Create(CultureInfo.InvariantCulture, $"  {(ok ? "ok  " : "DIFF")} {ids.Length,4} ids: max |Δlogit| {maxDiff:G3} (largest logit {scale:F1}), top-1 {(top1 ? "same" : "DIFFERENT")}, ")
@@ -222,7 +220,6 @@ internal sealed class CheckCommand : Command
         {
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
-            ["weights"] = choice.Weights,
             ["kv"] = cache.Name,
             ["ok"] = failures == 0,
             ["failures"] = failures,

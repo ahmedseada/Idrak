@@ -100,7 +100,7 @@ internal sealed class ProfileCommand : Command
         var network = model.Network;
         var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
-        var cache = ModelChoices.CacheLayout(choice, model);                    // --kv, else the cache in the run's type
+        var cache = ModelChoices.CacheLayout(choice);                    // --kv, else the cache in the run's type
         string kv = cache.Name;
         TensorOffloading.BeforeInference(device, network);                               // as generation does: room when offloaded
         using var noGrad = Autograd.NoGrad();
@@ -227,7 +227,7 @@ internal sealed class ProfileCommand : Command
         bool kernelTiming = kernels.Count > 0;
         double layerTotal = layers.Sum(l => l.Ms);
         string pass = promptPass ? $"one prompt pass of {promptTokens} tokens" : $"one decoding step after {promptTokens} tokens";
-        context.Write($"{choice.Model} on {device} ({device.Name}), weights {choice.Weights ?? "as stored"}, KV cache {kv}: {pass}");
+        context.Write($"{choice.Model} on {device} ({device.Name}), KV cache {kv}: {pass}");
         string timedText = promptPass ? "one pass" : $"the median of {timedPasses} steps";
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{(promptPass ? "pass" : "step")} {stepMs:F2} ms ({timedText}, each after a collection) with each layer drained "
             + $"({layerTotal:F2} ms in the layers{(promptPass ? "" : ", each layer's median")}), {layers.Sum(l => l.AllocatedMiB):F1} MiB allocated{(promptPass ? "" : " a step")}, "
@@ -262,7 +262,6 @@ internal sealed class ProfileCommand : Command
         {
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
-            ["weights"] = choice.Weights,
             ["kv"] = kv,
             ["prompt_tokens"] = promptTokens,
             ["pass"] = promptPass ? "prompt" : "step",
@@ -332,7 +331,7 @@ internal sealed class ProfileCommand : Command
         string[] modules = [];
         var result = InProcessCluster.Run(topology, options, rank =>
         {
-            using var model = ModelChoices.Load(context, choice, Device.Cpu, autoWeights: false);   // each rank keeps its own stage of it
+            using var model = ModelChoices.Load(context, choice, Device.Cpu);   // each rank keeps its own stage of it
             using var pipe = PipelineStage.Place(model.Network, rank.Collectives, options);
             if (!pipe.IsFirst)
             {
@@ -345,7 +344,7 @@ internal sealed class ProfileCommand : Command
                 int tokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - steps - 3));
                 var random = new Random(context.Seed ?? 1);
                 float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
-                using var decoding = new DecodingContext(rank.Device, 1, tokens + steps + 2, ModelChoices.CacheLayout(choice, model));   // --kv, else the cache in the run's type
+                using var decoding = new DecodingContext(rank.Device, 1, tokens + steps + 2, ModelChoices.CacheLayout(choice));   // --kv, else the cache in the run's type
                 using var noGrad = Autograd.NoGrad();
                 using (var scope = new TensorScope())
                 {

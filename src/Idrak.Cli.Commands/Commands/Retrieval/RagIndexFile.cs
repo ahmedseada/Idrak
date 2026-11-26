@@ -68,7 +68,7 @@ internal static class RagIndexFile
     private const string Format = "idrak-rag/1";
 
     /// <summary>What an index file holds about its vectors, or null for a keyword-only index.</summary>
-    internal sealed record EmbeddingInfo(string Model, string? Weights, int MaxTokens, int Dimensions);
+    internal sealed record EmbeddingInfo(string Model, int MaxTokens, int Dimensions);
 
     /// <summary>An opened index with its embedding model (when it has vectors); dispose to free the model.</summary>
     internal sealed class Opened(RetrievalIndex index, EmbeddingInfo? embedding, ModelEmbedder? embedder, bool ownsModel) : IDisposable
@@ -117,7 +117,6 @@ internal static class RagIndexFile
             info["embedding"] = new JsonObject
             {
                 ["model"] = embedding.Model,
-                ["weights"] = embedding.Weights,
                 ["max_tokens"] = embedding.MaxTokens,
                 ["dimensions"] = embedding.Dimensions,
             };
@@ -135,7 +134,7 @@ internal static class RagIndexFile
     /// Opens an index file; one with vectors loads its embedding model on the context's device (or reuses
     /// <paramref name="loaded"/> when that is the same model with the same weights).
     /// </summary>
-    public static Opened Open(CommandContext context, string path, (string Model, string? Weights, PretrainedModel Instance)? loaded = null)
+    public static Opened Open(CommandContext context, string path, (string Model, PretrainedModel Instance)? loaded = null)
     {
         if (!File.Exists(path))
         {
@@ -178,9 +177,9 @@ internal static class RagIndexFile
             return new Opened(RetrievalIndex.Load(stream, null), null, null, false);
         }
 
-        var embedding = new EmbeddingInfo((string)e["model"]!, (string?)e["weights"], (int?)e["max_tokens"] ?? 512, (int?)e["dimensions"] ?? vectors.Dimensions);
-        bool reuse = loaded is { } l && l.Model == embedding.Model && l.Weights == embedding.Weights;
-        var model = reuse ? loaded!.Value.Instance : ModelChoices.Load(context, new ModelChoices.ModelChoice(embedding.Model, embedding.Weights, null, null, null));
+        var embedding = new EmbeddingInfo((string)e["model"]!, (int?)e["max_tokens"] ?? 512, (int?)e["dimensions"] ?? vectors.Dimensions);
+        bool reuse = loaded is { } l && l.Model == embedding.Model;
+        var model = reuse ? loaded!.Value.Instance : ModelChoices.Load(context, new ModelChoices.ModelChoice(embedding.Model, null, null, null));
         var store = new InMemoryVectorStore(vectors.Dimensions, VectorMetric.Cosine);
         store.UpsertAsync([.. Enumerable.Range(0, vectors.Count).Select(i => new VectorRecord(i.ToString(System.Globalization.CultureInfo.InvariantCulture), vectors[i]))])
             .AsTask().GetAwaiter().GetResult();

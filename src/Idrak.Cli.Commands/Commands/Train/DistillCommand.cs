@@ -94,7 +94,6 @@ internal sealed class DistillCommand : Command
                                     answered together from a seed of its own, and on a cluster each rank answers its
                                     shards' (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
               --spread NAME         with --on-policy: blocks (runs of prompts, the default) or interleaved (IDRAK_RL_SPREAD)
-              --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: auto)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
           -w, --weights F           the student's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
@@ -114,7 +113,7 @@ internal sealed class DistillCommand : Command
 
         Examples:
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
-          idrak distill --teacher Qwen/Qwen3-8B --teacher-weights int4 --student Qwen/Qwen3-0.6B --data c.jsonl -o d
+          idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data c.jsonl -o d
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data c.jsonl --temperature 2 --alpha 0.8 -o d
           idrak distill --teacher Qwen/Qwen3-8B --student Qwen/Qwen3-0.6B --data chats.jsonl --precompute t.topk
           idrak distill --teacher t.topk --student Qwen/Qwen3-0.6B --data chats.jsonl -o adapters/d
@@ -127,7 +126,7 @@ internal sealed class DistillCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--teacher", "--student", "--base", "--data", "--out", "--temperature", "--alpha", "--top-k", "--precompute", "--max-new", "--batch-size",
-        "--teacher-weights", "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", "--shards", "--spread", .. TuneValues, .. ClusterJoin.Options,
+        "--teacher-device", "--weights", "--divergence", "--beta", "--mix", "--steps", "--shards", "--spread", .. TuneValues, .. ClusterJoin.Options,
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--generate", "--reasoning", "--keep-cut-off", "--on-policy", .. TuneFlags];
@@ -197,12 +196,7 @@ internal sealed class DistillCommand : Command
 
         string mode = onPolicy ? "on-policy" : generate ? "generate" : precompute is not null ? "precompute" : stored ? "stored logits" : "logits";
         Device? teacherDevice = context.Option("--teacher-device") is { } deviceName ? ParseDevice(deviceName) : null;
-        var teacherChoice = new ModelChoices.ModelChoice(teacher, context.Option("--teacher-weights"), null, null, null);
-        if (teacherChoice.Weights?.ToLowerInvariant() is not (null or "int8" or "int4" or "bf16" or "bfloat16"))
-        {
-            throw new UsageException($"--teacher-weights {teacherChoice.Weights}: use int8, int4 or bf16.");
-        }
-
+        var teacherChoice = new ModelChoices.ModelChoice(teacher, null, null, null);
         var captured = context.Json ? new StringWriter() : null;
         var console = ToolHost.Console(context, captured ?? (context.Quiet ? TextWriter.Null : context.Output));
         var trainingData = data.ToList();

@@ -146,7 +146,7 @@ internal sealed class VlmCheckCommand : Command
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
                       + $"grayscale {grayscale}, image transforms {(choice.Transforms.IsEmpty ? "none" : choice.Transforms)}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
-        context.Write($"Idrak      {choice.Model} on {device}, weights {choice.Weights ?? "as stored"}, KV cache {choice.Kv ?? "auto"}, encoder float32, "
+        context.Write($"Idrak      {choice.Model} on {device}, KV cache {choice.Kv ?? "auto"}, encoder float32, "
                       + $"matrix products {MixedPrecision.Default}");
 
         using var noGrad = Autograd.NoGrad();
@@ -164,7 +164,6 @@ internal sealed class VlmCheckCommand : Command
         {
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
-            ["weights"] = choice.Weights,
             ["kv"] = choice.Kv ?? "auto",
             ["reference"] = Path.GetFullPath(folder),
             ["reference_dtype"] = manifest["dtype"]?.DeepClone(),
@@ -281,7 +280,7 @@ internal sealed class VlmCheckCommand : Command
 
         int imageToken = vision.PromptFormat.ImageToken;
         int afterImage = Math.Max(0, System.Array.LastIndexOf(ids, imageToken) + 1);
-        var layout = ModelChoices.CacheLayout(choice, model);
+        var layout = ModelChoices.CacheLayout(choice);
         json["kv"] = layout.Name;                                         // the cache the run takes: --kv, else its type
 
         // 4. Teacher forcing, 5. greedy.

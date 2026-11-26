@@ -81,14 +81,9 @@ internal static class Seq2SeqRun
     public static void CheckChoice(ModelChoices.ModelChoice choice, string model, string architecture)
     {
         string Refused(string option, string why) => $"{option}: {model} is an encoder-decoder ({architecture}); {why}.";
-        if (choice.Weights is { } weights && weights.ToLowerInvariant() is not ("float32" or "f32"))
+        if (choice.Adapter is not null)
         {
-            throw new UsageException(Refused("--weights", $"its weights are read as stored (float32), not as {weights}"));
-        }
-
-        if (choice.HeadWeights is not null || choice.Adapter is not null)
-        {
-            throw new UsageException(Refused(choice.Adapter is not null ? "--adapter" : "--head-weights", "it is read as stored, without an adapter or a head format"));
+            throw new UsageException(Refused("--adapter", "it is read as stored, without an adapter"));
         }
     }
 
@@ -121,7 +116,7 @@ internal static class Seq2SeqRun
         CheckChoice(choice, model, architecture);
         var (beams, penalty) = Beams(context);
         // Auto keeps the run's type: an encoder-decoder load computes in float32 (its weights take no element type choice yet).
-        var layout = ModelChoices.CacheLayout(choice, Idrak.Abstraction.ElementType.Float32);
+        var layout = ModelChoices.CacheLayout(choice);
         var device = context.Device;
         var watch = Stopwatch.StartNew();
         PretrainedSeq2SeqModel loaded;

@@ -53,7 +53,7 @@ internal sealed class ReinforceCommand : Command
     [
         "--base", "--env", "--data", "--suite", "--reward", "--rounds", "--env-option", "--sandbox", "--algorithm", "--estimator", "--group", "--episodes", "--kl",
         "--clip", "--epochs", "--minibatch", "--iterations", "--environments", "--temperature", "--max-new", "--save-every", "--evaluate-every", "--teacher",
-        "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread", "--kv",
+        "--teacher-device", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread", "--kv",
         "--pairs", "--loss", "--pair-option", "--loss-option", "--reference",
     ];
 
@@ -114,7 +114,6 @@ internal sealed class ReinforceCommand : Command
               --teacher MODEL     a teacher model of the same vocabulary: its next-token distributions on the model's own
                                   replies, a term beside the reward (on-policy distillation; IDRAK_RL_TEACHER)
               --teacher-device D  the teacher's device (default: the model's; IDRAK_RL_TEACHER_DEVICE)
-              --teacher-weights F the teacher's weights: int8, int4 or bf16 (default: auto)
               --teacher-weight W  the teacher term's weight (default 1 with --teacher; IDRAK_RL_TEACHER_WEIGHT)
               --divergence NAME   forward, reverse (default) or jsd (TeacherDivergences; IDRAK_RL_DIVERGENCE)
               --beta B            jsd's weight, in (0, 1) (default 0.5)
@@ -249,12 +248,7 @@ internal sealed class ReinforceCommand : Command
         string? teacher = context.Option("--teacher") ?? Text(TeacherVariable);
         string? teacherDeviceName = context.Option("--teacher-device") ?? Text(TeacherDeviceVariable);
         Device? teacherDevice = teacherDeviceName is null ? null : ParseDevice(teacherDeviceName);
-        var teacherChoice = teacher is null ? null : new ModelChoices.ModelChoice(teacher, context.Option("--teacher-weights"), null, null, null);
-        if (teacherChoice?.Weights?.ToLowerInvariant() is not (null or "int8" or "int4" or "bf16" or "bfloat16"))
-        {
-            throw new UsageException($"--teacher-weights {teacherChoice!.Weights}: use int8, int4 or bf16.");
-        }
-
+        var teacherChoice = teacher is null ? null : new ModelChoices.ModelChoice(teacher, null, null, null);
         var policyOptions = PolicyOptions(context, teacher is not null);
         if (distill && teacher is null)
         {

@@ -9,8 +9,8 @@ namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// Model arguments, the same in every command: a Hugging Face id, a folder, a GGUF file, a .ikm package or an alias
-/// from the config ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B", "weights": "int8", "kv": "int8"}}), with the
-/// weight format (<c>--weights</c>, <c>-w</c>), the KV cache format (<c>--kv</c>, <c>-k</c>), the context length and
+/// from the config ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B", "kv": "float32"}}), with the KV cache format
+/// (<c>--kv</c>, <c>-k</c>), the context length and
 /// an adapter folder; for a vision-language model, whether its images are read in grey (<c>--grayscale</c>, or
 /// "grayscale": true in the alias), the image transforms run on its images first (<c>--image-transform
 /// "grayscale,max_width=1024,contrast=1.5"</c>, or the alias's "image_transforms"; <c>--grayscale</c> is the
@@ -20,7 +20,7 @@ namespace Idrak.Cli.Shared;
 internal static class ModelChoices
 {
     /// <summary>The options a command that loads a language model accepts.</summary>
-    public static readonly string[] ValueOptions = ["--weights", "--head-weights", "--kv", "--context", "--adapter"];
+    public static readonly string[] ValueOptions = ["--kv", "--context", "--adapter"];
 
     /// <summary>
     /// The option giving the decoder layers kept on the device when the model is split with the CPU (a count, or auto: as the
@@ -37,10 +37,6 @@ internal static class ModelChoices
                                  (the most used on the GPU, the rest in system memory, copied in when picked) or auto
                                  (the default: resident when it fits; IDRAK_MOE_EXPERTS, IDRAK_MOE_DEVICE_EXPERTS_MB,
                                  IDRAK_MOE_COLD=cpu computes cold experts on the CPU)
-              --dtype TYPE       the element type the run computes in: auto (the default: what the GPU computes natively,
-                                 bfloat16, else float16, else float32), float32 (results as before), bfloat16 (bf16)
-                                 or float16 (f16); without -w a 16-bit run's weights are bfloat16 or smaller, as
-                                 memory allows (IDRAK_DEFAULT_DTYPE)
         """;
 
     /// <summary>
@@ -48,9 +44,6 @@ internal static class ModelChoices
     /// placement, plan 37's R1); over IDRAK_MOE_EXPERTS (<see cref="Idrak.Models.Abstractions.ExpertPlacements"/>).
     /// </summary>
     public const string MoeExpertsOption = "--moe-experts";
-
-    /// <summary>The option naming the element type a run computes in (auto, float32, bfloat16 or float16, plan 37's T0 and T2); over IDRAK_DEFAULT_DTYPE.</summary>
-    public const string DtypeOption = "--dtype";
 
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
@@ -76,10 +69,10 @@ internal static class ModelChoices
         """;
 
     /// <summary>Their short forms.</summary>
-    public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-w"] = "--weights", ["-k"] = "--kv" };
+    public static readonly IReadOnlyDictionary<string, string> ShortForms = new Dictionary<string, string> { ["-k"] = "--kv" };
 
     /// <summary>What an alias or the options say: the model name and its settings.</summary>
-    public sealed record ModelChoice(string Model, string? Weights, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null,
+    public sealed record ModelChoice(string Model, string? Kv, int? Context, string? Adapter, bool Grayscale = false, VisionOptions? VisionOptions = null,
         ImageTransformPipeline? ImageTransforms = null)
     {
         /// <summary>
@@ -89,20 +82,11 @@ internal static class ModelChoices
         /// </summary>
         public TuningImages? AdapterImages { get; init; }
 
-        /// <summary>The output head's own weight format (<c>--head-weights</c>, or the alias's "head_weights"), or null for the projections' format.</summary>
-        public string? HeadWeights { get; init; }
-
         /// <summary>The decoder layers kept on the device (<c>--device-layers</c>, or the alias's "device_layers"), or null to size them (auto).</summary>
         public int? DeviceLayers { get; init; }
 
         /// <summary>Where a mixture-of-experts model's experts live (<c>--moe-experts</c>, or the alias's "moe_experts"), or null for IDRAK_MOE_EXPERTS, else auto.</summary>
         public string? MoeExperts { get; init; }
-
-        /// <summary>The element type the run computes in (<c>--dtype</c>, or the alias's "dtype"), or null for IDRAK_DEFAULT_DTYPE, else auto.</summary>
-        public string? Dtype { get; init; }
-
-        /// <summary>Where <see cref="Dtype"/> came from when a command set it itself ("check: the reference is float32"), or null for --dtype.</summary>
-        public string? DtypeSource { get; init; }
 
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
@@ -114,18 +98,15 @@ internal static class ModelChoices
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? weights = null, kv = null, headWeights = null, deviceLayers = null, dtype = null, moeExperts = null;
+        string? kv = null, deviceLayers = null, moeExperts = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         ImageTransformPipeline? transforms = null;
         if (context.Config.Object("aliases")?[name] is System.Text.Json.Nodes.JsonObject alias)
         {
             model = (string?)alias["model"] ?? name;
-            weights = (string?)alias["weights"];
-            headWeights = (string?)alias["head_weights"];
             kv = (string?)alias["kv"];
             deviceLayers = alias["device_layers"]?.ToString();
-            dtype = (string?)alias["dtype"];
             moeExperts = (string?)alias["moe_experts"];
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
@@ -151,13 +132,12 @@ internal static class ModelChoices
         }
 
         vision = vision.With(VisionOptionsOf(context));
-        return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
+        return new ModelChoice(model, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), adapter,
             grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms)
         {
-            AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights,
+            AdapterImages = tuned,
             DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
-            Dtype = context.Option(DtypeOption) ?? dtype,
             MoeExperts = MoeExpertsOf(context.Option(MoeExpertsOption) ?? moeExperts),
         };
     }
@@ -165,14 +145,6 @@ internal static class ModelChoices
     // A registered expert placement's name (refused at once, naming the registered ones), or null when none is given.
     private static string? MoeExpertsOf(string? name) => name is null ? null
         : Parsed(() => Idrak.Models.Abstractions.ExpertPlacements.Get(name.Trim()).Name, MoeExpertsOption);
-
-    // The head's registered format name: bf16 is bfloat16's short name, as in --weights.
-    private static string? HeadFormat(string? name) => name?.ToLowerInvariant() switch
-    {
-        null => null,
-        "bf16" => "bfloat16",
-        _ => name,
-    };
 
     /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>
     public static TuningImages? AdapterImages(string? adapter)
@@ -283,23 +255,13 @@ internal static class ModelChoices
         || model.EndsWith(".ikm", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Loads a pretrained language model with the chosen formats on <paramref name="device"/> (default: the command's
-    /// device), with a progress line while it loads.
+    /// Loads a pretrained language model on <paramref name="device"/> (default: the command's device), with a progress line
+    /// while it loads.
     /// </summary>
-    /// <remarks>
-    /// Without <c>-w</c> (or with <c>-w auto</c>) the weights' format is chosen before any weight is read
-    /// (<see cref="PretrainedOptions.AutoWeights"/>: the largest that fits the device's free memory with the key/value room
-    /// of the context), and the choice is said; <paramref name="autoWeights"/> false keeps float32 then (a reference
-    /// model, a conversion). <paramref name="keepPacked"/> false expands weights stored in a format of their own to float32
-    /// at load (a conversion writes float weights); null leaves it to the setting (IDRAK_KEEP_PACKED).
-    /// </remarks>
-    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null, bool autoWeights = true, bool? keepPacked = null)
+    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null)
     {
         device ??= context.Device;
         string folder = Resolve(context, choice.Model);
-        string? weights = choice.Weights?.ToLowerInvariant();
-        bool auto = weights is "auto" || weights is null && autoWeights;
-        weights = weights is "auto" ? null : weights;
         if (choice.AdapterImages?.Family is not null && Path.Combine(folder, "config.json") is var configFile && File.Exists(configFile)
             && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(configFile)) is System.Text.Json.Nodes.JsonObject config)
         {
@@ -314,38 +276,15 @@ internal static class ModelChoices
             model = PretrainedModel.Load(folder, new PretrainedOptions
             {
                 Device = device,
-                Int8 = weights == "int8",
-                Int4 = weights == "int4",
-                BFloat16 = weights is "bf16" or "bfloat16",
-                PackedFormatName = weights is null or "int8" or "int4" or "bf16" or "bfloat16" or "float32" or "f32" ? null : choice.Weights,
-                HeadFormatName = HeadFormat(choice.HeadWeights),
                 MaxPositions = choice.Context,
                 MergeAdapter = choice.Adapter,
-                AutoWeights = auto,
                 AutoWeightsContext = choice.Context ?? DefaultContext,
                 DeviceLayers = choice.DeviceLayers,
-                ElementType = choice.Dtype,
                 ExpertPlacement = choice.MoeExperts,
-                ElementTypeSource = choice.DtypeSource ?? DtypeOption,
-                KeepPacked = keepPacked,
             });
             progress.Clear();
         }
 
-        foreach (var type in model.DeviceElementTypes)
-        {
-            context.Error(type.ToString());                             // "element type: bfloat16 on cuda:0 (picked by auto: ...)", always shown (plan 37, T0, T2)
-        }
-
-        if (model.KeptWeights is { } kept)
-        {
-            context.Error(kept.ToString());                             // "weights kept packed: 14 matrices (q8_0), 1.2 MB; ..." (plan 37, Q0)
-        }
-
-        if (model.WeightsMapped is { } mapped)
-        {
-            context.Error(mapped);                                      // "weights mapped: 12 matrices read in place from the file ..." (plan 37, W3)
-        }
         if (model.Placement is { } placed)
         {
             // A model split with the CPU or streamed from system memory is said on the error output (it is slower for it).
@@ -356,20 +295,6 @@ internal static class ModelChoices
             else
             {
                 context.Detail($"placement {placed}");
-            }
-        }
-
-        if (model.Weights is { } chosen)
-        {
-            // Packed weights (or offload) are said on the error output, so the answer's output stays the answer.
-            string line = $"weights {chosen}";
-            if (chosen.Format is "int8" or "int4" || chosen.Offload)
-            {
-                context.Error(line + " (-w names a format)");
-            }
-            else
-            {
-                context.Detail(line);
             }
         }
 
@@ -397,27 +322,15 @@ internal static class ModelChoices
     public static int ContextLength(ModelChoice choice, PretrainedModel model) => Math.Min(choice.Context ?? DefaultContext, model.MaxPositions);
 
     /// <summary>
-    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"): auto, float32 (f32), int8, bfloat16 (bf16) or any
-    /// registered format; when not given IDRAK_KV_CACHE_TYPE, else auto, which keeps the element type
-    /// <paramref name="model"/>'s run computes in (a bfloat16 cache for a bfloat16 run; plan 37 T2).
+    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"): auto, float32 (f32) or any registered format; when
+    /// not given IDRAK_KV_CACHE_TYPE, else auto.
     /// </summary>
-    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, PretrainedModel model)
-    {
-        ArgumentNullException.ThrowIfNull(model);
-        return CacheLayout(choice, model.ElementType.Type);
-    }
-
-    /// <summary>
-    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"), else IDRAK_KV_CACHE_TYPE, else auto, which keeps
-    /// <paramref name="runType"/>, the element type the run computes in.
-    /// </summary>
-    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, Idrak.Abstraction.ElementType runType)
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice)
     {
         ArgumentNullException.ThrowIfNull(choice);
-        ArgumentNullException.ThrowIfNull(runType);
         try
         {
-            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv, runType).Layout;
+            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv).Layout;
         }
         catch (NotSupportedException e)
         {
@@ -428,11 +341,11 @@ internal static class ModelChoices
 
     /// <summary>A text generator for <paramref name="model"/> with the chosen KV cache format and context window.</summary>
     public static Idrak.Generation.TextGenerator CreateGenerator(PretrainedModel model, ModelChoice choice) =>
-        model.CreateGenerator(CacheLayout(choice, model), ContextLength(choice, model));
+        model.CreateGenerator(CacheLayout(choice), ContextLength(choice, model));
 
     /// <summary>A chat generator for <paramref name="model"/> (its own chat template) with the chosen KV cache format and context window.</summary>
     public static Idrak.Text.Generation.ChatGenerator CreateChat(PretrainedModel model, ModelChoice choice) =>
         model.ChatTemplate is null
             ? throw new InvalidOperationException($"{choice.Model} has no chat template (tokenizer_config.json); use 'idrak complete' for raw completion.")
-            : model.CreateChat(CacheLayout(choice, model), ContextLength(choice, model));
+            : model.CreateChat(CacheLayout(choice), ContextLength(choice, model));
 }

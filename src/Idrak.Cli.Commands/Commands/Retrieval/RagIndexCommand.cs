@@ -29,7 +29,6 @@ internal sealed class RagIndexCommand : Command
         "  -o, --out INDEX       the index file to write (required)\n" +
         "  -f, --force           replace an existing index file\n" +
         "  -m, --model MODEL     embed the chunks with MODEL for vector search (hybrid index)\n" +
-        "  -w, --weights FORMAT  the embedding model's weight format (int8, int4, bf16, ...)\n" +
         "      --chunk N         units per chunk (default 200 words, or 5 sentences)\n" +
         "      --overlap N       units shared by consecutive chunks (default 40 words, or 1 sentence)\n" +
         "      --sentences       count chunks in sentences rather than words\n" +
@@ -38,15 +37,15 @@ internal sealed class RagIndexCommand : Command
         "      --keywords NAME   the keyword index (default bm25; a plug-in's by its name)\n\n" +
         "Examples:\n" +
         "  idrak rag index ./docs -o docs.idx\n" +
-        "  idrak rag index ./docs -o docs.idx -m org/model -w int8 --chunk 120 --overlap 20";
+        "  idrak rag index ./docs -o docs.idx -m org/model --chunk 120 --overlap 20";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--model", "--weights", "--chunk", "--overlap", "--extensions", "--max-tokens", "--keywords"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--model", "--chunk", "--overlap", "--extensions", "--max-tokens", "--keywords"];
 
     public override IReadOnlyCollection<string> Flags => ["--force", "--sentences"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string>
     {
-        ["-o"] = "--out", ["-f"] = "--force", ["-m"] = "--model", ["-w"] = "--weights",
+        ["-o"] = "--out", ["-f"] = "--force", ["-m"] = "--model",
     };
 
     public override int Run(CommandContext context)
@@ -101,11 +100,7 @@ internal sealed class RagIndexCommand : Command
                 model = ModelChoices.Load(context, choice);
                 recorder = new Recorder(new ModelEmbedder(model, maxTokens), context);
                 builder.Embeddings(recorder, batchSize: 32).Fusion(60, 50);
-                embedding = new RagIndexFile.EmbeddingInfo(choice.Model, choice.Weights, maxTokens, model.Spec.Dim);
-            }
-            else if (context.Option("--weights") is not null)
-            {
-                throw new UsageException("--weights applies to the embedding model; add --model MODEL.");
+                embedding = new RagIndexFile.EmbeddingInfo(choice.Model, maxTokens, model.Spec.Dim);
             }
 
             var index = builder.Build();

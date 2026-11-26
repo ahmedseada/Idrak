@@ -240,7 +240,7 @@ internal sealed class PretrainCommand : Command
         {
             // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
             bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
-            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part, ElementType = context.Option(ModelChoices.DtypeOption), ElementTypeSource = ModelChoices.DtypeOption });
+            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
             foreach (var type in model.DeviceElementTypes)
             {
                 context.Error(type.ToString());                         // the type per device and how it was chosen (plan 37, T2)

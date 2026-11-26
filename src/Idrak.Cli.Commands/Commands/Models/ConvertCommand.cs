@@ -72,7 +72,7 @@ internal sealed class ConvertCommand : Command
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        using (var model = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, null), autoWeights: false, keepPacked: false))
+        using (var model = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null)))
         {
             ModelWork.SaveHuggingFace(model, output, type);
         }

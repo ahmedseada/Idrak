@@ -79,11 +79,8 @@ internal sealed partial class TranscribeCommand : Command
               --keep-silence     no no-speech check: every segment's text is kept
               --batch N          segments encoded together at most (default: measured on the device)
               --memory-fraction F  the share of the device's free memory a batch of segments may take (default 0.5)
-              --bf16, --no-bf16  run the encoder in bfloat16 where the device has it (the default), or in float32
               --no-timestamp-rules  the model's raw timestamp choices (default: the family's rules over them)
               --no-suppress      the model's raw choices (default: the family's lists of tokens never chosen)
-          -w, --weights FORMAT   the projection weights: as-stored (default: a float16 checkpoint's stay float16), f32,
-                                 bf16 or f16
           -k, --kv FORMAT        the decoder's key/value cache: float32 (default), int8 or bf16
           -o, --out FILE|DIR     write the result: FILE for one input, else a folder of NAME.EXT
               --format F         text (default), json, srt or vtt (also taken from -o FILE's extension)
@@ -122,13 +119,13 @@ internal sealed partial class TranscribeCommand : Command
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--language", "--task", "--beam", "--length-penalty", "--max-tokens", "--chunk-seconds", "--overlap-seconds", "--prompt", "--temperature", "--batch",
-        "--memory-fraction", "--weights", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
+        "--memory-fraction", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
         "--capture", "--input", "--input-rate", "--input-channels", "--input-format", "--step", "--window", "--silence", "--silence-db", "--silence-floor-db",
         "--agreement", "--commit", "--min-speech", "--audio-clean",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
-        ["--timestamps", "--no-carry", "--bf16", "--no-bf16", "--no-timestamp-rules", "--no-suppress", "--no-warm", "--no-fallback", "--keep-silence", "--live", "--list-inputs", "--every-step"];
+        ["--timestamps", "--no-carry", "--no-timestamp-rules", "--no-suppress", "--no-warm", "--no-fallback", "--keep-silence", "--live", "--list-inputs", "--every-step"];
 
     /// <summary>
     /// The command's defaults: the library's, with OpenAI Whisper's guards on (the temperature fallback and the
@@ -137,7 +134,7 @@ internal sealed partial class TranscribeCommand : Command
     internal static TranscriptionOptions Defaults => new() { TemperatureFallback = [0.2f, 0.4f, 0.6f, 0.8f, 1f], NoSpeechThreshold = 0.6f };
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
-        new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out", ["-w"] = "--weights", ["-k"] = "--kv" };
+        new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out", ["-k"] = "--kv" };
 
     public override IReadOnlyCollection<string> OwnFormats => ["srt", "vtt"];
 
@@ -170,7 +167,7 @@ internal sealed partial class TranscribeCommand : Command
         string format = Format(context, output, toFolder);
         var options = Options(context, format);
         var (clean, cleanSource) = AudioFiles.AudioClean(context, AudioFiles.AudioCleanVariable);
-        var modelOptions = new SpeechModelOptions { Device = context.Device, Weights = Weights(context.Option("--weights")), Cache = Cache(context.Option("--kv")) };
+        var modelOptions = new SpeechModelOptions { Device = context.Device, Cache = Cache(context.Option("--kv")) };
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
         try
@@ -278,11 +275,6 @@ internal sealed partial class TranscribeCommand : Command
     private static TranscriptionOptions Options(CommandContext context, string format)
     {
         var d = Defaults;
-        if (context.Flag("--bf16") && context.Flag("--no-bf16"))
-        {
-            throw new UsageException("Give --bf16 or --no-bf16, not both.");
-        }
-
         string task = context.Option("--task") ?? d.Task;
         if (task is not ("transcribe" or "translate"))
         {
@@ -311,7 +303,6 @@ internal sealed partial class TranscribeCommand : Command
             Seed = context.IntOption("--seed", d.Seed),
             MaxBatch = context.IntOption("--batch", d.MaxBatch) is >= 0 and var batch ? batch : throw new UsageException("--batch needs a whole number, 0 or more."),
             MemoryFraction = AudioFiles.Number(context, "--memory-fraction", d.MemoryFraction, double.Epsilon, 1),
-            BFloat16 = !context.Flag("--no-bf16"),
             SuppressTokens = !context.Flag("--no-suppress"),
         };
     }
@@ -328,15 +319,6 @@ internal sealed partial class TranscribeCommand : Command
 
         return [.. values];
     }
-
-    private static EncoderWeights Weights(string? text) => text?.ToLowerInvariant() switch
-    {
-        null or "as-stored" or "stored" => EncoderWeights.AsStored,
-        "f32" or "float32" => EncoderWeights.Float32,
-        "bf16" or "bfloat16" => EncoderWeights.BFloat16,
-        "f16" or "float16" => EncoderWeights.Float16,
-        _ => throw new UsageException($"--weights takes as-stored, f32, bf16 or f16, not '{text}'."),
-    };
 
     private static KeyValueFormat Cache(string? text) => text?.ToLowerInvariant() switch
     {

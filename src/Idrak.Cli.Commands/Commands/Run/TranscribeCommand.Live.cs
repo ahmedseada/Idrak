@@ -88,7 +88,7 @@ internal sealed partial class TranscribeCommand
         var source = OpenSource(context);
         live = live with { KeepUp = source is not FileInput && !context.Flag("--every-step") };   // a file, or a recording piped in, at its own pace
         using var input = Cleaned(source, clean, cleanSource);
-        var modelOptions = new SpeechModelOptions { Device = context.Device, Weights = Weights(context.Option("--weights")), Cache = Cache(context.Option("--kv")) };
+        var modelOptions = new SpeechModelOptions { Device = context.Device, Cache = Cache(context.Option("--kv")) };
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
         ISpeechRecognizer recognizer;
