@@ -1,18 +1,17 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Globalization;
 using System.Text.Json;
 using Idrak;
 
 // The profiler contract (plan 17, H3): a workload of one's own run cold and warm with the probes around it, the intrusive
-// probes in runs of their own, the report summed up by the chosen statistic and written by any registered writer.
+// probes in runs of their own, the report summed up by the chosen statistic and written by any of the writers.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ProfilerGroup =
     [
-        ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap, jit and memory around each timed run; the intrusive probes in runs of their own (operations and host fallbacks counted, kernels only where the device times them); an unknown probe refused naming the registered ones", ProfilerRuns),
-        ("profiler: the table, markdown, csv and json writers; an app's probe and writer registered, used and removed; the criteria from IDRAK_PROFILE_*", ProfilerWritersAndCriteria),
+        ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap, jit and memory around each timed run; the intrusive probes in runs of their own (operations counted, kernels only where the device times them); an unknown probe refused naming the probes", ProfilerRuns),
+        ("profiler: the table, markdown, csv and json writers; the probes and writers by name; the criteria from IDRAK_PROFILE_*", ProfilerWritersAndCriteria),
         ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the jit probe records the compiling; the tuning, fallbacks, graphs and inference probes record from telemetry", ProfilerWatch),
     ];
 
@@ -38,7 +37,7 @@ internal abstract partial class Tests
         var report = watch.End();
         Check(ReferenceEquals(report, other) && watch.Ended && report.Watched && report.Runs is [{ Kind: ProfileRunKind.Once, Index: 0 }],
             $"one run, ended once: {string.Join(", ", report.Runs.Select(r => r.Kind))}");
-        Check(report.Probes.All(p => ProfileProbes.Get(p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
+        Check(report.Probes.All(p => ProfileProbes.Named(p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
               && report.Probes.Contains("tuning") && report.Probes.Contains("fallbacks") && report.Probes.Contains("graphs") && report.Probes.Contains("inference"),
             $"the watched probes: {string.Join(", ", report.Probes)}");
         Check(report.Notes.Any(n => n.Contains("operations", StringComparison.Ordinal) && n.Contains("IDRAK_PROFILE_PROBES", StringComparison.Ordinal)),
@@ -81,22 +80,6 @@ internal abstract partial class Tests
                   && namedReport.Notes.Any(n => n.Contains("include their cost", StringComparison.Ordinal)) && namedReport.Notes[^1] == "ended with exit code 0",
                 $"a named intrusive probe in the watched run: {string.Join(" | ", namedReport.Notes)}");
         }
-
-        // The host fallbacks of a device without kernels of its own, by operation, counted while the probe listens.
-        if (device.Type == DeviceType.Cpu)
-        {
-            var minimal = Device.Get("minimal");
-            long before = Idrak.Abstraction.Operations.Kernels.HostCalls(minimal.Backend);
-            var fallbacks = Profiler.Watch("minimal", minimal, new ProfileOptions { Probes = ["fallbacks"] });
-            ProfiledProduct(fallbacks.Run);
-            var minimalReport = fallbacks.End();
-            var table = minimalReport.Runs[0].Tables.Single(t => t.Name == "host fallbacks");
-            Check(minimalReport["fallback calls"]?.Value == Idrak.Abstraction.Operations.Kernels.HostCalls(minimal.Backend) - before && minimalReport["fallback calls"]?.Value > 0
-                  && table.Rows.Any(r => r[0] == "minimal" && r[1] == "Softmax" && long.Parse(r[2], CultureInfo.InvariantCulture) >= 1)
-                  && table.Rows.Where(r => r[0] == "minimal").Sum(r => long.Parse(r[2], CultureInfo.InvariantCulture)) == minimalReport["fallback calls"]?.Value
-                  && table.Columns[^1] == "why" && table.Rows.Where(r => r[0] == "minimal").All(r => r[3] == "no kernel of its own"),
-                $"the host fallbacks by operation: {minimalReport["fallback calls"]}, {string.Join("; ", table.Rows.Select(r => string.Join(' ', r)))}");
-        }
     }
 
     // A small product and softmax on the device, a stage of it timed, a value of the workload's own recorded.
@@ -111,7 +94,7 @@ internal abstract partial class Tests
     internal static void ProfilerRuns(Device device)
     {
         var report = Profiler.Run("product", device, ProfiledProduct, new ProfileOptions { WarmRuns = 3 });
-        int intrusive = report.Probes.Count(p => ProfileProbes.Get(p).Intrusive);
+        int intrusive = report.Probes.Count(p => ProfileProbes.Named(p).Intrusive);
         Check(report.Runs.Count == 1 + 3 + intrusive && report.Runs[0].Kind == ProfileRunKind.Cold && report.Runs.Skip(1).Take(3).All(r => r.Kind == ProfileRunKind.Warm)
               && report.Runs.Skip(4).All(r => r.Kind == ProfileRunKind.Probe && r.Probe is not null),
             $"a cold run, 3 warm and one for each intrusive probe: {string.Join(", ", report.Runs.Select(r => $"{r.Kind}{r.Probe}"))}");
@@ -152,15 +135,6 @@ internal abstract partial class Tests
             times ? $"the device times its kernels{(kernelsOff is null ? "" : $" (none of its own ran: {kernelsOff})")}: {report["kernel time"]}"
                 : $"kernels skipped on {device}: {string.Join(", ", report.Skipped)}");
 
-        // A device without kernels of its own: every operation a host fallback, counted by operation.
-        if (device.Type == DeviceType.Cpu)
-        {
-            var minimal = Profiler.Run("minimal", Device.Get("minimal"), ProfiledProduct, new ProfileOptions { Cold = false, WarmRuns = 1, Probes = ["operations"] });
-            Check(minimal.Runs.Count == 2 && minimal["host fallbacks"] is { Value: > 0 }
-                  && minimal.Runs[1].Tables.Any(t => t.Name == "host fallbacks" && t.Rows.Any(r => r[0] == "Softmax")),
-                $"host fallbacks on the minimal device: {minimal["host fallbacks"]}");
-        }
-
         string refused = "";
         try
         {
@@ -171,7 +145,7 @@ internal abstract partial class Tests
             refused = e.Message;
         }
 
-        Check(refused.Contains("'nope' is not registered", StringComparison.Ordinal) && refused.Contains("cpu", StringComparison.Ordinal), $"an unknown probe: {refused}");
+        Check(refused.Contains("No profile probe 'nope'", StringComparison.Ordinal) && refused.Contains("cpu", StringComparison.Ordinal), $"an unknown probe: {refused}");
         Check(Profiler.Run("none", device, _ => { }, new ProfileOptions { Probes = [], WarmRuns = 1 }).Summary.Select(s => s.Name).SequenceEqual(["wall"]), "no probes: the wall time alone");
 
         // Graphs recorded while steps run directly (the kernels probe's pass) replay by running their step; after, as the device does.
@@ -189,35 +163,6 @@ internal abstract partial class Tests
         {
             Check(after.IsRecorded == device.Backend.SupportsGraphs, $"after the scope a graph is recorded where the device records them: {after.IsRecorded}");
         }
-    }
-
-    // A probe of the app's: a counter of runs.
-    internal sealed class CountingProbe : IProfileProbe
-    {
-        public int Begun;
-
-        public string Name => "runs counted";
-
-        public string Summary => "counts the runs (test)";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            int n = ++Begun;
-            return () => run.Record("run number", n);
-        }
-    }
-
-    internal sealed class NamesWriter : IProfileWriter
-    {
-        public string Name => "names";
-
-        public string Summary => "the summary's names (test)";
-
-        public void Write(ProfileReport report, TextWriter output) => output.Write(string.Join(";", report.Summary.Select(s => s.Name)));
     }
 
     internal static void ProfilerWritersAndCriteria(Device device)
@@ -248,30 +193,8 @@ internal abstract partial class Tests
                 "json: one line, the runs and the summary");
         }
 
-        // An app's probe and writer, by name, then gone.
-        var probe = new CountingProbe();
-        ProfileProbes.Register(probe);
-        ProfileWriters.Register(new NamesWriter());
-        try
-        {
-            var counted = Profiler.Run("counted", device, _ => { }, new ProfileOptions { WarmRuns = 2, Probes = ["Runs Counted"] });
-            Check(probe.Begun == 3 && counted["run number"] is { Cold: 1, Min: 2, Max: 3 }, $"the app's probe around every timed run: {counted["run number"]}");
-            var names = new StringWriter();
-            counted.Write(names, "NAMES");
-            Check(names.ToString() == "wall;run number", $"the app's writer: {names}");
-            Check(ProfileProbes.Origin("runs counted") != Overrides.Library && ProfileWriters.Names.Contains("names"), "registered by the app");
-        }
-        finally
-        {
-            ProfileProbes.Unregister("runs counted");
-            ProfileWriters.Unregister("names");
-        }
-
-        Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        // Idrak.Mcp adds "mcp" after them when it is loaded before the registry's first use (as an earlier group may load it).
-        string[] library = ["bandwidth", "cpu", "heap", "jit", "memory", "tuning", "fallbacks", "types", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"];
-        Check(ProfileProbes.Names.Take(library.Length).SequenceEqual(library) && ProfileProbes.Names.Skip(library.Length).All(n => n == "mcp")
-              && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        string[] library = ["bandwidth", "cpu", "heap", "jit", "memory", "tuning", "fallbacks", "graphs", "inference", "operations", "kernels", "stages", "timings"];
+        Check(ProfileProbes.Names.SequenceEqual(library) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

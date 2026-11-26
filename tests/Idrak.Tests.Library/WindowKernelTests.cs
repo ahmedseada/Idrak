@@ -214,14 +214,6 @@ internal abstract partial class Tests
     {
         var random = new Random(73);
         float[] R(int n) => [.. Enumerable.Range(0, n).Select(_ => 2 * random.NextSingle() - 1)];
-        float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle(random.Next() ^ (random.Next() << 16)))];
-        float[] BFloat16Pairs(int words) => [.. Enumerable.Range(0, words).Select(_ =>
-        {
-            uint low = (uint)BitConverter.SingleToInt32Bits(2 * random.NextSingle() - 1) >> 16;
-            uint high = (uint)BitConverter.SingleToInt32Bits(2 * random.NextSingle() - 1) & 0xFFFF0000u;
-            return BitConverter.Int32BitsToSingle((int)(low | high));
-        })];
-        float[] Scales(int n) => [.. Enumerable.Range(0, n).Select(_ => 0.002f + 0.01f * random.NextSingle())];
 
         // (head size, key/value heads, groups, steps, capacity, position): decoding steps, short prompts, a prompt longer than
         // a block, odd sizes, a window inside and one beyond the keys.
@@ -236,8 +228,6 @@ internal abstract partial class Tests
                 int rowsPerHead = groups * steps, rows = heads * rowsPerHead, slots = heads * capacity;
                 float scale = 1f / MathF.Sqrt(dim);
                 float[] q = R(rows * dim), keys = R(slots * dim), values = R(slots * dim);
-                float[] k16 = BFloat16Pairs(slots * ((dim + 1) / 2)), v16 = BFloat16Pairs(slots * ((dim + 1) / 2));
-                float[] k8 = Bits(slots * ((dim + 3) / 4)), v8 = Bits(slots * ((dim + 3) / 4)), ks = Scales(slots), vs = Scales(slots);
                 foreach (var variant in variants)
                 {
                     string shape = $"{label}: head size {dim}, {heads} heads × {groups} groups, {steps} steps, capacity {capacity}, position {position}, window {variant.Window}, cap {variant.Softcap}";
@@ -247,10 +237,6 @@ internal abstract partial class Tests
                         string split = $"{shape}, {(splits is null ? "measured" : $"{splits} splits")}";
                         PromptCase(backend, $"decoding {split}", [q, keys, values, [position], new float[rows * dim]], [4],
                             (b, s) => b.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, rowsPerHead, steps, capacity, dim, scale, variant), "attention_decode");
-                        PromptCase(backend, $"bfloat16 decoding {split}", [q, k16, v16, [position], new float[rows * dim]], [4],
-                            (b, s) => b.AttentionBFloat16(s[0], s[1], s[2], s[3], s[4], heads, rowsPerHead, steps, capacity, dim, scale, false, variant), "attention_bf16");
-                        PromptCase(backend, $"int8 decoding {split}", [q, k8, v8, ks, vs, [position], new float[rows * dim]], [6],
-                            (b, s) => b.AttentionInt8(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, rowsPerHead, steps, capacity, dim, scale, false, variant), "attention_int8");
                     }
 
                     VulkanBackend.AttentionSplits = null;

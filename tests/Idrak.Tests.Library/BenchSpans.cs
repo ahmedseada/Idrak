@@ -6,9 +6,9 @@ using Idrak;
 using Idrak.Abstraction.Operations;
 
 // A bidirectional attention pass the size of SigLIP's (4,096 tokens, 16 heads of 72 dimensions; IDRAK_SPAN_TOKENS
-// changes the tokens) on each device IDRAK_DEVICES names (default the CPU), in the current precision (IDRAK_MATMUL=bf16
-// for tensor cores): through AttentionSpans (tiled, no score matrix), composed (the full [heads, T, T] scores, softmax,
-// values) and Tensor.AttentionFastest (the device's measured choice; which one it took is printed). The argument picks
+// changes the tokens) on each device IDRAK_DEVICES names (default the CPU): through AttentionSpans (tiled, no score
+// matrix), composed (the full [heads, T, T] scores, softmax, values) and Tensor.AttentionFastest (the device's measured
+// choice; which one it took is printed). The argument picks
 // one (spans, composed or fastest); without it all three run. Each path's peak is the device's own count of the bytes
 // its tensors held at once (MemoryUsage.Peak, reset before the path), on every device alike; the process's peak resident
 // memory (VmHWM, Linux) is printed too, for the CPU. With "train", each pass is a training step's: the forward pass with
@@ -85,52 +85,9 @@ internal abstract partial class Tests
                         + $"(inputs {(4L * heads * tokens * dim * 3 + 8L * tokens) >> 20} MB), process peak {PeakMegabytes()} MB");
                 }
             }
-
         }
 
         return 0;
-    }
-
-    // Each tensor-core span kernel CUDA can choose for this shape (the single-stage one and the pipelined one, 4 and 8
-    // warps a block), forced in turn: ms a pass, and whether its output equals the first one's bit for bit.
-    internal static void BenchSpanKernels(Tensor q, Tensor k, Tensor v, Tensor starts, Tensor ends, float scale)
-    {
-        float[]? first = null;
-        var previous = Idrak.Gpu.Cuda.CudaBackend.SpanTensorForced;
-        try
-        {
-            foreach (int candidate in Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Concat(Idrak.Gpu.Cuda.PtxKernels.SpanTensorWarps.Select(w => Idrak.Gpu.Cuda.CudaBackend.SpanPipelined + w)))
-            {
-                Idrak.Gpu.Cuda.CudaBackend.SpanTensorForced = candidate;
-                using (Autograd.NoGrad())
-                {
-                    using var trace = Kernels.Trace(q.Device.Backend);
-                    var output = Tensor.AttentionSpans(q, k, v, starts, ends, scale);
-                    var values = output.ToArray();
-                    output.Dispose();
-                    var watch = Stopwatch.StartNew();
-                    const int Repeats = 5;
-                    for (int i = 0; i < Repeats; i++)
-                    {
-                        using var y = Tensor.AttentionSpans(q, k, v, starts, ends, scale);
-                    }
-
-                    q.Device.Synchronize();
-                    first ??= values;
-                    bool same = values.AsSpan().SequenceEqual(first);
-                    string kernel = candidate >= Idrak.Gpu.Cuda.CudaBackend.SpanPipelined
-                        ? $"pipelined, {candidate - Idrak.Gpu.Cuda.CudaBackend.SpanPipelined} warps"
-                        : $"single-stage, {candidate} warps";
-                    Console.WriteLine($"  tensor-core spans, {kernel}: {watch.Elapsed.TotalMilliseconds / Repeats:F2} ms a pass, "
-                        + $"{(same ? "the same output bit for bit" : $"differs from the first by up to {values.Zip(first).Max(p => Math.Abs(p.First - p.Second)):G3}")}"
-                        + $"{(trace.HostCallsByOperation.Count > 0 ? ", host fallbacks: " + string.Join(", ", trace.HostCallsByOperation.Keys) : "")}");
-                }
-            }
-        }
-        finally
-        {
-            Idrak.Gpu.Cuda.CudaBackend.SpanTensorForced = previous;
-        }
     }
 
     // One training pass of attention over q, k, v (which take the gradient): forward with the gradient recorded, then
