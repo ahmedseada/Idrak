@@ -25,6 +25,8 @@ internal abstract partial class Tests
 
     internal static string CtcData(string relative) => AudioData(Path.Combine("ctc", relative));
 
+    internal static string AudioLanguageData(string relative) => AudioData(Path.Combine("audio-language", relative));
+
     internal static JsonObject CtcReference => JsonNode.Parse(File.ReadAllText(CtcData("reference/loss.json")))!.AsObject();
 
     internal static void AudioTrainViterbi(Device device)

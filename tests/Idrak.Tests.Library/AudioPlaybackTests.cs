@@ -14,9 +14,9 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] AudioPlaybackGroup =
     [
-        ("audio playback: the registries: winmm, alsa and aaudio playbacks and the aaudio capture registered, each unavailable off its own system with the reason; this machine's chosen; an app's playback chosen before the library's, then unregistered; an unknown name not registered", AudioPlaybackRegistry),
+        ("audio playback: the winmm, alsa and aaudio playbacks and the aaudio capture, each unavailable off its own system with the reason; a buffer under a block refused", AudioPlaybackKinds),
         ("audio playback: conversion is exact: 22.05 kHz stereo blocks of uneven sizes to 48 kHz mono are Resampler.Resample of the blocks joined and folded as ToMono, rounded to 16 bits; 24 kHz mono to 48 kHz stereo repeats it; a rate change ends the stream; 16-bit sound at the output's rate is queued as its bytes; three channels fold onto two in float; the vector and scalar 16-bit rounding agree", AudioPlaybackConversion),
-        ("audio playback: a test speaker through AudioPlaybacks: a synthesis-like stream written block by block and drained comes out whole and in order; a write larger than the buffer waits while the device is held (back-pressure) and a drain waits for the device's own play-out; a second write at once is refused; a failed device's message reaches the writer; dispose ends a waiting write; the playing thread allocates nothing per block", AudioPlaybackSemantics),
+        ("audio playback: a test speaker: a synthesis-like stream written block by block and drained comes out whole and in order; a write larger than the buffer waits while the device is held (back-pressure) and a drain waits for the device's own play-out; a second write at once is refused; a failed device's message reaches the writer; dispose ends a waiting write; the playing thread allocates nothing per block", AudioPlaybackSemantics),
         ("audio playback: ALSA's null device played through the driver (a 22.05 kHz tone to 48 kHz stereo in three blocks, drained, disposed) where libasound is installed; its outputs listed with the default first", AudioPlaybackAlsa),
         ("audio playback: aaudio off Android: capture and playback unavailable with the reason, Open refused naming it, no devices; a device is \"default\" or a number (a name refused); the microphone's failure names RECORD_AUDIO and AAudio.h's result", AudioPlaybackAaudio),
     ];
@@ -211,52 +211,19 @@ internal abstract partial class Tests
         return blocks;
     }
 
-    internal static void AudioPlaybackRegistry(Device device)
+    internal static void AudioPlaybackKinds(Device device)
     {
         _ = device;
-        Check(AudioPlaybacks.Names.Contains(AudioPlaybacks.Winmm) && AudioPlaybacks.Names.Contains(AudioPlaybacks.Alsa) && AudioPlaybacks.Names.Contains(AudioPlaybacks.Aaudio),
-            $"playbacks: {string.Join(", ", AudioPlaybacks.Names)}");
-        Check(AudioCaptures.Names.Contains(AudioCaptures.Aaudio) && AudioCaptures.Origin(AudioCaptures.Aaudio) == Overrides.Library,
-            $"captures: {string.Join(", ", AudioCaptures.Names)}; aaudio's origin {AudioCaptures.Origin(AudioCaptures.Aaudio)}");
-        Check(AudioPlaybacks.Get("WINMM").IsAvailable(out string winmm) == OperatingSystem.IsWindows() && (OperatingSystem.IsWindows() || winmm.Contains("Windows", StringComparison.Ordinal)),
+        Check(new WinmmPlayback().IsAvailable(out string winmm) == OperatingSystem.IsWindows() && (OperatingSystem.IsWindows() || winmm.Contains("Windows", StringComparison.Ordinal)),
             $"winmm: {winmm}");
-        bool alsaHere = AudioPlaybacks.Get("alsa").IsAvailable(out string alsa);
+        bool alsaHere = new AlsaPlayback().IsAvailable(out string alsa);
         Check(alsaHere || !OperatingSystem.IsLinux() || alsa.Contains("libasound", StringComparison.Ordinal), $"alsa: {alsa}");
-        Check(AudioPlaybacks.Get("aaudio").IsAvailable(out string aaudio) == OperatingSystem.IsAndroid() && (OperatingSystem.IsAndroid() || aaudio.Contains("Android", StringComparison.Ordinal)),
+        Check(new AAudioPlayback().IsAvailable(out string aaudio) == OperatingSystem.IsAndroid() && (OperatingSystem.IsAndroid() || aaudio.Contains("Android", StringComparison.Ordinal)),
             $"aaudio: {aaudio}");
-        string? expected = OperatingSystem.IsWindows() ? "winmm" : OperatingSystem.IsAndroid() ? "aaudio" : alsaHere ? "alsa" : null;
-        if (expected is not null)
-        {
-            var chosen = AudioPlaybacks.ForThisMachine();
-            Check(chosen.Name == expected && chosen.Devices().Count > 0 && chosen.Devices()[0].IsDefault,
-                $"this machine's playback: {chosen.Name} (expected {expected}), outputs {string.Join(", ", chosen.Devices().Select(d => d.Id))}");
-        }
-        else
-        {
-            ThrowsNaming<NotSupportedException>(() => AudioPlaybacks.ForThisMachine(), "no playback here", "No audio playback", "aaudio:");
-        }
-
-        if (OperatingSystem.IsAndroid())
-        {
-            Check(AudioCaptures.ForThisMachine().Name == "aaudio", $"Android's capture: {AudioCaptures.ForThisMachine().Name}");
-        }
-
-        var app = new TestSpeaker("test-speaker");
-        AudioPlaybacks.Register(app);
-        try
-        {
-            Check(AudioPlaybacks.ForThisMachine() == app && AudioPlaybacks.Origin("test-speaker") is { } origin && origin != Overrides.Library && AudioPlaybacks.Default("test-speaker") is null,
-                $"the app's playback first: {AudioPlaybacks.ForThisMachine().Name}, origin {AudioPlaybacks.Origin("test-speaker")}");
-        }
-        finally
-        {
-            Check(AudioPlaybacks.Unregister("test-speaker") && AudioPlaybacks.Find("test-speaker") is null && !AudioPlaybacks.Unregister("alsa"),
-                "the app's playback unregistered; the library's stays");
-        }
-
-        ThrowsNaming<NotSupportedException>(() => AudioPlaybacks.Get("pulse-direct"), "an unknown playback", "'pulse-direct' is not registered", "winmm");
+        Check(new AAudioCapture().IsAvailable(out string capture) == OperatingSystem.IsAndroid() && (OperatingSystem.IsAndroid() || capture.Contains("Android", StringComparison.Ordinal)),
+            $"aaudio's capture: {capture}");
         ThrowsNaming<ArgumentException>(() => new AudioPlaybackOptions { BufferSeconds = 0.01, BlockSeconds = 0.02 }.Check(), "a buffer under a block", "BufferSeconds");
-        Console.WriteLine($"    playbacks {string.Join(", ", AudioPlaybacks.Names)}; alsa here: {alsaHere}; aaudio: {aaudio}");
+        Console.WriteLine($"    alsa here: {alsaHere}; aaudio: {aaudio}");
     }
 
     internal static void AudioPlaybackConversion(Device device)
@@ -358,13 +325,11 @@ internal abstract partial class Tests
     {
         _ = device;
 
-        // Through the registry, from a stream of blocks as synthesis gives them.
+        // A stream of blocks as synthesis gives them.
         var speaker = new TestSpeaker("test-pipeline");
-        AudioPlaybacks.Register(speaker);
         var voice = new AudioData(Tones(24000, 24000, 1), 1, 24000);
-        try
         {
-            using var output = AudioPlaybacks.ForThisMachine().Open(new AudioPlaybackOptions { SampleRate = 48000, Channels = 1, BufferSeconds = 0.1 });
+            using var output = speaker.Open(new AudioPlaybackOptions { SampleRate = 48000, Channels = 1, BufferSeconds = 0.1 });
             Finish(Task.Run(async () =>
             {
                 await foreach (var block in SpokenBlocks(voice))
@@ -378,10 +343,6 @@ internal abstract partial class Tests
             Check(speaker.Bytes().AsSpan().SequenceEqual(expected) && output.SampleRate == 48000 && output.Channels == 1 && output.Description.Contains("test-pipeline", StringComparison.Ordinal),
                 $"a second of a 24 kHz voice at 48 kHz: {FirstDifference(speaker.Bytes(), expected, 1)}; {output.Description}");
             Check(speaker.Takes > 10 && speaker.TakeAllocated == 0, $"the playing thread allocated {speaker.TakeAllocated} bytes over {speaker.Takes - 5} steady takes");
-        }
-        finally
-        {
-            AudioPlaybacks.Unregister("test-pipeline");
         }
 
         // Back-pressure: 0.5 s into a 0.05 s buffer waits while the device is held, and goes on once it plays.
@@ -431,7 +392,7 @@ internal abstract partial class Tests
     internal static void AudioPlaybackAlsa(Device device)
     {
         _ = device;
-        var alsa = AudioPlaybacks.Get("alsa");
+        var alsa = new AlsaPlayback();
         if (!alsa.IsAvailable(out string reason))
         {
             Console.WriteLine($"    alsa not here ({reason}): its null device not played");
@@ -454,8 +415,8 @@ internal abstract partial class Tests
     internal static void AudioPlaybackAaudio(Device device)
     {
         _ = device;
-        var playback = AudioPlaybacks.Get("aaudio");
-        var capture = AudioCaptures.Get("aaudio");
+        var playback = new AAudioPlayback();
+        var capture = new AAudioCapture();
         Check(AAudioLibrary.DeviceId(null) == 0 && AAudioLibrary.DeviceId("default") == 0 && AAudioLibrary.DeviceId("12") == 12, "device ids: default is AAUDIO_UNSPECIFIED, a number itself");
         ThrowsNaming<ArgumentException>(() => AAudioLibrary.DeviceId("speaker"), "a device by name", "device id", "'speaker'");
         Check(AAudioLibrary.ResultName(-899) == "AAUDIO_ERROR_DISCONNECTED" && AAudioLibrary.ResultName(-885) == "AAUDIO_ERROR_TIMEOUT" && AAudioLibrary.ResultName(-880) == "AAUDIO_ERROR_INVALID_RATE"
