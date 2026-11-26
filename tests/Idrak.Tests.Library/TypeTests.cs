@@ -88,8 +88,10 @@ internal abstract partial class Tests
         Check(types.Count == types.Distinct().Count() && types.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == types.Count,
             "each type once, each its own name");
         Check(types.All(t => t.Description.Valid), $"invalid: {string.Join(", ", types.Where(t => !t.Description.Valid))}");
-        var unwritten = types.Where(t => t.Unwritable is not null).Select(t => $"{t}: {t.Unwritable}").ToList();
-        Check(unwritten.Count == 0, $"unwritten: {string.Join("; ", unwritten)}");
+        // Every type written but Q8_K, whose float32 scale level the described encoder does not write yet (said by Unwritable).
+        var unwritten = types.Where(t => t.Unwritable is not null).ToList();
+        Check(unwritten.SequenceEqual([Idrak.Types.Q8_K.Type]) && Idrak.Types.Q8_K.Type.Unwritable!.Contains("16 bits", StringComparison.Ordinal),
+            $"unwritten: {string.Join("; ", unwritten.Select(t => $"{t}: {t.Unwritable}"))}");
         var natives = types.ToDictionary(t => t, t => t.Native);
         Check(natives[F32.Type] == NativeKind.Float32 && natives[F64.Type] == NativeKind.Float64 && natives[F16.Type] == NativeKind.Float16 && natives[BF16.Type] == NativeKind.BFloat16
               && natives[F8E4M3.Type] == NativeKind.Float8E4M3 && natives[F8E5M2.Type] == NativeKind.Float8E5M2 && natives[I8.Type] == NativeKind.Int8 && natives[U8.Type] == NativeKind.UInt8
@@ -101,7 +103,7 @@ internal abstract partial class Tests
 
         // A description alike to a native one is that native kind, whatever the type says of itself.
         Check(((IElementType)new TestType("anything", BF16.Type.Description with { })).Native == NativeKind.BFloat16, "a native kind from the description alone");
-        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written");
+        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written but q8_k ({Idrak.Types.Q8_K.Type.Unwritable})");
     }
 
     private static void TypesReadAsDescribed(Device device)

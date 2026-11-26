@@ -105,7 +105,7 @@ public sealed class GgufFile : IDisposable
 
     /// <summary>
     /// The type ggml's type id <paramref name="id"/> names (GGUF's own table: 0 F32, 1 F16, 2 Q4_0, 3 Q4_1, 6 Q5_0, 7 Q5_1,
-    /// 8 Q8_0, 10 Q2_K, 11 Q3_K, 12 Q4_K, 13 Q5_K, 14 Q6_K, 16 IQ2_XXS, 17 IQ2_XS, 18 IQ3_XXS, 19 IQ1_S, 20 IQ4_NL, 21 IQ3_S,
+    /// 8 Q8_0, 9 Q8_1, 10 Q2_K, 11 Q3_K, 12 Q4_K, 13 Q5_K, 14 Q6_K, 15 Q8_K, 16 IQ2_XXS, 17 IQ2_XS, 18 IQ3_XXS, 19 IQ1_S, 20 IQ4_NL, 21 IQ3_S,
     /// 22 IQ2_S, 23 IQ4_XS, 24 I8, 25 I16, 26 I32, 27 I64, 28 F64, 29 IQ1_M, 30 BF16, 34 TQ1_0, 35 TQ2_0, 39 MXFP4), or null.
     /// </summary>
     public static IElementType? TypeOfId(int id) => id switch
@@ -117,11 +117,13 @@ public sealed class GgufFile : IDisposable
         6 => Types.Q5_0.Type,
         7 => Types.Q5_1.Type,
         8 => Types.Q8_0.Type,
+        9 => Types.Q8_1.Type,
         10 => Types.Q2_K.Type,
         11 => Types.Q3_K.Type,
         12 => Types.Q4_K.Type,
         13 => Types.Q5_K.Type,
         14 => Types.Q6_K.Type,
+        15 => Types.Q8_K.Type,
         16 => Types.IQ2_XXS.Type,
         17 => Types.IQ2_XS.Type,
         18 => Types.IQ3_XXS.Type,
