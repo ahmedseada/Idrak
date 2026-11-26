@@ -52,6 +52,185 @@ internal abstract partial class Tests
         }
     }
 
+    // The values of `values` written through `type` and read back (what an operand of the type holds after a write).
+    private static float[] ThroughType(IElementType type, float[] values)
+    {
+        var stored = new byte[type.ByteCount(values.Length)];
+        type.Write(values, stored);
+        var read = new float[values.Length];
+        type.Read(stored, read);
+        return read;
+    }
+
+    internal static void TypedOperandsInPlaceAndViews(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        const int Rows = 48, Cols = 256, Count = Rows * Cols;
+        var backend = Device.Cpu.Backend;
+        var random = new Random(41);
+        Tensor Floats(int count) => Tensor.From(RandomArray(random, count), [count], Device.Cpu);
+        foreach (var type in TypedWritable(wide: false))
+        {
+            using var scope = new TensorScope();
+            var (typed, plain) = TypedPair(type, Count, 19);
+            string name = type.Name;
+            var other = Floats(Count);
+
+            // The paths the first test does not reach: sampling, the heads' norm and rotation, resizing, the recurrent
+            // steps' typed weights forward and back.
+            var step = Tensor.Indices([3], Device.Cpu);
+            SameOutputsOnTyped($"{name}: sampling", typed, plain, [6, 13 * 6 * 4],
+                (z, o) => backend.SampleRows(z, o[0], o[1], step.Storage, 6, 300, 2000, 7, 0.8f, 40, 0.9f, 0.02f, 11));
+            var gains = Floats(64);
+            var positions = Tensor.Indices([5, 40, 17], Device.Cpu);
+            var at = Tensor.Indices([2], Device.Cpu);
+            SameOutputsOnTyped($"{name}: the heads' norm and rotation", typed, plain, [4 * 3 * 64, 2 * 8 * 64, 2 * 8 * 64],
+                (t, o) => backend.NormRopeHeads(t, t, t, 1, 3, 4, 2, 64, gains.Storage, 1e-6f, 0f, gains.Storage, 1e-6f, 1f, t, t, positions.Storage, 16, false, o[0], o[1], o[2],
+                    at.Storage, 8, 64));
+            var (coefficients, scales) = ResizeTables(24, 16, 64, 32, bytes: false);
+            SameOutputsOnTyped($"{name}: resize and normalize", typed, plain, [6 * 16 * 24],
+                (x, o) => backend.ResizeNormalize(x, coefficients.Storage, scales.Storage, o[0], 6, 3, 32, 64, 16, 24, 2, 2, false));
+            var projected = Floats(2 * 3 * 64);
+            SameOutputsOnTyped($"{name}: LSTM steps, typed weights", typed, plain, [32, 96, 384, 96],
+                (w, o) => backend.LstmSequence(projected.Storage, w, o[0], o[1], o[2], o[3], 3, 2, 16, false));
+            SameOutputsOnTyped($"{name}: GRU steps, typed weights", typed, plain, [96, 2 * 3 * 64],
+                (w, o) => backend.GruSequence(projected.Storage, w, null, o[0], o[1], 3, 2, 16, false));
+            var gates = Tensor.Zeros([384], Device.Cpu);
+            var cells = Tensor.Zeros([96], Device.Cpu);
+            backend.LstmSequence(projected.Storage, plain.Storage, Tensor.Zeros([32], Device.Cpu).Storage, Tensor.Zeros([96], Device.Cpu).Storage, gates.Storage, cells.Storage,
+                3, 2, 16, false);
+            var dOutput = Floats(96);
+            SameOutputsOnTyped($"{name}: LSTM steps' gradient, typed weights", typed, plain, [32, 384],
+                (w, o) => backend.LstmSequenceBackward(gates.Storage, cells.Storage, dOutput.Storage, w, o[0], o[1], 3, 2, 16, false));
+
+            // Operands written in place: the optimizers' parameters and moments, the cross-entropy's logits. The typed run
+            // gives the float32 run's results written through the type.
+            InPlace($"{name}: SGD's parameters and momentum", type, Count, 2, (s, g) => backend.SgdStep(s[0], g, s[1], Count, 0.1f, 0.9f), other);
+            InPlace($"{name}: Adam's parameters and moments", type, Count, 3, (s, g) => backend.AdamStep(s[0], g, s[1], s[2], Count, 1e-3f, 0.9f, 0.999f, 1e-8f), other);
+            var targets = Tensor.Indices([.. Enumerable.Range(0, Rows).Select(i => i * 31 % Cols)], Device.Cpu);
+            var weights = Floats(Rows);
+            InPlace($"{name}: the cross-entropy's logits", type, Count, 1, (s, _) =>
+            {
+                using var losses = Tensor.Zeros([Rows], Device.Cpu);
+                backend.SoftmaxCrossEntropyRows(s[0], targets.Storage, weights.Storage, losses.Storage, Rows, Cols, 0.5f);
+            }, other);
+
+            // Views that are no plane (the last dimension not of step 1), typed, read in place: the product, the
+            // attention, a cache's write; each gives what its contiguous float32 copy gives.
+            var bView = new TensorLayout([2, 8, 12], [96, 1, 8], 0);
+            var aMatrix = Floats(2 * 5 * 8);
+            var contiguousB = Tensor.Zeros([2 * 8 * 12], Device.Cpu);
+            backend.StridedCopy(plain.Storage, 0, [2, 8, 12], [96, 1, 8], contiguousB.Storage);
+            using var expected = Tensor.Zeros([2 * 5 * 12], Device.Cpu);
+            backend.BatchedMatMul(aMatrix.Storage, contiguousB.Storage, expected.Storage, 2, 5, 12, 8, false, false, 0f);
+            var want = expected.ToArray();
+            foreach (var (input, label) in new[] { (typed, "typed"), (plain, "float32") })
+            {
+                using var product = Tensor.Zeros([2 * 5 * 12], Device.Cpu);
+                backend.BatchedMatMulStrided(aMatrix.Storage, TensorLayout.Contiguous([2, 5, 8]), input.Storage, bView, product.Storage, 2, 5, 12, 8, false, false, 0f);
+                Check(product.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(want.Select(BitConverter.SingleToInt32Bits)),
+                    $"{name}: the product of a {label} view that is no plane, read in place, gives its contiguous copy's bits");
+            }
+
+            var kvView = new TensorLayout([2, 16, 64], [1024, 1, 16], 0);              // the rows and the columns swapped: no plane
+            var q = Floats(2 * 4 * 64);
+            var contiguousKv = Tensor.Zeros([2 * 16 * 64], Device.Cpu);
+            backend.StridedCopy(plain.Storage, 0, [2, 16, 64], [1024, 1, 16], contiguousKv.Storage);
+            var position = Tensor.Indices([10], Device.Cpu);
+            using var attended = Tensor.Zeros([2 * 4 * 64], Device.Cpu);
+            backend.AttentionTiled(q.Storage, contiguousKv.Storage, contiguousKv.Storage, position.Storage, attended.Storage, null, 2, 4, 4, 16, 64, 0.125f);
+            using var strided = Tensor.Zeros([2 * 4 * 64], Device.Cpu);
+            backend.AttentionTiledStrided(q.Storage, TensorLayout.Contiguous([2, 4, 64]), plain.Storage, kvView, plain.Storage, kvView, position.Storage, strided.Storage, null,
+                2, 4, 4, 16, 64, 0.125f);
+            Check(strided.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(attended.ToArray().Select(BitConverter.SingleToInt32Bits)),
+                $"{name}: attention over a cache view that is no plane gives its contiguous copy's bits");
+            using var stridedTyped = Tensor.Zeros([2 * 4 * 64], Device.Cpu);
+            backend.AttentionTiledStrided(q.Storage, TensorLayout.Contiguous([2, 4, 64]), typed.Storage, kvView, typed.Storage, kvView, position.Storage, stridedTyped.Storage,
+                null, 2, 4, 4, 16, 64, 0.125f);
+            Check(stridedTyped.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(attended.ToArray().Select(BitConverter.SingleToInt32Bits)),
+                $"{name}: attention over a typed cache view that is no plane gives its values' bits");
+            var sourceView = new TensorLayout([2, 4, 64], [1024, 1, 16], 0);
+            var contiguousSource = Tensor.Zeros([2 * 4 * 64], Device.Cpu);
+            backend.StridedCopy(plain.Storage, 0, [2, 4, 64], [1024, 1, 16], contiguousSource.Storage);
+            using var cacheWanted = Tensor.Zeros([2 * 8 * 64], Device.Cpu);
+            backend.KeyValueWrite(contiguousSource.Storage, cacheWanted.Storage, at.Storage, 2, 4, 8, 64);
+            using var cacheGot = Tensor.Zeros([2 * 8 * 64], Device.Cpu);
+            backend.KeyValueWriteStrided(typed.Storage, sourceView, cacheGot.Storage, at.Storage, 2, 4, 8, 64);
+            Check(cacheGot.ToArray().Select(BitConverter.SingleToInt32Bits).SequenceEqual(cacheWanted.ToArray().Select(BitConverter.SingleToInt32Bits)),
+                $"{name}: a cache's write from a typed source view that is no plane gives its values' bits");
+        }
+
+        // Bytes: an 8-bit unsigned image read through its type gives the packed words' resizing.
+        {
+            using var scope = new TensorScope();
+            var u8 = Idrak.Abstraction.Types.U8.Type;
+            var pixels = new float[6 * 32 * 64];
+            for (int i = 0; i < pixels.Length; i++)
+            {
+                pixels[i] = (i * 37 + i / 64 * 11) % 256;
+            }
+
+            var typedImage = Tensor.Stored(u8, pixels, [pixels.Length], Device.Cpu);
+            var words = new float[typedImage.Storage.Length];
+            backend.Download(typedImage.Storage, words);
+            var packed = Tensor.From(words, [words.Length], Device.Cpu);              // the same bytes, four a word
+            var (coefficients, table) = ResizeTables(24, 16, 64, 32, bytes: true);
+            SameOutputsOnTyped("uint8: resize and normalize of bytes", typedImage, packed, [6 * 16 * 24],
+                (x, o) => backend.ResizeNormalize(x, coefficients.Storage, table.Storage, o[0], 6, 3, 32, 64, 16, 24, 2, 2, true));
+        }
+
+        // Runs `op` on `count`-value operands written in place: float32 ones holding a type's values, then operands of the
+        // type: the typed operands hold the float32 results written through the type.
+        void InPlace(string what, IElementType type, int count, int operands, Action<Storage[], Storage> op, Tensor gradient)
+        {
+            using var scope = new TensorScope();
+            // The typed operands first (moments of Adam are not negative), and float32 ones holding the values they hold.
+            var typedOnes = Enumerable.Range(0, operands).Select(i =>
+            {
+                var values = RandomArray(new Random(50 + i), count);
+                return Tensor.Stored(type, i == 0 ? values : [.. values.Select(MathF.Abs)], [count], Device.Cpu);
+            }).ToArray();
+            var floats = typedOnes.Select(t => Tensor.From(t.ToArray(), [count], Device.Cpu)).ToArray();
+            op([.. floats.Select(f => f.Storage)], gradient.Storage);
+            op([.. typedOnes.Select(t => t.Storage)], gradient.Storage);
+            for (int i = 0; i < operands; i++)
+            {
+                var wanted = ThroughType(type, floats[i].ToArray());
+                var got = typedOnes[i].ToArray();
+                int bad = Enumerable.Range(0, count).FirstOrDefault(j => BitConverter.SingleToInt32Bits(wanted[j]) != BitConverter.SingleToInt32Bits(got[j]), -1);
+                Check(bad < 0, $"{what}: operand {i} element {bad} is {(bad < 0 ? 0 : got[bad])}, the float32 run's written through the type {(bad < 0 ? 0 : wanted[bad])}");
+            }
+        }
+    }
+
+    // ResizeNormalize's tables for a [height, width] plane to [outHeight, outWidth]: two taps a direction (each output's
+    // first input and its neighbour), as weights (floats) or Pillow's fixed-point integers (bytes); each channel's scale and
+    // shift (floats) or byte table.
+    private static (Tensor Coefficients, Tensor Values) ResizeTables(int outWidth, int outHeight, int width, int height, bool bytes)
+    {
+        var c = new List<float>();
+        void Taps(int outputs, int size)
+        {
+            for (int o = 0; o < outputs; o++)
+            {
+                int first = Math.Min(size - 2, o * size / outputs);
+                c.Add(BitConverter.Int32BitsToSingle(first));
+                c.Add(BitConverter.Int32BitsToSingle(2));
+                c.Add(bytes ? BitConverter.Int32BitsToSingle(1 << 21) : 0.75f);
+                c.Add(bytes ? BitConverter.Int32BitsToSingle(1 << 21) : 0.25f);
+            }
+        }
+
+        Taps(outWidth, width);
+        Taps(outHeight, height);
+        float[] values = bytes ? [.. Enumerable.Range(0, 3 * 256).Select(i => i % 256 / 255f - 0.5f)] : [0.5f, -0.25f, 2f, 0.125f, 1f, 0f];
+        return (Tensor.From([.. c], [c.Count], Device.Cpu), Tensor.From(values, [values.Length], Device.Cpu));
+    }
+
     internal static void WideResultsStayWide(Device device)
     {
         if (device.Type != DeviceType.Cpu)

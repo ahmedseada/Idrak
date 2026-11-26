@@ -19,10 +19,10 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        fixed (float* px = bytes ? V(x) : D(x), pc = V(coefficients), pv = V(values), py = V(y))
+        fixed (float* px = D(x), pc = V(coefficients), pv = V(values), py = V(y))
         {
             var kernel = new ResizeRows(px, pc, pv, py, Math.Max(1, channels), height, width, outHeight, outWidth, xTaps, yTaps, bytes, planes,
-                bytes ? default : new TypedRanges(x, 0, "ResizeNormalize"));
+                new TypedRanges(x, 0, "ResizeNormalize"));
             Rows(bytes ? "ResizeNormalize bytes" : "ResizeNormalize", kernel, planes, outHeight * outWidth, Math.Max(1, xTaps + yTaps));
         }
     }
@@ -36,7 +36,8 @@ internal sealed unsafe partial class CpuBackend
         {
             int c = p % channels, across = xTaps > 0 ? outWidth : width;
             long plane = (long)p * height * width;
-            float* source = bytes ? x : tx.At(x, plane, (long)height * width);           // a typed plane read through its type when its row runs
+            // A typed plane read through its type when its row runs (bytes: its values as the bytes, 0 to 255); else the words.
+            float* source = tx.At(x, plane, (long)height * width);
             float* target = _y + (long)p * outHeight * outWidth;
             // Floats without a horizontal pass: the plane itself is the vertical pass's input.
             bool inPlace = xTaps == 0 && !bytes;
@@ -98,7 +99,7 @@ internal sealed unsafe partial class CpuBackend
                 {
                     if (xTaps == 0)
                     {
-                        into[ox] = bytes ? Byte(row + ox) : source[row + ox];
+                        into[ox] = bytes ? Byte(row + ox, source) : source[row + ox];
                         continue;
                     }
 
@@ -109,7 +110,7 @@ internal sealed unsafe partial class CpuBackend
                         int sum = 1 << 21;
                         for (int t = 0; t < taps; t++)
                         {
-                            sum += Byte(row + first + t) * Whole(at[2 + t]);
+                            sum += Byte(row + first + t, source) * Whole(at[2 + t]);
                         }
 
                         into[ox] = Clip(sum);
@@ -129,7 +130,9 @@ internal sealed unsafe partial class CpuBackend
         }
 
         // Byte i of the packed words (value i in bits 8·(i % 4) of word i / 4).
-        private readonly int Byte(long i) => (int)((BitConverter.SingleToUInt32Bits(x[i >> 2]) >> (int)(8 * (i & 3))) & 0xFF);
+        // A typed plane's value i as a byte (its value, held to 0 to 255: an 8-bit unsigned type's own).
+        private readonly int Byte(long i, float* source) =>
+            tx.Typed ? (int)Math.Clamp(source[i], 0f, 255f) : (int)((BitConverter.SingleToUInt32Bits(x[i >> 2]) >> (int)(8 * (i & 3))) & 0xFF);
 
         public void Redirect(ref Scratch scratch) => _y = scratch.Take((long)planes * outHeight * outWidth);
     }

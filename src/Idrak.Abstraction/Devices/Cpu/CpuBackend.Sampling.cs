@@ -238,16 +238,34 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
-        fixed (float* pz = V(logits), pt = D(targets), ww = D(weights), pl = V(losses))
+        fixed (float* wz = D(logits), pt = D(targets), ww = D(weights), pl = V(losses))
         {
-            // The logits are overwritten with the gradient: float32's own; a typed weights vector read once, its own size.
+            // The logits are overwritten with the gradient: typed logits read and written back through their type a chunk of
+            // rows at a time (TypedInOut, rows of whole groups of its blocks); a typed weights vector read once, its own size.
             var tw = new TypedInput(weights, ww, 0, rows, "SoftmaxCrossEntropyRows");
-            Rows("SoftmaxCrossEntropyRows", new CrossEntropyRows(pz, IndicesOf(targets, pt), tw.Range(0, rows), pl, vocabulary, scale, rows), rows, vocabulary, 24);
+            float* pw = tw.Range(0, rows);
+            var ids = IndicesOf(targets, pt);
+            if (NativeFloats(logits))
+            {
+                Rows("SoftmaxCrossEntropyRows", new CrossEntropyRows(wz, ids, pw, pl, vocabulary, scale, rows), rows, vocabulary, 24);
+                return;
+            }
+
+            int step = RowStep(rows, vocabulary, true);
+            var tz = new TypedInOut(logits, wz, 0, (long)step * vocabulary, "SoftmaxCrossEntropyRows");
+            for (int r = 0; r < rows; r += step)
+            {
+                int e = Math.Min(rows, r + step);
+                long at = (long)r * vocabulary, count = (long)(e - r) * vocabulary;
+                Rows("SoftmaxCrossEntropyRows", new CrossEntropyRows(tz.Range(at, count), ids, pw, pl, vocabulary, scale, rows, r, e), e, vocabulary, 24, r);
+                tz.Store(at, count);
+            }
         }
     }
 
     // losses[r] = w (lse - x[t]); the logits overwritten with scale · w · (softmax - onehot(t)).
-    private struct CrossEntropyRows(float* logits, Indices targets, float* weights, float* losses, int vocabulary, float scale, int rows) : IRowKernel
+    private struct CrossEntropyRows(float* logits, Indices targets, float* weights, float* losses, int vocabulary, float scale, int rows, int first = 0, int last = -1)
+        : IRowKernel
     {
         private float* _z = logits, _losses = losses;
 
@@ -273,9 +291,11 @@ internal sealed unsafe partial class CpuBackend
 
         public void Redirect(ref Scratch scratch)
         {
-            // The logits are read and written in place: measured on a copy of them.
+            // The logits are read and written in place: measured on a copy of the rows run (a chunk's, rows [first, last)).
+            int end = last < 0 ? rows : last;
+            long from = (long)first * vocabulary, count = (long)(end - first) * vocabulary;
             float* copy = scratch.Take((long)rows * vocabulary);
-            new ReadOnlySpan<float>(_z, rows * vocabulary).CopyTo(new Span<float>(copy, rows * vocabulary));
+            new ReadOnlySpan<float>(_z + from, (int)count).CopyTo(new Span<float>(copy + from, (int)count));
             _z = copy;
             _losses = scratch.Take(rows);
         }

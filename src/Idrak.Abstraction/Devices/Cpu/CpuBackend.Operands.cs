@@ -203,8 +203,83 @@ internal sealed unsafe partial class CpuBackend
     [ThreadStatic]
     private static float[]?[]? t_ranges;
 
-    // Slots a thread's kernels take: 0 to 7 an input's ranges (TypedRanges), 8 to 11 a kernel's working rows (WorkRow).
-    private const int RangeSlots = 12;
+    // Slots a thread's kernels take: 0 to 7 an input's ranges (TypedRanges), 8 to 11 a kernel's working rows (WorkRow),
+    // 12 to 19 the rows gathered from a view of the input of slot s - 12 (GatherView through RowsIn), 20 to 23 an operand
+    // read and written in place (TypedInOut).
+    private const int RangeSlots = 24;
+
+    /// <summary>
+    /// An operand an operation reads and writes in place (a parameter and an optimizer's moments, logits overwritten with
+    /// their gradient, a gradient zeroed): float32's own words, or its values read through its type a range at a time
+    /// (whole groups of its blocks) into the calling thread's buffer of slot 20 + <c>slot</c>, the range's kernel run over
+    /// them, and written back through its type (<see cref="Store"/>): never the whole operand at once. Refused where its
+    /// values need float64 (its float64 lane is not built), naming the operation.
+    /// </summary>
+    internal readonly struct TypedInOut
+    {
+        private readonly IElementType? _type;
+        private readonly float* _words, _buffer;
+        private readonly long _unit;
+
+        /// <summary>The operand <paramref name="s"/> (its words pinned by the caller at <paramref name="words"/>), for ranges of up to <paramref name="most"/> values.</summary>
+        public TypedInOut(Storage s, float* words, int slot, long most, string operation)
+        {
+            _words = words;
+            if (NativeFloats(s))
+            {
+                return;
+            }
+
+            if (WideValues(s.Type))
+            {
+                throw new NotSupportedException($"The CPU's {operation} writes float32 values; {s.Type.Name}'s values need float64 (native kind {s.Type.Native}), "
+                    + "which it never narrows: its float64 lane is not built.");
+            }
+
+            _type = s.Type;
+            _unit = Math.Max(1, s.Type.Description.UnitValues);
+            _buffer = ThreadBuffer(20 + slot, most + _unit);
+        }
+
+        /// <summary>Whether the operand is read and written through its type.</summary>
+        public bool Typed => _type is not null;
+
+        /// <summary>The values a range takes at most: <paramref name="most"/>, in whole groups of the type's blocks where typed.</summary>
+        public long Piece(long most) => _type is null ? most : Math.Max(_unit, most / _unit * _unit);
+
+        /// <summary>A pointer p such that p[i] is value i for i in [<paramref name="first"/>, + <paramref name="count"/>), <paramref name="first"/> a multiple of the type's group.</summary>
+        public float* Range(long first, long count)
+        {
+            if (_type is null)
+            {
+                return _words;
+            }
+
+            Check(first);
+            var bytes = new ReadOnlySpan<byte>((byte*)_words + _type.ByteCount(first), (int)_type.ByteCount(count));
+            ReadValues(_type, bytes, new Span<float>(_buffer, (int)count));
+            return _buffer - first;
+        }
+
+        /// <summary>Writes the range's values back through the type (nothing for float32's own words, written in place).</summary>
+        public void Store(long first, long count)
+        {
+            if (_type is null)
+            {
+                return;
+            }
+
+            _type.Write(new ReadOnlySpan<float>(_buffer, (int)count), new Span<byte>((byte*)_words + _type.ByteCount(first), (int)_type.ByteCount(count)));
+        }
+
+        private void Check(long first)
+        {
+            if (first % _unit != 0)
+            {
+                throw new NotSupportedException($"The CPU writes {_type!.Name} in place whole groups of {_unit} values; a range from value {first} is not.");
+            }
+        }
+    }
 
     // The calling thread's pinned buffer of `slot`, at least `count` floats.
     private static float* ThreadBuffer(int slot, long count)
@@ -266,6 +341,9 @@ internal sealed unsafe partial class CpuBackend
 
         /// <summary>The values the input holds.</summary>
         public long Count => _count;
+
+        /// <summary>The slot its ranges are read into.</summary>
+        public int Slot => _slot;
 
         /// <summary>
         /// A pointer p such that p[i] is value i for i in [<paramref name="first"/>, <paramref name="first"/> +
@@ -331,23 +409,74 @@ internal sealed unsafe partial class CpuBackend
 
     /// <summary>
     /// The rows of an input from element <paramref name="offset"/> of its words (pinned at <paramref name="words"/>): a
-    /// head's or a view's plane, read where it lies (float32's own) or through its type (<see cref="TypedRanges"/>).
+    /// head's or a view's plane, read where it lies (float32's own) or through its type (<see cref="TypedRanges"/>); or,
+    /// with <paramref name="view"/>, element <c>offset + i</c> of that view in its row-major order, each row gathered from
+    /// where its values lie (<see cref="GatherView"/>) into the thread's buffer of the reader's view slot: a view of any
+    /// strides read in place, never copied whole.
     /// </summary>
-    internal readonly struct RowsIn(TypedRanges reader, float* words, long offset)
+    internal readonly struct RowsIn(TypedRanges reader, float* words, long offset, TensorLayout? view = null)
     {
-        /// <summary>Whether its values are read through their type.</summary>
-        public bool Typed => reader.Typed;
+        /// <summary>Whether its values are read through their type, or gathered from a view (a row read into a buffer either way).</summary>
+        public bool Typed => reader.Typed || view is not null;
 
         /// <summary>A pointer to element <paramref name="element"/> (from the offset) and the <paramref name="count"/> after it, as float32.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public float* Row(long element, long count)
         {
             long at = offset + element;
-            return reader.At(words, at, count) + at;
+            return view is null ? reader.At(words, at, count) + at : Gathered(at, count);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private float* Gathered(long at, long count)
+        {
+            float* into = ThreadBuffer(12 + reader.Slot, Math.Max(1, count));
+            GatherView(reader, words, view!, at, count, into);
+            return into;
         }
 
         /// <summary>The rows from <paramref name="more"/> elements further on.</summary>
-        public RowsIn Plus(long more) => new(reader, words, offset + more);
+        public RowsIn Plus(long more) => new(reader, words, offset + more, view);
+    }
+
+    /// <summary>
+    /// Elements [<paramref name="first"/>, + <paramref name="count"/>) of <paramref name="view"/> in its row-major order,
+    /// as float32, into <paramref name="into"/>: each read where it lies in the input's words (pinned at
+    /// <paramref name="words"/>), float32's own or through its type a window at a time (TypedRanges.Windowed: a window of
+    /// the input read once while the view's addresses stay in it); the view never copied whole.
+    /// </summary>
+    internal static void GatherView(TypedRanges reader, float* words, TensorLayout view, long first, long count, float* into)
+    {
+        var shape = view.Shape;
+        var strides = view.Strides;
+        int rank = shape.Length;
+        Span<int> index = stackalloc int[Math.Max(1, rank)];
+        long rest = first, at = view.Offset;
+        for (int d = rank - 1; d >= 0; d--)
+        {
+            int size = Math.Max(1, shape[d]);
+            index[d] = (int)(rest % size);
+            rest /= size;
+            at += index[d] * strides[d];
+        }
+
+        float* values = null;
+        long from = 0, to = 0;
+        for (long t = 0; t < count; t++)
+        {
+            into[t] = reader.Typed ? reader.Windowed(words, at, ChunkValues, ref values, ref from, ref to) : words[at];
+            for (int d = rank - 1; d >= 0; d--)
+            {
+                at += strides[d];
+                if (++index[d] < shape[d])
+                {
+                    break;
+                }
+
+                at -= strides[d] * shape[d];
+                index[d] = 0;
+            }
+        }
     }
 
     /// <summary>The elements an operation runs at a time: all <paramref name="n"/> where every input is float32's own, else a chunk.</summary>

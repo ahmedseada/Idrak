@@ -105,10 +105,10 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * hiddenSize);
             try
             {
-                fixed (float* pg = V(gates), pcs = V(cells), pdo = dOutput is null ? null : V(dOutput), put = V(weightsT), pdc = V(dCell), pdz = V(dGates),
+                fixed (float* pg = V(gates), pcs = V(cells), pdo = dOutput is null ? null : V(dOutput), put = D(weightsT), pdc = V(dCell), pdz = V(dGates),
                     pdh = buffer)
                 {
-                    LstmStepBackRun(pg, pcs, pdo, put, pdc, pdz, step, next, previous, steps, batch, hiddenSize, pdh);
+                    LstmStepBackRun(pg, pcs, pdo, put, pdc, pdz, step, next, previous, steps, batch, hiddenSize, pdh, WeightsType(weightsT, "LstmStepBackward"));
                 }
             }
             finally
@@ -128,13 +128,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
             var buffer = StepBuffer((long)batch * hiddenSize);
             try
             {
-                fixed (float* pg = V(gates), pcs = V(cells), pdo = dOutput is null ? null : V(dOutput), put = V(weightsT), pdc = V(dCell), pdz = V(dGates),
+                fixed (float* pg = V(gates), pcs = V(cells), pdo = dOutput is null ? null : V(dOutput), put = D(weightsT), pdc = V(dCell), pdz = V(dGates),
                     pdh = buffer)
                 {
                     for (int i = steps - 1; i >= 0; i--)
                     {
                         LstmStepBackRun(pg, pcs, pdo, put, pdc, pdz, Taken(i, steps, reverse), i == steps - 1 ? -1 : Taken(i + 1, steps, reverse),
-                            i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pdh);
+                            i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, pdh, WeightsType(weightsT, "LstmSequenceBackward"));
                     }
                 }
             }
@@ -189,11 +189,11 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // The step's gradient: dh = dGates[n, next] · Uᵀ into `dHidden` [batch, H] (0 for the last step taken), then the
     // cell's gradient.
     private static void LstmStepBackRun(float* gates, float* cells, float* dOutput, float* weightsT, float* dCell, float* dGates, int step, int next, int previous,
-        int steps, int batch, int h, float* dHidden)
+        int steps, int batch, int h, float* dHidden, IElementType? wType = null)
     {
         if (next >= 0)
         {
-            Product(dGates + (long)next * 4 * h, weightsT, null, dHidden, 1, batch, h, 4 * h, false, false, 0f, (long)steps * 4 * h);
+            Product(dGates + (long)next * 4 * h, weightsT, null, dHidden, 1, batch, h, 4 * h, false, false, 0f, (long)steps * 4 * h, bType: wType);
         }
         else
         {
@@ -403,10 +403,10 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     {
         if (batch > 0 && hiddenSize > 0)
         {
-            fixed (float* pg = V(gates), po = V(output), pdo = dOutput is null ? null : V(dOutput), put = V(weightsT), pdh = V(dHidden), pdz = V(dGates),
+            fixed (float* pg = V(gates), po = V(output), pdo = dOutput is null ? null : V(dOutput), put = D(weightsT), pdh = V(dHidden), pdz = V(dGates),
                 pdr = V(dRecurrent))
             {
-                GruStepBackRun(pg, po, pdo, put, pdh, pdz, pdr, step, next, previous, steps, batch, hiddenSize);
+                GruStepBackRun(pg, po, pdo, put, pdh, pdz, pdr, step, next, previous, steps, batch, hiddenSize, WeightsType(weightsT, "GruStepBackward"));
             }
         }
 
@@ -418,13 +418,13 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     {
         if (batch > 0 && hiddenSize > 0)
         {
-            fixed (float* pg = V(gates), po = V(output), pdo = dOutput is null ? null : V(dOutput), put = V(weightsT), pdh = V(dHidden), pdz = V(dGates),
+            fixed (float* pg = V(gates), po = V(output), pdo = dOutput is null ? null : V(dOutput), put = D(weightsT), pdh = V(dHidden), pdz = V(dGates),
                 pdr = V(dRecurrent))
             {
                 for (int i = steps - 1; i >= 0; i--)
                 {
                     GruStepBackRun(pg, po, pdo, put, pdh, pdz, pdr, Taken(i, steps, reverse), i == steps - 1 ? -1 : Taken(i + 1, steps, reverse),
-                        i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize);
+                        i == 0 ? -1 : Taken(i - 1, steps, reverse), steps, batch, hiddenSize, WeightsType(weightsT, "GruSequenceBackward"));
                 }
             }
         }
@@ -464,11 +464,11 @@ internal sealed unsafe partial class CpuBackend : IRecurrentKernels
     // The step's gradient: dHidden += dRecurrent[n, next] · Uᵀ (each sum from dHidden, the terms fused in order; none for
     // the last step taken), then the cell's gradient, which overwrites dHidden with the direct part dh · u.
     private static void GruStepBackRun(float* gates, float* output, float* dOutput, float* weightsT, float* dHidden, float* dGates, float* dRecurrent, int step,
-        int next, int previous, int steps, int batch, int h)
+        int next, int previous, int steps, int batch, int h, IElementType? wType = null)
     {
         if (next >= 0)
         {
-            Product(dRecurrent + (long)next * 3 * h, weightsT, null, dHidden, 1, batch, h, 3 * h, false, false, 1f, (long)steps * 3 * h);
+            Product(dRecurrent + (long)next * 3 * h, weightsT, null, dHidden, 1, batch, h, 3 * h, false, false, 1f, (long)steps * 3 * h, bType: wType);
         }
 
         GruBackward(gates, output, dOutput, dHidden, dGates, dRecurrent, null, step, previous, steps, batch, h);

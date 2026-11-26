@@ -958,14 +958,20 @@ internal sealed unsafe partial class CpuBackend
 
     public override void SgdStepKernel(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
-        // The parameters and the momentum are written: float32's own; a typed gradient read through its type a chunk at a time.
-        fixed (float* pp = V(p), wg = D(g), pv = v is null ? null : V(v))
+        // A typed gradient read through its type a chunk at a time; typed parameters and momentum read and written back
+        // through their types a chunk at a time (TypedInOut).
+        fixed (float* wp = D(p), wg = D(g), wv = v is null ? null : D(v))
         {
+            TypedInOut tp = new(p, wp, 0, ChunkValues, "SgdStep"), tv = v is null ? default : new(v, wv, 1, ChunkValues, "SgdStep");
             var tg = new TypedInput(g, wg, 0, ChunkValues, "SgdStep");
-            for (long i = 0, step = Step(n, tg.Typed); i < n; i += step)
+            long step = tp.Typed || tv.Typed || tg.Typed ? Math.Min(tp.Piece(ChunkValues), tv.Piece(ChunkValues)) : Math.Max(1, n);
+            for (long i = 0; i < n; i += step)
             {
                 long e = Math.Min(n, i + step);
+                float* pp = tp.Range(i, e - i), pv = v is null ? null : tv.Range(i, e - i);
                 Elements("SgdStep", new SgdMap(pp, tg.Range(i, e - i), pv, lr, momentum, n), e, 2, i);
+                tp.Store(i, e - i);
+                tv.Store(i, e - i);
             }
         }
     }
@@ -996,14 +1002,20 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
-        // The parameters and the moments are written: float32's own; a typed gradient read through its type a chunk at a time.
-        fixed (float* pp = V(p), wg = D(g), pm = V(m), pv = V(v))
+        // A typed gradient read through its type a chunk at a time; typed parameters and moments read and written back
+        // through their types a chunk at a time (TypedInOut).
+        fixed (float* wp = D(p), wg = D(g), wm = D(m), wv = D(v))
         {
+            TypedInOut tp = new(p, wp, 0, ChunkValues, "AdamStep"), tm = new(m, wm, 1, ChunkValues, "AdamStep"), tv = new(v, wv, 2, ChunkValues, "AdamStep");
             var tg = new TypedInput(g, wg, 0, ChunkValues, "AdamStep");
-            for (long i = 0, step = Step(n, tg.Typed); i < n; i += step)
+            long step = tp.Typed || tm.Typed || tv.Typed || tg.Typed ? Math.Min(tp.Piece(ChunkValues), Math.Min(tm.Piece(ChunkValues), tv.Piece(ChunkValues))) : Math.Max(1, n);
+            for (long i = 0; i < n; i += step)
             {
                 long e = Math.Min(n, i + step);
-                Elements("AdamStep", new AdamMap(pp, tg.Range(i, e - i), pm, pv, lr, beta1, beta2, eps, n), e, 8, i);
+                Elements("AdamStep", new AdamMap(tp.Range(i, e - i), tg.Range(i, e - i), tm.Range(i, e - i), tv.Range(i, e - i), lr, beta1, beta2, eps, n), e, 8, i);
+                tp.Store(i, e - i);
+                tm.Store(i, e - i);
+                tv.Store(i, e - i);
             }
         }
     }

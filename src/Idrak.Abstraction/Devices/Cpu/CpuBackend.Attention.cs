@@ -114,8 +114,10 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
 
     // `at`: views' planes read where they lie (q, keys and values each from its element offset, steps by HeadSteps), or
     // null for packed operands.
+    // `views`: operands of any strides, each row gathered from where its values lie (RowsIn's view mode), the steps packed.
     private static void Causal(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, AttentionVariant variant, string operation, (long Q, long K, long V, HeadSteps Steps)? at = null)
+        int steps, int capacity, int dim, float scale, AttentionVariant variant, string operation, (long Q, long K, long V, HeadSteps Steps)? at = null,
+        (TensorLayout? Q, TensorLayout? K, TensorLayout? V)? views = null)
     {
         int rows = heads * rowsPerHead;
         if (rows <= 0 || dim <= 0)
@@ -127,15 +129,17 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
         {
             long start = IndicesOf(position, pp)[0];
             var (oq, ok, ov, layout) = at ?? (0, 0, 0, default);
-            var kernel = new CausalRows(Read(q, pq, oq, 0, operation), Read(keys, pk, ok, 1, operation), Read(values, pv, ov, 2, operation), py, pl, (int)start,
-                rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1, layout);
+            var (vq, vk, vv) = views ?? (null, null, null);
+            var kernel = new CausalRows(Read(q, pq, oq, 0, operation, vq), Read(keys, pk, ok, 1, operation, vk), Read(values, pv, ov, 2, operation, vv), py, pl,
+                (int)start, rowsPerHead, Math.Max(1, steps), capacity, dim, scale, variant, rows, default, false, 1, layout);
             Rows(operation, kernel, rows, dim * Math.Min(capacity, (int)start + Math.Max(1, steps)), 2);
         }
     }
 
     // An attention input's rows from element `offset` (a view's plane), read where they lie or through the input's type
     // into the thread's buffer of `slot` (a typed q, a typed cache).
-    private static RowsIn Read(Storage s, float* words, long offset, int slot, string operation) => new(new TypedRanges(s, slot, operation), words, offset);
+    private static RowsIn Read(Storage s, float* words, long offset, int slot, string operation, TensorLayout? view = null) =>
+        new(new TypedRanges(s, slot, operation), words, offset, view is { IsContiguousFromStart: false } ? view : null);
 
     // Where a head's rows lie: q's row i of head h at h · QHead + i · QRow, its keys' at h · KHead + c · KRow, its values'
     // at h · VHead + c · VRow (a view's planes read where they are); all 0: packed ([heads, rows, dim] each).
@@ -251,7 +255,13 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     }
 
     public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
+        TiledBackward(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant, null, null, null);
+
+    // The tiled gradients; q, keys and values views of any strides read in place (RowsIn's view mode) where given.
+    private static void TiledBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys,
+        Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant, TensorLayout? qView, TensorLayout? keysView,
+        TensorLayout? valuesView)
     {
         if (heads <= 0 || rowsPerHead <= 0 || dim <= 0)
         {
@@ -260,8 +270,8 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
 
         fixed (float* pq = D(q), pk = D(keys), pv = D(values), po = D(output), pl = V(logSumExp), pdo = D(dOutput), pdq = V(dq), pdk = V(dkeys), pdv = V(dvalues))
         {
-            var kernel = new BackwardHeads(BackwardReads(q, pq, keys, pk, values, pv, output, po, dOutput, pdo, "AttentionTiledBackward"), pl, pdq, pdk, pdv, default,
-                default, heads, heads, 1, rowsPerHead, capacity, Math.Max(1, steps), dim, scale, variant, mode: 0);
+            var kernel = new BackwardHeads(BackwardReads(q, pq, keys, pk, values, pv, output, po, dOutput, pdo, "AttentionTiledBackward", qView, keysView, valuesView), pl,
+                pdq, pdk, pdv, default, default, heads, heads, 1, rowsPerHead, capacity, Math.Max(1, steps), dim, scale, variant, mode: 0);
             Rows("AttentionTiledBackward", kernel, heads, rowsPerHead * dim * Math.Max(1, steps), 4);
         }
     }
@@ -273,8 +283,8 @@ internal sealed unsafe partial class CpuBackend : ISegmentedAttentionBackend, IR
     }
 
     private static AttentionReads BackwardReads(Storage q, float* pq, Storage keys, float* pk, Storage values, float* pv, Storage output, float* po, Storage dOutput,
-        float* pdo, string operation) =>
-        new(Read(q, pq, 0, 0, operation), Read(keys, pk, 0, 1, operation), Read(values, pv, 0, 2, operation), Read(output, po, 0, 3, operation),
+        float* pdo, string operation, TensorLayout? qView = null, TensorLayout? keysView = null, TensorLayout? valuesView = null) =>
+        new(Read(q, pq, 0, 0, operation, qView), Read(keys, pk, 0, 1, operation, keysView), Read(values, pv, 0, 2, operation, valuesView), Read(output, po, 0, 3, operation),
             Read(dOutput, pdo, 0, 4, operation));
 
     // A key/value head's gradients: its query heads' rows in order (spans: ranges from the tables; else causal from 0 with
