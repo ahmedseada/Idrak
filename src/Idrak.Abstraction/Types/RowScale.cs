@@ -8,7 +8,9 @@ namespace Idrak.Abstraction.Types;
 /// <see cref="IElementType.ForRow"/> give: they hold no fraction): one block of the row's values, its scale first, then
 /// each value's code as the element type stores it (the block form the described lanes read, ggml's Q8_0 with a block a
 /// row); a value is its code's number times its row's scale. Read and written by the interface's defaults from that
-/// description alone, with no tensor of scales beside it.
+/// description alone, with no tensor of scales beside it. Each is made where a row is asked for and kept by the tensor it
+/// describes; two of one element type and length are equal by their descriptions' value (<see cref="TypeDescription"/>),
+/// which is what a device's plans and measured lanes are kept by.
 /// </summary>
 public sealed class RowScale : IElementType
 {
@@ -16,6 +18,7 @@ public sealed class RowScale : IElementType
 
     internal RowScale(IElementType element, int length)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
         var e = element.Description;
         if (e is not { Values: 1, Group: 1, Scales: null or [], Mins: null or [], Sums: null or [], Planes: [{ Offset: 0, Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] }
             || plane.Bits != 8 * e.Bytes)
@@ -47,51 +50,4 @@ public sealed class RowScale : IElementType
 
     /// <inheritdoc />
     public override string ToString() => Name;
-}
-
-/// <summary>
-/// The row types (<see cref="RowScale"/>) one element type gives: each row length's made once and given again, so a row
-/// type, and its description, is one object (a device's plans and its measured lanes, kept a description, made once).
-/// </summary>
-/// <param name="element">The element type whose rows these are.</param>
-public sealed class RowScales(IElementType element)
-{
-    private readonly Lock _gate = new();
-    private RowScale[] _made = [];
-
-    /// <summary>The row of <paramref name="length"/> values.</summary>
-    /// <param name="length">Values a row holds.</param>
-    public IElementType Of(int length)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
-        if (Find(Volatile.Read(ref _made), length) is { } made)
-        {
-            return made;
-        }
-
-        lock (_gate)
-        {
-            if (Find(_made, length) is { } again)
-            {
-                return again;
-            }
-
-            var row = new RowScale(element, length);
-            Volatile.Write(ref _made, [.. _made, row]);
-            return row;
-        }
-    }
-
-    private static RowScale? Find(RowScale[] made, int length)
-    {
-        foreach (var row in made)
-        {
-            if (row.Length == length)
-            {
-                return row;
-            }
-        }
-
-        return null;
-    }
 }

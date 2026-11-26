@@ -88,6 +88,72 @@ public sealed record CodePlane(int Offset, int Bits, int Group, int Stride = 0, 
         int per = Group * Bits / 8, w = value % Group;
         return (Offset + value / Group * (Stride > 0 ? Stride : per) + w % per, Bits * (w / per));
     }
+
+    /// <summary>Whether <paramref name="other"/> places its fields alike: every field equal, listed places one by one (a plane is its value).</summary>
+    public bool Equals(CodePlane? other) => ReferenceEquals(this, other) || other is not null && Offset == other.Offset && Bits == other.Bits
+        && Group == other.Group && Stride == other.Stride && Stream == other.Stream && Radix == other.Radix && DescribedLists.Same(Places, other.Places);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(Offset, Bits, Group, Stride, Stream, Radix, Places?.Count ?? -1);
+}
+
+// The value equality of the descriptions' lists (a description is its value, whatever objects hold it): items compared
+// one by one; a list of none (Scales, Mins, Sums) null and empty alike, where null says "none".
+internal static class DescribedLists
+{
+    public static bool Same<T>(IReadOnlyList<T>? a, IReadOnlyList<T>? b, bool noneIsEmpty = false)
+    {
+        if (ReferenceEquals(a, b))
+        {
+            return true;
+        }
+
+        if (!noneIsEmpty && (a is null || b is null))
+        {
+            return false;
+        }
+
+        int count = a?.Count ?? 0;
+        if (count != (b?.Count ?? 0))
+        {
+            return false;
+        }
+
+        var items = EqualityComparer<T>.Default;
+        for (int i = 0; i < count; i++)
+        {
+            if (!items.Equals(a![i], b![i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // A scale's pieces: each scale's list of pieces, one by one.
+    public static bool SamePieces(IReadOnlyList<IReadOnlyList<ScalePiece>>? a, IReadOnlyList<IReadOnlyList<ScalePiece>>? b)
+    {
+        if (ReferenceEquals(a, b))
+        {
+            return true;
+        }
+
+        if (a is null || b is null || a.Count != b.Count)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (!Same(a[i], b[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 /// <summary>
@@ -239,6 +305,14 @@ public sealed record NumberType(int Bits, NumberKind Kind, bool Signed, int Expo
 
         return negative ? -value : value;
     }
+
+    /// <summary>Whether <paramref name="other"/> reads its bits as the same numbers: every field equal, a table's entries one by one.</summary>
+    public bool Equals(NumberType? other) => ReferenceEquals(this, other) || other is not null && Bits == other.Bits && Kind == other.Kind
+        && Signed == other.Signed && Exponent == other.Exponent && Mantissa == other.Mantissa && ExponentBias == other.ExponentBias
+        && Subnormals == other.Subnormals && Specials == other.Specials && Width == other.Width && DescribedLists.Same(Table, other.Table);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(Bits, Kind, Signed, Exponent, Mantissa, ExponentBias, HashCode.Combine(Subnormals, Specials, Width), Table?.Count ?? -1);
 }
 
 /// <summary>
@@ -283,6 +357,13 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
     /// values it covers (a codebook's: its entry's value of that place; a number's: the same for each), its bias added.
     /// </summary>
     public double Value(ReadOnlySpan<byte> block, int index, int within) => Type.Value(Bits(block, index), within % Type.Width) + Bias;
+
+    /// <summary>Whether <paramref name="other"/> is the same scale: its number type, place, bias and pieces equal.</summary>
+    public bool Equals(BlockScale? other) => ReferenceEquals(this, other) || other is not null && Values == other.Values && Offset == other.Offset
+        && Bias.Equals(other.Bias) && Type == other.Type && DescribedLists.SamePieces(Pieces, other.Pieces);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(Type, Values, Offset, Bias, Pieces?.Count ?? -1);
 }
 
 /// <summary>
@@ -394,6 +475,22 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     /// <summary>Whether a value's code or factors come from a codebook (a code or a scale of more than one value an entry).</summary>
     public bool HasCodebook => Code.Width > 1 || (Scales ?? []).Concat(Mins ?? []).Any(s => s.Type.Width > 1);
 
+    /// <summary>
+    /// Whether <paramref name="other"/> describes the same bits: every field equal and every list's items one by one (no
+    /// scales, minimums or sums null and empty alike). A description is its value: two made apart (int8's rows of one
+    /// length asked twice, <see cref="Types.RowScale"/>) are equal, so what a device keeps by a description (its plans, its
+    /// measured lanes) is kept once a value, whatever object holds it.
+    /// </summary>
+    public bool Equals(TypeDescription? other) => ReferenceEquals(this, other) || other is not null
+        && Values == other.Values && Bytes == other.Bytes && Group == other.Group && GroupBytes == other.GroupBytes && MinsAdded == other.MinsAdded
+        && CodeOffset.Equals(other.CodeOffset) && Code == other.Code && DescribedLists.Same(Planes, other.Planes)
+        && DescribedLists.Same(Scales, other.Scales, noneIsEmpty: true) && DescribedLists.Same(Mins, other.Mins, noneIsEmpty: true)
+        && DescribedLists.Same(Sums, other.Sums, noneIsEmpty: true);
+
+    /// <summary>From the fields and the lists' lengths alone (no list walked): cheap for a key looked up on every product.</summary>
+    public override int GetHashCode() => HashCode.Combine(Values, Bytes, Group, GroupBytes, CodeOffset, Code,
+        HashCode.Combine(MinsAdded, Planes.Count, Scales?.Count ?? 0, Mins?.Count ?? 0, Sums?.Count ?? 0));
+
     /// <summary>Bits [<paramref name="bit"/>, + <paramref name="bits"/>) of <paramref name="bytes"/>, little-endian (at most 64).</summary>
     public static ulong Field(ReadOnlySpan<byte> bytes, long bit, int bits)
     {
@@ -496,7 +593,8 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 /// </summary>
 internal sealed class DescribedEncoder
 {
-    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TypeDescription, object> Made = new();
+    // Kept by the description's value (two descriptions made apart and equal share one writer, or one reason).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, object> Made = new();
 
     // A unit's candidate scales put its value of largest magnitude at the codes' extreme moved by these half steps of the
     // extreme's step (outward positive; past the extreme clips the largest values, which the error may favour); with a
@@ -777,10 +875,10 @@ internal sealed class DescribedEncoder
     }
 
     /// <summary>The writer of <paramref name="d"/>, or null where its description is one it does not write (said by <see cref="Why"/>).</summary>
-    public static DescribedEncoder? Of(TypeDescription? d) => d is null ? null : Made.GetValue(d, static x => Make(x)) as DescribedEncoder;
+    public static DescribedEncoder? Of(TypeDescription? d) => d is null ? null : Made.GetOrAdd(d, static x => Make(x)) as DescribedEncoder;
 
     /// <summary>Why <paramref name="d"/> has no writer, or null where it has one.</summary>
-    public static string? Why(TypeDescription d) => Made.GetValue(d, static x => Make(x)) as string;
+    public static string? Why(TypeDescription d) => Made.GetOrAdd(d, static x => Make(x)) as string;
 
     private static object Make(TypeDescription d)
     {

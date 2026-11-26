@@ -407,8 +407,9 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             return null;                                                    // read as float32 values (an adapter merges into those)
         }
 
-        // The type it is kept as: the one asked, as the type gives itself for rows of this weight's (ForRow: int8's carry a
-        // scale a row), where its rows are whole groups of that type's blocks; else its own.
+        // The type it is kept as: the one asked, as the type gives itself for rows of this weight's (ForRow, asked once here
+        // for this weight: int8's carry a scale a row), where its rows are whole groups of that type's blocks; else its own.
+        // The weight's tensor carries the type it was given.
         var type = reader.TypeOf(storedName);
         int columns = stored[^1];
         long values = stored.Aggregate(1L, (a, b) => a * b);
@@ -425,9 +426,9 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
 
         long start = Stopwatch.GetTimestamp();
         byte[] bytes;
-        if (target == type)
+        if (target.Description == type.Description)
         {
-            bytes = reader.ReadStored(storedName);
+            bytes = reader.ReadStored(storedName);                          // the same bits, by the descriptions' value: as stored
         }
         else
         {

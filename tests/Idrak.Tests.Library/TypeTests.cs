@@ -17,13 +17,13 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] TypeGroup =
     [
-        ("types: the built-in list holds each type once, each valid and written, its native kind from its description", TypesBuiltInList),
+        ("types: the built-in list holds each type once, each valid and written, its native kind from its description; every description equal by value to a copy of itself and to no other type's", TypesBuiltInList),
         ("types: every built-in and alien type read through the default matches its description's own decode, bit for bit", TypesReadAsDescribed),
         ("types: the arithmetic rounding of wide codes is the table's rounding on every narrow float and integer", TypesWideRounding),
         ("types: the encoder writes every alien type: finite, every code reachable, its error against the least-squares bound", TypesEncoderWrites),
         ("types: wide scale levels' numbers ordered, stored and rounded by their own arithmetic", TypesWideLevels),
         ("types: Q8_1's and Q8_K's sums written from the values stored and read back", TypesSums),
-        ("types: int8 and int16 rows carry their own float32 scale, read, written and multiplied", TypesRowScale),
+        ("types: int8 and int16 rows carry their own float32 scale, equal by description a length, read, written and multiplied", TypesRowScale),
         ("types: 32- and 64-bit machine formats written from float64 and read back without narrowing", TypesNoNarrowing),
         ("types: a type defined outside the library is read, written and multiplied through the interface alone", TypesOutside),
         ("types: a typed tensor holds its type's bytes and reads back through its type", TypesTypedTensors),
@@ -117,7 +117,30 @@ internal abstract partial class Tests
 
         // A description alike to a native one is that native kind, whatever the type says of itself.
         Check(((IElementType)new TestType("anything", BF16.Type.Description with { })).Native == NativeKind.BFloat16, "a native kind from the description alone");
-        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written");
+
+        // A description is its value: each equals a copy of every list it holds (its hash too), and no two types are equal.
+        var all = types.Concat(AlienTypes()).ToList();
+        var unlike = all.Where(t => t.Description != Copied(t.Description) || t.Description.GetHashCode() != Copied(t.Description).GetHashCode()).ToList();
+        Check(unlike.Count == 0, $"not equal to a copy of itself: {string.Join(", ", unlike)}");
+        var alike = all.SelectMany((t, i) => all.Skip(i + 1).Where(o => o.Description == t.Description).Select(o => $"{t} and {o}")).ToList();
+        Check(alike.Count == 0, $"described alike: {string.Join(", ", alike)}");
+        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written; {all.Count} descriptions equal to their copies, no two alike");
+    }
+
+    // A description with every list (and every number type's table) copied: equal to the original by value alone.
+    private static TypeDescription Copied(TypeDescription d)
+    {
+        static NumberType Number(NumberType n) => n with { Table = n.Table is null ? null : [.. n.Table] };
+        static BlockScale[]? Scales(IReadOnlyList<BlockScale>? scales) => scales is null ? null
+            : [.. scales.Select(s => s with { Type = Number(s.Type), Pieces = s.Pieces is null ? null : [.. s.Pieces.Select(p => (IReadOnlyList<ScalePiece>)[.. p])] })];
+        return d with
+        {
+            Code = Number(d.Code),
+            Planes = [.. d.Planes.Select(p => p with { Places = p.Places is null ? null : [.. p.Places] })],
+            Scales = Scales(d.Scales),
+            Mins = Scales(d.Mins),
+            Sums = d.Sums is null ? null : [.. d.Sums.Select(s => s with { Type = Number(s.Type) })],
+        };
     }
 
     private static void TypesReadAsDescribed(Device device)
@@ -526,8 +549,8 @@ internal abstract partial class Tests
         }
     }
 
-    // int8 and int16 rows: each row a block of its float32 scale and its codes (RowScale, ForRow), one type a length, read,
-    // written and multiplied by the CPU through the description alone.
+    // int8 and int16 rows: each row a block of its float32 scale and its codes (RowScale, ForRow), equal by description a
+    // length (an object each ask), read, written and multiplied by the CPU through the description alone.
     private static void TypesRowScale(Device device)
     {
         CpuOnly(device);
@@ -538,7 +561,10 @@ internal abstract partial class Tests
         {
             int m = 3, n = 5, bytes = element.Description.Bytes, rowBytes = k * bytes + 4;
             var row = element.ForRow(k);
-            Check(row == element.ForRow(k) && row != element.ForRow(k + 32) && row.ForRow(k) == row && row.ForRow(k + 32) == element.ForRow(k + 32), $"{element}: one row type a length");
+            var again = element.ForRow(k);
+            Check(row.Description == again.Description && row.Description.GetHashCode() == again.Description.GetHashCode() && row.Description != element.ForRow(k + 32).Description
+                  && row.ForRow(k) == row && row.ForRow(k + 32).Description == element.ForRow(k + 32).Description && row.Description == (row.Description with { Planes = [.. row.Description.Planes] }),
+                $"{element}: rows of one length describe themselves alike, by value (whatever object each is), another length not");
             Check(row.Description.Valid && row.Native == NativeKind.None && row.Unwritable is null && row.ByteCount((long)n * k) == n * rowBytes,
                 $"{row}: valid, read through its description, written, {row.ByteCount((long)n * k)} bytes for {n} rows");
             var w = new float[n * k];
@@ -574,7 +600,7 @@ internal abstract partial class Tests
             // after (the scale covers the row, so it factors out of the row's sum).
             Check(CpuBackend.DescribedRoute(row.Description, k) is not null, $"{row}: the CPU's described lane reads it");
             var xs = Enumerable.Range(0, m * k).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
-            using var weight = Tensor.Stored(row, stored, [n, k], device);
+            using var weight = Tensor.Stored(again, stored, [n, k], device);                 // another object of the same description
             using var x = Tensor.From(xs, [m, k], device);
             using var y = Tensor.Zeros([m, n], device);
             device.Backend.StoredMatMul(x.Storage, weight.Storage, y.Storage, m, n, k);
@@ -867,9 +893,9 @@ internal abstract partial class Tests
             Check(int8.Architecture.Names.SequenceEqual(["Qwen3ForCausalLM"]) && Idrak.Text.Plugins.BuiltInFamilies.All.Families.Contains(int8.Architecture), "the family found by the checkpoint's own name");
             var rowLinears = Linears(int8.Network).ToList();
             var rowTable = rowLinears.Single(l => l.TiedTo is not null).TiedTo!.Weight;
-            Check(rowLinears.Where(l => l.TiedTo is null).All(l => l.Stored is { } s && s.Type == I8.Type.ForRow(s.Shape[1]) && s.Storage.ElementCount == s.Size
+            Check(rowLinears.Where(l => l.TiedTo is null).All(l => l.Stored is { } s && s.Type.Description == I8.Type.ForRow(s.Shape[1]).Description && s.Storage.ElementCount == s.Size
                       && s.Type.ByteCount(s.Size) == (long)s.Shape[0] * (s.Shape[1] + 4))
-                  && rowTable.Type == I8.Type.ForRow(spec.Dim),
+                  && rowTable.Type.Description == I8.Type.ForRow(spec.Dim).Description,
                 $"written as int8 rows, a float32 scale a row: {string.Join(", ", rowLinears.Select(l => l.Stored?.Type.Name ?? l.TiedTo?.Weight.Type.Name))}");
             var generated = new Idrak.Generation.TextGenerator(int8.Network, int8.Tokenizer!, 64).Generate("hi", new Idrak.Abstraction.Generation.GenerationOptions { TopK = 1, NumPredict = 4, Seed = 1 });
             Check(generated.Text is not null, "the int8 model generates");

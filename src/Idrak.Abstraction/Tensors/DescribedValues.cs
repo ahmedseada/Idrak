@@ -3,7 +3,6 @@
 
 using System.Buffers;
 using System.Buffers.Binary;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction;
@@ -17,7 +16,8 @@ namespace Idrak.Abstraction;
 /// </summary>
 internal sealed class DescribedReader
 {
-    private static readonly ConditionalWeakTable<TypeDescription, DescribedReader> Made = new();
+    // Kept by the description's value (two descriptions made apart and equal share one reader).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, DescribedReader> Made = new();
 
     private readonly TypeDescription d;
     private readonly int n, size, planes, width;
@@ -91,11 +91,11 @@ internal sealed class DescribedReader
         twoBytes = alone && planeBits[0] == 16 && size == 2;
     }
 
-    /// <summary>The reader of <paramref name="d"/>, made once.</summary>
+    /// <summary>The reader of <paramref name="d"/>, made once a description's value.</summary>
     public static DescribedReader Of(TypeDescription d)
     {
         ArgumentNullException.ThrowIfNull(d);
-        return Made.GetValue(d, static x => x.Valid ? new DescribedReader(x) : throw new ArgumentException("The description does not hold together; its values are not read.", nameof(d)));
+        return Made.TryGetValue(d, out var made) ? made : Made.GetOrAdd(d, static x => x.Valid ? new DescribedReader(x) : throw new ArgumentException("The description does not hold together; its values are not read.", nameof(d)));
     }
 
     /// <summary>The first <c>values.Length</c> values of <paramref name="stored"/> as float32 (each value's float64 rounded once).</summary>

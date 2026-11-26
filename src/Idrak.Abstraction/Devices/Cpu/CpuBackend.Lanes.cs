@@ -1860,7 +1860,7 @@ internal sealed partial class CpuBackend
     }
 
     // A description's fingerprint: SHA-256 of its fields as text (each list's items, never a type's name), 16 hex digits.
-    private static string DescriptionFingerprint(TypeDescription d) => s_fingerprints.GetValue(d, static x =>
+    private static string DescriptionFingerprint(TypeDescription d) => s_fingerprints.GetOrAdd(d, static x =>
     {
         var text = new System.Text.StringBuilder();
         static void Number(System.Text.StringBuilder t, NumberType n)
@@ -1915,7 +1915,8 @@ internal sealed partial class CpuBackend
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString())))[..16];
     });
 
-    private static readonly ConditionalWeakTable<TypeDescription, string> s_fingerprints = new();
+    // Kept by the description's value (equal descriptions made apart, as int8's rows of one length, share one).
+    private static readonly ConcurrentDictionary<TypeDescription, string> s_fingerprints = new();
 
     // A weight's candidates as a choice of lanes (Chosen): the described lane by the portable instructions and by each
     // instruction set the CPU has that its plan takes, the 128-bit twins among them for 4 rows of x or more
@@ -2498,7 +2499,8 @@ internal sealed partial class CpuBackend
     /// </summary>
     private sealed unsafe class DescribedPlan
     {
-        private static readonly ConditionalWeakTable<TypeDescription, object> Plans = new();
+        // Kept by the description's value (equal descriptions made apart, as int8's rows of one length, share one plan).
+        private static readonly ConcurrentDictionary<TypeDescription, DescribedPlan?> Plans = new();
 
         // The pinned arrays the kernels read through pointers, kept alive with the plan.
         private readonly List<Array> held = [];
@@ -2757,7 +2759,7 @@ internal sealed partial class CpuBackend
         private int signMask;
 
         /// <summary>The plan of <paramref name="d"/>, or null where the lane does not read it.</summary>
-        public static DescribedPlan? Of(TypeDescription d) => Plans.GetValue(d, static x => (object?)Make(x) ?? x) as DescribedPlan;
+        public static DescribedPlan? Of(TypeDescription d) => Plans.TryGetValue(d, out var plan) ? plan : Plans.GetOrAdd(d, static x => Make(x));
 
         /// <summary>Groups a row of <paramref name="k"/> values takes (the last may be short).</summary>
         public int Groups(int k) => (k + GroupValues - 1) / GroupValues;
