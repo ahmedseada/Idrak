@@ -468,9 +468,9 @@ internal sealed class PdfImageInfo
 /// 1 to 16 bits (rows padded to whole bytes) mapped through /Decode, grey and RGB (and the calibrated and ICC-based
 /// spaces by their component count) into 8-bit planes, 16-bit grey and RGB into values; CMYK to RGB as the library's JPEG
 /// codec turns ink into light ((255 - K) - X (255 - K) / 255); indexed colours through their table; Lab through XYZ (its
-/// white point scaled to D65) into sRGB; an image mask as grey (0 where it paints, 255 where it does not). Other encodings
-/// (JPEG, JPEG 2000, CCITT fax, JBIG2) go to the image codec registered by their name, whose decode is theirs. Safe from
-/// several threads.
+/// white point scaled to D65) into sRGB; an image mask as grey (0 where it paints, 255 where it does not). A JPEG
+/// (<c>DCTDecode</c>) is decoded by the library's JPEG codec, reached directly, whose decode is its own; JPEG 2000, CCITT
+/// fax and JBIG2 have no decoder in the library (their bytes are given as stored). Safe from several threads.
 /// </summary>
 internal sealed class PdfImage
 {
@@ -768,15 +768,20 @@ internal sealed class PdfImage
         return palette;
     }
 
-    // The image codecs were registered (ImageCodecs) and looked up by name: not on the new design yet.
-    private IImageCodec CodecNamed(string? encoding) =>
-        throw new NotSupportedException($"{_where} is {encoding}: an image codec by name is not on the new design yet (DocumentImage.Bytes gives its data as stored).");
+    // A DCTDecode image is JPEG by PDF's own definition (ISO 32000-2, 7.4.8): the library's one JPEG decoder (Idrak.Imaging's
+    // JpegCodec) decodes it, reached directly. The library has no decoder for JPXDecode, CCITTFaxDecode or JBIG2Decode;
+    // they were decoded by a codec registered under the encoding's name (ImageCodecs): not on the new design yet.
+    private static readonly Idrak.Imaging.JpegCodec Jpeg = new();
 
-    // A JPEG, JPEG 2000, CCITT or JBIG2 image through the codec registered by its encoding's name: its own decode,
+    private IImageCodec CodecFor(string encoding) =>
+        encoding == DocumentImage.Jpeg ? Jpeg
+        : throw new NotSupportedException($"{_where} is {encoding}: the library has no decoder for it, and an image codec by name is not on the new design yet (DocumentImage.Bytes gives its data as stored).");
+
+    // A JPEG image through the library's JPEG codec (a JPEG 2000, CCITT or JBIG2 image stops: no decoder): its own decode,
     // bounded by its header's size, which must be the dictionary's.
     private ImageData DecodeEncoded()
     {
-        var codec = CodecNamed(Info.Encoding);
+        var codec = CodecFor(Info.Encoding);
 
         using var data = Data();
         var bytes = data.Span;
@@ -1395,8 +1400,12 @@ internal sealed class PdfPageImages(PdfFile file, int page, PdfIssues issues)
         var info = image.Info;
         if (info.Encoding != DocumentImage.Raw)
         {
-            issues.Add(DocumentIssue.ImageEncoding,
-                $"page {page}: {info.Encoding} images: an image codec by name is not on the new design yet (DocumentImage.Bytes gives their data as stored)");
+            // A JPEG is decoded by the library's JPEG codec (PdfImage); the other encodings have no decoder.
+            if (info.Encoding != DocumentImage.Jpeg)
+            {
+                issues.Add(DocumentIssue.ImageEncoding,
+                    $"page {page}: {info.Encoding} images: the library has no decoder for them, and an image codec by name is not on the new design yet (DocumentImage.Bytes gives their data as stored)");
+            }
         }
         else if (info.Problem is { } problem)
         {

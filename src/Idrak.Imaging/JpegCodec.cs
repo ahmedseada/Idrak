@@ -32,12 +32,15 @@ namespace Idrak.Imaging;
 /// not done; a complete progressive file does not use it.
 /// </para>
 /// </summary>
-internal sealed class JpegCodec : IImageCodec
+public sealed class JpegCodec : IImageCodec
 {
+    /// <summary>"jpeg".</summary>
     public string Name => "jpeg";
 
+    /// <summary>".jpg", ".jpeg", ".jpe" and ".jfif".</summary>
     public IReadOnlyCollection<string> Extensions { get; } = [".jpg", ".jpeg", ".jpe", ".jfif"];
 
+    /// <inheritdoc/>
     public ImageInfo? ReadInfo(ReadOnlySpan<byte> header)
     {
         if (header.Length < 4 || header[0] != 0xFF || header[1] != 0xD8 || header[2] != 0xFF)
@@ -85,6 +88,7 @@ internal sealed class JpegCodec : IImageCodec
         }
     }
 
+    /// <inheritdoc/>
     public ImageData Decode(ReadOnlySpan<byte> file) => ToImage(JpegDecoder.Decode(file));
 
     // An 8-bit image of the decoded planes (each cut to the image when it holds whole blocks), its values the bytes times

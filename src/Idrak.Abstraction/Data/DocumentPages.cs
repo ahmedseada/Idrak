@@ -486,7 +486,7 @@ public sealed class DocumentImage
     /// <summary>Pixels stored as they are (the format decodes them itself).</summary>
     public const string Raw = "raw";
 
-    /// <summary>JPEG (decoded through <see cref="ImageCodecs"/>' "jpeg").</summary>
+    /// <summary>JPEG (the PDF reader decodes it with the library's JPEG codec).</summary>
     public const string Jpeg = "jpeg";
 
     /// <summary>JPEG 2000.</summary>
@@ -563,9 +563,9 @@ public sealed class DocumentImage
     /// <summary>The stored bytes, read now.</summary>
     public ReadOnlyMemory<byte> Bytes() => _bytes();
 
-    /// <summary>The pixels, as the document's format decodes them (raw pixels, a colour space to convert).</summary>
-    /// <exception cref="NotSupportedException">The format gives no decoder, or the image is in an encoding an image codec
-    /// reads (JPEG, JPEG 2000, CCITT, JBIG2): an image codec picked by the encoding's name is not on the new design yet
+    /// <summary>The pixels, as the document's format decodes them (raw pixels, a colour space to convert, a JPEG).</summary>
+    /// <exception cref="NotSupportedException">The format gives no decoder, or the image is in an encoding the library has
+    /// no decoder for (JPEG 2000, CCITT, JBIG2): an image codec picked by the encoding's name is not on the new design yet
     /// (<see cref="Bytes"/> gives the data as stored).</exception>
     /// <exception cref="InvalidDataException">The stored bytes are damaged.</exception>
     public ImageData Decode() =>
