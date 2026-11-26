@@ -11,7 +11,7 @@ namespace Idrak.Text.Plugins.Gemma;
 /// The Gemma families as <see cref="IPretrainedArchitecture"/>s (under the names of <see cref="GemmaPlugin"/>): Gemma
 /// (<see cref="Gemma"/>, the Llama naming with (1 + w) gains, scaled and tied embeddings, written from a spec too), Gemma 2
 /// and Gemma 3 text (<see cref="Gemma2"/>, <see cref="Gemma3"/>, on the common keys read by
-/// <see cref="PretrainedFamilies.CommonSpec"/>), and the text decoder of Gemma 3 with images (<see cref="Gemma3VisionLanguage()"/>,
+/// <see cref="PretrainedFamilies.CommonSpec(System.Text.Json.Nodes.JsonObject, List{string})"/>), and the text decoder of Gemma 3 with images (<see cref="Gemma3VisionLanguage()"/>,
 /// read from text_config in whichever of its namings the checkpoint uses; its vision part is an <see cref="IVisionFamily"/>
 /// of Idrak.Vision.Plugins). Each call returns a new architecture.
 /// </summary>

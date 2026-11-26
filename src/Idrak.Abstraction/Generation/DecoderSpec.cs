@@ -325,6 +325,11 @@ public sealed record DecoderSpec
             r["rotaryDim"] = rotary;
         }
 
+        if (rope.Scaling is { } s)
+        {
+            r["scaling"] = new JsonObject { ["type"] = s.Name, ["parameters"] = s.Parameters };
+        }
+
         if (rope.Sections is { } sections)
         {
             r["sections"] = new JsonArray([.. sections.Pairs.Select(p => (JsonNode?)p)]);
@@ -333,17 +338,26 @@ public sealed record DecoderSpec
         return r;
     }
 
-    private static RopeSettings RopeFromJson(JsonObject r)
+    // A scaling written by its method's own name, read back by walking the methods' own names (RopeScalings.Read).
+    private static RopeSettings RopeFromJson(JsonObject r, IReadOnlyList<IRopeScalingMethod> scalings)
     {
+        var scaling = r["scaling"] is JsonObject s ? new RopeScaling(RopeScalings.Named((string?)s["type"] ?? "", scalings), s["parameters"] as JsonObject) : null;
+
         return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!)
         {
+            Scaling = scaling,
             Sections = r["sections"] is JsonArray sections ? new RotarySections([.. sections.Select(p => (int)p!)]) : null,
         };
     }
 
-    /// <summary>Reads a spec written by <see cref="ToJson"/>.</summary>
-    public static DecoderSpec FromJson(JsonObject json)
+    /// <summary>Reads a spec written by <see cref="ToJson"/> (a RoPE scaling by the library's methods' own names, <see cref="RopeScalings.All"/>).</summary>
+    public static DecoderSpec FromJson(JsonObject json) => FromJson(json, RopeScalings.All);
+
+    /// <summary>Reads a spec written by <see cref="ToJson"/>, its RoPE scaling by <paramref name="scalings"/>' own names.</summary>
+    public static DecoderSpec FromJson(JsonObject json, IReadOnlyList<IRopeScalingMethod> scalings)
     {
+        ArgumentNullException.ThrowIfNull(json);
+        ArgumentNullException.ThrowIfNull(scalings);
         if (!IsDescription(json))
         {
             throw new InvalidDataException($"Not a decoder description (format '{json["format"]}').");
@@ -358,10 +372,10 @@ public sealed record DecoderSpec
             QkvBias = (bool)json["qkvBias"]!, OutputBias = (bool)json["outputBias"]!, FeedForwardBias = (bool)json["feedForwardBias"]!,
             QkNorm = (bool)json["qkNorm"]!, PostNorms = (bool)json["postNorms"]!, ParallelBlocks = (bool)json["parallelBlocks"]!,
             TieEmbeddings = (bool)json["tieEmbeddings"]!, HeadBias = (bool)json["headBias"]!, EmbeddingScale = (float?)json["embeddingScale"],
-            Rope = json["rope"] is JsonObject r ? RopeFromJson(r) : null, LearnedPositions = (bool?)json["learnedPositions"] ?? false, Dropout = (float?)json["dropout"] ?? 0f,
+            Rope = json["rope"] is JsonObject r ? RopeFromJson(r, scalings) : null, LearnedPositions = (bool?)json["learnedPositions"] ?? false, Dropout = (float?)json["dropout"] ?? 0f,
             SlidingWindow = (int?)json["slidingWindow"],
             SlidingWindowLayers = json["slidingWindowLayers"] is JsonArray layers ? [.. layers.Select(l => (bool)l!)] : null,
-            SlidingWindowRope = json["slidingWindowRope"] is JsonObject local ? RopeFromJson(local) : null,
+            SlidingWindowRope = json["slidingWindowRope"] is JsonObject local ? RopeFromJson(local, scalings) : null,
             AttentionScale = (float?)json["attentionScale"], AttentionSoftcap = (float?)json["attentionSoftcap"], LogitSoftcap = (float?)json["logitSoftcap"],
             Experts = (int?)json["experts"] ?? 0, ExpertsPerToken = (int?)json["expertsPerToken"] ?? 0, ExpertFfDim = (int?)json["expertFfDim"] ?? 0,
             SharedExpertFfDim = (int?)json["sharedExpertFfDim"] ?? 0, NormalizeTopK = (bool?)json["normalizeTopK"] ?? true,

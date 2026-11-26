@@ -33,8 +33,8 @@ public static class LlamaArchitectures
     /// </summary>
     public static GgufChatTemplate ChatTemplateFallback() => new() { Matches = (_, tokens) => tokens.Contains("<|start_header_id|>"), Template = ChatTemplateText };
 
-    /// <summary>LlamaForCausalLM: the common keys and names as they are, written back as config.json with model_type "llama".</summary>
-    public static IPretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama", [LlamaPlugin.LlamaForCausalLM]);
+    /// <summary>LlamaForCausalLM: the common keys and names as they are (Llama 3's RoPE scaling too, <see cref="LlamaRopeScaling.Method"/>), written back as config.json with model_type "llama".</summary>
+    public static IPretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama", [LlamaPlugin.LlamaForCausalLM], LlamaRopeScaling.Methods);
 
     /// <summary>
     /// llama.cpp's "llama": LlamaForCausalLM (Mistral's files too), MixtralForCausalLM when the file has experts (counted

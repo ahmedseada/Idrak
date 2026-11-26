@@ -346,7 +346,7 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public IChatTemplate? ChatTemplate { get; }
 
-    /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec"/>).</summary>
+    /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec(System.Text.Json.Nodes.JsonObject, List{string})"/>).</summary>
     public IReadOnlyList<string> Notes { get; }
 
     /// <summary>The longest sequence the loaded model supports.</summary>

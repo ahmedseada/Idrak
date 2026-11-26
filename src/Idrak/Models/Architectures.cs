@@ -11,37 +11,42 @@ namespace Idrak.Models;
 /// <summary>
 /// The pieces model families are made of, for the families of plug-ins and apps (the library has none;
 /// Idrak.Text.Plugins and Idrak.Vision.Plugins do):
-/// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string})"/> for those sharing
+/// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string}, IReadOnlyList{IRopeScalingMethod})"/> for those sharing
 /// the common configuration keys and checkpoint names, the specs read from the common configuration keys
-/// (<see cref="CommonSpec"/>, <see cref="ExpertSpec"/>), the configuration of a spec (<see cref="CommonConfig"/>) and the
+/// (<see cref="CommonSpec(JsonObject, List{string})"/>, <see cref="ExpertSpec"/>), the configuration of a spec (<see cref="CommonConfig"/>) and the
 /// common checkpoint names (<see cref="CommonTensorName"/>).
 /// </summary>
 public static class PretrainedFamilies
 {
     /// <summary>
-    /// An architecture with the common configuration keys (<see cref="CommonSpec"/>) and weight names
+    /// An architecture with the common configuration keys (<see cref="CommonSpec(JsonObject, List{string})"/>) and weight names
     /// (<see cref="CommonTensorName"/>: model.embed_tokens, model.layers.i.self_attn.q_proj, input_layernorm,
     /// post_attention_layernorm, mlp.gate_proj/up_proj/down_proj, model.norm, lm_head), which many families share.
     /// <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm);
-    /// <paramref name="names"/> are the names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>).
+    /// <paramref name="names"/> are the names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>);
+    /// <paramref name="scalings"/> the RoPE scaling methods a configuration's rope_scaling is read by (the library's
+    /// <see cref="RopeScalings.All"/> when null; a family that scales its own way adds its method).
     /// </summary>
-    public static IPretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, IReadOnlyList<string>? names = null)
+    public static IPretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, IReadOnlyList<string>? names = null,
+        IReadOnlyList<IRopeScalingMethod>? scalings = null)
     {
         ArgumentNullException.ThrowIfNull(adjust);
-        return new CommonDecoder(adjust) { Names = names ?? [] };
+        return new CommonDecoder(adjust, scalings ?? RopeScalings.All) { Names = names ?? [] };
     }
 
     /// <summary>
-    /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string})"/> that can also write a
+    /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string}, IReadOnlyList{IRopeScalingMethod})"/> that can also write a
     /// spec as config.json (<see cref="IConfigWritingArchitecture.Config"/>, through <see cref="CommonConfig"/> with
     /// <paramref name="modelType"/>), so models of the family can be made from a spec; <paramref name="names"/> are the
-    /// names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>).
+    /// names its checkpoints call it by (<see cref="IPretrainedArchitecture.Names"/>), <paramref name="scalings"/> the RoPE scaling
+    /// methods its configurations are read by (<see cref="RopeScalings.All"/> when null).
     /// </summary>
-    public static IConfigWritingArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType, IReadOnlyList<string>? names = null)
+    public static IConfigWritingArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType, IReadOnlyList<string>? names = null,
+        IReadOnlyList<IRopeScalingMethod>? scalings = null)
     {
         ArgumentNullException.ThrowIfNull(adjust);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
-        return new CommonDecoderWithConfig(adjust, modelType) { Names = names ?? [] };
+        return new CommonDecoderWithConfig(adjust, modelType, scalings ?? RopeScalings.All) { Names = names ?? [] };
     }
 
     /// <summary>
@@ -57,26 +62,26 @@ public static class PretrainedFamilies
         return new ReadDecoder(spec, tensorName) { Names = names ?? [] };
     }
 
-    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string})"/>, kept for one release.</summary>
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, IReadOnlyList{string}, IReadOnlyList{IRopeScalingMethod})"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
     public static IPretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => CommonArchitecture(adjust);
 
-    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string})"/>, kept for one release.</summary>
+    /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string, IReadOnlyList{string}, IReadOnlyList{IRopeScalingMethod})"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
     public static IConfigWritingArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType) =>
         CommonArchitecture(adjust, modelType);
 
     // The common keys and names, the spec adjusted by the family.
-    private class CommonDecoder(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) : PretrainedArchitecture
+    private class CommonDecoder(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, IReadOnlyList<IRopeScalingMethod> scalings) : PretrainedArchitecture
     {
-        public override DecoderSpec Spec(JsonObject config, List<string> notes) => adjust(config, CommonSpec(config, notes), notes);
+        public override DecoderSpec Spec(JsonObject config, List<string> notes) => adjust(config, CommonSpec(config, notes, scalings), notes);
 
         public override string? TensorName(string name) => CommonTensorName(name);
     }
 
     // The common architecture that writes a spec back as the common keys, checked by reading them again.
-    private sealed class CommonDecoderWithConfig(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
-        : CommonDecoder(adjust), IConfigWritingArchitecture
+    private sealed class CommonDecoderWithConfig(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType, IReadOnlyList<IRopeScalingMethod> scalings)
+        : CommonDecoder(adjust, scalings), IConfigWritingArchitecture
     {
         public JsonObject Config(DecoderSpec spec) => CheckedConfig(spec, CommonConfig(spec, modelType), Spec, modelType);
     }
@@ -90,7 +95,7 @@ public static class PretrainedFamilies
     }
 
     /// <summary>
-    /// A spec as the common configuration keys (the inverse of <see cref="CommonSpec"/>): hidden_size,
+    /// A spec as the common configuration keys (the inverse of <see cref="CommonSpec(JsonObject, List{string})"/>): hidden_size,
     /// num_hidden_layers, num_attention_heads, num_key_value_heads, head_dim, intermediate_size, vocab_size,
     /// max_position_embeddings, rms_norm_eps, rope_theta (and partial_rotary_factor, rope_scaling), hidden_act,
     /// attention_bias, mlp_bias, tie_word_embeddings and the sliding window (sliding_window, layer_types), with
@@ -129,6 +134,18 @@ public static class PretrainedFamilies
             if (rope.RotaryDim is int rotary)
             {
                 c["partial_rotary_factor"] = (double)rotary / spec.HeadDim;
+            }
+
+            if (rope.Scaling is { } scaling)
+            {
+                var parameters = scaling.Parameters;
+                if ((int?)parameters["max_position_embeddings"] == spec.MaxPositions)
+                {
+                    parameters.Remove("max_position_embeddings");     // the reader puts the context length back
+                }
+
+                parameters["rope_type"] = scaling.Name;                    // the method's own name
+                c["rope_scaling"] = parameters;
             }
         }
 
@@ -186,26 +203,33 @@ public static class PretrainedFamilies
     /// The spec from the configuration keys most families share (hidden_size, num_attention_heads, rope_theta, …). A
     /// configuration with experts is refused: families with experts read it with <see cref="ExpertSpec"/>.
     /// </summary>
-    public static DecoderSpec CommonSpec(JsonObject c, List<string> notes)
+    public static DecoderSpec CommonSpec(JsonObject c, List<string> notes) => CommonSpec(c, notes, RopeScalings.All);
+
+    /// <summary>
+    /// <see cref="CommonSpec(JsonObject, List{string})"/> with the RoPE scaling read by <paramref name="scalings"/>' own names
+    /// (the library's <see cref="RopeScalings.All"/> and a family's own, such as Llama 3's).
+    /// </summary>
+    public static DecoderSpec CommonSpec(JsonObject c, List<string> notes, IReadOnlyList<IRopeScalingMethod> scalings)
     {
+        ArgumentNullException.ThrowIfNull(scalings);
         if (c["num_local_experts"] is not null || (int?)c["num_experts"] is > 0)
         {
             throw new NotSupportedException("This configuration has experts, which this family does not read; mixture-of-experts families "
                 + "(Idrak.Text.Plugins' MixtralForCausalLM, Qwen2MoeForCausalLM, Qwen3MoeForCausalLM, or a family of one's own that reads it with PretrainedFamilies.ExpertSpec) do.");
         }
 
-        return Common(c, notes);
+        return Common(c, notes, scalings);
     }
 
     /// <summary>
-    /// The spec of a mixture-of-experts model: the common keys (<see cref="CommonSpec"/>) and the experts' keys:
+    /// The spec of a mixture-of-experts model: the common keys (<see cref="CommonSpec(JsonObject, List{string})"/>) and the experts' keys:
     /// num_local_experts (Mixtral) or num_experts (Qwen), num_experts_per_tok, moe_intermediate_size (each expert's
     /// hidden size; intermediate_size when absent), shared_expert_intermediate_size (a gated shared expert), norm_topk_prob
     /// (<paramref name="normalizeTopK"/> when absent), and which layers have experts (decoder_sparse_step, mlp_only_layers).
     /// </summary>
-    public static DecoderSpec ExpertSpec(JsonObject c, List<string> notes, bool normalizeTopK)
+    public static DecoderSpec ExpertSpec(JsonObject c, List<string> notes, bool normalizeTopK, IReadOnlyList<IRopeScalingMethod>? scalings = null)
     {
-        var spec = Common(c, notes);
+        var spec = Common(c, notes, scalings);
         int experts = (int?)c["num_local_experts"] ?? (int?)c["num_experts"] ?? throw new InvalidDataException("config.json has no 'num_local_experts' or 'num_experts'.");
         int perToken = (int?)c["num_experts_per_tok"] ?? throw new InvalidDataException("config.json has no 'num_experts_per_tok'.");
         if (experts < 1 || perToken < 1 || perToken > experts)
@@ -234,7 +258,7 @@ public static class PretrainedFamilies
     }
 
     // The common keys, experts or not.
-    private static DecoderSpec Common(JsonObject c, List<string> notes)
+    private static DecoderSpec Common(JsonObject c, List<string> notes, IReadOnlyList<IRopeScalingMethod>? scalings)
     {
         int Int(string key) => (int?)c[key] ?? throw new InvalidDataException($"config.json has no '{key}'.");
 
@@ -243,10 +267,9 @@ public static class PretrainedFamilies
         int maxPositions = (int?)c["max_position_embeddings"] ?? 4096;
         float theta = (float?)c["rope_theta"] ?? 10000f;
         int? rotary = c["partial_rotary_factor"] is { } factor ? (int)(headDim * (float)factor) : null;
-        if (c["rope_scaling"] is JsonObject s && ((string?)s["rope_type"] ?? (string?)s["type"] ?? "default") is var type && type != "default")
-        {
-            throw new NotSupportedException($"The RoPE scaling '{type}', picked by its name, is not on the new design yet; remove rope_scaling to use the model within its original context.");
-        }
+        // The configuration's RoPE scaling by its own name, matched against the methods' own names (the library's, and the
+        // family's own where it hands them over).
+        var scaling = RopeScalings.Read(c["rope_scaling"] as JsonObject, maxPositions, scalings ?? RopeScalings.All);
 
         // Sliding-window attention, as transformers reads it: the window (none when use_sliding_window is false, as Qwen2
         // and Qwen3 have it), in the layers layer_types marks "sliding_attention", else from max_window_layers on (Qwen2,
@@ -287,7 +310,7 @@ public static class PretrainedFamilies
                 "relu" => FeedForwardActivation.Relu,
                 _ => throw new NotSupportedException($"Activation '{activation}' is not supported."),
             },
-            Rope = new RopeSettings(theta, rotary, Interleaved: false),
+            Rope = new RopeSettings(theta, rotary, Interleaved: false) { Scaling = scaling },
             QkvBias = attentionBias, OutputBias = attentionBias, FeedForwardBias = (bool?)c["mlp_bias"] ?? false,
             TieEmbeddings = (bool?)c["tie_word_embeddings"] ?? false,
             SlidingWindow = window, SlidingWindowLayers = windowed,

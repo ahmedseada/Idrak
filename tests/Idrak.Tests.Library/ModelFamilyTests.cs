@@ -19,7 +19,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ModelFamilyGroup =
     [
-        ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas", RopeScalingMethods),
+        ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas; a configuration's rope_scaling read by the methods' own names (Llama's adding llama3), another refused naming theirs; a spec's scaling written and read back by its method's name", RopeScalingMethods),
         ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads", ModelFamilyConfigs),
     ];
 
@@ -52,6 +52,31 @@ internal abstract partial class Tests
 
         var llamaScaled = LlamaRopeScaling.Scale(new RopeSettings((float)theta).Frequencies(dim), 8);
         Check(llamaScaled.Frequencies.SequenceEqual(llama3) && llamaScaled.AttentionFactor == 1 && llamaScaled.FrequenciesAt is null, "llama3 unchanged");
+
+        // A configuration's rope_scaling read by the methods' own names where it comes in: the library's list, and Llama's
+        // adding its own; each method then scales as its function does, the model holding the method itself.
+        var linearRead = RopeScalings.Read(new JsonObject { ["rope_type"] = "linear", ["factor"] = 2 }, 4096, RopeScalings.All);
+        Check(linearRead is { Method: var m } && ReferenceEquals(m, LinearRopeScaling.Method) && linearRead.Name == "linear"
+              && (new RopeSettings((float)theta) { Scaling = linearRead }).Frequencies(dim).SequenceEqual(linear), "linear read by its own name, scaling as before");
+        Check(RopeScalings.Read(new JsonObject { ["type"] = "default" }, 4096, RopeScalings.All) is null && RopeScalings.Read(null, 4096, RopeScalings.All) is null, "default and none: no scaling");
+        var llamaRead = RopeScalings.Read(new JsonObject { ["rope_type"] = "llama3", ["factor"] = 8, ["low_freq_factor"] = 1, ["high_freq_factor"] = 4, ["original_max_position_embeddings"] = 8192 }, 131072, LlamaRopeScaling.Methods);
+        Check(llamaRead is { } l && ReferenceEquals(l.Method, LlamaRopeScaling.Method) && (new RopeSettings((float)theta) { Scaling = l }).Frequencies(dim).SequenceEqual(llama3),
+            "llama3 read by Llama's methods, scaling as before");
+        string refused = "";
+        try
+        {
+            RopeScalings.Read(new JsonObject { ["rope_type"] = "llama3", ["factor"] = 8 }, 4096, RopeScalings.All);
+        }
+        catch (NotSupportedException e)
+        {
+            refused = e.Message;
+        }
+
+        Check(refused.Contains("'llama3'", StringComparison.Ordinal) && refused.Contains("linear, yarn, dynamic", StringComparison.Ordinal), $"a name none of the methods states refused naming theirs: {refused}");
+        var yarnSpec = new DecoderSpec { Vocabulary = 8, Dim = 8, Layers = 1, Heads = 1, KvHeads = 1, HeadDim = 8, FfDim = 8, MaxPositions = 64,
+            Rope = new RopeSettings(10000f) { Scaling = RopeScaling.Yarn(4, 16) } };
+        Check(DecoderSpec.FromJson(yarnSpec.ToJson()).Rope == yarnSpec.Rope && DecoderSpec.FromJson(yarnSpec.ToJson()).Rope!.Scaling!.Method == YarnRopeScaling.Method,
+            "a spec's scaling written by its method's own name and read back by it");
 
         // YaRN, from the formulas of transformers' _compute_yarn_parameters written out independently.
         (double[] Frequencies, double Attention) Yarn(double b, int d, double factor, double original, double? attentionFactor, double? mscale,

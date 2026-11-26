@@ -14,6 +14,29 @@ public static class LlamaRopeScaling
     public const string Name = "llama3";
 
     /// <summary>
+    /// The method itself (<see cref="IRopeScalingMethod"/>, stating its name <see cref="Name"/>): its parameters factor,
+    /// low_freq_factor (1), high_freq_factor (4) and original_max_position_embeddings (8192), read by <see cref="Scale"/>.
+    /// The Llama family hands it over beside the library's methods (<see cref="RopeScalings.All"/>).
+    /// </summary>
+    public static IRopeScalingMethod Method { get; } = new Llama3Method();
+
+    /// <summary>The methods a Llama configuration's rope_scaling is read by: the library's and Llama 3's.</summary>
+    public static IReadOnlyList<IRopeScalingMethod> Methods { get; } = Array.AsReadOnly<IRopeScalingMethod>([.. RopeScalings.All, Method]);
+
+    private sealed class Llama3Method : IRopeScalingMethod
+    {
+        public IReadOnlyList<string> Names { get; } = [Name];
+
+        public RopeScalingResult Scale(RopeScalingInput input)
+        {
+            ArgumentNullException.ThrowIfNull(input);
+            var p = input.Parameters;
+            return LlamaRopeScaling.Scale(input.Frequencies, RopeScaling.Number(p, "factor"), RopeScaling.Number(p, "low_freq_factor", 1), RopeScaling.Number(p, "high_freq_factor", 4),
+                RopeScaling.Number(p, "original_max_position_embeddings", 8192));
+        }
+    }
+
+    /// <summary>
     /// Llama 3's scaling of <paramref name="frequencies"/>, in place: wavelengths longer than original / low stretched by the
     /// factor, shorter than original / high kept, a smooth blend between.
     /// </summary>

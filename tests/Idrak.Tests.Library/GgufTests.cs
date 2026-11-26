@@ -63,8 +63,8 @@ internal abstract partial class Tests
             _ = new TextGenerator(gguf.Network, gguf.Tokenizer, 64).Generate("hello", options);
 
             // The other fixtures, each by its own names: its query and key projections and norm gains as its twin's, its
-            // tokenizer's ids, generating (Gemma 3's fixture is left: its RoPE scaling is still picked by its name).
-            foreach (string name in new[] { "tiny-llama", "tiny-gemma", "tiny-gemma2" })
+            // tokenizer's ids, generating (Gemma 3's RoPE scaling, linear, read by the method's own name).
+            foreach (string name in new[] { "tiny-llama", "tiny-gemma", "tiny-gemma2", "tiny-gemma3" })
             {
                 string other = GgufModel.Prepare(Path.Combine(DataFolder(), "gguf", name + ".gguf"), cache, families);
                 string otherTwin = Path.Combine(DataFolder(), "gguf", name + "-hf");
