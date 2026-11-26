@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Idrak.Audio.Abstractions;
@@ -9,11 +8,11 @@ namespace Idrak.Audio.Abstractions;
 /// <summary>
 /// Turns text of a script into the Latin letters a checkpoint was trained on: MMS-TTS checkpoints that set
 /// <c>is_uroman</c> in tokenizer_config.json read text romanised by uroman, so a synthesizer's tokenizer romanises
-/// such text before tokenizing. Registered in <see cref="TextRomanizers"/>.
+/// such text before tokenizing.
 /// </summary>
 public interface ITextRomanizer
 {
-    /// <summary>The name it is registered under (Idrak.Audio.Plugins' VITS family registers uroman's Arabic as "uroman-arabic").</summary>
+    /// <summary>Its name (Idrak.Audio.Plugins' VITS family's uroman Arabic is "uroman-arabic").</summary>
     string Name { get; }
 
     /// <summary>Whether it romanises <paramref name="rune"/> (a character of its script).</summary>
@@ -24,68 +23,11 @@ public interface ITextRomanizer
 }
 
 /// <summary>
-/// The romanizers, by name (ordinal). None is built in: a romanizer belongs to the family whose checkpoints read its
-/// letters, and that family's plug-in registers it (Idrak.Audio.Plugins' VITS family registers uroman's romanisation of
-/// the Arabic script). <see cref="For"/> picks the one that covers a text's script; register one for another script with
-/// <see cref="Register"/>.
+/// What the romanizers share. None is built in: a romanizer belongs to the family whose checkpoints read its letters, and
+/// comes with that family's plug-in (Idrak.Audio.Plugins' VITS family has uroman's romanisation of the Arabic script).
 /// </summary>
 public static class TextRomanizers
 {
-    private static readonly SlotTable<string, ITextRomanizer> Table = new(nameof(TextRomanizers), comparer: StringComparer.Ordinal, newestFirst: true);
-
-    /// <summary>Registers <paramref name="romanizer"/> under its <see cref="ITextRomanizer.Name"/> (asked before the earlier ones by <see cref="For"/>).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITextRomanizer romanizer)
-    {
-        ArgumentNullException.ThrowIfNull(romanizer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(romanizer.Name);
-        Table.Register(romanizer.Name, romanizer, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's romanizer <paramref name="name"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, the most recently registered first.</summary>
-    public static IReadOnlyList<string> Names => Table.Keys;
-
-    /// <summary>The romanizer <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
-    public static ITextRomanizer Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(TextRomanizers), name, Table.Keys,
-            $"Romanizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextRomanizers.Register.");
-
-    /// <summary>The built-in romanizer <paramref name="name"/>, whatever an app registered over it; null when there is none.</summary>
-    public static ITextRomanizer? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the romanizer <paramref name="name"/>: <see cref="Overrides.Library"/> for the built-in or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// The romanizer for <paramref name="text"/>: the first registered (most recent first) that covers its first
-    /// non-Latin letter; null when none does.
-    /// </summary>
-    public static ITextRomanizer? For(string text)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        foreach (var rune in text.EnumerateRunes())
-        {
-            if (IsNonLatinLetter(rune))
-            {
-                foreach (var romanizer in Table.Values)
-                {
-                    if (romanizer.Covers(rune))
-                    {
-                        return romanizer;
-                    }
-                }
-
-                return null;
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>Whether <paramref name="rune"/> is a letter outside the Latin blocks (past Latin Extended-B): one a romanizer may cover.</summary>
     public static bool IsNonLatinLetter(Rune rune) => Rune.IsLetter(rune) && rune.Value > 0x024F;
 }
@@ -93,12 +35,11 @@ public static class TextRomanizers
 /// <summary>
 /// Turns text into the phonemes a checkpoint was trained on: VITS checkpoints that set <c>phonemize</c> in
 /// tokenizer_config.json (VCTK's, LJSpeech's) read IPA from espeak, as transformers' <c>VitsTokenizer</c> gets it from
-/// the <c>phonemizer</c> package, so a synthesizer's tokenizer phonemizes such text before tokenizing. Registered in
-/// <see cref="TextPhonemizers"/>.
+/// the <c>phonemizer</c> package, so a synthesizer's tokenizer phonemizes such text before tokenizing.
 /// </summary>
 public interface ITextPhonemizer
 {
-    /// <summary>The name it is registered under (Idrak.Audio.Plugins' espeak-ng phonemizer registers "espeak-ng").</summary>
+    /// <summary>Its name (Idrak.Audio.Plugins' espeak-ng phonemizer is "espeak-ng").</summary>
     string Name { get; }
 
     /// <summary>
@@ -110,48 +51,14 @@ public interface ITextPhonemizer
 }
 
 /// <summary>
-/// The phonemizers, by name (ordinal). None is built in: the library starts no outside program (rule 70), so a
-/// phonemizer is a plug-in's (Idrak.Audio.Plugins' "espeak-ng" runs the espeak-ng program the user installs; the VITS
-/// family registers it, as its phonemize checkpoints read espeak's IPA). Register one (a pure .NET G2P, a service) with
-/// <see cref="Register"/>.
+/// What the phonemizers share. None is built in: the library starts no outside program (rule 70), so a phonemizer is a
+/// plug-in's (Idrak.Audio.Plugins' "espeak-ng" runs the espeak-ng program the user installs; the VITS family's phonemize
+/// checkpoints read espeak's IPA).
 /// </summary>
 public static class TextPhonemizers
 {
     /// <summary>The punctuation a phonemizer keeps in place (the phonemizer package's default marks).</summary>
     public const string Marks = ";:,.!?¡¿—…\"«»“”(){}[]";
-
-    private static readonly SlotTable<string, ITextPhonemizer> Table = new(nameof(TextPhonemizers), comparer: StringComparer.Ordinal, newestFirst: true);
-
-    /// <summary>Registers <paramref name="phonemizer"/> under its <see cref="ITextPhonemizer.Name"/> (asked before the earlier ones by <see cref="First"/>).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITextPhonemizer phonemizer)
-    {
-        ArgumentNullException.ThrowIfNull(phonemizer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(phonemizer.Name);
-        Table.Register(phonemizer.Name, phonemizer, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's phonemizer <paramref name="name"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, the most recently registered first.</summary>
-    public static IReadOnlyList<string> Names => Table.Keys;
-
-    /// <summary>The phonemizer <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
-    public static ITextPhonemizer Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(TextPhonemizers), name, Table.Keys,
-            $"Phonemizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextPhonemizers.Register.");
-
-    /// <summary>The most recently registered phonemizer.</summary>
-    /// <exception cref="NotSupportedException">None is registered: the message names the registry and the plug-in package.</exception>
-    public static ITextPhonemizer First() => Table.Keys is { Count: > 0 } names
-        ? Get(names[0])
-        : throw new NotSupportedException("No phonemizer is registered; add one with TextPhonemizers.Register, or reference Idrak.Audio.Plugins and call "
-                                          + "AudioPlugins.RegisterAll() (its espeak-ng phonemizer runs the espeak-ng program).");
-
-    /// <summary>Who registered the phonemizer <paramref name="name"/>: <see cref="Overrides.Library"/> for the built-in or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>
     /// <paramref name="text"/> phonemized a stretch at a time by <paramref name="phonemize"/> between the

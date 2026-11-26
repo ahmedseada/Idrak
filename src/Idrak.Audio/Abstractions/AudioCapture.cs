@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>How a capture is opened (<see cref="IAudioCapture.Open"/>).</summary>
@@ -88,10 +86,10 @@ public interface IAudioCapture
 }
 
 /// <summary>
-/// The audio captures, by name (ignoring case). Built in (Idrak.Audio), each loading the operating system's audio library
-/// when first used: "winmm" (Windows' waveIn), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio). Register another (macOS, a sound server, a
-/// network stream) with <see cref="Register"/>; <see cref="ForThisMachine"/> picks the first that can run, an app's before
-/// the library's.
+/// The audio captures' names (ignoring case). Built in (Idrak.Audio), each loading the operating system's audio library
+/// when first used: "winmm" (Windows' waveIn), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio), each
+/// reached directly (<see cref="Idrak.Audio.WinmmCapture"/>, <see cref="Idrak.Audio.AlsaCapture"/>,
+/// <see cref="Idrak.Audio.AAudioCapture"/>); <see cref="ForThisMachine"/> picks the first that can run.
 /// </summary>
 public static class AudioCaptures
 {
@@ -104,65 +102,30 @@ public static class AudioCaptures
     /// <summary>Android's AAudio (libaaudio.so, Android 8.0, API 26, and later).</summary>
     public const string Aaudio = "aaudio";
 
-    private static readonly SlotTable<string, IAudioCapture> Table = BuiltIn();
-
-    private static SlotTable<string, IAudioCapture> BuiltIn()
-    {
-        var table = new SlotTable<string, IAudioCapture>(nameof(AudioCaptures), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a capture records from its own system's devices, so another cannot stand in for it");
-        table.RegisterDefault(Winmm, new Idrak.Audio.WinmmCapture());
-        table.RegisterDefault(Alsa, new Idrak.Audio.AlsaCapture());
-        table.RegisterDefault(Aaudio, new Idrak.Audio.AAudioCapture());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="capture"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioCapture capture)
-    {
-        ArgumentNullException.ThrowIfNull(capture);
-        ArgumentException.ThrowIfNullOrWhiteSpace(capture.Name);
-        Table.Register(capture.Name, capture, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's capture of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The capture of that name, or null.</summary>
-    public static IAudioCapture? Find(string name) => Table.Find(name);
-
-    /// <summary>The capture of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioCapture Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioCaptures), name, Table.Keys,
-            $"Audio capture '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCaptures.Register.");
-
-    /// <summary>The library's capture of that name, or null.</summary>
-    public static IAudioCapture? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the capture of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>The first registered capture that can run on this machine, an app's before the library's.</summary>
-    /// <exception cref="NotSupportedException">None can; the message gives each one's reason.</exception>
+    /// <summary>The first capture that can run on this machine.</summary>
+    /// <exception cref="NotSupportedException">
+    /// None can; the message gives each one's reason. Always for now: the captures to pick from were registered, which is
+    /// not on the new design yet.
+    /// </exception>
     public static IAudioCapture ForThisMachine()
     {
         var reasons = new List<string>();
-        foreach (string name in Table.Keys.OrderBy(n => Origin(n) == Overrides.Library ? 1 : 0))
+        foreach (var capture in Registered())
         {
-            var capture = Table.Find(name)!;
             if (capture.IsAvailable(out string reason))
             {
                 return capture;
             }
 
-            reasons.Add($"{name}: {reason}");
+            reasons.Add($"{capture.Name}: {reason}");
         }
 
-        throw new NotSupportedException($"No audio capture can record on this machine ({string.Join("; ", reasons)}). Register one with AudioCaptures.Register, "
+        throw new NotSupportedException($"No audio capture can record on this machine ({string.Join("; ", reasons)}); "
             + "or pipe the sound in from a recorder.");
     }
+
+    // The captures were registered (AudioCaptures.Register) and the first that can run picked among them, which is not on the new
+    // design yet.
+    private static IEnumerable<IAudioCapture> Registered() =>
+        throw new NotSupportedException("The audio captures to pick from were registered, which is not on the new design yet.");
 }

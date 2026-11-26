@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>How live sound is transcribed (<c>LiveTranscriber</c>): when it is read again, when a segment ends, what is quiet.</summary>
@@ -84,11 +82,11 @@ public sealed record LiveTranscript(string Committed, string Tentative, string? 
 
 /// <summary>
 /// Decides which leading words of a segment are final while it is still being heard, from its transcriptions so far
-/// (registered in <see cref="LiveCommitPolicies"/>).
+/// (named in <see cref="LiveCommitPolicies"/>).
 /// </summary>
 public interface ILiveCommitPolicy
 {
-    /// <summary>The name it is registered under ("agreement").</summary>
+    /// <summary>Its name ("agreement").</summary>
     string Name { get; }
 
     /// <summary>
@@ -99,52 +97,12 @@ public interface ILiveCommitPolicy
 }
 
 /// <summary>
-/// The live commit policies, by name (ignoring case). Built in (Idrak.Audio): "agreement" (the words the last
-/// <see cref="LiveTranscriptionOptions.Agreement"/> transcriptions agree on from the start: Whisper-streaming's local
-/// agreement). Register another with <see cref="Register"/>.
+/// The live commit policies' names (ignoring case). Built in (Idrak.Audio): "agreement" (<see cref="Idrak.Audio.AgreementPolicy"/>:
+/// the words the last <see cref="LiveTranscriptionOptions.Agreement"/> transcriptions agree on from the start:
+/// Whisper-streaming's local agreement).
 /// </summary>
 public static class LiveCommitPolicies
 {
     /// <summary>"agreement".</summary>
     public const string Agreement = "agreement";
-
-    private static readonly SlotTable<string, ILiveCommitPolicy> Table = BuiltIn();
-
-    private static SlotTable<string, ILiveCommitPolicy> BuiltIn()
-    {
-        var table = new SlotTable<string, ILiveCommitPolicy>(nameof(LiveCommitPolicies), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a policy's choice of final words is its own, so another cannot stand in for it");
-        table.RegisterDefault(Agreement, new Idrak.Audio.AgreementPolicy());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="policy"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ILiveCommitPolicy policy)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentException.ThrowIfNullOrWhiteSpace(policy.Name);
-        Table.Register(policy.Name, policy, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's policy of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The policy of that name, or null.</summary>
-    public static ILiveCommitPolicy? Find(string name) => Table.Find(name);
-
-    /// <summary>The policy of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static ILiveCommitPolicy Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(LiveCommitPolicies), name, Table.Keys,
-            $"Live commit policy '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with LiveCommitPolicies.Register.");
-
-    /// <summary>The library's policy of that name, or null.</summary>
-    public static ILiveCommitPolicy? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the policy of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
 }

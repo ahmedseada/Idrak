@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Audio.Abstractions;
@@ -102,10 +101,12 @@ public sealed record AudioAugmentationOptions
 /// <see cref="Random"/> it is given, which the trainer seeds from the run's seed, the pass and the utterance
 /// (<see cref="AudioAugmentations.RandomFor"/>): the same utterance in the same pass is varied the same way on every run
 /// and on resume. It varies the sound (<see cref="ISoundAugmentation"/>) or the features (<see cref="IFeatureAugmentation"/>).
-/// Register one with <see cref="AudioAugmentations.Register"/> under its <see cref="IKind.Name"/> ("speed").
 /// </summary>
-public interface IAudioAugmentation : IKind
+public interface IAudioAugmentation
 {
+    /// <summary>Its name ("speed"): the run's settings name it, and its draws are seeded with it (<see cref="AudioAugmentations.RandomFor"/>).</summary>
+    string Name { get; }
+
     /// <summary>Whether it changes the sound (<see cref="ISoundAugmentation"/>) or the features (<see cref="IFeatureAugmentation"/>).</summary>
     AudioAugmentationStage Stage => this is IFeatureAugmentation ? AudioAugmentationStage.Features : AudioAugmentationStage.Sound;
 }
@@ -125,7 +126,7 @@ public interface IFeatureAugmentation : IAudioAugmentation
 }
 
 /// <summary>
-/// The training augmentations, by name (ignoring case). Built in (Idrak.Audio): "speed" (the sound resampled by a factor
+/// The training augmentations' names (ignoring case). Built in (Idrak.Audio): "speed" (the sound resampled by a factor
 /// drawn from <see cref="AudioAugmentationOptions.SpeedFactors"/>, so it plays faster or slower), "noise" (white noise, or a
 /// stretch of one of <see cref="AudioAugmentationOptions.NoiseFiles"/>, added at a signal-to-noise ratio drawn between
 /// the options' limits) and "spec-mask" (SpecAugment's time and frequency masks on the features, Park et al. 2019,
@@ -141,52 +142,6 @@ public static class AudioAugmentations
 
     /// <summary>Time and frequency masks.</summary>
     public const string SpecMask = "spec-mask";
-
-    private static readonly KindTable<IAudioAugmentation> Table = BuiltIn();
-
-    private static KindTable<IAudioAugmentation> BuiltIn()
-    {
-        var table = new KindTable<IAudioAugmentation>(nameof(AudioAugmentations), "Audio augmentation", "add it with AudioAugmentations.Register",
-            comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "an augmentation's draws are its own, so another cannot stand in for it and give the same varied audio");
-        table.RegisterDefault(new SpeedAugmentation());
-        table.RegisterDefault(new NoiseAugmentation());
-        table.RegisterDefault(new SpecMaskAugmentation());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="augmentation"/> under its name (over the library's of that name, which stays behind it).</summary>
-    /// <exception cref="ArgumentException">It varies neither the sound nor the features (it is no <see cref="ISoundAugmentation"/> and no <see cref="IFeatureAugmentation"/>).</exception>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioAugmentation augmentation)
-    {
-        ArgumentNullException.ThrowIfNull(augmentation);
-        if (augmentation is not (ISoundAugmentation or IFeatureAugmentation))
-        {
-            throw new ArgumentException($"The audio augmentation '{augmentation.Name}' varies neither the sound (ISoundAugmentation) nor the features (IFeatureAugmentation).", nameof(augmentation));
-        }
-
-        Table.Register(augmentation, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's augmentation of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The augmentation of that name, or null.</summary>
-    public static IAudioAugmentation? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The augmentation of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioAugmentation Get(string name) => Table.Get(name);
-
-    /// <summary>The library's augmentation of that name, or null.</summary>
-    public static IAudioAugmentation? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the augmentation of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>
     /// The random draws of augmentation <paramref name="name"/> for utterance <paramref name="utterance"/> in pass

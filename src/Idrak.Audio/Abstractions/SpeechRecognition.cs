@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Audio.Abstractions;
@@ -190,13 +189,13 @@ public sealed record SpeechCheckpoint(string Architecture, JsonObject Config, st
 public sealed record CreatedSpeechModel(JsonObject Config, IReadOnlyList<(string Name, int[] Shape, float[] Values)> Tensors, IReadOnlyDictionary<string, string> Files);
 
 /// <summary>
-/// A speech recognition family: how its checkpoints are read into a recognizer. Registered in <see cref="SpeechFamilies"/>
-/// under the architecture name its checkpoints give (config.json's "architectures"). The library registers none: a family
-/// is a plug-in or the app's (Idrak.Audio.Plugins' Whisper family is one).
+/// A speech recognition family: how its checkpoints are read into a recognizer, under the architecture name its
+/// checkpoints give (config.json's "architectures"). The library has none: a family is a plug-in or the app's
+/// (Idrak.Audio.Plugins' Whisper family is one).
 /// </summary>
 public interface ISpeechFamily
 {
-    /// <summary>The architecture name it is registered under.</summary>
+    /// <summary>The architecture name its checkpoints give.</summary>
     string Name { get; }
 
     /// <summary>The recognizer read from <paramref name="checkpoint"/>.</summary>
@@ -224,56 +223,3 @@ public interface ICreatableSpeechFamily : ISpeechFamily
     bool Creates(JsonObject spec) => true;
 }
 
-/// <summary>
-/// The speech recognition families, by architecture name (config.json's "architectures"). The library registers none: a
-/// checkpoint whose name has no family is refused, naming this registry; nothing falls back to another family, since
-/// families are not interchangeable. Register one with <see cref="Register"/>.
-/// </summary>
-public static class SpeechFamilies
-{
-    private static readonly SlotTable<string, ISpeechFamily> Registry = new(nameof(SpeechFamilies), comparer: StringComparer.Ordinal,
-        unguarded: "a family's reading, features, prompt and decoding must agree with one another, so two registrations cannot be mixed");
-
-    /// <summary>Registers <paramref name="family"/> under its <see cref="ISpeechFamily.Name"/>; under a library name it takes that family's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISpeechFamily family)
-    {
-        ArgumentNullException.ThrowIfNull(family);
-        ArgumentException.ThrowIfNullOrEmpty(family.Name);
-        Registry.Register(family.Name, family, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The family registered as <paramref name="name"/>, or null.</summary>
-    public static ISpeechFamily? Find(string name) => Registry.Find(name);
-
-    /// <summary>The family registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names <see cref="Register"/>.</exception>
-    public static ISpeechFamily Get(string name) => Registry.Find(name) ?? throw NotRegistered(name);
-
-    /// <summary>The library's family <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ISpeechFamily? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>The family that reads a checkpoint of architecture <paramref name="architecture"/> with this config.json: the one registered under that exact name.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names this registry.</exception>
-    public static ISpeechFamily For(string architecture, JsonObject config)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(architecture);
-        ArgumentNullException.ThrowIfNull(config);
-        return Registry.Find(architecture) ?? throw NotRegistered(architecture);
-    }
-
-    internal static NotRegisteredException NotRegistered(string name) =>
-        new(nameof(SpeechFamilies), name, Registry.Keys,
-            $"Speech family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "add it with SpeechFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
-            + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
-}

@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Audio.Abstractions;
@@ -66,11 +65,11 @@ public readonly record struct AudioPiece(int Start, int Length)
 
 /// <summary>
 /// Cuts a recording into pieces (at its pauses, at fixed lengths): what <c>idrak data audio --split</c> and a data
-/// preparation step use. Register one with <see cref="AudioSplitters.Register"/>.
+/// preparation step use.
 /// </summary>
 public interface IAudioSplitter
 {
-    /// <summary>The name it is registered under ("silence").</summary>
+    /// <summary>Its name ("silence").</summary>
     string Name { get; }
 
     /// <summary>The pieces of <paramref name="audio"/> (any channels, any rate), in order, not overlapping; empty when nothing is kept.</summary>
@@ -79,7 +78,7 @@ public interface IAudioSplitter
 }
 
 /// <summary>
-/// The splitters, by name (ignoring case). Built in (Idrak.Audio): "silence" (the pieces between pauses: a frame's
+/// The splitters' names (ignoring case). Built in (Idrak.Audio): "silence" (the pieces between pauses: a frame's
 /// energy against the loudest frame's, one pass over the samples) and "seconds" (pieces of a fixed length).
 /// </summary>
 public static class AudioSplitters
@@ -89,45 +88,4 @@ public static class AudioSplitters
 
     /// <summary>Pieces of a fixed length.</summary>
     public const string Seconds = "seconds";
-
-    private static readonly SlotTable<string, IAudioSplitter> Table = BuiltIn();
-
-    private static SlotTable<string, IAudioSplitter> BuiltIn()
-    {
-        var table = new SlotTable<string, IAudioSplitter>(nameof(AudioSplitters), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a splitter's cuts are its own, so another cannot stand in for it and give the same pieces");
-        table.RegisterDefault(Silence, new SilenceSplitter());
-        table.RegisterDefault(Seconds, new SecondsSplitter());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="splitter"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioSplitter splitter)
-    {
-        ArgumentNullException.ThrowIfNull(splitter);
-        ArgumentException.ThrowIfNullOrWhiteSpace(splitter.Name);
-        Table.Register(splitter.Name, splitter, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's splitter of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The splitter of that name, or null.</summary>
-    public static IAudioSplitter? Find(string name) => Table.Find(name);
-
-    /// <summary>The splitter of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioSplitter Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioSplitters), name, Table.Keys,
-            $"Audio splitter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioSplitters.Register.");
-
-    /// <summary>The library's splitter of that name, or null.</summary>
-    public static IAudioSplitter? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the splitter of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
 }

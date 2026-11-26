@@ -16,18 +16,6 @@ internal static class RepairProcessors
 {
     public const string DenoiseLive = "denoise-live", SpectralGate = "spectral-gate", Declick = "declick", Declip = "declip", Deess = "deess", Dereverb = "dereverb";
 
-    // The library's noise and repair processors, registered after the dynamics (AudioProcessors.BuiltIn).
-    public static void RegisterDefaults(KindTable<IAudioProcessor> table)
-    {
-        ArgumentNullException.ThrowIfNull(table);
-        table.RegisterDefault(new LiveDenoiseProcessor());
-        table.RegisterDefault(new SpectralGateProcessor());
-        table.RegisterDefault(new DeclickProcessor());
-        table.RegisterDefault(new DeclipProcessor());
-        table.RegisterDefault(new DeessProcessor());
-        table.RegisterDefault(new DereverbProcessor());
-    }
-
     // The largest power of two of samples not over `seconds` (at least 16), as denoise takes its window.
     public static int WindowSize(double seconds, int sampleRate)
     {
@@ -230,8 +218,6 @@ internal sealed class LiveDenoiseProcessor : ILiveAudioProcessor
 
     public string Label => "Denoise (live)";
 
-    public string Summary => "spectral gating against a running noise floor (the least smoothed magnitude over the last `track` s), taken off value times (default 1.5), no frequency turned down past `floor` dB; lags by the window";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Strength", AudioProcessorInput.Number)
@@ -405,8 +391,6 @@ internal sealed class DereverbProcessor : ILiveAudioProcessor
 
     public string Label => "Dereverb";
 
-    public string Summary => "late reverberation taken off: each frequency's power `delay` ms back, decayed as a room of `t60` s would, taken off value times (default 1), no frequency turned down past `floor` dB; lags by the window";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Strength", AudioProcessorInput.Number)
@@ -509,8 +493,6 @@ internal sealed class SpectralGateProcessor : IRecordingAudioProcessor
     public string Name => RepairProcessors.SpectralGate;
 
     public string Label => "Spectral gate";
-
-    public string Summary => "noisereduce's stationary gate: a bin passes when over the noise profile's mean plus value (default 1.5) deviations, the mask smoothed over `smooth` ms and `spread` Hz, the rest turned down by `reduce`";
 
     public string? LiveAlternative => RepairProcessors.DenoiseLive;
 
@@ -706,8 +688,6 @@ internal sealed class DeessProcessor : ILiveAudioProcessor
     public string Name => RepairProcessors.Deess;
 
     public string Label => "De-esser";
-
-    public string Summary => "a split-band compressor on the sibilance (over `frequency` Hz, or the band around it): its level over the value, dBFS (default -30), divided by `ratio`, the rest of the sound untouched";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -1303,8 +1283,6 @@ internal sealed class DeclickProcessor : ILiveAudioProcessor
 
     public string Label => "Declick";
 
-    public string Summary => "clicks found where the linear predictor's residual passes the value (default 10) times its spread, up to `length` ms long, and filled from the sound around them (AR interpolation of `order`)";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Threshold", AudioProcessorInput.Number)
@@ -1441,8 +1419,6 @@ internal sealed class DeclipProcessor : ILiveAudioProcessor
     public string Name => RepairProcessors.Declip;
 
     public string Label => "Declip";
-
-    public string Summary => "clipped runs (at the clip `level`, auto: the peak so far) rebuilt from the sound around them (AR interpolation of `order`, kept over the clip level), then `headroom` dB taken off to make room";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [

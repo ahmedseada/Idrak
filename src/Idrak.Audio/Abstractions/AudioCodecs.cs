@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
-using System.Runtime.CompilerServices;
 
 namespace Idrak.Audio.Abstractions;
 
@@ -16,8 +15,8 @@ namespace Idrak.Audio.Abstractions;
 public readonly record struct AudioInfo(int SampleRate, int Channels, long Samples, int BitsPerSample, bool IsFloat, string Format);
 
 /// <summary>
-/// Reads one sound format; register it with <see cref="AudioCodecs.Register"/>. A codec decides from a file's first
-/// bytes whether the file is in its format, so the extension only decides which files a folder source picks up.
+/// Reads one sound format. A codec decides from a file's first bytes whether the file is in its format, so the extension
+/// only decides which files a folder source picks up.
 /// </summary>
 public interface IAudioCodec
 {
@@ -42,92 +41,31 @@ public interface IAudioCodec
 }
 
 /// <summary>
-/// The sound formats the library reads, by name (ignoring case). Built in (Idrak.Audio): "wav" (RIFF/WAVE: PCM 8, 16,
-/// 24 and 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE; not compressed variants or RF64). Register a codec for
-/// another format with <see cref="Register"/>; an app's codec over a library one falls back on it or is compared with it
-/// by its policy.
+/// Reads sound files with the codec that knows their format. The library's codecs, each reached directly:
+/// <see cref="Idrak.Audio.WavCodec"/> (RIFF/WAVE: PCM 8, 16, 24 and 32 bits, float 32 and 64, WAVE_FORMAT_EXTENSIBLE; not
+/// compressed variants or RF64), <see cref="Idrak.Audio.FlacCodec"/> and <see cref="Idrak.Audio.Mp3Codec"/>. The codecs
+/// were registered and the one that knows a file found among them, which is not on the new design yet: finding it stops.
 /// </summary>
 public static class AudioCodecs
 {
     /// <summary>The bytes of a file's start that <see cref="IAudioCodec.ReadInfo"/> receives.</summary>
     public const int HeaderBytes = 64 * 1024;
 
-    // The most recently registered first; the library's wav, flac and mp3 behind them (registered as a library default on
-    // the registry's first use).
-    private static readonly SlotTable<string, IAudioCodec> Registry = BuiltIn();
-
-    private static SlotTable<string, IAudioCodec> BuiltIn()
-    {
-        var table = new SlotTable<string, IAudioCodec>(nameof(AudioCodecs), (slot, app, library) => new GuardedCodec(slot, app, library), StringComparer.OrdinalIgnoreCase, newestFirst: true);
-        table.RegisterDefault("wav", new WavCodec());
-        table.RegisterDefault("flac", new FlacCodec());
-        table.RegisterDefault("mp3", new Mp3Codec());
-        return table;
-    }
-
-    /// <summary>
-    /// Registers <paramref name="codec"/>: one of a registered name takes its place (a built-in stays behind it as its
-    /// fallback, see <see cref="SetPolicy"/>), a new one is asked first.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioCodec codec)
-    {
-        ArgumentNullException.ThrowIfNull(codec);
-        ArgumentException.ThrowIfNullOrWhiteSpace(codec.Name);
-        Registry.Register(codec.Name, codec, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's codec <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered codec names, the first asked first.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The extensions of the registered codecs (with the dot, lower case).</summary>
-    public static IReadOnlyCollection<string> Extensions => [.. Registry.Values.SelectMany(c => c.Extensions).Select(e => e.ToLowerInvariant()).Distinct()];
-
-    /// <summary>The codec registered as <paramref name="name"/> (any case).</summary>
-    /// <exception cref="NotSupportedException">None is; the message names those that are.</exception>
-    public static IAudioCodec Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioCodecs), name, Names,
-            $"No audio codec '{name}' is registered ({string.Join(", ", Names)}); add it with AudioCodecs.Register.");
-
-    /// <summary>The library's codec <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IAudioCodec? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the codec <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's codec <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the
-    /// error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's), or whether it only runs
-    /// beside the library's (<see cref="SlotPolicy.Shadow"/>: the library's answer is used, the two are compared).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
     // The codecs in the order a file is offered to them: those that list the path's extension first (a .wav file is the
-    // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest, each group in the
-    // registry's order.
-    private static IEnumerable<IAudioCodec> ForExtension(string path)
-    {
-        string extension = Path.GetExtension(path);
-        if (extension.Length == 0)
-        {
-            return Registry.Values;
-        }
+    // WAV codec's before a codec that finds a frame sync inside its samples is asked), then the rest. They were registered
+    // and found by the path's extension and the file's first bytes, which is not on the new design yet.
+    private static IEnumerable<IAudioCodec> CodecsFor(string path) =>
+        throw new NotSupportedException($"{path}: finding the audio codec that reads it among the registered codecs is not on the new design yet.");
 
-        var listing = Registry.Values.Where(c => c.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase)).ToList();
-        return listing.Count == 0 ? Registry.Values : listing.Concat(Registry.Values.Where(c => !listing.Contains(c)));
-    }
-
-    /// <summary>Whether a registered codec lists the extension of <paramref name="path"/>.</summary>
+    /// <summary>Whether a codec lists the extension of <paramref name="path"/>.</summary>
+    /// <exception cref="NotSupportedException">Always for now: the codecs to ask were registered, which is not on the new design yet.</exception>
     public static bool CanDecode(string path)
     {
         string extension = Path.GetExtension(path);
-        return extension.Length > 0 && Registry.Values.Any(c => c.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
+        return extension.Length > 0 && CodecsFor(path).Any(c => c.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
     }
 
-    /// <summary>The rate, channels and length of a sound file, or null when no registered codec knows its format.</summary>
+    /// <summary>The rate, channels and length of a sound file, or null when no codec knows its format.</summary>
     public static AudioInfo? ReadInfo(string path)
     {
         byte[] head = ArrayPool<byte>.Shared.Rent(HeaderBytes);              // one per file of a folder: pooled, not allocated
@@ -140,7 +78,7 @@ public static class AudioCodecs
             }
 
             byte[]? whole = null;
-            foreach (var codec in ForExtension(path))
+            foreach (var codec in CodecsFor(path))
             {
                 if (codec.ReadInfo(head.AsSpan(0, length)) is not { } info)
                 {
@@ -170,13 +108,13 @@ public static class AudioCodecs
     }
 
     /// <summary>
-    /// The rate, channels and length of a sound file held in memory, or null when no registered codec knows its format:
+    /// The rate, channels and length of a sound file held in memory, or null when no codec knows its format:
     /// from its first bytes, or all of them when the data lies further on. Nothing is decoded.
     /// </summary>
     public static AudioInfo? ReadInfo(ReadOnlySpan<byte> file)
     {
         var header = file[..Math.Min(file.Length, HeaderBytes)];
-        foreach (var codec in Registry.Values)
+        foreach (var codec in CodecsFor("audio"))
         {
             if (codec.ReadInfo(header) is not { } info)
             {
@@ -198,7 +136,7 @@ public static class AudioCodecs
     }
 
     /// <summary>Decodes a sound file with the codec that knows its format.</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads the file, or it is damaged; the message names the file.</exception>
+    /// <exception cref="InvalidDataException">No codec reads the file, or it is damaged; the message names the file.</exception>
     /// <exception cref="NotSupportedException">The file is in a variant its codec does not read; the message names the file.</exception>
     public static AudioData Decode(string path)
     {
@@ -226,13 +164,13 @@ public static class AudioCodecs
     }
 
     /// <summary>Decodes a sound file held in memory (a chat message's audio, a download) with the codec that knows its format.</summary>
-    /// <exception cref="InvalidDataException">No registered codec reads the bytes, or they are damaged.</exception>
+    /// <exception cref="InvalidDataException">No codec reads the bytes, or they are damaged.</exception>
     public static AudioData Decode(ReadOnlySpan<byte> file) => Decode(file, "audio");
 
     private static AudioData Decode(ReadOnlySpan<byte> bytes, string path)
     {
         var header = bytes[..Math.Min(bytes.Length, HeaderBytes)];
-        foreach (var codec in ForExtension(path))
+        foreach (var codec in CodecsFor(path))
         {
             // A codec that knows the first bytes decodes the file; one that needs all of them to be sure (a large tag
             // before the sound) and then finds it is not its own leaves it to the next.
@@ -257,7 +195,7 @@ public static class AudioCodecs
             }
         }
 
-        throw new InvalidDataException($"{path}: not an audio format of the registered codecs ({string.Join(", ", Names)}); register one with AudioCodecs.Register.");
+        throw new InvalidDataException($"{path}: not an audio format the codecs read.");
     }
 
     /// <summary>
@@ -282,79 +220,5 @@ public static class AudioCodecs
         }
 
         throw new ArgumentException($"{path} has {audio.Channels} channels, not {channels} (1 mixes a file's channels down; others are not invented).", nameof(channels));
-    }
-
-    // An app's codec over a built-in: each call falls back on its own, or is compared with the built-in's.
-    private sealed class GuardedCodec(Slot slot, IAudioCodec app, IAudioCodec library) : IAudioCodec
-    {
-        public string Name => app.Name;
-
-        public IReadOnlyCollection<string> Extensions => app.Extensions;
-
-        public AudioInfo? ReadInfo(ReadOnlySpan<byte> header)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.ReadInfo(header);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        run.Done(Comparisons.Exact(answer, app.ReadInfo(header)));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.ReadInfo(header);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.ReadInfo(header);
-            }
-        }
-
-        public AudioData Decode(ReadOnlySpan<byte> file)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Decode(file);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        var other = app.Decode(file);
-                        run.Done(Comparisons.Exact((answer.Channels, answer.SampleRate, answer.Length), (other.Channels, other.SampleRate, other.Length))
-                                 ?? Comparisons.Difference(answer.Samples, other.Samples, 1e-6f));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Decode(file);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Decode(file);
-            }
-        }
     }
 }

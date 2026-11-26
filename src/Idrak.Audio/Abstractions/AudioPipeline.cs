@@ -8,7 +8,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
-/// Audio processors in the order they run, each a registered <see cref="IAudioProcessor"/>, as images have
+/// Audio processors in the order they run, each an <see cref="IAudioProcessor"/>, as images have
 /// <c>ImageTransformPipeline</c>. Written as text, steps comma-separated, each a name, an optional value and
 /// space-separated options: <c>highpass=80, denoise=1.5 quantile=0.2, trim, normalize=-20 peak=0.9</c>; an item whose
 /// name is an option of the step before it (<c>trim, silence=30</c>) belongs to that step. As JSON: that text, or an
@@ -18,20 +18,29 @@ namespace Idrak.Audio.Abstractions;
 /// <para>
 /// <see cref="Apply"/> runs a recording; <see cref="Open"/> gives one stage for blocks (a file read in pieces, a
 /// stream); <see cref="Wrap"/> cleans live sound (an <see cref="IAudioInput"/>) before it is used, and refuses a
-/// pipeline with a whole-recording step. The registered processors at the time of the call run.
+/// pipeline with a whole-recording step. A step's processor was found by its name among the registered ones, which is
+/// not on the new design yet: making a pipeline with steps stops.
 /// </para>
 /// </summary>
 public sealed class AudioPipeline : IEquatable<AudioPipeline>
 {
-    /// <summary>The steps <paramref name="steps"/>, checked against the registry.</summary>
-    /// <exception cref="ArgumentException">A step names no registered processor, or one that refuses its value or options.</exception>
+    // The processors were registered (AudioProcessors) and a step's found by its name, which is not on the new design yet.
+    private static IAudioProcessor? FindProcessor(ReadOnlySpan<char> name) =>
+        throw new NotSupportedException($"The audio processor '{name}' by name is not on the new design yet.");
+
+    private static IAudioProcessor ProcessorNamed(ReadOnlySpan<char> name) =>
+        FindProcessor(name) ?? throw new ArgumentException($"Unknown audio processor '{name}'.");
+
+    /// <summary>The steps <paramref name="steps"/>, each checked by its processor.</summary>
+    /// <exception cref="ArgumentException">A step's processor refuses its value or options.</exception>
+    /// <exception cref="NotSupportedException">A step is given: its processor by name is not on the new design yet.</exception>
     public AudioPipeline(IEnumerable<AudioProcessorStep> steps)
     {
         ArgumentNullException.ThrowIfNull(steps);
         Steps = [.. steps];
         foreach (var step in Steps)
         {
-            var processor = AudioProcessors.Get(step.Name);
+            var processor = ProcessorNamed(step.Name);
             step.ThrowIfUnknownOptions(processor.Keys);
             processor.Check(step);
         }
@@ -47,7 +56,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
     public bool IsEmpty => Steps.Count == 0;
 
     /// <summary>Whether every step runs on sound as it comes (<see cref="IAudioProcessor.Live"/>), so <see cref="Wrap"/> takes it.</summary>
-    public bool Live => Steps.All(s => AudioProcessors.Get(s.Name).Live);
+    public bool Live => Steps.All(s => ProcessorNamed(s.Name).Live);
 
     /// <summary>The pipeline written as text (see the class); null, empty or "none" give <see cref="Empty"/>.</summary>
     /// <exception cref="ArgumentException">An unknown processor or option, a bad value, or an item that is not NAME or NAME=VALUE.</exception>
@@ -63,19 +72,19 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
         {
             string[] words = item.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             var (name, value) = Split(words[0], item);
-            if (AudioProcessors.Find(name) is null)
+            if (FindProcessor(name) is null)
             {
                 // An option of the step before it (written after a comma, as image pipelines do).
                 if (steps.Count > 0 && value is not null && words.Length == 1
-                    && AudioProcessors.Get(steps[^1].Name).Keys.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    && ProcessorNamed(steps[^1].Name).Keys.Contains(name, StringComparer.OrdinalIgnoreCase))
                 {
                     steps[^1].Options.Add(KeyValuePair.Create(name, value));
                     continue;
                 }
 
-                string after = steps.Count > 0 && AudioProcessors.Get(steps[^1].Name).Keys is { Count: > 0 } keys
+                string after = steps.Count > 0 && ProcessorNamed(steps[^1].Name).Keys is { Count: > 0 } keys
                     ? $"; after {steps[^1].Name} it can also be one of its options: {string.Join(", ", keys)}" : "";
-                throw new ArgumentException($"Unknown audio processor '{name}' (registered: {string.Join(", ", AudioProcessors.Names)}{after}).");
+                throw new ArgumentException($"Unknown audio processor '{name}'{after}.");
             }
 
             var options = new List<KeyValuePair<string, string>>();
@@ -129,7 +138,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
                     {
                         string name = step["name"] is JsonValue n && n.GetValueKind() == JsonValueKind.String ? n.GetValue<string>()
                             : throw new ArgumentException($"An audio processor object needs a \"name\": {step.ToJsonString()}.");
-                        _ = AudioProcessors.Get(name);
+                        _ = ProcessorNamed(name);
                         var options = step.Where(p => p.Key is not "name" and not "value" && p.Value is not null)
                             .Select(p => KeyValuePair.Create(p.Key, Text(p.Value!, p.Key))).ToList();
                         steps.Add(new AudioProcessorStep(name, step["value"] is { } v ? Text(v, "value") : null, options));
@@ -170,7 +179,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
     {
         foreach (var step in Steps)
         {
-            var processor = AudioProcessors.Get(step.Name);
+            var processor = ProcessorNamed(step.Name);
             if (!processor.Live)
             {
                 throw new ArgumentException($"The audio processor {step.Name} needs the whole recording, so it cannot clean live sound"
@@ -194,7 +203,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
         var current = audio;
         for (int i = 0; i < Steps.Count;)
         {
-            var processor = AudioProcessors.Get(Steps[i].Name);
+            var processor = ProcessorNamed(Steps[i].Name);
             if (!processor.Live)
             {
                 current = processor.Apply(current, Steps[i]);
@@ -203,7 +212,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
             }
 
             int end = i + 1;
-            while (end < Steps.Count && AudioProcessors.Get(Steps[end].Name).Live)
+            while (end < Steps.Count && ProcessorNamed(Steps[end].Name).Live)
             {
                 end++;
             }
@@ -284,7 +293,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
                 double shift = 0, delay = 0;
                 foreach (var step in steps)
                 {
-                    var processor = AudioProcessors.Get(step.Name);
+                    var processor = ProcessorNamed(step.Name);
                     if (!processor.Live)
                     {
                         drops.Add((int)Math.Round(shift * sampleRate));

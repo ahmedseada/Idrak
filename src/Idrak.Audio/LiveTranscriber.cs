@@ -21,6 +21,10 @@ public static class LiveTranscriber
 {
     private const int FramesPerSecond = 50;                                  // the quiet is measured per 20 ms
 
+    // The commit policies were registered (LiveCommitPolicies) and picked by name, which is not on the new design yet.
+    private static ILiveCommitPolicy PolicyNamed(string name) =>
+        throw new NotSupportedException($"The live commit policy '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// The updates of <paramref name="sound"/>'s transcription as it arrives (any rate and channels: mixed to one, and
     /// resampled to the first block's rate when a block comes at another); ends after the last segment when the sound ends.
@@ -28,7 +32,7 @@ public static class LiveTranscriber
     /// finished).
     /// </summary>
     /// <exception cref="ArgumentException">An option is out of range.</exception>
-    /// <exception cref="NotSupportedException">The policy is not registered.</exception>
+    /// <exception cref="NotSupportedException">Always for now: the commit policy by its name is not on the new design yet.</exception>
     public static async IAsyncEnumerable<LiveTranscript> TranscribeAsync(ISpeechRecognizer recognizer, IAsyncEnumerable<AudioData> sound, LiveTranscriptionOptions? options = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -36,7 +40,7 @@ public static class LiveTranscriber
         ArgumentNullException.ThrowIfNull(sound);
         options ??= new LiveTranscriptionOptions();
         options.Check();
-        var policy = LiveCommitPolicies.Get(options.Policy);
+        var policy = PolicyNamed(options.Policy);
         var arriving = Channel.CreateUnbounded<AudioData>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pump = Task.Run(async () =>

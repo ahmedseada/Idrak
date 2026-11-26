@@ -68,11 +68,11 @@ internal static class CleaningLevels
     }
 }
 
-// The cleaning stages (AudioCleaners) run the processors of their names (AudioProcessors), each step made from the
-// stage's AudioCleaningOptions; the numbers are written round-trip ("R"), so the processor reads the very doubles.
+// The cleaning stages (AudioCleaners) run the library's processors of their names, reached directly, each step made from
+// the stage's AudioCleaningOptions; the numbers are written round-trip ("R"), so the processor reads the very doubles.
 internal static class CleaningSteps
 {
-    public static AudioData Run(string name, AudioData audio, string? value, params ReadOnlySpan<(string Key, double Value)> options)
+    public static AudioData Run(IAudioProcessor processor, AudioData audio, string? value, params ReadOnlySpan<(string Key, double Value)> options)
     {
         var pairs = new KeyValuePair<string, string>[options.Length];
         for (int i = 0; i < options.Length; i++)
@@ -80,7 +80,7 @@ internal static class CleaningSteps
             pairs[i] = KeyValuePair.Create(options[i].Key, Text(options[i].Value));
         }
 
-        return AudioProcessors.Get(name).Apply(audio, new AudioProcessorStep(name, value, pairs));
+        return processor.Apply(audio, new AudioProcessorStep(processor.Name, value, pairs));
     }
 
     public static string Text(double value) => value.ToString("R", CultureInfo.InvariantCulture);
@@ -89,52 +89,28 @@ internal static class CleaningSteps
 // "highpass": the processor "highpass" at HighPassHertz; 0 leaves the sound as it is.
 internal sealed class HighPassCleaner : IAudioCleaner
 {
-    public string Name => AudioCleaners.HighPass;
-
-    public string Summary => "a Butterworth high-pass at HighPassHertz: the DC offset and rumble go";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
     public AudioData Clean(AudioData audio, AudioCleaningOptions options) => options.HighPassHertz <= 0 || audio.Length == 0
         ? audio
-        : CleaningSteps.Run(AudioProcessors.HighPass, audio, CleaningSteps.Text(options.HighPassHertz));
+        : CleaningSteps.Run(new HighPassProcessor(), audio, CleaningSteps.Text(options.HighPassHertz));
 }
 
 // "trim": the processor "trim" with TrimPadSeconds, SilenceDecibels and HopSeconds.
 internal sealed class TrimCleaner : IAudioCleaner
 {
-    public string Name => AudioCleaners.Trim;
-
-    public string Summary => "the silence at both ends cut, TrimPadSeconds kept";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Trim, audio, CleaningSteps.Text(options.TrimPadSeconds),
+    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(new TrimProcessor(), audio, CleaningSteps.Text(options.TrimPadSeconds),
         ("silence", options.SilenceDecibels), ("hop", options.HopSeconds));
 }
 
 // "normalize": the processor "normalize" with TargetDecibels, SilenceDecibels, HopSeconds and PeakCeiling.
 internal sealed class NormalizeCleaner : IAudioCleaner
 {
-    public string Name => AudioCleaners.Normalize;
-
-    public string Summary => "the speech level brought to TargetDecibels, the peak kept under PeakCeiling";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Normalize, audio, CleaningSteps.Text(options.TargetDecibels),
+    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(new NormalizeProcessor(), audio, CleaningSteps.Text(options.TargetDecibels),
         ("silence", options.SilenceDecibels), ("hop", options.HopSeconds), ("peak", options.PeakCeiling));
 }
 
 // "denoise": the processor "denoise" with DenoiseStrength, NoiseQuantile, DenoiseFloorDecibels and DenoiseWindowSeconds.
 internal sealed class DenoiseCleaner : IAudioCleaner
 {
-    public string Name => AudioCleaners.Denoise;
-
-    public string Summary => "spectral gating against the noise floor read from the pauses";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Denoise, audio, CleaningSteps.Text(options.DenoiseStrength),
+    public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(new DenoiseProcessor(), audio, CleaningSteps.Text(options.DenoiseStrength),
         ("quantile", options.NoiseQuantile), ("floor", options.DenoiseFloorDecibels), ("window", options.DenoiseWindowSeconds));
 }

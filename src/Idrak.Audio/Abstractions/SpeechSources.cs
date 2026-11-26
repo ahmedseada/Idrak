@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Audio.Abstractions;
@@ -100,14 +99,11 @@ public interface ISpeechReader : IDisposable
     byte[] ReadBytes(int index);
 }
 
-/// <summary>A kind of speech data: how its files become utterances. Register one with <see cref="SpeechSources.Register"/>.</summary>
+/// <summary>A kind of speech data: how its files become utterances.</summary>
 public interface ISpeechSource
 {
     /// <summary>The kind's name.</summary>
     string Name { get; }
-
-    /// <summary>One line on what it reads.</summary>
-    string Summary { get; }
 
     /// <summary>Opens <paramref name="source"/>'s files.</summary>
     /// <exception cref="FileNotFoundException">A file is missing (and the source does not skip missing files).</exception>
@@ -116,7 +112,7 @@ public interface ISpeechSource
 }
 
 /// <summary>
-/// The kinds of speech data, by name (ignoring case). Built in (Idrak.Audio): "transcripts" (JSONL rows of
+/// The kinds of speech data's names (ignoring case). Built in (Idrak.Audio): "transcripts" (JSONL rows of
 /// <c>{"audio": path, "text": ...}</c>, as <c>idrak data audio</c>'s manifest.jsonl and <c>idrak transcribe -o</c> write
 /// them; paths relative to the transcript file, inside its zip, or to <see cref="SpeechSource.Audio"/>) and
 /// "audio-folder" (every sound file of a folder or zip with its transcript beside it, <c>name.wav</c> and <c>name.txt</c>).
@@ -129,56 +125,17 @@ public static class SpeechSources
     /// <summary>A folder of sound files with their texts beside them.</summary>
     public const string AudioFolder = "audio-folder";
 
-    private static readonly SlotTable<string, ISpeechSource> Table = BuiltIn();
-
-    private static SlotTable<string, ISpeechSource> BuiltIn()
-    {
-        var table = new SlotTable<string, ISpeechSource>(nameof(SpeechSources), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a source kind reads its own files into utterances, so another kind cannot read the same ones");
-        table.RegisterDefault(Transcripts, new TranscriptSpeechSource());
-        table.RegisterDefault(AudioFolder, new FolderSpeechSource());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="source"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISpeechSource source)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentException.ThrowIfNullOrWhiteSpace(source.Name);
-        Table.Register(source.Name, source, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's kind of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The kind of that name, or null.</summary>
-    public static ISpeechSource? Find(string name) => Table.Find(name);
-
-    /// <summary>The kind of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static ISpeechSource Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(SpeechSources), name, Table.Keys,
-            $"Speech source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with SpeechSources.Register.");
-
-    /// <summary>The library's kind of that name, or null.</summary>
-    public static ISpeechSource? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the kind of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each kind as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
-
     /// <summary>Opens <paramref name="source"/> through the kind it names.</summary>
+    /// <exception cref="NotSupportedException">Always for now: the kind by its name is not on the new design yet.</exception>
     public static ISpeechReader Open(SpeechSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        return Get(source.Kind).Open(source);
+        return KindNamed(source.Kind).Open(source);
     }
+
+    // The kinds were registered (SpeechSources.Register) and picked by name, which is not on the new design yet.
+    private static ISpeechSource KindNamed(string name) =>
+        throw new NotSupportedException($"The speech source kind '{name}' by name is not on the new design yet.");
 
     /// <summary>
     /// The order of <paramref name="count"/> utterances in pass <paramref name="epoch"/> of a run seeded with

@@ -101,7 +101,7 @@ public sealed class Seq2SeqObjective : ISpeechTrainingObjective
     {
         var sequence = Sequence(model);
         ArgumentNullException.ThrowIfNull(frames);
-        int beams = decoder == CtcDecoders.Greedy ? 1 : Math.Max(1, beamWidth);
+        int beams = decoder == "greedy" ? 1 : Math.Max(1, beamWidth);
         using var noGrad = Autograd.NoGrad();
         var memory = sequence.Encode(features, frames);
         var readings = new int[frames.Count][];

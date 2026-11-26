@@ -16,7 +16,7 @@ public sealed record SpeechCreateOptions
     /// <summary>The seed the weights are drawn from.</summary>
     public int Seed { get; init; }
 
-    /// <summary>The architecture (a <see cref="SpeechFamilies"/> name); null: the spec's "architecture" (or its "architectures"[0]).</summary>
+    /// <summary>The architecture (a <c>SpeechFamilies</c> name); null: the spec's "architecture" (or its "architectures"[0]).</summary>
     public string? Architecture { get; init; }
 
     /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
@@ -24,7 +24,7 @@ public sealed record SpeechCreateOptions
 }
 
 /// <summary>
-/// Loads speech recognition models through their registered family (<see cref="SpeechFamilies"/>), as
+/// Loads speech recognition models through their registered family (<c>SpeechFamilies</c>), as
 /// <c>ImageModels.Load</c> loads image models: a model folder (config.json and safetensors weights, or any folder a
 /// registered checkpoint format reads), its architecture from config.json's "architectures", the tensors opened one at a
 /// time as the family makes its layers.
@@ -38,10 +38,20 @@ public sealed record SpeechCreateOptions
 /// </remarks>
 public static class SpeechModels
 {
+    // The speech families were registered (SpeechFamilies) and a checkpoint's found by its architecture name, which is not on
+    // the new design yet.
+    private static ISpeechFamily FamilyNamed(string architecture) =>
+        throw new NotSupportedException($"The speech family '{architecture}' by name is not on the new design yet.");
+
+    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
+    // new design yet.
+    private static ICheckpointFormat FormatFor(string path) =>
+        throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
+
     /// <summary>
     /// Reads the speech model at <paramref name="path"/>: a model folder, or its config.json or a .safetensors file in it.
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <see cref="SpeechFamilies"/>.</exception>
+    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <c>SpeechFamilies</c>.</exception>
     /// <exception cref="InvalidDataException">The checkpoint names no architecture, or its family cannot read it.</exception>
     public static ISpeechRecognizer Load(string path, SpeechModelOptions? options = null)
     {
@@ -49,7 +59,7 @@ public static class SpeechModels
         options ??= new SpeechModelOptions();
         string target = File.Exists(path) && (path.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(path) == "config.json")
             ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
-        var format = CheckpointFormats.For(target);
+        var format = FormatFor(target);
         string folder = format.Prepare(target);
         string configFile = Path.Combine(folder, "config.json");
         var config = File.Exists(configFile)
@@ -58,7 +68,7 @@ public static class SpeechModels
         string architecture = options.Architecture
             ?? (config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : (string?)config["architecture"])
             ?? throw new InvalidDataException($"{configFile} names no architecture (\"architectures\"); pass SpeechModelOptions.Architecture.");
-        var family = SpeechFamilies.Get(architecture);                        // refused before any weight is opened
+        var family = FamilyNamed(architecture);                               // refused before any weight is opened
         var notes = new List<string>(format.Notes(folder));
         using var tensors = format.Open(folder);
         var checkpoint = new SpeechCheckpoint(architecture, config, path, folder, tensors, options, notes);
@@ -82,7 +92,7 @@ public static class SpeechModels
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new SpeechCreateOptions();
         string architecture = Architecture(spec, options);
-        var family = SpeechFamilies.Get(architecture) as ICreatableSpeechFamily
+        var family = FamilyNamed(architecture) as ICreatableSpeechFamily
             ?? throw new NotSupportedException($"Speech family '{architecture}' cannot make a model from a description (it reads checkpoints only).");
         CheckFolder(folder, options);
         Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);

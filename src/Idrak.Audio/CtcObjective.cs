@@ -9,7 +9,7 @@ namespace Idrak.Audio;
 /// <summary>
 /// The "ctc" training objective (<see cref="SpeechTrainingObjectives"/>): an <see cref="ICtcSpeechModel"/>'s logits, a
 /// log-softmax over its classes, each utterance's steps (<see cref="ICtcSpeechModel.StepsFor"/> of its frames) and labels,
-/// PyTorch's <c>ctc_loss</c> with mean reduction and zero_infinity; evaluation decodes through <see cref="CtcDecoders"/>.
+/// PyTorch's <c>ctc_loss</c> with mean reduction and zero_infinity; evaluation decodes through <c>CtcDecoders</c>.
 /// An utterance whose steps are fewer than its labels need (<see cref="CtcAlignment.MinimumSteps"/>) is not trained on.
 /// </summary>
 public sealed class CtcObjective : ISpeechTrainingObjective
@@ -51,9 +51,13 @@ public sealed class CtcObjective : ISpeechTrainingObjective
     {
         var ctc = Ctc(model);
         var logProbs = ctc.Logits(features, frames).LogSoftmax();
-        var readings = CtcDecoders.Decode(logProbs, [.. frames.Select(ctc.StepsFor)], decoder, new CtcDecodeOptions { Blank = ctc.Blank, BeamWidth = beamWidth }, batchFirst: true);
+        var readings = DecodedBy(decoder, logProbs, [.. frames.Select(ctc.StepsFor)], new CtcDecodeOptions { Blank = ctc.Blank, BeamWidth = beamWidth });
         return [.. readings.Select(r => r[0].Labels)];
     }
+
+    // The CTC decoders were registered (CtcDecoders) and picked by name, which is not on the new design yet.
+    private static IReadOnlyList<IReadOnlyList<CtcHypothesis>> DecodedBy(string decoder, Tensor logProbs, int[] steps, CtcDecodeOptions options) =>
+        throw new NotSupportedException($"The CTC decoder '{decoder}' by name is not on the new design yet.");
 
     private static ICtcSpeechModel Ctc(ITrainableSpeechModel model) =>
         model as ICtcSpeechModel ?? throw new ArgumentException($"The ctc objective trains an ICtcSpeechModel, not a {model.GetType().Name}.", nameof(model));

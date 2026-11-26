@@ -30,6 +30,10 @@ public static class AdversarialSynthesisTrainer
     /// <summary>The files of a checkpoint folder that only resuming reads (the run's state, both optimizers' state).</summary>
     public static IReadOnlyList<string> StateFiles { get; } = [SpeechTrainer.StateFile, SpeechTrainer.OptimizerFile, DiscriminatorOptimizerFile];
 
+    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    private static IAudioAugmentation AugmentationNamed(string name) =>
+        throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="SpeechTrainingOptions.Steps"/> steps (see
     /// <see cref="SpeechTrainer.Train"/>), or goes on from <paramref name="resume"/> (see <see cref="Resume"/>).
@@ -43,7 +47,7 @@ public static class AdversarialSynthesisTrainer
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(options);
         options.Check();
-        if (options.Augmentations.Select(AudioAugmentations.Get).FirstOrDefault(a => a.Stage == AudioAugmentationStage.Features) is { } masking)
+        if (options.Augmentations.Select(AugmentationNamed).FirstOrDefault(a => a.Stage == AudioAugmentationStage.Features) is { } masking)
         {
             throw new ArgumentException($"The '{masking.Name}' augmentation changes the training rows after they are taken, and a synthesizer's rows are its targets: "
                 + "give a synthesizer sound augmentations only (\"speed\", \"noise\").", nameof(options));
@@ -85,6 +89,14 @@ public static class AdversarialSynthesisTrainer
         return Train(model, state.Train, state.Evaluation, options, output, state with { Options = options }, progress, cancellationToken, trace);
     }
 
+    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
+        throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
+
+    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
+        throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
+
     // The optimizer the options name over `parameters` at `rate`: Adam and AdamW with the adversarial options' betas and
     // epsilon (VITS's 0.8, 0.99, 1e-9), the others as the speech trainer makes them.
     internal static Optimizer Optimizer(List<Tensor> parameters, SpeechTrainingOptions options, AdversarialSynthesisOptions adversarial, float rate)
@@ -95,7 +107,7 @@ public static class AdversarialSynthesisTrainer
             settings = settings with { Beta1 = adversarial.Beta1, Beta2 = adversarial.Beta2, Epsilon = adversarial.Epsilon };
         }
 
-        var make = OptimizerKinds.Factory(options.Optimizer, settings);
+        var make = OptimizerFactoryNamed(options.Optimizer, settings);
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 
@@ -170,7 +182,7 @@ public static class AdversarialSynthesisTrainer
                 _optimizer.RequireState().LoadState(SpeechTrainer.ReadState(path));
             }
 
-            _schedule = LearningRateSchedules.Factory(run.Schedule, new LearningRateScheduleSettings(run.WarmupFraction, run.MinLearningRate))(_optimizer, run.Steps);
+            _schedule = ScheduleNamed(run.Schedule, new LearningRateScheduleSettings(run.WarmupFraction, run.MinLearningRate), _optimizer, run.Steps);
             for (int i = 0; i < step; i++)
             {
                 _schedule.Step();

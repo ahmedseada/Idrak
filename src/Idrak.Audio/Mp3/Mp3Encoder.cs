@@ -15,7 +15,7 @@ namespace Idrak.Audio;
 /// Huffman tables. The stream is plain frames (no ID3, Xing or LAME tag): a decoder gives <see cref="Delay"/> samples of
 /// silence before the sound and silence after it to the end of the last frame. The sample format of
 /// <see cref="AudioEncodeOptions"/> is ignored (MP3 has none); the encoder's own options are <see cref="Mp3EncodeOptions"/>,
-/// which a call sets by key through <see cref="AudioEncodeOptions.Parameters"/> (<see cref="Parameters"/>).
+/// given to its constructor (a key in <see cref="AudioEncodeOptions.Parameters"/> is refused).
 /// </summary>
 /// <param name="options">How it encodes; null: the IDRAK_MP3_* variables, the defaults where unset.</param>
 public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
@@ -38,9 +38,6 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
     /// <summary>The options it encodes with: those given, else the environment's (<see cref="Mp3EncodeOptions.FromEnvironment"/>, read at the first use).</summary>
     public Mp3EncodeOptions Options => _given ?? (_environment ??= Mp3EncodeOptions.FromEnvironment());
 
-    /// <summary>The options a call may set by key (<see cref="AudioEncodeOptions.Parameters"/>): <see cref="Mp3EncodeOptions.Schema"/>.</summary>
-    public OptionSchema Parameters => Mp3EncodeOptions.Schema;
-
     /// <inheritdoc />
     /// <exception cref="ArgumentException">An option MP3 does not take (a bit rate or sample rate; the message names those it does).</exception>
     /// <exception cref="NotSupportedException">More than two channels without <see cref="Mp3ChannelMode.Mono"/>.</exception>
@@ -48,7 +45,12 @@ public sealed class Mp3Encoder(Mp3EncodeOptions? options = null) : IAudioEncoder
     {
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(output);
-        var settings = options?.Parameters is { Count: > 0 } given ? Options.With(Mp3EncodeOptions.Schema.Parse(given)) : Options;
+        if (options?.Parameters is { Count: > 0 } given)
+        {
+            throw new ArgumentException($"The MP3 encoder takes its options as Mp3EncodeOptions, not by key (given: {string.Join(", ", given.Keys)}).", nameof(options));
+        }
+
+        var settings = Options;
         var format = Resolve(settings, audio.SampleRate, audio.Channels);
         var source = format.Rate == audio.SampleRate ? audio : Resampler.Resample(audio, format.Rate);
         int length = source.Length;

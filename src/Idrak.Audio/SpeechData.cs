@@ -15,9 +15,6 @@ internal sealed class TranscriptSpeechSource : ISpeechSource
 {
     public string Name => SpeechSources.Transcripts;
 
-    public string Summary => "JSONL rows of {\"audio\", \"text\"} (or audio_filepath, path, file, name; transcript, sentence; seconds, duration), "
-        + "audio paths relative to the transcript file, its zip, or the source's audio folder or zip";
-
     public ISpeechReader Open(SpeechSource source)
     {
         var reader = new SpeechReader(source);
@@ -138,8 +135,6 @@ internal sealed class TranscriptSpeechSource : ISpeechSource
 internal sealed class FolderSpeechSource : ISpeechSource
 {
     public string Name => SpeechSources.AudioFolder;
-
-    public string Summary => "every sound file of a folder or zip (and its subfolders) with its transcript beside it: name.wav and name.txt";
 
     public ISpeechReader Open(SpeechSource source)
     {
@@ -394,7 +389,7 @@ internal sealed class SpeechReader(SpeechSource source) : ISpeechReader
 
         if (info is not { Samples: >= 0 } known)
         {
-            throw new InvalidDataException($"{utterance.Name}: {utterance.Audio} is not a sound file a registered codec reads ({string.Join(", ", AudioCodecs.Names)}).");
+            throw new InvalidDataException($"{utterance.Name}: {utterance.Audio} is not a sound file a codec reads.");
         }
 
         return known.Samples / (double)known.SampleRate;

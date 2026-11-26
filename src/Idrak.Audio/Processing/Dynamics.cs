@@ -16,17 +16,6 @@ namespace Idrak.Audio;
 internal static class DynamicsProcessors
 {
     public const string Gate = "gate", Compress = "compress", Limit = "limit", Agc = "agc", Loudness = "loudness", LoudnessLive = "loudness-live", Peak = "peaknorm";
-
-    public static void RegisterDefaults(KindTable<IAudioProcessor> table)
-    {
-        table.RegisterDefault(new GateProcessor());
-        table.RegisterDefault(new CompressProcessor());
-        table.RegisterDefault(new LimitProcessor());
-        table.RegisterDefault(new AgcProcessor());
-        table.RegisterDefault(new LoudnessProcessor());
-        table.RegisterDefault(new LiveLoudnessProcessor());
-        table.RegisterDefault(new PeakProcessor());
-    }
 }
 
 // The arithmetic the dynamics stages share. A time constant of t ms at fs is the one-pole coefficient exp(-1 / (t fs))
@@ -305,7 +294,6 @@ internal sealed class DynamicsWalk
             level[i] = first ? d : _detector == DynamicsDetector.MeanSquare ? level[i] + d : Math.Max(level[i], d);
         }
     }
-
 }
 
 // "gate" (live): a noise gate. The level is a one-pole mean square (time constant `window`) of the largest square over
@@ -317,8 +305,6 @@ internal sealed class GateProcessor : ILiveAudioProcessor
     public string Name => DynamicsProcessors.Gate;
 
     public string Label => "Noise gate";
-
-    public string Summary => "a noise gate: the sound under the value, dBFS (default -50), is turned down by `range` dB, opening with `attack`, held open `hold` ms, closing with `release`";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -421,8 +407,6 @@ internal sealed class CompressProcessor : ILiveAudioProcessor
     public string Name => DynamicsProcessors.Compress;
 
     public string Label => "Compressor";
-
-    public string Summary => "a feed-forward compressor: the level over the value, dBFS (default -20), divided by `ratio` (soft knee `knee` dB, `attack`/`release` ms, `makeup` dB or auto)";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -546,8 +530,6 @@ internal sealed class LimitProcessor : ILiveAudioProcessor
     public string Name => DynamicsProcessors.Limit;
 
     public string Label => "Limiter";
-
-    public string Summary => "a look-ahead peak limiter: no sample passes the value, dBFS (default -1); the output lags by `lookahead` ms, the gain comes back with `release`";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -730,8 +712,6 @@ internal sealed class AgcProcessor : ILiveAudioProcessor
 
     public string Label => "Automatic gain control";
 
-    public string Summary => "automatic gain control: the level (an RMS over `window` ms) brought towards the value, dBFS (default -20), within `min` and `max` dB, held through the pauses under `quiet`";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Target", AudioProcessorInput.Number) { Max = 0, Step = 1, Unit = "dBFS", Optional = true, Default = "-20", Help = "The speech level (RMS) aimed at" },
@@ -879,8 +859,6 @@ internal sealed class LoudnessProcessor : IRecordingAudioProcessor
 
     public string Label => "Loudness (EBU R128)";
 
-    public string Summary => "the integrated loudness (ITU-R BS.1770-4, EBU R128) brought to the value, LUFS (default -23), the true peak kept under `ceiling` dBFS";
-
     public string? LiveAlternative => DynamicsProcessors.LoudnessLive;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
@@ -1007,8 +985,6 @@ internal sealed class LiveLoudnessProcessor : ILiveAudioProcessor
 
     public string Label => "Loudness (live)";
 
-    public string Summary => "the short-term loudness (BS.1770, over `window` ms) steered towards the value, LUFS (default -23), smoothly, within `min` and `max` dB";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Target", AudioProcessorInput.Number) { Max = 0, Step = 1, Unit = "LUFS", Optional = true, Default = "-23", Help = "The loudness aimed at" },
@@ -1110,8 +1086,6 @@ internal sealed class PeakProcessor : IRecordingAudioProcessor
     public string Name => DynamicsProcessors.Peak;
 
     public string Label => "Peak normalize";
-
-    public string Summary => "the peak brought to the value, dBFS (default -1), by one gain (meter=true: the true peak)";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [

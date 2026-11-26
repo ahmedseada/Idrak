@@ -17,8 +17,6 @@ internal sealed class HighPassProcessor : ILiveAudioProcessor
 
     public string Label => "High-pass filter";
 
-    public string Summary => $"a Butterworth high-pass at the value, Hz (default {DefaultHertz}; 0 leaves the sound), of `order` (default {DefaultOrder}): the DC offset and the rumble go";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Cutoff", AudioProcessorInput.Number)
@@ -47,8 +45,6 @@ internal sealed class TrimProcessor : IRecordingAudioProcessor
     public string Name => AudioProcessors.Trim;
 
     public string Label => "Trim silence";
-
-    public string Summary => $"the silence at both ends cut, the value's seconds kept on both sides (default {DefaultPad}); silence is a frame `silence` dB under the loudest";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -88,8 +84,6 @@ internal sealed class NormalizeProcessor : IRecordingAudioProcessor
     public string Name => AudioProcessors.Normalize;
 
     public string Label => "Normalize level";
-
-    public string Summary => $"the speech level (the RMS of the frames that are not silence) brought to the value, dBFS (default {DefaultTarget}), the peak kept under `peak`";
 
     public string? LiveAlternative => "agc";
 
@@ -168,8 +162,6 @@ internal sealed class DenoiseProcessor : IRecordingAudioProcessor
     public string Name => AudioProcessors.Denoise;
 
     public string Label => "Denoise";
-
-    public string Summary => $"spectral gating: the noise floor read from the quietest frames (the pauses) taken off value times (default {DefaultStrength}), no frequency turned down past `floor` dB";
 
     public string? LiveAlternative => RepairProcessors.DenoiseLive;
 

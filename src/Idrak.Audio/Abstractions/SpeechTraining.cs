@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>How a trainable speech model runs a training pass (<see cref="ICtcSpeechModel.Logits"/>, a sequence model's logits).</summary>
@@ -20,7 +18,7 @@ public sealed record SpeechForwardOptions
 /// </summary>
 public interface ITrainableSpeechModel : ISpeechRecognizer
 {
-    /// <summary>The architecture name its folder's config.json gives (its <see cref="SpeechFamilies"/> registration).</summary>
+    /// <summary>The architecture name its folder's config.json gives (its <c>SpeechFamilies</c> registration).</summary>
     string Architecture { get; }
 
     /// <summary>The <see cref="SpeechTrainingObjectives"/> name it trains with ("ctc", "seq2seq").</summary>
@@ -79,7 +77,7 @@ public interface ISpeechTrainingObjective
 /// PyTorch's CTC loss over an <see cref="ICtcSpeechModel"/>'s head, CtcDecoders for evaluation) and "seq2seq"
 /// (<see cref="Idrak.Audio.Seq2SeqObjective"/>: an <see cref="ISequenceSpeechModel"/>'s decoder read with teacher forcing,
 /// each utterance's mean token cross-entropy; greedy or beam generation for evaluation). Register another with
-/// <see cref="Register"/> (one under a built-in name takes its place until <see cref="Unregister"/>).
+/// <c>Register</c> (one under a built-in name takes its place until <c>Unregister</c>).
 /// </summary>
 public static class SpeechTrainingObjectives
 {
@@ -88,44 +86,6 @@ public static class SpeechTrainingObjectives
 
     /// <summary>"seq2seq".</summary>
     public const string Seq2Seq = "seq2seq";
-
-    private static readonly SlotTable<string, ISpeechTrainingObjective> Registry = BuiltIn();
-
-    private static SlotTable<string, ISpeechTrainingObjective> BuiltIn()
-    {
-        var table = new SlotTable<string, ISpeechTrainingObjective>(nameof(SpeechTrainingObjectives), comparer: StringComparer.Ordinal,
-            unguarded: "an objective's loss and decoding belong to its models, so two registrations cannot stand in for each other");
-        table.RegisterDefault(Ctc, new Idrak.Audio.CtcObjective());
-        table.RegisterDefault(Seq2Seq, new Idrak.Audio.Seq2SeqObjective());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="objective"/> under its <see cref="ISpeechTrainingObjective.Name"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISpeechTrainingObjective objective)
-    {
-        ArgumentNullException.ThrowIfNull(objective);
-        ArgumentException.ThrowIfNullOrEmpty(objective.Name);
-        Registry.Register(objective.Name, objective, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's objective <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The objective <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under it; the message names those that are.</exception>
-    public static ISpeechTrainingObjective Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(SpeechTrainingObjectives), name, Registry.Keys,
-            $"Speech training objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechTrainingObjectives.Register.");
-
-    /// <summary>The library's objective <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ISpeechTrainingObjective? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the objective <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
 }
 
 /// <summary>

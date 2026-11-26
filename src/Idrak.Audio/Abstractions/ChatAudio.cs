@@ -150,17 +150,12 @@ public sealed record ChatAudio : ChatPart
 
 /// <summary>
 /// The "audio" kind of message part: <see cref="ChatAudio"/> as <c>{"type": "audio", "media_type": "audio/wav", "data":
-/// "&lt;base64&gt;"}</c>, read back the same, and made from bytes a bridge holds (<see cref="IBinaryPartKind"/>). Registered
-/// in <see cref="ChatParts"/> as a library default by this package; an app's kind of the same name shadows it and falls
-/// back to it by its policy.
+/// "&lt;base64&gt;"}</c>, read back the same, and made from bytes a bridge holds (<see cref="IBinaryPartKind"/>).
 /// </summary>
 public sealed class AudioPartKind : IBinaryPartKind
 {
     /// <inheritdoc />
     public string Name => ChatParts.Audio;
-
-    /// <inheritdoc />
-    public string Summary => "a sound's bytes as base64, with its media type: {\"type\": \"audio\", \"media_type\": …, \"data\": …}";
 
     /// <inheritdoc />
     public void Write(ChatPart part, JsonObject json)

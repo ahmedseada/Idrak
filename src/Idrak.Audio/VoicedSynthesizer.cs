@@ -51,8 +51,14 @@ public sealed class VoicedSynthesizer : ISpeechSynthesizer
     /// <inheritdoc />
     public int SampleRate => _synthesizer.SampleRate;
 
+    // The voice stores were registered (VoiceStores) and picked by name, which is not on the new design yet; without a name,
+    // the built-in folder store, reached directly.
+    private static IVoiceStore StoreNamed(string? name) => name is null
+        ? new FolderVoiceStore(FolderVoiceStore.DefaultRoot, VoiceStores.FolderName)
+        : throw new NotSupportedException($"The voice store '{name}' by name is not on the new design yet.");
+
     /// <summary>The checkpoint's speakers, then the installed voices of the store (the given one, or "folder").</summary>
-    public IReadOnlyList<string> Voices => [.. _synthesizer.Voices, .. (_store ?? VoiceStores.Get()).List().Select(v => v.Name)];
+    public IReadOnlyList<string> Voices => [.. _synthesizer.Voices, .. (_store ?? StoreNamed(null)).List().Select(v => v.Name)];
 
     // A speaker of the checkpoint: one of its voices (any case), or the index of one.
     private bool IsSpeaker(string name) => _synthesizer.Voices.Contains(name, StringComparer.OrdinalIgnoreCase)
@@ -68,7 +74,7 @@ public sealed class VoicedSynthesizer : ISpeechSynthesizer
             return (_synthesizer, options, null, null);
         }
 
-        var store = _store ?? VoiceStores.Get(options.VoiceStore);
+        var store = _store ?? StoreNamed(options.VoiceStore);
         var voice = store.Find(name) ?? throw new ArgumentException(
             $"Voice '{name}' is not a speaker of this model (speakers: {(_synthesizer.Voices.Count == 0 ? "none, it has one voice" : string.Join(", ", _synthesizer.Voices))}) "
             + $"nor installed in {store.Location} (installed: {(store.List() is { Count: > 0 } all ? string.Join(", ", all.Select(v => v.Name)) : "none")}).", nameof(options));

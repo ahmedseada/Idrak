@@ -6,13 +6,18 @@ using System.Text.Json.Nodes;
 namespace Idrak.Audio;
 
 /// <summary>
-/// The "audio" model part (<see cref="ModelParts"/>, a library default this package registers): an audio-language
-/// model's audio side, stored beside its decoder under an <c>audio_config</c>, read, made and opened through the family
-/// registered under the model's architecture in <see cref="AudioFamilies"/>. Its source is a <see cref="ChatAudioParts"/>
+/// The "audio" model part: an audio-language model's audio side, stored beside its decoder under an <c>audio_config</c>,
+/// read, made and opened through the family of the model's architecture (found by its name, which is not on the new
+/// design yet). Its source is a <see cref="ChatAudioParts"/>
 /// that trains when the family's part does (<see cref="IAudioTuningPart"/>).
 /// </summary>
 internal sealed class AudioModelPart : IModelPart
 {
+    // The audio-language families were registered (AudioFamilies) and a checkpoint's found by its architecture name, which is
+    // not on the new design yet.
+    private static IAudioFamily? FindFamily(string architecture) =>
+        throw new NotSupportedException($"The audio family '{architecture}' by name is not on the new design yet.");
+
     public string Kind => ChatParts.Audio;
 
     public bool In(JsonObject config) => AudioFamilies.HasAudio(config);
@@ -22,9 +27,9 @@ internal sealed class AudioModelPart : IModelPart
     public IReadOnlySet<string> StoredTensors(ModelPartCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
-        if (AudioFamilies.Find(checkpoint.Architecture) is null)
+        if (FindFamily(checkpoint.Architecture) is null)
         {
-            checkpoint.Notes.Add($"the audio part is not read: no audio family is registered as '{checkpoint.Architecture}' (AudioFamilies.Register; a plug-in package such as Idrak.Audio.Plugins brings one: AudioPlugins.RegisterAll()).");
+            checkpoint.Notes.Add($"the audio part is not read: no audio family reads '{checkpoint.Architecture}'.");
             return new HashSet<string>();
         }
 
@@ -34,7 +39,7 @@ internal sealed class AudioModelPart : IModelPart
     public CreatedModelPart Create(ModelPartRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var family = AudioFamilies.Get(request.Architecture) as ICreatableAudioFamily
+        var family = FindFamily(request.Architecture) as ICreatableAudioFamily
             ?? throw new NotSupportedException($"Audio family '{request.Architecture}' cannot make an audio part from a description (it reads checkpoints only).");
         var made = family.Create(request.Description, request.TextDim, request.Tokenizer, request.Seed);
         return new CreatedModelPart(made.Config, made.Tensors, made.Files);
@@ -49,7 +54,7 @@ internal sealed class AudioModelPart : IModelPart
 
     private static IPretrainedAudio? Read(ModelPartCheckpoint checkpoint)
     {
-        var family = AudioFamilies.For(checkpoint.Architecture, checkpoint.Config)
+        var family = (AudioFamilies.HasAudio(checkpoint.Config) ? FindFamily(checkpoint.Architecture) : null)
             ?? throw new InvalidDataException($"The {checkpoint.Architecture} config.json has no audio_config.");
         return family.Read(new AudioCheckpoint(checkpoint.Architecture, checkpoint.Config, checkpoint.Tensors, checkpoint.Folder, checkpoint.Open, checkpoint.Notes));
     }

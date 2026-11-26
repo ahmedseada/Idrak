@@ -25,12 +25,16 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     private readonly IAudioTuningPart? _tuning;                  // the family's trainable side, taken once (rule 75)
     private readonly ITrainableAudioEncoder? _trainable;         // the encoder's training members, when the family trains and built it
 
+    // The feature caches were registered (FeatureCaches) and the "memory" one made by its name, which is not on the new
+    // design yet (Idrak.Text's memory cache is internal to it).
+    private static IFeatureCache MemoryCache() => throw new NotSupportedException("The \"memory\" feature cache by name is not on the new design yet.");
+
     /// <summary>
     /// A source over <paramref name="audio"/> with <paramref name="encoder"/> (the family's, on the model's device).
     /// </summary>
     /// <param name="audio">The model's audio part.</param>
     /// <param name="encoder">Its encoder (built with <see cref="IPretrainedAudio.CreateEncoder"/> when null, and disposed with this).</param>
-    /// <param name="cache">Where features are kept (not disposed by this); a new "memory" one when null (disposed with this).</param>
+    /// <param name="cache">Where features are kept (not disposed by this); null: a new "memory" one by its name, which is not on the new design yet.</param>
     /// <param name="checkpoint">A text that changes when the checkpoint's weights do, for the cache's keys; the model folder's name when null.</param>
     public ChatAudioParts(IPretrainedAudio audio, IAudioLanguageEncoder? encoder = null, IFeatureCache? cache = null, string? checkpoint = null)
     {
@@ -38,7 +42,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         _ownsEncoder = encoder is null;
         Encoder = encoder ?? audio.CreateEncoder();
         _ownsCache = cache is null;
-        Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
+        Cache = cache ?? MemoryCache();
         Checkpoint = checkpoint ?? audio.Family;
         _options = audio.Features.Options.ToJson().ToJsonString();
         (_tuning, _trainable) = Trainable(audio, Encoder);
@@ -52,7 +56,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         _ownsEncoder = true;
         Encoder = audio.CreateEncoder(options);
         _ownsCache = cache is null || ownsCache;
-        Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
+        Cache = cache ?? MemoryCache();
         Checkpoint = audio.Family;
         _options = audio.Features.Options.ToJson().ToJsonString();
         (_tuning, _trainable) = Trainable(audio, Encoder);

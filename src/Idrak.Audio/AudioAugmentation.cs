@@ -11,8 +11,6 @@ internal sealed class SpeedAugmentation : ISoundAugmentation
 {
     public string Name => AudioAugmentations.Speed;
 
-    public string Summary => "the sound resampled by a factor of SpeedFactors, so it plays faster or slower";
-
     public AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options)
     {
         double factor = options.SpeedFactors[random.Next(options.SpeedFactors.Count)];
@@ -34,8 +32,6 @@ internal sealed class NoiseAugmentation : ISoundAugmentation
     private static readonly ConcurrentDictionary<(string Path, int Rate), float[]> Decoded = new();
 
     public string Name => AudioAugmentations.Noise;
-
-    public string Summary => "white noise, or a stretch of a noise file, added at a signal-to-noise ratio between the limits";
 
     public AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options)
     {
@@ -111,8 +107,6 @@ internal sealed class NoiseAugmentation : ISoundAugmentation
 internal sealed class SpecMaskAugmentation : IFeatureAugmentation
 {
     public string Name => AudioAugmentations.SpecMask;
-
-    public string Summary => "SpecAugment's time and frequency masks on the features, filled with the utterance's mean";
 
     public void Augment(Span<float> features, int frames, int mels, Random random, AudioAugmentationOptions options)
     {

@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
@@ -15,7 +13,7 @@ namespace Idrak.Audio.Abstractions;
 /// </summary>
 public interface ITrainableSpeechSynthesizer : ISpeechSynthesizer
 {
-    /// <summary>The architecture name its folder's config.json gives (its <see cref="SpeechSynthesisFamilies"/> registration).</summary>
+    /// <summary>The architecture name its folder's config.json gives (its <c>SpeechSynthesisFamilies</c> registration).</summary>
     string Architecture { get; }
 
     /// <summary>The <see cref="SpeechSynthesisObjectives"/> name it trains with ("durations").</summary>
@@ -89,47 +87,10 @@ public interface ISpeechSynthesisObjective
 /// The speech synthesis training objectives, by name (ordinal). Built in (Idrak.Audio): "durations"
 /// (<see cref="Idrak.Audio.DurationSynthesisObjective"/>: the mean absolute log-mel error with the given durations, plus
 /// the mean squared log-duration error weighted by <see cref="SpeechTrainingOptions.DurationLossWeight"/>). Register
-/// another with <see cref="Register"/> (one under a built-in name takes its place until <see cref="Unregister"/>).
+/// another with <c>Register</c> (one under a built-in name takes its place until <c>Unregister</c>).
 /// </summary>
 public static class SpeechSynthesisObjectives
 {
     /// <summary>"durations".</summary>
     public const string Durations = "durations";
-
-    private static readonly SlotTable<string, ISpeechSynthesisObjective> Registry = BuiltIn();
-
-    private static SlotTable<string, ISpeechSynthesisObjective> BuiltIn()
-    {
-        var table = new SlotTable<string, ISpeechSynthesisObjective>(nameof(SpeechSynthesisObjectives), comparer: StringComparer.Ordinal,
-            unguarded: "an objective's loss belongs to its models, so two registrations cannot stand in for each other");
-        table.RegisterDefault(Durations, new Idrak.Audio.DurationSynthesisObjective());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="objective"/> under its <see cref="ISpeechSynthesisObjective.Name"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISpeechSynthesisObjective objective)
-    {
-        ArgumentNullException.ThrowIfNull(objective);
-        ArgumentException.ThrowIfNullOrEmpty(objective.Name);
-        Registry.Register(objective.Name, objective, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's objective <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The objective <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under it; the message names those that are.</exception>
-    public static ISpeechSynthesisObjective Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(SpeechSynthesisObjectives), name, Registry.Keys,
-            $"Speech synthesis objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechSynthesisObjectives.Register.");
-
-    /// <summary>The library's objective <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ISpeechSynthesisObjective? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the objective <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
 }

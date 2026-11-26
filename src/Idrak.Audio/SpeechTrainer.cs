@@ -61,7 +61,7 @@ public sealed record SpeechTrainingOptions
     /// <summary>The rate over the steps: a <see cref="LearningRateSchedules"/> name ("cosine", "linear", "constant", "wsd").</summary>
     public string Schedule { get; init; } = "cosine";
 
-    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "sgd").</summary>
+    /// <summary>The optimizer: an <c>OptimizerKinds</c> name ("adamw", "adam", "sgd").</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>Weight decay (decoupled for AdamW).</summary>
@@ -91,8 +91,8 @@ public sealed record SpeechTrainingOptions
     /// <summary>The evaluation's score: a <see cref="TuningMetrics"/> name ("cer", "wer").</summary>
     public string Metric { get; init; } = TuningMetrics.CharacterErrorRate;
 
-    /// <summary>The evaluation's decoder: "greedy" or "beam" (for CTC, a <see cref="CtcDecoders"/> name).</summary>
-    public string Decoder { get; init; } = CtcDecoders.Greedy;
+    /// <summary>The evaluation's decoder: "greedy" or "beam" (for CTC, a <c>CtcDecoders</c> name).</summary>
+    public string Decoder { get; init; } = "greedy";
 
     /// <summary>The beam width of the "beam" decoder.</summary>
     public int BeamWidth { get; init; } = 10;
@@ -129,7 +129,7 @@ public sealed record SpeechTrainingOptions
     /// Where features are kept between passes: a <see cref="FeatureCaches"/> name ("disk", "memory"), keyed by each file's
     /// SHA-256 and the feature options, so a second pass takes no features again; null for none.
     /// </summary>
-    public string? FeatureCache { get; init; } = FeatureCaches.Disk;
+    public string? FeatureCache { get; init; } = "disk";
 
     /// <summary>The disk cache's folder (<see cref="FeatureCaches.DefaultFolder"/> when null).</summary>
     public string? FeatureCacheFolder { get; init; }
@@ -246,30 +246,7 @@ public sealed record SpeechTrainingOptions
                 + "DistillationAlpha 0 to 1 and DistillationTemperature positive.");
         }
 
-        if (OptimizerKinds.Find(Optimizer) is null)
-        {
-            throw new ArgumentException($"Optimizer '{Optimizer}' is not registered in OptimizerKinds (registered: {string.Join(", ", OptimizerKinds.Names)}).");
-        }
-
-        if (LearningRateSchedules.Find(Schedule) is null)
-        {
-            throw new ArgumentException($"Schedule '{Schedule}' is not registered in LearningRateSchedules (registered: {string.Join(", ", LearningRateSchedules.Names)}).");
-        }
-
-        _ = TuningMetrics.Get(Metric);
-        _ = CtcDecoders.Get(Decoder);
-        foreach (string name in Augmentations)
-        {
-            _ = AudioAugmentations.Get(name);
-        }
-
         AugmentationOptions.Check();
-        AudioCleaners.CheckSettings(Cleaning, CleaningOptions);          // every stage registered, every setting read by one
-        foreach (string name in Cleaning)
-        {
-            _ = AudioCleaners.Get(name);
-        }
-
         CleaningOptions.Check();
         if (Processing is null)
         {
@@ -277,10 +254,6 @@ public sealed record SpeechTrainingOptions
         }
 
         Adversarial?.Check();
-        if (FeatureCache is { } cache)
-        {
-            _ = FeatureCaches.Get(cache);
-        }
     }
 }
 
@@ -358,6 +331,32 @@ public static class SpeechTrainer
     internal const string OptimizerFile = "optimizer.safetensors";
     private const string FeatureStage = "audio-features";
 
+    // What the run's options name was registered and picked by name, which is not on the new design yet: the training
+    // objective (SpeechTrainingObjectives), the feature cache (FeatureCaches), the augmentations (AudioAugmentations), the
+    // evaluation's metric (TuningMetrics), the cleaning stages (AudioCleaners), the optimizer and the schedule (below).
+    private static ISpeechTrainingObjective ObjectiveNamed(string name) =>
+        throw new NotSupportedException($"The speech training objective '{name}' by name is not on the new design yet.");
+
+    private static IFeatureCache FeatureCacheNamed(string name, FeatureCacheOptions options) =>
+        throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
+
+    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    private static IAudioAugmentation AugmentationNamed(string name) =>
+        throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
+
+    private static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"The tuning metric '{name}' by name is not on the new design yet.");
+
+    private static IAudioCleaner CleanerNamed(string name) =>
+        throw new NotSupportedException($"The audio cleaning stage '{name}' by name is not on the new design yet.");
+
+    // The optimizers were registered (OptimizerKinds) and picked by name, which is not on the new design yet.
+    private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
+        throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
+
+    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name, which is not on the new design yet.
+    private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) =>
+        throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="SpeechTrainingOptions.Steps"/> steps, writing
     /// checkpoints into <paramref name="outputFolder"/>, scoring <paramref name="evaluation"/> when given; or goes on from
@@ -372,7 +371,7 @@ public static class SpeechTrainer
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(options);
         options.Check();
-        var objective = SpeechTrainingObjectives.Get(model.Objective);
+        var objective = ObjectiveNamed(model.Objective);
         if (!objective.Trains(model))
         {
             throw new ArgumentException($"The '{objective.Name}' objective does not train a {model.GetType().Name} ({model.Architecture}).", nameof(model));
@@ -409,7 +408,7 @@ public static class SpeechTrainer
             trace?.Invoke(note);
         }
 
-        using var cache = options.FeatureCache is { } cacheName ? FeatureCaches.Create(cacheName, new FeatureCacheOptions { Folder = options.FeatureCacheFolder }) : null;
+        using var cache = options.FeatureCache is { } cacheName ? FeatureCacheNamed(cacheName, new FeatureCacheOptions { Folder = options.FeatureCacheFolder }) : null;
         var features = new FeatureSource(model.Features, cache, options);
 
         // The utterances the objective can train on (CTC: their frames give at least the steps their labels need). Features
@@ -475,7 +474,7 @@ public static class SpeechTrainer
             seconds[i] = segment ?? reader[i].Seconds;
         }
 
-        var augmentations = options.Augmentations.Select(AudioAugmentations.Get).ToArray();
+        var augmentations = options.Augmentations.Select(AugmentationNamed).ToArray();
         var parameters = model.Network.Parameters().ToList();
         using var optimizer = model.CreateOptimizer(parameters, options);
         var losses = new List<float>(resume?.Losses ?? []);
@@ -487,7 +486,7 @@ public static class SpeechTrainer
             optimizer.RequireState().LoadState(ReadOptimizerState(resume.Folder));
         }
 
-        var schedule = LearningRateSchedules.Factory(options.Schedule, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate))(optimizer, options.Steps);
+        var schedule = ScheduleNamed(options.Schedule, new LearningRateScheduleSettings(options.WarmupFraction, options.MinLearningRate), optimizer, options.Steps);
         for (int i = 0; i < step; i++)
         {
             schedule.Step();                                                    // the resumed run's rate where it was
@@ -871,7 +870,7 @@ public static class SpeechTrainer
     // The optimizer over `parameters` the options name (on the host with HostOptimizer).
     internal static Optimizer CreateOptimizer(List<Tensor> parameters, SpeechTrainingOptions options)
     {
-        var make = OptimizerKinds.Factory(options.Optimizer, new OptimizerSettings(options.LearningRate, options.WeightDecay, options.Momentum));
+        var make = OptimizerFactoryNamed(options.Optimizer, new OptimizerSettings(options.LearningRate, options.WeightDecay, options.Momentum));
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
 
@@ -944,7 +943,7 @@ public static class SpeechTrainer
     // utterance's decoded text against its transcript.
     private sealed class RecognizerTrainee(ITrainableSpeechModel model, ISpeechTrainingObjective objective, SpeechTrainingOptions options) : SpeechTrainee
     {
-        private readonly ITuningMetric _metric = TuningMetrics.Get(options.Metric);
+        private readonly ITuningMetric _metric = MetricNamed(options.Metric);
 
         public override string Architecture => model.Architecture;
 
@@ -987,7 +986,7 @@ public static class SpeechTrainer
     private sealed class FeatureSource(IAudioFeatureExtractor extractor, IFeatureCache? cache, SpeechTrainingOptions options)
     {
         private readonly string _options = extractor.Options.ToJson().ToJsonString();
-        private readonly IAudioCleaner[] _cleaners = [.. options.Cleaning.Select(AudioCleaners.Get)];
+        private readonly IAudioCleaner[] _cleaners = [.. options.Cleaning.Select(CleanerNamed)];
         private readonly string _cleaning = CacheKey(options);
         private int _extracted, _cached;
 

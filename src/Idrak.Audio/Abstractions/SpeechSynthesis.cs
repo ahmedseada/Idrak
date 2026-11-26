@@ -117,7 +117,7 @@ public sealed record SpeechSynthesisLoadOptions
 
 /// <summary>
 /// A text-to-speech family: how its checkpoints are read into an <see cref="ISpeechSynthesizer"/>. Registered in
-/// <see cref="SpeechSynthesisFamilies"/> under the architecture name its checkpoints give (config.json's "architectures").
+/// <c>SpeechSynthesisFamilies</c> under the architecture name its checkpoints give (config.json's "architectures").
 /// </summary>
 public interface ISpeechSynthesisFamily
 {
@@ -188,30 +188,40 @@ public sealed record SpeechTextNeeds
     {
         if (Phonemes)
         {
-            var registered = TextPhonemizers.Names;
+            var registered = PhonemizerNames();
             if (Phonemizer is { } name && !registered.Contains(name, StringComparer.Ordinal))
             {
                 return $"it reads phonemes{Language()} from the phonemizer '{name}', which is not registered here "
-                    + $"(registered: {(registered.Count == 0 ? "none" : string.Join(", ", registered))}; TextPhonemizers.Register adds one)";
+                    + $"(registered: {(registered.Count == 0 ? "none" : string.Join(", ", registered))})";
             }
 
             if (registered.Count == 0)
             {
-                return $"it reads phonemes{Language()} from a phonemizer, and none is registered here (TextPhonemizers.Register adds one; "
-                    + "Idrak.Audio.Plugins' espeak-ng phonemizer runs the espeak-ng program)";
+                return $"it reads phonemes{Language()} from a phonemizer, and none is registered here "
+                    + "(Idrak.Audio.Plugins' espeak-ng phonemizer runs the espeak-ng program)";
             }
         }
 
-        if (Romanized && text is not null && HasOtherScript(text) && TextRomanizers.For(text) is null)
+        if (Romanized && text is not null && HasOtherScript(text) && RomanizerFor(text) is null)
         {
+            var romanizers = RomanizerNames();
             return "it reads romanised text, and no registered romanizer covers this text's script "
-                + $"(registered: {(TextRomanizers.Names.Count == 0 ? "none" : string.Join(", ", TextRomanizers.Names))}; TextRomanizers.Register adds one)";
+                + $"(registered: {(romanizers.Count == 0 ? "none" : string.Join(", ", romanizers))})";
         }
 
         return null;
     }
 
     private string Language() => PhonemeLanguage is { Length: > 0 } language ? $" ({language})" : "";
+
+    // The phonemizers and romanizers were registered (TextPhonemizers, TextRomanizers) and looked up here, which is not on
+    // the new design yet.
+    private static IReadOnlyList<string> PhonemizerNames() => throw new NotSupportedException("The registered phonemizers are not on the new design yet.");
+
+    private static IReadOnlyList<string> RomanizerNames() => throw new NotSupportedException("The registered romanizers are not on the new design yet.");
+
+    private static ITextRomanizer? RomanizerFor(string text) =>
+        throw new NotSupportedException("The romanizer that covers a text's script, found among the registered ones, is not on the new design yet.");
 
     private static bool HasOtherScript(string text)
     {
@@ -239,66 +249,22 @@ public interface ITextFrontEndSynthesisFamily : ISpeechSynthesisFamily
     SpeechTextNeeds TextNeeds(JsonObject config, string folder);
 }
 
-/// <summary>
-/// The text-to-speech families, by architecture name (config.json's "architectures"). The library registers none: a
-/// family (its configuration, tokenizer, layers and decoder) is an application of these contracts, registered by the
-/// app or plug-in that brings it (Idrak.Audio.Plugins' VITS family is one). A checkpoint whose name has no family is refused
-/// naming this registry: nothing falls back to another family, since families are not interchangeable.
-/// </summary>
-public static class SpeechSynthesisFamilies
-{
-    private static readonly SlotTable<string, ISpeechSynthesisFamily> Registry = new(nameof(SpeechSynthesisFamilies), comparer: StringComparer.Ordinal,
-        unguarded: "a family's tokenizer, layers and decoder must agree with one another, so two registrations cannot be mixed");
-
-    /// <summary>Registers <paramref name="family"/> under its <see cref="ISpeechSynthesisFamily.Name"/>; under a library name it takes that family's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISpeechSynthesisFamily family)
-    {
-        ArgumentNullException.ThrowIfNull(family);
-        ArgumentException.ThrowIfNullOrEmpty(family.Name);
-        Registry.Register(family.Name, family, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The family registered as <paramref name="name"/>, or null.</summary>
-    public static ISpeechSynthesisFamily? Find(string name) => Registry.Find(name);
-
-    /// <summary>The family registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names <see cref="Register"/>.</exception>
-    public static ISpeechSynthesisFamily Get(string name) => Registry.Find(name) ?? throw NotRegistered(name);
-
-    /// <summary>The library's family <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ISpeechSynthesisFamily? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>The family that reads a checkpoint of architecture <paramref name="architecture"/>: the one registered under that exact name.</summary>
-    /// <exception cref="NotSupportedException">No family is registered under the name; the message names this registry.</exception>
-    public static ISpeechSynthesisFamily For(string architecture)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(architecture);
-        return Registry.Find(architecture) ?? throw NotRegistered(architecture);
-    }
-
-    internal static NotRegisteredException NotRegistered(string name) =>
-        new(nameof(SpeechSynthesisFamilies), name, Registry.Keys,
-            $"Speech synthesis family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with SpeechSynthesisFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
-            + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
-}
-
 /// <summary>Loads a text-to-speech model from a folder: its config.json names the family, the checkpoint format reads its tensors.</summary>
 public static class SpeechSynthesisModels
 {
+    // The text-to-speech families were registered (SpeechSynthesisFamilies) and a checkpoint's found by its architecture
+    // name, which is not on the new design yet.
+    private static ISpeechSynthesisFamily FamilyNamed(string architecture) =>
+        throw new NotSupportedException($"The speech synthesis family '{architecture}' by name is not on the new design yet.");
+
+    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
+    // new design yet.
+    private static ICheckpointFormat FormatFor(string path) =>
+        throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
+
     /// <summary>
     /// Loads the model at <paramref name="path"/> (a folder with config.json and a checkpoint any registered
-    /// <see cref="CheckpointFormats"/> format opens) through the family config.json's "architectures" names.
+    /// <c>CheckpointFormats</c> format opens) through the family config.json's "architectures" names.
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
     /// <exception cref="InvalidDataException">config.json names no architecture.</exception>
@@ -337,19 +303,19 @@ public static class SpeechSynthesisModels
     public static SpeechTextNeeds TextNeeds(string path)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        string folder = Directory.Exists(path) ? path : CheckpointFormats.For(path).Prepare(path);
+        string folder = Directory.Exists(path) ? path : FormatFor(path).Prepare(path);
         var (config, architecture) = Config(folder);
-        return SpeechSynthesisFamilies.For(architecture) is ITextFrontEndSynthesisFamily family ? family.TextNeeds(config, folder) : SpeechTextNeeds.None;
+        return FamilyNamed(architecture) is ITextFrontEndSynthesisFamily family ? family.TextNeeds(config, folder) : SpeechTextNeeds.None;
     }
 
     // The checkpoint at `path` read by the family its config.json names.
     private static T Read<T>(string path, Func<ISpeechSynthesisFamily, SpeechSynthesisCheckpoint, T> read)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        var format = CheckpointFormats.For(path);
+        var format = FormatFor(path);
         string folder = format.Prepare(path);
         var (config, architecture) = Config(folder);
-        var family = SpeechSynthesisFamilies.For(architecture);
+        var family = FamilyNamed(architecture);
         using var tensors = format.Open(folder);
         return read(family, new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []));
     }
@@ -387,7 +353,7 @@ public static class SpeechSynthesisModels
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new SpeechCreateOptions();
         string architecture = SpeechModels.Architecture(spec, options);
-        var family = SpeechSynthesisFamilies.Get(architecture) as ICreatableSynthesisFamily
+        var family = FamilyNamed(architecture) as ICreatableSynthesisFamily
             ?? throw new NotSupportedException($"Speech synthesis family '{architecture}' cannot make a model from a description (it reads checkpoints only).");
         SpeechModels.CheckFolder(folder, options);
         SpeechModels.Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);

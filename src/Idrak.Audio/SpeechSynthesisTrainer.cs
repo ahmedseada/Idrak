@@ -17,6 +17,15 @@ namespace Idrak.Audio;
 /// </summary>
 public static class SpeechSynthesisTrainer
 {
+    // The augmentations were registered (AudioAugmentations) and picked by name, which is not on the new design yet.
+    private static IAudioAugmentation AugmentationNamed(string name) =>
+        throw new NotSupportedException($"The audio augmentation '{name}' by name is not on the new design yet.");
+
+    // The synthesis objectives were registered (SpeechSynthesisObjectives) and a model's picked by its name, which is not on
+    // the new design yet.
+    private static ISpeechSynthesisObjective ObjectiveNamed(string name) =>
+        throw new NotSupportedException($"The speech synthesis objective '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Trains <paramref name="model"/> on <paramref name="train"/> for <see cref="SpeechTrainingOptions.Steps"/> steps (see
     /// <see cref="SpeechTrainer.Train"/>), its durations from <see cref="SpeechTrainingOptions.Durations"/>; or goes on from
@@ -37,13 +46,13 @@ public static class SpeechSynthesisTrainer
             throw new ArgumentException("A synthesizer trains on label durations: give SpeechTrainingOptions.Durations, an alignments file (SpeechAlignments.AlignToFile, or idrak data audio --align MODEL).", nameof(options));
         }
 
-        if (options.Augmentations.Select(AudioAugmentations.Get).FirstOrDefault(a => a.Stage == AudioAugmentationStage.Features) is { } masking)
+        if (options.Augmentations.Select(AugmentationNamed).FirstOrDefault(a => a.Stage == AudioAugmentationStage.Features) is { } masking)
         {
             throw new ArgumentException($"The '{masking.Name}' augmentation changes the features after they are taken, and a synthesizer's features are its targets: "
                 + "give a synthesizer sound augmentations only (\"speed\", \"noise\").", nameof(options));
         }
 
-        var objective = SpeechSynthesisObjectives.Get(model.Objective);
+        var objective = ObjectiveNamed(model.Objective);
         if (!objective.Trains(model))
         {
             throw new ArgumentException($"The '{objective.Name}' synthesis objective does not train a {model.GetType().Name} ({model.Architecture}).", nameof(model));

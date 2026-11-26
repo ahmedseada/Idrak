@@ -2,14 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
 /// One step done to sound (filter it, take the noise off, set its level): sound in, sound out, as images have
-/// <c>IImageTransform</c>. Register one with <see cref="AudioProcessors.Register"/>; a pipeline
+/// <c>IImageTransform</c>. Register one with <c>AudioProcessors.Register</c>; a pipeline
 /// (<see cref="AudioPipeline"/>) names processors in the order they run, as text such as
 /// <c>highpass=80, denoise=1.5 quantile=0.2, normalize=-20</c>.
 /// <para>
@@ -23,16 +22,19 @@ namespace Idrak.Audio.Abstractions;
 /// naming <see cref="LiveAlternative"/> when it has one.
 /// </para>
 /// <para>
-/// Its <see cref="IKind.Name"/> is what a pipeline uses (<c>highpass</c>; names compare ignoring case and hold no ',',
+/// Its <see cref="Name"/> is what a pipeline uses (<c>highpass</c>; names compare ignoring case and hold no ',',
 /// '=' or spaces). What a processor takes is described by <see cref="Parameters"/>: its value (<c>80</c> in
 /// <c>highpass=80</c>) and options (<c>quantile=0.2</c>), each with its kind, range, unit and the value used when left
-/// out. The default <see cref="IConfigurableKind.Keys"/> and <see cref="Check"/> follow from them, so a processor that
-/// describes its inputs gets its steps checked when a pipeline is parsed. A processor knows nothing of models: one that
+/// out. The default <see cref="Keys"/> and <see cref="Check"/> follow from them, so a processor that describes its inputs gets
+/// its steps checked when a pipeline is parsed. A processor knows nothing of models: one that
 /// runs a model (a learned denoiser) is a plug-in.
 /// </para>
 /// </summary>
-public interface IAudioProcessor : IConfigurableKind
+public interface IAudioProcessor
 {
+    /// <summary>Its name, what a pipeline's step names (<c>highpass</c>).</summary>
+    string Name { get; }
+
     /// <summary>
     /// Whether it runs on sound as it comes, block by block (an <see cref="ILiveAudioProcessor"/>), or needs the whole
     /// recording (an <see cref="IRecordingAudioProcessor"/>: its stage gives everything when flushed, and a live pipeline
@@ -40,7 +42,7 @@ public interface IAudioProcessor : IConfigurableKind
     /// </summary>
     bool Live => this is ILiveAudioProcessor;
 
-    /// <summary>A short name for people ("High-pass filter"); <see cref="IKind.Name"/> unless the processor gives one.</summary>
+    /// <summary>A short name for people ("High-pass filter"); <see cref="Name"/> unless the processor gives one.</summary>
     string Label => Name;
 
     /// <summary>
@@ -50,7 +52,7 @@ public interface IAudioProcessor : IConfigurableKind
     IReadOnlyList<AudioProcessorParameter> Parameters => [];
 
     /// <summary>The option keys it takes besides its value: by default, those of <see cref="Parameters"/>.</summary>
-    IReadOnlySet<string> IConfigurableKind.Keys => new OptionKeys(Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key));
+    IReadOnlyCollection<string> Keys => [.. Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key)];
 
     /// <summary>For a whole-recording processor, the live one to use on live sound instead (named when a live pipeline refuses it); null when there is none.</summary>
     string? LiveAlternative => null;
@@ -428,9 +430,9 @@ public sealed class AudioProcessorStep
 /// <c>mono</c> and <c>resample</c>, and <c>highpass</c>'s <c>order</c>; dynamics, <c>gate</c>, <c>compress</c>, <c>limit</c> (a look-ahead limiter),
 /// <c>agc</c> and <c>loudness-live</c> (live), <c>loudness</c> (ITU-R BS.1770 / EBU R128 integrated) and <c>peaknorm</c>
 /// (whole recording); noise and repair, <c>denoise-live</c> (a running noise floor), <c>declick</c>, <c>declip</c>,
-/// <c>deess</c> and <c>dereverb</c> (live), <c>spectral-gate</c> (whole recording). <see cref="Describe"/> lists them with
-/// their summaries. No processor's option is named as a processor: after a comma a registered name starts a step. Register another with <see cref="Register"/>; one of a library name shadows the
-/// library's, which <see cref="Unregister"/> brings back.
+/// <c>deess</c> and <c>dereverb</c> (live), <c>spectral-gate</c> (whole recording). <c>Describe</c> lists them with
+/// their summaries. No processor's option is named as a processor: after a comma a registered name starts a step. Register another with <c>Register</c>; one of a library name shadows the
+/// library's, which <c>Unregister</c> brings back.
 /// </summary>
 public static class AudioProcessors
 {
@@ -446,61 +448,7 @@ public static class AudioProcessors
     /// <summary>The speech level set, the peak kept under a ceiling (whole recording).</summary>
     public const string Normalize = "normalize";
 
-    private static readonly KindTable<IAudioProcessor> Table = BuiltIn();
-
-    private static KindTable<IAudioProcessor> BuiltIn()
-    {
-        var table = new KindTable<IAudioProcessor>(nameof(AudioProcessors), "Audio processor", "add one with AudioProcessors.Register", comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a processor's stage keeps its state between blocks, so another cannot stand in for one block unnoticed");
-        table.RegisterDefault(new HighPassProcessor());
-        table.RegisterDefault(new DenoiseProcessor());
-        table.RegisterDefault(new TrimProcessor());
-        table.RegisterDefault(new NormalizeProcessor());
-        FilterProcessors.RegisterDefaults(table);
-        DynamicsProcessors.RegisterDefaults(table);
-        RepairProcessors.RegisterDefaults(table);
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="processor"/> under its name (over the library's of that name, which stays behind it).</summary>
-    /// <exception cref="ArgumentException">The name is empty or holds a ',', '=' or a space.</exception>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioProcessor processor)
-    {
-        ArgumentNullException.ThrowIfNull(processor);
-        ArgumentException.ThrowIfNullOrWhiteSpace(processor.Name);
-        if (processor.Name.AsSpan().IndexOfAny(", =\t") >= 0)
-        {
-            throw new ArgumentException($"An audio processor's name has no ',', '=' or space ('{processor.Name}').", nameof(processor));
-        }
-
-        Table.Register(processor, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
     // The refusal of a processor that is neither live nor whole-recording.
     internal static string Neither(string name) =>
         $"The audio processor {name} implements neither ILiveAudioProcessor (Open) nor IRecordingAudioProcessor (Apply): it runs neither on blocks nor on a whole recording.";
-
-    /// <summary>Removes the app's processor <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The processor registered as <paramref name="name"/>, or null.</summary>
-    public static IAudioProcessor? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The processor registered as <paramref name="name"/>.</summary>
-    /// <exception cref="ArgumentException">None is: the message names the registered ones.</exception>
-    public static IAudioProcessor Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new ArgumentException($"Unknown audio processor '{name}' (registered: {string.Join(", ", Names)}); add one with AudioProcessors.Register.");
-
-    /// <summary>The library's processor <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IAudioProcessor? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the processor <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered processor as "name: summary" (with "(whole recording)" for those that are not live), one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Kinds.Select(p => $"{p.Name}: {p.Summary}{(p.Live ? "" : " (whole recording)")}"));
 }

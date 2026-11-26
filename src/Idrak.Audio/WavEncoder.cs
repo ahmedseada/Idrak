@@ -29,7 +29,7 @@ public sealed class WavEncoder : IAudioEncoder
         options ??= new AudioEncodeOptions();
         if (options.Parameters is { Count: > 0 } parameters)
         {
-            _ = AudioEncoders.NoParameters.Parse(parameters);                           // WAV takes none: every key refused, by name
+            throw new ArgumentException($"WAV takes no options by key (given: {string.Join(", ", parameters.Keys)}).", nameof(options));
         }
 
         int bits = options.Float ? 32 : options.BitsPerSample;

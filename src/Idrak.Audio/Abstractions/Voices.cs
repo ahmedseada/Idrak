@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Formats;
@@ -143,10 +142,10 @@ public sealed record VoiceConverterLoadOptions
     public string? Family { get; init; }
 }
 
-/// <summary>A voice converter family: how its checkpoints are recognised and read. Registered in <see cref="VoiceConverters"/>.</summary>
+/// <summary>A voice converter family: how its checkpoints are recognised and read.</summary>
 public interface IVoiceConverterFamily
 {
-    /// <summary>The name it is registered under (stored in voice.json).</summary>
+    /// <summary>Its name (stored in voice.json).</summary>
     string Name { get; }
 
     /// <summary>Whether <paramref name="config"/> (a config.json naming no architecture) is one of its checkpoints.</summary>
@@ -158,46 +157,25 @@ public interface IVoiceConverterFamily
 }
 
 /// <summary>
-/// The voice converter families, by name (ordinal). The library registers none: a family is an application of these
-/// contracts, registered by the plug-in that brings it (Idrak.Audio.Plugins' OpenVoice family is one). A checkpoint no family reads is
-/// refused naming this registry; nothing falls back to another family.
+/// Loads voice converters. The library has no converter family: a family is an application of these contracts, brought
+/// by a plug-in (Idrak.Audio.Plugins' OpenVoice family is one); the families were registered and a checkpoint's found
+/// among them, which is not on the new design yet.
 /// </summary>
 public static class VoiceConverters
 {
-    private static readonly SlotTable<string, IVoiceConverterFamily> Registry = new(nameof(VoiceConverters), comparer: StringComparer.Ordinal,
-        unguarded: "a converter's embeddings are its own, so two registrations cannot be mixed");
+    // The converter families were registered (VoiceConverters.Register) and a checkpoint's found by its name or by
+    // recognising its config.json, which is not on the new design yet.
+    private static IVoiceConverterFamily ConverterFamilyFor(JsonObject config, string? name) =>
+        throw new NotSupportedException($"The voice converter family {(name is null ? "that reads this config.json" : $"'{name}'")}, found among the registered ones, is not on the new design yet.");
 
-    /// <summary>Registers <paramref name="family"/> under its <see cref="IVoiceConverterFamily.Name"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IVoiceConverterFamily family)
-    {
-        ArgumentNullException.ThrowIfNull(family);
-        ArgumentException.ThrowIfNullOrEmpty(family.Name);
-        Registry.Register(family.Name, family, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family <paramref name="name"/>; false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The family registered as <paramref name="name"/>, or null.</summary>
-    public static IVoiceConverterFamily? Find(string name) => Registry.Find(name);
-
-    /// <summary>The family registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names <see cref="Register"/>.</exception>
-    public static IVoiceConverterFamily Get(string name) => Registry.Find(name) ?? throw NotRegistered(name);
-
-    /// <summary>The library's family <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IVoiceConverterFamily? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
+    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
+    // new design yet.
+    private static ICheckpointFormat FormatFor(string path) =>
+        throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
 
     /// <summary>
     /// Loads the converter at <paramref name="path"/> (a folder with config.json and a checkpoint a registered
-    /// <see cref="CheckpointFormats"/> format opens) through the options' family, the one config.json names, or the
+    /// <c>CheckpointFormats</c> format opens) through the options' family, the one config.json names, or the
     /// first registered that recognises config.json.
     /// </summary>
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
@@ -206,7 +184,7 @@ public static class VoiceConverters
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         options ??= new VoiceConverterLoadOptions();
-        var format = CheckpointFormats.For(path);
+        var format = FormatFor(path);
         string folder = format.Prepare(path);
         string configPath = Path.Combine(folder, "config.json");
         if (!File.Exists(configPath))
@@ -216,44 +194,10 @@ public static class VoiceConverters
 
         var config = JsonNode.Parse(File.ReadAllText(configPath), documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip })?.AsObject()
             ?? throw new InvalidDataException($"{configPath} is not a JSON object.");
-        var family = FamilyFor(config, options.Family, folder);
+        var family = ConverterFamilyFor(config, options.Family);
         using var tensors = format.Open(folder);
         return family.Read(new VoiceConverterCheckpoint(config, tensors, Path.GetFullPath(folder), []), options);
     }
-
-    /// <summary>The family that reads <paramref name="config"/>: <paramref name="name"/> when given, the one config.json names, else the first that recognises it.</summary>
-    /// <exception cref="NotSupportedException">None does.</exception>
-    public static IVoiceConverterFamily FamilyFor(JsonObject config, string? name = null, string? where = null)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        if (name is not null)
-        {
-            return Get(name);
-        }
-
-        string? named = config["architectures"] is JsonArray { Count: > 0 } a && a[0] is JsonValue v && v.TryGetValue(out string? s) ? s
-            : config["model_type"] is JsonValue m && m.TryGetValue(out string? t) ? t : null;
-        if (named is not null && Registry.Find(named) is { } family)
-        {
-            return family;
-        }
-
-        foreach (var candidate in Registry.Values)
-        {
-            if (candidate.Recognizes(config))
-            {
-                return candidate;
-            }
-        }
-
-        throw NotRegistered(named ?? $"for {where ?? "this config.json"}");
-    }
-
-    internal static NotRegisteredException NotRegistered(string name) =>
-        new(nameof(VoiceConverters), name, Registry.Keys,
-            $"Voice converter family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with VoiceConverters.Register (a plug-in or the app that brings the family; the library registers none), "
-            + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
 }
 
 /// <summary>How a voice is installed from clips (<see cref="IVoiceStore.Add"/>).</summary>
@@ -311,7 +255,7 @@ public sealed record VoiceCheckpointOptions
 
 /// <summary>
 /// Where voices are installed: each a folder holding voice.json (the manifest: kind, languages, encoder, embedding
-/// width, clips, consent) and, for an embedding voice, embedding.safetensors. Registered in <see cref="VoiceStores"/>.
+/// width, clips, consent) and, for an embedding voice, embedding.safetensors.
 /// </summary>
 public interface IVoiceStore
 {
@@ -369,49 +313,12 @@ public interface ICheckpointVoiceStore : IVoiceStore
 }
 
 /// <summary>
-/// The voice stores, by name (ignoring case). Built in (Idrak.Audio): "folder" (<see cref="FolderVoiceStore"/> at
+/// The voice stores' names (ignoring case). Built in (Idrak.Audio): "folder" (<see cref="FolderVoiceStore"/> at
 /// <see cref="FolderVoiceStore.DefaultRoot"/>: <c>IDRAK_VOICES</c>, else voices/ under <c>IDRAK_CACHE</c> or
-/// <c>~/.cache/idrak</c>). Register another (a shared or remote one) with <see cref="Register"/>.
+/// <c>~/.cache/idrak</c>), reached directly.
 /// </summary>
 public static class VoiceStores
 {
     /// <summary>The built-in store's name, "folder".</summary>
     public const string FolderName = "folder";
-
-    private static readonly SlotTable<string, IVoiceStore> Registry = BuiltIn();
-
-    private static SlotTable<string, IVoiceStore> BuiltIn()
-    {
-        var table = new SlotTable<string, IVoiceStore>(nameof(VoiceStores), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a store's voices live where it keeps them, so two stores cannot stand in for each other");
-        table.RegisterDefault(FolderName, new FolderVoiceStore(FolderVoiceStore.DefaultRoot, FolderName));
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="store"/> under its <see cref="IVoiceStore.Name"/>; under "folder" it takes the built-in's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IVoiceStore store)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-        ArgumentException.ThrowIfNullOrWhiteSpace(store.Name);
-        Registry.Register(store.Name, store, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's store <paramref name="name"/> (the built-in name gets the built-in back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The store <paramref name="name"/> (null: "folder").</summary>
-    /// <exception cref="NotSupportedException">None is registered under the name.</exception>
-    public static IVoiceStore Get(string? name = null) => Registry.Find(name ?? FolderName)
-        ?? throw new NotRegisteredException(nameof(VoiceStores), name ?? FolderName, Registry.Keys,
-            $"Voice store '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with VoiceStores.Register.");
-
-    /// <summary>The library's store <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IVoiceStore? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the store <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
 }

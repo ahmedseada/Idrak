@@ -118,7 +118,7 @@ public sealed record HifiGanVocoderConfig
 /// memory follows the piece. Read from a checkpoint folder (<see cref="Load"/>: transformers' <c>conv_pre</c>,
 /// <c>upsampler.N</c>, <c>resblocks.N</c>, <c>conv_post</c>, <c>mean</c> and <c>scale</c> at the root, as SpeechT5's and
 /// FastSpeech 2's HiFi-GAN ship) or built from any <see cref="StoredLayers"/>. An app registers one in
-/// <see cref="Vocoders"/> with <see cref="RegisterFolder"/>, so a synthesizer picks it by name.
+/// <see cref="Vocoders"/> with <c>RegisterFolder</c>, so a synthesizer picks it by name.
 /// </summary>
 public sealed class HifiGanVocoder : IVocoder, IDisposable
 {
@@ -184,16 +184,21 @@ public sealed class HifiGanVocoder : IVocoder, IDisposable
     /// </summary>
     public double DecoderChunkSeconds { get; set; } = 10;
 
+    // The checkpoint formats were registered (CheckpointFormats) and the one of a path found among them, which is not on the
+    // new design yet.
+    private static ICheckpointFormat FormatFor(string path) =>
+        throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
+
     /// <summary>
     /// Reads a HiFi-GAN checkpoint (<paramref name="path"/>: a folder with config.json and its tensors in any format
-    /// <see cref="CheckpointFormats"/> opens, or a file in it) onto <paramref name="device"/> (default <see cref="Device.Default"/>).
+    /// <c>CheckpointFormats</c> opens, or a file in it) onto <paramref name="device"/> (default <see cref="Device.Default"/>).
     /// </summary>
     /// <exception cref="InvalidDataException">No config.json, or a tensor missing or of another shape than the config says.</exception>
     public static HifiGanVocoder Load(string path, Device? device = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         string target = File.Exists(path) ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
-        var format = CheckpointFormats.For(target);
+        var format = FormatFor(target);
         string folder = format.Prepare(target);
         string configFile = Path.Combine(folder, "config.json");
         if (!File.Exists(configFile))
@@ -235,31 +240,6 @@ public sealed class HifiGanVocoder : IVocoder, IDisposable
             generator.Dispose();
             throw;
         }
-    }
-
-    /// <summary>
-    /// Registers a vocoder read from <paramref name="path"/> under <paramref name="name"/> in <see cref="Vocoders"/>: the
-    /// checkpoint is read at the first <see cref="Vocoders.Create"/> and kept for the process (the registry's options are
-    /// not read; the checkpoint fixes the mel layout, so the kind takes only options of its rate and mel count).
-    /// </summary>
-    public static void RegisterFolder(string path, string name = DefaultName, Device? device = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        Vocoders.Register(new FolderKind(name, new Lazy<HifiGanVocoder>(() => Load(path, device), LazyThreadSafetyMode.ExecutionAndPublication)));
-    }
-
-    // A checkpoint folder as a vocoder kind: one vocoder, read once, of the checkpoint's mel layout.
-    private sealed class FolderKind(string name, Lazy<HifiGanVocoder> loaded) : IVocoderKind
-    {
-        public string Name => name;
-
-        public string Summary => "HiFi-GAN read from a checkpoint folder (its mel layout fixed by the checkpoint)";
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public bool Accepts(AudioFeatureOptions options) => options.Mels == loaded.Value.Mels && options.SampleRate == loaded.Value.SampleRate;
-
-        public IVocoder Create(AudioFeatureOptions request) => loaded.Value;
     }
 
     /// <inheritdoc />

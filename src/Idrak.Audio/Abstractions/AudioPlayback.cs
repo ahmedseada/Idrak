@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Audio.Abstractions;
 
 /// <summary>
@@ -141,10 +139,10 @@ public interface IAudioPlayback
 }
 
 /// <summary>
-/// The audio playbacks, by name (ignoring case). Built in (Idrak.Audio), each loading the operating system's audio library
-/// when first used: "winmm" (Windows' waveOut), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio). Register
-/// another (macOS, a sound server, a network stream) with <see cref="Register"/>; <see cref="ForThisMachine"/> picks the
-/// first that can run, an app's before the library's.
+/// The audio playbacks' names (ignoring case). Built in (Idrak.Audio), each loading the operating system's audio library
+/// when first used: "winmm" (Windows' waveOut), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio), each
+/// reached directly (<see cref="Idrak.Audio.WinmmPlayback"/>, <see cref="Idrak.Audio.AlsaPlayback"/>,
+/// <see cref="Idrak.Audio.AAudioPlayback"/>); <see cref="ForThisMachine"/> picks the first that can run.
 /// </summary>
 public static class AudioPlaybacks
 {
@@ -157,65 +155,30 @@ public static class AudioPlaybacks
     /// <summary>Android's AAudio (libaaudio.so, Android 8.0, API 26, and later).</summary>
     public const string Aaudio = "aaudio";
 
-    private static readonly SlotTable<string, IAudioPlayback> Table = BuiltIn();
-
-    private static SlotTable<string, IAudioPlayback> BuiltIn()
-    {
-        var table = new SlotTable<string, IAudioPlayback>(nameof(AudioPlaybacks), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a playback plays on its own system's devices, so another cannot stand in for it");
-        table.RegisterDefault(Winmm, new Idrak.Audio.WinmmPlayback());
-        table.RegisterDefault(Alsa, new Idrak.Audio.AlsaPlayback());
-        table.RegisterDefault(Aaudio, new Idrak.Audio.AAudioPlayback());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="playback"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioPlayback playback)
-    {
-        ArgumentNullException.ThrowIfNull(playback);
-        ArgumentException.ThrowIfNullOrWhiteSpace(playback.Name);
-        Table.Register(playback.Name, playback, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's playback of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The playback of that name, or null.</summary>
-    public static IAudioPlayback? Find(string name) => Table.Find(name);
-
-    /// <summary>The playback of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioPlayback Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioPlaybacks), name, Table.Keys,
-            $"Audio playback '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioPlaybacks.Register.");
-
-    /// <summary>The library's playback of that name, or null.</summary>
-    public static IAudioPlayback? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the playback of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>The first registered playback that can run on this machine, an app's before the library's.</summary>
-    /// <exception cref="NotSupportedException">None can; the message gives each one's reason.</exception>
+    /// <summary>The first playback that can run on this machine.</summary>
+    /// <exception cref="NotSupportedException">
+    /// None can; the message gives each one's reason. Always for now: the playbacks to pick from were registered, which is
+    /// not on the new design yet.
+    /// </exception>
     public static IAudioPlayback ForThisMachine()
     {
         var reasons = new List<string>();
-        foreach (string name in Table.Keys.OrderBy(n => Origin(n) == Overrides.Library ? 1 : 0))
+        foreach (var playback in Registered())
         {
-            var playback = Table.Find(name)!;
             if (playback.IsAvailable(out string reason))
             {
                 return playback;
             }
 
-            reasons.Add($"{name}: {reason}");
+            reasons.Add($"{playback.Name}: {reason}");
         }
 
-        throw new NotSupportedException($"No audio playback can play on this machine ({string.Join("; ", reasons)}). Register one with AudioPlaybacks.Register, "
+        throw new NotSupportedException($"No audio playback can play on this machine ({string.Join("; ", reasons)}); "
             + "or write the sound to a file (AudioEncoders).");
     }
+
+    // The playbacks were registered (AudioPlaybacks.Register) and the first that can run picked among them, which is not on the new
+    // design yet.
+    private static IEnumerable<IAudioPlayback> Registered() =>
+        throw new NotSupportedException("The audio playbacks to pick from were registered, which is not on the new design yet.");
 }

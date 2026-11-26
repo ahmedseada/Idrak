@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 
 namespace Idrak.Audio.Abstractions;
@@ -120,7 +119,7 @@ public sealed record AudioFeatureOptions
     }
 }
 
-/// <summary>Turns sound into a model's features; register one with <see cref="AudioFeatureExtractors.Register"/>.</summary>
+/// <summary>Turns sound into a model's features; register one with <c>AudioFeatureExtractors.Register</c>.</summary>
 public interface IAudioFeatureExtractor
 {
     /// <summary>The extractor's name, e.g. "log-mel".</summary>
@@ -136,80 +135,3 @@ public interface IAudioFeatureExtractor
     Tensor Extract(AudioData audio, Device device);
 }
 
-/// <summary>
-/// A kind of feature extractor, registered in <see cref="AudioFeatureExtractors"/> under its <see cref="IKind.Name"/>
-/// ("log-mel"): makes the extractor for its options (<see cref="IKind{TRequest, T}.Create"/>).
-/// </summary>
-public interface IAudioFeatureKind : IKind<AudioFeatureOptions, IAudioFeatureExtractor>;
-
-/// <summary>
-/// The feature extractors, by name (ignoring case). Built in (Idrak.Audio): "log-mel" (Whisper's). Register another kind,
-/// or one over a library name (which stays behind it, see <see cref="SetPolicy"/>), with <see cref="Register"/>.
-/// </summary>
-public static class AudioFeatureExtractors
-{
-    private static readonly KindTable<IAudioFeatureKind> Registry = BuiltIn();
-
-    private static KindTable<IAudioFeatureKind> BuiltIn()
-    {
-        var table = new KindTable<IAudioFeatureKind>(nameof(AudioFeatureExtractors), "Audio feature extractor", "add it with AudioFeatureExtractors.Register",
-            (slot, app, library) => new Kind(app.Name, app.Summary, options => new GuardedExtractor(slot, app.Create(options), library.Create(options))), StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(new Kind("log-mel", "Whisper's log-mel spectrogram (its STFT, mel filters and clamp)", options => new LogMelFeatures(options)));
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="kind"/> under its name; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioFeatureKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's extractor <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Names;
-
-    /// <summary>The extractor <paramref name="name"/> made with <paramref name="options"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered; the message names those that are.</exception>
-    public static IAudioFeatureExtractor Create(string name, AudioFeatureOptions? options = null) =>
-        (Registry.Find(name) ?? throw new NotSupportedException($"No audio feature extractor '{name}' is registered ({string.Join(", ", Names)}); add it with AudioFeatureExtractors.Register."))
-        .Create(options ?? new AudioFeatureOptions());
-
-    /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IAudioFeatureKind? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's extractor <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> retries on the library's), or whether it only runs beside the library's
-    /// (<see cref="SlotPolicy.Shadow"/>: the library's features are used, the two compared within 1e-4).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
-    // A kind as a function of its options.
-    private sealed class Kind(string name, string summary, Func<AudioFeatureOptions, IAudioFeatureExtractor> create) : IAudioFeatureKind
-    {
-        public string Name => name;
-
-        public string Summary => summary;
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public IAudioFeatureExtractor Create(AudioFeatureOptions request) => create(request);
-    }
-
-    // An app's extractor over a library one: each call falls back on its own, or is compared with the library's.
-    private sealed class GuardedExtractor(Slot slot, IAudioFeatureExtractor app, IAudioFeatureExtractor library) : IAudioFeatureExtractor
-    {
-        public string Name => app.Name;
-
-        public AudioFeatureOptions Options => app.Options;
-
-        public int FramesFor(long samples) => app.FramesFor(samples);
-
-        public Tensor Extract(AudioData audio, Device device) =>
-            slot.Call(() => app.Extract(audio, device), () => library.Extract(audio, device),
-                (a, b) => Comparisons.Exact(a.Shape.ToArray().Length, b.Shape.ToArray().Length) ?? Comparisons.Difference(a.ToArray(), b.ToArray(), 1e-4f));
-    }
-}
