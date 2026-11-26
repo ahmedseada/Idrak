@@ -167,7 +167,7 @@ internal sealed class McpServeCommand : Command
         McpHost host;
         try
         {
-            host = McpHost.StartAsync(transport, registry, options, interrupt.Token).GetAwaiter().GetResult();
+            host = NotOnTheNewDesign.Yet<McpHost>($"Picking the MCP transport '{transport}' by its name");
         }
         catch (ArgumentException e)
         {

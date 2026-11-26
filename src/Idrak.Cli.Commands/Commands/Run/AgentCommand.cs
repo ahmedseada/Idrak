@@ -110,11 +110,8 @@ internal sealed class AgentCommand : Command
 
         if (coding.All.Any(t => t.Definition.Name == "run_command"))
         {
-            // The first line: where the model's commands run, and how to isolate them.
-            context.Error(coding.Sandbox.Name.Equals(CommandSandboxes.Process, StringComparison.OrdinalIgnoreCase)
-                ? $"Commands run in the {CommandSandboxes.Process} sandbox: a plain process of this machine with your rights, nothing isolated (for models you trust); "
-                  + $"for one you do not, run them in a container: --sandbox {CommandSandboxes.Container} or {CommandSandboxes.EnvironmentVariable}={CommandSandboxes.Container} (Docker or Podman)."
-                : $"Commands run in the {coding.Sandbox.Name} sandbox: {coding.Sandbox.Summary}.");
+            // The first line: where the model's commands run.
+            context.Error($"Commands run in the {coding.Sandbox.Name} sandbox: {coding.Sandbox.Summary}.");
         }
 
         if (coding.LanguageNotice is { } notice)

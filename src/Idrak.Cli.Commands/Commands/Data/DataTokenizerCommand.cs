@@ -49,7 +49,7 @@ internal sealed class DataTokenizerCommand : Command
 
         Options:
               --model M            bpe (the default), unigram or wordpiece
-              --trainer NAME       a plug-in's trainer (-P), instead of --model
+              --trainer NAME       a trainer by its name (not on the new design yet), instead of --model
               --vocab N            the vocabulary to reach: special tokens, the alphabet and the learned tokens (32000)
               --min-frequency N    bpe and wordpiece: a pair seen fewer times is never merged (2)
               --special TOKEN      a special token (repeat for several); replaces the defaults: <pad> <s> </s>
@@ -208,7 +208,7 @@ internal sealed class DataTokenizerCommand : Command
         string? plugin = context.Option("--trainer");
         if (model is not null && plugin is not null)
         {
-            throw new UsageException("Give --model (a built-in trainer: bpe, unigram or wordpiece) or --trainer (a plug-in's), not both.");
+            throw new UsageException("Give --model (a built-in trainer: bpe, unigram or wordpiece) or --trainer NAME, not both.");
         }
 
         if (model is not null && !Models.Contains(model))

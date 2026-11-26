@@ -232,7 +232,7 @@ internal static class DashboardTopology
         result["predictions"] = predictions;
         try
         {
-            var plan = TransportPlan.Make(topology, options);
+            var plan = NotOnTheNewDesign.Yet<TransportPlan>("Picking the transport of each pair of ranks (the transport selectors)");
             var transports = new JsonArray();
             for (int a = 0; a < topology.WorldSize; a++)
             {

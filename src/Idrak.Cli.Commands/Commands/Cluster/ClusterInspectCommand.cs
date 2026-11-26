@@ -156,7 +156,7 @@ internal sealed class ClusterInspectCommand : Command
         string? planned = null;
         try
         {
-            var plan = TransportPlan.Make(topology, settings);
+            var plan = NotOnTheNewDesign.Yet<TransportPlan>("Picking the transport of each pair of ranks (the transport selectors)");
             var groups = new SortedDictionary<string, int>(StringComparer.Ordinal);
             for (int a = 0; a < topology.WorldSize; a++)
             {

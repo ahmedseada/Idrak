@@ -217,7 +217,7 @@ internal sealed class TuneTool(ToolConsole console)
             float NextFloat() => float.Parse(Next(), CultureInfo.InvariantCulture);
             switch (args[i])
             {
-                case "--cuda": device = Device.Cuda(); break;
+                case "--cuda": device = ParseDevice("cuda"); break;
                 case "--gpu": device = Gpu(); break;
                 case "--device":
                     device = Next() switch
