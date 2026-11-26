@@ -28,7 +28,7 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
 {
     /// <summary>
     /// Reads one transcript: <c>{"messages": [...], "tools": [...]}</c> in the OpenAI / Hugging Face chat format
-    /// (content as a string or a list of parts, each read by <see cref="ChatParts.FromJson"/>: text, images or a registered kind; reasoning in reasoning_content, thinking or reasoning; tool calls as
+    /// (content as a string or a list of parts, each read by <c>ChatParts.FromJson</c>: text, images or a registered kind; reasoning in reasoning_content, thinking or reasoning; tool calls as
     /// [{"function": {"name", "arguments"}}] with arguments as an object or a JSON string; tool results with role "tool"
     /// and a name or a tool_call_id), or ShareGPT's <c>{"conversations": [{"from": "human" | "gpt" | "system", "value"}]}</c>.
     /// Optional "enable_thinking" / "think" sets <see cref="Think"/>.
@@ -82,13 +82,16 @@ public sealed record ChatTranscript(IReadOnlyList<ChatMessage> Messages, IReadOn
         return new ChatTranscript(messages, tools, think);
     }
 
+    // A message's content was read through the registered part kinds (ChatParts): not on the new design yet.
+    private static IReadOnlyList<ChatPart> ContentFromJson(JsonNode? content) => throw new NotSupportedException("A message's content read through the chat part kinds is not on the new design yet.");
+
     private static ChatMessage Message(JsonObject m, Dictionary<string, string> callNames, Func<JsonNode?, IReadOnlyList<ChatPart>>? read)
     {
         string role = (string?)m["role"] ?? throw new InvalidDataException("A message has no role.");
         IReadOnlyList<ChatPart> content;
         try
         {
-            content = read is null ? ChatParts.ContentFromJson(m["content"]) : read(m["content"]);
+            content = read is null ? ContentFromJson(m["content"]) : read(m["content"]);
         }
         catch (Exception ex) when (ex is FormatException or NotSupportedException)
         {
@@ -903,7 +906,7 @@ public sealed record FineTuningOptions
 
     /// <summary>
     /// Creates the optimizer from the trainable parameters (the adapters), e.g. <c>ps =&gt; new Sgd(ps, 0.05f, momentum: 0.9f)</c>
-    /// or one by name, <see cref="OptimizerKinds.Factory"/>. Null (the default): AdamW with <see cref="LearningRate"/> and
+    /// or one by name, <c>OptimizerKinds.Factory</c>. Null (the default): AdamW with <see cref="LearningRate"/> and
     /// <see cref="WeightDecay"/>. The rate the optimizer starts with is the peak the schedule works from. With
     /// <see cref="HostOptimizer"/> it receives the CPU copies of the parameters (one each). Recorded steps
     /// (<see cref="CudaGraphs"/>) record only the forward and backward pass, so they work with any optimizer that keeps the
@@ -914,7 +917,7 @@ public sealed record FineTuningOptions
 
     /// <summary>
     /// Creates the learning-rate schedule from the optimizer and the number of optimizer steps planned; it is stepped once
-    /// per optimizer step (by name: <see cref="LearningRateSchedules.Factory"/>). Null (the default): a linear warm-up over
+    /// per optimizer step (by name: <c>LearningRateSchedules.Factory</c>). Null (the default): a linear warm-up over
     /// <see cref="WarmupFraction"/> of the steps, then cosine decay to <see cref="MinLearningRate"/>.
     /// </summary>
     public Func<Optimizer, int, ILearningRateScheduler>? Scheduler { get; init; }

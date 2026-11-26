@@ -17,7 +17,7 @@ namespace Idrak.Text;
 /// <summary>
 /// The parts a synthetic page adds around its record's text: header lines at the start, centre and end, a title, a
 /// subject, a signature and a footer, each drawn per page from its alternatives at its chance, their slots
-/// (<c>{digits:6}</c>, <c>{hijri}</c>, ...; see <see cref="PagePartFillers"/>) filled from the page's seed. Written as
+/// (<c>{digits:6}</c>, <c>{hijri}</c>, ...; see <c>PagePartFillers</c>) filled from the page's seed. Written as
 /// JSON (<see cref="Read"/>): <c>{"headerStart": [["line", "line"], ...], "headerCenter", "headerEnd", "titles": ["..."],
 /// "subjects", "signatures", "footers", "chances": {"headerStart": 0.9, ...}, "digits": "٠١٢٣٤٥٦٧٨٩", "nativeDigits":
 /// 0.3, "language": "ar"}</c>; an alternative may be one line as a string. The library has no parts of its own: a page
@@ -149,10 +149,7 @@ public sealed record SyntheticPageParts
         {
             foreach (var (name, _) in PagePartTemplate.Slots(line, where))
             {
-                if (PagePartFillers.Find(name) is null)
-                {
-                    throw new InvalidDataException($"{where}: no slot {{{name}}} is registered, in \"{line}\" (registered: {string.Join(", ", PagePartFillers.Names)}); add it with PagePartFillers.Register.");
-                }
+                _ = SyntheticPages.FillerNamed(name);
             }
         }
 
@@ -201,7 +198,7 @@ public sealed record SyntheticPageOptions
     /// <summary>The share of pages drawn in grey (else as the style says).</summary>
     public double Grey { get; init; } = 0.3;
 
-    /// <summary>The record format (<see cref="SyntheticRecordFormats"/>); null to find it from the input.</summary>
+    /// <summary>The record format (<c>SyntheticRecordFormats</c>); null to find it from the input.</summary>
     public string? Format { get; init; }
 
     /// <summary>The answer's JSON key holding the page's text; null for the first key starting with "full_text", else the longest text.</summary>
@@ -275,12 +272,12 @@ public sealed record SyntheticPageOptions
 
         foreach (string layout in Layouts)
         {
-            _ = PageLayouts.Get(layout);
+            _ = SyntheticPages.LayoutNamed(layout);
         }
 
         foreach (string scan in Scans)
         {
-            _ = SyntheticPages.Profile(scan);
+            SyntheticPages.CheckProfile(scan);
         }
 
         if (Shapes.Count == 0)
@@ -290,7 +287,7 @@ public sealed record SyntheticPageOptions
 
         foreach (string shapes in Shapes)
         {
-            _ = ShapeProfiles.Resolve(shapes);
+            _ = SyntheticPages.ShapeProfilesNamed(shapes);
         }
 
         SyntheticPages.CheckOptions(Style.Options);
@@ -312,7 +309,7 @@ public sealed record SyntheticPageOptions
 
         if (!Documents && !ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase))
         {
-            _ = ImageEncoders.Get(ImageFormat);
+            _ = SyntheticPages.EncoderNamed(ImageFormat);
         }
 
         if (Output is not (SyntheticPageOutput.Images or SyntheticPageOutput.ScannedDocuments or SyntheticPageOutput.VectorDocuments))
@@ -323,7 +320,7 @@ public sealed record SyntheticPageOptions
         if (Documents)
         {
             ArgumentNullException.ThrowIfNull(WriteOptions);
-            _ = DocumentWriters.Get(Writer);
+            _ = SyntheticDocuments.WriterNamed(Writer);
             ArgumentOutOfRangeException.ThrowIfLessThan(PagesPerDocument, 1, nameof(PagesPerDocument));
             if (!(Dpi == 0 || Dpi is >= 1f and <= 9600f))
             {
@@ -411,9 +408,35 @@ public sealed record SyntheticPagesResult(int Records, int Pages, IReadOnlyList<
 /// </summary>
 public static class SyntheticPages
 {
-    /// <summary>The scan profile <paramref name="nameOrText"/> names or writes; null for "none".</summary>
-    public static IScanProfile? Profile(string nameOrText) =>
-        nameOrText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase) ? null : ScanProfiles.Resolve(nameOrText);
+    // Each of these was a registry (Idrak.Abstraction's, Idrak.Text's) a page's settings picked from by name: not on the
+    // new design yet.
+    internal static IPagePartFiller FillerNamed(string name) => throw new NotSupportedException($"The page part slot {{{name}}} by name is not on the new design yet.");
+
+    internal static IPageLayout LayoutNamed(string name) => throw new NotSupportedException($"The page layout '{name}' by name is not on the new design yet.");
+
+    internal static bool ShapeProfilesNamed(string text) => throw new NotSupportedException($"The shape profiles '{text}' by name are not on the new design yet.");
+
+    internal static IImageEncoder EncoderNamed(string name) => throw new NotSupportedException($"The image encoder '{name}' by name is not on the new design yet.");
+
+    internal static IPen PenNamed(string name) => throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+
+    internal static ITextBinding BindingNamed(string name) => throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
+
+    internal static IGlyphPose PoseNamed(string name) => throw new NotSupportedException($"The glyph pose '{name}' by name is not on the new design yet.");
+
+    internal static Idrak.Abstraction.Text.ITextHabits HabitsNamed(string name) => throw new NotSupportedException($"The text habits '{name}' by name are not on the new design yet.");
+
+    internal static ISyntheticRecordFormat RecordFormatFor(string? name, string input) =>
+        throw new NotSupportedException($"The synthetic record format of {input} ({name ?? "detected"}) by name or detection is not on the new design yet.");
+    /// <summary>Checks the scan profile <paramref name="nameOrText"/>: "none" (no look) is the only one for now.</summary>
+    /// <exception cref="NotSupportedException">Another: the scan profiles were registered (<c>ScanProfiles</c>) and their looks are image transforms by name, which is not on the new design yet.</exception>
+    public static void CheckProfile(string nameOrText)
+    {
+        if (!nameOrText.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException($"The scan profile '{nameOrText}' by name is not on the new design yet.");
+        }
+    }
 
     /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
@@ -438,7 +461,7 @@ public static class SyntheticPages
     /// (<see cref="GlyphPoses"/>), which <see cref="Style"/> also reads, each once.
     /// </summary>
     public static IReadOnlyList<string> KindStyleKeys() =>
-        [.. Pens.AllKeys().Concat(TextBindings.AllKeys()).Concat(GlyphPoses.AllKeys()).Distinct(StringComparer.OrdinalIgnoreCase)];
+        [];                                                                     // the registered kinds' keys went with their registries
 
     /// <summary>
     /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
@@ -456,7 +479,7 @@ public static class SyntheticPages
     /// pose (a registered glyph pose: each glyph drawn a little differently); and every key a registered pen, text binding
     /// or glyph pose takes (<see cref="KindStyleKeys"/>, each value
     /// checked by the kinds that take it); habits (none, the
-    /// default; a <see cref="Idrak.Abstraction.Text.TextHabits"/> name or a rules file), habit-chance (every habit's
+    /// default; a <c>Idrak.Abstraction.Text.TextHabits</c> name or a rules file), habit-chance (every habit's
     /// chance) and habit.NAME (one habit's), and label (drawn, the default: the label says what is drawn; source: the
     /// input's spelling).
     /// </summary>
@@ -537,10 +560,10 @@ public static class SyntheticPages
         switch (key)
         {
             case "pen":
-                _ = Pens.Find(value) ?? throw new ArgumentException($"{what} is a registered pen ({string.Join(", ", Pens.Names)}), not '{value}'.");
+                _ = PenNamed(value);
                 return;
             case "bind":
-                _ = TextBindings.Find(value) ?? throw new ArgumentException($"{what} is a registered text binding ({string.Join(", ", TextBindings.Names)}), not '{value}'.");
+                _ = BindingNamed(value);
                 return;
             case "blue-pen":
                 _ = PageOptions.Chance(what, value);
@@ -558,21 +581,14 @@ public static class SyntheticPages
                 _ = PageOptions.Choice(what, value, "none", "blank");
                 return;
             case "pose":
-                _ = GlyphPoses.Find(value) ?? throw new ArgumentException($"{what} is a registered glyph pose ({string.Join(", ", GlyphPoses.Names)}), not '{value}'.");
+                _ = PoseNamed(value);
                 return;
             case "emblem-shapes" or "stamp-shapes" or "signature-shapes":
-                try
-                {
-                    _ = ShapeProfiles.Choices(value);
-                }
-                catch (NotSupportedException e)
-                {
-                    throw new ArgumentException($"{what} names shape profiles between '|' (registered: {string.Join(", ", ShapeProfiles.Names)}): {e.Message}", e);
-                }
+                _ = ShapeProfilesNamed(value);
 
                 return;
             case "emblem-pen" or "stamp-pen" or "signature-pen":
-                _ = Pens.Find(value) ?? throw new ArgumentException($"{what} is a registered pen ({string.Join(", ", Pens.Names)}), not '{value}'.");
+                _ = PenNamed(value);
                 return;
             case "stamp-turn":
                 _ = PageOptions.Range(what, value, -180, 180);
@@ -585,33 +601,7 @@ public static class SyntheticPages
                 return;
         }
 
-        var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
-        foreach (string name in Pens.Names)
-        {
-            var pen = Pens.Get(name);
-            if (pen.Keys.Contains(key))
-            {
-                _ = pen.Read(one);
-            }
-        }
-
-        foreach (string name in TextBindings.Names)
-        {
-            var binding = TextBindings.Get(name);
-            if (binding.Keys.Contains(key))
-            {
-                _ = binding.Read(one);
-            }
-        }
-
-        foreach (string name in GlyphPoses.Names)
-        {
-            var pose = GlyphPoses.Get(name);
-            if (pose.Keys.Contains(key))
-            {
-                _ = pose.Read(one);
-            }
-        }
+        // The registered pens, bindings and poses each checked the keys of their own: they went with their registries.
     }
 
     // The options a style holds for the layouts, checked before the first page: each known key's value, the pen's and
@@ -626,27 +616,25 @@ public static class SyntheticPages
             }
         }
 
-        var pen = Pens.Get(options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
-        _ = pen.Read(PageOptions.Only(options, pen.Keys));
+        // The pen, letter pens, binding and pose by name, each reading its own keys: not on the new design yet.
+        _ = PenNamed(options.TryGetValue("pen", out var penName) ? penName : Pens.Ideal);
         foreach (string key in LetterPenKeys)
         {
-            var letterPen = Pens.Get(options.TryGetValue(key, out var letterPenName) ? letterPenName : key == "signature-pen" ? "ballpoint" : Pens.Ideal);
-            _ = letterPen.Read(PageOptions.Only(options, letterPen.Keys));
+            _ = PenNamed(options.TryGetValue(key, out var letterPenName) ? letterPenName : key == "signature-pen" ? "ballpoint" : Pens.Ideal);
         }
-        var binding = TextBindings.Get(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
-        _ = binding.Read(PageOptions.Only(options, binding.Keys));
-        var pose = GlyphPoses.Get(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
-        _ = pose.Read(PageOptions.Only(options, pose.Keys));
+
+        _ = BindingNamed(options.TryGetValue("bind", out var bindName) ? bindName : TextBindings.Sequence);
+        _ = PoseNamed(options.TryGetValue("pose", out var poseName) ? poseName : GlyphPoses.None);
     }
 
-    // The habits a page setting names: none, a registered set, or a rules file.
+    // The habits a page setting names: none, or a rules file (a registered set by name is not on the new design yet).
     private static Idrak.Abstraction.Text.ITextHabits? Habits(string value) =>
         value.Equals("none", StringComparison.OrdinalIgnoreCase) ? null
-        : Idrak.Abstraction.Text.TextHabits.Find(value) ?? (File.Exists(value) ? Idrak.Abstraction.Text.RuleTextHabits.Read(value)
-            : throw new ArgumentException($"Page setting habits is none, a registered set ({string.Join(", ", Idrak.Abstraction.Text.TextHabits.Names)}) or a rules file, not '{value}'."));
+        : File.Exists(value) ? Idrak.Abstraction.Text.RuleTextHabits.Read(value) : HabitsNamed(value);
 
     /// <summary>The fonts in <paramref name="folder"/> (.ttf, .otf, .ttc; every face of a collection).</summary>
-    public static IReadOnlyList<IFontFace> Fonts(string folder) => FontFormats.ReadFolder(folder);
+    /// <exception cref="NotSupportedException">Always for now: a folder's fonts were read through the registered font formats (<c>FontFormats</c>), which is not on the new design yet.</exception>
+    public static IReadOnlyList<IFontFace> Fonts(string folder) => throw new NotSupportedException($"The fonts of {folder} read through the font formats are not on the new design yet.");
 
     /// <summary>The page a record's answer makes as variant <paramref name="variant"/> of record <paramref name="record"/>.</summary>
     /// <exception cref="InvalidDataException">The answer has no page text, or no font has its characters.</exception>
@@ -661,7 +649,7 @@ public static class SyntheticPages
     /// <summary>The records <paramref name="input"/> holds (read once to count them, for progress).</summary>
     public static int Count(string input, SyntheticPageOptions options)
     {
-        var format = options.Format is null ? SyntheticRecordFormats.Detect(input) : SyntheticRecordFormats.Get(options.Format);
+        var format = RecordFormatFor(options.Format, input);
         int count = format.Read(input, options.Prompt, options.AnswerKey).Count();
         return options.Limit > 0 ? Math.Min(count, options.Limit) : count;
     }
@@ -685,7 +673,7 @@ public static class SyntheticPages
         ArgumentException.ThrowIfNullOrEmpty(output);
         ArgumentNullException.ThrowIfNull(options);
         options.Check();
-        var format = options.Format is null ? SyntheticRecordFormats.Detect(input) : SyntheticRecordFormats.Get(options.Format);
+        var format = RecordFormatFor(options.Format, input);
         int total = Count(input, options) * options.Variants;
 
         string data = Path.GetFullPath(output.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) ? output : output + ".jsonl");
@@ -695,8 +683,8 @@ public static class SyntheticPages
         string manifest = Path.Combine(folder, stem + ".manifest.jsonl");
         bool documents = options.Documents;
         bool jpeg = !documents && options.ImageFormat.Equals("jpeg", StringComparison.OrdinalIgnoreCase);
-        var encoder = jpeg || documents ? null : ImageEncoders.Get(options.ImageFormat);
-        string extension = jpeg ? ".jpg" : documents ? SyntheticDocuments.ExtensionOf(DocumentWriters.Get(options.Writer)) : encoder!.Extensions.First();
+        var encoder = jpeg || documents ? null : EncoderNamed(options.ImageFormat);
+        string extension = jpeg ? ".jpg" : documents ? SyntheticDocuments.ExtensionOf(SyntheticDocuments.WriterNamed(options.Writer)) : encoder!.Extensions.First();
         int workers = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads;
 
         var watch = Stopwatch.StartNew();
@@ -1013,11 +1001,11 @@ public static class SyntheticPages
         {
             Fonts = fonts, Fallbacks = [.. style.Fallbacks, .. style.Fonts], Color = style.Color && !grey, Options = pageOptions, Vectors = style.Vectors || options.Documents,
         };
-        var rendered = PageLayouts.Get(layoutName).Render(content, pageStyle, layoutSeed);
+        var rendered = LayoutNamed(layoutName).Render(content, pageStyle, layoutSeed);
         if (options.Documents && rendered.Vectors is null)
         {
             throw new NotSupportedException($"The page layout '{layoutName}' keeps no vectors of its pages (RenderedPage.Vectors when PageStyle.Vectors asks): "
-                                            + $"documents need a layout that does, as the library's {string.Join(", ", PageLayouts.Names.Where(n => PageLayouts.Origin(n) == Overrides.Library).Order(StringComparer.Ordinal))} do.");
+                                            + "documents need a layout that does.");
         }
 
         var drawn = rendered.Image;
@@ -1034,10 +1022,14 @@ public static class SyntheticPages
 
         // A vector document's page is the page as drawn: no look is put on it.
         bool look = options.Output != SyntheticPageOutput.VectorDocuments;
-        var steps = look ? Profile(scanName)?.Sample(scanSeed) ?? ImageTransformPipeline.Empty : ImageTransformPipeline.Empty;
-        var image = steps.IsEmpty ? drawn : steps.Apply(drawn);
+        if (look)
+        {
+            CheckProfile(scanName);
+        }
+
+        var image = drawn;
         string label = options.Style.Label == PageLabel.Source ? Unvaried(rendered.Text, body, source) : rendered.Text;
-        return new SyntheticPage(image, label, answer.With(label), seed, layoutName, steps.ToString(), description, look ? scanName : "none")
+        return new SyntheticPage(image, label, answer.With(label), seed, layoutName, "", description, look ? scanName : "none")
         {
             Shapes = shapes, Vectors = options.Documents ? rendered.Vectors : null, Drawn = shown,
         };
@@ -1442,7 +1434,7 @@ internal static class PagePartTemplate
                 continue;
             }
 
-            if (PagePartFillers.Get(name).Fill(argument, context) is not { } value)
+            if (SyntheticPages.FillerNamed(name).Fill(argument, context) is not { } value)
             {
                 return null;
             }

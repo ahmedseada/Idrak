@@ -31,9 +31,9 @@ public sealed record PromptTask(IReadOnlyList<ChatMessage> Prompt, string? Refer
 }
 
 /// <summary>
-/// The <c>prompts</c> environment kind (Plan 27, R3; <see cref="EnvironmentKinds"/>, registered by Idrak.Text): chat
+/// The <c>prompts</c> environment kind (Plan 27, R3; <c>EnvironmentKinds</c>, registered by Idrak.Text): chat
 /// prompts with references and optional tools, each episode one prompt drawn from its seed. The agent's reply ends the
-/// episode, rewarded by a reward expression (option <c>reward</c>: a <see cref="RewardFunctions"/> or
+/// episode, rewarded by a reward expression (option <c>reward</c>: a <c>RewardFunctions</c> or
 /// <see cref="TuningMetrics"/> name, "exact" by default, or weighted terms "exact:1,length:0.1"; each term's options as
 /// "term.key"); a reply that calls tools, when the kind was made with a tool registry, has them run and the results sent
 /// back, for at most <c>rounds</c> replies (1 by default), the last one cut by the limit (truncated) when it still
@@ -44,9 +44,6 @@ public sealed class PromptsEnvironmentKind : IPromptDataEnvironmentKind, IReward
 {
     /// <summary>The kind's name.</summary>
     public const string KindName = "prompts";
-
-    // The library's kind reads its tasks from "data"; a kind made with tasks refuses it.
-    private static readonly OptionKeys DataKeys = new("data", "reward", "rounds"), TaskKeys = new("reward", "rounds");
 
     private readonly IReadOnlyList<PromptTask>? _tasks;
     private readonly IToolRegistry? _tools;
@@ -77,12 +74,6 @@ public sealed class PromptsEnvironmentKind : IPromptDataEnvironmentKind, IReward
 
     /// <inheritdoc />
     public string Name { get; }
-
-    /// <inheritdoc />
-    public string Summary => "chat prompts with references: the reply is scored by a reward expression (reward=exact, or exact:1,length:0.1)";
-
-    /// <inheritdoc />
-    public IReadOnlySet<string> Keys => _tasks is null ? DataKeys : TaskKeys;
 
     /// <inheritdoc />
     public string? DataKey => _tasks is null ? "data" : null;
@@ -137,7 +128,8 @@ public sealed class PromptsEnvironmentKind : IPromptDataEnvironmentKind, IReward
                 default:
                     if (!key.Contains('.', StringComparison.Ordinal))
                     {
-                        throw new ArgumentException($"The {Name} environment does not take the option '{key}'; it takes: {string.Join(", ", Keys)}, and a reward term's options as term.key.",
+                        // The library's kind reads its tasks from "data"; a kind made with tasks refuses it.
+                        throw new ArgumentException($"The {Name} environment does not take the option '{key}'; it takes: {(_tasks is null ? "data, " : "")}reward, rounds, and a reward term's options as term.key.",
                             nameof(request));
                     }
 

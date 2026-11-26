@@ -12,32 +12,29 @@ namespace Idrak.Text.Generation;
 /// <see cref="ChatGenerator.Images"/>), all from the model's vision family (<see cref="PretrainedModel.Vision"/>): the
 /// encoder (built when the first image is read, disposed with this), the prompt format and the attention rule. Every
 /// image is decoded by the library's codecs and turned upright by its EXIF orientation (<see cref="ChatImageDecoder"/>,
-/// as transformers' load_image does), then goes through <see cref="ChatImages.Transforms"/> unless a request gives its own
-/// (<see cref="ChatRequest.ImageTransforms"/>).
+/// as transformers' load_image does).
 /// </summary>
 public sealed class ModelImages : IDisposable
 {
     private readonly LazyEncoder _encoder;
 
-    private ModelImages(PretrainedModel model, IPretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms,
-        Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? encoderFactory)
+    private ModelImages(PretrainedModel model, IPretrainedVision vision, VisionEncoderOptions options, Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? encoderFactory)
     {
         Options = options;
         _encoder = new LazyEncoder(() => (encoderFactory ?? ((m, o) => m.CreateVisionEncoder(o)))(model, options), vision.Width, model.Device);
         Images = new ChatImages(_encoder, vision.PromptFormat, vision.Attention)
         {
-            Decode = ChatImageDecoder.Decode, Transforms = transforms ?? ImageTransformPipeline.Empty, Owner = this,     // an engine disposes it with the model it serves
+            Decode = ChatImageDecoder.Decode, Owner = this,     // an engine disposes it with the model it serves
         };
     }
 
     /// <summary>
-    /// The image reading of <paramref name="model"/>, or null for a text model. <paramref name="transforms"/> run on every
-    /// decoded image first (unless a request gives its own); <paramref name="visionOptions"/> are the family's options for
+    /// The image reading of <paramref name="model"/>, or null for a text model. <paramref name="visionOptions"/> are the family's options for
     /// every image (their keys checked against the family's). <paramref name="encoderFactory"/> makes the encoder instead
     /// of the model's own (<see cref="PretrainedModel.CreateVisionEncoder"/>: tests feed reference features with it).
     /// </summary>
     /// <exception cref="ArgumentException">A vision option the family does not know.</exception>
-    public static ModelImages? For(PretrainedModel model, ImageTransformPipeline? transforms = null, VisionOptions? visionOptions = null,
+    public static ModelImages? For(PretrainedModel model, VisionOptions? visionOptions = null,
         Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? encoderFactory = null)
     {
         ArgumentNullException.ThrowIfNull(model);
@@ -46,8 +43,7 @@ public sealed class ModelImages : IDisposable
             return null;
         }
 
-        visionOptions?.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
-        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions }, transforms, encoderFactory);
+        return new ModelImages(model, vision, new VisionEncoderOptions { Device = model.Device, VisionOptions = visionOptions }, encoderFactory);
     }
 
     /// <summary>The device and vision options its encoder is built with.</summary>

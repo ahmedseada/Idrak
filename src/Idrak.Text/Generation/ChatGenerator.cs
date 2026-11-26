@@ -39,14 +39,8 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     public Func<ChatImage, ImageData> Decode { get; init; } = ChatImageDecoder.Decode;
 
     /// <summary>
-    /// The image transforms run on every decoded image before the encoder (a request's
-    /// <see cref="ChatRequest.ImageTransforms"/> replaces them); none unless set.
-    /// </summary>
-    public ImageTransformPipeline Transforms { get; init; } = ImageTransformPipeline.Empty;
-
-    /// <summary>
     /// A chat image's pixels as the encoder reads them for <paramref name="request"/>: decoded, then transformed (the
-    /// request's transforms, else <see cref="Transforms"/>). The last image read is kept with its content's hash and the
+    /// request's transforms, else <c>Transforms</c>). The last image read is kept with its content's hash and the
     /// transforms until the same image is read again with them (a page shown as the model sees it, then answered), which
     /// takes it: decoded and transformed once, and at most one image held. The pixels returned are shared with that
     /// earlier caller and must not be changed.
@@ -54,11 +48,9 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     public ImageData Read(ChatImage image, ChatRequest? request = null)
     {
         ArgumentNullException.ThrowIfNull(image);
-        var pipeline = request?.ImageTransforms ?? Transforms;
-        string transforms = pipeline.ToString();
         lock (_lastLock)
         {
-            if (_last is { } last && last.Hash == image.Hash && last.Transforms == transforms)
+            if (_last is { } last && last.Hash == image.Hash)
             {
                 _last = null;                                              // taken: nothing held past the read that used it
                 return last.Pixels;
@@ -68,15 +60,10 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
         long start = Telemetry.StartStage();
         var decoded = Decode(image);
         Telemetry.InferenceStage(InferenceStageKind.ImageDecode, null, start, (long)decoded.Channels * decoded.Height * decoded.Width, image.Data.Length);
-        start = Telemetry.StartStage();
-        var pixels = pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
-        if (!pipeline.IsEmpty)
-        {
-            Telemetry.InferenceStage(InferenceStageKind.ImageTransforms, null, start, (long)pixels.Channels * pixels.Height * pixels.Width);
-        }
+        var pixels = decoded;
         lock (_lastLock)
         {
-            _last = (image.Hash, transforms, pixels);
+            _last = (image.Hash, pixels);
         }
 
         return pixels;
@@ -84,7 +71,7 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
 
     /// <summary>
     /// Keeps <paramref name="pixels"/> as <paramref name="image"/>'s for the next <see cref="Read"/> of it with
-    /// <paramref name="request"/>'s transforms (else <see cref="Transforms"/>), in place of the image kept before: a caller
+    /// <paramref name="request"/>'s transforms (else <c>Transforms</c>), in place of the image kept before: a caller
     /// that decoded and transformed the image already (to show it before a model was loaded, say) hands it over, so the
     /// read decodes and transforms nothing. The pixels must be what <see cref="Read"/> would make: the image decoded as
     /// <see cref="Decode"/> does (the codecs, then the EXIF orientation), then those transforms; they are shared with the
@@ -94,15 +81,14 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
     {
         ArgumentNullException.ThrowIfNull(image);
         ArgumentNullException.ThrowIfNull(pixels);
-        string transforms = (request?.ImageTransforms ?? Transforms).ToString();
         lock (_lastLock)
         {
-            _last = (image.Hash, transforms, pixels);
+            _last = (image.Hash, pixels);
         }
     }
 
     private readonly Lock _lastLock = new();
-    private (string Hash, string Transforms, ImageData Pixels)? _last;
+    private (string Hash, ImageData Pixels)? _last;
 
     /// <summary>
     /// What the encoder holds (its module, built on first use for example), or null: the inference engine disposes it

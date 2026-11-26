@@ -101,7 +101,7 @@ public sealed record PretrainingOptions
     /// <summary>Weight decay (decoupled, for the AdamW kinds).</summary>
     public float WeightDecay { get; init; } = 0.1f;
 
-    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
+    /// <summary>The optimizer: an <c>OptimizerKinds</c> name ("adamw", "adam", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>The optimizer's first moment decay (AdamW kinds).</summary>
@@ -156,7 +156,7 @@ public sealed record PretrainingOptions
     public TuningImages Images { get; init; } = TuningImages.None;
 
     /// <summary>Where image features of frozen vision stages are cached: a <see cref="FeatureCaches"/> name.</summary>
-    public string FeatureCache { get; init; } = FeatureCaches.Memory;
+    public string FeatureCache { get; init; } = "memory";
 
     /// <summary>
     /// A teacher whose token distributions the model learns beside the token loss (<see cref="FineTuningLosses.Distillation"/>),
@@ -330,6 +330,21 @@ public static partial class Pretrainer
     private const string StateFile = "pretrain-state.json";
     private const string OptimizerFile = "optimizer.safetensors";
 
+    // The stop agreements were registered (StopAgreements) and picked by the cluster options: not on the new design yet.
+    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) => throw new NotSupportedException("The stop agreement picked by the cluster options is not on the new design yet.");
+
+    // The pretraining sources were registered (PretrainingSources) and picked by name: not on the new design yet.
+    private static IPretrainingSource SourceNamed(string name) => throw new NotSupportedException($"The pretraining source '{name}' by name is not on the new design yet.");
+
+    // The gradient syncs were registered (GradientSyncs) and picked by the cluster options: not on the new design yet.
+    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => throw new NotSupportedException("The gradient sync picked by the cluster options is not on the new design yet.");
+
+    // The learning-rate schedules were registered (LearningRateSchedules) and picked by name: not on the new design yet.
+    private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) => throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");
+
+    // The feature caches were registered (FeatureCaches) and picked by name: not on the new design yet.
+    private static IFeatureCache FeatureCacheNamed(string name) => throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Runs <paramref name="options"/>' stages on <paramref name="model"/>, writing checkpoints to
     /// <paramref name="outputFolder"/> (<c>checkpoint-STEP</c>), or goes on from <paramref name="resume"/> (the model then
@@ -392,7 +407,7 @@ public static partial class Pretrainer
         using var seeds = options.Cluster is { } ranked ? Dropout.SeedsForRank(ranked.Rank) : null;
         // On a cluster a cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7): a step's
         // batches run to their end on every rank (their token is cancelled only when this rank gives up waiting).
-        var agreement = options.Cluster is { } agreeing ? StopAgreements.For(agreeing, clusterOptions) : null;
+        var agreement = options.Cluster is { } agreeing ? StopAgreementFor(agreeing, clusterOptions) : null;
         agreement?.Reset();
         using var asks = agreement?.Watch(cancellationToken) ?? default;
         var inner = agreement?.GiveUpToken ?? cancellationToken;
@@ -416,7 +431,7 @@ public static partial class Pretrainer
             }
 
             using var vision = model.Vision is not null && (records || visionParts.Count > 0)
-                ? TuningVision.Create(model, options.Images, visionParts, FeatureCaches.Create(options.FeatureCache)) : null;
+                ? TuningVision.Create(model, options.Images, visionParts, FeatureCacheNamed(options.FeatureCache)) : null;
             // The parts stored beside the decoder (an audio encoder and projector), opened as soft-part sources: each trains
             // the stage's names it offers ("audio-encoder", "audio-projector"; "all": every one), the others frozen.
             using var partSources = new PartSources(model, stage, records, options.FeatureCache);
@@ -429,7 +444,7 @@ public static partial class Pretrainer
                 for (int s = 0; s < stage.Sources.Count; s++)
                 {
                     var source = stage.Sources[s];
-                    var reader = PretrainingSources.Get(source.Kind).Open(source, context);
+                    var reader = SourceNamed(source.Kind).Open(source, context);
                     var position = resume is { } rr && rr.Stage == stageIndex && s < rr.Sources.Count ? rr.Sources[s] : (0L, 0L, 0L);
                     readers.Add(new SourceState(reader, source.Weight, options.Seed, stageIndex, s) { Pass = position.Item1, Next = position.Item2, Drawn = position.Item3 });
                 }
@@ -445,7 +460,7 @@ public static partial class Pretrainer
                 using var optimizer = CreateOptimizer(parameters, options, stage);
 
                 // Data parallel (plan 23): every rank draws each step's sequences alike and trains its share of them.
-                using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
+                using var sync = options.Cluster is { } cluster ? GradientSyncFor(cluster, optimizer, clusterOptions!) : null;
                 var sharded = sync as IShardedGradientSync;                 // asked once: the update, gathers and state are its
                 if (resume is { } rs && rs.Stage == stageIndex)
                 {
@@ -459,7 +474,7 @@ public static partial class Pretrainer
 
                 sync?.Start();
 
-                var schedule = LearningRateSchedules.Factory(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate))(optimizer, stage.Steps);
+                var schedule = ScheduleNamed(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate), optimizer, stage.Steps);
                 for (int i = 0; i < stageStep; i++)
                 {
                     schedule.Step();                                         // the resumed stage's rate where it was
@@ -734,7 +749,7 @@ public static partial class Pretrainer
             {
                 foreach (string kind in model.Parts)
                 {
-                    var source = model.OpenPart(kind, model.Device, FeatureCaches.Create(featureCache));
+                    var source = model.OpenPart(kind, model.Device, FeatureCacheNamed(featureCache));
                     var trained = source.TrainableParts.Where(p => all || stage.Trained.Contains(p, StringComparer.OrdinalIgnoreCase)).ToList();
                     if (!records && trained.Count == 0)
                     {
@@ -818,11 +833,6 @@ public static partial class Pretrainer
             throw new ArgumentException($"MaxLength ({options.MaxLength}), BatchTokens ({options.BatchTokens}) and GradientAccumulation ({options.GradientAccumulation}) must be positive.", nameof(options));
         }
 
-        if (OptimizerKinds.Find(options.Optimizer) is null)
-        {
-            throw new ArgumentException($"Optimizer '{options.Optimizer}' is not registered in OptimizerKinds (registered: {string.Join(", ", OptimizerKinds.Names)}).", nameof(options));
-        }
-
         // Names outside these are the model's parts' (ModelParts: "audio-encoder", say), checked when the stage opens them.
         string[] parts = ["decoder", "embeddings", "head", VisionTuningParts.Tower, VisionTuningParts.Projector, "all"];
         foreach (var stage in options.Stages)
@@ -845,11 +855,6 @@ public static partial class Pretrainer
             if (stage.Sources.Any(s => s.Weight <= 0 || !double.IsFinite(s.Weight)))
             {
                 throw new ArgumentException($"Stage {stage.Name}: every source's weight must be positive.", nameof(options));
-            }
-
-            if (LearningRateSchedules.Find(stage.Schedule) is null)
-            {
-                throw new ArgumentException($"Stage {stage.Name}: schedule '{stage.Schedule}' is not registered in LearningRateSchedules (registered: {string.Join(", ", LearningRateSchedules.Names)}).", nameof(options));
             }
         }
     }
@@ -897,10 +902,14 @@ public static partial class Pretrainer
         return chosen.Count > 0 ? chosen : throw new ArgumentException($"Stage {stage.Name} trains nothing of this model ({string.Join(", ", stage.Trained)}).");
     }
 
+    // The optimizers were registered (OptimizerKinds) and picked by name: not on the new design yet.
+    private static Func<IReadOnlyList<Tensor>, Optimizer> OptimizerFactoryNamed(string name, OptimizerSettings settings) =>
+        throw new NotSupportedException($"The optimizer '{name}' by name is not on the new design yet.");
+
     // The optimizer the options name, at the stage's rate with the options' betas (the Adam kinds; epsilon 1e-8) or momentum (SGD).
     private static Optimizer CreateOptimizer(List<Tensor> parameters, PretrainingOptions options, PretrainingStage stage)
     {
-        var make = OptimizerKinds.Factory(options.Optimizer,
+        var make = OptimizerFactoryNamed(options.Optimizer,
             new OptimizerSettings(stage.LearningRate, options.WeightDecay, options.Momentum) { Beta1 = options.Beta1, Beta2 = options.Beta2, Epsilon = 1e-8f });
         return options.HostOptimizer ? new HostOptimizer(parameters, make) : make(parameters);
     }
@@ -973,7 +982,7 @@ public static partial class Pretrainer
         var sequences = new List<TrainingSequence>();
         foreach (var source in options.Evaluation)
         {
-            using var reader = PretrainingSources.Get(source.Kind).Open(source, context);
+            using var reader = SourceNamed(source.Kind).Open(source, context);
             for (long i = 0; i < reader.Count && sequences.Count < options.EvaluationSequences * (options.Evaluation.Count); i++)
             {
                 if (reader.Read(i) is { } sequence && sequence.Tokens.Length >= 2)
@@ -1220,8 +1229,6 @@ internal sealed class TokenPretrainingSource : IPretrainingSource
 {
     public string Name => PretrainingSources.Tokens;
 
-    public string Summary => "token files (uint16, int32, uint32 or .npy, as idrak data tokens writes them), cut into windows of the maximum length, every token trained";
-
     public IPretrainingReader Open(PretrainingSource source, PretrainingContext context)
     {
         var files = new List<TokenFileSource>();
@@ -1295,7 +1302,8 @@ internal sealed class RecordPretrainingSource : IPretrainingSource
 {
     public string Name => PretrainingSources.Records;
 
-    public string Summary => "conversations in a tuning data format (messages, sharegpt), with images when the model has a vision part; the answers trained";
+    // The tuning data formats were registered (TuningDataFormats), picked by name or found by what a file holds: not on the new design yet.
+    private static ITuningDataFormat DataFormatFor(string? name, string file) => throw new NotSupportedException($"The tuning data format of {file} ({name ?? "auto"}) by name or detection is not on the new design yet.");
 
     public IPretrainingReader Open(PretrainingSource source, PretrainingContext context)
     {
@@ -1310,7 +1318,7 @@ internal sealed class RecordPretrainingSource : IPretrainingSource
                     throw new FileNotFoundException($"{path} not found.", path);
                 }
 
-                var format = source.Format is { } name ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(path);
+                var format = DataFormatFor(source.Format, path);
                 files.Add(format.ReadPending(path, new TuningDataOptions { Images = source.Images, Audios = source.Audios }));
             }
 

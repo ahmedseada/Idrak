@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Text.Abstractions;
 
 /// <summary>
@@ -30,9 +28,6 @@ public interface IWritePolicy
     /// <summary>Its name in <see cref="WritePolicies"/> ("allow", "ask").</summary>
     string Name { get; }
 
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
     /// <summary>Null to let <paramref name="write"/> happen; else why not, in words the model reads ("the user said no").</summary>
     /// <param name="write">The write, before it is made.</param>
     /// <param name="cancellationToken">Cancels the question (the tool call ends with it).</param>
@@ -55,7 +50,7 @@ public sealed class AskingWritePolicy(Func<FileWrite, CancellationToken, ValueTa
     public string Name { get; } = string.IsNullOrWhiteSpace(name) ? throw new ArgumentException("A write policy needs a name.", nameof(name)) : name;
 
     /// <inheritdoc />
-    public string Summary => "asks before every write_file and edit_file (y to write)";
+
 
     /// <summary>The reason a refused write gives the model ("the user did not allow it" by default).</summary>
     public string Refusal { get; init; } = "the user did not allow it";
@@ -69,12 +64,11 @@ public sealed class AskingWritePolicy(Func<FileWrite, CancellationToken, ValueTa
 }
 
 /// <summary>
-/// The write policies of the coding tools' <c>write_file</c> and <c>edit_file</c>, by name (ignoring case). The library
-/// registers <see cref="Allow"/> (every write inside the workspace happens: the default); an app registers
-/// <see cref="Ask"/> (an <see cref="AskingWritePolicy"/> with its own question) or its own. The tools take theirs from
-/// their options' <c>WritePolicy</c>, else <see cref="EnvironmentVariable"/> (IDRAK_WRITE_POLICY), else
-/// <see cref="Allow"/>; one that is not registered is refused with "not registered", and nothing falls back to another
-/// (a policy is a safety boundary).
+/// The names of the write policies of the coding tools' <c>write_file</c> and <c>edit_file</c>: <see cref="Allow"/>
+/// (every write inside the workspace happens: the default) and <see cref="Ask"/> (an <see cref="AskingWritePolicy"/>
+/// with its own question). The tools name theirs in their options' <c>WritePolicy</c>, else
+/// <see cref="EnvironmentVariable"/> (IDRAK_WRITE_POLICY), else <see cref="Allow"/>; nothing falls back to another (a
+/// policy is a safety boundary).
 /// </summary>
 public static class WritePolicies
 {
@@ -87,55 +81,13 @@ public static class WritePolicies
     /// <summary>The variable that names the write policy when an option does not: "IDRAK_WRITE_POLICY".</summary>
     public const string EnvironmentVariable = "IDRAK_WRITE_POLICY";
 
-    private static readonly SlotTable<string, IWritePolicy> Table = new(nameof(WritePolicies), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a write policy is a safety boundary: falling back to another when one fails would write a file the user was to be asked about");
-
-    static WritePolicies() => Overrides.AsLibraryDefaults(() => Register(new AllowWritePolicy()));
-
     /// <summary>The policy named by <see cref="EnvironmentVariable"/>, or <see cref="Allow"/> when it is not set.</summary>
     public static string DefaultName => System.Environment.GetEnvironmentVariable(EnvironmentVariable) is { } name && name.Trim().Length > 0 ? name.Trim() : Allow;
 
-    /// <summary>Registers <paramref name="policy"/> under its <see cref="IWritePolicy.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IWritePolicy policy)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentException.ThrowIfNullOrWhiteSpace(policy.Name);
-        Table.Register(policy.Name, policy, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's policy <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The policy registered as <paramref name="name"/>, or null.</summary>
-    public static IWritePolicy? Find(string name) => Table.Find(name);
-
-    /// <summary>The policy registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones and who registers <see cref="Ask"/>.</exception>
-    public static IWritePolicy Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(WritePolicies), name, Table.Keys,
-            $"Write policy '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-            + $"add it with WritePolicies.Register; '{Allow}' comes with Idrak.Text, '{Ask}' is an app's (an AskingWritePolicy with its own question; "
-            + "the CLI's idrak agent registers one).");
-
-    /// <summary>The library's policy <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IWritePolicy? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the policy <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered policy as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}: {p.Summary}"));
-
     // The library's: every write inside the workspace happens (the tools have already refused one outside it).
-    private sealed class AllowWritePolicy : IWritePolicy
+    internal sealed class AllowWritePolicy : IWritePolicy
     {
         public string Name => Allow;
-
-        public string Summary => "every write inside the workspace happens, without asking";
 
         public ValueTask<string?> CheckAsync(FileWrite write, CancellationToken cancellationToken = default) => ValueTask.FromResult<string?>(null);
     }

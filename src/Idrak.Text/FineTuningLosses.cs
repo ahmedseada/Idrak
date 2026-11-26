@@ -268,7 +268,7 @@ public sealed class FineTuningLossInput
     /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
     public Tensor TeacherDivergence(float temperature, string divergence, float beta = 0.5f)
     {
-        var kind = TeacherDivergences.Get(divergence);
+        var kind = FineTuningLosses.DivergenceNamed(divergence);
         if (kind.UsesBeta && !(beta > 0f && beta < 1f))
         {
             throw new ArgumentOutOfRangeException(nameof(beta), beta, $"The '{kind.Name}' divergence's beta is in (0, 1).");
@@ -477,7 +477,7 @@ public static class FineTuningLosses
     }
 
     /// <summary>
-    /// A policy-gradient loss of <see cref="PolicyLosses"/> (REINFORCE, PPO, GRPO: Idrak.Reinforcement's, or one an app
+    /// A policy-gradient loss of <c>PolicyLosses</c> (REINFORCE, PPO, GRPO: Idrak.Reinforcement's, or one an app
     /// registered) as a fine-tuning loss, for a language model's policy trained through a <see cref="FineTuningSession"/>:
     /// each trained token is an action unit, its sequence's tokens a sequence of the policy loss
     /// (<see cref="PolicyLossInput.Counts"/>), its advantage <see cref="FineTuningLossInput.TokenValues"/> (from
@@ -489,13 +489,13 @@ public static class FineTuningLosses
     /// <see cref="PolicyLossInput.StepSequences"/>. The policy loss's gradient reaches the network as any loss of one's own
     /// does: one more pass of the head over the trained rows.
     /// </summary>
-    /// <param name="loss">The policy loss (<see cref="PolicyLosses.Get"/>).</param>
-    /// <param name="options">Its options by key (<see cref="IConfigurableKind.Keys"/>), null for its defaults.</param>
+    /// <param name="loss">The policy loss.</param>
+    /// <param name="options">Its options by key, null for its defaults.</param>
     public static IFineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(loss);
         bool reference = loss.NeedsReference(options);
-        return new Loss(loss.Name, loss.Summary, input =>
+        return new Loss("policy", $"the policy loss {loss.GetType().Name}", input =>
         {
             var policy = new PolicyLossInput(input.LogProbabilities, input.TokenCounts, input.TokenValues, input.BehaviorLogProbabilities,
                 reference ? input.ReferenceLogProbabilities : null, stepUnits: input.StepTokens, stepSequences: input.StepSequences);
@@ -525,7 +525,7 @@ public static class FineTuningLosses
             throw new ArgumentOutOfRangeException(nameof(temperature), "The temperature is a positive number.");
         }
 
-        var kind = TeacherDivergences.Get(divergence);
+        var kind = FineTuningLosses.DivergenceNamed(divergence);
         if (kind.UsesBeta && !(beta > 0f && beta < 1f))
         {
             throw new ArgumentOutOfRangeException(nameof(beta), beta, $"The '{kind.Name}' divergence's beta is in (0, 1).");
@@ -551,7 +551,7 @@ public static class FineTuningLosses
         }
 
         bool both = weight != 0f;                                              // a zero weight never reads the second
-        return new Loss($"{first.Name}+{second.Name}", $"{first.Summary}, plus {second.Summary}",
+        return new Loss($"{first.Name}+{second.Name}", $"{first.Name}, plus {second.Name}",
             input => weight == 0f ? first.Compute(input) : first.Compute(input) + second.Compute(input) * weight)
         {
             NeedsPairs = first.NeedsPairs || (both && second.NeedsPairs),
@@ -644,13 +644,15 @@ public static class FineTuningLosses
     /// The preference loss registered as <paramref name="name"/> in <see cref="PreferenceLosses"/> ("dpo", "orpo",
     /// "simpo", or an app's) with <paramref name="options"/>: the factories above, chosen by name.
     /// </summary>
-    /// <exception cref="NotRegisteredException">No preference loss of that name is registered.</exception>
-    /// <exception cref="ArgumentException">An option the loss does not take, or a bad value.</exception>
+    /// <exception cref="NotSupportedException">Always for now: the preference losses were registered (<see cref="PreferenceLosses"/>) and picked by name, which is not on the new design yet.</exception>
     public static IFineTuningLoss Preference(string name, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return PreferenceLosses.Get(name).Create(options);
+        throw new NotSupportedException($"The preference loss '{name}' by name is not on the new design yet.");
     }
+
+    // The divergences were registered (TeacherDivergences) and picked by name: not on the new design yet.
+    internal static ITeacherDivergence DivergenceNamed(string name) => throw new NotSupportedException($"The teacher divergence '{name}' by name is not on the new design yet.");
 
     private static void Require(FineTuningLossInput input, string name)
     {

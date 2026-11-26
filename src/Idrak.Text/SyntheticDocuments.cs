@@ -27,15 +27,18 @@ internal sealed class SyntheticDocuments : IDisposable
     private string _name = "";
     private int _pages;
 
+    // The document writers were registered (DocumentWriters) and picked by name: not on the new design yet.
+    internal static IDocumentWriter WriterNamed(string name) => throw new NotSupportedException($"The document writer '{name}' by name is not on the new design yet.");
+
     /// <param name="options">The pages' options: the output, the writer and its options, the pages a document, the resolution.</param>
     /// <param name="folder">The folder the documents' names are relative to (the records').</param>
     /// <param name="zip">The zip the documents go into instead, or null.</param>
-    /// <exception cref="NotRegisteredException">The options' writer is not registered.</exception>
+    /// <exception cref="NotSupportedException">The options' writer is not registered.</exception>
     public SyntheticDocuments(SyntheticPageOptions options, string folder, ZipArchive? zip)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options;
-        _writer = DocumentWriters.Get(options.Writer);
+        _writer = WriterNamed(options.Writer);
         _folder = folder;
         _zip = zip;
         _scale = 72f / options.DocumentDpi;
@@ -51,7 +54,7 @@ internal sealed class SyntheticDocuments : IDisposable
         ArgumentNullException.ThrowIfNull(page);
         ArgumentNullException.ThrowIfNull(options);
         using var stream = new MemoryStream();
-        using (var builder = DocumentWriters.Get(options.Writer).Create(stream, options.WriteOptions))
+        using (var builder = WriterNamed(options.Writer).Create(stream, options.WriteOptions))
         {
             Write(builder, page, options.Output, 72f / options.DocumentDpi);
             builder.Finish();

@@ -61,7 +61,7 @@ public sealed record ConversationTuningOptions
     public IReadOnlyList<string> TrainedParts { get; init; } = [];
 
     /// <summary>Where image features are kept between steps and epochs (<see cref="FeatureCaches"/>).</summary>
-    public string FeatureCache { get; init; } = FeatureCaches.Memory;
+    public string FeatureCache { get; init; } = "memory";
 
     /// <summary>The disk feature cache's folder (null: the library's).</summary>
     public string? FeatureFolder { get; init; }
@@ -190,6 +190,9 @@ public sealed class ConversationTuning : IDisposable
     /// <summary>The settings <see cref="Train"/> uses (the options' tuning with the image side, the scorer and a length within the model's context).</summary>
     public FineTuningOptions Tuning { get; set; } = new();
 
+    // The feature caches were registered (FeatureCaches) and picked by name: not on the new design yet.
+    private static IFeatureCache FeatureCacheNamed(string name, FeatureCacheOptions options) => throw new NotSupportedException($"The feature cache '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Reads the data files, builds the image side, holds out the evaluation share and tokenizes the conversations.
     /// </summary>
@@ -225,7 +228,7 @@ public sealed class ConversationTuning : IDisposable
         IFeatureCache? cache = null;
         if (model.Vision is not null)
         {
-            cache = FeatureCaches.Create(options.FeatureCache, new FeatureCacheOptions { Folder = options.FeatureFolder });
+            cache = FeatureCacheNamed(options.FeatureCache, new FeatureCacheOptions { Folder = options.FeatureFolder });
             try
             {
                 vision = TuningVision.Create(model, options.Preparation with { Family = null }, options.VisionParts, cache);
@@ -376,6 +379,9 @@ public sealed class ConversationTuning : IDisposable
         _cache?.Dispose();
     }
 
+    // The answer texts were registered (AnswerTexts) and picked by name: not on the new design yet.
+    private static IAnswerText AnswerTextNamed(string name) => throw new NotSupportedException($"The answer text '{name}' by name is not on the new design yet.");
+
     // The conversations read, the held-out share taken, the sequences tokenized, the scorer made.
     private void Load(IReadOnlyList<string> data, FineTuningOptions tuning, IProgress<TuningStage>? progress, Action<string>? log, CancellationToken cancellationToken)
     {
@@ -428,7 +434,7 @@ public sealed class ConversationTuning : IDisposable
 
             if (Options.MetricText is { } text)
             {
-                _ = AnswerTexts.Get(text);                                    // not registered: said now, not after an epoch
+                _ = AnswerTextNamed(text);                                    // not registered: said now, not after an epoch
             }
 
             Scorer = new TuningAnswerScorer(evaluation, metric, Options.MetricSamples)
@@ -441,6 +447,9 @@ public sealed class ConversationTuning : IDisposable
 
         Tuning = tuning with { Vision = Vision, Answers = Scorer, Parts = Parts };
     }
+
+    // The tuning data formats were registered (TuningDataFormats), picked by name or found by what a file holds: not on the new design yet.
+    private static ITuningDataFormat DataFormatFor(string? name, string file) => throw new NotSupportedException($"The tuning data format of {file} ({name ?? "auto"}) by name or detection is not on the new design yet.");
 
     // Conversations from data files through their format, their images not read yet (ITuningDataFormat.ReadPending);
     // each file's images under `byFile`'s root for it, else `images`.
@@ -455,7 +464,7 @@ public sealed class ConversationTuning : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var options = new TuningDataOptions { Images = byFile is not null && byFile.TryGetValue(file, out var root) ? root : images, Audios = Options.Audios, Prompt = Options.Prompt };
-                var format = Options.DataFormat is { } name && !name.Equals("auto", StringComparison.OrdinalIgnoreCase) ? TuningDataFormats.Get(name) : TuningDataFormats.Detect(file);
+                var format = DataFormatFor(Options.DataFormat, file);
                 var pending = format.ReadPending(file, options);
                 read.Add(pending);
                 log?.Invoke($"{what}: {pending.Count:N0} conversations ({format.Name}) from {file}, {pending.Images:N0} images ({watch.Elapsed.TotalSeconds:F1} s)");

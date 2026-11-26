@@ -28,7 +28,7 @@ internal sealed class MemoryFeatureCache : IFeatureCache
         ArgumentOutOfRangeException.ThrowIfNegative(Budget, nameof(options.Budget));
     }
 
-    public string Name => FeatureCaches.Memory;
+    public string Name => "memory";
 
     // The most bytes of values kept.
     public long Budget { get; }
@@ -156,7 +156,7 @@ internal sealed class DiskFeatureCache : IFeatureCache
         Directory.CreateDirectory(Folder);
     }
 
-    public string Name => FeatureCaches.Disk;
+    public string Name => "disk";
 
     // Where the files are.
     public string Folder { get; }

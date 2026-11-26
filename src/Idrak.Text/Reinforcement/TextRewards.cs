@@ -11,23 +11,22 @@ using Idrak.Text.Abstractions;
 namespace Idrak.Text.Reinforcement;
 
 /// <summary>
-/// The text rewards Idrak.Text registers in <see cref="RewardFunctions"/> (Plan 27, R3, contract R-C4), each scoring an
-/// answer alone:
+/// The text rewards of Idrak.Text (Plan 27, R3, contract R-C4), each scoring an answer alone, their options their
+/// constructors':
 /// <list type="bullet">
-/// <item><see cref="Metric"/> ("metric"): a <see cref="TuningMetrics"/> metric against the reference (option
-/// <c>metric</c>, "exact" by default, and the metric's own options): its score for a metric where higher is better, 1
-/// less it for an error rate.</item>
-/// <item><see cref="Pattern"/> ("regex"): 1 when the answer matches <c>pattern</c> (<c>whole</c>: the whole answer;
-/// <c>ignore_case</c>), else 0: a final-answer tag, a format.</item>
-/// <item><see cref="Json"/> ("json"): 1 when the answer holds JSON as written, <c>repaired</c> (0.5 by default) when it
-/// parses only after <see cref="JsonRepairs"/>' repair <c>repair</c> ("lenient"), 0 when none.</item>
-/// <item><see cref="Length"/> ("length"): a penalty past a budget: −<c>penalty</c> per <c>unit</c> beyond <c>budget</c>
-/// (tokens, read from the episode's info <see cref="EpisodeInfoKeys.Tokens"/>; words; characters).</item>
+/// <item><see cref="Metric"/> ("metric"): a tuning metric against the reference: its score for a metric where higher is
+/// better, 1 less it for an error rate.</item>
+/// <item><see cref="Pattern"/> ("regex"): 1 when the answer matches a pattern (whole: the whole answer; ignoring case or
+/// not), else 0: a final-answer tag, a format.</item>
+/// <item><see cref="Json"/> ("json"): 1 when the answer holds JSON as written, a repaired score (0.5 by default) when it
+/// parses only after a repair (<see cref="JsonRepairs"/>' lenient one unless given), 0 when none.</item>
+/// <item><see cref="Length"/> ("length"): a penalty past a budget: −penalty per unit beyond the budget (tokens, read from
+/// the episode's info <see cref="EpisodeInfoKeys.Tokens"/>; words; characters).</item>
 /// <item><see cref="Judge"/> ("judge"): a judge model's probability of its "yes" word against its "no" word
-/// (<see cref="AnswerScorer"/>, any model the library loads: options <c>model</c>, <c>device</c>, <c>question</c>,
-/// <c>yes</c>, <c>no</c>, <c>max_length</c>; the question and the two words are the caller's, in the judge's language).</item>
-/// <item><see cref="Sum"/> ("sum"): a weighted sum, <c>terms</c> = "exact:1,length:0.1" (each a reward's name, or a
-/// metric's through "metric"), each term's options as "term.key".</item>
+/// (<see cref="AnswerScorer"/>, any model the library loads; the question and the two words are the caller's, in the
+/// judge's language).</item>
+/// <item><see cref="Sum"/> ("sum"): a weighted sum, terms = "exact:1,length:0.1" (each a reward's name, or a metric's
+/// through "metric"), each term's options as "term.key".</item>
 /// </list>
 /// </summary>
 public static class TextRewards
@@ -50,269 +49,259 @@ public static class TextRewards
     /// <summary>A weighted sum of rewards.</summary>
     public const string Sum = "sum";
 
-    /// <summary>The library's text rewards, as registered.</summary>
-    internal static IReadOnlyList<IRewardFunction> Library() =>
-        [new MetricReward(), new RegexReward(), new JsonReward(), new LengthReward(), new JudgeReward(), new SumReward()];
-
     /// <summary>
     /// Scores <paramref name="inputs"/> with a reward expression: one reward or metric name ("exact"), or terms with
     /// weights ("exact:1,length:0.1"), each term's options as "term.key" in <paramref name="options"/>.
     /// </summary>
+    /// <exception cref="NotSupportedException">Always for now: a term's reward or metric is picked by its name, which is not on the new design yet.</exception>
     public static ValueTask<float[]> ScoreAsync(string expression, IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null,
         CancellationToken cancellationToken = default) =>
         RewardExpression.Parse(expression, options).ScoreAsync(inputs, cancellationToken);
 
-    // The options of a reward, as messages name what takes them: "reward length".
-    internal static OptionSchema Schema(string reward, params ReadOnlySpan<OptionSpec> options) => new($"reward {reward}", options);
-
-    private sealed class MetricReward : IRewardFunction, IOptionSchema
+    // The options by key the contract still passes: a reward's options are its constructor's, so every key is one it does
+    // not take.
+    internal static void NoOptions(string reward, IReadOnlyDictionary<string, string>? options)
     {
-        private static readonly OptionSpec<string?> MetricName = OptionSpec.Text("metric", TuningMetrics.ExactMatch, summary: "the tuning metric");
-
-        public string Name => Metric;
-
-        public string Summary => "a tuning metric against the reference (metric=exact by default): its score, or 1 less an error rate";
-
-        public OptionSchema Options { get; } = Schema(Metric, MetricName);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
+        if (options is { Count: > 0 })
         {
-            ArgumentNullException.ThrowIfNull(inputs);
-            var metric = TuningMetrics.Get(options?.GetValueOrDefault("metric") ?? TuningMetrics.ExactMatch);
-            var own = Options.Parse(options, metric.Keys.Contains).Rest;           // the metric's own options, as given
-            cancellationToken.ThrowIfCancellationRequested();
-            var scores = new float[inputs.Count];
-            for (int i = 0; i < inputs.Count; i++)
-            {
-                var input = inputs[i];
-                string reference = input.Reference ?? throw new ArgumentException($"The reward {Name} ({metric.Name}) scores against a reference: input {i} has none.", nameof(inputs));
-                double value = metric.Score(input.Answer, reference, own.Count == 0 ? null : own).Value;
-                scores[i] = (float)(metric.LowerIsBetter ? 1 - value : value);
-            }
-
-            return ValueTask.FromResult(scores);
+            throw new ArgumentException($"The reward {reward} takes its options as constructor parameters, not by key (given '{string.Join("', '", options.Keys)}').", nameof(options));
         }
     }
+}
 
-    private sealed class RegexReward : IRewardFunction, IOptionSchema
+// "metric": a tuning metric against the reference: its score for a metric where higher is better, 1 less it for an
+// error rate.
+internal sealed class MetricReward(ITuningMetric metric, string metricName = TuningMetrics.ExactMatch) : IRewardFunction
+{
+    private readonly ITuningMetric _metric = metric ?? throw new ArgumentNullException(nameof(metric));
+
+    public string Name => TextRewards.Metric;
+
+    public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
     {
-        private static readonly OptionSpec<string?> PatternText = OptionSpec.Text("pattern", takes: "a regular expression");
-        private static readonly OptionSpec<bool> Whole = OptionSpec.Flag("whole", summary: "the whole answer matches");
-        private static readonly OptionSpec<bool> IgnoreCase = OptionSpec.Flag("ignore_case");
-
-        // One matcher per pattern and thread (one Regex shared by threads builds a matcher per match on the others).
-        [ThreadStatic]
-        private static Dictionary<(string, RegexOptions), Regex>? _patterns;
-
-        public string Name => Pattern;
-
-        public string Summary => "1 when the answer matches the pattern (whole: the whole answer; ignore_case), else 0";
-
-        public OptionSchema Options { get; } = Schema(Pattern, PatternText, Whole, IgnoreCase);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
+        ArgumentNullException.ThrowIfNull(inputs);
+        TextRewards.NoOptions(Name, options);
+        cancellationToken.ThrowIfCancellationRequested();
+        var scores = new float[inputs.Count];
+        for (int i = 0; i < inputs.Count; i++)
         {
-            ArgumentNullException.ThrowIfNull(inputs);
-            var own = Options.Parse(options);
-            string pattern = own.Get(PatternText) ?? throw new ArgumentException($"The reward {Name} needs its option pattern (a regular expression).", nameof(options));
-            if (own.Get(Whole))
-            {
-                pattern = $"^(?:{pattern})$";
-            }
-
-            var flags = RegexOptions.CultureInvariant | (own.Get(IgnoreCase) ? RegexOptions.IgnoreCase : RegexOptions.None);
-            _patterns ??= [];
-            if (!_patterns.TryGetValue((pattern, flags), out var regex))
-            {
-                _patterns[(pattern, flags)] = regex = new Regex(pattern, flags, TimeSpan.FromSeconds(1));
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            var scores = new float[inputs.Count];
-            for (int i = 0; i < inputs.Count; i++)
-            {
-                try
-                {
-                    scores[i] = regex.IsMatch(inputs[i].Answer) ? 1f : 0f;
-                }
-                catch (RegexMatchTimeoutException)
-                {
-                    scores[i] = 0f;                                         // a pattern that does not finish matching does not match
-                }
-            }
-
-            return ValueTask.FromResult(scores);
+            var input = inputs[i];
+            string reference = input.Reference ?? throw new ArgumentException($"The reward {Name} ({metricName}) scores against a reference: input {i} has none.", nameof(inputs));
+            double value = _metric.Score(input.Answer, reference).Value;
+            scores[i] = (float)(_metric.LowerIsBetter ? 1 - value : value);
         }
+
+        return ValueTask.FromResult(scores);
+    }
+}
+
+// "regex": 1 when the answer matches the pattern (whole: the whole answer; ignoreCase), else 0.
+internal sealed class RegexReward : IRewardFunction
+{
+    // One matcher per pattern and thread (one Regex shared by threads builds a matcher per match on the others).
+    [ThreadStatic]
+    private static Dictionary<(string, RegexOptions), Regex>? _patterns;
+
+    private readonly string _pattern;
+    private readonly RegexOptions _flags;
+
+    public RegexReward(string pattern, bool whole = false, bool ignoreCase = false)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(pattern);
+        _pattern = whole ? $"^(?:{pattern})$" : pattern;
+        _flags = RegexOptions.CultureInvariant | (ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
     }
 
-    private sealed class JsonReward : IRewardFunction, IOptionSchema
+    public string Name => TextRewards.Pattern;
+
+    public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
     {
-        private static readonly OptionSpec<string?> Repair = OptionSpec.Text("repair", JsonRepairs.Lenient, takes: "a JSON repair's name");
-        private static readonly OptionSpec<float> Repaired = OptionSpec.Number("repaired", 0.5f, takes: "a number", summary: "the score of JSON a repair parses");
-
-        public string Name => Json;
-
-        public string Summary => "1 when the answer holds JSON as written, `repaired` (0.5) when only a repair (repair=lenient) parses it, else 0";
-
-        public OptionSchema Options { get; } = Schema(Json, Repair, Repaired);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
+        ArgumentNullException.ThrowIfNull(inputs);
+        TextRewards.NoOptions(Name, options);
+        string pattern = _pattern;
+        var flags = _flags;
+        _patterns ??= [];
+        if (!_patterns.TryGetValue((pattern, flags), out var regex))
         {
-            ArgumentNullException.ThrowIfNull(inputs);
-            var own = Options.Parse(options);
-            var repair = JsonRepairs.Get(own.Get(Repair)!);
-            float repaired = own.Get(Repaired);
-            cancellationToken.ThrowIfCancellationRequested();
-            var scores = new float[inputs.Count];
-            for (int i = 0; i < inputs.Count; i++)
-            {
-                var result = repair.Repair(inputs[i].Answer);
-                scores[i] = result is null ? 0f : result.Repaired ? repaired : 1f;
-            }
-
-            return ValueTask.FromResult(scores);
+            _patterns[(pattern, flags)] = regex = new Regex(pattern, flags, TimeSpan.FromSeconds(1));
         }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var scores = new float[inputs.Count];
+        for (int i = 0; i < inputs.Count; i++)
+        {
+            try
+            {
+                scores[i] = regex.IsMatch(inputs[i].Answer) ? 1f : 0f;
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                scores[i] = 0f;                                         // a pattern that does not finish matching does not match
+            }
+        }
+
+        return ValueTask.FromResult(scores);
+    }
+}
+
+// "json": 1 when the answer holds JSON as written, `repaired` (0.5) when only the repair (the lenient one unless given)
+// parses it, else 0.
+internal sealed class JsonReward(float repaired = 0.5f, IJsonRepair? repair = null) : IRewardFunction
+{
+    public string Name => TextRewards.Json;
+
+    public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(inputs);
+        TextRewards.NoOptions(Name, options);
+        cancellationToken.ThrowIfCancellationRequested();
+        var scores = new float[inputs.Count];
+        for (int i = 0; i < inputs.Count; i++)
+        {
+            var result = repair is null ? JsonRepairs.Parse(inputs[i].Answer) : repair.Repair(inputs[i].Answer);
+            scores[i] = result is null ? 0f : result.Repaired ? repaired : 1f;
+        }
+
+        return ValueTask.FromResult(scores);
+    }
+}
+
+// "length": −penalty per unit past budget (unit: tokens from the episode's info, words or characters; budget 256,
+// penalty 1 / budget unless given).
+internal sealed class LengthReward : IRewardFunction
+{
+    private readonly float _budget, _penalty;
+    private readonly string _unit;
+
+    public LengthReward(float budget = 256f, string unit = "tokens", float? penalty = null)
+    {
+        if (!(budget >= 0f))
+        {
+            throw new ArgumentException($"The reward {TextRewards.Length}'s budget is 0 or more.", nameof(budget));
+        }
+
+        _budget = budget;
+        _unit = unit is "tokens" or "words" or "characters" ? unit : throw new ArgumentException($"The reward {TextRewards.Length}'s unit is tokens, words or characters, not '{unit}'.", nameof(unit));
+        _penalty = penalty ?? 1f / Math.Max(1f, budget);
     }
 
-    private sealed class LengthReward : IRewardFunction, IOptionSchema
+    public string Name => TextRewards.Length;
+
+    public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
     {
-        private static readonly OptionSpec<float> Budget = OptionSpec.Number("budget", 256f, takes: "a number");
-        private static readonly OptionSpec<string> Unit = OptionSpec.Choice("unit", "tokens", "tokens", "words", "characters");
-        private static readonly OptionSpec<float> Penalty = OptionSpec.Number("penalty", 1f / 256f, takes: "a number", summary: "per unit past the budget (1 / budget unless given)");
-
-        public string Name => Length;
-
-        public string Summary => "−penalty per unit past budget (unit: tokens from the episode's info, words or characters; budget 256, penalty 1 / budget)";
-
-        public OptionSchema Options { get; } = Schema(Length, Budget, Unit, Penalty);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
+        ArgumentNullException.ThrowIfNull(inputs);
+        TextRewards.NoOptions(Name, options);
+        float budget = _budget;
+        float penalty = _penalty;
+        string unit = _unit;
+        cancellationToken.ThrowIfCancellationRequested();
+        var scores = new float[inputs.Count];
+        for (int i = 0; i < inputs.Count; i++)
         {
-            ArgumentNullException.ThrowIfNull(inputs);
-            var own = Options.Parse(options);
-            float budget = own.Get(Budget);
-            if (budget < 0f)
+            var input = inputs[i];
+            double count = unit switch
             {
-                throw new ArgumentException($"The reward {Name}'s budget is 0 or more.", nameof(options));
-            }
-
-            float penalty = own.IsGiven(Penalty) ? own.Get(Penalty) : 1f / Math.Max(1f, budget);
-            string unit = own.Get(Unit);
-            cancellationToken.ThrowIfCancellationRequested();
-            var scores = new float[inputs.Count];
-            for (int i = 0; i < inputs.Count; i++)
-            {
-                var input = inputs[i];
-                double count = unit switch
-                {
-                    "tokens" => input.Info is { } info && info.TryGet(EpisodeInfoKeys.Tokens, out int n) ? n
-                        : throw new ArgumentException($"The reward {Name} in tokens reads the episode's info \"tokens\" (an environment made with a tokenizer gives it); "
-                                                      + $"input {i} has none: give unit=words or unit=characters.", nameof(inputs)),
-                    "words" => input.Answer.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length,
-                    _ => input.Answer.Length,
-                };
-                scores[i] = (float)(-penalty * Math.Max(0, count - budget));
-            }
-
-            return ValueTask.FromResult(scores);
+                "tokens" => input.Info is { } info && info.TryGet(EpisodeInfoKeys.Tokens, out int n) ? n
+                    : throw new ArgumentException($"The reward {Name} in tokens reads the episode's info \"tokens\" (an environment made with a tokenizer gives it); "
+                                                  + $"input {i} has none: give unit=words or unit=characters.", nameof(inputs)),
+                "words" => input.Answer.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length,
+                _ => input.Answer.Length,
+            };
+            scores[i] = (float)(-penalty * Math.Max(0, count - budget));
         }
+
+        return ValueTask.FromResult(scores);
     }
+}
 
-    private sealed class SumReward : IRewardFunction, IOptionSchema
+// "sum": a weighted sum, terms = "exact:1,length:0.1" (rewards, or metrics through metric), each term's options as
+// term.key in termOptions.
+internal sealed class SumReward(string terms, IReadOnlyDictionary<string, string>? termOptions = null) : IRewardFunction
+{
+    public string Name => TextRewards.Sum;
+
+    public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
     {
-        private static readonly OptionSpec<string?> Terms = OptionSpec.Text("terms", takes: "weighted terms (\"exact:1,length:0.1\")");
-        private static readonly Func<string, bool> TermOption = key => key.Contains('.', StringComparison.Ordinal);
-
-        public string Name => Sum;
-
-        public string Summary => "a weighted sum: terms=exact:1,length:0.1 (rewards, or metrics through metric), each term's options as term.key";
-
-        public OptionSchema Options { get; } = Schema(Sum, Terms);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
-        {
-            ArgumentNullException.ThrowIfNull(inputs);
-            var own = Options.Parse(options, TermOption);
-            string terms = own.Get(Terms) ?? throw new ArgumentException($"The reward {Name} needs its option terms (\"exact:1,length:0.1\").", nameof(options));
-            return RewardExpression.Parse(terms, own.Rest).ScoreAsync(inputs, cancellationToken);
-        }
+        ArgumentNullException.ThrowIfNull(inputs);
+        TextRewards.NoOptions(Name, options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(terms);
+        return RewardExpression.Parse(terms, termOptions).ScoreAsync(inputs, cancellationToken);
     }
 }
 
 /// <summary>
 /// The judge reward ("judge", <see cref="TextRewards.Judge"/>): a judge model's probability of its "yes" word over its
 /// "no" word after a question about the answer (<see cref="AnswerScorer.Choose"/>, nothing generated). Made with a
-/// scorer it uses that judge (an app's own model, already loaded); the library's loads the model of the option
-/// <c>model</c> on <c>device</c> on first use and keeps it for the process (<see cref="Release"/> frees them). The
-/// question and the two words are options, in the judge's language; none is assumed.
+/// scorer it uses that judge (an app's own model, already loaded); made with a model's folder it loads that model on its
+/// device on first use and keeps it for the process (<see cref="Release"/> frees it). The question and the two words are
+/// the caller's, in the judge's language; none is assumed.
 /// </summary>
-public sealed class JudgeReward : IRewardFunction, IOptionSchema
+public sealed class JudgeReward : IRewardFunction
 {
-    private static readonly OptionSpec<string?> Model = OptionSpec.Text("model", takes: "the judge's folder");
-    private static readonly OptionSpec<string?> OnDevice = OptionSpec.Text("device", "cpu", takes: "a device");
-    private static readonly OptionSpec<string?> Question = OptionSpec.Text("question", takes: "what the judge is asked, in its language");
-    private static readonly OptionSpec<string?> Yes = OptionSpec.Text("yes", takes: "the judge's word for yes");
-    private static readonly OptionSpec<string?> No = OptionSpec.Text("no", takes: "the judge's word for no");
-    private static readonly OptionSpec<float> MaxLength = OptionSpec.Number("max_length", 2048f, takes: "a number");
-
     private readonly AnswerScorer? _scorer;
+    private readonly string? _model;
+    private readonly string _device = "cpu";
+    private readonly int _maxLength = 2048;
+    private readonly string _question, _yes, _no;
     private readonly ConcurrentDictionary<(string Model, string Device, int MaxLength), Lazy<(PretrainedModel Model, AnswerScorer Scorer)>> _loaded = new();
     private readonly Lock _gate = new();
 
-    /// <summary>The library's judge: the model comes from the options.</summary>
-    public JudgeReward()
+    /// <summary>A judge on the model in <paramref name="model"/>, loaded on <paramref name="device"/> on first use.</summary>
+    /// <param name="model">The judge's folder.</param>
+    /// <param name="question">What the judge is asked, in its language.</param>
+    /// <param name="yes">The judge's word for yes.</param>
+    /// <param name="no">The judge's word for no.</param>
+    /// <param name="device">The device the judge is loaded on.</param>
+    /// <param name="maxLength">The longest prompt the judge reads, in tokens.</param>
+    public JudgeReward(string model, string question, string yes, string no, string device = "cpu", int maxLength = 2048)
+        : this(question, yes, no, TextRewards.Judge)
     {
-        Name = TextRewards.Judge;
-        Options = TextRewards.Schema(Name, Model, OnDevice, Question, Yes, No, MaxLength);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
+        ArgumentException.ThrowIfNullOrWhiteSpace(device);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxLength);
+        _model = model;
+        _device = device;
+        _maxLength = maxLength;
     }
 
-    /// <summary>A judge on <paramref name="scorer"/>'s model, registered as <paramref name="name"/>.</summary>
-    public JudgeReward(AnswerScorer scorer, string name = TextRewards.Judge)
+    /// <summary>A judge on <paramref name="scorer"/>'s model, named <paramref name="name"/>.</summary>
+    /// <param name="scorer">The judge's scorer, its model already loaded.</param>
+    /// <param name="question">What the judge is asked, in its language.</param>
+    /// <param name="yes">The judge's word for yes.</param>
+    /// <param name="no">The judge's word for no.</param>
+    /// <param name="name">What messages call the reward.</param>
+    public JudgeReward(AnswerScorer scorer, string question, string yes, string no, string name = TextRewards.Judge)
+        : this(question, yes, no, name)
     {
         ArgumentNullException.ThrowIfNull(scorer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
         _scorer = scorer;
-        Name = name;
-        Options = TextRewards.Schema(Name, Question, Yes, No);
     }
 
-    /// <inheritdoc />
+    private JudgeReward(string question, string yes, string no, string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(question);
+        ArgumentException.ThrowIfNullOrWhiteSpace(yes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(no);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        (_question, _yes, _no, Name) = (question, yes, no, name);
+    }
+
+    /// <summary>What messages call the reward.</summary>
     public string Name { get; }
-
-    /// <inheritdoc />
-    public string Summary => "a judge model's probability of yes (options question, yes, no; model and device unless made with a scorer)";
-
-    /// <inheritdoc />
-    public OptionSchema Options { get; }
-
-    /// <inheritdoc />
-    public IReadOnlySet<string> Keys => Options.Keys;
 
     /// <inheritdoc />
     public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(inputs);
-        var own = Options.Parse(options);
-        string question = own.Get(Question) ?? throw new ArgumentException($"The reward {Name} needs its option question (what the judge is asked, in its language).", nameof(options));
-        string yes = own.Get(Yes) ?? throw new ArgumentException($"The reward {Name} needs its option yes (the judge's word for yes).", nameof(options));
-        string no = own.Get(No) ?? throw new ArgumentException($"The reward {Name} needs its option no (the judge's word for no).", nameof(options));
+        TextRewards.NoOptions(Name, options);
+        string question = _question, yes = _yes, no = _no;
         cancellationToken.ThrowIfCancellationRequested();
         if (inputs.Count == 0)
         {
             return ValueTask.FromResult(Array.Empty<float>());
         }
 
-        var scorer = _scorer ?? Load(own);
+        var scorer = _scorer ?? Load();
         var prompts = inputs.Select(i => (IReadOnlyList<ChatMessage>)
             [new ChatMessage("system", question), new ChatMessage("user", i.Reference is null ? $"{i.Prompt}\n\n{i.Answer}" : $"{i.Prompt}\n\n{i.Answer}\n\n{i.Reference}")]).ToList();
         AnswerChoice[] choices;
@@ -324,11 +313,11 @@ public sealed class JudgeReward : IRewardFunction, IOptionSchema
         return ValueTask.FromResult(choices.Select(c => float.IsFinite((float)c.Probabilities[0]) ? (float)c.Probabilities[0] : 0f).ToArray());
     }
 
-    private AnswerScorer Load(OptionValues options)
+    private AnswerScorer Load()
     {
-        string model = options.Get(Model) ?? throw new ArgumentException($"The reward {Name} needs its option model (the judge's folder).");
-        string device = options.Get(OnDevice)!;
-        int maxLength = (int)options.Get(MaxLength);
+        string model = _model!;
+        string device = _device;
+        int maxLength = _maxLength;
         var loaded = _loaded.GetOrAdd((model, device, maxLength), key => new Lazy<(PretrainedModel, AnswerScorer)>(() =>
         {
             var judge = PretrainedModel.Load(key.Model, new PretrainedOptions { Device = Device.Parse(key.Device) });
@@ -354,7 +343,12 @@ public sealed class JudgeReward : IRewardFunction, IOptionSchema
 // "term.key" (a term that is a metric is scored by the metric reward with metric=name). Scores add in the terms' order.
 internal sealed class RewardExpression
 {
-    private readonly List<(IRewardFunction Reward, float Weight, Dictionary<string, string>? Options)> _terms = [];
+    private readonly List<(IRewardFunction Reward, float Weight)> _terms = [];
+
+    // The rewards were registered (RewardFunctions) and the metrics too (TuningMetrics), and a term picked one by its name,
+    // made with the term's own options: not on the new design yet.
+    private static IRewardFunction RewardNamed(string name, IReadOnlyDictionary<string, string> options) =>
+        throw new NotSupportedException($"The reward or metric '{name}' by name is not on the new design yet.");
 
     public static RewardExpression Parse(string expression, IReadOnlyDictionary<string, string>? options)
     {
@@ -382,23 +376,9 @@ internal sealed class RewardExpression
                 }
             }
 
-            IRewardFunction reward;
-            if (RewardFunctions.Find(name) is { } registered)
-            {
-                reward = registered;
-            }
-            else if (TuningMetrics.Find(name) is { } metric)
-            {
-                reward = RewardFunctions.Get(TextRewards.Metric);
-                own["metric"] = metric.Name;
-            }
-            else
-            {
-                throw new NotSupportedException($"'{name}' is neither a reward ({string.Join(", ", RewardFunctions.Names)}) nor a metric ({string.Join(", ", TuningMetrics.Names)}).");
-            }
-
+            var reward = RewardNamed(name, own);
             names.Add(name);
-            result._terms.Add((reward, weight, own.Count == 0 ? null : own));
+            result._terms.Add((reward, weight));
         }
 
         if (result._terms.Count == 0)
@@ -421,9 +401,9 @@ internal sealed class RewardExpression
     public async ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, CancellationToken cancellationToken)
     {
         var totals = new double[inputs.Count];
-        foreach (var (reward, weight, options) in _terms)
+        foreach (var (reward, weight) in _terms)
         {
-            var scores = await reward.ScoreAsync(inputs, options, cancellationToken).ConfigureAwait(false);
+            var scores = await reward.ScoreAsync(inputs, cancellationToken: cancellationToken).ConfigureAwait(false);
             for (int i = 0; i < totals.Length; i++)
             {
                 totals[i] += (double)weight * scores[i];

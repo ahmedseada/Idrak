@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Text.Abstractions;
 
 /// <summary>
@@ -17,9 +15,6 @@ public interface ITeacherDivergence
 {
     /// <summary>The divergence's name in <see cref="TeacherDivergences"/> ("forward", "reverse", "jsd").</summary>
     string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
 
     /// <summary>Whether it reads a weight β in (0, 1) (the generalized Jensen-Shannon divergence's).</summary>
     bool UsesBeta { get; }
@@ -48,8 +43,7 @@ public interface ITeacherDivergence
 /// GKD computes it), β KL(q ‖ m) + (1 − β) KL(p ‖ m) with m = β q + (1 − β) p, β in (0, 1) (near 0 it behaves as β times
 /// the forward KL, near 1 as (1 − β) times the reverse one); gradient p ⊙ (a − Σ p a), a = (1 − β) (log p − log m).</item>
 /// </list>
-/// A zero of q is read as 1e-30 inside a logarithm (q · log q is 0 there). Register another with <see cref="Register"/>;
-/// one under a library name shadows the library's, which <see cref="Unregister"/> brings back.
+/// A zero of q is read as 1e-30 inside a logarithm (q · log q is 0 there).
 /// </summary>
 public static class TeacherDivergences
 {
@@ -64,54 +58,6 @@ public static class TeacherDivergences
 
     private static readonly ITeacherDivergence LibraryForward = new ForwardDivergence();
 
-    private static readonly SlotTable<string, ITeacherDivergence> Table = BuiltIn();
-
-    private static SlotTable<string, ITeacherDivergence> BuiltIn()
-    {
-        var table = new SlotTable<string, ITeacherDivergence>(nameof(TeacherDivergences), (slot, app, library) => new GuardedDivergence(slot, app, library),
-            StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(Forward, LibraryForward);
-        table.RegisterDefault(Reverse, new ReverseDivergence());
-        table.RegisterDefault(JensenShannon, new JensenShannonDivergence());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="divergence"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITeacherDivergence divergence)
-    {
-        ArgumentNullException.ThrowIfNull(divergence);
-        ArgumentException.ThrowIfNullOrWhiteSpace(divergence.Name);
-        Table.Register(divergence.Name, divergence, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's divergence of that name (the library's, if any, answers again); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The divergence of that name, or null.</summary>
-    public static ITeacherDivergence? Find(string name) => Table.Find(name);
-
-    /// <summary>The divergence of that name; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static ITeacherDivergence Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(TeacherDivergences), name, Table.Keys,
-            $"Teacher divergence '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TeacherDivergences.Register.");
-
-    /// <summary>The library's divergence of that name, whatever an app registered over it; null when the library has none.</summary>
-    public static ITeacherDivergence? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the divergence of that name: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's divergence of that name fails (<see cref="SlotPolicy.Throw"/> unless set).</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered divergence as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(d => $"{d.Name}: {d.Summary}"));
-
     // Whether `kind` is the library's forward KL itself (not an app's over it): the chunked pass's own path, as the
     // distillation before the registry computed it.
     internal static bool IsLibraryForward(ITeacherDivergence kind) => ReferenceEquals(kind, LibraryForward);
@@ -120,25 +66,11 @@ public static class TeacherDivergences
     internal static TokenDivergenceRule? Rule(ITeacherDivergence? kind, float beta) =>
         kind is null || IsLibraryForward(kind) ? null : (student, teacher, gradient) => kind.Rows(student, teacher, beta, gradient);
 
-    // An app's divergence over the library's: each call falls back on its own, or is compared with the library's.
-    private sealed class GuardedDivergence(Slot slot, ITeacherDivergence app, ITeacherDivergence library) : ITeacherDivergence
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public bool UsesBeta => app.UsesBeta;
-
-        public (Tensor Values, Tensor? Gradient) Rows(Tensor studentLogProbabilities, Tensor teacherProbabilities, float beta, bool gradient) =>
-            slot.Call(() => app.Rows(studentLogProbabilities, teacherProbabilities, beta, gradient), () => library.Rows(studentLogProbabilities, teacherProbabilities, beta, gradient),
-                (a, b) => Comparisons.Difference(b.Values.ToArray(), a.Values.ToArray(), 1e-5f));
-    }
-
     // Each row's sum over the vocabulary repeated along it [rows, vocabulary]: an outer product with a row of ones (no broadcasting).
     internal static Tensor AlongRows(Tensor perRow, int rows, int vocabulary) =>
         perRow.Reshape(rows, 1).MatMul(Tensor.Full([1, vocabulary], 1f, perRow.Device));
 
-    private sealed class ForwardDivergence : ITeacherDivergence
+    internal sealed class ForwardDivergence : ITeacherDivergence
     {
         public string Name => Forward;
 
@@ -154,7 +86,7 @@ public static class TeacherDivergences
         }
     }
 
-    private sealed class ReverseDivergence : ITeacherDivergence
+    internal sealed class ReverseDivergence : ITeacherDivergence
     {
         public string Name => Reverse;
 
@@ -173,7 +105,7 @@ public static class TeacherDivergences
         }
     }
 
-    private sealed class JensenShannonDivergence : ITeacherDivergence
+    internal sealed class JensenShannonDivergence : ITeacherDivergence
     {
         public string Name => JensenShannon;
 

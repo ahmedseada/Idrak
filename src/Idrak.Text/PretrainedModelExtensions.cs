@@ -13,14 +13,14 @@ public static class PretrainedModelExtensions
     extension(PretrainedModel model)
     {
         /// <summary>
-        /// A text generator for the model, its KV cache in <paramref name="cacheFormat"/>; null: <see cref="KeyValueLayouts.EnvironmentVariable"/>,
-        /// else the model's element type (<see cref="KeyValueLayouts.Choose"/>).
+        /// A text generator for the model, its KV cache in <paramref name="cacheFormat"/>; null: <c>KeyValueLayouts.EnvironmentVariable</c>,
+        /// else the model's element type (<c>KeyValueLayouts.Choose</c>).
         /// </summary>
         public TextGenerator CreateGenerator(KeyValueFormat? cacheFormat = null, int? contextLength = null)
         {
             if (cacheFormat is null)
             {
-                return model.CreateGenerator(KeyValueLayouts.Choose(null).Layout, contextLength);
+                return model.CreateGenerator(KeyValueLayouts.For(KeyValueFormat.Float32), contextLength);
             }
 
             model.Network.Eval();
@@ -39,7 +39,7 @@ public static class PretrainedModelExtensions
 
         /// <summary>
         /// A chat model using the model's own chat template (and its tool-call format), its KV cache in
-        /// <paramref name="cacheFormat"/>; null: <see cref="KeyValueLayouts.EnvironmentVariable"/>, else the model's element type.
+        /// <paramref name="cacheFormat"/>; null: <c>KeyValueLayouts.EnvironmentVariable</c>, else the model's element type.
         /// </summary>
         public ChatGenerator CreateChat(KeyValueFormat? cacheFormat = null, int? contextLength = null) =>
             new(model.CreateGenerator(cacheFormat, contextLength), model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));

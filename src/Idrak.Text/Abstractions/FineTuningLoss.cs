@@ -14,8 +14,10 @@ namespace Idrak.Text.Abstractions;
 /// or <see cref="FineTuningLossInput.StepSequences"/>. Built-in: <see cref="FineTuningLosses"/>; one of one's own from a
 /// function: <see cref="FineTuningLosses.Of"/>.
 /// </summary>
-public interface IFineTuningLoss : IKind
+public interface IFineTuningLoss
 {
+    /// <summary>Its name ("sft", "dpo", "on-policy-distillation"): what a trainer's messages and telemetry call it.</summary>
+    string Name { get; }
     /// <summary>Whether it reads preference pairs (<see cref="FineTuningLossInput.Pairs"/>): trained only on <see cref="PreferencePair"/> data.</summary>
     bool NeedsPairs { get; }
 

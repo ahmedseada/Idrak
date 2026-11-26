@@ -67,18 +67,11 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// <summary>
     /// The shape of the model's JSON tool calls (for the "json" format); when not set, read off the template itself by
     /// rendering a probe call (see <see cref="DetectToolCallFormat"/>), so any family's JSON format is parsed as its
-    /// template writes it. Setting it selects the "json" format unless <see cref="CallFormatName"/> says otherwise.
+    /// template writes it.
     /// </summary>
     public ToolCallFormat? CallFormat { get; init; }
 
-    /// <summary>
-    /// The registered tool-call format the model writes calls in (see <see cref="ToolCallFormats"/>); when not set,
-    /// detected from the template (<see cref="ToolCallFormats.Detect"/> of <see cref="ProbeToolCalls"/>).
-    /// </summary>
-    public string? CallFormatName { get; init; }
-
     private ToolCallFormat? _detectedCalls;
-    private string? _detectedFormatName;
     private (string Text, int Shared, int SharedTail)? _probe;
     private bool _probed;
 
@@ -87,10 +80,6 @@ public sealed class JinjaChatTemplate : ChatTemplate
 
     /// <inheritdoc />
     public override ToolCallFormat ToolCalls => CallFormat ?? (_detectedCalls ??= DetectToolCallFormat());
-
-    /// <inheritdoc />
-    public override string ToolCallFormatName =>
-        CallFormatName ?? (CallFormat is not null ? ToolCallFormats.Json : _detectedFormatName ??= ToolCallFormats.Detect(ProbeToolCalls()));
 
     /// <summary>
     /// What tool-call format detectors see of this template: its source, and the assistant turn rendered with one probe
@@ -294,9 +283,9 @@ public sealed class JinjaChatTemplate : ChatTemplate
                 return ChatParts.TextOnly;                                      // the template does not read lists of parts
             }
 
-            // Every registered kind but text (image, audio, an app's): one the template writes something for.
+            // Every kind of the library's but text (image, audio): one the template writes something for.
             var kinds = new List<string> { ChatParts.Text };
-            foreach (string kind in ChatParts.Names)
+            foreach (string kind in (string[])[ChatParts.Image, ChatParts.Audio])
             {
                 if (kind == ChatParts.Text)
                 {
@@ -599,17 +588,3 @@ public sealed class JinjaChatTemplate : ChatTemplate
     }
 }
 
-/// <summary>
-/// The reader of a model's own Jinja chat template ("jinja" in <see cref="ChatTemplates"/>): tokenizer_config.json,
-/// chat_template.jinja or chat_template.json (<see cref="JinjaChatTemplate.Load"/>).
-/// </summary>
-internal sealed class JinjaTemplateReader : IChatTemplateReader
-{
-    public string Name => "jinja";
-
-    public string Summary => "the model folder's Jinja chat template (tokenizer_config.json, chat_template.jinja or chat_template.json)";
-
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    public IChatTemplate? Create(ChatTemplateRequest request) => JinjaChatTemplate.Load(request.Folder, request.Tokenizer);
-}

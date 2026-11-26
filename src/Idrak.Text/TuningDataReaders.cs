@@ -361,7 +361,7 @@ internal sealed class TuningImageSource : IDisposable
     /// <exception cref="InvalidDataException">No binary kind of that name is registered, or the reference is empty, remote or not a part of it.</exception>
     public ChatPart LoadPart(string kind, string reference, string where)
     {
-        if (ChatParts.Find(kind) is not IBinaryPartKind binary)
+        if (TuningRecordImages.PartKindNamed(kind) is not IBinaryPartKind binary)
         {
             throw new InvalidDataException($"{where}: the record names a '{kind}' part ({reference}) and no '{kind}' part kind made from bytes is registered in ChatParts "
                 + "(ship Idrak.Audio for 'audio', or register one with ChatParts.Register).");
@@ -623,8 +623,6 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
 
     public string Name => TuningDataFormats.Transcripts;
 
-    public string Summary => "{\"audio\", \"text\"} per line or a JSON array (also NeMo's audio_filepath): the sound and the prompt (TuningDataOptions.Prompt, \"Transcribe.\"), answered by the text";
-
     public bool Recognizes(JsonObject record) =>
         record["messages"] is null && record["conversations"] is null && AudioKeys.Any(k => record[k] is JsonValue) && TextKeys.Any(k => record[k] is JsonValue);
 
@@ -667,7 +665,7 @@ internal static class TuningRecordImages
 
         IEnumerable<ChatTranscript> Iterate()
         {
-            IReadOnlyList<IBinaryPartKind> kinds = [.. ChatParts.BinaryKinds];
+            IReadOnlyList<IBinaryPartKind> kinds = TuningRecordImages.BinaryKinds();
             using var source = new TuningImageSource(path, options?.Images);
             using var audios = AudioSource(path, options, source);
             foreach (var (record, where) in records)
@@ -686,7 +684,7 @@ internal static class TuningRecordImages
         ArgumentException.ThrowIfNullOrEmpty(path);
         var records = TuningRecords.Read(path);
         TuningImageSource.CheckRoot(options?.Images);
-        IReadOnlyList<IBinaryPartKind> kinds = [.. ChatParts.BinaryKinds];
+        IReadOnlyList<IBinaryPartKind> kinds = TuningRecordImages.BinaryKinds();
         var read = new List<PendingRecord>();
         int images = 0;
         foreach (var (record, where) in records)
@@ -836,6 +834,15 @@ internal static class TuningRecordImages
         return new PendingRecord(transcript, references, images, where) { PartReferences = lists ?? PendingRecord.NoParts, Parts = parts };
     }
 
+    // The part kinds were registered (ChatParts) and read a record's parts by their names: not on the new design yet.
+    internal static IChatPartKind? PartKindNamed(string name) => throw new NotSupportedException($"The chat part kind '{name}' by name is not on the new design yet.");
+
+    internal static IReadOnlyList<IBinaryPartKind> BinaryKinds() => throw new NotSupportedException("The registered binary chat part kinds are not on the new design yet.");
+
+    internal static ChatPart PartFromJson(JsonNode? part) => throw new NotSupportedException("A chat part read through the registered part kinds is not on the new design yet.");
+
+    internal static IReadOnlyList<ChatPart> ContentFromJson(JsonNode? content) => throw new NotSupportedException("A message's content read through the chat part kinds is not on the new design yet.");
+
     // Whether `kind` is the name of one of the binary kinds.
     public static IBinaryPartKind? Binary(IReadOnlyList<IBinaryPartKind> kinds, string? kind)
     {
@@ -905,8 +912,6 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
 {
     public string Name => TuningDataFormats.Messages;
 
-    public string Summary => "{\"messages\": [{\"role\", \"content\"}], \"tools\"} per line (or a JSON array); image (audio) parts by path, data URL, base64 or the record's \"images\" (\"audios\") list";
-
     public bool Recognizes(JsonObject record) => record["messages"] is JsonArray;
 
     public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, Pending);
@@ -965,14 +970,14 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                         }
                         else
                         {
-                            parts.Add(ChatParts.FromJson(o));
+                            parts.Add(TuningRecordImages.PartFromJson(o));
                         }
                     }
                     else if (item is JsonObject a && TuningRecordImages.Binary(kinds, (string?)a["type"]) is { } binary)
                     {
                         if (a["data"] is not null)
                         {
-                            parts.Add(ChatParts.FromJson(a));                         // the registered kind reads its bytes
+                            parts.Add(TuningRecordImages.PartFromJson(a));                         // the registered kind reads its bytes
                         }
                         else if (Reference(a, "path", binary.Name, "url") is { } reference)
                         {
@@ -989,13 +994,13 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                     }
                     else
                     {
-                        parts.Add(ChatParts.FromJson(item));
+                        parts.Add(TuningRecordImages.PartFromJson(item));
                     }
                 }
 
                 return parts;
             default:
-                return ChatParts.ContentFromJson(content);
+                return TuningRecordImages.ContentFromJson(content);
         }
     }
 
@@ -1052,8 +1057,6 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
 internal sealed class ShareGptDataFormat : ITuningDataFormat
 {
     public string Name => TuningDataFormats.ShareGpt;
-
-    public string Summary => "{\"conversations\": [{\"from\", \"value\"}], \"system\", \"images\", \"audios\"} per line or a JSON array (LlamaFactory); each <image> (<audio>) in a turn takes the next entry of \"images\" (\"audios\")";
 
     public bool Recognizes(JsonObject record) => record["conversations"] is JsonArray;
 

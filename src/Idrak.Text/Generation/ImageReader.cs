@@ -12,9 +12,6 @@ namespace Idrak.Text.Generation;
 /// <summary>How an <see cref="ImageReader"/> reads: the images' preparation and the attention cache.</summary>
 public sealed record ImageReaderOptions
 {
-    /// <summary>The image transforms every page goes through before the family's own processor (a read may give its own).</summary>
-    public ImageTransformPipeline Transforms { get; init; } = ImageTransformPipeline.Empty;
-
     /// <summary>The vision family's options for every image (null: the family's defaults).</summary>
     public VisionOptions? VisionOptions { get; init; }
 
@@ -100,9 +97,6 @@ public sealed record ImageReadRequest(ChatImage Image, string Prompt)
 
     /// <summary>The most tokens the answer may take.</summary>
     public int MaxTokens { get; init; } = 2048;
-
-    /// <summary>This page's image transforms instead of the reader's (<see cref="ImageReaderOptions.Transforms"/>).</summary>
-    public ImageTransformPipeline? Transforms { get; init; }
 
     /// <summary>This page's vision options instead of the reader's.</summary>
     public VisionOptions? VisionOptions { get; init; }
@@ -195,7 +189,7 @@ public sealed class ImageReader : IDisposable
         options ??= new ImageReaderOptions();
         Model = model;
         Options = options;
-        _images = ModelImages.For(model, options.Transforms, options.VisionOptions, options.EncoderFactory)
+        _images = ModelImages.For(model, options.VisionOptions, options.EncoderFactory)
                   ?? throw new InvalidOperationException($"{model.Folder} reads text only (no vision encoder): give a vision-language checkpoint.");
         try
         {
@@ -206,7 +200,7 @@ public sealed class ImageReader : IDisposable
             var images = _images.Images;
             _reading = new ChatImages(images.Encoder, images.Format, images.Attention)
             {
-                Decode = images.Decode, Transforms = images.Transforms, Owner = images.Owner,
+                Decode = images.Decode, Owner = images.Owner,
             };
             _chat = new ChatGenerator(chat.Generator, chat.Template) { Images = _reading };
             Publish();                                                      // what the device alone decides
@@ -219,22 +213,22 @@ public sealed class ImageReader : IDisposable
     }
 
     /// <summary>
-    /// Settings worth changing for this reader (every advisor of <see cref="SettingAdvisors"/>), from what its device
-    /// reports and, once a read was measured (<see cref="ImageReaderOptions.Suggest"/>), from that read's figures; none
-    /// where a figure is missing.
+    /// Settings worth changing for this reader: none for now (the advisors were registered, <c>SettingAdvisors</c>, which
+    /// is not on the new design yet).
     /// </summary>
-    public IReadOnlyList<SettingSuggestion> Suggestions() => SettingAdvisors.Suggest(Situation);
+    public IReadOnlyList<SettingSuggestion> Suggestions() => [];
 
     private AdviceSituation Situation => new(Model.Device, this, _measured) { Headroom = Options.SuggestionHeadroom };
 
     private AdviceMeasure? _measured;
     private int _reads;                                                     // reads seen while waiting to measure one
-    private readonly HashSet<(string Setting, string Value)> _published = [];
 
     private bool Suggesting => Options.Suggest ?? Telemetry.IsEnabled(TelemetryLevel.Suggestions);
 
-    // Each suggestion once, to the hooks listening at TelemetryLevel.Suggestions.
-    private void Publish() => SettingAdvisors.Publish(Situation, _published);
+    // Each suggestion once, to the hooks listening at TelemetryLevel.Suggestions: none for now (no advisors).
+    private static void Publish()
+    {
+    }
 
     // The first read after SuggestAfterReads, measured for the suggestions (when wanted and the device reports its free
     // memory): the device's peak above what it held before and after, and what it has left after.
@@ -279,7 +273,7 @@ public sealed class ImageReader : IDisposable
     public ImageData Prepared(ImageReadRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return _reading.Read(request.Image, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
+        return _reading.Read(request.Image, new ChatRequest([]));
     }
 
     /// <summary>
@@ -293,7 +287,7 @@ public sealed class ImageReader : IDisposable
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(prepared);
-        _reading.Keep(request.Image, prepared, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
+        _reading.Keep(request.Image, prepared, new ChatRequest([]));
     }
 
     /// <summary>The answer to <paramref name="request"/> as it is generated (the last chunk is done, with the figures).</summary>
@@ -413,7 +407,7 @@ public sealed class ImageReader : IDisposable
         };
         return new ChatRequest(messages, Options: options)
         {
-            ImageTransforms = request.Transforms, VisionOptions = request.VisionOptions, AddSpecialTokens = request.AddSpecialTokens,
+            VisionOptions = request.VisionOptions, AddSpecialTokens = request.AddSpecialTokens,
         };
     }
 

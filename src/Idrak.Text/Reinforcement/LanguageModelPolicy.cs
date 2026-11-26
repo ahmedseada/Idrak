@@ -63,7 +63,7 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>
     /// The key/value cache format replies are generated with: a <see cref="KeyValueLayouts"/> name (float32, bfloat16,
     /// int8 or one registered), <see cref="CacheFormatVariable"/> when set; null or "auto": the model's element type
-    /// (<see cref="KeyValueLayouts.Choose"/>, after <see cref="KeyValueLayouts.EnvironmentVariable"/>). bfloat16 takes half
+    /// (<c>KeyValueLayouts.Choose</c>, after <c>KeyValueLayouts.EnvironmentVariable</c>). bfloat16 takes half
     /// the memory of float32 and still decodes conversations of different lengths together (<see cref="IRowStartsLayout"/>);
     /// a format that cannot decodes them in float32. The trained log-probabilities are the training forward's either way
     /// (<see cref="Behavior"/>).
@@ -159,6 +159,13 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
     private (string Name, IReadOnlyDictionary<string, string>? Options, IFineTuningLoss Loss)? _preference;
     private bool _disposed;
 
+    // The key/value layouts were registered (KeyValueLayouts) and picked by name, the option's or its variable's: not on the new design yet;
+    // with neither, the built-in float32 layout.
+    private static IKeyValueLayout CacheLayout(string? name) =>
+        (name ?? System.Environment.GetEnvironmentVariable(LanguageModelPolicyOptions.CacheFormatVariable)) is { Length: > 0 } named
+            ? throw new NotSupportedException($"The key/value cache layout '{named}' by name is not on the new design yet.")
+            : KeyValueLayouts.For(KeyValueFormat.Float32);
+
     /// <summary>A policy over <paramref name="session"/>'s model and adapters.</summary>
     /// <param name="session">The fine-tuning session the policy samples from and trains.</param>
     /// <param name="options">Its settings; null for the defaults (and the variables').</param>
@@ -195,7 +202,7 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
         Session = session;
         Options = options;
         _ownsSession = ownsSession;
-        var chat = session.Generator(KeyValueLayouts.Choose(options.CacheFormat, LanguageModelPolicyOptions.CacheFormatVariable).Layout,
+        var chat = session.Generator(CacheLayout(options.CacheFormat),
             options.ContextLength);
         Chat = options.ToolsInPrompt is null ? chat : new Generation.ChatGenerator(chat.Generator, chat.Template) { ToolsInPrompt = options.ToolsInPrompt };
     }

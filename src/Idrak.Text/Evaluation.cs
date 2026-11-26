@@ -47,6 +47,9 @@ public static class ChatEvaluation
     /// </summary>
     public const string Auto = "auto";
 
+    // The tuning metrics were registered (TuningMetrics) and picked by name: not on the new design yet.
+    private static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"The tuning metric '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Evaluates <paramref name="chat"/> on <paramref name="conversations"/> (rows {"messages": [...]} as datasets give them;
     /// rows without a final assistant message are skipped), scoring by the metric <paramref name="metric"/> (a name in
@@ -60,7 +63,7 @@ public static class ChatEvaluation
         int batchSize = 1)
     {
         ArgumentNullException.ThrowIfNull(metric);
-        var scorer = IsAuto(metric) ? null : TuningMetrics.Get(metric);
+        var scorer = IsAuto(metric) ? null : MetricNamed(metric);
         var answers = new List<EvaluatedAnswer>();
         var watch = Stopwatch.StartNew();
         var options = new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = maxNewTokens, NumCtx = contextLength };
@@ -94,7 +97,7 @@ public static class ChatEvaluation
 
             var prompt = transcript.Messages.Take(last).ToList();
             string reference = transcript.Messages[last].Content;
-            scorer ??= TuningMetrics.Get(Choose(reference));                  // auto: the first reference decides
+            scorer ??= MetricNamed(Choose(reference));                  // auto: the first reference decides
             pending.Add((new ChatRequest(prompt, transcript.Tools.Count > 0 ? transcript.Tools : null, think, options), prompt, reference));
             if (pending.Count >= Math.Max(1, batchSize))
             {
@@ -107,7 +110,7 @@ public static class ChatEvaluation
             Answer();
         }
 
-        return new EvaluationReport(scorer?.Name ?? TuningMetrics.WordF1, answers, double.NaN, watch.Elapsed);
+        return new EvaluationReport(IsAuto(metric) ? TuningMetrics.WordF1 : metric, answers, double.NaN, watch.Elapsed);
     }
 
     /// <summary>
@@ -119,7 +122,7 @@ public static class ChatEvaluation
     {
         ArgumentNullException.ThrowIfNull(metric);
         ArgumentNullException.ThrowIfNull(reference);
-        return TuningMetrics.Get(IsAuto(metric) ? Choose(reference) : metric).Score(answer, reference).Value;
+        return MetricNamed(IsAuto(metric) ? Choose(reference) : metric).Score(answer, reference).Value;
     }
 
     private static bool IsAuto(string metric) => metric.Equals(Auto, StringComparison.OrdinalIgnoreCase);

@@ -146,14 +146,14 @@ public sealed record CodingToolOptions
     public bool ReadBeforeEdit { get; init; } = true;
 
     /// <summary>
-    /// The <see cref="CommandSandboxes"/> sandbox every command runs in: <see cref="CommandSandboxes.Process"/> unless
-    /// <see cref="CommandSandboxes.EnvironmentVariable"/> (IDRAK_SANDBOX) names another. <b>process is a plain process of
+    /// The <c>CommandSandboxes</c> sandbox every command runs in: <c>Process</c> unless
+    /// <c>EnvironmentVariable</c> (IDRAK_SANDBOX) names another. <b>process is a plain process of
     /// this machine</b>, with the user's rights: no shell and only the programs allowed, but nothing isolates the files,
     /// the network or the processes a command reaches (a build or a test runs the project's code). Use it with models you
-    /// trust; for one you do not, choose <see cref="CommandSandboxes.Container"/> (Docker or Podman, Idrak.Reinforcement.Plugins:
+    /// trust; for one you do not, choose <c>Container</c> (Docker or Podman, Idrak.Reinforcement.Plugins:
     /// <c>Sandbox = "container"</c> or IDRAK_SANDBOX=container).
     /// </summary>
-    public string Sandbox { get; init; } = CommandSandboxes.DefaultName;
+    public string Sandbox { get; init; } = System.Environment.GetEnvironmentVariable("IDRAK_SANDBOX") is { } sandbox && sandbox.Trim().Length > 0 ? sandbox.Trim() : "process";
 
     /// <summary>
     /// The <see cref="WritePolicies"/> policy every <c>write_file</c> and <c>edit_file</c> asks before it writes:
@@ -204,10 +204,22 @@ public sealed partial class CodingTools
     private readonly HashSet<string> _ignored;
     private readonly Lazy<string?> _notice;
 
+    // The write policies were registered (WritePolicies) and picked by name: not on the new design yet.
+    private static IWritePolicy WritePolicyNamed(string name) => throw new NotSupportedException($"The write policy '{name}' by name is not on the new design yet.");
+
+    // The coding languages were registered (CodingLanguages) and picked by name or by what the workspace holds: not on the new design yet.
+    private static IReadOnlyList<ICodingLanguage> LanguagesNamed(string? choice) => throw new NotSupportedException($"The coding languages '{choice ?? CodingLanguages.DefaultChoice}' by name are not on the new design yet.");
+
+    // The notice named the registered languages' folders (CodingLanguages): not on the new design yet.
+    private static string? LanguagesNotice(string workspace) => throw new NotSupportedException("The coding languages' notice for a workspace is not on the new design yet.");
+
+    // The command sandboxes were registered (CommandSandboxes) and picked by name: not on the new design yet.
+    private static ICommandSandbox SandboxNamed(string name) => throw new NotSupportedException($"The command sandbox '{name}' by name is not on the new design yet.");
+
     /// <summary>Tools over <paramref name="workspace"/>.</summary>
     /// <param name="workspace">The folder the tools work in.</param>
     /// <param name="options">What they may do; null for the defaults.</param>
-    /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <see cref="CommandSandboxes"/>.</param>
+    /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <c>CommandSandboxes</c>.</param>
     /// <exception cref="DirectoryNotFoundException">The workspace does not exist.</exception>
     /// <exception cref="NotSupportedException">
     /// The sandbox or the write policy is not registered, or the sandbox cannot enforce the options' limits (the message
@@ -224,8 +236,8 @@ public sealed partial class CodingTools
         int hops = MaxLinks;
         _realRoot = RealPath(_root, ref hops) ?? _root;
         _options = options ?? new CodingToolOptions();
-        WritePolicy = WritePolicies.Get(_options.WritePolicy);
-        Languages = CodingLanguages.Resolve(_options.Languages, _root, _options.DetectionDepth);
+        WritePolicy = WritePolicyNamed(_options.WritePolicy);
+        Languages = LanguagesNamed(_options.Languages);
         var languages = Languages;
         Commands = _options.Commands ?? CodingLanguages.Merge([.. languages.Select(l => l.Commands), ["git"]], StringComparer.OrdinalIgnoreCase);
         IgnoredDirectories = _options.IgnoredDirectories ?? CodingLanguages.Merge(
@@ -233,8 +245,8 @@ public sealed partial class CodingTools
              CodingToolOptions.LanguageFreeIgnoredDirectories.Skip(1).ToList()], StringComparer.OrdinalIgnoreCase);
         _ignored = new HashSet<string>(IgnoredDirectories, StringComparer.OrdinalIgnoreCase);
         string choice = string.IsNullOrWhiteSpace(_options.Languages) ? CodingLanguages.DefaultChoice : _options.Languages.Trim();
-        _notice = new Lazy<string?>(() => choice.Equals(CodingLanguages.None, StringComparison.OrdinalIgnoreCase) ? null : CodingLanguages.Notice(_root, languages, _options.DetectionDepth));
-        Sandbox = sandbox ?? CommandSandboxes.Get(_options.Sandbox);
+        _notice = new Lazy<string?>(() => choice.Equals(CodingLanguages.None, StringComparison.OrdinalIgnoreCase) ? null : LanguagesNotice(_root));
+        Sandbox = sandbox ?? SandboxNamed(_options.Sandbox);
         var environment = new Dictionary<string, string>(Quiet, StringComparer.Ordinal);
         foreach (var (name, value) in languages.SelectMany(l => l.Environment).Concat(_options.Environment ?? new Dictionary<string, string>()))
         {
@@ -405,7 +417,7 @@ public sealed partial class CodingTools
 
     /// <summary>
     /// A notice when none of the languages detects the workspace although it holds source files
-    /// (<see cref="CodingLanguages.Notice"/>: which plug-in to register); null otherwise, and with the choice
+    /// (<c>CodingLanguages.Notice</c>: which plug-in to register); null otherwise, and with the choice
     /// <see cref="CodingLanguages.None"/>. Found on first read.
     /// </summary>
     public string? LanguageNotice => _notice.Value;

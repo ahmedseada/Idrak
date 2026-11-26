@@ -21,12 +21,15 @@ public sealed class RetrievalIndex : ISearchableRetriever
 
     private readonly KeywordChoice? _keywords;                     // the keyword index asked for, as saved
 
+    // The keyword indexes were registered (KeywordIndexes) and picked by name: not on the new design yet.
+    internal static IKeywordIndex KeywordIndexNamed(string name, IEnumerable<string> texts, KeywordIndexOptions options) => throw new NotSupportedException($"The keyword index '{name}' by name is not on the new design yet.");
+
     internal RetrievalIndex(IReadOnlyList<Chunk> chunks, KeywordChoice? keywords, TextEncoder? encoder, VectorIndex? vectors, (int K, int Depth)? fusion,
         IEmbedder? embedder = null, IVectorStore? store = null)
     {
         Chunks = chunks;
         _keywords = keywords;
-        Keywords = keywords is { } k ? KeywordIndexes.Create(k.Name, chunks.Select(c => c.Text), k.Options) : null;
+        Keywords = keywords is { } k ? KeywordIndexNamed(k.Name, chunks.Select(c => c.Text), k.Options) : null;
         Encoder = encoder;
         Vectors = vectors;
         Fusion = fusion;
@@ -324,7 +327,7 @@ public sealed class RetrievalIndexBuilder
     /// <exception cref="NotSupportedException">No keyword index has that name.</exception>
     public RetrievalIndexBuilder Keywords(string name, KeywordIndexOptions? options = null)
     {
-        _ = KeywordIndexes.Get(name);                                            // an unknown name fails here, not at Build
+        _ = RetrievalIndex.KeywordIndexNamed(name, [], new KeywordIndexOptions());                                         // an unknown name fails here, not at Build
         _keywords = new KeywordChoice(name, options ?? new KeywordIndexOptions());
         return this;
     }

@@ -77,7 +77,7 @@ public sealed record RandomTextResult(int Documents, int Lines, int Words, int C
 
 /// <summary>
 /// Random text for training pages when there is no text to draw (plan 18): documents of random lines from a source
-/// (<see cref="RandomTextSources"/>), written as plain text that <see cref="SyntheticPages"/> reads ("text": documents
+/// (<c>RandomTextSources</c>), written as plain text that <see cref="SyntheticPages"/> reads ("text": documents
 /// separated by lines of <c>---</c>). Each document is drawn from the seed and its place, so the same options give the
 /// same file.
 /// </summary>
@@ -173,7 +173,6 @@ public sealed class PooledTextSource : IRandomTextSource
         string? digits, string[] marks, string unmarked, (int, int) years)
     {
         Name = name;
-        Summary = summary;
         _pools = pools;
         _patterns = patterns;
         _punctuation = punctuation;
@@ -186,9 +185,6 @@ public sealed class PooledTextSource : IRandomTextSource
 
     /// <inheritdoc/>
     public string Name { get; }
-
-    /// <inheritdoc/>
-    public string Summary { get; }
 
     /// <summary>The pools' names.</summary>
     public IReadOnlyCollection<string> Pools => _pools.Keys;

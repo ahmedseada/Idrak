@@ -178,6 +178,9 @@ public sealed record ChatImage : ChatPart
 /// </summary>
 public interface IChatPartKind
 {
+    /// <summary>Its name: the <see cref="ChatPart.Kind"/> of its parts and the "type" of their JSON ("text", "image").</summary>
+    string Name { get; }
+
     /// <summary>Writes the fields of <paramref name="part"/> (one of this kind) into <paramref name="json"/>, which already holds its "type".</summary>
     void Write(ChatPart part, JsonObject json);
 

@@ -12,16 +12,12 @@ internal sealed class RawAnswerText : IAnswerText
 {
     public string Name => AnswerTexts.Raw;
 
-    public string Summary => "the answer as it is";
-
     public string Text(string answer) => answer;
 }
 
 internal sealed class JsonValuesAnswerText : IAnswerText
 {
     public string Name => AnswerTexts.Values;
-
-    public string Summary => "the string and number values of the answer's JSON in document order, one a line (the JSON read leniently; an answer without JSON as it is)";
 
     public string Text(string answer)
     {

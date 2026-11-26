@@ -60,6 +60,9 @@ public sealed class TuningAnswerScorer
 {
     private readonly ITuningMetric _metric;
 
+    // The tuning metrics were registered (TuningMetrics) and picked by name, made with their options: not on the new design yet.
+    private static ITuningMetric MetricNamed(string name) => throw new NotSupportedException($"The tuning metric '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// A scorer of the conversations in <paramref name="transcripts"/> that end with an assistant message (text, no tool
     /// calls): the messages before it are the prompt, its text the reference.
@@ -73,8 +76,8 @@ public sealed class TuningAnswerScorer
         ArgumentNullException.ThrowIfNull(transcripts);
         ArgumentException.ThrowIfNullOrWhiteSpace(metric);
         ArgumentOutOfRangeException.ThrowIfNegative(samples);
-        _metric = TuningMetrics.Get(metric);
-        Metric = _metric.Name;
+        _metric = MetricNamed(metric);
+        Metric = metric;
         var items = transcripts.Select(Split).OfType<(IReadOnlyList<ChatMessage> Prompt, string Reference, IReadOnlyList<ToolDefinition> Tools, bool? Think)>();
         Items = [.. samples > 0 ? items.Take(samples) : items];
     }
@@ -85,7 +88,7 @@ public sealed class TuningAnswerScorer
     /// <summary>Whether a lower score is better (the metric's <see cref="ITuningMetric.LowerIsBetter"/>).</summary>
     public bool LowerIsBetter => _metric.LowerIsBetter;
 
-    /// <summary>The metric's options (its <see cref="IConfigurableKind.Keys"/>), or null for its defaults.</summary>
+    /// <summary>The metric's options (its <c>IConfigurableKind.Keys</c>), or null for its defaults.</summary>
     public IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
 
     /// <summary>
@@ -137,6 +140,9 @@ public sealed class TuningAnswerScorer
     /// <summary>Whether training scores after optimizer step <paramref name="step"/> (<see cref="Every"/>; the last step of an epoch when it is 0).</summary>
     public bool IsDue(int step, bool lastOfEpoch) => Count > 0 && (Every > 0 ? step % Every == 0 : lastOfEpoch);
 
+    // The answer texts were registered (AnswerTexts) and picked by name: not on the new design yet.
+    private static IAnswerText AnswerTextNamed(string name) => throw new NotSupportedException($"The answer text '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// Generates an answer to every prompt with <paramref name="model"/> (greedy, its adapters as they are now) and scores
     /// it. Prompts with images are read through <paramref name="vision"/> (made from the model for this call when null).
@@ -170,7 +176,7 @@ public sealed class TuningAnswerScorer
         {
             var chat = new ChatGenerator(generator, template)
             {
-                Images = images ? new ChatImages(vision!.Encoder, vision.Format, vision.Attention) { Transforms = vision.Images.Pipeline } : null,
+                Images = images ? new ChatImages(vision!.Encoder, vision.Format, vision.Attention) { Decode = image => vision.Images.Apply(Idrak.Imaging.ChatImageDecoder.Decode(image)) } : null,
                 Parts = Parts,
             };
             var options = new GenerationOptions
@@ -187,8 +193,8 @@ public sealed class TuningAnswerScorer
                     var reply = chat.Chat(request, cancellationToken);
                     string answer = reply.Message?.Content ?? "";
                     var score = AnswerText is { } text
-                        ? _metric.Score(AnswerTexts.Of(answer, text), AnswerTexts.Of(reference, text), MetricOptions)
-                        : _metric.Score(answer, reference, MetricOptions);
+                        ? _metric.Score(AnswerTexts.Normalize(AnswerTextNamed(text).Text(answer)), AnswerTexts.Normalize(AnswerTextNamed(text).Text(reference)))
+                        : _metric.Score(answer, reference);
                     var scored = new TuningAnswer(prompt, reference, answer, score, reply.Stats?.GeneratedTokens ?? 0);
                     answers.Add(scored);
                     progress?.Report(scored);

@@ -274,9 +274,9 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
     /// <summary>
     /// The instructions the agent gets by default with every registered coding language (<see cref="CodingLanguages.All"/>):
-    /// <see cref="SystemPrompt"/> of <see cref="CodingLanguages.Registered"/>.
+    /// <see cref="SystemPrompt"/> of <c>CodingLanguages.Registered</c>.
     /// </summary>
-    public static string DefaultSystemPrompt => SystemPrompt(CodingLanguages.Registered);
+    public static string DefaultSystemPrompt => SystemPrompt([]);
 
     /// <summary>
     /// The instructions the agent gets by default with <paramref name="languages"/>: how to work, and in the line on checking
@@ -702,7 +702,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
             [context.Template.ToolCalls.ArgumentsKey] = ExampleArguments(example),
         }.ToJsonString();
         var format = context.Template.ToolCalls;
-        string how = context.Template is UnknownTemplate || context.Template.ToolCallFormatName != ToolCallFormats.Json
+        string how = context.Template is UnknownTemplate || ToolCallFormatNameOf(context.Template) != ToolCallFormats.Json
             ? "To call a tool, write the call in your chat template's own tool-call format, as you were trained to, never inside a markdown code block. "
               + "As JSON, a call reads:\n" + call
             : format.Open.Length == 0
@@ -737,13 +737,16 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     }
 
     // A template that is not known: calls are read with the common "arguments" key, and the correction's example is generic.
+    // A template's tool-call format by name was detected through the registered formats (ToolCallFormats): not on the new
+    // design yet.
+    private static string ToolCallFormatNameOf(IChatTemplate template) =>
+        throw new NotSupportedException($"The tool-call format of {template.GetType().Name} by name is not on the new design yet.");
+
     private sealed class UnknownTemplate : ChatTemplate
     {
         public static readonly UnknownTemplate Instance = new();
 
         public override IReadOnlyList<string> StopSequences => [];
-
-        public override string ToolCallFormatName => "";
 
         public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt) =>
             throw new NotSupportedException("The agent's template is not known; it renders nothing.");

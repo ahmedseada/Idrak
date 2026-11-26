@@ -22,7 +22,7 @@ public sealed class TextEncoder : IEmbedder
 {
     private readonly TokenizerEncodeOptions _batchOptions;   // an IPretrainedTokenizer's batch encode (made once)
     private readonly ISequenceEncoder? _encoder;
-    private readonly ISequencePooler _pooler = SequencePoolers.Get(SequencePoolers.Mean);
+    private readonly ISequencePooler _pooler = new MeanPooler();          // the default, reached directly
 
     /// <summary>Creates the encoder.</summary>
     /// <param name="model">Token ids [N, T] → hidden states [N, T, D].</param>
@@ -74,6 +74,9 @@ public sealed class TextEncoder : IEmbedder
     /// <summary>The sequence encoder, or null when the encoder runs <see cref="Model"/> on the ids alone.</summary>
     public ISequenceEncoder? Encoder => _encoder;
 
+    // The poolers were registered (SequencePoolers) and picked by name: not on the new design yet.
+    private static ISequencePooler PoolerNamed(string name) => throw new NotSupportedException($"The pooler '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// How the states become one vector per text: a name in <see cref="SequencePoolers"/> ("mean", the default: the
     /// average of the real tokens' states, as always; "first", "max", or one registered).
@@ -82,7 +85,7 @@ public sealed class TextEncoder : IEmbedder
     public string Pooler
     {
         get => _pooler.Name;
-        init => _pooler = SequencePoolers.Get(value);
+        init => _pooler = PoolerNamed(value);
     }
 
     /// <summary>

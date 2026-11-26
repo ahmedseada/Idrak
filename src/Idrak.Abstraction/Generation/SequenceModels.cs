@@ -125,12 +125,17 @@ internal sealed class FirstPooler : ISequencePooler
     }
 }
 
-// A weighted sum over time with each real position weighing 1 / length (an empty sequence: its first position), as one
-// batched product [batch, 1, time] · [batch, time, width]; the same arithmetic as TextEncoder's average always had.
-internal sealed class MeanPooler : ISequencePooler
+/// <summary>
+/// The mean pooler ("mean"): a weighted sum over time with each real position weighing 1 / length (an empty sequence: its
+/// first position), as one batched product [batch, 1, time] · [batch, time, width]; the same arithmetic as TextEncoder's
+/// average always had. Public so its users reach it directly (the poolers' registry is gone).
+/// </summary>
+public sealed class MeanPooler : ISequencePooler
 {
+    /// <inheritdoc />
     public string Name => SequencePoolers.Mean;
 
+    /// <inheritdoc />
     public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
     {
         var (n, t, d) = SequencePoolers.Check(hidden, lengths);

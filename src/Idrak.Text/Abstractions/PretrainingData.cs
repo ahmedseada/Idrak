@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Datasets;
 using Idrak.Models;
@@ -87,14 +86,11 @@ public interface IPretrainingReader : IDisposable
     TrainingSequence? Read(long index);
 }
 
-/// <summary>A kind of pretraining data: how its files become training sequences. Register one with <see cref="PretrainingSources.Register"/>.</summary>
+/// <summary>A kind of pretraining data: how its files become training sequences. Register one with <c>PretrainingSources.Register</c>.</summary>
 public interface IPretrainingSource
 {
     /// <summary>The kind's name.</summary>
     string Name { get; }
-
-    /// <summary>One line on what it reads.</summary>
-    string Summary { get; }
 
     /// <summary>Opens <paramref name="source"/>'s files.</summary>
     /// <exception cref="FileNotFoundException">A file is missing.</exception>
@@ -103,7 +99,7 @@ public interface IPretrainingSource
 }
 
 /// <summary>
-/// The kinds of pretraining data, by name. Built in: "tokens" (token files, as <c>idrak data tokens</c> writes them, cut
+/// The names of the kinds of pretraining data. Built in: "tokens" (token files, as <c>idrak data tokens</c> writes them, cut
 /// into windows of the maximum length, every token trained) and "records" (conversations in a
 /// <see cref="TuningDataFormats">tuning data format</see>, with images when the model has a vision part; the answers
 /// trained, the prompt and the images not).
@@ -115,45 +111,4 @@ public static class PretrainingSources
 
     /// <summary>Conversation records.</summary>
     public const string Records = "records";
-
-    private static readonly SlotTable<string, IPretrainingSource> Table = BuiltIn();
-
-    private static SlotTable<string, IPretrainingSource> BuiltIn()
-    {
-        var table = new SlotTable<string, IPretrainingSource>(nameof(PretrainingSources), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a source kind reads its own files into sequences, so another kind cannot read the same ones");
-        table.RegisterDefault(Tokens, new TokenPretrainingSource());
-        table.RegisterDefault(Records, new RecordPretrainingSource());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="source"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPretrainingSource source)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentException.ThrowIfNullOrWhiteSpace(source.Name);
-        Table.Register(source.Name, source, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's kind of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The kind of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IPretrainingSource Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(PretrainingSources), name, Table.Keys,
-            $"Pretraining source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with PretrainingSources.Register.");
-
-    /// <summary>The library's kind of that name, or null.</summary>
-    public static IPretrainingSource? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the kind of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each kind as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
 }

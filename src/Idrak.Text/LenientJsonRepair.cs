@@ -25,8 +25,6 @@ internal sealed class LenientJsonRepair : IJsonRepair
 
     public string Name => JsonRepairs.Lenient;
 
-    public string Summary => "the first object or array of the text, repaired as json_repair does (open strings and brackets, commas, quotes, bare keys, Python literals, code fences)";
-
     public JsonRepairResult? Repair(string text)
     {
         ArgumentNullException.ThrowIfNull(text);

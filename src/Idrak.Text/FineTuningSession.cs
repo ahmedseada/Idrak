@@ -97,6 +97,12 @@ public sealed class FineTuningSession : IDisposable
         }
     }
 
+    // The gradient syncs were registered (GradientSyncs) and picked by the cluster options: not on the new design yet.
+    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => throw new NotSupportedException("The gradient sync picked by the cluster options is not on the new design yet.");
+
+    // The stop agreements were registered (StopAgreements) and picked by the cluster options: not on the new design yet.
+    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) => throw new NotSupportedException("The stop agreement picked by the cluster options is not on the new design yet.");
+
     // What a run sets up before its steps (FineTuner.Train's order): the image side, adapters (resumed), the trained
     // parameters, FP8 copies, the optimizer, the cluster's sync (its optimizer state loaded) and its start. Begin follows,
     // once the run knows its steps and its batches' sizes.
@@ -151,9 +157,9 @@ public sealed class FineTuningSession : IDisposable
                 throw new NotSupportedException("Pipeline placement (IDRAK_CLUSTER_PLACEMENT=pipeline) trains through the Pretrainer (plan 23, C7); fine-tuning runs with single placement.");
             }
 
-            Sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions!) : null;
+            Sync = options.Cluster is { } cluster ? GradientSyncFor(cluster, Optimizer, clusterOptions!) : null;
             Sharded = Sync as IShardedGradientSync;                         // asked once: the update, gathers and state are its
-            Stop = options.Cluster is { } ranks ? StopAgreements.For(ranks, clusterOptions) : null;
+            Stop = options.Cluster is { } ranks ? StopAgreementFor(ranks, clusterOptions) : null;
             _seeds = Sync is null ? null : Dropout.SeedsForRank(Sync.Rank);
             if (options.ResumeFrom is { } resumed)
             {
@@ -216,7 +222,7 @@ public sealed class FineTuningSession : IDisposable
     {
         TotalSteps = totalSteps;
         var scheduler = Options.Scheduler
-            ?? LearningRateSchedules.Factory(LearningRateSchedules.Cosine, new LearningRateScheduleSettings(Options.WarmupFraction, Options.MinLearningRate));
+            ?? ((optimizer, steps) => new CosineAnnealing(optimizer, Math.Max(1, steps), Options.MinLearningRate, (int)Math.Round(Options.WarmupFraction * steps)));   // the default cosine schedule, reached directly
         _schedule = scheduler(Optimizer, Math.Max(1, totalSteps))
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         _runner = new FineTuner.StepRunner(Model, train, Optimizer, Options, lossRows, _defaultCustom, _trace, largest, imageTokens, Sync);
@@ -474,7 +480,7 @@ public sealed class FineTuningSession : IDisposable
     public ChatGenerator Generator(int? contextLength = null, KeyValueFormat cacheFormat = KeyValueFormat.Float32) =>
         Generator(KeyValueLayouts.For(cacheFormat), contextLength);
 
-    /// <summary><see cref="Generator(int?, KeyValueFormat)"/> with a cache format given by its layout (a built-in or one registered with <see cref="KeyValueLayouts.Register"/>).</summary>
+    /// <summary><see cref="Generator(int?, KeyValueFormat)"/> with a cache format given by its layout (a built-in or one registered with <c>KeyValueLayouts.Register</c>).</summary>
     /// <param name="cacheLayout">How its key/value cache stores keys and values while a reply is generated.</param>
     /// <param name="contextLength">Its context window (the model's, by default).</param>
     /// <exception cref="InvalidOperationException">The model has no chat template.</exception>

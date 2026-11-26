@@ -92,7 +92,7 @@ public sealed class TuningVision : IDisposable
         var encoder = model.CreateVisionEncoder(new VisionEncoderOptions { Device = model.Device, TrainedParts = asked });
         try
         {
-            images.ThrowIfUnknown(vision.Family, vision.VisionOptionKeys);
+            // the family's option keys went with the option schema
             var tuning = VisionTuningParts.For(vision, asked);
             if ((tuning is not null || model.TrainedVisionTensors.Count > 0) && encoder is not IVisionEncoderStages)
             {
@@ -121,7 +121,7 @@ public sealed class TuningVision : IDisposable
             }
 
             bool owns = cache is null;
-            return new TuningVision(model, encoder, images, asked, tuning, parameters, cache ?? FeatureCaches.Create(FeatureCaches.Memory), owns, CheckpointIdentity(model));
+            return new TuningVision(model, encoder, images, asked, tuning, parameters, cache ?? new MemoryFeatureCache(new FeatureCacheOptions()), owns, CheckpointIdentity(model));
         }
         catch
         {
@@ -243,14 +243,12 @@ public sealed class TuningVision : IDisposable
 
     /// <summary>
     /// <paramref name="image"/>'s pixels as the encoder reads them: decoded (<see cref="ChatImageDecoder.Decode(ChatImage)"/>,
-    /// EXIF orientation applied), then through <paramref name="preparation"/>'s transforms (<see cref="Images"/>' when null).
+    /// EXIF orientation applied), then as <paramref name="preparation"/> asks (<see cref="Images"/> when null: <see cref="TuningImages.Apply"/>).
     /// </summary>
     public ImageData Read(ChatImage image, TuningImages? preparation = null)
     {
         ArgumentNullException.ThrowIfNull(image);
-        var pipeline = (preparation ?? Images).Pipeline;
-        var decoded = ChatImageDecoder.Decode(image);
-        return pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
+        return (preparation ?? Images).Apply(ChatImageDecoder.Decode(image));
     }
 
     /// <summary>

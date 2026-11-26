@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using Idrak.Data;
 
 namespace Idrak.Text.Abstractions;
@@ -45,9 +44,6 @@ public interface ICodingLanguage
 {
     /// <summary>Its name in <see cref="CodingLanguages"/> (ignoring case), e.g. "csharp".</summary>
     string Name { get; }
-
-    /// <summary>One line on what it covers.</summary>
-    string Summary { get; }
 
     /// <summary>Whether the files within <paramref name="depth"/> folders of <paramref name="workspace"/>'s top (0: the top only) show a project of the language.</summary>
     bool Detect(string workspace, int depth);
@@ -128,20 +124,19 @@ public sealed record CodingLanguage(string Name, string Summary) : ICodingLangua
 }
 
 /// <summary>
-/// The coding languages by name (ignoring case). <b>The library registers none</b>: what stays in it is language-free (the
-/// agent's loop, the tools, git's read-only subcommands, <c>.git</c> as an ignored folder, a prompt with no build or test
-/// commands). The coding agent and its tools compose their defaults from the languages a run works with
-/// (<see cref="Resolve"/>: every registered one, <see cref="All"/>, the default; those that detect the workspace,
-/// <see cref="Detected"/>; or names), in their order: the prompt's line on checking the work, the programs allowed (git
-/// last), the folders skipped, the tools' examples, the commands' variables. Idrak.Text.Plugins registers the library's
-/// own (<c>TextPlugins.RegisterAll()</c>); a language that is not registered is refused with "not registered".
+/// The coding languages' choices and the helpers that compose them. <b>The library holds no language</b>: what stays in
+/// it is language-free (the agent's loop, the tools, git's read-only subcommands, <c>.git</c> as an ignored folder, a
+/// prompt with no build or test commands). The coding agent and its tools compose their defaults from the languages a run
+/// works with (every one, <see cref="All"/>, the default; those that detect the workspace, <see cref="Detected"/>; or
+/// names), in their order: the prompt's line on checking the work, the programs allowed (git last), the folders skipped,
+/// the tools' examples, the commands' variables. The languages live in Idrak.Text.Plugins.
 /// </summary>
 public static class CodingLanguages
 {
-    /// <summary>Every registered language (the default choice).</summary>
+    /// <summary>Every language (the default choice).</summary>
     public const string All = "all";
 
-    /// <summary>The registered languages that detect the workspace.</summary>
+    /// <summary>The languages that detect the workspace.</summary>
     public const string Detected = "detected";
 
     /// <summary>No language: the language-free defaults alone.</summary>
@@ -156,136 +151,8 @@ public static class CodingLanguages
     /// <summary>The package whose plug-ins register the library's own languages, as the "not registered" messages name it.</summary>
     public const string PluginPackage = "Idrak.Text.Plugins";
 
-    private static readonly SlotTable<string, ICodingLanguage> Table = new(nameof(CodingLanguages), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a language's lists are read once, when the tools are made, and composed into their defaults: there is no call a guard could fall back on");
-
     /// <summary>The choice <see cref="EnvironmentVariable"/> names, or <see cref="All"/> when it is not set.</summary>
     public static string DefaultChoice => System.Environment.GetEnvironmentVariable(EnvironmentVariable) is { } choice && choice.Trim().Length > 0 ? choice.Trim() : All;
-
-    /// <summary>Registers <paramref name="language"/> under its <see cref="ICodingLanguage.Name"/> (one of the same name takes its place).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ICodingLanguage language)
-    {
-        ArgumentNullException.ThrowIfNull(language);
-        ArgumentException.ThrowIfNullOrWhiteSpace(language.Name);
-        if (language.Name.Contains(',', StringComparison.Ordinal) || language.Name.Equals(All, StringComparison.OrdinalIgnoreCase)
-            || language.Name.Equals(Detected, StringComparison.OrdinalIgnoreCase) || language.Name.Equals(None, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new ArgumentException($"'{language.Name}' cannot name a coding language: it holds a comma or is one of {All}, {Detected}, {None}.", nameof(language));
-        }
-
-        Table.Register(language.Name, language, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the language <paramref name="name"/>; false when none is registered under it.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The registered languages, in the order they were registered.</summary>
-    public static IReadOnlyList<ICodingLanguage> Registered => [.. Table.Values];
-
-    /// <summary>The language <paramref name="name"/>, or null.</summary>
-    public static ICodingLanguage? Find(string name) => Table.Find(name);
-
-    /// <summary>The language <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones and the package with the library's own.</exception>
-    public static ICodingLanguage Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(CodingLanguages), name, Table.Keys,
-            $"Coding language '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-            + $"register its plug-in ({PluginPackage}: TextPlugins.RegisterAll() registers the library's own, each as '<name>-language') "
-            + "or your own with CodingLanguages.Register.");
-
-    /// <summary>Who registered the language <paramref name="name"/>: the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered language as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(l => $"{l.Name}: {l.Summary}"));
-
-    /// <summary>
-    /// The languages <paramref name="choice"/> names: <see cref="All"/> (every registered one, in their order),
-    /// <see cref="Detected"/> (those that detect <paramref name="workspace"/>), <see cref="None"/>, or names separated by
-    /// commas (in that order); null or empty for <see cref="DefaultChoice"/>.
-    /// </summary>
-    /// <exception cref="NotSupportedException">A name is not registered.</exception>
-    /// <exception cref="ArgumentException"><see cref="Detected"/> without a workspace.</exception>
-    public static IReadOnlyList<ICodingLanguage> Resolve(string? choice, string? workspace = null, int depth = DefaultDepth)
-    {
-        string text = string.IsNullOrWhiteSpace(choice) ? DefaultChoice : choice.Trim();
-        if (text.Equals(All, StringComparison.OrdinalIgnoreCase))
-        {
-            return Registered;
-        }
-
-        if (text.Equals(None, StringComparison.OrdinalIgnoreCase))
-        {
-            return [];
-        }
-
-        if (text.Equals(Detected, StringComparison.OrdinalIgnoreCase))
-        {
-            return workspace is null ? throw new ArgumentException($"The coding languages '{Detected}' are found in a workspace; none was given.", nameof(workspace))
-                : Detect(workspace, depth);
-        }
-
-        var languages = new List<ICodingLanguage>();
-        foreach (var name in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var language = Get(name);
-            if (!languages.Contains(language))
-            {
-                languages.Add(language);
-            }
-        }
-
-        return languages;
-    }
-
-    /// <summary>The registered languages that detect <paramref name="workspace"/> (<see cref="ICodingLanguage.Detect"/>), in their order.</summary>
-    public static IReadOnlyList<ICodingLanguage> Detect(string workspace, int depth = DefaultDepth)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        return [.. Table.Values.Where(l => l.Detect(workspace, depth))];
-    }
-
-    /// <summary>
-    /// A notice for a workspace none of <paramref name="languages"/> detects although it holds source files (named by
-    /// Idrak.Data's table of file extensions): which languages its files are in, and that a coding-language plug-in that
-    /// provides one is to be registered (the agent gets no build or test commands for them; a task's own commands still
-    /// run). Null when one of them detects it, or it holds no source file within <paramref name="depth"/>.
-    /// </summary>
-    public static string? Notice(string workspace, IReadOnlyList<ICodingLanguage> languages, int depth = DefaultDepth)
-    {
-        ArgumentNullException.ThrowIfNull(workspace);
-        ArgumentNullException.ThrowIfNull(languages);
-        if (languages.Any(l => l.Detect(workspace, depth)))
-        {
-            return null;
-        }
-
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var skipped = Table.Values.SelectMany(l => l.IgnoredDirectories.Concat(l.LinkedDirectories)).ToList();
-        FindFile(workspace, depth, name =>
-        {
-            if (DataFiles.LanguageOf(name) is { } language)
-            {
-                counts[language] = counts.GetValueOrDefault(language) + 1;
-            }
-
-            return false;
-        }, skipped);
-        if (counts.Count == 0)
-        {
-            return null;
-        }
-
-        var found = counts.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(3).Select(p => p.Key).ToList();
-        string chosen = languages.Count == 0 ? "no coding language" : $"none of the coding languages {string.Join(", ", languages.Select(l => l.Name))}";
-        return $"Note: {chosen} detects this workspace, whose files are {string.Join(", ", found)}: the agent gets no build or test commands for them. "
-               + $"Register a coding-language plug-in that provides '{found[0]}' ({PluginPackage}: TextPlugins.RegisterAll() registers the library's own, each as "
-               + $"'<name>-language'), or choose the languages ({EnvironmentVariable}: {All}, {Detected} or names).";
-    }
 
     /// <summary>
     /// The lists joined in order, each item once (by <paramref name="comparer"/>, ordinal by default), every list's own

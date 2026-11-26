@@ -85,7 +85,7 @@ public static partial class Pretrainer
         // A cancelled token asks the ranks to stop and they agree at a step boundary (Plan 27, R7): no stage leaves a step
         // the others are in. No collective of every rank carries the flag here (the replicas' reductions are a stage's), so
         // the agreement sums it in a one-value all-reduce at the boundary (every ClusterOptions.StopEvery boundaries).
-        var agreement = StopAgreements.For(collectives, cluster);
+        var agreement = StopAgreementFor(collectives, cluster);
         agreement.Reset();
         using var asks = agreement.Watch(cancellationToken);
 
@@ -105,7 +105,7 @@ public static partial class Pretrainer
                 for (int s = 0; s < stage.Sources.Count; s++)
                 {
                     var source = stage.Sources[s];
-                    var reader = PretrainingSources.Get(source.Kind).Open(source, context);
+                    var reader = SourceNamed(source.Kind).Open(source, context);
                     var position = resume is { } rr && rr.Stage == stageIndex && s < rr.Sources.Count ? rr.Sources[s] : (0L, 0L, 0L);
                     readers.Add(new SourceState(reader, source.Weight, options.Seed, stageIndex, s) { Pass = position.Item1, Next = position.Item2, Drawn = position.Item3 });
                 }
@@ -127,9 +127,9 @@ public static partial class Pretrainer
                 }
 
                 // The ranks holding this stage (its replicas) sum its gradients; with one replica there is nothing to sum.
-                using var sync = pipe.Replicas is { } replicas ? GradientSyncs.Create(replicas, optimizer, cluster) : null;
+                using var sync = pipe.Replicas is { } replicas ? GradientSyncFor(replicas, optimizer, cluster) : null;
                 sync?.Start();
-                var schedule = LearningRateSchedules.Factory(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate))(optimizer, stage.Steps);
+                var schedule = ScheduleNamed(stage.Schedule, new LearningRateScheduleSettings(stage.WarmupFraction, stage.MinLearningRate), optimizer, stage.Steps);
                 for (int i = 0; i < stageStep; i++)
                 {
                     schedule.Step();

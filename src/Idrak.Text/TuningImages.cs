@@ -8,7 +8,7 @@ namespace Idrak.Text;
 
 /// <summary>
 /// How a vision-language fine-tune prepares its images, the same for training and evaluation records: the image transform
-/// pipeline (<see cref="Transforms"/>, the same text as <c>--image-transform</c>), the family's vision options
+/// pipeline (<c>Transforms</c>, the same text as <c>--image-transform</c>), the family's vision options
 /// (<see cref="VisionOptions"/>, as <c>--vision-option</c>; checked against the family's keys with
 /// <see cref="ThrowIfUnknown"/>, as generation does) and <see cref="Grayscale"/>. Saved next to the adapters
 /// (<see cref="FileName"/>), so <c>run</c> and <c>serve</c> can prepare images as the model was tuned on them. Immutable;
@@ -32,15 +32,12 @@ public sealed record TuningImages
     /// <summary>No transforms, no options, colour: images as decoded, the family's defaults.</summary>
     public static TuningImages None { get; } = new();
 
-    /// <summary>The image transforms, in order (registered in <see cref="ImageTransforms"/>).</summary>
-    public ImageTransformPipeline Transforms { get; init; } = ImageTransformPipeline.Empty;
-
     /// <summary>The vision family's own options for every image (its keys; the family's defaults for the others).</summary>
     public VisionOptions VisionOptions { get; init; } = VisionOptions.Empty;
 
     /// <summary>
-    /// Turn images to grayscale first (the <c>grayscale</c> transform before <see cref="Transforms"/>, unless they already
-    /// have one), as the command line's <c>--grayscale</c> does.
+    /// Turn images to grayscale first (<see cref="Idrak.Imaging.ChatImageDecoder.Grayscale(ImageData)"/>), as the command
+    /// line's <c>--grayscale</c> does.
     /// </summary>
     public bool Grayscale { get; init; }
 
@@ -52,25 +49,34 @@ public sealed record TuningImages
     /// </summary>
     public string? Family { get; init; }
 
-    /// <summary>Whether this changes nothing: no transforms, no options, colour.</summary>
-    public bool IsEmpty => Transforms.IsEmpty && VisionOptions.Count == 0 && !Grayscale;
+    /// <summary>Whether this changes nothing: no options, colour.</summary>
+    public bool IsEmpty => VisionOptions.Count == 0 && !Grayscale;
 
-    /// <summary>The transforms every image goes through: <see cref="Transforms"/>, after <c>grayscale</c> when <see cref="Grayscale"/> asks for it.</summary>
-    public ImageTransformPipeline Pipeline =>
-        Grayscale && !Transforms.Contains("grayscale") ? ImageTransformPipeline.Parse("grayscale").Then(Transforms) : Transforms;
+    // The image transforms were registered (ImageTransforms) and a preparation named them as steps: not on the new design
+    // yet. Null, empty or "none" is no transform.
+    private static void NoTransforms(string? text)
+    {
+        if (!string.IsNullOrWhiteSpace(text) && !text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new NotSupportedException($"The image transforms '{text}' by name are not on the new design yet.");
+        }
+    }
 
     /// <summary>The preparation the command line's options describe.</summary>
-    /// <param name="transforms">The pipeline as text (<c>--image-transform</c>); null, empty or "none" for none.</param>
+    /// <param name="transforms">The image transforms as text (<c>--image-transform</c>); null, empty or "none" for none (others are not on the new design yet).</param>
     /// <param name="visionOptions">KEY=VALUE items (<c>--vision-option</c>).</param>
     /// <param name="grayscale">Grayscale first (<c>--grayscale</c>).</param>
-    /// <exception cref="ArgumentException">An unknown transform or option of one, or a bad value.</exception>
+    /// <exception cref="NotSupportedException">Image transforms: by name, they are not on the new design yet.</exception>
     /// <exception cref="FormatException">A vision option is not KEY=VALUE.</exception>
-    public static TuningImages Parse(string? transforms, IEnumerable<string>? visionOptions = null, bool grayscale = false) => new()
+    public static TuningImages Parse(string? transforms, IEnumerable<string>? visionOptions = null, bool grayscale = false)
     {
-        Transforms = ImageTransformPipeline.Parse(transforms),
-        VisionOptions = visionOptions is null ? VisionOptions.Empty : VisionOptions.Parse(visionOptions),
-        Grayscale = grayscale,
-    };
+        NoTransforms(transforms);
+        return new()
+        {
+            VisionOptions = visionOptions is null ? VisionOptions.Empty : VisionOptions.Parse(visionOptions),
+            Grayscale = grayscale,
+        };
+    }
 
     /// <summary>
     /// Throws unless every vision option is one the family <paramref name="family"/> takes (<paramref name="accepted"/>:
@@ -95,19 +101,19 @@ public sealed record TuningImages
         }
     }
 
-    /// <summary><paramref name="image"/> after <see cref="Pipeline"/> (decoded pixels in and out).</summary>
-    public ImageData Apply(ImageData image) => Pipeline.Apply(image);
+    /// <summary><paramref name="image"/> turned to grayscale when <see cref="Grayscale"/> asks for it (decoded pixels in and out).</summary>
+    public ImageData Apply(ImageData image) => Grayscale ? Idrak.Imaging.ChatImageDecoder.Grayscale(image) : image;
 
     /// <summary>
-    /// The preparation as JSON: <c>{"format", "image_transforms", "vision_options", "grayscale"}</c> (the transforms as
-    /// their text, the options as an object of strings), and <c>"family"</c> when <see cref="Family"/> is set.
+    /// The preparation as JSON: <c>{"format", "image_transforms", "vision_options", "grayscale"}</c> (no transforms: "",
+    /// the options as an object of strings), and <c>"family"</c> when <see cref="Family"/> is set.
     /// </summary>
     public JsonObject ToJson()
     {
         var json = new JsonObject
         {
             ["format"] = Format,
-            ["image_transforms"] = Transforms.ToString(),
+            ["image_transforms"] = "",
             ["vision_options"] = VisionOptions.ToJson(),
             ["grayscale"] = Grayscale,
         };
@@ -121,7 +127,7 @@ public sealed record TuningImages
 
     /// <summary>The preparation in <paramref name="json"/> (as <see cref="ToJson"/> writes it; missing keys: none).</summary>
     /// <exception cref="InvalidDataException">Another format, or a value of the wrong kind.</exception>
-    /// <exception cref="ArgumentException">An unknown transform (the registered ones are named).</exception>
+    /// <exception cref="NotSupportedException">Image transforms: by name, they are not on the new design yet.</exception>
     public static TuningImages FromJson(JsonObject json)
     {
         ArgumentNullException.ThrowIfNull(json);
@@ -132,9 +138,14 @@ public sealed record TuningImages
 
         try
         {
+            NoTransforms(json["image_transforms"] switch
+            {
+                JsonValue value when value.TryGetValue(out string? text) => text,
+                JsonArray { Count: > 0 } steps => steps.ToJsonString(),
+                _ => null,
+            });
             return new TuningImages
             {
-                Transforms = ImageTransformPipeline.FromJson(json["image_transforms"]),
                 VisionOptions = json["vision_options"] switch
                 {
                     null => VisionOptions.Empty,
@@ -196,14 +207,14 @@ public sealed record TuningImages
         }));
     }
 
-    /// <summary>Equal when the transforms' text, the vision options and the grayscale switch are (<see cref="Family"/> aside).</summary>
+    /// <summary>Equal when the vision options and the grayscale switch are (<see cref="Family"/> aside).</summary>
     public bool Equals(TuningImages? other) =>
-        other is not null && Transforms.Equals(other.Transforms) && Grayscale == other.Grayscale && VisionOptions.ToString() == other.VisionOptions.ToString();
+        other is not null && Grayscale == other.Grayscale && VisionOptions.ToString() == other.VisionOptions.ToString();
 
     /// <inheritdoc />
-    public override int GetHashCode() => HashCode.Combine(Transforms, Grayscale, VisionOptions.ToString());
+    public override int GetHashCode() => HashCode.Combine(Grayscale, VisionOptions.ToString());
 
     /// <summary>"transforms grayscale,contrast=1.5; vision options do_pan_and_scan=true", or "images as decoded".</summary>
     public override string ToString() => IsEmpty ? "images as decoded"
-        : $"transforms {(Pipeline.IsEmpty ? "none" : Pipeline.ToString())}; vision options {VisionOptions}";
+        : $"grayscale {(Grayscale ? "yes" : "no")}; vision options {VisionOptions}";
 }

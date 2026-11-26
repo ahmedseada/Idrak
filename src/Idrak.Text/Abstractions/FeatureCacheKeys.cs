@@ -13,7 +13,7 @@ public static class FeatureCacheKeyExtensions
         {
             ArgumentNullException.ThrowIfNull(image);
             ArgumentNullException.ThrowIfNull(images);
-            return new FeatureCacheKey(image.Hash, images.Pipeline.ToString(), images.VisionOptions.ToString(), family, checkpoint, stage);
+            return new FeatureCacheKey(image.Hash, images.Grayscale ? "grayscale" : "", images.VisionOptions.ToString(), family, checkpoint, stage);
         }
     }
 }

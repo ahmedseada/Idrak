@@ -7,15 +7,15 @@ using System.Text;
 namespace Idrak.Text.Generation;
 
 /// <summary>
-/// The <c>process</c> command sandbox (<see cref="CommandSandboxes.Process"/>, registered by Idrak.Text; the default): the
+/// The <c>process</c> command sandbox (the default): the
 /// command runs as a plain process of this machine, with the user's rights and nothing isolating the files, network or
-/// processes it reaches (for models you trust; <see cref="CommandSandboxes.Container"/> isolates them), started without a
+/// processes it reaches (for models you trust; <c>CommandSandboxes.Container</c> isolates them), started without a
 /// shell, in its folder, with the programs allowed (<see cref="CommandLimits.Programs"/>, found on the PATH: this
 /// sandbox's check is the one the coding tools rely on, they keep no copy of it), standard input closed, the time limit and the memory limit
 /// enforced by stopping the whole process tree, and the output trimmed to its cap. The memory limit is checked on the
 /// started process's working set (<see cref="Process.WorkingSet64"/>, which .NET reports on every platform), every
 /// <see cref="PollInterval"/>; the processes it starts in turn are not counted. It cannot turn the network off nor limit
-/// processes or CPUs, so it refuses those limits, naming <see cref="CommandSandboxes.Container"/>. Each line of output
+/// processes or CPUs, so it refuses those limits, naming <c>CommandSandboxes.Container</c>. Each line of output
 /// goes to <see cref="CommandLimits.Output"/> as it is written, when one is given. <see cref="StartAsync"/> starts a command
 /// interactively the same way (the programs allowed, the variables, the time and memory limits), its standard input kept
 /// open and its three standard streams handed to the caller as the process's own pipes (.NET's <see cref="Process"/> on
@@ -27,7 +27,7 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(50);
 
     /// <inheritdoc />
-    public string Name => CommandSandboxes.Process;
+    public string Name => "process";
 
     /// <inheritdoc />
     public string Summary => "a plain process (no shell): the programs allowed, a time limit, an output cap and a memory limit on the started process; the network as the machine has it";
@@ -41,8 +41,8 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
             : limits.MaxCpus > 0 ? "limit the CPUs a command uses"
             : null;
         return missing is null ? null
-            : $"The {CommandSandboxes.Process} sandbox cannot {missing}: run the commands in the {CommandSandboxes.Container} sandbox "
-              + $"(CodingToolOptions.Sandbox = \"{CommandSandboxes.Container}\", {CommandSandboxes.EnvironmentVariable}={CommandSandboxes.Container}; Idrak.Reinforcement.Plugins), which can.";
+            : $"The process sandbox cannot {missing}: run the commands in the container sandbox "
+              + $"(CodingToolOptions.Sandbox = \"container\", IDRAK_SANDBOX=container; Idrak.Reinforcement.Plugins), which can.";
     }
 
     /// <inheritdoc />

@@ -51,6 +51,9 @@ public static class PreferencePairs
         return added;
     }
 
+    // The pair sources were registered (PreferencePairSources) and picked by name, made with their options: not on the new design yet.
+    private static IPreferencePairSource PairSourceNamed(string name, IReadOnlyDictionary<string, string>? options) => throw new NotSupportedException($"The preference pair source '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// The preference pairs of recorded or played <paramref name="episodes"/> by the source <paramref name="source"/> of
     /// <see cref="PreferencePairSources"/> ("group", "verdict", or an app's), encoded as <see cref="Encode"/> does: what
@@ -61,14 +64,14 @@ public static class PreferencePairs
     /// <param name="source">The pair source's name.</param>
     /// <param name="encoder">Tokenizes kept texts; null when no choice holds one.</param>
     /// <param name="options">The source's options; null for its defaults.</param>
-    /// <exception cref="NotRegisteredException">No source of that name is registered.</exception>
+    /// <exception cref="NotSupportedException">No source of that name is registered.</exception>
     public static List<PreferencePair> Build(IReadOnlyList<Trajectory<ChatObservation, ChatMessage>> episodes, string source, ChatTranscriptEncoder? encoder = null,
         IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(episodes);
         ArgumentException.ThrowIfNullOrWhiteSpace(source);
         var choices = new List<PreferenceChoice>();
-        PreferencePairSources.Get(source).Choose(episodes, choices, options);
+        PairSourceNamed(source, options).Choose(episodes, choices);
         var pairs = new List<PreferencePair>(choices.Count);
         Encode(episodes, choices, encoder, pairs);
         return pairs;
