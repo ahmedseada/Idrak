@@ -4,30 +4,17 @@ The text model families: decoders, encoders and encoder-decoders, with their GGU
 scalings. The library (`Idrak`, `Idrak.Text`) keeps only generic defaults and fallbacks; the families live here, one
 namespace each (`Idrak.Text.Plugins.<Family>`), written on the library's public API only. It builds on Idrak.Text.
 
-```csharp
-using Idrak.Text.Plugins;
-
-TextPlugins.RegisterAll();      // every family of the package; calling it again changes nothing
-```
-
-- `TextPlugins.RegisterAll()` registers every family, `TextPlugins.UnregisterAll()` takes them back (the registries
-  are left as they were found), `TextPlugins.All` lists them.
-- One family alone: its namespace's static `<Family>Plugin` class, with `Register()` and `Unregister()`.
-- Each family is an `IIdrakPlugin` (`Idrak.Abstraction.Plugins`), recorded by name in `IdrakPlugins`; a plug-in
-  registered later under the same name takes its place.
-- The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
-  `TextPlugins.Package` is the package (an `IIdrakPluginPackage`: its name and `All`); the assembly declares it with
-  `[assembly: IdrakPluginPackage]`, which `-P` and `IdrakPlugins.Load` read when a host loads `Idrak.Text.Plugins.dll`
-  itself.
-
-A model whose family is not registered is refused with "not registered", naming this package.
+Nothing is registered: finding a checkpoint's family by its architecture name (`PretrainedModel.Load`,
+`PretrainedEncoderModel.Load`, `PretrainedSeq2SeqModel.Load`, a GGUF file's architecture), and picking a tool-call format,
+a fill-in-the-middle format, a RoPE scaling or a coding language by its name, are not on the new design yet, so loading a
+model stops there.
 
 ## Families
 
 ### BERT (`Idrak.Text.Plugins.Bert`)
 
-`BertPlugin.Register()` registers `BertModel`, `BertForMaskedLM` and `BertForSequenceClassification` (config.json's
-`architectures`) in `PretrainedEncoders`; `PretrainedEncoderModel.Load` then reads a Hugging Face folder (safetensors
+The `BertPlugin` family holds `BertModel`, `BertForMaskedLM` and `BertForSequenceClassification` (config.json's
+`architectures`); `PretrainedEncoderModel.Load` reads a Hugging Face folder through it (safetensors
 or a PyTorch checkpoint, with or without the `bert.` prefix, LayerNorm `weight`/`bias` or the older `gamma`/`beta`):
 word, learned position and token-type embeddings, post-norm blocks (`TransformerEncoderLayer` with
 `NormPlacement.After`), and the heads the checkpoint holds: `pooler` (dense + tanh of the first token),
@@ -40,8 +27,6 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text.Plugins.Bert;
 using Idrak.Text.Retrieval;
-
-BertPlugin.Register();
 using var bert = PretrainedEncoderModel.Load(folder);
 using (Autograd.NoGrad())
 {
@@ -59,9 +44,9 @@ embeddings (`position_embedding_type` other than `absolute`) and decoder checkpo
 
 ### T5 (`Idrak.Text.Plugins.T5`)
 
-`T5Plugin.Register()` registers `T5ForConditionalGeneration` and `MT5ForConditionalGeneration` in `PretrainedSeq2Seq`,
-and `T5EncoderModel` and `MT5EncoderModel` in `PretrainedEncoders`. `PretrainedSeq2SeqModel.Load` then reads a Hugging
-Face folder: the shared token embedding (the encoder's input, the decoder's input and, tied, the head's table, one copy),
+The `T5Plugin` family holds `T5ForConditionalGeneration` and `MT5ForConditionalGeneration`,
+and `T5EncoderModel` and `MT5EncoderModel`. `PretrainedSeq2SeqModel.Load` reads a Hugging
+Face folder through it: the shared token embedding (the encoder's input, the decoder's input and, tied, the head's table, one copy),
 pre-norm blocks with RMS norms (`TransformerEncoderLayer` with RMS norms; `DecoderBlock` with cross-attention), attention
 without score scaling, the library's `bucketed` relative position bias of each stack's first block shared by the
 others, the ReLU feed-forward (T5 v1.0) or the gated GELU one (`feed_forward_proj` `gated-gelu`: v1.1, mT5), and the
@@ -73,8 +58,6 @@ target is `n_positions` (512 when not given). The tokenizer is the folder's Unig
 ```csharp
 using Idrak.Models;
 using Idrak.Text.Plugins.T5;
-
-T5Plugin.Register();
 using var t5 = PretrainedSeq2SeqModel.Load(folder);
 var generator = t5.CreateGenerator();
 var (text, reason, stats) = generator.Generate("translate English to German: The house is wonderful.",
@@ -87,19 +70,19 @@ values, bucket settings that do not fit and checkpoints without a tensor the con
 
 ### Gemma (`Idrak.Text.Plugins.Gemma`)
 
-`GemmaPlugin.Register()` registers `GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM` and the text decoder of
-`Gemma3ForConditionalGeneration` in `PretrainedArchitectures` (`GemmaArchitectures`); `PretrainedModel.Load` then reads
-them on the library's decoder (`DecoderSpec`): gains stored as a difference from 1, embeddings scaled by √width and
+The `GemmaPlugin` family holds `GemmaForCausalLM`, `Gemma2ForCausalLM`, `Gemma3ForCausalLM` and the text decoder of
+`Gemma3ForConditionalGeneration` (`GemmaArchitectures`); `PretrainedModel.Load` reads
+them through it on the library's decoder (`DecoderSpec`): gains stored as a difference from 1, embeddings scaled by √width and
 tied, and for Gemma 2 and 3 the norms after attention and the feed-forward block too (`GemmaArchitectures.TensorName`),
 scores scaled by `query_pre_attn_scalar`, windowed layers alternating as the configuration or `layer_types` says,
 soft-capping (Gemma 2), q/k norms and the windowed layers' own rotary base (Gemma 3, transformers 5's
 `rope_parameters` too). Gemma writes its configuration from a spec (`PretrainedModel.Create`); Gemma 2 and 3 are read
 from checkpoints only. The text decoder of Gemma 3 with images reads `text_config` (with transformers' defaults for
 absent keys), never soft-caps its logits, and fits each checkpoint's naming (`language_model.model.` or
-`model.language_model.`); its vision part is the Gemma 3 vision plug-in of `Idrak.Vision.Plugins`, which registers this
-family when it is missing. Without the vision plug-in such a checkpoint is refused, naming the vision family.
+`model.language_model.`); its vision part is the Gemma 3 vision plug-in of `Idrak.Vision.Plugins`, which builds on
+this family.
 
-It also registers llama.cpp's `gemma`, `gemma2` and `gemma3` in `GgufArchitectures` (`GemmaGguf`), read as
+It also holds llama.cpp's `gemma`, `gemma2` and `gemma3` (`GemmaGguf`), read as
 `GemmaForCausalLM`, `Gemma2ForCausalLM` and `Gemma3ForCausalLM`: llama.cpp's converter stores every norm gain with
 Gemma's 1 added, taken back off as the gains are read (`GgufArchitecture.StoredOffset`); Gemma 2 and 3 keep their
 post-norms under llama.cpp's names (`post_attention_norm`, `ffn_norm` before the feed-forward block, `post_ffw_norm`;
@@ -111,58 +94,50 @@ query scalar, which the files do not store, is llama.cpp's (`GemmaGguf.ImpliedQu
 ```csharp
 using Idrak.Models;
 using Idrak.Text.Plugins.Gemma;
-
-GemmaPlugin.Register();
 using var model = PretrainedModel.Load(folder);
 ```
 
 ### Llama (`Idrak.Text.Plugins.Llama`)
 
-`LlamaPlugin.Register()` registers `LlamaForCausalLM` in `PretrainedArchitectures` (`LlamaArchitectures.Llama()`: the
+The `LlamaPlugin` family holds `LlamaForCausalLM` (`LlamaArchitectures.Llama()`: the
 library's common configuration keys and checkpoint names, `PretrainedFamilies.CommonArchitecture`), llama.cpp's `llama`
-in `GgufArchitectures` (each head's query and key rows put back in order, experts read as `MixtralForCausalLM`, and Llama
+(each head's query and key rows put back in order, experts read as `MixtralForCausalLM`, and Llama
 3's RoPE scaling recovered from `rope_freqs.weight`), the GGUF pre-tokenizer names `llama3`, `llama-bpe`, `llama-v3`,
-`smaug-bpe`, `falcon3` and `pixtral` in `GgufPreTokenizers` (and `llama3` as `GgufPreTokenizers.Fallback`, the rule
-of a name nobody registered, when none is set), the RoPE scaling `llama3` in `RopeScalings` (`LlamaRopeScaling`), and
+`smaug-bpe`, `falcon3` and `pixtral`, the RoPE scaling `llama3` (`LlamaRopeScaling`), and
 Llama 3's chat template for a GGUF file without one whose vocabulary holds `<|start_header_id|>`, `llama3` in
 `GgufChatTemplates` (after the library's ChatML).
 
 ### Qwen (`Idrak.Text.Plugins.Qwen`)
 
-`QwenPlugin.Register()` registers `Qwen2ForCausalLM` (query, key and value biases), `Qwen3ForCausalLM` (q/k norms),
-`Qwen2MoeForCausalLM` and `Qwen3MoeForCausalLM` (experts, a gated shared expert; `QwenArchitectures.MoeTensorName`) in
-`PretrainedArchitectures`, llama.cpp's `qwen2`, `qwen3`, `qwen2moe` and `qwen3moe` in `GgufArchitectures`, the GGUF
-pre-tokenizer names `qwen2`, `qwen35`, `megrez` and `hunyuan`, and the XML tool-call format `qwen3-coder` in
-`ToolCallFormats`. The vision-language Qwen models are `Idrak.Vision.Plugins`'.
+The `QwenPlugin` family holds `Qwen2ForCausalLM` (query, key and value biases), `Qwen3ForCausalLM` (q/k norms),
+`Qwen2MoeForCausalLM` and `Qwen3MoeForCausalLM` (experts, a gated shared expert; `QwenArchitectures.MoeTensorName`), llama.cpp's `qwen2`, `qwen3`, `qwen2moe` and `qwen3moe`, the GGUF
+pre-tokenizer names `qwen2`, `qwen35`, `megrez` and `hunyuan`, and the XML tool-call format `qwen3-coder`. The vision-language Qwen models are `Idrak.Vision.Plugins`'.
 
 ### Mistral (`Idrak.Text.Plugins.Mistral`)
 
-`MistralPlugin.Register()` registers `MistralForCausalLM` and `MixtralForCausalLM` (experts under `block_sparse_moe`,
-`MistralArchitectures.MixtralTensorName`) in `PretrainedArchitectures`, the GGUF pre-tokenizer `tekken`, and the
-tool-call format `mistral` (`[TOOL_CALLS]`). Mistral's GGUF files are llama.cpp's `llama`, so it registers the Llama
-plug-in when that is missing.
+The `MistralPlugin` family holds `MistralForCausalLM` and `MixtralForCausalLM` (experts under `block_sparse_moe`,
+`MistralArchitectures.MixtralTensorName`), the GGUF pre-tokenizer `tekken`, and the
+tool-call format `mistral` (`[TOOL_CALLS]`). Mistral's GGUF files are llama.cpp's `llama`, so it builds on the Llama
+plug-in.
 
 ### DeepSeek and harmony (`Idrak.Text.Plugins.DeepSeek`, `Idrak.Text.Plugins.Harmony`)
 
-`DeepSeekPlugin.Register()` registers DeepSeek's special-token tool-call format `deepseek` and the GGUF pre-tokenizer
-`deepseek-r1-qwen` (Qwen2's rule); `HarmonyPlugin.Register()` registers the harmony tool-call format `harmony`
+The `DeepSeekPlugin` family holds DeepSeek's special-token tool-call format `deepseek` and the GGUF pre-tokenizer
+`deepseek-r1-qwen` (Qwen2's rule); the `HarmonyPlugin` family holds the harmony tool-call format `harmony`
 (reasoning in the analysis channel, calls as messages to `functions.name`). The tool-call parsers build on the library's
 `MarkedToolCallParser` and `ToolCallText`.
 
 ```csharp
 using Idrak.Models;
 using Idrak.Text.Plugins.Qwen;
-
-QwenPlugin.Register();
 using var model = PretrainedModel.Load(folder);              // or GgufModel.Prepare("model.gguf") first
 ```
 
 ### Fill-in-the-middle formats
 
-Four families register their fill-in-the-middle format in `FillInMiddleFormats`, each on the library's
-`FillInMiddleLayout` with the tokens of its own tokenizer; a model's format is detected from its tokenizer
-(`FillInMiddleFormats.Detect`), and a tokenizer none of them matches has none (completion falls back to the prefix alone,
-said so by the caller):
+Four families have a fill-in-the-middle format (`<Family>Plugin.FillInMiddle`), each on the library's
+`FillInMiddleLayout` with the tokens of its own tokenizer; detecting a model's format from its tokenizer is not on the
+new design yet:
 
 | Format | Family | Layout | Repository files |
 |---|---|---|---|
@@ -171,13 +146,13 @@ said so by the caller):
 | `gemma` | CodeGemma | `<bos><\|fim_prefix\|>prefix<\|fim_suffix\|>suffix<\|fim_middle\|>` | `<\|file_separator\|>path` before it |
 | `mistral` | Codestral | `<s>[SUFFIX]suffix[PREFIX]prefix` (suffix first, no middle token) | none |
 
-CodeLlama (Llama's family) is not registered: Meta's infilling feeds `▁<PRE>`, `▁<SUF>` and `▁<MID>` by id with the
+CodeLlama (Llama's family) has none: Meta's infilling feeds `▁<PRE>`, `▁<SUF>` and `▁<MID>` by id with the
 suffix encoded without SentencePiece's leading space, which a text prompt does not express; an app that has checked its
-tokenizer registers its own `FillInMiddleLayout`.
+tokenizer makes its own `FillInMiddleLayout`.
 
 ```csharp
 var tokenizer = (IPretrainedTokenizer)model.Tokenizer!;
-var format = FillInMiddleFormats.For(tokenizer);              // "not registered" when the model's family has none
+var format = QwenPlugin.FillInMiddle;                          // the model's family's format, reached directly
 var prompt = format.Create(new FillInMiddleContext(tokenizer, before, after));
 await foreach (var chunk in generator.StreamAsync(prompt.Text, FillInMiddleFormats.Options(prompt, options), token)) { … }
 ```
@@ -185,8 +160,8 @@ await foreach (var chunk in generator.StreamAsync(prompt.Text, FillInMiddleForma
 ## Coding languages
 
 The library's coding agent and tools (`CodingAgent`, `CodingTools`, Idrak.Text) name no programming language: they
-compose their defaults from the coding languages registered in `CodingLanguages` (`ICodingLanguage`:
-`Idrak.Text.Abstractions`). This package has the library's own, each a plug-in in a namespace of its own:
+compose their defaults from the coding languages (`ICodingLanguage`: `Idrak.Text.Abstractions`); picking them by
+name is not on the new design yet. This package has the library's own, each a plug-in in a namespace of its own:
 
 | Namespace | Plug-in | Languages | What they add |
 |---|---|---|---|
@@ -194,14 +169,14 @@ compose their defaults from the coding languages registered in `CodingLanguages`
 | `Idrak.Text.Plugins.TypeScript` | `TypeScriptLanguagePlugin` ("typescript-language") | `typescript` (`package.json`, `tsconfig.json`), `angular` (`angular.json`) | `npm`, `npx`, `node`, `tsc` (and `ng`); checked with `npx tsc --noEmit`, `npm test` (`npx ng build`, `npx ng test --watch=false`); `node_modules` linked into a task's workspace, `dist` and `.angular` skipped |
 | `Idrak.Text.Plugins.Python` | `PythonLanguagePlugin` ("python-language") | `python` (`pyproject.toml`, `setup.py`, `requirements.txt`, …) | `__pycache__` and `.venv` skipped (no commands) |
 
-With all three registered and every language chosen (`CodingToolOptions.Languages`, `IDRAK_CODING_LANGUAGES`: `all`, the
+With all three and every language chosen (`CodingToolOptions.Languages`, `IDRAK_CODING_LANGUAGES`: `all`, the
 default), the agent's prompt, its programs and the tools' descriptions are what the library had before the languages
 moved out; `detected` keeps those the workspace shows. A workspace no chosen language detects gets a notice
-(`CodingTools.LanguageNotice`) naming the plug-in to register.
+(`CodingTools.LanguageNotice`) naming the plug-in that has one.
 
 ### C# task families (`idrak data code`)
 
-`CSharpLanguagePlugin.Register()` also registers the C# task families of plan 36 into `TaskFamilies` (Idrak.Data), both
+The `CSharpLanguagePlugin` plug-in also has the C# task families of plan 36 (Idrak.Data's `ITaskFamily`), both
 declaring `csharp` (`CSharpTaskFamilies`):
 
 | Family | Draft | Check |

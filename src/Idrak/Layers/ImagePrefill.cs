@@ -44,7 +44,7 @@ public sealed record PromptImage(int Position, Tensor Features)
 /// </summary>
 /// <example>
 /// <code>
-/// var vision = model.Vision!;                                                         // the family's registration
+/// var vision = model.Vision!;                                                         // the family's vision part
 /// var images = ImagePrefill.Locate(ids, vision.PromptFormat.ImageToken, features);   // ImageFeatures from its encoder
 /// var logits = model.Network.ForwardCached(Tensor.From(ids, [1, ids.Length], device), images, vision.Attention, context);
 /// // then model.Network.ForwardCached(next, context) per new token

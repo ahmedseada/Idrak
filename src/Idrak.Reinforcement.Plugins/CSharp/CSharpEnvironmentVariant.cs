@@ -10,7 +10,7 @@ using Idrak.Text.Plugins.CSharp;
 namespace Idrak.Reinforcement.Plugins.CSharp;
 
 /// <summary>
-/// The <c>csharp</c> environment kind (registered by <see cref="CSharpCodingPlugin"/>): the <c>coding</c> environment on C#
+/// The <c>csharp</c> environment kind (<see cref="CSharpCodingPlugin"/>): the <c>coding</c> environment on C#
 /// projects, with the <c>csharp</c> coding language's defaults (<see cref="CSharpLanguagePlugin"/>: its programs and prompt
 /// lines; a task that names no commands restores, builds and tests with dotnet), and rewards read from machine-readable
 /// output: every verification <c>dotnet build</c> writes its errors and warnings to logs (<see cref="ErrorLog"/>,

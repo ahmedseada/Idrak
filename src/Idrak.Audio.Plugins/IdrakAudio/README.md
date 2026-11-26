@@ -2,15 +2,13 @@
 
 `Idrak.Audio.Plugins.IdrakAudio` (plan 26 moved it here from `samples/IdrakAudio`).
 
-Idrak's own audio family (decision 1 of plan 21), registered in `SpeechFamilies` and `SpeechSynthesisFamilies` by
-`IdrakAudioPlugin.Register()` (or `AudioPlugins.RegisterAll()`; the `idrak` tool registers it at startup). Built so far: the **"ctc"** and
+Idrak's own audio family (decision 1 of plan 21), a speech and a speech synthesis family (Finding a checkpoint's family by its architecture name is not on the new design yet, so loading stops there). Built so far: the **"ctc"** and
 **"seq2seq"** tasks, speech recognizers trained from scratch with `SpeechTrainer` (src/Idrak.Audio) and the matching
 objective (`SpeechTrainingObjectives`: "ctc", "seq2seq"), the **"audio-language"** model (below), and the **"tts"**
 task, a synthesizer trained from scratch with `SpeechSynthesisTrainer` and the "durations" objective
 (`SpeechSynthesisObjectives`). A spec asking for a task not built is refused by name.
 
 ```csharp
-IdrakAudioPlugin.Register();
 var created = SpeechModels.Create("models/my-asr", spec, tokenizer);          // a folder SpeechModels.Load reads
 using var model = (ICtcSpeechModel)SpeechModels.Load("models/my-asr", new SpeechModelOptions { Device = device });
 var train = SpeechSources.Create(new SpeechSourceOptions { Kind = "transcripts", Path = "data/train.jsonl" });
@@ -70,7 +68,6 @@ frames (the alignment's in training, the predicted ones over `SpeechSynthesisOpt
 layout of the model's `features`.
 
 ```csharp
-IdrakAudioPlugin.Register();
 using var ctc = (ICtcSpeechModel)SpeechModels.Load("models/my-asr");                       // the owner's trained CTC model
 SpeechAlignments.AlignToFile(ctc, train, "data/alignments.jsonl");                           // what `idrak data audio --align MODEL` runs
 using var tts = (IdrakAudioTtsModel)SpeechSynthesisModels.Create("models/my-tts", spec, tokenizer);   // the CTC model's tokenizer
@@ -98,7 +95,7 @@ each piece's durations, make its spectrogram in one device pass and turn it into
 vocoder: the call's `Vocoder`, else one the app set on the model (`IdrakAudioTtsModel.Vocoder`, a `GriffinLimVocoder` of
 more iterations say), else the config's `vocoder`, else the library's **"griffin-lim"**. A vocoder whose mel bands or
 rate differ from the model's features is refused naming both; a neural vocoder such as the VITS plug-in's HiFi-GAN can be
-used when it is registered in `Vocoders` for this mel layout (the VITS decoder reads its own flow's latents, not a log-mel,
+used when it is made for this mel layout (picking a vocoder by its name is not on the new design yet) (the VITS decoder reads its own flow's latents, not a log-mel,
 so it does not fit a model trained here unless one is trained for it).
 
 **What it sounds like, plainly.** Without a neural vocoder, this model sounds like Griffin-Lim: the phases are guessed

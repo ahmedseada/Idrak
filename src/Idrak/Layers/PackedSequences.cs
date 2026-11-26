@@ -159,7 +159,7 @@ public sealed partial class PackedSequences : IDisposable
     /// <summary>
     /// Whether <paramref name="network"/> can run packed batches on its device: it has attention layers
     /// (<see cref="IAttentionCacheInfo"/>) and each runs over packed sequences on its device (<see cref="CausalSelfAttention"/>:
-    /// a head size the device's packed attention supports, on CUDA bfloat16 tensor cores with head size 64 or 128, and no
+    /// a head size the device's packed attention supports, and no
     /// sliding window that can mask or soft-capped scores), and no layer numbers positions of its own that ignores the
     /// packing (<see cref="IPositionAware"/>).
     /// </summary>

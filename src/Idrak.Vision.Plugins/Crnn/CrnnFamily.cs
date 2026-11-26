@@ -8,8 +8,8 @@ namespace Idrak.Vision.Plugins.Crnn;
 
 /// <summary>
 /// The CRNN line recognizer as an image model family (<see cref="IImageModelFamily"/>, task
-/// <see cref="ImageTask.LineRecognition"/>), registered in <c>ImageModelFamilies</c> under
-/// <see cref="CrnnPlugin.Architecture"/> by <see cref="CrnnPlugin"/>: a model folder's config.json holds the settings
+/// <see cref="ImageTask.LineRecognition"/>), for the architecture name <see cref="CrnnPlugin.Architecture"/>: a model
+/// folder's config.json holds the settings
 /// (<see cref="CrnnSettings"/>), its safetensors the network's tensors by layer (<see cref="Tensors"/>); the network is
 /// made from the settings (<see cref="CrnnRecognizer.Describe"/>) and each tensor read into it, its shape checked. The
 /// model reads lines through the library (<c>model.LineReader()</c>): one channel, the alphabet as labels after the blank,

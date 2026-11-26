@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Audio.Plugins</PackageId>
-    <Description>The speech and voice model families for Idrak, as plug-ins on the library's public API (one namespace per family): Whisper, VITS (with uroman's Arabic romanizer), OpenVoice, IdrakAudio and the espeak-ng phonemizer. Reference it and call AudioPlugins.RegisterAll(), or register one family with its own Register().</Description>
+    <Description>The speech and voice model families for Idrak, as plug-ins on the library's public API (one namespace per family): Whisper, VITS (with uroman's Arabic romanizer), OpenVoice, IdrakAudio and the espeak-ng phonemizer. Picking a family by its name is not on the new design yet.</Description>
   </PropertyGroup>
 
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. -->

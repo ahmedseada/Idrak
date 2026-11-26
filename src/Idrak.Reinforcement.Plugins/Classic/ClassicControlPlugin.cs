@@ -8,11 +8,10 @@ namespace Idrak.Reinforcement.Plugins.Classic;
 /// <summary>
 /// The classic control environments as a plug-in: <c>bandit</c> (<see cref="BanditEnvironment"/>), <c>cartpole</c>
 /// (<see cref="CartPoleEnvironment"/>, Gymnasium's CartPole-v1), <c>pendulum</c> (<see cref="PendulumEnvironment"/>,
-/// Pendulum-v1, a box action) and <c>mountain-car</c> (<see cref="MountainCarEnvironment"/>, MountainCar-v0) in
-/// <c>EnvironmentKinds</c>. They observe float arrays, so <c>ModulePolicy</c> (Idrak.Reinforcement) trains in them
-/// on-policy, and <c>OffPolicyTrainer</c> (DQN) in the discrete ones. <c>ReinforcementPlugins.RegisterAll</c>
-/// registers the plug-in with the package's other families (the idrak tool does at startup); an app may call
-/// <c>Register</c> alone, or make an environment directly (<c>new CartPoleEnvironment()</c>).
+/// Pendulum-v1, a box action) and <c>mountain-car</c> (<see cref="MountainCarEnvironment"/>, MountainCar-v0), each kind
+/// reached directly here and each environment made directly (<c>new CartPoleEnvironment()</c>). They observe float
+/// arrays, so <c>ModulePolicy</c> (Idrak.Reinforcement) trains in them on-policy, and <c>OffPolicyTrainer</c> (DQN) in
+/// the discrete ones. Picking a kind by its name is not on the new design yet.
 /// </summary>
 public static class ClassicControlPlugin
 {
@@ -41,8 +40,8 @@ public static class ClassicControlPlugin
 
         public Type ActionType => actionType;
 
-        // The kinds' options by key were read through their option schema, which went with the registry: a kind makes its
-        // environments with their default options, and an environment of other options is made directly.
+        // Reading a kind's options by key is not on the new design yet: a kind makes its environments with their default
+        // options, and an environment of other options is made directly.
         public IEnvironment Create(EnvironmentRequest request)
         {
             ArgumentNullException.ThrowIfNull(request);

@@ -31,8 +31,7 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
     private readonly ConcurrentDictionary<Rune, bool> _readable = new();
     private bool _disposed;
 
-    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
-    // design yet.
+    // Picking the config's feature extractor by its name is not on the new design yet.
     private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
         throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
 
@@ -277,8 +276,8 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
         return (audio.Samples, modelTime, Stopwatch.GetElapsedTime(vocoderStart));
     }
 
-    // The vocoders were registered (Vocoders) and picked by name, which is not on the new design yet; none named is the
-    // library's Griffin-Lim, reached directly.
+    // Picking the vocoders by name is not on the new design yet; none named is the library's Griffin-Lim, reached
+    // directly.
     private static IVocoder VocoderNamed(string? name, AudioFeatureOptions options) => name is null
         ? new GriffinLimVocoder(options)
         : throw new NotSupportedException($"The vocoder '{name}' by name is not on the new design yet.");

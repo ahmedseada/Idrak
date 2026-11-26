@@ -55,7 +55,7 @@ public sealed record ContainerSandboxOptions
 }
 
 /// <summary>
-/// The <c>container</c> command sandbox (<c>CommandSandboxes.Container</c>, registered by <see cref="CodingPlugin"/>):
+/// The <c>container</c> command sandbox:
 /// each command runs in a fresh container of <see cref="ContainerSandboxOptions.Image"/> started by Docker or Podman
 /// (<c>run --rm</c>), the workspace mounted at <see cref="ContainerSandboxOptions.MountPoint"/>, the network off unless
 /// allowed, and the memory, CPU and process limits of <see cref="CommandLimits"/> given to the program, which enforces them

@@ -13,7 +13,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// (<see cref="CommitStart"/>), a prepared copy cloned for each episode (<see cref="Clone"/>), and the files the agent
 /// changed where the hidden tests go (<see cref="TestEdits"/>) or that a glob protects (<see cref="ProtectedEdits"/>).
 /// What is build output, a dependency folder or a git exclude comes from the coding languages given
-/// (<see cref="CodingLanguages"/>; every registered one when none are given): no language is named here.
+/// (<see cref="CodingLanguages"/>; none when none are given): no language is named here.
 /// </summary>
 public static class CodingWorkspace
 {
@@ -28,7 +28,7 @@ public static class CodingWorkspace
     /// </summary>
     /// <param name="task">The task.</param>
     /// <param name="workFolder">The folder to fill.</param>
-    /// <param name="languages">The coding languages whose folders are skipped and linked; null for every registered one.</param>
+    /// <param name="languages">The coding languages whose folders are skipped and linked; null for none.</param>
     /// <exception cref="IOException">The work folder is not empty.</exception>
     public static void Prepare(CodingTask task, string workFolder, IReadOnlyList<ICodingLanguage>? languages = null)
     {
@@ -40,7 +40,7 @@ public static class CodingWorkspace
         }
 
         Directory.CreateDirectory(workFolder);
-        languages ??= [];                                      // the languages were registered: none now
+        languages ??= [];                                      // none given: none
         var skipped = NotCopied(languages);
         var linked = CodingLanguages.Merge([.. languages.Select(l => l.LinkedDirectories)], StringComparer.OrdinalIgnoreCase);
         foreach (var source in new[] { task.Base, task.Workspace })
@@ -71,7 +71,7 @@ public static class CodingWorkspace
 
     /// <summary>
     /// Copies the files of <paramref name="source"/> over <paramref name="workFolder"/> (replacing files of the same path;
-    /// the languages' build output not copied; every registered language's when <paramref name="languages"/> is null): hidden tests, a solution.
+    /// the languages' build output not copied; none when <paramref name="languages"/> is null): hidden tests, a solution.
     /// </summary>
     public static void Overlay(string source, string workFolder, IReadOnlyList<ICodingLanguage>? languages = null)
     {
@@ -82,8 +82,8 @@ public static class CodingWorkspace
 
     /// <summary>
     /// Makes <paramref name="folder"/> a git repository with its files committed as "start", so the agent can review its
-    /// changes with <c>git diff</c>, the languages' git excludes (<see cref="ICodingLanguage.GitExcludes"/>; every
-    /// registered language's when <paramref name="languages"/> is null) left out; best effort (nothing happens without git,
+    /// changes with <c>git diff</c>, the languages' git excludes (<see cref="ICodingLanguage.GitExcludes"/>; none when
+    /// <paramref name="languages"/> is null) left out; best effort (nothing happens without git,
     /// or when it is a repository already).
     /// </summary>
     public static void CommitStart(string folder, IReadOnlyList<ICodingLanguage>? languages = null)
@@ -147,7 +147,7 @@ public static class CodingWorkspace
 
     /// <summary>
     /// The paths of the task's hidden files (<see cref="CodingTask.VerifyFiles"/>), relative to the workspace with '/', in
-    /// order (the languages' build output left out; every registered language's when <paramref name="languages"/> is null); none without them.
+    /// order (the languages' build output left out; none when <paramref name="languages"/> is null); none without them.
     /// </summary>
     public static IReadOnlyList<string> HiddenFiles(CodingTask task, IReadOnlyList<ICodingLanguage>? languages = null)
     {
@@ -203,8 +203,8 @@ public static class CodingWorkspace
     /// The files matching one of <paramref name="globs"/> (paths relative to the workspace with '/'; <c>*</c> within a
     /// folder, <c>**</c> across folders, as <see cref="DataFiles.Glob"/>) that <paramref name="workspace"/> holds with other
     /// content than <paramref name="start"/>, adds, or removes: the agent's edits to files a task protects (test projects,
-    /// the build's shared files). The languages' build output and <c>.git</c> are not looked in (every registered
-    /// language's when <paramref name="languages"/> is null). Relative paths with '/', in order; none without globs.
+    /// the build's shared files). The languages' build output and <c>.git</c> are not looked in (no language's when
+    /// <paramref name="languages"/> is null). Relative paths with '/', in order; none without globs.
     /// </summary>
     public static IReadOnlyList<string> ProtectedEdits(string start, string workspace, IReadOnlyList<string> globs, IReadOnlyList<ICodingLanguage>? languages = null)
     {

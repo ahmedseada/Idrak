@@ -19,7 +19,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// </summary>
 public sealed class WoffWriter : IFontWriter
 {
-    /// <summary>The writer's name in <c>FontWriters</c>: "woff".</summary>
+    /// <summary>The writer's name: "woff".</summary>
     public const string WriterName = "woff";
 
     /// <summary>The variable that sets <see cref="CompressionLevel"/> (0 to 9): "IDRAK_WOFF_COMPRESSION".</summary>
@@ -50,7 +50,7 @@ public sealed class WoffWriter : IFontWriter
     }
 
     /// <summary>
-    /// The <c>FontWriters</c> name of the writer that writes a face as an sfnt before it is packed
+    /// The name of the writer that writes a face as an sfnt before it is packed
     /// (<see cref="DefaultSfntWriter"/> unless set; any writer of TrueType or OpenType fonts).
     /// </summary>
     /// <exception cref="ArgumentException">Empty, or this writer's own name.</exception>
@@ -65,8 +65,8 @@ public sealed class WoffWriter : IFontWriter
         }
     }
 
-    // The font writers were registered (FontWriters) and picked by name: not on the new design yet. The default, the
-    // library's "truetype" (TrueTypeWriter), is reached directly; another name stops.
+    // Picking the font writers by name is not on the new design yet. The default, the library's "truetype"
+    // (TrueTypeWriter), is reached directly; another name stops.
     private static readonly TrueTypeWriter TrueType = new();
 
     private static IFontWriter WriterNamed(string name) =>

@@ -15,9 +15,8 @@ namespace Idrak;
 /// </summary>
 internal static class Offloading
 {
-    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks. The device
-    // registry's hook that connected them went with the registries: connecting them is not on the new design yet, so
-    // nothing calls this.
+    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks. Connecting them
+    // is not on the new design yet, so nothing calls this.
     internal static void ConnectTensors() => TensorOffloading.Register(new TensorHooks());
 
     // The hooks tensors and modules call (ITensorOffloadingHooks), Idrak's staging behind each.

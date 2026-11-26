@@ -25,8 +25,7 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
     private readonly CrossAttention[] _crosses;
     private readonly IdrakAudioTranscriber _transcriber;
 
-    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
-    // design yet.
+    // Picking the config's feature extractor by its name is not on the new design yet.
     private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
         throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
 

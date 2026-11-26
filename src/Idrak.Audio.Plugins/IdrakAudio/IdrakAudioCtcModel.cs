@@ -19,8 +19,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     private readonly IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> _layout;
     private readonly IdrakAudioTranscriber _transcriber;
 
-    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
-    // design yet.
+    // Picking the config's feature extractor by its name is not on the new design yet.
     private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
         throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
 
@@ -140,7 +139,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     public IAsyncEnumerable<TranscriptSegment> TranscribeStream(IAsyncEnumerable<AudioData> chunks, TranscriptionOptions? options = null, CancellationToken cancellationToken = default) =>
         _transcriber.TranscribeStream(chunks, options, cancellationToken);
 
-    // The CTC decoders were registered (CtcDecoders) and picked by name, which is not on the new design yet.
+    // Picking the CTC decoders by name is not on the new design yet.
     private static IReadOnlyList<CtcHypothesis> DecodedBy(string decoder, ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options) =>
         throw new NotSupportedException($"The CTC decoder '{decoder}' by name is not on the new design yet.");
 

@@ -89,8 +89,8 @@ public sealed record CreateOptions
     public bool Overwrite { get; init; }
 
     /// <summary>
-    /// A vision part, for a vision-language model: the description the vision family registered under the architecture
-    /// reads (<see cref="IVisionFamily.Create"/>); null for a text model.
+    /// A vision part, for a vision-language model: the description the architecture's vision family reads
+    /// (<see cref="IVisionFamily.Create"/>); null for a text model.
     /// </summary>
     public JsonObject? Vision { get; init; }
 
@@ -304,8 +304,8 @@ public sealed class PretrainedModel : IDisposable
     public ITokenizer? Tokenizer { get; }
 
     /// <summary>
-    /// The model's own chat template (from tokenizer_config.json, read by a reader registered with
-    /// <see cref="ChatTemplates"/>: Idrak.Text's Jinja templates), or null when the model has none or no reader reads it.
+    /// The model's own chat template (from tokenizer_config.json), or null when the model has none or it is not read
+    /// (reading a folder's own template is not on the new design yet).
     /// </summary>
     public IChatTemplate? ChatTemplate { get; }
 
@@ -472,8 +472,8 @@ public sealed class PretrainedModel : IDisposable
             weights.Used.UnionWith(vision.StoredTensors);
         }
 
-        // The parts stored beside the decoder (an audio encoder): finding them among the packages' registered parts is not
-        // on the new design yet, so none is read.
+        // The parts stored beside the decoder (an audio encoder): finding them is not on the new design yet, so none is
+        // read.
         var partTensors = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
 
         var unused = lazy ? new List<string>() : reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
@@ -504,7 +504,7 @@ public sealed class PretrainedModel : IDisposable
         long tokenizing = Stopwatch.GetTimestamp();
         var tokenizer = PretrainedTokenizers.TryLoad(folder, options.Tokenizer);
         tokenizer?.PadVocabulary(spec.Vocabulary);
-        IChatTemplate? template = null;                                 // reading the folder's own template (its registered readers): not on the new design yet
+        IChatTemplate? template = null;                                 // reading the folder's own template: not on the new design yet
         long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default, vision);
@@ -752,7 +752,7 @@ public sealed class PretrainedModel : IDisposable
     private readonly Dictionary<string, (int[] Shape, float[] Values)> _parts = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// The kinds of the parts stored beside the decoder that a registered <see cref="IModelPart"/> read ("audio"): their
+    /// The kinds of the parts stored beside the decoder that an <see cref="IModelPart"/> read ("audio"): their
     /// tensors count as used, every save carries them, and <see cref="OpenPart"/> opens each as a soft-part source.
     /// </summary>
     public IReadOnlyCollection<string> Parts => _partTensors.Keys;
@@ -790,7 +790,7 @@ public sealed class PretrainedModel : IDisposable
     /// (<see cref="TrainedPartTensors"/>). Dispose it when done.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model has no such part.</exception>
-    /// <exception cref="NotSupportedException">The part's kind is no longer registered (the message names the registry).</exception>
+    /// <exception cref="NotSupportedException">Picking the part's kind by its name is not on the new design yet.</exception>
     public ITrainableSoftParts OpenPart(string kind, Device? device = null, IFeatureCache? cache = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(kind);
@@ -977,7 +977,7 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// The model's weights as its checkpoint stores them, in the order a save writes them: each one's checkpoint name, its
     /// stored shape and the model's tensor (a tied head's table once, under the embedding's name). The names are the
-    /// architecture's (<see cref="IPretrainedArchitecture.TensorName"/>), so this holds for any registered family.
+    /// architecture's (<see cref="IPretrainedArchitecture.TensorName"/>), so this holds for any family.
     /// </summary>
     public IReadOnlyList<StoredTensor> StoredTensors()
     {

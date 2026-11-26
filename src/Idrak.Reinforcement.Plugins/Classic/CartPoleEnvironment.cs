@@ -43,7 +43,7 @@ public sealed record CartPoleOptions
 /// </summary>
 public sealed class CartPoleEnvironment : IEnvironment<float[], int>
 {
-    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "cartpole".</summary>
+    /// <summary>The kind's name: "cartpole".</summary>
     public const string KindName = "cartpole";
 
     private const double Gravity = 9.8, MassCart = 1.0, MassPole = 0.1, Length = 0.5, ForceMagnitude = 10.0, Tau = 0.02, XThreshold = 2.4;

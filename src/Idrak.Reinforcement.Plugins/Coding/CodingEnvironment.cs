@@ -14,7 +14,7 @@ using Idrak.Text.Reinforcement.Abstractions;
 namespace Idrak.Reinforcement.Plugins.Coding;
 
 /// <summary>
-/// The <c>coding</c> environment kind (<c>EnvironmentKinds</c>, registered by <see cref="CodingPlugin"/>): an
+/// The <c>coding</c> environment kind: an
 /// agent with <see cref="CodingTools"/> works on coding tasks (<see cref="CodingTask"/>), each episode one task drawn
 /// from its seed, rewarded by the task's verification. Observations are conversations (<see cref="ChatObservation"/>:
 /// the system prompt, the task's prompt, the replies and the tools' results, the tools offered), actions the assistant's
@@ -87,7 +87,7 @@ public sealed class CodingEnvironmentKind : ISuiteEnvironmentKind, IRewardedEnvi
 
     /// <summary>A kind of <paramref name="tasks"/> (the option <c>suite</c> is then refused).</summary>
     /// <param name="tasks">The tasks, at least one.</param>
-    /// <param name="name">The kind's name (to register it beside the plug-in's).</param>
+    /// <param name="name">The kind's name.</param>
     public CodingEnvironmentKind(IReadOnlyList<CodingTask> tasks, string name = KindName)
     {
         ArgumentNullException.ThrowIfNull(tasks);
@@ -393,8 +393,7 @@ internal sealed class CodingSuiteRun
     private int _users, _slots;
     private long _largest;
 
-    // The coding languages were registered (CodingLanguages) and picked by name or by what the tasks hold: not on the new
-    // design yet.
+    // Picking the coding languages by name or by what the tasks hold is not on the new design yet.
     private static IReadOnlyList<ICodingLanguage> LanguagesNamed(string choice) => throw new NotSupportedException($"The coding languages '{choice}' by name are not on the new design yet.");
 
     public CodingSuiteRun(CodingSettings settings, IReadOnlyList<CodingTask> tasks, Lock kind, Action forget, ICodingEnvironmentVariant? variant = null)

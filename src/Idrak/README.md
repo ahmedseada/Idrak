@@ -11,7 +11,7 @@ driver, or for GCN by Idrak's own assembler).
 
 ```bash
 dotnet add package Idrak
-dotnet add package Idrak.Gpu       # the CUDA, Vulkan and HIP devices (they register themselves)
+dotnet add package Idrak.Gpu       # the CUDA, Vulkan and HIP device code
 dotnet add package Idrak.Imaging   # images: codecs, Pillow's transforms, model preprocessors
 ```
 
@@ -24,9 +24,9 @@ through its driver alone.
 |------|---------------|
 | Tensors | N-D tensors with automatic differentiation |
 | Layers | Linear, Conv2d, Conv1d and ConvTranspose1d with weight norm, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head and relative-position attention, transformer layers, convolutional feed-forward, mixture of experts, dilated depth-separable convolution, coupling flows (rational-quadratic spline, element-wise affine), padded-batch masks; graph modules with skip connections and branches; `StoredLayers` reads a checkpoint into them by name |
-| Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
+| Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), schedules, gradient clipping, memory offloading |
 | Datasets | In-memory datasets and lazy sources (streamed CSV, memory-mapped token files and .npy arrays), views, scalers, the `DataLoader` (`Idrak.Datasets`; image folders, augmentation and codecs are in `Idrak.Imaging`) |
-| Pretrained models | Decoder models of a registered family (the families, such as Llama, Qwen, Mistral and Gemma, from `Idrak.Text.Plugins`) by Hugging Face id, folder or GGUF file: safetensors and GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
+| Pretrained models | Decoder models (the families, such as Llama, Qwen, Mistral and Gemma, are in `Idrak.Text.Plugins`; picking a model's family by its architecture name is not on the new design yet) by Hugging Face id, folder or GGUF file: safetensors and GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive (text and chat models are added by `Idrak.Text`) |
 | Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |
 | ONNX | Export to `.onnx` (opset 17) that ONNX Runtime, TensorRT, OpenVINO, DirectML and other runtimes can run; import of `.onnx` files into layers or graph modules; no dependencies (the protobuf is read and written here) |
@@ -40,16 +40,16 @@ that names them adds the `using` line.
 
 | Namespace | Contracts |
 |-----------|-----------|
-| `Idrak.Layers.Abstractions` | `LayerTypes`, `GraphOps` (with `GraphOp`, `GraphOpContext`, `GraphNode`), `NetworkOps` and `INetworkBuilder` (network-builder steps), `ICachedModule` (layers that decode with a KV cache), `RecurrentModule` |
-| `Idrak.Models.Abstractions` | `CheckpointFormats` and `ICheckpointFormat`, `ITensorStore`, `IWeightSource`, `WeightCodec` and `WeightFormat`, `GgufTypes`, `GgufArchitectures`, `GgufPreTokenizers`, `GgufChatTemplates` (the chat template of a GGUF file without one: the library's ChatML, a family's from its plug-in), `PretrainedArchitectures` (with `PretrainedBuildContext`, `DecoderBuildOptions`), `TokenizerComponents` (`ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`); the vision side of vision-language models: `IVisionFamily` and `VisionFamilies` (the library registers no family; `PretrainedVision` and `IVisionTuningPart` are in `Idrak.Abstraction.Generation`, since Idrak.Text's tuner uses them too) |
-| `Idrak.Onnx.Abstractions` | `OnnxImportOps` and `OnnxImportContext`, `OnnxExportOps` and `OnnxGraph` (with `OnnxValue`, `OnnxAttribute`) |
-| `Idrak.Data.Abstractions` | `SampleSources`, `IBatchSource` and `Batch` (core registers the PNG, JPEG, BMP and Netpbm codecs of `Idrak.Abstraction.Data`'s `ImageCodecs`), `ImagePreprocessor` (in `Idrak.Data`: a `preprocessor_config.json`'s resize, rescale and normalize, as transformers does them), `IScaler` |
+| `Idrak.Layers.Abstractions` | `GraphNode`, `ICachedModule` (layers that decode with a KV cache), `RecurrentModule` |
+| `Idrak.Models.Abstractions` | `ICheckpointFormat`, `ITensorStore`, `IWeightSource`, `IPretrainedArchitecture` (with `PretrainedBuildContext`, `DecoderBuildOptions`), `ITokenizerNormalizer`, `IPreTokenizer`, `ITokenizerDecoder`; the vision side of vision-language models: `IVisionFamily` (the library has no family; `PretrainedVision` and `IVisionTuningPart` are in `Idrak.Abstraction.Generation`, since Idrak.Text's tuner uses them too) |
+| `Idrak.Onnx.Abstractions` | `OnnxImportContext`, `OnnxGraph` (with `OnnxValue`, `OnnxAttribute`) |
+| `Idrak.Data.Abstractions` | `SampleSources`, `IBatchSource` and `Batch`, `ImagePreprocessor` (in `Idrak.Data`: a `preprocessor_config.json`'s resize, rescale and normalize, as transformers does them), `IScaler` |
 | `Idrak.Training.Abstractions` | `ITrainerCallback`, `TrainerContext`, `TrainingHistory` |
 
 ## Backends
 
-The CPU device is in `Idrak.Abstraction`; the CUDA, Vulkan and HIP devices are in `Idrak.Gpu`. This package brings
-both, so `dotnet add package Idrak` gives every device.
+The CPU device is in `Idrak.Abstraction`; the CUDA, Vulkan and HIP device code is in `Idrak.Gpu`. This package brings
+both.
 
 | Backend | How it works | Needs |
 |---------|--------------|-------|
@@ -58,9 +58,9 @@ both, so `dotnet add package Idrak` gives every device.
 | Vulkan | SPIR-V kernels generated in C# for NVIDIA, AMD, Intel and phone GPUs; fused decoding, recorded graphs, cooperative matrices | A Vulkan 1.1+ driver |
 | HIP | AMD GPUs; Idrak's own GCN kernels as they land, the rest through host fallbacks | The AMD graphics driver (Windows) or ROCm's runtime (Linux); no SDK |
 
-`Device.Default` picks a CUDA GPU when there is one, else the CPU; any device is available by name
-(`Device.Parse("vulkan:0")`). Kernel choices come from what each device reports or from measurements on it, stored
-per device and driver, never from a card's name.
+`Device` is CPU-only on the new design: `Device.Default` is the CPU unless a host sets it, and reaching the GPU devices
+through it is not on the new design yet. Kernel choices come from what each device reports or from measurements on it,
+stored per device and driver, never from a card's name.
 
 Tested, every test passing on each: GeForce RTX 5070 Ti, 5050 and 3060 (CUDA and Vulkan), Radeon Vega and Intel UHD
 Graphics (Vulkan), an Adreno 730 phone GPU (Vulkan through Mesa Turnip), Snapdragon and Apple M4 Max CPUs (ARM64) and
@@ -146,8 +146,9 @@ has one with 2,500 rows).
 ## Language models
 
 This package loads decoder models from Hugging Face folders or GGUF files, with their own tokenizers
-(`PretrainedModel`); the families (Llama, Qwen, Mistral, their mixtures of experts, Gemma, …) are registered by the
-plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`). The companion package `Idrak.Text` generates and chats with them (using
+(`PretrainedModel`); the families (Llama, Qwen, Mistral, their mixtures of experts, Gemma, …) are in the plug-in
+package `Idrak.Text.Plugins`. Picking a model's family by its architecture name, and the source of a model name, are not
+on the new design yet, so loading stops there with that message. The companion package `Idrak.Text` generates and chats with them (using
 each model's own chat template), fine-tunes them (LoRA, DoRA, preference losses, distillation) and answers from
 documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it brings along:
 
@@ -155,10 +156,8 @@ documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it bring
 using Idrak;
 using Idrak.Models;
 using Idrak.Text;
-using Idrak.Text.Plugins;
 
-TextPlugins.RegisterAll();
-using var model = PretrainedModel.Load(ModelSource.Resolve("Qwen/Qwen3-0.6B"), new PretrainedOptions { Device = Device.Default, Int8 = true });
+using var model = PretrainedModel.Load(ModelSource.Resolve("Qwen/Qwen3-0.6B"), new PretrainedOptions { Device = Device.Default });
 var chat = model.CreateChat();
 var reply = chat.Chat(new ChatRequest([new ChatMessage("user", "Explain gradient descent in one sentence.")], Think: false));
 Console.WriteLine(reply.Message!.Content);
@@ -172,10 +171,10 @@ Console.WriteLine(reply.Message!.Content);
 | `Idrak.Text` | Text generation and chat with tools, Jinja chat templates, the engine's text and chat models, LLM fine-tuning and evaluation, retrieval and RAG, a coding agent |
 | `Idrak.Data` | JSON Lines, JSON, CSV, text and Parquet files; Hugging Face, GitHub, Kaggle, Zenodo and URL sources |
 | `Idrak.Vision` | Region classification in batches, content framing for classifiers of single objects, image statistics |
-| `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` | The model families as plug-ins, one namespace per family (`TextPlugins.RegisterAll()` and the like) |
+| `Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins` | The model families as plug-ins, one namespace per family |
 | `Idrak.Reinforcement` | Reinforcement learning: the general algorithms on the reinforcement contracts (environments, policies, rewards, advantages, policy losses) |
-| `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families as plug-ins, one namespace per family (`ReinforcementPlugins.RegisterAll()`) |
-| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins: WOFF fonts read and written (`ImagingPlugins.RegisterAll()`) |
+| `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families as plug-ins, one namespace per family |
+| `Idrak.Imaging.Plugins` | Image and font formats as plug-ins: WOFF fonts read and written (`WoffFormat`, `WoffWriter`) |
 | `Idrak.AspNetCore` | Prediction, generation, a local chat API and an OpenAI-style `/v1` API in ASP.NET Core |
 | `Idrak.Mcp` | Model Context Protocol tools |
 | `Idrak.Onnx.Runtime` | Running `.onnx` models with ONNX Runtime as Idrak modules |

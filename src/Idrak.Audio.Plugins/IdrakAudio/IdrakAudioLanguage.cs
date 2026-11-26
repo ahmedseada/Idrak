@@ -101,7 +101,7 @@ public sealed class IdrakAudioProjector : Module
 /// </summary>
 public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
 {
-    /// <summary>The architecture name config.json gives; the text decoder is registered under it too.</summary>
+    /// <summary>The architecture name config.json gives; the text decoder's too.</summary>
     public const string Architecture = "IdrakAudioForConditionalGeneration";
 
     /// <summary>Where the encoder's tensors are stored.</summary>
@@ -119,8 +119,8 @@ public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
     /// <inheritdoc />
     public string Name => Architecture;
 
-    // The image attention rules were registered (ImageAttentionRules) and picked by name, which is not on the new design yet;
-    // none named is the library's causal rule, reached directly.
+    // Picking the image attention rules by name is not on the new design yet; none named is the library's causal rule,
+    // reached directly.
     private static IImageAttentionRule AttentionRuleNamed(string? name) => name is null
         ? new CausalRule()
         : throw new NotSupportedException($"The image attention rule '{name}' by name is not on the new design yet.");
@@ -234,8 +234,7 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
     private readonly IReadOnlySet<string> _stored;
     private readonly Func<ITensorStore> _open;
 
-    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
-    // design yet.
+    // Picking the config's feature extractor by its name is not on the new design yet.
     private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
         throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
 

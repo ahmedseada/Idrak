@@ -41,8 +41,8 @@ Every key is optional; `"preprocessing"` (a preprocessor_config.json) is too (th
 
 ## Use
 
-The family is `Idrak.Vision.Plugins.IdrakVision` in the package Idrak.Vision.Plugins, which the idrak tool registers at
-startup:
+The family is `Idrak.Vision.Plugins.IdrakVision` in the package Idrak.Vision.Plugins (finding it by a checkpoint's
+architecture name, as these commands do, is not on the new design yet):
 
 ```
 idrak create spec.json -o model
@@ -50,7 +50,7 @@ idrak pretrain model -C pretrain.json -o run
 idrak run run/checkpoint-2000 --image page.png "Read the page."
 ```
 
-In an app: reference Idrak.Vision.Plugins and call `IdrakVisionPlugin.Register()` (or `VisionPlugins.RegisterAll()`).
+In an app: reference Idrak.Vision.Plugins.
 
 ## From nothing to a reader, in one script
 

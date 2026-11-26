@@ -9,11 +9,9 @@ namespace Idrak.Reinforcement.Plugins.CSharp;
 
 /// <summary>
 /// Agentic coding on C# projects as a plug-in: the <c>csharp</c> environment (<see cref="CSharpEnvironmentVariant"/>, the
-/// coding environment with dotnet's defaults, in <c>EnvironmentKinds</c>) and its rewards (<see cref="CSharpRewards"/>:
-/// csharp-tests and csharp-build in <c>RewardFunctions</c>). It builds on the coding plug-in
-/// (<see cref="CodingPlugin"/>) and the C# coding language of Idrak.Text.Plugins (<see cref="CSharpLanguagePlugin"/>) and
-/// copies neither: registering it registers them when they are missing, and unregistering it takes back only what it
-/// registered.
+/// coding environment with dotnet's defaults) and its rewards (<see cref="CSharpRewards"/>: csharp-tests and
+/// csharp-build). It builds on the coding plug-in (<see cref="CodingPlugin"/>) and the C# coding language of
+/// Idrak.Text.Plugins (<see cref="CSharpLanguagePlugin"/>) and copies neither.
 /// </summary>
 public static class CSharpCodingPlugin
 {

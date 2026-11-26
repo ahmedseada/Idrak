@@ -1,9 +1,7 @@
 # RNNoise: a learned denoiser as an audio processor (plan 31, P5)
 
-`Idrak.Audio.Plugins.RnNoise`; `RnNoisePlugin.Register()` registers it alone, `AudioPlugins.RegisterAll()` with the
-package's other plug-ins, and the `idrak` tool registers it at startup. It registers the live audio processor
-`rnnoise` in `AudioProcessors`; the library has no learned denoiser of its own, so without the plug-in `rnnoise` is an
-unknown processor.
+`Idrak.Audio.Plugins.RnNoise`: the live audio processor `rnnoise`; the library has no learned denoiser of its own.
+Picking a processor by its name in a pipeline is not on the new design yet.
 
 A C# port of xiph's RNNoise, its last classic release (tag v0.1.1, https://github.com/xiph/rnnoise; Jean-Marc Valin's
 "A Hybrid DSP/Deep Learning Approach to Real-Time Full-Band Speech Enhancement", 2018):

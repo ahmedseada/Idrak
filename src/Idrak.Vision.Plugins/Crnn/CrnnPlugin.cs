@@ -6,12 +6,9 @@ using Idrak.Vision.Abstractions;
 namespace Idrak.Vision.Plugins.Crnn;
 
 /// <summary>
-/// The CRNN line recognizer (convolutions, a bidirectional LSTM, CTC) as a plug-in: <see cref="CrnnFamily"/> registered in
-/// <c>ImageModelFamilies</c> under <see cref="Architecture"/>, so a recognizer's model folder loads through
-/// <c>ImageModels.Load</c> and reads lines through the library's line-recognition task (<c>model.LineReader()</c>,
-/// <c>idrak predict</c>, <c>idrak train --task line-recognition</c>). <see cref="CrnnRecognizer"/> makes, trains, saves
-/// and reads one. <c>VisionPlugins.RegisterAll</c> registers it with the package's other families (the idrak tool
-/// does at startup); an app may call <c>Register</c> alone.
+/// The CRNN line recognizer (convolutions, a bidirectional LSTM, CTC) as a plug-in: <see cref="CrnnFamily"/>, for the
+/// architecture name <see cref="Architecture"/>. <see cref="CrnnRecognizer"/> makes, trains, saves and reads one.
+/// Finding the family of a model folder by its architecture name is not on the new design yet.
 /// </summary>
 public static class CrnnPlugin
 {

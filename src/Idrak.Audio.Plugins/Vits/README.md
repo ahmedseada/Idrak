@@ -1,18 +1,14 @@
 # VITS: a VITS text-to-speech family as a plug-in (plan 21, S5)
 
 `Idrak.Audio.Plugins.Vits` (plan 26 moved it here from `samples/VitsSpeech`, with uroman's Arabic romanizer from
-Idrak.Audio); `VitsPlugin.Register()` registers it alone, `AudioPlugins.RegisterAll()` with the package's other families,
-and the `idrak` tool registers it at startup.
+Idrak.Audio).
 
 The family of transformers' `VitsModel`, the architecture the MMS-TTS checkpoints ship (`facebook/mms-tts-<lang>`, one
 per language, Arabic among them): one safetensors file holds the text encoder, the stochastic duration predictor, the
-flow and the HiFi-GAN decoder, so one plug-in speaks with no second checkpoint. It registers the family in
-`SpeechSynthesisFamilies` under `VitsModel`, uroman's Arabic romanizer in `TextRomanizers` and, when missing, the
-espeak-ng phonemizer (`Idrak.Audio.Plugins.EspeakNg`) in `TextPhonemizers`; the library registers no family (CLAUDE.md: a family that is not registered
-fails with "not registered").
+flow and the HiFi-GAN decoder, so one plug-in speaks with no second checkpoint. It holds the family `VitsModel` and uroman's Arabic romanizer, and
+builds on the espeak-ng phonemizer (`Idrak.Audio.Plugins.EspeakNg`); the library has no family. Finding a checkpoint's family by its architecture name is not on the new design yet, so loading stops there.
 
 ```csharp
-VitsPlugin.Register();                                         // or AudioPlugins.RegisterAll(); the idrak tool registers it
 using var model = SpeechSynthesisModels.Load("models/mms-tts-eng", new SpeechSynthesisLoadOptions { Device = device });
 var (audio, stats) = model.Speak("hello world", new SpeechSynthesisOptions { Rate = 1f, NoiseScale = 0.667f, Seed = 1 });
 AudioEncoders.Save("hello.wav", audio);
@@ -61,13 +57,13 @@ fine-tune (route C, below).
 
 VCTK's and LJSpeech's checkpoints set `phonemize` in tokenizer_config.json: they were trained on espeak's IPA, as
 transformers' `VitsTokenizer` makes it through the `phonemizer` package. `VitsTokenizer` phonemizes such text first
-through the library's `TextPhonemizers` registry (Idrak.Audio, which registers none: the library starts no outside
-program): this family registers `EspeakNgPhonemizer` (`Idrak.Audio.Plugins.EspeakNg`), which runs the **espeak-ng program,
+through a phonemizer (the library has none: it starts no outside program; picking one is not on the new design yet):
+this family's is `EspeakNgPhonemizer` (`Idrak.Audio.Plugins.EspeakNg`), which runs the **espeak-ng program,
 which you install** (no one carries it): `espeak-ng -q --ipa -v LANGUAGE` on each stretch of text between punctuation, the marks kept in
 place (the package's `preserve_punctuation`), white space collapsed. The program is `IDRAK_ESPEAK` (its full path) or
 `espeak-ng` on the PATH; the voice is tokenizer_config.json's `language` (else en-us, what transformers asks for), or
-`IDRAK_ESPEAK_VOICE`. Register another phonemizer (`ITextPhonemizer`) with `TextPhonemizers.Register`, and pick one by
-name with `VitsTokenizer.Phonemizer`. The espeak program's output is close to the package's, not checked equal to it.
+`IDRAK_ESPEAK_VOICE`. `VitsTokenizer.Phonemizer` names a phonemizer (`ITextPhonemizer`); picking one by its name is
+not on the new design yet. The espeak program's output is close to the package's, not checked equal to it.
 
 ## Checked against the fixture
 
@@ -82,18 +78,17 @@ deterministic duration predictor) give transformers' waveform of each speaker wi
 
 MMS-TTS checkpoints for languages written in non-Latin scripts (Arabic among them: `facebook/mms-tts-ara`) set
 `is_uroman` in `tokenizer_config.json`: they were trained on text romanised by uroman, and expect the same at
-inference. `VitsTokenizer` romanises such text first, with the romanizer the library's `TextRomanizers` registry
-(Idrak.Audio) holds for its script (`VitsTokenizer.Romanizer` names one instead):
+inference. `VitsTokenizer` romanises such text first, with the romanizer for its script (`VitsTokenizer.Romanizer`
+names one instead; picking one is not on the new design yet):
 
-- **"uroman-arabic"** (`VitsPlugin.UromanArabic`, registered with this family: `UromanArabicRomanizer`): uroman's romanisation of the Arabic script, every code point
+- **"uroman-arabic"** (`VitsPlugin.UromanArabic`, this family's: `UromanArabicRomanizer`): uroman's romanisation of the Arabic script, every code point
   of the Arabic blocks and presentation forms plus the three sequences uroman romanises together without a language
   code (alef + fathatan "an", maddah + alef, a word-initial alef + Persian yeh). `tools/audio/make_uroman_table.py`
   generates the table (`src/Idrak.Audio.Plugins/Vits/UromanArabicTable.cs`) and the cases
   `tests/Idrak.Tests/data/audio/uroman/arabic.json` from uroman itself; the test checks the romanizer gives uroman's output
   on every case. So "مرحبا بكم في إدراك" reads
   "mrhba bkm fy idrak", as the model was trained.
-- A script no registered romanizer covers is refused, naming `TextRomanizers.Register`: an app registers an
-  `ITextRomanizer` for it (asked before the earlier ones), or gives Latin text.
+- A script no romanizer covers is refused: an app gives Latin text.
 
 ## Shared with the OpenVoice converter (plan 21, S9)
 
@@ -148,5 +143,5 @@ later setting). The convolution's backward sums in a fixed order on CUDA too, so
 
 - `SpeechSynthesisFamilies` has no `Create` (a VITS model from a description): MMS-TTS checkpoints are loaded, not made
   (and fine-tuned, above).
-- The HiFi-GAN decoder is not registered in `Vocoders` by name (it needs a loaded checkpoint); `VitsSynthesizer.Vocoder`
+- The HiFi-GAN decoder is not a vocoder by name (it needs a loaded checkpoint); `VitsSynthesizer.Vocoder`
   exposes it to a model that produces the same latents.

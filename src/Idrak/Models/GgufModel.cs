@@ -174,7 +174,7 @@ public static class GgufModel
         }
         else if (!own && scaling is "yarn" && factor > 1)
         {
-            // llama.cpp's YaRN keys, as Hugging Face's rope_scaling (the scaling registered as "yarn" reads it): the context
+            // llama.cpp's YaRN keys, as Hugging Face's rope_scaling (the "yarn" scaling reads it): the context
             // the model was trained on, and the ramp's bounds when the file sets them. The context length stays the file's.
             var yarn = new JsonObject { ["rope_type"] = "yarn", ["factor"] = factor };
             int original = file.Get($"{arch}.rope.scaling.original_context_length", 0);
@@ -215,8 +215,8 @@ public static class GgufModel
         string? template = file.Get<string?>("tokenizer.chat_template", null);
         if (template is null)
         {
-            // No template, as a model folder without one: picking a fallback among the registered ones for the file's
-            // tokens is not on the new design yet.
+            // No template, as a model folder without one: picking a fallback for the file's tokens is not on the new
+            // design yet.
             notes.Add("the file has no chat template, and picking a fallback for its tokens is not on the new design yet: "
                 + "chat is not available (plain text generation and fine-tuning on text work).");
         }

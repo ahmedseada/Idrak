@@ -28,7 +28,7 @@ namespace Idrak.Imaging.Plugins.Fonts;
 /// </summary>
 public sealed class WoffFormat : IFontFormat
 {
-    /// <summary>The format's name in <c>FontFormats</c>: "woff".</summary>
+    /// <summary>The format's name: "woff".</summary>
     public const string FormatName = "woff";
 
     /// <summary>The variable that sets <see cref="MaxFontBytes"/> (bytes, or with k, m or g): "IDRAK_WOFF_MAX_BYTES".</summary>

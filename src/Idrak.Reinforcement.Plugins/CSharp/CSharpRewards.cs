@@ -25,7 +25,7 @@ public static class CSharpInfo
 }
 
 /// <summary>
-/// The C# rewards (registered by <see cref="CSharpCodingPlugin"/> in <c>RewardFunctions</c>), read from the
+/// The C# rewards (<see cref="CSharpCodingPlugin"/>), read from the
 /// <c>csharp</c> environment's info (<see cref="CSharpInfo"/>), combined with the coding ones (<c>rounds</c>,
 /// <c>tool-errors</c>) and a teacher term by weights in the reward expression:
 /// <list type="bullet">
@@ -43,7 +43,7 @@ public static class CSharpRewards
     /// <summary>The build, less its errors and warnings.</summary>
     public const string Build = "csharp-build";
 
-    /// <summary>The two rewards, as the plug-in registers them.</summary>
+    /// <summary>The two rewards.</summary>
     public static IReadOnlyList<IRewardFunction> All { get; } = [new TestsReward(), new BuildReward()];
 
     private static int Count(string reward, RewardInput input, EpisodeInfoKey<int> key) =>

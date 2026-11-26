@@ -7,14 +7,14 @@ using Idrak.Models;
 namespace Idrak.Audio.Plugins.IdrakAudio;
 
 /// <summary>
-/// The IdrakAudio speech family (registered under <see cref="Architecture"/>): it makes a model from a spec
+/// The IdrakAudio speech family (its architecture name: <see cref="Architecture"/>): it makes a model from a spec
 /// (<see cref="Create"/>, through <c>SpeechModels.Create</c>) and reads one back from its folder (<see cref="Read"/>, through
 /// <c>SpeechModels.Load</c>). The task is the config's "task": "ctc" (<see cref="IdrakAudioCtcModel"/>) and "seq2seq"
 /// (<see cref="IdrakAudioSeq2SeqModel"/>) are built; another is refused naming them.
 /// </summary>
 public sealed class IdrakAudioFamily : ICreatableSpeechFamily
 {
-    /// <summary>The architecture name the family is registered under and its config.json gives.</summary>
+    /// <summary>The family's architecture name, the one its config.json gives.</summary>
     public const string Architecture = "IdrakAudio";
 
     /// <summary>The CTC recognizer task.</summary>

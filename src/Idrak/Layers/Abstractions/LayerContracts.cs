@@ -27,7 +27,7 @@ public interface IOffloadableLayer
     /// </summary>
     IEnumerable<Tensor> StagedParameters();
 
-    /// <summary>The fixed tensors besides its parameters that it reads whole (a linear layer's packed weights): staged with them and always marked cold.</summary>
+    /// <summary>The fixed tensors besides its parameters that it reads whole: staged with them and always marked cold.</summary>
     IEnumerable<Tensor> StagedBuffers();
 }
 

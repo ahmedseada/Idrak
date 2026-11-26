@@ -202,15 +202,15 @@ public sealed class Gemma3ImageEncoder : Module, ITrainableVisionEncoder, IVisio
     /// <summary>The soft-token embeddings of one decoded image, [1, tokens per image, text width].</summary>
     public Tensor Encode(ImageData image) => Encode([image]);
 
-    /// <summary>The soft-token embeddings of an image file (any registered codec), [1, tokens per image, text width].</summary>
+    /// <summary>The soft-token embeddings of an image file, [1, tokens per image, text width].</summary>
     public Tensor Encode(string path) => Encode(DecodedFile(path));
 
-    // The image codecs were registered (ImageCodecs) and an image decoded through them: not on the new design yet.
+    // Decoding an image through the image codecs is not on the new design yet.
     private static ImageData DecodedFile(string path) => throw new NotSupportedException($"Decoding {path} through the image codecs is not on the new design yet.");
 
     private static ImageData Decoded(ReadOnlySpan<byte> data) => throw new NotSupportedException("Decoding an image through the image codecs is not on the new design yet.");
 
-    /// <summary>The soft-token embeddings of chat images (their encoded bytes, decoded by the registered codecs), [images.Count, tokens per image, text width].</summary>
+    /// <summary>The soft-token embeddings of chat images (their encoded bytes, decoded), [images.Count, tokens per image, text width].</summary>
     public Tensor Encode(IReadOnlyList<ChatImage> images)
     {
         ArgumentNullException.ThrowIfNull(images);

@@ -48,7 +48,7 @@ public readonly record struct PipelineStepResult(double Loss, TimeSpan Wall, Tim
 /// load the model on the host (the CPU) first, so no device ever holds it whole. Training steps run the micro-batches in
 /// the order of the <see cref="ClusterOptions.Schedule"/>; generation runs on the first stage (<see cref="Network"/>) while
 /// the others <see cref="Serve"/>. With more ranks than stages, each stage's replicas reduce its gradients over
-/// <see cref="Replicas"/>. Nothing here names a model family: any registered family's network is cut by its modules.
+/// <see cref="Replicas"/>. Nothing here names a model family: any family's network is cut by its modules.
 /// </summary>
 public sealed class PipelineStage : IDisposable
 {

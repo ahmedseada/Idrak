@@ -229,7 +229,7 @@ internal static class T5Layers
     }
 
     // A stack's position bias: its first block's relative_attention_bias.weight [buckets, heads] in the library's bucketed
-    // bias, made directly (the position biases' registry is gone).
+    // bias, made directly.
     private static IAttentionPositionBias Bias(ITensorStore store, string stack, Sizes sizes, bool bidirectional, Device device)
     {
         string name = $"{stack}.block.0.layer.0.SelfAttention.relative_attention_bias.weight";

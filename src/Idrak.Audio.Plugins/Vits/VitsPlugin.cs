@@ -33,8 +33,8 @@ public sealed class VitsSpeechFamily : ITrainableSpeechSynthesisFamily, ITextFro
 
     /// <inheritdoc />
     /// <remarks>
-    /// The tokenizer's flags (<see cref="VitsTokenizer.Read"/>): <c>phonemize</c> with its <c>language</c> (phonemes from the
-    /// most recently registered phonemizer), <c>is_uroman</c> (romanised text).
+    /// The tokenizer's flags (<see cref="VitsTokenizer.Read"/>): <c>phonemize</c> with its <c>language</c> (phonemes from a
+    /// phonemizer), <c>is_uroman</c> (romanised text).
     /// </remarks>
     public SpeechTextNeeds TextNeeds(JsonObject config, string folder)
     {

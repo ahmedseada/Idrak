@@ -13,7 +13,7 @@ namespace Idrak.Audio.Plugins.Whisper;
 /// </summary>
 public sealed class WhisperFamily : ISpeechFamily
 {
-    /// <summary>The architecture name the family is registered under.</summary>
+    /// <summary>The family's architecture name.</summary>
     public const string Architecture = "WhisperForConditionalGeneration";
 
     /// <inheritdoc />

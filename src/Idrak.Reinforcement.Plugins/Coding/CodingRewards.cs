@@ -47,7 +47,7 @@ public static class CodingInfo
 }
 
 /// <summary>
-/// The coding rewards (registered by <see cref="CodingPlugin"/> in <c>RewardFunctions</c>), read from the
+/// The coding rewards, read from the
 /// <c>coding</c> environment's info (<see cref="CodingInfo"/>), combined with weights in its reward expression
 /// ("tests-passed:1,rounds:1,tool-errors:1"):
 /// <list type="bullet">
@@ -72,7 +72,7 @@ public static class CodingRewards
     /// <summary>A penalty per failed tool call.</summary>
     public const string ToolErrorsPenalty = "tool-errors";
 
-    /// <summary>The four rewards, as the plug-in registers them.</summary>
+    /// <summary>The four rewards.</summary>
     public static IReadOnlyList<IRewardFunction> All { get; } = [new TestsPassedReward(), new VerifyFractionReward(), new RoundsReward(), new ToolErrorsReward()];
 
     // A whole number the coding environment reported; an input without it is refused, naming the environment.

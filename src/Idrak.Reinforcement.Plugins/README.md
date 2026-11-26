@@ -5,29 +5,16 @@ uses. The library (`Idrak.Reinforcement`, `Idrak.Abstraction`'s reinforcement co
 algorithms; the environments live here, one namespace each (`Idrak.Reinforcement.Plugins.<Family>`), written on the
 library's public API only. It builds on Idrak.Reinforcement and Idrak.Text (and through them Idrak).
 
-```csharp
-using Idrak.Reinforcement.Plugins;
-
-ReinforcementPlugins.RegisterAll();      // every family of the package; calling it again changes nothing
-```
-
-- `ReinforcementPlugins.RegisterAll()` registers every family, `ReinforcementPlugins.UnregisterAll()` takes them back
-  (the registries are left as they were found), `ReinforcementPlugins.All` lists them.
-- One family alone: its namespace's static `<Family>Plugin` class, with `Register()` and `Unregister()`.
-- Each family is an `IIdrakPlugin` (`Idrak.Abstraction.Plugins`), recorded by name in `IdrakPlugins`; a plug-in
-  registered later under the same name takes its place.
-- The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
-  `ReinforcementPlugins.Package` is the package (an `IIdrakPluginPackage`: its name and `All`); the assembly declares it with
-  `[assembly: IdrakPluginPackage]`, which `-P` and `IdrakPlugins.Load` read when a host loads `Idrak.Reinforcement.Plugins.dll`
-  itself.
+Nothing is registered: picking an environment kind, a reward or a command sandbox by its name is not on the new
+design yet; an environment is made directly (`new CartPoleEnvironment()`, a `CodingEnvironmentKind` of one's tasks).
 
 ## The families
 
-| Namespace | Plug-in | Registers | Read more |
+| Namespace | Plug-in | What it holds | Read more |
 |---|---|---|---|
-| `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | `CodingEnvironmentKind`, `CodingVerifier` |
-| `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp-coding"; requires "coding" and Idrak.Text.Plugins' "csharp-language") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build` | `CSharpEnvironmentVariant`, `CSharpRewards` |
-| `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | `CartPoleEnvironment`, `PendulumEnvironment`, `MountainCarEnvironment`, `BanditEnvironment` |
+| `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` | the environment kind `coding`; the rewards `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; the command sandbox `container` | `CodingEnvironmentKind`, `CodingVerifier` |
+| `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` (on the coding plug-in and Idrak.Text.Plugins' C# language) | the environment kind `csharp`; the rewards `csharp-tests`, `csharp-build` | `CSharpEnvironmentVariant`, `CSharpRewards` |
+| `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` | the environment kinds `bandit`, `cartpole`, `pendulum`, `mountain-car` | `CartPoleEnvironment`, `PendulumEnvironment`, `MountainCarEnvironment`, `BanditEnvironment` |
 
 **Coding** (`Idrak.Reinforcement.Plugins.Coding`): the coding task layer (`CodingTask` with its `task.json` layout,
 `CodingSuite`, `CodingWorkspace`, `CodingVerifier` and `CodingOutcome`; an app evaluates a model on a suite with them,
@@ -69,6 +56,6 @@ state. Options: `max-steps` (each one's Gymnasium limit, 500, 200, 200), and `su
 `bandit` is a multi-armed bandit (Gymnasium has none): `arms`, `means`, `spreads`, `means-seed` (Sutton and Barto's
 10-armed testbed by default) and `pulls` an episode.
 
-An environment whose kind is not registered is refused with "not registered", naming this package.
+Picking an environment kind by its name is not on the new design yet.
 
 License: Apache 2.0.

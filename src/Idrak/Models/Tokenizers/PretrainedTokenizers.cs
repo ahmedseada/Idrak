@@ -6,15 +6,15 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Models;
 
 /// <summary>
-/// Reads the tokenizer of a model folder (or a tokenizer file), whatever kind it is. Finding the file's reader among the
-/// registered ones (<see cref="TokenizerFiles"/>) and building the model type it names (<see cref="TokenizerModels"/>) are
-/// not on the new design yet: each reader and each model's class reads and builds its own.
+/// Reads the tokenizer of a model folder (or a tokenizer file), whatever kind it is. Finding the file's reader and
+/// building the model type it names are not on the new design yet: each reader and each model's class reads and builds
+/// its own.
 /// </summary>
 public static class PretrainedTokenizers
 {
     /// <summary>
     /// The tokenizer file at <paramref name="path"/> (a model folder, or a file) and its reader: picking the reader by
-    /// <see cref="TokenizerOptions.Format"/>'s name, or asking each registered reader, is not on the new design yet.
+    /// <see cref="TokenizerOptions.Format"/>'s name, or asking each reader, is not on the new design yet.
     /// </summary>
     /// <exception cref="NotSupportedException">Always: not on the new design yet.</exception>
     public static (string File, ITokenizerFileReader Reader)? Find(string path, TokenizerOptions? options = null)
@@ -23,7 +23,7 @@ public static class PretrainedTokenizers
         return NotOnTheNewDesign.Yet<(string File, ITokenizerFileReader Reader)?>($"Finding the reader of the tokenizer at {path} among the registered ones");
     }
 
-    /// <summary>Whether <paramref name="path"/> holds (or is) a tokenizer file a registered reader reads.</summary>
+    /// <summary>Whether <paramref name="path"/> holds (or is) a tokenizer file a reader reads.</summary>
     public static bool Exists(string path, TokenizerOptions? options = null) => Find(path, options) is not null;
 
     /// <summary>The definition of the tokenizer at <paramref name="path"/>, as its reader found it (see <see cref="Find"/>).</summary>

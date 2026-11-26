@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Reinforcement.Plugins</PackageId>
-    <Description>The reinforcement-learning environment families for Idrak, as plug-ins on the library's public API (one namespace per family): reference it and call ReinforcementPlugins.RegisterAll(), or register one family with its own Register().</Description>
+    <Description>The reinforcement-learning environment families for Idrak, as plug-ins on the library's public API (one namespace per family). Picking a family by its name is not on the new design yet.</Description>
   </PropertyGroup>
 
   <!-- Plan 26: a plug-in package uses the library's public API only; no library assembly grants it internals. -->

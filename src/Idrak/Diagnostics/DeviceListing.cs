@@ -3,7 +3,7 @@
 
 namespace Idrak.Diagnostics;
 
-/// <summary>One kind of device beyond the CPU (CUDA, Vulkan, HIP, or a registered one) and how many were found.</summary>
+/// <summary>One kind of device beyond the CPU (CUDA, Vulkan, HIP) and how many were found.</summary>
 /// <param name="Kind">The name in device names ("vulkan" in "vulkan:0").</param>
 /// <param name="Display">The name in messages ("Vulkan").</param>
 /// <param name="Count">Devices found (0 when the driver or runtime is missing).</param>

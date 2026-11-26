@@ -21,7 +21,7 @@ public sealed record MemoryPart(string Name, long Bytes, string? Note = null);
 /// </summary>
 public static class ModelMemory
 {
-    /// <summary>The bytes of <paramref name="module"/>'s parameters and buffers (packed weights as packed), each storage once.</summary>
+    /// <summary>The bytes of <paramref name="module"/>'s parameters and buffers, each storage once.</summary>
     public static long TensorBytes(Module module)
     {
         ArgumentNullException.ThrowIfNull(module);

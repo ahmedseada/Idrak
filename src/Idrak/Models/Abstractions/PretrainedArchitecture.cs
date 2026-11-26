@@ -104,7 +104,7 @@ public abstract class PretrainedArchitecture : IPretrainedArchitecture
 /// <see cref="IPretrainedArchitecture.Transposed"/> (with a merged adapter's updates added), as building a spec reads them.
 /// </param>
 /// <param name="Checkpoint">The checkpoint's tensors by their stored names, as stored.</param>
-/// <param name="Options">Device, packed weight format and context length chosen by the caller.</param>
+/// <param name="Options">Device and context length chosen by the caller.</param>
 /// <param name="Notes">Append anything approximated (shown in the loaded model's notes).</param>
 public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec, IWeightSource Weights, ITensorStore Checkpoint,
     DecoderBuildOptions Options, List<string> Notes);

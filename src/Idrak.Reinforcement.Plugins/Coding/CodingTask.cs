@@ -61,8 +61,8 @@ public static class CodingSuite
 {
     /// <summary>
     /// Every task under <paramref name="folder"/>, ordered by id (its folder's path in the suite, with '/'); <c>.git</c> and
-    /// the coding languages' build output and dependency folders (every registered language's when
-    /// <paramref name="languages"/> is null) are not searched. With <paramref name="filter"/>, only the tasks whose id holds
+    /// the coding languages' build output and dependency folders (none when <paramref name="languages"/> is null) are not
+    /// searched. With <paramref name="filter"/>, only the tasks whose id holds
     /// it (ignoring case).
     /// </summary>
     public static IReadOnlyList<CodingTask> Load(string folder, string? filter = null, IReadOnlyList<ICodingLanguage>? languages = null)

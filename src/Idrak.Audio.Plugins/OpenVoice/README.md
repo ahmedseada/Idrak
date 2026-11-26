@@ -1,18 +1,14 @@
 # OpenVoice: a voice converter as a plug-in (plan 21, S9 route B)
 
-`Idrak.Audio.Plugins.OpenVoice` (plan 26 moved it here from `samples/OpenVoice`); `OpenVoicePlugin.Register()`
-registers it alone, `AudioPlugins.RegisterAll()` with the package's other families, and the `idrak` tool registers it at
-startup.
+`Idrak.Audio.Plugins.OpenVoice` (plan 26 moved it here from `samples/OpenVoice`).
 
 OpenVoice's tone colour converter (MIT licence, `myshell-ai/OpenVoiceV2`'s `converter/`) as an `IVoiceConverter`
-registered in `VoiceConverters` under `openvoice`. A few clips of a real person give a speaker embedding; any speech
+named `openvoice`. A few clips of a real person give a speaker embedding; any speech
 (MMS-TTS Arabic or English, any synthesizer, a recording) is then changed to that person's timbre. Conversion works on
-sound, not text, so it does not depend on the language. The library registers no converter family (CLAUDE.md: a family
-that is not registered fails with "not registered").
+sound, not text, so it does not depend on the language. The library has no converter family. Finding a checkpoint's converter family is not on the new design yet, so
+loading stops there.
 
 ```csharp
-OpenVoicePlugin.Register();                                    // the idrak tool registers both at startup
-VitsPlugin.Register();
 using var converter = VoiceConverters.Load("models/openvoice-v2", new VoiceConverterLoadOptions { Device = device });
 var store = VoiceStores.Get();                                 // IDRAK_VOICES, else voices/ under IDRAK_CACHE or ~/.cache/idrak
 store.Add("ahmed", ["rec/1.wav", "rec/2.mp3"], converter, new VoiceAddOptions
@@ -70,8 +66,7 @@ safetensors copy instead, `tools/audio/convert_openvoice.py` still writes one (i
 ## Installing a voice and speaking with it
 
 `idrak voice` adds, lists, shows, removes, exports and imports voices, and `idrak speak --voice` speaks with one
-(`-v` prints the cold and warm timings and the peak device memory). The tool registers the plug-in at startup.
-`samples/OpenVoice/voice.cs` is the prototype these commands match, an app on this package.
+(`-v` prints the cold and warm timings and the peak device memory). `samples/OpenVoice/voice.cs` is the prototype these commands match, an app on this package.
 
 ```powershell
 cd D:\Projects\Idrak

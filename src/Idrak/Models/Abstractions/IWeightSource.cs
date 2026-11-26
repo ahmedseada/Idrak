@@ -29,8 +29,8 @@ public interface IWeightSource
 
     /// <summary>
     /// A text that changes whenever the values <see cref="Read"/> gives for <paramref name="name"/> [<paramref name="shape"/>]
-    /// may change (where the stored tensor is, its file's size and time of change), for a cache of what is made from them
-    /// (packed weights): the tensor counts as used, as a read would make it. Null when the source cannot say (the default,
+    /// may change (where the stored tensor is, its file's size and time of change), for a cache of what is made from them:
+    /// the tensor counts as used, as a read would make it. Null when the source cannot say (the default,
     /// or a source that has not the tensor), and nothing made from it is cached.
     /// </summary>
     /// <param name="name">The tensor's name.</param>

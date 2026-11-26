@@ -1,12 +1,10 @@
 # Whisper: a Whisper-style speech recognition family as a plug-in (plan 21, phase S4)
 
-`Idrak.Audio.Plugins.Whisper` (plan 26 moved it here from `samples/WhisperSpeech`); `WhisperPlugin.Register()` registers
-it alone, `AudioPlugins.RegisterAll()` with the package's other families, and the `idrak` tool registers it at startup.
+`Idrak.Audio.Plugins.Whisper` (plan 26 moved it here from `samples/WhisperSpeech`).
 
 Reads a checkpoint saved by transformers (`WhisperForConditionalGeneration`) into the library's speech contracts
-(`ISpeechRecognizer`, `SpeechFamilies`, `SpeechModels.Load` in `Idrak.Audio`). Nothing of the family is in the library:
-without this plug-in a Whisper checkpoint is refused with "Speech family 'WhisperForConditionalGeneration' is not
-registered".
+(`ISpeechRecognizer`, `SpeechFamilies`, `SpeechModels.Load` in `Idrak.Audio`). Nothing of the family is in the library.
+Finding a checkpoint's family by its architecture name is not on the new design yet, so loading stops there.
 
 - **Features**: the library's "log-mel" extractor with the checkpoint's `preprocessor_config.json` (rate, n_fft, hop,
   mels, the 30 s segment); sound at another rate is resampled, several channels mixed to one.
@@ -44,7 +42,6 @@ transformers trains `WhisperForConditionalGeneration`:
   packed query, key and value split again, one tensor in memory at a time), and every other file of the source folder.
 
 ```csharp
-WhisperPlugin.Register();
 using var model = (WhisperRecognizer)SpeechModels.Load("models/whisper-small",
     new SpeechModelOptions { Device = device, Weights = EncoderWeights.Float32, Language = "ar" });
 var result = SpeechTrainer.Train(model, new SpeechSource(SpeechSources.Transcripts, ["train.jsonl"]),
@@ -73,7 +70,6 @@ has it), `SuppressTokens`. Not in this phase: sampling with a temperature and th
 ## Use
 
 ```csharp
-WhisperPlugin.Register();                                     // or AudioPlugins.RegisterAll()
 using var recognizer = SpeechModels.Load("models/whisper-tiny", new SpeechModelOptions { Device = device });
 var result = recognizer.Transcribe(AudioCodecs.Decode("talk.wav"), new TranscriptionOptions { Language = "ar", Beams = 4, Timestamps = true });
 foreach (var segment in result.Segments)
@@ -99,7 +95,7 @@ the end, and 863 MB now (the owner's CUDA run with whisper-small had reported 7.
 
 ## Trying it on a real checkpoint
 
-`idrak transcribe` transcribes WAV, FLAC or MP3 files through the plug-in (the tool registers it), as text, JSON, SRT
+`idrak transcribe` transcribes WAV, FLAC or MP3 files through the plug-in, as text, JSON, SRT
 or WebVTT; `-v` prints the cold and warm stage timings and the peak device memory. `samples/WhisperSpeech/transcribe.cs`
 is the prototype it matches, an app on this package.
 

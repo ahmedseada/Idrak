@@ -41,7 +41,7 @@ public sealed record MountainCarOptions
 /// </summary>
 public sealed class MountainCarEnvironment : IEnvironment<float[], int>
 {
-    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "mountain-car".</summary>
+    /// <summary>The kind's name: "mountain-car".</summary>
     public const string KindName = "mountain-car";
 
     internal const double MinPosition = -1.2, MaxPosition = 0.6;

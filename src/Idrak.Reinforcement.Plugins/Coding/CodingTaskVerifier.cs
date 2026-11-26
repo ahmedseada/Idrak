@@ -6,10 +6,9 @@ using Idrak.Data.Abstractions;
 namespace Idrak.Reinforcement.Plugins.Coding;
 
 /// <summary>
-/// The coding tasks' proof as a task verifier (<see cref="TaskVerifiers"/>, "coding"): a task folder a code extractor wrote
+/// The coding tasks' proof as a task verifier ("coding"): a task folder a code extractor wrote
 /// is loaded as a <see cref="CodingTask"/> and checked by <see cref="CodingVerifier.CheckTaskAsync"/>, in the sandbox and
-/// under the limits of its options, its setup and verification commands with the task's own variables. Registered by
-/// <see cref="CodingPlugin"/>; <c>idrak data code</c> uses it unless asked for another or none.
+/// under the limits of its options, its setup and verification commands with the task's own variables.
 /// </summary>
 /// <param name="options">The commands' tools and time limit; null for the defaults.</param>
 public sealed class CodingTaskVerifier(CodingVerifierOptions? options = null) : ITaskVerifier

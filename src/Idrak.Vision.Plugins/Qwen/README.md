@@ -1,10 +1,9 @@
 # Idrak.Vision.Plugins.Qwen: the Qwen-VL families as a plug-in
 
-Qwen2.5-VL (`Qwen2_5_VLForConditionalGeneration`) and Qwen2-VL (`Qwen2VLForConditionalGeneration`) as one registration
+Qwen2.5-VL (`Qwen2_5_VLForConditionalGeneration`) and Qwen2-VL (`Qwen2VLForConditionalGeneration`) as one implementation
 each of Idrak's vision-language contracts, outside the library ([plans/done/16-qwen-vl.md](../../../plans/done/16-qwen-vl.md)), in
-the package Idrak.Vision.Plugins. `QwenVisionPlugin.Register()` (or `VisionPlugins.RegisterAll()`) adds, for both, the
-vision part (`VisionFamilies`) and the text decoder (`PretrainedArchitectures`); without it a Qwen-VL checkpoint is not
-registered.
+the package Idrak.Vision.Plugins. It holds, for both, the vision part and the text decoder;
+finding them by a checkpoint's architecture name is not on the new design yet, so loading a Qwen-VL checkpoint stops there.
 
 Checked against transformers 5.19 on tiny random checkpoints of both families, in transformers 5's and the hub's
 config.json layouts (`tests/Idrak.Tests/data/vlm-qwen`, `tools/vlm/make_tiny_qwen_vl.py`; the `qwen vl` test group):
@@ -15,15 +14,12 @@ and cached, 20 greedy tokens, two pages in one prompt, text only, the chat API, 
 ## Use
 
 ```powershell
-# the command line registers the package at startup: nothing to load
 idrak run MODEL --image scan.png "Read the page."
 ```
 
 ```csharp
-// an app references Idrak.Vision.Plugins and registers it beside Gemma 3's
+// an app references Idrak.Vision.Plugins
 using Idrak.Vision.Plugins.Qwen;
-
-QwenVisionPlugin.Register();
 ```
 
 A page's resolution is Qwen's pixel budget: the vision option `max_pixels` (and `min_pixels`), about 28 x 28 pixels per

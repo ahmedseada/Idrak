@@ -7,13 +7,13 @@ using Idrak.Models;
 namespace Idrak.Audio.Plugins.OpenVoice;
 
 /// <summary>
-/// The family: reads an OpenVoice converter folder (OpenVoice's config.json and its tensors, safetensors or any
-/// format <c>CheckpointFormats</c> opens) into an <see cref="OpenVoiceConverter"/>. Its config.json names no
+/// The family: reads an OpenVoice converter folder (OpenVoice's config.json and its tensors) into an
+/// <see cref="OpenVoiceConverter"/>. Its config.json names no
 /// architecture, so it is recognised by its shape (<see cref="OpenVoiceConfig.Recognizes"/>).
 /// </summary>
 public sealed class OpenVoiceFamily : IVoiceConverterFamily
 {
-    /// <summary>The name it is registered under, "openvoice".</summary>
+    /// <summary>The family's name, "openvoice".</summary>
     public const string FamilyName = "openvoice";
 
     /// <inheritdoc />

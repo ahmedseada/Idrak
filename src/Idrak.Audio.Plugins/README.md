@@ -1,38 +1,23 @@
 # Idrak.Audio.Plugins
 
 The speech and voice model families: recognition, synthesis, voice conversion and phonemizers. The library (`Idrak`,
-`Idrak.Audio`) keeps only generic defaults and fallbacks; the families live here, one namespace each
+`Idrak.Audio`) keeps only generic defaults; the families live here, one namespace each
 (`Idrak.Audio.Plugins.<Family>`), written on the library's public API only. It builds on Idrak.Audio (and through it
-Idrak).
-
-```csharp
-using Idrak.Audio.Plugins;
-
-AudioPlugins.RegisterAll();      // every family of the package; calling it again changes nothing
-```
-
-- `AudioPlugins.RegisterAll()` registers every family, `AudioPlugins.UnregisterAll()` takes them back (the registries
-  are left as they were found), `AudioPlugins.All` lists them.
-- One family alone: its namespace's static `<Family>Plugin` class, with `Register()` and `Unregister()`.
-- Each family is an `IIdrakPlugin` (`Idrak.Abstraction.Plugins`), recorded by name in `IdrakPlugins`; a plug-in
-  registered later under the same name takes its place.
-- The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
-  `AudioPlugins.Package` is the package (an `IIdrakPluginPackage`: its name and `All`); the assembly declares it with
-  `[assembly: IdrakPluginPackage]`, which `-P` and `IdrakPlugins.Load` read when a host loads `Idrak.Audio.Plugins.dll`
-  itself.
+Idrak). Nothing is registered: picking a family by a checkpoint's architecture name, or a phonemizer, romanizer or
+processor by its name, is not on the new design yet.
 
 ## The families
 
-| Namespace | Plug-in (`IdrakPlugins` name) | Registers | Came from |
-|---|---|---|---|
-| `Idrak.Audio.Plugins.Whisper` | `WhisperPlugin` ("whisper") | `SpeechFamilies`: `WhisperForConditionalGeneration` | `samples/WhisperSpeech` |
-| `Idrak.Audio.Plugins.EspeakNg` | `EspeakNgPlugin` ("espeak-ng") | `TextPhonemizers`: "espeak-ng", which runs the espeak-ng program the user installs (`IDRAK_ESPEAK`, `IDRAK_ESPEAK_VOICE`) | `src/Idrak.Audio` |
-| `Idrak.Audio.Plugins.Vits` | `VitsPlugin` ("vits"; `RegisterFamily()` registers "vits-family", the family and its romanizer without espeak-ng, for a host that starts no program) | `SpeechSynthesisFamilies`: `VitsModel` (what a checkpoint's text needs, phonemes or romanised text, read by `SpeechSynthesisModels.TextNeeds`); `TextRomanizers`: "uroman-arabic"; the espeak-ng plug-in when missing | `samples/VitsSpeech`, uroman's romanizer from `src/Idrak.Audio` |
-| `Idrak.Audio.Plugins.OpenVoice` | `OpenVoicePlugin` ("openvoice") | `VoiceConverters`: "openvoice" (its tensor names through the library's `RenamedTensorStore`) | `samples/OpenVoice` |
-| `Idrak.Audio.Plugins.IdrakAudio` | `IdrakAudioPlugin` ("idrak-audio") | `SpeechFamilies` and `SpeechSynthesisFamilies`: `IdrakAudio`; `PretrainedArchitectures` and `AudioFamilies`: `IdrakAudioForConditionalGeneration` | `samples/IdrakAudio` |
-| `Idrak.Audio.Plugins.RnNoise` | `RnNoisePlugin` ("rnnoise") | `AudioProcessors`: "rnnoise", RNNoise's learned denoiser (xiph's classic recurrent network, ported to C#) as a live audio processor | xiph's RNNoise v0.1.1 (BSD-3-Clause) |
+| Namespace | What it holds | Came from |
+|---|---|---|
+| `Idrak.Audio.Plugins.Whisper` | The speech family `WhisperForConditionalGeneration` | `samples/WhisperSpeech` |
+| `Idrak.Audio.Plugins.EspeakNg` | The "espeak-ng" phonemizer, which runs the espeak-ng program the user installs (`IDRAK_ESPEAK`, `IDRAK_ESPEAK_VOICE`) | `src/Idrak.Audio` |
+| `Idrak.Audio.Plugins.Vits` | The speech synthesis family `VitsModel` (what a checkpoint's text needs, phonemes or romanised text, read by `SpeechSynthesisModels.TextNeeds`) and the "uroman-arabic" romanizer | `samples/VitsSpeech`, uroman's romanizer from `src/Idrak.Audio` |
+| `Idrak.Audio.Plugins.OpenVoice` | The "openvoice" voice converter (its tensor names through the library's `RenamedTensorStore`) | `samples/OpenVoice` |
+| `Idrak.Audio.Plugins.IdrakAudio` | The speech and speech synthesis family `IdrakAudio`, and the audio-language architecture `IdrakAudioForConditionalGeneration` | `samples/IdrakAudio` |
+| `Idrak.Audio.Plugins.RnNoise` | "rnnoise", RNNoise's learned denoiser (xiph's classic recurrent network, ported to C#) as a live audio processor | xiph's RNNoise v0.1.1 (BSD-3-Clause) |
 
-Each family's folder has its README. The library itself registers no speech family, no voice converter, no romanizer,
+Each family's folder has its README. The library itself has no speech family, no voice converter, no romanizer,
 no phonemizer and no learned denoiser, and starts no outside program for text: the espeak-ng phonemizer is this
 package's only one.
 
@@ -41,12 +26,8 @@ package's only one.
 `rnnoise` cleans speech of steady and changing noise (fans, traffic, keyboards, a room's hum) with RNNoise's small
 recurrent network: 42 features of each 10 ms frame (band energies, the pitch and its correlation), three GRUs giving
 a gain for each of 22 bands and a voice probability, a pitch filter, then the gains over the spectrum. It is live (it
-cleans a microphone as it comes) and runs on the CPU, far faster than real time. In a pipeline:
-
-```powershell
-idrak audio process phone.wav -o clean.wav --pipeline "highpass=80, rnnoise, agc"
-idrak transcribe ./whisper-small --live --audio-clean "highpass=80, rnnoise mix=0.9, agc"
-```
+cleans a microphone as it comes) and runs on the CPU, far faster than real time. Naming it in a pipeline
+(`idrak audio process --pipeline`, `idrak transcribe --audio-clean`) is not on the new design yet.
 
 | Option | Default | What it does |
 |---|---|---|
@@ -78,6 +59,6 @@ missing model is refused when a stage opens, naming where it looked and how to g
 port's details and RNNoise's licence.
 `samples/WhisperSpeech/transcribe.cs` and `samples/OpenVoice/voice.cs` are apps on this package.
 
-A model whose family is not registered is refused with "not registered", naming this package.
+Loading a model whose family is picked by its architecture name is not on the new design yet.
 
 License: Apache 2.0.

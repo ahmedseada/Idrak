@@ -110,7 +110,7 @@ public sealed class ModelPackageWriter
         ? Add(savable.EntryKind, name, s => WriteText(s, savable.Save))
         : throw new NotSupportedException($"{scaler.GetType().Name} cannot be stored; a scaler that saves itself (ISavableScaler: StandardScaler, MinMaxScaler) can.");
 
-    /// <summary>A tokenizer that saves itself (<see cref="ISavableTokenizer"/>: <see cref="CharTokenizer"/>, <see cref="WordTokenizer"/>, one of one's own with its reader registered).</summary>
+    /// <summary>A tokenizer that saves itself (<see cref="ISavableTokenizer"/>: <see cref="CharTokenizer"/>, <see cref="WordTokenizer"/>, or one of one's own).</summary>
     public ModelPackageWriter Tokenizer(string name, ITokenizer tokenizer)
     {
         if (tokenizer is not ISavableTokenizer)

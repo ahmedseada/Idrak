@@ -299,7 +299,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
     bool IAttentionCacheInfo.SupportsRows(Backend backend) => SupportsRows(backend);
 
     /// <inheritdoc />
-    /// <remarks>On CUDA, bfloat16 tensor cores with head size 64 or 128, and no sliding window that can mask or soft-capped scores.</remarks>
+    /// <remarks>Where the device's segmented attention takes the head size, and no sliding window that can mask or soft-capped scores.</remarks>
     bool IAttentionCacheInfo.SupportsPacking() => SupportsSegmented(Query.Device.Backend);
 
     /// <inheritdoc />
@@ -538,8 +538,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
         }
 
         // Keys as the cache holds them, up to this step's last position: the ranges stop at each row's last key, so only
-        // that prefix is read (a float32 cache in place; bfloat16 and int8 expanded for those slots only, not every slot
-        // of the context window).
+        // that prefix is read (a float32 cache in place; a layout of one's own expanded for those slots only, not every
+        // slot of the context window).
         int filled = context.LengthOf(cache) + images.Steps;
         var keys = cache.Layout.ExpandPrefix(cache, keys: true, filled);
         var values = cache.Layout.ExpandPrefix(cache, keys: false, filled);
@@ -635,7 +635,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
     private static Tensor Softcap(Tensor scores, float scale, float cap) => (scores * (scale / cap)).Tanh() * cap;
 
     // Projections → q [n·kv, group·t, d] (the query heads sharing a key/value head are stacked), k and v [n·kv, t, d];
-    // with a (float32 or bfloat16) cache, inference writes k and v into it in the same pass and returns them null.
+    // with a float32 cache, inference writes k and v into it in the same pass and returns them null.
     // packed: positions hold one entry per token of the [n, t] batch (PackedSequences) instead of one per step.
     // rotary: the pass's own rotary rows (images on several axes; positions then index them, one per token), else the
     // layer's tables.
@@ -1078,7 +1078,7 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
     private Tensor Attended(Tensor x, DecodingContext? context) => context is null ? Attention.Forward(x) : Attention.ForwardCached(x, context);
 
     // With a context, the attention's heads without its output projection, which inference then runs together with the
-    // residual addition and the next normalization where the device can (few rows, packed weights).
+    // residual addition and the next normalization where the device can (few rows).
     private Tensor Run(Tensor input, DecodingContext? context)
     {
         var normalized = AttentionNorm.Forward(input);

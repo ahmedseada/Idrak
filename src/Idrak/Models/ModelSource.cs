@@ -6,7 +6,7 @@ namespace Idrak.Models;
 /// <summary>
 /// Where a model comes from: a local folder, a GGUF file, a model of the local model store ("store:qwen3:8b", see
 /// <see cref="LocalStoreModel"/>), or a Hugging Face model id such as "Qwen/Qwen3-0.6B". Picking the source that resolves
-/// a name among the registered ones is not on the new design yet.
+/// a name is not on the new design yet.
 /// </summary>
 public static class ModelSource
 {

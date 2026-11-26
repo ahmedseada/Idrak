@@ -2,8 +2,8 @@
 
 A line recognizer made of convolutions (pooling to height 1), a bidirectional LSTM over the columns and a score per
 character and CTC's blank, as an image model family of the library's line-recognition task
-(`ImageTask.LineRecognition`, plan 26 G14). `CrnnPlugin.Register()` (or `VisionPlugins.RegisterAll()`) registers
-`CrnnFamily` in `ImageModelFamilies` under `CrnnForLineRecognition`.
+(`ImageTask.LineRecognition`, plan 26 G14): `CrnnFamily`, for the architecture name `CrnnForLineRecognition`. Finding the
+family of a model folder by that name is not on the new design yet.
 
 | Type | Holds |
 |---|---|
@@ -15,7 +15,6 @@ character and CTC's blank, as an image model family of the library's line-recogn
 A folder saved before the move (`recognizer.ikm` and `recognizer.json`) still loads with `CrnnRecognizer.Load`.
 
 ```csharp
-CrnnPlugin.Register();
 using var recognizer = CrnnRecognizer.Load("model", Device.Default);
 var lines = recognizer.Read(images, CtcDecoders.Greedy, new CtcDecodeOptions(), new MeasuredLineBatches(recognizer.Device));
 ```

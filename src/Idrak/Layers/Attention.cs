@@ -688,7 +688,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         if (_dropout is null && _activation is null && _feedForward is null && FusedPasses(input))
         {
             // Inference: each residual added in its output projection's epilogue and the GELU in the first feed-forward
-            // projection's, where the layers hold packed weights (else the same operations one by one): the same values.
+            // projection's, where the device fuses them (else the same operations one by one): the same values.
             var sum = _attention.ForwardAdding(_norm1.Forward(input), input);
             return _feedForward2!.ProjectAdding(_feedForward1!.ProjectGelu(_norm2.Forward(sum)), sum);
         }
@@ -705,7 +705,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
         if (_dropout is null && FusedPasses(input))
         {
             // Inference: each residual added in its output projection's epilogue, the bias (and the tanh GELU) in the first
-            // feed-forward projection's, where the layers hold packed weights (else the same operations one by one): the
+            // feed-forward projection's, where the device fuses them (else the same operations one by one): the
             // same values as below.
             var sum = _norm1.Forward(_attention.ForwardAdding(input, input));
             if (_feedForward is not null)

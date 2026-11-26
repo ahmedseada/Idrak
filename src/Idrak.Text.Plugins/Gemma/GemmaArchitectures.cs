@@ -134,7 +134,7 @@ public static class GemmaArchitectures
 
     // The text decoder of Gemma 3 with images: Gemma 3's, read from text_config, never soft-capping its logits
     // (Gemma3ForConditionalGeneration does not, whatever final_logit_softcapping says), in whichever naming the checkpoint
-    // uses. The vision part is read by a registered vision family of the same name (Idrak.Vision.Plugins').
+    // uses. The vision part is read by the vision family of the same name (Idrak.Vision.Plugins').
     private static IPretrainedArchitecture Gemma3VisionLanguage(Gemma3Layout layout) => new Gemma3VisionLanguageDecoder(layout);
 
     private sealed class Gemma3VisionLanguageDecoder(Gemma3Layout layout) : PretrainedArchitecture, ICheckpointFittedArchitecture

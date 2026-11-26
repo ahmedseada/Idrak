@@ -7,8 +7,8 @@ using Idrak.Models;
 namespace Idrak.Audio.Plugins.IdrakAudio;
 
 /// <summary>
-/// The IdrakAudio synthesis family (registered in <c>SpeechSynthesisFamilies</c> under
-/// <see cref="IdrakAudioFamily.Architecture"/>): it makes a "tts" model from a spec (<see cref="Create"/>, through
+/// The IdrakAudio synthesis family (its architecture name: <see cref="IdrakAudioFamily.Architecture"/>): it makes a
+/// "tts" model from a spec (<see cref="Create"/>, through
 /// <c>SpeechSynthesisModels.Create</c>) and reads one back from its folder (<see cref="Read"/>, through
 /// <c>SpeechSynthesisModels.Load</c>) as an <see cref="IdrakAudioTtsModel"/>. A recognizer task is refused, naming the
 /// recognizers' loader.

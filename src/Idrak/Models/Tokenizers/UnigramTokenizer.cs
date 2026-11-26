@@ -16,7 +16,7 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The Unigram model (plan 24, T1: SentencePiece's unigram language model, the tokenizer of T5, ALBERT, XLNet, XLM-R and
-/// many multilingual models), registered as "Unigram" in <see cref="TokenizerModels"/>. Added tokens are matched first;
+/// many multilingual models), the model type a tokenizer.json names "Unigram". Added tokens are matched first;
 /// the text between them runs through the span pipeline (<see cref="TokenizerPipeline"/>), and each piece is segmented by
 /// Viterbi over a lattice of its UTF-8 bytes whose nodes start at character boundaries, the vocabulary's matches found by
 /// one walk of a double-array trie per position.

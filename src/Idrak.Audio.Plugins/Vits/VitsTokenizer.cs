@@ -11,9 +11,9 @@ namespace Idrak.Audio.Plugins.Vits;
 /// The character tokenizer of a VITS checkpoint (transformers' <c>VitsTokenizer</c>): <c>vocab.json</c> maps each
 /// symbol to its id; <c>tokenizer_config.json</c> (optional) says whether the text is lower-cased
 /// (<c>normalize</c>), whether a blank is put between symbols (<c>add_blank</c>, the pad token's id), whether the
-/// checkpoint expects phonemes (<c>phonemize</c>: the text phonemized first by a <see cref="TextPhonemizers"/> entry, the espeak-ng phonemizer <see cref="VitsPlugin"/> registers unless an app registered another) or romanised text
-/// (<c>is_uroman</c>: non-Latin text is romanised first by the <see cref="TextRomanizers"/> entry that covers its
-/// script, Arabic's registered with the family; a script none covers is refused). Each flag can be changed after loading.
+/// checkpoint expects phonemes (<c>phonemize</c>: the text phonemized first by a phonemizer) or romanised text
+/// (<c>is_uroman</c>: non-Latin text is romanised first by the romanizer that covers its script; a script none covers is
+/// refused). Picking the phonemizer or the romanizer is not on the new design yet. Each flag can be changed after loading.
 /// </summary>
 public sealed class VitsTokenizer
 {
@@ -60,7 +60,7 @@ public sealed class VitsTokenizer
     /// </summary>
     public bool Phonemize { get; set; }
 
-    /// <summary>The phonemizer for <see cref="Phonemize"/> checkpoints: a name in <see cref="TextPhonemizers"/>, or null (the default) for the most recently registered.</summary>
+    /// <summary>The phonemizer for <see cref="Phonemize"/> checkpoints, by name, or null (the default); picking it is not on the new design yet.</summary>
     public string? Phonemizer { get; set; }
 
     /// <summary>The language the phonemizer reads the text in: tokenizer_config.json's <c>language</c>, else "en-us" (what transformers asks espeak for).</summary>
@@ -162,8 +162,7 @@ public sealed class VitsTokenizer
         return ids;
     }
 
-    // The phonemizers were registered (TextPhonemizers) and the one named, else the most recently registered, picked: not
-    // on the new design yet.
+    // Picking the phonemizer, the one named or the default, is not on the new design yet.
     private static ITextPhonemizer PhonemizerNamed(string? name) =>
         throw new NotSupportedException($"The phonemizer {(name is null ? "registered last" : $"'{name}'")} is not on the new design yet.");
 
@@ -171,7 +170,7 @@ public sealed class VitsTokenizer
     /// <paramref name="text"/> as a <see cref="Phonemize"/> checkpoint reads it: lower-cased (transformers' normalisation),
     /// phonemized by <see cref="Phonemizer"/> in <see cref="PhonemeLanguage"/>, white space collapsed.
     /// </summary>
-    /// <exception cref="NotSupportedException">The phonemizer is not registered or cannot run (the message says what it needs).</exception>
+    /// <exception cref="NotSupportedException">Picking the phonemizer is not on the new design yet.</exception>
     public string Phonemes(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -201,16 +200,15 @@ public sealed class VitsTokenizer
         symbols.RemoveRange(0, start);
     }
 
-    // The romanizers were registered (TextRomanizers) and the one named, else the one that covers the text's script,
-    // picked: not on the new design yet.
+    // Picking the romanizer, the one named or the one that covers the text's script, is not on the new design yet.
     private static ITextRomanizer? RomanizerFor(string? name, string text) =>
         throw new NotSupportedException($"The romanizer {(name is null ? "that covers the text's script" : $"'{name}'")} is not on the new design yet.");
 
     /// <summary>
     /// <paramref name="text"/> as an <see cref="IsUroman"/> checkpoint reads it: romanised by <see cref="Romanizer"/> (or
-    /// the registered romanizer that covers its script) when it holds non-Latin letters, else as it is.
+    /// the romanizer that covers its script) when it holds non-Latin letters, else as it is.
     /// </summary>
-    /// <exception cref="NotSupportedException">No registered romanizer covers the text's script.</exception>
+    /// <exception cref="NotSupportedException">Picking the romanizer is not on the new design yet.</exception>
     public string Romanize(string text)
     {
         ArgumentNullException.ThrowIfNull(text);

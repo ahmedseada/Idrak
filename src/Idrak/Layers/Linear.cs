@@ -124,7 +124,7 @@ public sealed partial class Linear : Module, IAdaptableLinear, ITiedWeights, INa
     {
         if (Bias is not null && _weight is not null && _tiedTo is null && Adapter is null && input.Rank >= 2)
         {
-            return Tensor.MatMulBias(input, _weight, Bias);                 // one pass on tensor cores
+            return Tensor.MatMulBias(input, _weight, Bias);                 // one pass where the device has one
         }
 
         var product = ProjectWithoutBias(input);

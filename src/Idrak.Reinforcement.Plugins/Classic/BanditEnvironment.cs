@@ -90,7 +90,7 @@ public sealed record BanditOptions
 /// </summary>
 public sealed class BanditEnvironment : IEnvironment<float[], int>
 {
-    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "bandit".</summary>
+    /// <summary>The kind's name: "bandit".</summary>
     public const string KindName = "bandit";
 
     private readonly double[] _means, _spreads;

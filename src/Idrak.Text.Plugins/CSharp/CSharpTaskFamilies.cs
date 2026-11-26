@@ -38,8 +38,8 @@ public sealed record CSharpTaskOptions
 }
 
 /// <summary>
-/// The C# task families of the plug-in (plan 36), registered into <c>TaskFamilies</c> with the language
-/// (<see cref="CSharpLanguagePlugin"/>): "method-body" (<see cref="MethodBody"/>) and "test-subject" (<see cref="TestSubject"/>).
+/// The C# task families of the plug-in (plan 36), beside the language (<see cref="CSharpLanguagePlugin"/>):
+/// "method-body" (<see cref="MethodBody"/>) and "test-subject" (<see cref="TestSubject"/>).
 /// Both read C# as Roslyn syntax trees (<c>Microsoft.CodeAnalysis.CSharp</c>, each file parsed once for both families;
 /// syntax only, no compilation or semantic model) and take the tests that reach a method from the tests' own code: a test
 /// reaches a method it calls by name, directly or through a helper of its test files, when no other method of the source
@@ -59,10 +59,10 @@ public static class CSharpTaskFamilies
     /// <summary>The test-subject family with the default <see cref="CSharpTaskOptions"/>.</summary>
     public static ITaskFamily TestSubject { get; } = new TestSubjectFamily(new CSharpTaskOptions());
 
-    /// <summary>The method-body family checking with <paramref name="options"/> (register it over the plug-in's to use them).</summary>
+    /// <summary>The method-body family checking with <paramref name="options"/>.</summary>
     public static ITaskFamily CreateMethodBody(CSharpTaskOptions options) => new MethodBodyFamily(options ?? throw new ArgumentNullException(nameof(options)));
 
-    /// <summary>The test-subject family checking with <paramref name="options"/> (register it over the plug-in's to use them).</summary>
+    /// <summary>The test-subject family checking with <paramref name="options"/>.</summary>
     public static ITaskFamily CreateTestSubject(CSharpTaskOptions options) => new TestSubjectFamily(options ?? throw new ArgumentNullException(nameof(options)));
 
     private sealed class MethodBodyFamily(CSharpTaskOptions options) : ITaskFamily

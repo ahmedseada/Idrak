@@ -44,7 +44,7 @@ public sealed record PendulumOptions
 /// </summary>
 public sealed class PendulumEnvironment : IEnvironment<float[], float[]>
 {
-    /// <summary>The kind's name in <c>EnvironmentKinds</c>: "pendulum".</summary>
+    /// <summary>The kind's name: "pendulum".</summary>
     public const string KindName = "pendulum";
 
     private const double MaxSpeed = 8, Dt = 0.05, Mass = 1.0, Length = 1.0;

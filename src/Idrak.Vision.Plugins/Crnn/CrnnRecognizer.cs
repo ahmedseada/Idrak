@@ -211,15 +211,15 @@ public sealed class CrnnRecognizer : IDisposable
         || File.Exists(Path.Combine(folder, LegacyPackageFile)) && File.Exists(Path.Combine(folder, LegacySettingsFile));
 
     /// <summary>
-    /// The recognizer saved in <paramref name="folder"/>: read through its family (<see cref="ImageModels.Load"/>, so the
-    /// family registered under <see cref="CrnnPlugin.Architecture"/> reads it: <c>CrnnPlugin.Register</c>), or, for
-    /// a folder of the earlier layout, from its model package.
+    /// The recognizer saved in <paramref name="folder"/>: read through its family (<see cref="ImageModels.Load"/>, which
+    /// finds the family by its architecture name, <see cref="CrnnPlugin.Architecture"/>), or, for a folder of the
+    /// earlier layout, from its model package.
     /// </summary>
     /// <param name="folder">The model folder.</param>
     /// <param name="device">Where the network is made.</param>
     /// <param name="textNormalizer">As <see cref="Create"/>'s.</param>
     /// <exception cref="FileNotFoundException">The folder holds no recognizer.</exception>
-    /// <exception cref="NotSupportedException">The family is not registered.</exception>
+    /// <exception cref="NotSupportedException">Finding the family by its architecture name is not on the new design yet.</exception>
     public static CrnnRecognizer Load(string folder, Device device, Func<string, string>? textNormalizer = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(folder);

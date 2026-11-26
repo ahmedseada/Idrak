@@ -4,8 +4,8 @@
 namespace Idrak;
 
 /// <summary>
-/// What a registry picked by name until the registries are rebuilt on real interfaces: asking for it fails, and the code
-/// that used what it picked stays as it was.
+/// What is not on the new design yet (a choice by name, until it is rebuilt on real interfaces): asking for it fails, and
+/// the code that used what it gave stays as it was.
 /// </summary>
 internal static class NotOnTheNewDesign
 {
