@@ -124,7 +124,4 @@ internal sealed partial class VulkanBackend
 
         RunAt(storages.Length == 6 ? "attention_tiled_lse" : "attention_tiled", width, RowGroups(blocks), 1, 1, storages, push);
     }
-
-    // ------------------------------------------------------------------ packed products for many rows
-
 }

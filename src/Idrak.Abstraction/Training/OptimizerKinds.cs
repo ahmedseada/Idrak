@@ -8,8 +8,7 @@ namespace Idrak.Abstraction.Training;
 /// <summary>A kind reads what it uses and leaves the rest.
 /// </summary>
 /// <param name="LearningRate">The step size the optimizer starts with (the peak a schedule works from).</param>
-/// <param name="WeightDecay">Weight decay: decoupled for AdamW and 8-bit AdamW, an L2 term on the gradients for Adam
-/// and SGD.</param>
+/// <param name="WeightDecay">Weight decay: decoupled for AdamW, an L2 term on the gradients for Adam and SGD.</param>
 /// <param name="Momentum">SGD's momentum.</param>
 public sealed record OptimizerSettings(float LearningRate, float WeightDecay = 0f, float Momentum = 0.9f)
 {

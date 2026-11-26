@@ -70,7 +70,6 @@ namespace Idrak.Gpu.Hip;
 // | norm_bwd_f32           | dxhat, xhat, s1, s2, invstd, dx; groups, inner, m, n                        | element-wise                        | element               | 30    | 28    |
 // | sgd_momentum_f32       | p, g, v; nlr, momentum, n                                                   | element-wise                        | element               | 4     | 20    |
 // | adam_f32               | p, g, m, v; lr, b1, b2, c1, c2, eps, n                                      | element-wise                        | element               | 28    | 28    |
-// | adam8_f32              | p, g, m, v, absmax, map; lr, b1, b2, c1, c2, eps, count, gscale, decay, n   | blocks of 256 elements (or fewer)   | element               | 50    | 14    |
 // | multi_sumsq_f32        | chunks, table, partials; n                                                  | chunks of 4,096 (or fewer)          | element               | 2     | 4     |
 // | multi_adamw_f32        | chunks, table, factor; lr, decay, b1, b2, c1, c2, eps, zero, n              | chunks of 4,096 (or fewer)          | element               | 30    | 32    |
 // | clip_factor_f32        | x, y; maxnorm, n                                                            | single (n = 1)                      | value                 | 20    | 8     |

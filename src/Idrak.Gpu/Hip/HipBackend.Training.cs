@@ -49,7 +49,6 @@ internal sealed unsafe partial class HipBackend
         "norm_bwd_f32" => (30, 28),
         "sgd_momentum_f32" => (4, 20),
         "adam_f32" => (28, 28),
-        "adam8_f32" => (50, 14),
         "multi_sumsq_f32" => (2, 4),
         "multi_adamw_f32" => (30, 32),
         "clip_factor_f32" => (20, 8),

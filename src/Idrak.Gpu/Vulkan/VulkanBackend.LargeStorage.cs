@@ -76,10 +76,6 @@ internal sealed partial class VulkanBackend
         return most == long.MaxValue ? 0 : most / step * step;
     }
 
-    // ------------------------------------------------------------------ packed products
-
-    // ------------------------------------------------------------------ packed products
-
     private static long Gcd(long a, long b)
     {
         while (b != 0)
