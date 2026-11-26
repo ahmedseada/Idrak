@@ -11,19 +11,22 @@ namespace Idrak.Imaging;
 /// default). A group of one region (a box's) takes the whole line. Lines beyond the groups, and groups beyond the lines,
 /// draw nothing.
 /// </summary>
-internal sealed class SequenceBinding : ITextBinding
+public sealed class SequenceBinding : ITextBinding
 {
     private static readonly string[] Keys = ["take", "blank", "blank-at"];
 
     private static readonly string Own = string.Join(", ", Keys);
 
     /// <summary>Its keys, the page's options it reads (<see cref="PageOptions.Only"/> takes them out of a page's), as the default binding is read.</summary>
-    internal static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
+    public static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>"sequence".</summary>
     public string Name => TextBindings.Sequence;
 
+    /// <summary>One line on what it does, with its keys.</summary>
     public string Summary => "each line fills one group of regions in reading order, a unit a region (take: units per region, rest for one that takes what the others leave; blank: the chance a region is left empty; blank-at: which, from 1)";
 
+    /// <inheritdoc/>
     public TextBindingSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -72,6 +75,7 @@ internal sealed class SequenceBinding : ITextBinding
         return new Settings(options, take, rest, blank, blankAt);
     }
 
+    /// <inheritdoc/>
     public BoundText Bind(IReadOnlyList<string> lines, IReadOnlyList<ShapeRegion> regions, TextBindingSettings settings, int seed)
     {
         ArgumentNullException.ThrowIfNull(lines);

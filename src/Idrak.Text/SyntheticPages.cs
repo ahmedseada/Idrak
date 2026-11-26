@@ -449,7 +449,7 @@ public static class SyntheticPages
         }
     }
 
-    /// <summary>The keys <see cref="Style"/> reads besides those of the registered pens and text bindings (<see cref="KindStyleKeys"/>).</summary>
+    /// <summary>The keys <see cref="Style"/> reads besides those of the default pens and text binding (<see cref="KindStyleKeys"/>).</summary>
     public static IReadOnlyList<string> StyleKeys { get; } =
         ["width", "height", "size", "spacing", "margin", "ink", "justify", "color", "rule", "emblem", "stamp", "blue-signature", "header-font", "crop", "crop-padding",
          "pen", "bind", "blue-pen", "cell-align", "stroke", "least-size", "pose", "sections",
@@ -465,11 +465,13 @@ public static class SyntheticPages
     private static readonly string[] ProfileListKeys = ["emblem-shapes", "stamp-shapes", "signature-shapes"];
 
     /// <summary>
-    /// The keys of the registered pens (<see cref="Pens"/>), text bindings (<see cref="TextBindings"/>) and glyph poses
-    /// (<see cref="GlyphPoses"/>), which <see cref="Style"/> also reads, each once.
+    /// The keys of the default pens, text binding and glyph pose, which <see cref="Style"/> also reads, each once: the
+    /// "sequence" binding's (<see cref="SequenceBinding.OwnKeys"/>) and the "ballpoint" pen's, a letter's signature pen
+    /// (<see cref="BallpointPen.OwnKeys"/>); the "ideal" pen and the "none" pose take none. (Another kind's keys came with
+    /// its registry, picked by name, which is not on the new design yet.)
     /// </summary>
     public static IReadOnlyList<string> KindStyleKeys() =>
-        [];                                                                     // the registered kinds' keys went with their registries
+        [.. SequenceBinding.OwnKeys.Concat(BallpointPen.OwnKeys).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// <paramref name="style"/> with the settings of <paramref name="settings"/> over it, written
@@ -558,7 +560,7 @@ public static class SyntheticPages
         return options is null ? style : style with { Options = options };
     }
 
-    // Whether a registered pen or text binding takes the key.
+    // Whether a default pen or text binding takes the key.
     private static bool IsKindKey(string key) => KindStyleKeys().Contains(key, StringComparer.OrdinalIgnoreCase);
 
     // A "shapes" layout setting checked as the layout reads it; a pen's or binding's key by every kind that takes it.
@@ -605,7 +607,19 @@ public static class SyntheticPages
                 return;
         }
 
-        // The registered pens, bindings and poses each checked the keys of their own: they went with their registries.
+        // A default kind's own key, its value checked by the kind that takes it, as the layouts read it: the "sequence"
+        // binding's (ShapesLayout), the "ballpoint" signature pen's (LetterOrnaments). Another kind's keys went with its
+        // registry.
+        var one = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [key] = value };
+        if (SequenceBinding.OwnKeys.Contains(key))
+        {
+            _ = ShapesLayout.BindingFor(one, TextBindings.Sequence);
+        }
+
+        if (BallpointPen.OwnKeys.Contains(key))
+        {
+            _ = LetterOrnaments.Read(one);
+        }
     }
 
     // The options a style holds for the layouts, checked before the first page: each known key's value, the pen's and

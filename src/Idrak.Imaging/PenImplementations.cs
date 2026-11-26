@@ -387,21 +387,24 @@ internal sealed class IdealPen : IPen
 /// and stops a little past or short of its ends (pen-overshoot, stroke widths) and drifts sideways along the way
 /// (pen-tilt, stroke widths at its end); each a range drawn per stroke from its seed.
 /// </summary>
-internal sealed class BallpointPen : IPen
+public sealed class BallpointPen : IPen
 {
     private static readonly string[] Keys = ["pen-wobble", "pen-jitter", "pen-pressure", "pen-overshoot", "pen-tilt"];
 
     private static readonly string Own = string.Join(", ", Keys);
 
     /// <summary>Its keys, the page's options it reads (<see cref="PageOptions.Only"/> takes them out of a page's), as a letter's default signature pen is read.</summary>
-    internal static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
+    public static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
 
     private static readonly Settings Defaults = new(PageOptions.None, (0.15f, 0.5f), (0.03f, 0.1f), (0.1f, 0.3f), (0f, 1.5f), (0f, 1f));
 
+    /// <summary>"ballpoint".</summary>
     public string Name => "ballpoint";
 
+    /// <summary>One line on what it draws, with its keys.</summary>
     public string Summary => "a hand's ballpoint: a slow wobble, a little jitter, pressure along the stroke, an overshoot or a short stop at its ends, a slight drift (pen-wobble, pen-jitter, pen-pressure, pen-overshoot, pen-tilt: ranges)";
 
+    /// <inheritdoc/>
     public PenSettings Read(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -435,12 +438,14 @@ internal sealed class BallpointPen : IPen
         return new Settings(options, wobble, jitter, pressure, overshoot, tilt);
     }
 
+    /// <inheritdoc/>
     public float Stray(PenSettings settings, float width)
     {
         var s = settings as Settings ?? Defaults;
         return (s.Wobble.Max + s.Jitter.Max + s.Tilt.Max + s.Overshoot.Max) * width;
     }
 
+    /// <inheritdoc/>
     public void Stroke(ReadOnlySpan<PenPoint> path, bool closed, PenSettings settings, int seed, PenStroke stroke)
     {
         ArgumentNullException.ThrowIfNull(stroke);
