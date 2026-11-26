@@ -344,6 +344,8 @@ internal abstract partial class Tests
     // From FontTests.cs.
     internal static string FontData(string name) => TestData($"fonts/{name}");
 
+    internal static IFontFace SubsetFace() => new OpenTypeFormat().Read(File.ReadAllBytes(FontData("dejavu-sans-subset.ttf")), "dejavu-sans-subset").Single();
+
     // From GenericVisionComponentTests.cs.
     // A line of dark marks on a light page: a full stroke for a, the upper half for b, the lower half for c, a gap between.
     internal static ImageData LineImage(string text, int height = 12)

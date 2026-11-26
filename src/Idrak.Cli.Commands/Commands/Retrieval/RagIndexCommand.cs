@@ -84,7 +84,8 @@ internal sealed class RagIndexCommand : Command
         var watch = Stopwatch.StartNew();
         string keywords = context.Option("--keywords") ?? KeywordIndexes.Bm25;
 
-        var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap).Keywords(keywords);
+        var builder = RetrievalIndex.Create().Documents(documents, sentences ? ChunkUnit.Sentences : ChunkUnit.Words, size, overlap);
+        _ = context.Option("--keywords") is { } named ? builder.Keywords(named) : builder.Bm25();     // BM25, the library's keyword index, reached directly; another by name stops
         Recorder? recorder = null;
         RagIndexFile.EmbeddingInfo? embedding = null;
         Idrak.Models.PretrainedModel? model = null;

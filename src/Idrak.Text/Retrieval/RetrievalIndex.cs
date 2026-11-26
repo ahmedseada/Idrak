@@ -29,7 +29,9 @@ public sealed class RetrievalIndex : ISearchableRetriever
     {
         Chunks = chunks;
         _keywords = keywords;
-        Keywords = keywords is { } k ? KeywordIndexNamed(k.Name, chunks.Select(c => c.Text), k.Options) : null;
+        Keywords = keywords is not { } k ? null
+            : IsPlainBm25(k) ? new Bm25Index(chunks.Select(c => c.Text), k.Options.K1, k.Options.B)   // the library's keyword index, reached directly
+            : KeywordIndexNamed(k.Name, chunks.Select(c => c.Text), k.Options);
         Encoder = encoder;
         Vectors = vectors;
         Fusion = fusion;
@@ -318,7 +320,11 @@ public sealed class RetrievalIndexBuilder
         Add(Chunker.Split(documents, unit, size, overlap));
 
     /// <summary>Keyword search with BM25 (<paramref name="k1"/>: term-frequency saturation, <paramref name="b"/>: length normalization).</summary>
-    public RetrievalIndexBuilder Bm25(double k1 = 1.2, double b = 0.75) => Keywords(KeywordIndexes.Bm25, new KeywordIndexOptions { K1 = k1, B = b });
+    public RetrievalIndexBuilder Bm25(double k1 = 1.2, double b = 0.75)
+    {
+        _keywords = new KeywordChoice(KeywordIndexes.Bm25, new KeywordIndexOptions { K1 = k1, B = b });
+        return this;
+    }
 
     /// <summary>
     /// Keyword search with the index registered as <paramref name="name"/> in <see cref="KeywordIndexes"/> ("bm25", or one
