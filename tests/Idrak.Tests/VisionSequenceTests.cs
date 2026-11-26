@@ -134,7 +134,7 @@ internal abstract partial class DesktopTests : Tests
             }
         }
 
-        var greedy = CtcDecoding.Greedy(rows, path.Length, 3, new CtcDecodeOptions());
+        var greedy = Idrak.Abstraction.Generation.CtcDecoding.Greedy(rows, path.Length, 3, new CtcDecodeOptions());
         Check(greedy is [{ Labels: [1, 2, 1, 2] } best] && MathF.Abs(best.LogProbability - path.Length * MathF.Log(0.8f)) < 1e-4f,
             $"greedy: [{string.Join(",", greedy[0].Labels)}] {greedy[0].LogProbability}");
 
@@ -174,7 +174,7 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var ranked = exact.OrderByDescending(p => p.Value).Take(3).ToList();
-        var beam = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3 });
+        var beam = Idrak.Abstraction.Generation.CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3 });
         for (int i = 0; i < 3; i++)
         {
             Check(string.Join(",", beam[i].Labels) == ranked[i].Key && Math.Abs(beam[i].LogProbability - Math.Log(ranked[i].Value)) < 1e-4,
@@ -182,9 +182,9 @@ internal abstract partial class DesktopTests : Tests
         }
 
         // Pruning that keeps every class changes nothing; a narrow beam still returns readings, the best first.
-        var pruned = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3, TopClasses = 3, MinLogProbability = -100f });
+        var pruned = Idrak.Abstraction.Generation.CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 1000, Results = 3, TopClasses = 3, MinLogProbability = -100f });
         Check(pruned.Select(h => string.Join(",", h.Labels)).SequenceEqual(beam.Select(h => string.Join(",", h.Labels))), "pruning that keeps every class");
-        var narrow = CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 2, Results = 2, TopClasses = 2 });
+        var narrow = Idrak.Abstraction.Generation.CtcDecoding.BeamSearch(logProbs, steps, classes, new CtcDecodeOptions { BeamWidth = 2, Results = 2, TopClasses = 2 });
         Check(narrow.Count == 2 && narrow[0].LogProbability >= narrow[1].LogProbability, "a narrow beam");
     }
 
