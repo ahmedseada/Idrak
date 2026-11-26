@@ -21,6 +21,9 @@ internal abstract partial class Tests
         ("types: every built-in and alien type read through the default matches its description's own decode, bit for bit", TypesReadAsDescribed),
         ("types: the arithmetic rounding of wide codes is the table's rounding on every narrow float and integer", TypesWideRounding),
         ("types: the encoder writes every alien type: finite, every code reachable, its error against the least-squares bound", TypesEncoderWrites),
+        ("types: wide scale levels' numbers ordered, stored and rounded by their own arithmetic", TypesWideLevels),
+        ("types: Q8_1's and Q8_K's sums written from the values stored and read back", TypesSums),
+        ("types: int8 and int16 rows carry their own float32 scale, read, written and multiplied", TypesRowScale),
         ("types: 32- and 64-bit machine formats written from float64 and read back without narrowing", TypesNoNarrowing),
         ("types: a type defined outside the library is read, written and multiplied through the interface alone", TypesOutside),
         ("types: a typed tensor holds its type's bytes and reads back through its type", TypesTypedTensors),
@@ -43,9 +46,12 @@ internal abstract partial class Tests
 
     private static readonly NumberType E4M3Number = NumberType.Floating(4, 3, specials: FloatSpecials.AllOnesNaN);
 
+    private static readonly NumberType F32Number = NumberType.Floating(8, 23);
+
     // Alien descriptions: per-element codes of 3, 5, 6, 7 and 24 bits packed tight, floats of 3, 5, 6 and 24 bits, 3- and
     // 5-bit block codes with E4M3 or 6-bit integer scales, codes over 3 planes, digits of radix 5 and 7, a 12-bit codebook,
-    // three levels of scales (one shared over a group of blocks), a minimum of its own, E2M1 codes under E4M3 scales.
+    // three levels of scales (one shared over a group of blocks), a minimum of its own, E2M1 codes under E4M3 scales; float32
+    // levels (the coarsest, a child under a float16, a minimum) and a float32 scale shared over a group of 128 blocks.
     private static IReadOnlyList<IElementType> AlienTypes()
     {
         var book = new Random(12);
@@ -78,6 +84,15 @@ internal abstract partial class Tests
                 Scales: [new BlockScale(HalfNumber, 32, 0)], Mins: [new BlockScale(NumberType.Integer(6, signed: false), 32, 2)])),
             new TestType("E2M1 codes, 16 a block, an E4M3 scale", new(16, 9, NumberType.Floating(2, 1, bias: 1, specials: FloatSpecials.None), [new CodePlane(1, 4, 16)],
                 Scales: [new BlockScale(E4M3Number, 16, 0)])),
+            new TestType("int8 blocks of 64, a float32 scale", new(64, 68, NumberType.Integer(8, signed: true), [new CodePlane(4, 8, 1)], Scales: [new BlockScale(F32Number, 64, 0)])),
+            new TestType("4-bit codes, 6-bit scales of 16 under a float32", new(64, 39, NumberType.Integer(4, signed: false), [new CodePlane(7, 4, 2)], -8,
+                [new BlockScale(F32Number, 64, 0), new BlockScale(NumberType.Integer(6, signed: false), 16, 4)])),
+            new TestType("4-bit codes, float32 scales of 16 under a float16", new(64, 50, NumberType.Integer(4, signed: true), [new CodePlane(18, 4, 2)],
+                Scales: [new BlockScale(HalfNumber, 64, 0), new BlockScale(F32Number, 16, 2)])),
+            new TestType("4-bit codes, a float32 scale and a float32 minimum", new(32, 24, NumberType.Integer(4, signed: false), [new CodePlane(8, 4, 2)],
+                Scales: [new BlockScale(F32Number, 32, 0)], Mins: [new BlockScale(F32Number, 32, 4)])),
+            new TestType("int8 groups of 128, a float32 scale after them", new(1, 1, NumberType.Integer(8, signed: true), [new CodePlane(0, 8, 1)],
+                Scales: [new BlockScale(F32Number, 128, 128)], Group: 128, GroupBytes: 132)),
         ];
     }
 
@@ -88,10 +103,9 @@ internal abstract partial class Tests
         Check(types.Count == types.Distinct().Count() && types.Select(t => t.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == types.Count,
             "each type once, each its own name");
         Check(types.All(t => t.Description.Valid), $"invalid: {string.Join(", ", types.Where(t => !t.Description.Valid))}");
-        // Every type written but Q8_K, whose float32 scale level the described encoder does not write yet (said by Unwritable).
+        // Every type written (Q8_K's float32 scale level searched by its own arithmetic).
         var unwritten = types.Where(t => t.Unwritable is not null).ToList();
-        Check(unwritten.SequenceEqual([Idrak.Types.Q8_K.Type]) && Idrak.Types.Q8_K.Type.Unwritable!.Contains("16 bits", StringComparison.Ordinal),
-            $"unwritten: {string.Join("; ", unwritten.Select(t => $"{t}: {t.Unwritable}"))}");
+        Check(unwritten.Count == 0, $"unwritten: {string.Join("; ", unwritten.Select(t => $"{t}: {t.Unwritable}"))}");
         var natives = types.ToDictionary(t => t, t => t.Native);
         Check(natives[F32.Type] == NativeKind.Float32 && natives[F64.Type] == NativeKind.Float64 && natives[F16.Type] == NativeKind.Float16 && natives[BF16.Type] == NativeKind.BFloat16
               && natives[F8E4M3.Type] == NativeKind.Float8E4M3 && natives[F8E5M2.Type] == NativeKind.Float8E5M2 && natives[I8.Type] == NativeKind.Int8 && natives[U8.Type] == NativeKind.UInt8
@@ -103,7 +117,7 @@ internal abstract partial class Tests
 
         // A description alike to a native one is that native kind, whatever the type says of itself.
         Check(((IElementType)new TestType("anything", BF16.Type.Description with { })).Native == NativeKind.BFloat16, "a native kind from the description alone");
-        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written but q8_k ({Idrak.Types.Q8_K.Type.Unwritable})");
+        Console.WriteLine($"  {types.Count} built-in types, {types.Count - none.Count} native, every one written");
     }
 
     private static void TypesReadAsDescribed(Device device)
@@ -197,7 +211,10 @@ internal abstract partial class Tests
         {
             var d = type.Description;
             Check(type.Unwritable is null, $"{type}: not written: {type.Unwritable}");
-            int units = d.UnitValues >= 256 ? 24 : Math.Max(64, 6144 / d.UnitValues), n = units * d.UnitValues;
+            // Values enough for every code to be some value's nearest: 8-bit codes under a scale take more (their outer
+            // codes are few values' nearest).
+            int values = d.Code.Bits >= 8 && d.Code.Width == 1 && (d.Scales?.Count ?? 0) > 0 ? 1 << 16 : 6144;
+            int units = d.UnitValues >= 256 ? Math.Max(24, values / d.UnitValues) : Math.Max(64, values / d.UnitValues), n = units * d.UnitValues;
             var x = new float[n];
             for (int u = 0; u < units; u++)
             {
@@ -382,6 +399,215 @@ internal abstract partial class Tests
         }
 
         return (error, bound, energy);
+    }
+
+    // Wide level numbers (WideLevel): every rank's number stored by its code and rounded back to its rank, ranks in the
+    // numbers' order, ±0 apart, any value in range rounded as WideNumber rounds it, past the extremes the extreme.
+    private static void TypesWideLevels(Device device)
+    {
+        CpuOnly(device);
+        var random = new Random(13);
+        NumberType[] types =
+        [
+            F32Number, NumberType.Floating(11, 52), NumberType.Floating(8, 11), NumberType.Floating(6, 12, signed: false), NumberType.Floating(8, 15, specials: FloatSpecials.AllOnesNaN),
+            NumberType.Integer(32, signed: true), NumberType.Integer(32, signed: false), NumberType.Integer(64, signed: true), NumberType.Integer(64, signed: false), NumberType.Integer(24, signed: true),
+        ];
+        long checks = 0;
+        foreach (var t in types)
+        {
+            var level = DescribedEncoder.WideLevel.Of(t, 0)!;
+            var wide = WideNumber.Of(t)!;
+            bool integer = t.Kind == NumberKind.Integer;
+            // An integer's ranks where float64 holds its numbers exactly (an unsigned 64-bit one's ranks moved by 2^63).
+            long origin = t is { Kind: NumberKind.Integer, Signed: false, Bits: 64 } ? long.MinValue : 0;
+            long low = !integer ? level.First : origin == long.MinValue ? origin : Math.Max(level.First, -(1L << 52)), high = integer ? Math.Min(level.Last, origin + (1L << 52)) : level.Last;
+            var ranks = new List<long> { low, low + 1, high - 1, high, -2, -1, 0, 1, 2 };
+            for (int i = 0; i < 4000; i++)
+            {
+                ranks.Add(random.NextInt64(low, high));
+            }
+
+            foreach (long r in ranks.Where(r => r >= low && r <= high).Distinct())
+            {
+                double v = level.NumberOf(r);
+                Check(double.IsFinite(v) && BitConverter.DoubleToInt64Bits(t.Value(level.CodeOf(r))) == BitConverter.DoubleToInt64Bits(v), $"{t}: rank {r}'s code stores its number {v}");
+                Check(level.RankNearest(v) == r, $"{t}: rank {r}'s number {v} rounds to rank {level.RankNearest(v)}");
+                if (r < high)
+                {
+                    double next = level.NumberOf(r + 1);
+                    Check(next > v || next == 0 && v == 0 && double.IsNegative(v) && !double.IsNegative(next), $"{t}: rank {r + 1}'s number {next} after rank {r}'s {v}");
+                }
+
+                checks++;
+            }
+
+            // Values within the finite numbers (past the largest the level keeps its largest, where the arithmetic gives the
+            // type's overflow).
+            double largest = level.NumberOf(level.Last);
+            for (int i = 0; i < 4000; i++)
+            {
+                double x = integer ? (random.NextDouble() * 2 - 1) * Math.ScaleB(1, t.Bits - 1) : Math.ScaleB(random.NextDouble() * 2 - 1, random.Next(-60, 60));
+                x = t.Signed ? x : Math.Abs(x);
+                if (!integer && Math.Abs(x) >= largest)
+                {
+                    continue;
+                }
+
+                Check(level.CodeOf(level.RankNearest(x)) == wide.Round(x), $"{t}: {x.ToString("R", CultureInfo.InvariantCulture)} rounds to code {level.CodeOf(level.RankNearest(x)):X}, the arithmetic's {wide.Round(x):X}");
+                checks++;
+            }
+
+            Check(level.RankNearest(double.PositiveInfinity) == level.Last && level.RankNearest(double.MaxValue) == level.Last && level.RankNearest(double.NaN) == level.RankNearest(0)
+                  && level.RankNearest(double.NegativeInfinity) == level.First, $"{t}: past the extremes the extreme, NaN as 0");
+        }
+
+        Console.WriteLine($"  {types.Length} wide number types, {checks} ranks and values: each rank's code its number, ordered, and rounded as the arithmetic rounds");
+    }
+
+    // Q8_1's and Q8_K's sums: written from the values the encoder stored (Q8_1's s their sum, d · Σq, as float16; Q8_K's 16
+    // sums of 16 codes, signed 16-bit), read back by the description's sums; Q8_K's scale a float32 of its own.
+    private static void TypesSums(Device device)
+    {
+        CpuOnly(device);
+        var random = new Random(14);
+        foreach (var type in new[] { Idrak.Types.Q8_1.Type, Idrak.Types.Q8_K.Type })
+        {
+            var d = type.Description;
+            int blocks = 48, n = blocks * d.Values;
+            var x = new float[n];
+            for (int b = 0; b < blocks; b++)
+            {
+                double magnitude = Math.Pow(10, random.NextDouble() * 4 - 2);
+                for (int v = 0; v < d.Values; v++)
+                {
+                    x[b * d.Values + v] = (float)(magnitude * (random.NextDouble() * 2 - 1 + (b % 3 == 0 ? 0.4 : 0)));
+                }
+            }
+
+            var stored = new byte[type.ByteCount(n)];
+            type.Write(x, stored);
+            var y = new float[n];
+            type.Read(stored, y);
+            double error = 0, energy = 0;
+            for (int i = 0; i < n; i++)
+            {
+                error += (x[i] - y[i]) * (double)(x[i] - y[i]);
+                energy += x[i] * (double)x[i];
+            }
+
+            Check(error < 1e-4 * energy, $"{type}: relative error {error / energy}");
+            int sums = 0, nonzero = 0, ownScales = 0;
+            for (int b = 0; b < blocks; b++)
+            {
+                var block = stored.AsSpan(b * d.Bytes, d.Bytes);
+                double scale = d.Scales![0].Value(block, 0);
+                ownScales += (double)(Half)scale != scale ? 1 : 0;
+                foreach (var sum in d.Sums!)
+                {
+                    for (int i = 0; i < d.Values / sum.Values; i++)
+                    {
+                        long codes = 0;
+                        for (int v = i * sum.Values; v < (i + 1) * sum.Values; v++)
+                        {
+                            codes += (long)d.Code.Value(d.CodeBits(block, v));
+                        }
+
+                        double expected = sum.OfValues ? (double)(Half)(scale * codes) : codes;
+                        Check(sum.Value(block, i) == expected, $"{type}: block {b}'s sum {i} reads {sum.Value(block, i)}; its {(sum.OfValues ? "values'" : "codes'")} sum is {expected}");
+                        sums++;
+                        nonzero += expected != 0 ? 1 : 0;
+                    }
+                }
+            }
+
+            Check(nonzero > sums / 2, $"{type}: {nonzero} of {sums} sums nonzero");
+            Check(type == Idrak.Types.Q8_1.Type || ownScales > blocks / 2, $"{type}: {ownScales} of {blocks} scales float32 of their own (not a float16's)");
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {type}: {sums} sums written and read back as the values stored give them, relative error {error / energy:0.0000000}"));
+        }
+    }
+
+    // int8 and int16 rows: each row a block of its float32 scale and its codes (RowScale, ForRow), one type a length, read,
+    // written and multiplied by the CPU through the description alone.
+    private static void TypesRowScale(Device device)
+    {
+        CpuOnly(device);
+        var random = new Random(15);
+        Check(F16.Type.ForRow(96) == F16.Type && Idrak.Types.Q8_0.Type.ForRow(96) == Idrak.Types.Q8_0.Type, "a type whose description holds for any row is its own row's");
+        var wrong = new List<string>();
+        foreach (var (element, k) in new[] { (I8.Type, 96), (I8.Type, 64), (I8.Type, 2048), (I16.Type, 96), (I16.Type, 2048) })
+        {
+            int m = 3, n = 5, bytes = element.Description.Bytes, rowBytes = k * bytes + 4;
+            var row = element.ForRow(k);
+            Check(row == element.ForRow(k) && row != element.ForRow(k + 32) && row.ForRow(k) == row && row.ForRow(k + 32) == element.ForRow(k + 32), $"{element}: one row type a length");
+            Check(row.Description.Valid && row.Native == NativeKind.None && row.Unwritable is null && row.ByteCount((long)n * k) == n * rowBytes,
+                $"{row}: valid, read through its description, written, {row.ByteCount((long)n * k)} bytes for {n} rows");
+            var w = new float[n * k];
+            for (int r = 0; r < n; r++)
+            {
+                double magnitude = Math.Pow(10, random.NextDouble() * 4 - 3);
+                for (int j = 0; j < k; j++)
+                {
+                    w[r * k + j] = (float)(magnitude * (random.NextDouble() * 2 - 1));
+                }
+            }
+
+            var stored = new byte[row.ByteCount(w.Length)];
+            row.Write(w, stored);
+            var back = new float[w.Length];
+            row.Read(stored, back);
+            double error = 0, energy = 0;
+            for (int r = 0; r < n; r++)
+            {
+                double scale = BitConverter.ToSingle(stored, r * rowBytes);
+                for (int j = 0; j < k; j++)
+                {
+                    double code = element.Description.ValueOf(stored.AsSpan(r * rowBytes + 4 + j * bytes, bytes), 0);
+                    Check(back[r * k + j] == (float)(code * scale), $"{row}: row {r}'s value {j} is its code {code} times the row's scale {scale}");
+                    error += (w[r * k + j] - back[r * k + j]) * (double)(w[r * k + j] - back[r * k + j]);
+                    energy += w[r * k + j] * (double)w[r * k + j];
+                }
+            }
+
+            Check(error < (bytes == 1 ? 1e-4 : 1e-8) * energy, $"{row}: relative error {error / energy}");
+            if (bytes != 1)
+            {
+                // int16 codes under a scale: the CPU's described lane does not read them yet (the CPU operations' piece).
+                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}"));
+                continue;
+            }
+
+            var xs = Enumerable.Range(0, m * k).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
+            using var weight = Tensor.Stored(row, stored, [n, k], device);
+            using var x = Tensor.From(xs, [m, k], device);
+            using var y = Tensor.Zeros([m, n], device);
+            device.Backend.StoredMatMul(x.Storage, weight.Storage, y.Storage, m, n, k);
+            var product = y.ToArray();
+            double worst = 0;
+            for (int i = 0; i < m; i++)
+            {
+                for (int j = 0; j < n; j++)
+                {
+                    double reference = 0, magnitude = 0;
+                    for (int p = 0; p < k; p++)
+                    {
+                        reference += (double)xs[i * k + p] * back[j * k + p];
+                        magnitude += Math.Abs((double)xs[i * k + p] * back[j * k + p]);
+                    }
+
+                    worst = Math.Max(worst, Math.Abs(product[i * n + j] - reference) / magnitude);
+                }
+            }
+
+            // The CPU's integer lane takes x's chunks as int8 too: its products within their rounding.
+            if (!(worst < 5e-3))
+            {
+                wrong.Add($"{row}: worst error {worst} of the magnitudes");
+            }
+
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}, the CPU's product within {worst:0.0e+0}"));
+        }
+
+        Check(wrong.Count == 0, $"the CPU's product of a row's scale and codes: {string.Join("; ", wrong)}");
     }
 
     private static void TypesNoNarrowing(Device device)
@@ -637,7 +863,18 @@ internal abstract partial class Tests
             var writtenLinears = Linears(written.Network).ToList();
             Check(writtenLinears.Where(l => l.TiedTo is null).All(l => l.Stored?.Type == Idrak.Types.Q8_0.Type) && writtenLinears.Single(l => l.TiedTo is not null).TiedTo!.Weight.Type == Idrak.Types.Q8_0.Type,
                 "written as q8_0 by its encoder");
-            Console.WriteLine($"  {projections.Count} projections and the table loaded as bfloat16 as stored (2 bytes a value, the file's bytes), run, looked up; written as q8_0 too");
+
+            // Written as int8: each weight's rows as int8 gives them (its codes and a float32 scale a row), and the model runs.
+            using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Family = QwenArchitectures.Qwen3(), Weights = I8.Type });
+            var rowLinears = Linears(int8.Network).ToList();
+            var rowTable = rowLinears.Single(l => l.TiedTo is not null).TiedTo!.Weight;
+            Check(rowLinears.Where(l => l.TiedTo is null).All(l => l.Stored is { } s && s.Type == I8.Type.ForRow(s.Shape[1]) && s.Storage.ElementCount == s.Size
+                      && s.Type.ByteCount(s.Size) == (long)s.Shape[0] * (s.Shape[1] + 4))
+                  && rowTable.Type == I8.Type.ForRow(spec.Dim),
+                $"written as int8 rows, a float32 scale a row: {string.Join(", ", rowLinears.Select(l => l.Stored?.Type.Name ?? l.TiedTo?.Weight.Type.Name))}");
+            var generated = new Idrak.Generation.TextGenerator(int8.Network, int8.Tokenizer!, 64).Generate("hi", new Idrak.Abstraction.Generation.GenerationOptions { TopK = 1, NumPredict = 4, Seed = 1 });
+            Check(generated.Text is not null, "the int8 model generates");
+            Console.WriteLine($"  {projections.Count} projections and the table loaded as bfloat16 as stored (2 bytes a value, the file's bytes), run, looked up; written as q8_0 and as int8 rows too, the int8 model generating");
         }
         finally
         {

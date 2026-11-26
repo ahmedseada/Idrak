@@ -126,6 +126,16 @@ public interface IElementType
 
     /// <summary>Why values cannot be written as this type, or null where they can.</summary>
     string? Unwritable => DescribedEncoder.Why(Description);
+
+    /// <summary>
+    /// The type values are written as row by row when they are rows of <paramref name="length"/> values (a weight's output
+    /// rows of its input features, a table's rows), the rows one after another: by default this type itself, whose
+    /// description holds for a row of any length. A type whose rows carry a number of their own gives the type of such a row,
+    /// its description that row's: int8 and int16 hold no fraction, so a row of them takes a float32 scale of its own
+    /// (<see cref="Types.RowScale"/>: a block of the row's scale and its codes, read and written by the defaults).
+    /// </summary>
+    /// <param name="length">Values a row holds.</param>
+    IElementType ForRow(int length) => this;
 }
 
 /// <summary>
@@ -150,7 +160,7 @@ public static class NativeKinds
     public static NativeKind Of(TypeDescription description)
     {
         ArgumentNullException.ThrowIfNull(description);
-        if (description is not { Values: 1, Group: 1, CodeOffset: 0, Scales: null or [], Mins: null or [], Planes: [{ Offset: 0, Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] }
+        if (description is not { Values: 1, Group: 1, CodeOffset: 0, Scales: null or [], Mins: null or [], Sums: null or [], Planes: [{ Offset: 0, Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] }
             || plane.Bits != description.Code.Bits || description.Bytes * 8 != plane.Bits || description.UnitBytes != description.Bytes)
         {
             return NativeKind.None;

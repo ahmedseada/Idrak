@@ -405,10 +405,12 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             return null;                                                    // read as float32 values (an adapter merges into those)
         }
 
-        // The type it is kept as: the one asked (where its rows are whole groups of that type's blocks), else its own.
+        // The type it is kept as: the one asked, as the type gives itself for rows of this weight's (ForRow: int8's carry a
+        // scale a row), where its rows are whole groups of that type's blocks; else its own.
         var type = reader.TypeOf(storedName);
-        long columns = stored[^1], values = stored.Aggregate(1L, (a, b) => a * b);
-        var target = Writes is { } asked && asked.ByteCount(2 * columns) == 2 * asked.ByteCount(columns) ? asked : type;
+        int columns = stored[^1];
+        long values = stored.Aggregate(1L, (a, b) => a * b);
+        var target = Writes?.ForRow(columns) is { } asked && asked.ByteCount(2L * columns) == 2 * asked.ByteCount(columns) ? asked : type;
         if (target.Native == NativeKind.Float32)
         {
             return null;                                                    // the device's own float32: read as values

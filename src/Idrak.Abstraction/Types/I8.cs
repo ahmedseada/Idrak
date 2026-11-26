@@ -6,8 +6,11 @@ namespace Idrak.Abstraction.Types;
 /// <summary>A signed 8-bit integer (two's complement).</summary>
 public sealed class I8 : IElementType
 {
+    private readonly RowScales _rows;
+
     private I8()
     {
+        _rows = new RowScales(this);
     }
 
     /// <summary>The type.</summary>
@@ -18,6 +21,13 @@ public sealed class I8 : IElementType
 
     /// <inheritdoc />
     public string Name => "int8";
+
+    /// <summary>
+    /// A row of int8 values written with a float32 scale of its own (int8 holds no fraction: a weight's row is its codes
+    /// times the row's scale, <see cref="RowScale"/>), each row length's type made once.
+    /// </summary>
+    /// <param name="length">Values a row holds.</param>
+    public IElementType ForRow(int length) => _rows.Of(length);
 
     /// <inheritdoc />
     public override string ToString() => Name;

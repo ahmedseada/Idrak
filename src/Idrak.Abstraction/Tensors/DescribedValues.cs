@@ -359,11 +359,14 @@ internal sealed class DescribedReader
 /// </summary>
 internal static class DescribedWriting
 {
+    // Values from which the groups are written on all the threads (fewer: on the caller's).
+    private const int ParallelValues = 1 << 16;
+
     public static void Write(TypeDescription d, ReadOnlySpan<float> values, Span<byte> stored)
     {
         var encoder = Encoder(d, values.Length, stored.Length);
         int n = d.UnitValues, size = d.UnitBytes, whole = values.Length / n * n;
-        encoder.Encode(values[..whole], stored[..(whole / n * size)]);
+        Groups(encoder, values[..whole], stored[..(whole / n * size)], n, size);
         if (whole < values.Length)
         {
             Span<float> last = n <= 256 ? stackalloc float[n] : new float[n];
@@ -395,6 +398,30 @@ internal static class DescribedWriting
         finally
         {
             ArrayPool<float>.Shared.Return(floats);
+        }
+    }
+
+    // Whole groups by the encoder: many values spread over the threads in ranges of whole groups (each group's bytes its
+    // own, searched by its own values alone, so the bytes are the same however they are spread); few on this thread.
+    private static unsafe void Groups(DescribedEncoder encoder, ReadOnlySpan<float> values, Span<byte> stored, int n, int size)
+    {
+        int groups = values.Length / n, threads = ComputeResources.MaxCpuThreads;
+        if (values.Length < ParallelValues || groups < 2 || threads < 2)
+        {
+            encoder.Encode(values, stored);
+            return;
+        }
+
+        int ranges = (int)Math.Min(groups, 4L * threads);
+        fixed (float* x = values)
+        fixed (byte* y = stored)
+        {
+            nint from = (nint)x, to = (nint)y;
+            Parallel.For(0, ranges, ComputeResources.ParallelOptions, r =>
+            {
+                long g0 = (long)groups * r / ranges, g1 = (long)groups * (r + 1) / ranges;
+                encoder.Encode(new ReadOnlySpan<float>((float*)from + g0 * n, (int)((g1 - g0) * n)), new Span<byte>((byte*)to + g0 * size, (int)((g1 - g0) * size)));
+            });
         }
     }
 

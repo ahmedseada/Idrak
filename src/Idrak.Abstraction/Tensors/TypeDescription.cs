@@ -286,6 +286,24 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 }
 
 /// <summary>
+/// A block's field holding a sum over its values (<see cref="TypeDescription.Sums"/>): not part of the values (a value reads
+/// the same without it), a number some kernels read instead of summing, as ggml's activation types carry one. Sum i of a
+/// block covers its values i · <paramref name="Values"/> on, at bits [8 · <paramref name="Offset"/> + i · Type.Bits,
+/// + Type.Bits) of the block (little-endian): the sum of the values themselves as the description reads them
+/// (<paramref name="OfValues"/>: Q8_1's s, its scale times its codes' sum), or of their codes' numbers (Q8_K's 16 sums of
+/// 16 codes), rounded to <paramref name="Type"/> as the type rounds.
+/// </summary>
+/// <param name="Type">The number each sum is (an integer or a float).</param>
+/// <param name="Values">Values one sum covers (a block's, or a part of it).</param>
+/// <param name="Offset">The first sum's first byte in the block.</param>
+/// <param name="OfValues">Whether a sum is of the values (codes' numbers times their scales, less their minimums) rather than of the codes' numbers.</param>
+public sealed record BlockSum(NumberType Type, int Values, int Offset, bool OfValues = false)
+{
+    /// <summary>The number of sum <paramref name="index"/> of <paramref name="block"/>, as stored.</summary>
+    public double Value(ReadOnlySpan<byte> block, int index) => Type.Value(TypeDescription.Field(block, 8L * Offset + (long)index * Type.Bits, Type.Bits));
+}
+
+/// <summary>
 /// How a type's values read from their bits, whatever the type: blocks of <paramref name="Values"/> values in
 /// <paramref name="Bytes"/> bytes; value v's code is the fields of <paramref name="Planes"/> at its place in the block (the
 /// first plane the lowest bits), read as a number of <paramref name="Code"/>'s kind; value v = (that number +
@@ -297,7 +315,9 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 /// factor. A scale level shared over many blocks (a scale whose Values pass a block's, as a second-level scale of block
 /// scales) lives in a group of <paramref name="Group"/> blocks: the group's blocks one after another, then such levels, the
 /// group <paramref name="GroupBytes"/> bytes; each level's scale i of a group (its values i · Values of the group on) at its
-/// own position, bits [8 · Offset + i · its bits) from the group's first byte (or its pieces', from there). A kernel that
+/// own position, bits [8 · Offset + i · its bits) from the group's first byte (or its pieces', from there). A scale level
+/// of a row (int8's row scale, <see cref="Types.RowScale"/>) is a block of the row's values, the scale first, or such a
+/// shared level. A block may carry <paramref name="Sums"/> over its values, which are not part of them. A kernel that
 /// reads this alone multiplies any type described so, with no code of its own (the described lanes).
 /// </summary>
 /// <param name="Values">Values a block holds.</param>
@@ -310,8 +330,10 @@ public sealed record BlockScale(NumberType Type, int Values, int Offset, IReadOn
 /// <param name="MinsAdded">Whether the minimums' product is added rather than subtracted.</param>
 /// <param name="Group">Blocks a group holds: more than 1 where a scale level is shared over many blocks (stored after them).</param>
 /// <param name="GroupBytes">Bytes a group takes, its blocks and its shared levels (0: Group · Bytes).</param>
+/// <param name="Sums">A block's fields holding sums over its values (not part of the values), or null: none.</param>
 public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
-    IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false, int Group = 1, int GroupBytes = 0)
+    IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false, int Group = 1, int GroupBytes = 0,
+    IReadOnlyList<BlockSum>? Sums = null)
 {
     /// <summary>Values a group of blocks holds (Group · Values): the unit a row is whole of.</summary>
     public int UnitValues => Group * Values;
@@ -333,7 +355,8 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 
     /// <summary>
     /// Whether the description holds together: the planes' bits make the code's, each plane's fields (an entry's, a
-    /// codebook's) within a block, the scales cover whole values (a codebook scale exactly its entry's values).
+    /// codebook's) within a block, the scales cover whole values (a codebook scale exactly its entry's values), each sum a
+    /// number covering whole parts of a block, within it.
     /// </summary>
     public bool Valid => Values >= 1 && Bytes >= 1 && Group >= 1 && UnitBytes >= Group * Bytes && Code.Valid && Values % Code.Width == 0 && Planes.Count >= 1
         && Planes.Sum(p => p.Bits) == Code.Bits
@@ -341,7 +364,9 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
         && (Scales ?? []).Concat(Mins ?? []).All(s => s.Type.Valid && s.Values >= 1 && (s.Type.Width == 1 || s.Values == s.Type.Width) && (Shared(s)
             ? s.Values % Values == 0 && UnitValues % s.Values == 0 && s.Type.Width == 1
                 && (s.Pieces is { } shared ? shared.Count == UnitValues / s.Values : 8L * s.Offset + (long)UnitValues / s.Values * s.Type.Bits <= 8L * UnitBytes)
-            : Values % s.Values == 0 && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes)));
+            : Values % s.Values == 0 && (s.Pieces is { } pieces ? pieces.Count == Values / s.Values : 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes)))
+        && (Sums ?? []).All(s => s.Type.Valid && s.Type.Width == 1 && s.Type.Kind != NumberKind.Table && s.Values >= 1 && Values % s.Values == 0 && s.Offset >= 0
+            && 8L * s.Offset + (long)Values / s.Values * s.Type.Bits <= 8L * Bytes);
 
     // Whether plane p's fields hold together: fields of 1, 2, 4 or 8 bits in groups (or whole bytes a value), a stream's or
     // listed fields of up to 64 bits, or listed digits of a radix (each a digit its byte holds, its number within the bits);
@@ -459,10 +484,12 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 ///    factor's entry, as a sign mask, chosen first from the targets' signs, then again given the entries);
 /// 4. each level's numbers searched again, the finest first: each chunk's least-squares number given the codes, rounded, and
 ///    its neighbours, the codes chosen again for each and the error measured, the best kept.
-/// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added; a per-element code of more bits, up to 64, rounded by arithmetic), each
+/// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added; a
+/// per-element code of more bits, up to 64, rounded by arithmetic; a scale or minimum of more bits, up to 64, its numbers
+/// ordered and searched by the type's own arithmetic, WideLevel), each
 /// field written where the description places it (planes of bits or of digits, listed places, pieces, levels shared over a
 /// group of blocks); codes sharing a field (IQ1_S's delta sign, one a sub-block) are chosen together for the field's number
-/// that leaves them the least error. A type of no scale, minimum or factor (a per-element type) is rounded as its number
+/// that leaves them the least error; a block's sums (<see cref="TypeDescription.Sums"/>) last, from the values written. A type of no scale, minimum or factor (a per-element type) is rounded as its number
 /// type defines: to the nearest number, a tie to the even code, a zero's sign kept, a float past its range its infinity,
 /// its NaN or its largest as its specials say; a code of ±0 keeps its target's sign inside blocks too, so every code of a
 /// finite number is one some value writes. The same bytes on every CPU: scalar arithmetic in a fixed order.
@@ -498,6 +525,7 @@ internal sealed class DescribedEncoder
     private readonly WideNumber? wide;
     private readonly int minSign;
     private readonly Fields codes;
+    private readonly SumField[] sums;
     private readonly DigitPlane[] digitPlanes;
     private readonly int[]? leader;
     private readonly ulong sharedMask;
@@ -553,6 +581,10 @@ internal sealed class DescribedEncoder
         }
 
         codes = new Fields(start, [.. bits], [.. widths], [.. pieceLows]);
+
+        // The blocks' sums: each its field in the group (the group's blocks one after another, each block's sums in order)
+        // and the rounding to its number.
+        sums = [.. (d.Sums ?? []).Select(s => new SumField(s, WideNumber.Of(s.Type) ?? throw Unwritten(d, "a sum is not an integer or a float"), SumFieldsOf(d, s)))];
         digitPlanes =[.. Enumerable.Range(0, planes).Where(p => d.Planes[p].Radix != 0)
             .Select(p => DigitPlane.Of(d.Planes[p], lows[p], digitSlots[p], size) ?? throw Unwritten(d, $"its plane of base-{d.Planes[p].Radix} digits has numbers of digits no byte reads as"))];
 
@@ -611,8 +643,9 @@ internal sealed class DescribedEncoder
             unit = n;
             units = 1;
             scales = mins = free = all = [];
-            wholeBytes = WholeBytes(d);
-            if (!codes.Claim(new bool[8 * size], repeats: true))
+            wholeBytes = WholeBytes(d) && sums.Length == 0;
+            var claimed = new bool[8 * size];
+            if (!codes.Claim(claimed, repeats: true) || sums.Any(s => !s.Fields.Claim(claimed)))
             {
                 throw Unwritten(d, "two of its fields share bits");
             }
@@ -719,13 +752,13 @@ internal sealed class DescribedEncoder
         // Values of no scale, minimum or factor, each its own code (a per-element type) are rounded as a float format
         // defines (Grid.Round).
         direct = scales.Length == 0 && mins.Length == 0 && factor is null && codeGrid is not null && sharedMask == 0 && digitPlanes.Length == 0;
-        wholeBytes = direct && WholeBytes(d);
+        wholeBytes = direct && WholeBytes(d) && sums.Length == 0;
 
         // No two fields share a bit (a minimum stored in a scale's bits is that scale's level; codes sharing a field, theirs;
         // a plane of digits takes its bytes whole).
         var owned = new bool[8 * size];
         if (!codes.Claim(owned, repeats: true) || digitPlanes.Any(p => !p.Claim(owned)) || all.Any(l => !l.Fields.Claim(owned))
-            || factor is { } owner && !owner.Fields.Claim(owned))
+            || factor is { } owner && !owner.Fields.Claim(owned) || sums.Any(s => !s.Fields.Claim(owned)))
         {
             throw Unwritten(d, "two of its fields share bits");
         }
@@ -803,11 +836,53 @@ internal sealed class DescribedEncoder
         return placed;
     }
 
+    // A level's numbers: a table of a number type of up to 16 bits (Grid), or a wider integer's or float's by its arithmetic
+    // (WideLevel).
     private Level LevelOf(TypeDescription d, BlockScale s, bool scale)
     {
-        var grid = Grid.Of(s.Type, s.Bias) ?? throw Unwritten(d, "a scale or minimum is not a table, an integer or a float of up to 16 bits");
+        var grid = (LevelNumbers?)Grid.Of(s.Type, s.Bias) ?? WideLevel.Of(s.Type, s.Bias) ?? throw Unwritten(d, "a scale or minimum is not a table of up to 16 bits, an integer or a float");
         return new Level(s, grid, s.Values, n / s.Values, FieldsOf(d, s, n / s.Values)) { Scale = scale, Min = !scale };
     }
+
+    // Each sum's field in a group: block b's sum i the field b · (its sums a block) + i.
+    private static Fields SumFieldsOf(TypeDescription d, BlockSum s)
+    {
+        int each = d.Values / s.Values, count = d.Group * each;
+        var start = new int[count + 1];
+        var bits = new int[count];
+        var widths = new int[count];
+        for (int f = 0; f < count; f++)
+        {
+            bits[f] = 8 * (f / each * d.Bytes + s.Offset) + f % each * s.Type.Bits;
+            widths[f] = s.Type.Bits;
+            start[f + 1] = f + 1;
+        }
+
+        return new Fields(start, bits, widths);
+    }
+
+    // The group's sums from its bytes as written (after its codes and levels): each the sum, in float64 in the values' order,
+    // of its values as the description reads them, or of their codes' numbers, rounded to its number type.
+    private void WriteSums(Span<byte> group)
+    {
+        foreach (var sum in sums)
+        {
+            int per = sum.Source.Values, count = n / per;
+            for (int f = 0; f < count; f++)
+            {
+                double total = 0;
+                for (int v = f * per; v < (f + 1) * per; v++)
+                {
+                    total += sum.Source.OfValues ? d.ValueOf(group, v) : d.Code.Value(d.CodeBits(group, v), v % codeWidth) + d.CodeOffset;
+                }
+
+                sum.Fields.Write(group, f, sum.Rounding.Round(total));
+            }
+        }
+    }
+
+    // A block's sum: its description, the rounding to its number, its fields in a group.
+    private sealed record SumField(BlockSum Source, WideNumber Rounding, Fields Fields);
 
     // Each chunk's bits of a scale or minimum in a group (its pieces', or its run of bits from its offset).
     private static Fields FieldsOf(TypeDescription d, BlockScale s, int chunks)
@@ -886,6 +961,11 @@ internal sealed class DescribedEncoder
                 }
 
                 WriteCodes(w, destination.Slice(g * size, size));
+                if (sums.Length > 0)
+                {
+                    WriteSums(destination.Slice(g * size, size));
+                }
+
                 continue;
             }
 
@@ -938,6 +1018,10 @@ internal sealed class DescribedEncoder
             }
 
             WriteCodes(w, destination.Slice(g * size, size));
+            if (sums.Length > 0)
+            {
+                WriteSums(destination.Slice(g * size, size));
+            }
         }
     }
 
@@ -1003,7 +1087,7 @@ internal sealed class DescribedEncoder
                 {
                     if (level.Scale)
                     {
-                        tied *= level.Grid.Values[w.Ranks[level.Index][u * unit / level.Values]];
+                        tied *= level.Grid.NumberOf(w.Ranks[level.Index][u * unit / level.Values]);
                     }
                 }
 
@@ -1138,7 +1222,7 @@ internal sealed class DescribedEncoder
                 for (int c = 0; c < k; c++)
                 {
                     weight += (double)ws[c] * best[c] * best[c];
-                    ranks[p * k + c] = child.Grid.Nearest(best[c]);
+                    ranks[p * k + c] = child.Grid.RankNearest(best[c]);
                 }
 
                 w.LevelTargets[parent.Index][p] = lambda;
@@ -1149,7 +1233,7 @@ internal sealed class DescribedEncoder
         var coarsest = levels[0];
         for (int p = 0; p < coarsest.Chunks; p++)
         {
-            w.Ranks[coarsest.Index][p] = coarsest.Grid.Nearest(w.LevelTargets[coarsest.Index][p]);
+            w.Ranks[coarsest.Index][p] = coarsest.Grid.RankNearest(w.LevelTargets[coarsest.Index][p]);
         }
 
         for (int i = 1; i <= last; i++)
@@ -1162,12 +1246,12 @@ internal sealed class DescribedEncoder
                 double above = 1;
                 for (int l = 0; l < i; l++)
                 {
-                    above *= levels[l].Grid.Values[w.Ranks[levels[l].Index][j * level.Values / levels[l].Values]];
+                    above *= levels[l].Grid.NumberOf(w.Ranks[levels[l].Index][j * level.Values / levels[l].Values]);
                 }
 
                 if (above != 0)
                 {
-                    ranks[j] = level.Grid.Nearest(targets[j] / above);
+                    ranks[j] = level.Grid.RankNearest(targets[j] / above);
                 }
             }
         }
@@ -1322,12 +1406,12 @@ internal sealed class DescribedEncoder
         float scale = 1f, min = 1f;
         foreach (var level in scales)
         {
-            scale *= level.Grid.Floats[w.Ranks[level.Index][u * unit / level.Values]];
+            scale *= level.Grid.FloatOf(w.Ranks[level.Index][u * unit / level.Values]);
         }
 
         foreach (var level in mins)
         {
-            min *= level.Grid.Floats[w.Ranks[level.Index][u * unit / level.Values]];
+            min *= level.Grid.FloatOf(w.Ranks[level.Index][u * unit / level.Values]);
         }
 
         a = scale;
@@ -1364,7 +1448,7 @@ internal sealed class DescribedEncoder
     {
         int per = level.Values / unit, u0 = j * per;
         var ranks = w.Ranks[level.Index];
-        int r0 = ranks[j];
+        long r0 = ranks[j];
         double current = 0, saa = 0, sab = 0;
         double sign = minsAdded ? 1 : -1;
         for (int u = u0; u < u0 + per; u++)
@@ -1373,14 +1457,14 @@ internal sealed class DescribedEncoder
             double scaleOthers = 1, minOthers = 1, scale = 1, min = 1;
             foreach (var other in scales)
             {
-                double value = other.Grid.Values[w.Ranks[other.Index][u * unit / other.Values]];
+                double value = other.Grid.NumberOf(w.Ranks[other.Index][u * unit / other.Values]);
                 scale *= value;
                 scaleOthers *= other == level ? 1 : value;
             }
 
             foreach (var other in mins)
             {
-                double value = other.Grid.Values[w.Ranks[other.Index][u * unit / other.Values]];
+                double value = other.Grid.NumberOf(w.Ranks[other.Index][u * unit / other.Values]);
                 min *= value;
                 minOthers *= other == level ? 1 : value;
             }
@@ -1396,19 +1480,19 @@ internal sealed class DescribedEncoder
             }
         }
 
-        Span<int> candidates = stackalloc int[1 + 2 * Neighbours];
-        int count = Add(candidates, 0, saa > 0 ? level.Grid.Nearest(sab / saa) : r0, r0, level.Grid.Count);
-        if (level.Grid.Count <= SmallGrid)
+        Span<long> candidates = stackalloc long[1 + 2 * Neighbours];
+        int count = Add(candidates, 0, saa > 0 ? level.Grid.RankNearest(sab / saa) : r0, r0, level.Grid);
+        if (level.Grid.Few)
         {
             for (int step = 1; step <= neighbours; step++)
             {
-                count = Add(candidates, count, r0 - step, r0, level.Grid.Count);
-                count = Add(candidates, count, r0 + step, r0, level.Grid.Count);
+                count = Add(candidates, count, r0 - step, r0, level.Grid);
+                count = Add(candidates, count, r0 + step, r0, level.Grid);
             }
         }
 
         double best = current;
-        int bestRank = r0;
+        long bestRank = r0;
         int first = u0 * unit, values = per * unit, slotFirst = first / codeWidth, slotCount = values / codeWidth;
         int factorWidth = factor?.Values ?? 1, factorFirst = factor is null ? 0 : first / factorWidth, factorCount = factor is null ? 0 : values / factorWidth;
         for (int i = 0; i < count; i++)
@@ -1443,10 +1527,10 @@ internal sealed class DescribedEncoder
         }
     }
 
-    // A rank added to a search's candidates: within the grid, not the current one, not listed already.
-    private static int Add(Span<int> list, int count, int rank, int current, int ranks)
+    // A rank added to a search's candidates: within the level's numbers, not the current one, not listed already.
+    private static int Add(Span<long> list, int count, long rank, long current, LevelNumbers numbers)
     {
-        if (rank >= 0 && rank < ranks && rank != current && !list[..count].Contains(rank))
+        if (rank >= numbers.First && rank <= numbers.Last && rank != current && !list[..count].Contains(rank))
         {
             list[count++] = rank;
         }
@@ -1468,7 +1552,7 @@ internal sealed class DescribedEncoder
             var ranks = w.Ranks[level.Index];
             for (int j = 0; j < level.Chunks; j++)
             {
-                level.Fields.Write(group, j, level.Grid.Codes[ranks[j]]);
+                level.Fields.Write(group, j, level.Grid.CodeOf(ranks[j]));
             }
         }
 
@@ -1478,6 +1562,11 @@ internal sealed class DescribedEncoder
             {
                 f.Fields.Write(group, c, (ulong)w.Factors[c]);
             }
+        }
+
+        if (sums.Length > 0)
+        {
+            WriteSums(group);
         }
     }
 
@@ -1640,11 +1729,11 @@ internal sealed class DescribedEncoder
     }
 
     // A level of scales or minimums (a minimum stored in a scale's bits is that scale's level, both Scale and Min).
-    private sealed class Level(BlockScale source, Grid grid, int values, int chunks, Fields fields)
+    private sealed class Level(BlockScale source, LevelNumbers grid, int values, int chunks, Fields fields)
     {
         public BlockScale Source { get; } = source;
 
-        public Grid Grid { get; } = grid;
+        public LevelNumbers Grid { get; } = grid;
 
         public GridQuantizer Quantizer { get; } = new(grid);
 
@@ -1672,12 +1761,181 @@ internal sealed class DescribedEncoder
     }
 
     /// <summary>
+    /// The finite numbers a level of scales or minimums may store, each by its rank (ranks ordered as the numbers are, from
+    /// <see cref="First"/> to <see cref="Last"/>): what the search reads of a level's number type, whatever its width.
+    /// </summary>
+    internal abstract class LevelNumbers
+    {
+        /// <summary>The rank of the smallest number.</summary>
+        public abstract long First { get; }
+
+        /// <summary>The rank of the largest number.</summary>
+        public abstract long Last { get; }
+
+        /// <summary>Whether its numbers are few enough (at most SmallGrid) that a search tries a number's neighbours.</summary>
+        public abstract bool Few { get; }
+
+        /// <summary>Whether a number is below zero.</summary>
+        public abstract bool HasNegative { get; }
+
+        /// <summary>Whether a number is above zero.</summary>
+        public abstract bool HasPositive { get; }
+
+        /// <summary>The extremes a search puts a chunk's extremes at, and the steps beside them (Solve's candidates).</summary>
+        public abstract double Top { get; }
+
+        /// <inheritdoc cref="Top"/>
+        public abstract double Bottom { get; }
+
+        /// <inheritdoc cref="Top"/>
+        public abstract double TopStep { get; }
+
+        /// <inheritdoc cref="Top"/>
+        public abstract double BottomStep { get; }
+
+        /// <summary>The number of rank <paramref name="rank"/>, its bias added.</summary>
+        public abstract double NumberOf(long rank);
+
+        /// <summary>The number of rank <paramref name="rank"/> as float32.</summary>
+        public abstract float FloatOf(long rank);
+
+        /// <summary>The code that stores the number of rank <paramref name="rank"/>.</summary>
+        public abstract ulong CodeOf(long rank);
+
+        /// <summary>The rank of the number nearest <paramref name="x"/> (NaN as 0), a tie to the even code, a zero keeping its sign; past the extremes the extreme.</summary>
+        public abstract long RankNearest(double x);
+
+        /// <summary>Each target (y − c0) · t's nearest number into <paramref name="numbers"/>.</summary>
+        public abstract void Quantize(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers);
+    }
+
+    /// <summary>
+    /// The numbers of an integer or a float of more than 16 bits (up to 64), its bias added, by the type's own arithmetic
+    /// (no table of its codes: a float32 or float64 scale, an integer scale of 32 bits): an integer's rank is its number (an
+    /// unsigned 64-bit one's moved by 2^63, so every rank is a long in the numbers' order); a float's rank its magnitude's
+    /// code, a negative one's −1 less it (−0 at −1 below +0 at 0, as the narrow grid keeps them apart); the nearest number
+    /// by <see cref="WideNumber"/>'s rounding, the rounding the narrow grid's table gives. A search puts a chunk's extremes
+    /// at an integer's extremes, or at ±1 for a float (whose relative step is the same across its normal numbers, so ±1 keeps
+    /// a parent's number at the targets' own magnitude, far from either end of the float's range).
+    /// </summary>
+    internal sealed class WideLevel : LevelNumbers
+    {
+        private readonly NumberType type;
+        private readonly WideNumber rounding;
+        private readonly double bias, largest;
+        private readonly ulong signBit, mask;
+        private readonly bool unsigned64;
+
+        private WideLevel(NumberType type, double bias, WideNumber rounding)
+        {
+            this.type = type;
+            this.bias = bias;
+            this.rounding = rounding;
+            int b = type.Bits;
+            mask = b == 64 ? ulong.MaxValue : (1UL << b) - 1;
+            if (type.Kind == NumberKind.Integer)
+            {
+                unsigned64 = !type.Signed && b == 64;
+                First = type.Signed ? (b == 64 ? long.MinValue : -(1L << (b - 1))) : unsigned64 ? long.MinValue : 0;
+                Last = type.Signed ? (b == 64 ? long.MaxValue : (1L << (b - 1)) - 1) : unsigned64 ? long.MaxValue : (long)mask;
+                Top = NumberOf(Last);
+                Bottom = NumberOf(First);
+                TopStep = BottomStep = 1;
+            }
+            else
+            {
+                signBit = type.Signed ? 1UL << (b - 1) : 0;
+                ulong magnitudes = (type.Signed ? signBit : b == 64 ? 0 : 1UL << b) - 1;
+                ulong exponents = ((1UL << type.Exponent) - 1) << type.Mantissa;
+                long top = (long)(type.Specials switch
+                {
+                    FloatSpecials.Ieee => exponents - 1,
+                    FloatSpecials.AllOnesNaN => magnitudes - 1,
+                    _ => magnitudes,
+                });
+                First = type.Signed ? -1 - top : 0;
+                Last = top;
+                largest = type.Value((ulong)top);
+                Top = 1 + bias;
+                Bottom = type.Signed ? -1 + bias : NumberOf(First);
+                TopStep = BottomStep = Math.ScaleB(1, -type.Mantissa);
+            }
+
+            HasNegative = NumberOf(First) < 0;
+            HasPositive = NumberOf(Last) > 0;
+        }
+
+        /// <summary>The numbers of <paramref name="type"/> plus <paramref name="bias"/>, or null (16 bits or fewer: a grid's; a table or a codebook).</summary>
+        public static WideLevel? Of(NumberType type, double bias) => type.Bits > 16 && type.Width == 1 && WideNumber.Of(type) is { } rounding ? new WideLevel(type, bias, rounding) : null;
+
+        public override long First { get; }
+
+        public override long Last { get; }
+
+        public override bool Few => false;
+
+        public override bool HasNegative { get; }
+
+        public override bool HasPositive { get; }
+
+        public override double Top { get; }
+
+        public override double Bottom { get; }
+
+        public override double TopStep { get; }
+
+        public override double BottomStep { get; }
+
+        public override double NumberOf(long rank)
+        {
+            double value = type.Value(CodeOf(rank));
+            return bias == 0 ? value : value + bias;                        // a −0 kept (−0 + 0 is +0)
+        }
+
+        public override float FloatOf(long rank) => (float)NumberOf(rank);
+
+        public override ulong CodeOf(long rank) => type.Kind == NumberKind.Integer
+            ? (unsigned64 ? (ulong)rank ^ (1UL << 63) : (ulong)rank & mask)
+            : rank < 0 ? signBit | (ulong)(-1 - rank) : (ulong)rank;
+
+        public override long RankNearest(double x)
+        {
+            if (double.IsNaN(x))
+            {
+                x = 0;
+            }
+
+            x = bias == 0 ? x : x - bias;
+            if (type.Kind == NumberKind.Float && Math.Abs(x) >= largest)
+            {
+                return x > 0 ? Last : First;                                 // past the largest: the extreme
+            }
+
+            ulong code = rounding.Round(x);
+            if (type.Kind == NumberKind.Integer)
+            {
+                return unsigned64 ? (long)(code ^ (1UL << 63)) : type.Signed && type.Bits < 64 ? (long)(code << (64 - type.Bits)) >> (64 - type.Bits) : (long)code;
+            }
+
+            return (code & signBit) != 0 ? -1 - (long)(code & ~signBit) : (long)code;
+        }
+
+        public override void Quantize(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers)
+        {
+            for (int i = 0; i < y.Length; i++)
+            {
+                numbers[i] = FloatOf(RankNearest((y[i] - c0) * t));
+            }
+        }
+    }
+
+    /// <summary>
     /// The distinct finite numbers of a number type of up to 16 bits (the codes a filter holds), its bias added, ascending,
     /// each with a code giving it; a signed float's −0 and +0 apart. Nearest rounds to the nearest number, a tie to the even
     /// code (its lowest bit clear: a float's even mantissa, an integer's even number), a zero keeping its sign;
     /// <see cref="Round"/> also rounds a float past its largest as its specials define (an infinity, a NaN, or the largest).
     /// </summary>
-    internal sealed class Grid
+    internal sealed class Grid : LevelNumbers
     {
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Bias), Grid?> Made = new();
 
@@ -1755,9 +2013,33 @@ internal sealed class DescribedEncoder
 
         public int Count => Values.Length;
 
-        public bool HasNegative => Values[0] < 0;
+        public override bool HasNegative => Values[0] < 0;
 
-        public bool HasPositive => Values[^1] > 0;
+        public override bool HasPositive => Values[^1] > 0;
+
+        public override long First => 0;
+
+        public override long Last => Count - 1;
+
+        public override bool Few => Count <= SmallGrid;
+
+        public override double Top => Values[^1];
+
+        public override double Bottom => Values[0];
+
+        public override double TopStep => Count > 1 ? Values[^1] - Values[^2] : 1;
+
+        public override double BottomStep => Count > 1 ? Values[1] - Values[0] : 1;
+
+        public override double NumberOf(long rank) => Values[rank];
+
+        public override float FloatOf(long rank) => Floats[rank];
+
+        public override ulong CodeOf(long rank) => Codes[rank];
+
+        public override long RankNearest(double x) => Nearest(x);
+
+        public override void Quantize(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers) => Quantize(y, t, c0, numbers, []);
 
         /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> (made once), or null (not one number of up to 16 bits, or no finite number).</summary>
         public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid ? Made.GetOrAdd((type, bias), static key => Make(key.Type, key.Bias, null)) : null;
@@ -2208,19 +2490,18 @@ internal sealed class DescribedEncoder
     // A level's numbers (the factoring's children).
     private sealed class GridQuantizer : Quantizer
     {
-        private readonly Grid grid;
+        private readonly LevelNumbers grid;
 
-        public GridQuantizer(Grid grid)
+        public GridQuantizer(LevelNumbers grid)
         {
             this.grid = grid;
-            var v = grid.Values;
-            Top = v[^1];
-            Bottom = v[0];
-            TopStep = v.Length > 1 ? v[^1] - v[^2] : 1;
-            BottomStep = v.Length > 1 ? v[1] - v[0] : 1;
+            Top = grid.Top;
+            Bottom = grid.Bottom;
+            TopStep = grid.TopStep;
+            BottomStep = grid.BottomStep;
         }
 
-        public override void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g) => grid.Quantize(y, t, c0, g, []);
+        public override void Run(ReadOnlySpan<float> y, float t, float c0, Span<float> g) => grid.Quantize(y, t, c0, g);
     }
 
     // A unit's codes (a thread's own: it keeps the codes it chose): a grid's nearest numbers, or a codebook's nearest entries
@@ -2492,7 +2773,7 @@ internal sealed class DescribedEncoder
             Error = new double[e.units];
             TryError = new double[e.units];
             BestError = new double[e.units];
-            Ranks = [.. e.all.Select(l => new int[l.Chunks])];
+            Ranks = [.. e.all.Select(l => new long[l.Chunks])];
             LevelTargets = [.. e.all.Select(l => new float[l.Chunks])];
             LevelWeights = [.. e.all.Select(l => new float[l.Chunks])];
             Quantizer = new CodeQuantizer(e);
@@ -2547,7 +2828,7 @@ internal sealed class DescribedEncoder
 
         public double[] BestError { get; }
 
-        public int[][] Ranks { get; }
+        public long[][] Ranks { get; }
 
         public float[][] LevelTargets { get; }
 
