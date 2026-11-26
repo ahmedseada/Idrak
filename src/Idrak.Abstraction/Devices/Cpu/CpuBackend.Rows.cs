@@ -606,10 +606,14 @@ internal sealed unsafe partial class CpuBackend
             return true;
         }
 
-        fixed (float* pq = V(q), pk = V(k), pv = V(v), pgq = gainQ is null ? null : V(gainQ), pgk = gainK is null ? null : V(gainK),
+        fixed (float* pq = V(q), pk = V(k), pv = V(v), wgq = gainQ is null ? null : D(gainQ), wgk = gainK is null ? null : D(gainK),
             pc = half > 0 ? V(cos!) : null, ps = half > 0 ? V(sin!) : null, ppos = half > 0 ? D(positions!) : null, pyq = V(yq), pyk = V(yk), pyv = V(yv),
             pat = position is null ? null : D(position))
         {
+            // The gains (a vector every head reads) read once for the call through their types: float32's own words, or a
+            // gain kept as its checkpoint stores it read into the thread's buffer.
+            float* pgq = gainQ is null ? null : new TypedInput(gainQ, wgq, 0, cols, "NormRopeHeads").Range(0, cols);
+            float* pgk = gainK is null ? null : new TypedInput(gainK, wgk, 1, cols, "NormRopeHeads").Range(0, cols);
             long start = position is null ? 0 : IndicesOf(position, pat)[0];
             if (start < 0 || start + steps > capacity)
             {

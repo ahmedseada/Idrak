@@ -72,7 +72,8 @@ public sealed partial class RMSNorm : Module, INamedWeights
             return input.RmsNormAffine(Gain, Epsilon, Offset);                // one kernel when nothing needs gradients
         }
 
-        var scale = Offset == 0f ? Gain : Gain + Offset;
+        // A gain kept as its checkpoint stores it (a type of its own, never trained) is read through its type into float32.
+        var scale = Offset == 0f && !Gain.Storage.Typed ? Gain : Gain + Offset;
         return input.RmsNormalize(Epsilon).GroupAffine(scale, null, Features, 1);
     }
 

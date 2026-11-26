@@ -58,6 +58,11 @@ public static class DecoderBuilder
                 return Idrak.Abstraction.Tensor.Persistent(values, shape, device, requiresGrad: true);
             }
 
+            // A vector the layers read as it is (a norm's gain or shift, a bias): kept as its checkpoint stores it (its stored
+            // type, never widened, never written as the weights' type), else its float32 values.
+            Tensor KeptVector(string name, int features, Func<float[]> fallback) =>
+                weights?.ReadAsStored(name, [features], device) ?? Tensor(name, [features], fallback);
+
             float[] Uniform(int count, float bound) => [.. Enumerable.Range(0, count).Select(_ => (random.NextSingle() * 2f - 1f) * bound)];
 
             float[] Normal(int count, float std)
@@ -83,7 +88,7 @@ public static class DecoderBuilder
                     : weights?.Read($"{name}.weight", shape) ?? (weights is null
                         ? Initial(inputs * outputs, MathF.Sqrt(6f / (inputs + outputs)))
                         : throw new InvalidDataException($"The weights have no '{name}.weight' [{inputs}, {outputs}]."));
-                var b = bias ? Tensor($"{name}.bias", [outputs], () => new float[outputs]) : null;
+                var b = bias ? KeptVector($"{name}.bias", outputs, () => new float[outputs]) : null;
                 // A weight its checkpoint stores in a type of its own: kept as stored, [out, in], never widened.
                 if (tiedTable is null && weights?.ReadStored($"{name}.weight", [outputs, inputs], device) is { } stored)
                 {
@@ -95,10 +100,10 @@ public static class DecoderBuilder
 
             Module Normalization(string name, int features)
             {
-                var gain = Tensor($"{name}.weight", [features], () => Enumerable.Repeat(spec.Norm == DecoderNorm.Rms ? 1f - spec.NormOffset : 1f, features).ToArray());
+                var gain = KeptVector($"{name}.weight", features, () => Enumerable.Repeat(spec.Norm == DecoderNorm.Rms ? 1f - spec.NormOffset : 1f, features).ToArray());
                 return spec.Norm == DecoderNorm.Rms
                     ? RMSNorm.FromWeights(gain, spec.NormEpsilon, spec.NormOffset)
-                    : LayerNorm.FromWeights(gain, Tensor($"{name}.bias", [features], () => new float[features]), spec.NormEpsilon);
+                    : LayerNorm.FromWeights(gain, KeptVector($"{name}.bias", features, () => new float[features]), spec.NormEpsilon);
             }
 
             // The table's float values: drawn now for a random build (so the draws keep their order), read when first needed
@@ -164,8 +169,8 @@ public static class DecoderBuilder
                     Projection($"{p}.attn.k", spec.Dim, spec.KvHeads * spec.HeadDim, spec.QkvBias),
                     Projection($"{p}.attn.v", spec.Dim, spec.KvHeads * spec.HeadDim, spec.QkvBias),
                     Projection($"{p}.attn.o", spec.Heads * spec.HeadDim, spec.Dim, spec.OutputBias),
-                    spec.QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.q_norm.weight", [spec.HeadDim], () => Enumerable.Repeat(1f - spec.NormOffset, spec.HeadDim).ToArray()), spec.NormEpsilon, spec.NormOffset) : null,
-                    spec.QkNorm ? RMSNorm.FromWeights(Tensor($"{p}.attn.k_norm.weight", [spec.HeadDim], () => Enumerable.Repeat(1f - spec.NormOffset, spec.HeadDim).ToArray()), spec.NormEpsilon, spec.NormOffset) : null,
+                    spec.QkNorm ? RMSNorm.FromWeights(KeptVector($"{p}.attn.q_norm.weight", spec.HeadDim, () => Enumerable.Repeat(1f - spec.NormOffset, spec.HeadDim).ToArray()), spec.NormEpsilon, spec.NormOffset) : null,
+                    spec.QkNorm ? RMSNorm.FromWeights(KeptVector($"{p}.attn.k_norm.weight", spec.HeadDim, () => Enumerable.Repeat(1f - spec.NormOffset, spec.HeadDim).ToArray()), spec.NormEpsilon, spec.NormOffset) : null,
                     spec.Heads, spec.KvHeads, spec.HeadDim, spec.IsWindowed(i) ? spec.SlidingWindowRope ?? spec.Rope : spec.Rope, maxPositions)
                 {
                     SlidingWindow = spec.IsWindowed(i) ? spec.SlidingWindow : null,
@@ -270,7 +275,7 @@ public static class DecoderBuilder
             created.Add(norm);
             // A tied head reads the embedding table in place.
             head ??= spec.TieEmbeddings
-                ? Linear.Tied(embedding, spec.HeadBias ? Tensor("head.bias", [spec.Vocabulary], () => new float[spec.Vocabulary]) : null)
+                ? Linear.Tied(embedding, spec.HeadBias ? KeptVector("head.bias", spec.Vocabulary, () => new float[spec.Vocabulary]) : null)
                 : Projection("head", spec.Dim, spec.Vocabulary, spec.HeadBias);
             head.Name = "head";
             head.OutputSoftcap = spec.LogitSoftcap;

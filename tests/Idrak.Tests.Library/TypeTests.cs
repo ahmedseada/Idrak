@@ -29,6 +29,7 @@ internal abstract partial class Tests
         ("types: a typed tensor holds its type's bytes and reads back through its type", TypesTypedTensors),
         ("types: safetensors tensors read as their dtypes' types, their bytes as stored", TypesSafetensors),
         ("types: a Qwen3 checkpoint in bfloat16 loads its projections and table as stored, or written as any type", TypesLoadTyped),
+        ("types: norm gains and biases load as their checkpoint stores them (bfloat16 kept, never written as the weights' type), the logits and greedy text a float32 twin's", TypesStoredVectors),
     ];
 
     // A type given by a description (the aliens below, and the type defined outside the library): the interface's two
@@ -751,7 +752,8 @@ internal abstract partial class Tests
     }
 
     // A safetensors file of float32 tensors written again with each tensor stored as `type` (safetensors' dtype `dtype`).
-    private static void RewriteSafetensors(string file, string dtype, IElementType type)
+    // sFloat32: the tensors (by name and shape) stored as float32 of the values 	ype gives them (its rounding, exactly).
+    private static void RewriteSafetensors(string file, string dtype, IElementType type, Func<string, int, bool>? asFloat32 = null)
     {
         var bytes = File.ReadAllBytes(file);
         long length = BitConverter.ToInt64(bytes, 0);
@@ -773,8 +775,16 @@ internal abstract partial class Tests
             Buffer.BlockCopy(bytes, (int)(8 + length + begin), values, 0, (int)(end - begin));
             var stored = new byte[type.ByteCount(values.Length)];
             type.Write(values, stored);
+            bool wide = asFloat32?.Invoke(name, node["shape"]!.AsArray().Count) == true;
+            if (wide)
+            {
+                type.Read(stored, values);                                       // the type's values, kept as float32
+                stored = new byte[4 * values.Length];
+                Buffer.BlockCopy(values, 0, stored, 0, stored.Length);
+            }
+
             data.Add(stored);
-            rewritten[name] = new JsonObject { ["dtype"] = dtype, ["shape"] = node["shape"]!.DeepClone(), ["data_offsets"] = new JsonArray(offset, offset + stored.Length) };
+            rewritten[name] = new JsonObject { ["dtype"] = wide ? "F32" : dtype, ["shape"] = node["shape"]!.DeepClone(), ["data_offsets"] = new JsonArray(offset, offset + stored.Length) };
             offset += stored.Length;
         }
 
@@ -907,6 +917,69 @@ internal abstract partial class Tests
         }
     }
 
+    // Norm gains and biases kept as their checkpoint stores them (never widened, never written as the weights' type): a
+    // bfloat16 Qwen3 checkpoint (query and key norms) and a Qwen2 one (query, key and value biases), each against its twin
+    // whose vectors are float32 of the same values: the same logits bit for bit and the same greedy text.
+    private static void TypesStoredVectors(Device device)
+    {
+        CpuOnly(device);
+        var families = Idrak.Text.Plugins.BuiltInFamilies.All;
+        foreach (var (spec, architecture) in new[] { (TinyChatSpec(), "Qwen3ForCausalLM"), (TinyChatSpec() with { QkNorm = false, QkvBias = true }, "Qwen2ForCausalLM") })
+        {
+            string typed = WriteChatModel(spec), twin = TempFolder();
+            try
+            {
+                string config = Path.Combine(typed, "config.json");
+                var json = JsonNode.Parse(File.ReadAllText(config))!.AsObject();
+                json["architectures"] = new JsonArray(architecture);
+                File.WriteAllText(config, json.ToJsonString());
+                foreach (string file in Directory.GetFiles(typed))
+                {
+                    File.Copy(file, Path.Combine(twin, Path.GetFileName(file)), overwrite: true);
+                }
+
+                RewriteSafetensors(Path.Combine(typed, "model.safetensors"), "BF16", BF16.Type);
+                RewriteSafetensors(Path.Combine(twin, "model.safetensors"), "BF16", BF16.Type, asFloat32: (_, rank) => rank == 1);
+                using var model = PretrainedModel.Load(typed, new PretrainedOptions { Device = device, Families = families });
+                using var wide = PretrainedModel.Load(twin, new PretrainedOptions { Device = device, Families = families });
+                using var written = PretrainedModel.Load(typed, new PretrainedOptions { Device = device, Families = families, Weights = Idrak.Types.Q8_0.Type });
+                static List<Tensor> Vectors(Module network) => [.. network.Descendants().Distinct().SelectMany(m => m switch
+                {
+                    RMSNorm norm => [norm.Gain],
+                    Linear { Bias: { } bias } => [bias],
+                    _ => Array.Empty<Tensor>(),
+                })];
+                var vectors = Vectors(model.Network);
+                int expected = 2 * spec.Layers + 1 + (spec.QkNorm ? 2 * spec.Layers : 0) + (spec.QkvBias ? 3 * spec.Layers : 0);
+                Check(vectors.Count == expected && vectors.All(v => v.Type == BF16.Type && v.Storage.Typed),
+                    $"{architecture}: {vectors.Count} of {expected} norm gains and biases kept as stored, bfloat16: {string.Join(", ", vectors.Select(v => v.Type.Name).Distinct())}");
+                Check(Vectors(written.Network) is { Count: > 0 } kept && kept.All(v => v.Type == BF16.Type), $"{architecture}: kept bfloat16 when the weights are written as q8_0");
+                Check(Vectors(wide.Network).All(v => !v.Storage.Typed), $"{architecture}: the twin's float32 vectors read as float32");
+                using (var reader = SafeTensorsReader.Open(Path.Combine(typed, "model.safetensors")))
+                {
+                    var final = model.Network.Descendants().OfType<RMSNorm>().Single(n => n.Name == "norm");
+                    Check(final.Gain.ToBytes().AsSpan().SequenceEqual(reader.ReadStored("model.norm.weight")), $"{architecture}: the final norm's bytes are the file's");
+                }
+
+                int[] ids = [1, 5, 9, 200, 7, 33];
+                using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
+                var logits = model.Network.Predict(input).ToArray();
+                var reference = wide.Network.Predict(input).ToArray();
+                Check(logits.Select(BitConverter.SingleToInt32Bits).SequenceEqual(reference.Select(BitConverter.SingleToInt32Bits)),
+                    $"{architecture}: the logits are the float32 twin's, bit for bit");
+                var options = new Idrak.Abstraction.Generation.GenerationOptions { TopK = 1, NumPredict = 12, Seed = 1 };
+                string text = new Idrak.Generation.TextGenerator(model.Network, model.Tokenizer!, 64).Generate("hi", options).Text;
+                string twinText = new Idrak.Generation.TextGenerator(wide.Network, wide.Tokenizer!, 64).Generate("hi", options).Text;
+                Check(text == twinText, $"{architecture}: the same greedy text as the twin's ('{text}', '{twinText}')");
+                Console.WriteLine($"  {architecture}: {vectors.Count} norm gains and biases kept bfloat16 as stored (also with the weights written as q8_0); the logits and greedy text the float32 twin's");
+            }
+            finally
+            {
+                Directory.Delete(typed, recursive: true);
+                Directory.Delete(twin, recursive: true);
+            }
+        }
+    }
     // Every linear layer of a network, depth first.
     private static IEnumerable<Linear> Linears(Module module) =>
         module is Linear linear ? [linear] : module.Children().SelectMany(Linears);

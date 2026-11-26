@@ -25,6 +25,17 @@ public interface IWeightSource
     Tensor? ReadStored(string name, IReadOnlyList<int> stored, Device device) => null;
 
     /// <summary>
+    /// A vector the layers read as it is (a norm's gain or shift, a bias) as its source stores it: a tensor of its stored
+    /// type on <paramref name="device"/> (its bytes as they lie, never widened, and never written as the type the weights
+    /// are written as), where that type is not the device's own float32; null otherwise (the default: the caller reads its
+    /// float32 values with <see cref="Read"/>).
+    /// </summary>
+    /// <param name="name">The tensor's name.</param>
+    /// <param name="shape">Its shape.</param>
+    /// <param name="device">Where the tensor goes.</param>
+    Tensor? ReadAsStored(string name, IReadOnlyList<int> shape, Device device) => null;
+
+    /// <summary>
     /// Reads rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the matrix
     /// <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it) into
     /// <paramref name="destination"/>: the values <see cref="Read"/> gives for those rows. So a large matrix (an embedding
