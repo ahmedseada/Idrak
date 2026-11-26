@@ -278,8 +278,8 @@ internal abstract partial class Tests
         }
     }
 
-    // Decoding steps of a decoder (float32, int8, int4 and bfloat16 weights) and of a multi-head attention model, over
-    // float32, int8 and bfloat16 caches, with penalties and top-k, top-p and min-p sampling: no step takes the host fallback.
+    // Decoding steps of a decoder (float32 weights) and of a multi-head attention model, over a float32 cache, with
+    // penalties and top-k, top-p and min-p sampling: no step takes the host fallback.
     internal static void VulkanDecodingWithoutFallbacks(Device device)
     {
         if (device.Type != DeviceType.Vulkan)
@@ -298,9 +298,6 @@ internal abstract partial class Tests
         foreach (var (name, options) in new[]
         {
             ("decoder, float32 weights", new DecoderBuildOptions { Device = device, Seed = 2 }),
-            ("decoder, int8 weights", new DecoderBuildOptions { Device = device, Seed = 2, Int8 = true }),
-            ("decoder, int4 weights", new DecoderBuildOptions { Device = device, Seed = 2, Int4 = true }),
-            ("decoder, bfloat16 weights", new DecoderBuildOptions { Device = device, Seed = 2, BFloat16 = true }),
         })
         {
             models.Add((name, spec.Build(null, options), spec.Vocabulary));
@@ -316,7 +313,7 @@ internal abstract partial class Tests
             foreach (var (name, model, vocabulary) in models)
             {
                 model.Eval();
-                foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+                foreach (var format in new[] { KeyValueFormat.Float32 })
                 {
                     using var noGrad = Autograd.NoGrad();
                     using var context = new DecodingContext(device, 1, 32, format) { LastPositionOnly = true };

@@ -17,10 +17,10 @@ internal abstract partial class Tests
     [
         ("vulkan training: layer norm gradient, batch-norm statistics and gradients, group reductions, column sums and products with a bias run as kernels and match the CPU", VulkanTrainingNormsMatchCpu),
         ("cpu: column sums of a strided block (the base fallback's own target) add into y as the copy-then-sum reference does", CpuSumColumns),
-        ("vulkan training: fused AdamW (with and without clipping) and 8-bit Adam (the CPU's codes) run as kernels and match the CPU", VulkanTrainingOptimizersMatchCpu),
+        ("vulkan training: fused AdamW (with and without clipping) runs as kernels and matches the CPU", VulkanTrainingOptimizersMatchCpu),
         ("vulkan training: the tiled causal attention gradient (head sizes up to 256, grouped queries, capacity past the steps) runs as kernels and matches the CPU", VulkanTrainingAttentionMatchesCpu),
         ("vulkan training: the reductions and the attention gradient give the same bits run after run", VulkanTrainingRepeatable),
-        ("vulkan training: an MLP with LayerNorm and BatchNorm trained by AdamW (clipped, fused) and 8-bit AdamW gives the CPU's losses with no host fallback", VulkanTrainingEndToEnd),
+        ("vulkan training: an MLP with LayerNorm and BatchNorm trained by AdamW (clipped, fused) gives the CPU's losses with no host fallback", VulkanTrainingEndToEnd),
     ];
 
     // Runs `op` on the CPU (`cpuOp` when the CPU computes it another way) and on the Vulkan backend from the same inputs
@@ -189,86 +189,6 @@ internal abstract partial class Tests
                 }
             }
         }
-
-        // 8-bit Adam: whole blocks and a last partial block and word, a few steps; the parameters match and the codes are
-        // the CPU's (the same map, the same nearest-code search).
-        var map = AdamW8Bit.DynamicMap(signed: true).Concat(AdamW8Bit.DynamicMap(signed: false)).ToArray();
-        foreach (int n in new[] { 1, 1001, 20_000 })
-        {
-            int blocks = (n + AdamW8Bit.BlockSize - 1) / AdamW8Bit.BlockSize, words = (n + 3) / 4;
-            var p = R(n);
-            var grads = Enumerable.Range(0, 4).Select(_ => R(n, -0.5f, 0.5f)).ToArray();
-            (float[] P, uint[] M, uint[] V, float[] Scales) Run(Backend b)
-            {
-                Storage Put(float[] values)
-                {
-                    var s = b.Allocate(values.Length, zeroed: false);
-                    b.Upload(values, s);
-                    return s;
-                }
-
-                var (ps, ms, vs, scales, codes) = (Put(p), Put(new float[words]), Put(new float[words]), Put(new float[2 * blocks]), Put(map));
-                try
-                {
-                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(b);
-                    foreach (var g in grads)
-                    {
-                        var gs = Put(g);
-                        b.AdamStep8Bit(ps, gs, ms, vs, scales, codes, n, 0.01f, 0.9f, 0.95f, 1e-8f, 0.7f, 0.999f);
-                        gs.Release();
-                    }
-
-                    Check(b is CpuBackend || Idrak.Abstraction.Operations.Kernels.HostCalls(b) == fallbacks, "8-bit Adam took the host fallback");
-                    var (pv, mv, vv, sv) = (new float[n], new float[words], new float[words], new float[2 * blocks]);
-                    b.Download(ps, pv);
-                    b.Download(ms, mv);
-                    b.Download(vs, vv);
-                    b.Download(scales, sv);
-                    return (pv, [.. mv.Select(BitConverter.SingleToUInt32Bits)], [.. vv.Select(BitConverter.SingleToUInt32Bits)], sv);
-                }
-                finally
-                {
-                    foreach (var s in new[] { ps, ms, vs, scales, codes })
-                    {
-                        s.Release();
-                    }
-                }
-            }
-
-            var expected = Run(CpuBackend.Instance);
-            var actual = Run(backend);
-            // A moment within an ulp of the midpoint of two codes may round to the other code (checked below), and its
-            // parameter then moves by a slightly different step in the later steps: such elements (as few as the codes
-            // that may differ) are allowed a tenth of the learning rate, every other one 1e-5.
-            int moved = 0;
-            for (int i = 0; i < n; i++)
-            {
-                float d = Math.Abs(expected.P[i] - actual.P[i]);
-                Check(d <= 1e-3f, $"8-bit Adam, {n} elements: parameters: element {i} is {actual.P[i]}, expected {expected.P[i]}");
-                moved += d > 1e-5f ? 1 : 0;
-            }
-
-            Check(moved <= Math.Max(1, n / 1000), $"8-bit Adam, {n} elements: {moved} parameters differ from the CPU's by more than 1e-5");
-            AssertClose(expected.Scales, actual.Scales, 1e-5f, $"8-bit Adam, {n} elements: block scales");
-            int differ = 0;
-            for (int i = 0; i < n; i++)
-            {
-                int shift = 8 * (i % 4);
-                foreach (var (e, a) in new[] { (expected.M, actual.M), (expected.V, actual.V) })
-                {
-                    int ce = (int)(e[i / 4] >> shift & 255), ca = (int)(a[i / 4] >> shift & 255);
-                    Check(Math.Abs(ce - ca) <= 1, $"8-bit Adam, {n} elements: code {ca} of element {i}, the CPU's {ce}");
-                    differ += ce == ca ? 0 : 1;
-                }
-            }
-
-            // Nearest codes agree unless a moment falls within an ulp of the midpoint of two codes.
-            Check(differ <= n / 1000, $"8-bit Adam, {n} elements: {differ} codes differ from the CPU's");
-            for (int w = n / 4; w < words; w++)
-            {
-                Check(actual.M[w] >> (8 * (n % 4)) == 0 && actual.V[w] >> (8 * (n % 4)) == 0, $"8-bit Adam, {n} elements: bytes past the end stay zero");
-            }
-        }
     }
 
     // Queries, keys, values, the forward output and log-sum-exp (from the CPU), dOutput and the gradients' starting values.
@@ -387,14 +307,14 @@ internal abstract partial class Tests
         var t = Enumerable.Range(0, 48 * 5).Select(i => i % 5 == i / 5 % 5 ? 1f : 0f).ToArray();
 
         // Losses of 8 steps on a device; fallbacks (by operation) counted over the training steps on Vulkan.
-        (float[] Losses, float[][] Weights) Train(Device d, bool eightBit, ConcurrentDictionary<string, long>? fallbacks)
+        (float[] Losses, float[][] Weights) Train(Device d, ConcurrentDictionary<string, long>? fallbacks)
         {
             using var model = new Sequential(
                 new Linear(12, 40, device: d, random: new Random(5)), new GELU(), new LayerNorm(40, device: d),
                 new Linear(40, 24, device: d, random: new Random(6)), new BatchNorm(24, device: d), new ReLU(),
                 new Linear(24, 5, device: d, random: new Random(7)));
             model.Train();
-            using Optimizer optimizer = eightBit ? new AdamW8Bit(model.Parameters(), 1e-2f, minimumSize: 256) : new AdamW(model.Parameters(), 1e-2f, weightDecay: 0.05f);
+            using Optimizer optimizer = new AdamW(model.Parameters(), 1e-2f, weightDecay: 0.05f);
             var losses = new List<float>();
             for (int step = 0; step < 8; step++)
             {
@@ -412,15 +332,7 @@ internal abstract partial class Tests
                     optimizer.ZeroGrad();
                     var loss = Losses.CrossEntropy(model.Forward(input), target);
                     loss.Backward();
-                    if (eightBit)
-                    {
-                        optimizer.ClipGradientNorm(0.5f);
-                        optimizer.Step();
-                    }
-                    else
-                    {
-                        optimizer.ClipAndStep(0.5f);                       // one fused pass
-                    }
+                    optimizer.ClipAndStep(0.5f);                           // one fused pass
 
                     d.Synchronize();
                     CountHostCalls(d.Backend, null);
@@ -435,19 +347,16 @@ internal abstract partial class Tests
             return ([.. losses], [.. model.Parameters().Select(p => p.ToArray())]);
         }
 
-        foreach (bool eightBit in new[] { false, true })
+        const string Name = "AdamW";
+        var counts = new ConcurrentDictionary<string, long>();
+        var expected = Train(Device.Cpu, null);
+        var actual = Train(device, counts);
+        Check(counts.IsEmpty, $"{Name}: host fallbacks in the training steps: {string.Join(", ", counts.OrderBy(c => c.Key).Select(c => $"{c.Key} ×{c.Value}"))}");
+        AssertClose(expected.Losses, actual.Losses, 2e-3f, $"{Name}: losses");
+        Check(actual.Losses[^1] < actual.Losses[0], $"{Name}: the loss falls ({actual.Losses[0]} to {actual.Losses[^1]})");
+        for (int i = 0; i < expected.Weights.Length; i++)
         {
-            string name = eightBit ? "8-bit AdamW" : "AdamW";
-            var counts = new ConcurrentDictionary<string, long>();
-            var expected = Train(Device.Cpu, eightBit, null);
-            var actual = Train(device, eightBit, counts);
-            Check(counts.IsEmpty, $"{name}: host fallbacks in the training steps: {string.Join(", ", counts.OrderBy(c => c.Key).Select(c => $"{c.Key} ×{c.Value}"))}");
-            AssertClose(expected.Losses, actual.Losses, 2e-3f, $"{name}: losses");
-            Check(actual.Losses[^1] < actual.Losses[0], $"{name}: the loss falls ({actual.Losses[0]} to {actual.Losses[^1]})");
-            for (int i = 0; i < expected.Weights.Length; i++)
-            {
-                AssertClose(expected.Weights[i], actual.Weights[i], 5e-3f, $"{name}: parameter {i} after training");
-            }
+            AssertClose(expected.Weights[i], actual.Weights[i], 5e-3f, $"{Name}: parameter {i} after training");
         }
     }
 

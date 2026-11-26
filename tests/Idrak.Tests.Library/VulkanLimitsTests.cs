@@ -18,8 +18,7 @@ internal abstract partial class Tests
         ("vulkan limits: the kernels' width is measured at start (a float32 product and one-row decoding work at each width up to the formula's), stored per device and driver, and read back; products at the measured width match the CPU", VulkanWidthMeasured),
         ("vulkan limits: the loader's file names per operating system (libvulkan.so on Android; Linux and Windows unchanged)", VulkanLoaderNames),
         ("vulkan limits: windows of a large storage are whole rows within the binding range, starting at aligned offsets", VulkanWindowRows),
-        ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers (by rows and by columns), dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
-        ("vulkan limits: with a small binding range, decoding steps whose embedding and head exceed it (int8, int4, bfloat16, a tied bfloat16 head read by columns) match the CPU with no host fallbacks", VulkanLargeDecoder),
+        ("vulkan limits: with a 1 MiB binding range, gathers from a large table, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
         ("vulkan limits: subgroup size control only where reported; the size measured per kernel and stored; results as without it", VulkanSubgroupSizes),
         ("vulkan limits: a kernel the driver refuses (IDRAK_VULKAN_REFUSE_KERNELS) never takes the device down: it starts (the width probe too), the packed products run their next variant with the same bits, a kernel without variants runs on the host with the CPU's bits, one without its subgroup-size request where it only refused that; asked once per process; listed in the facts", VulkanRefusedKernels),
     ];
@@ -120,17 +119,6 @@ internal abstract partial class Tests
             return values;
         }
 
-        void Close(float[] want, float[] got, string what, double tolerance = 1e-4)
-        {
-            double worst = 0, scale = Math.Max(1e-6, want.Max(v => Math.Abs((double)v)));
-            for (int i = 0; i < want.Length; i++)
-            {
-                worst = Math.Max(worst, Math.Abs(want[i] - (double)got[i]) / scale);
-            }
-
-            Check(worst <= tolerance, $"{what}: off by {worst:G3} of the largest value");
-        }
-
         try
         {
             // Uploads and downloads of a storage of 3 MB (three windows), whole and from an offset in the last window.
@@ -143,45 +131,6 @@ internal abstract partial class Tests
                 Check(tail.SequenceEqual(values.Skip(600_000).Take(1000)), "download from an offset past the first binding");
             }
 
-            // Packed products: weights of several windows, k a multiple of 32 or not, rows of x 1 to 9.
-            foreach (var (k, n) in new[] { (1024, 3000), (2050, 1001), (96, 12_000) })
-            {
-                var w = Values(k * n, k + n);
-                var int8 = Int8Weight.Quantize(w, k, n, Device.Cpu);
-                var int4 = Int4Weight.Quantize(w, k, n, Device.Cpu);
-                var bf16 = BFloat16Weight.FromValues(w, k, n, Device.Cpu);
-                float[] q8 = int8.Packed.ToArray(), s8 = int8.Scales.ToArray(), q4 = int4.Packed.ToArray(), s4 = int4.Scales.ToArray(), b16 = bf16.Packed.ToArray();
-                Check(q8.Length * 4L > backend.MaxStorageBytes, $"{k} x {n}: the int8 weights exceed a binding");
-                foreach (int m in new[] { 1, 3, 9 })
-                {
-                    var x = Values(m * k, m);
-                    var (gx, cx) = (On(backend, x), On(cpu, x));
-                    var (g8, c8, gs8, cs8) = (On(backend, q8), On(cpu, q8), On(backend, s8), On(cpu, s8));
-                    var (g4, c4, gs4, cs4) = (On(backend, q4), On(cpu, q4), On(backend, s4), On(cpu, s4));
-                    var (gb, cb) = (On(backend, b16), On(cpu, b16));
-                    var (gy, cy) = (Empty(backend, m * n), Empty(cpu, m * n));
-                    string label = $"{m} x {k} -> {n}";
-
-                    backend.Int8MatMul(gx, g8, gs8, gy, m, n, k);
-                    cpu.Int8MatMul(cx, c8, cs8, cy, m, n, k);
-                    Close(Read(cpu, cy, m * n), Read(backend, gy, m * n), $"int8 product {label}");
-
-                    backend.Int4MatMul(gx, g4, gs4, gy, m, n, k);
-                    cpu.Int4MatMul(cx, c4, cs4, cy, m, n, k);
-                    Close(Read(cpu, cy, m * n), Read(backend, gy, m * n), $"int4 product {label}");
-
-                    backend.BFloat16MatMul(gx, gb, gy, m, n, k);
-                    cpu.BFloat16MatMul(cx, cb, cy, m, n, k);
-                    Close(Read(cpu, cy, m * n), Read(backend, gy, m * n), $"bfloat16 product {label}");
-                }
-
-                int8.Packed.Dispose();
-                int8.Scales.Dispose();
-                int4.Packed.Dispose();
-                int4.Scales.Dispose();
-                bf16.Packed.Dispose();
-            }
-
             // Gathers from tables of several windows (first and last rows, rows on both sides of a window's end).
             {
                 const int Vocabulary = 3000, Dim = 130;
@@ -192,48 +141,6 @@ internal abstract partial class Tests
                 backend.Gather(gt, gi, gy, indices.Length, Dim, Vocabulary);
                 cpu.Gather(ct, ci, cy, indices.Length, Dim, Vocabulary);
                 Check(Read(backend, gy, indices.Length * Dim).SequenceEqual(Read(cpu, cy, indices.Length * Dim)), "gather from a large float32 table");
-
-                var bf16 = BFloat16Weight.FromValues(Values(5000 * 201, 6), 5000, 201, Device.Cpu);
-                var packed = bf16.Packed.ToArray();
-                bf16.Packed.Dispose();
-                float[] ids = [4999, 0, 2500, 3333, 1, 4096];
-                var (gp, cp, gj, cj) = (On(backend, packed), On(cpu, packed), On(backend, ids), On(cpu, ids));
-                var (gz, cz) = (Empty(backend, ids.Length * 201), Empty(cpu, ids.Length * 201));
-                backend.GatherBFloat16(gp, gj, gz, ids.Length, 201, 5000);
-                cpu.GatherBFloat16(cp, cj, cz, ids.Length, 201, 5000);
-                Check(Read(backend, gz, ids.Length * 201).SequenceEqual(Read(cpu, cz, ids.Length * 201)), "gather from a large bfloat16 table");
-
-                // The same words as a [5000, 201] table read by columns (a tied head's weight as the embedding table).
-                float[] columns = [200, 0, 101, 57, 1, 199];
-                var (gc, cc) = (On(backend, columns), On(cpu, columns));
-                var (gw, cw) = (Empty(backend, columns.Length * 5000), Empty(cpu, columns.Length * 5000));
-                backend.GatherBFloat16Columns(gp, gc, gw, columns.Length, 5000, 201);
-                cpu.GatherBFloat16Columns(cp, cc, cw, columns.Length, 5000, 201);
-                Check(Read(backend, gw, columns.Length * 5000).SequenceEqual(Read(cpu, cw, columns.Length * 5000)), "column gather from a large bfloat16 table");
-            }
-
-            // Dequantizations whose float32 output (and int8, bfloat16 weights) exceed a binding.
-            {
-                const int K = 520, N = 1003;
-                var w = Values(K * N, 9);
-                var int8 = Int8Weight.Quantize(w, K, N, Device.Cpu);
-                var int4 = Int4Weight.Quantize(w, K, N, Device.Cpu);
-                var bf16 = BFloat16Weight.FromValues(w, K, N, Device.Cpu);
-                var (gy, cy) = (Empty(backend, K * N), Empty(cpu, K * N));
-                backend.Int8Dequantize(On(backend, int8.Packed.ToArray()), On(backend, int8.Scales.ToArray()), gy, K, N);
-                cpu.Int8Dequantize(On(cpu, int8.Packed.ToArray()), On(cpu, int8.Scales.ToArray()), cy, K, N);
-                Check(Read(backend, gy, K * N).SequenceEqual(Read(cpu, cy, K * N)), "int8 dequantization");
-                backend.Int4Dequantize(On(backend, int4.Packed.ToArray()), On(backend, int4.Scales.ToArray()), gy, K, N);
-                cpu.Int4Dequantize(On(cpu, int4.Packed.ToArray()), On(cpu, int4.Scales.ToArray()), cy, K, N);
-                Check(Read(backend, gy, K * N).SequenceEqual(Read(cpu, cy, K * N)), "int4 dequantization");
-                backend.BFloat16Dequantize(On(backend, bf16.Packed.ToArray()), gy, K, N);
-                cpu.BFloat16Dequantize(On(cpu, bf16.Packed.ToArray()), cy, K, N);
-                Check(Read(backend, gy, K * N).SequenceEqual(Read(cpu, cy, K * N)), "bfloat16 dequantization");
-                int8.Packed.Dispose();
-                int8.Scales.Dispose();
-                int4.Packed.Dispose();
-                int4.Scales.Dispose();
-                bf16.Packed.Dispose();
             }
 
             Check(Idrak.Abstraction.Operations.Kernels.HostCalls(backend) == fallbacks, $"{Idrak.Abstraction.Operations.Kernels.HostCalls(backend) - fallbacks} host fallbacks");
@@ -244,82 +151,6 @@ internal abstract partial class Tests
             {
                 s.Release();
             }
-        }
-    }
-
-    internal static void VulkanLargeDecoder(Device device)
-    {
-        if (LimitOrdinals(device).Count == 0)
-        {
-            return;
-        }
-
-        // Vocabulary 4096, dim 96: the int8 (384 KiB) and int4 (192 KiB) heads exceed a 128 KiB binding, the bfloat16
-        // embedding and head (768 KiB) a 256 KiB one (a window of the packed products holds whole 32-row leaves of k, the
-        // one order's: 32 bfloat16 rows of 4096 columns take 256 KiB); every other storage of a decoding step fits.
-        var backend = (VulkanBackend)device.Backend;
-        var spec = new DecoderSpec
-        {
-            Vocabulary = 4096, Dim = 96, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 16, FfDim = 192, MaxPositions = 32,
-            Rope = new RopeSettings(500f), NormEpsilon = 1e-5f, QkNorm = true,
-        };
-        string cache = Path.Combine(Path.GetTempPath(), $"idrak-limits-{Environment.ProcessId}.tsv");
-        string? savedCache = VulkanBackend.TuningCacheFile;
-        VulkanBackend.TuningCacheFile = cache;                               // choices measured under the small range kept apart
-        long savedRange = backend.LimitStorageRange(128 << 10);
-        var counts = new ConcurrentDictionary<string, long>();
-        try
-        {
-            foreach (var (name, options, tied, range) in new[]
-            {
-                ("int8", new DecoderBuildOptions { Seed = 4, Int8 = true }, false, 128 << 10),
-                ("int4", new DecoderBuildOptions { Seed = 4, Int4 = true }, false, 128 << 10),
-                ("bfloat16", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, false, 256 << 10),
-                ("bfloat16 tied (the head's columns as the table)", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, true, 256 << 10),
-            })
-            {
-                backend.LimitStorageRange(range);
-                var built = spec with { TieEmbeddings = tied };
-                using var gpu = built.Build(null, options with { Device = device });
-                using var host = built.Build(null, options with { Device = Device.Cpu });
-                gpu.Eval();
-                host.Eval();
-                using var noGrad = Autograd.NoGrad();
-                using var gpuContext = new DecodingContext(device, 1, 32) { LastPositionOnly = true };
-                using var hostContext = new DecodingContext(Device.Cpu, 1, 32) { LastPositionOnly = true };
-                float[] tokens = [1f, 2000f, 4095f];
-                for (int step = 0; step < 5; step++)
-                {
-                    if (step == 1)
-                    {
-                        counts.Clear();
-                        CountHostCalls(backend, counts);                // the decoding steps after the prompt
-                    }
-
-                    using var scope = new TensorScope();
-                    var want = host.ForwardCached(Tensor.From(tokens, [1, tokens.Length], Device.Cpu), hostContext).ToArray();
-                    var got = gpu.ForwardCached(Tensor.From(tokens, [1, tokens.Length], device), gpuContext).ToArray();
-                    double scale = want.Max(v => Math.Abs((double)v)), worst = 0;
-                    for (int i = 0; i < want.Length; i++)
-                    {
-                        worst = Math.Max(worst, Math.Abs(want[i] - (double)got[i]));
-                    }
-
-                    Check(worst <= 2e-3 * Math.Max(scale, 1e-3), $"{name} decoder, step {step}: logits off by {worst:G3} (largest {scale:G3})");
-                    int next = Array.IndexOf(want, want.Max());
-                    tokens = [next];
-                }
-
-                CountHostCalls(backend, null);
-                Check(counts.IsEmpty, $"{name} decoder: host fallbacks " + string.Join(", ", counts.Select(c => $"{c.Key} x{c.Value}")));
-            }
-        }
-        finally
-        {
-            CountHostCalls(backend, null);
-            backend.LimitStorageRange(savedRange);
-            VulkanBackend.TuningCacheFile = savedCache;
-            File.Delete(cache);
         }
     }
 

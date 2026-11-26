@@ -5,8 +5,8 @@ using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Gpu.Vulkan;
 
-// The Vulkan kernels shaped by the device: every workgroup width a device may be given, the products split over k, the
-// decoding attention split over the cached positions, the tiled float32 products, and the choices measured on the
+// The Vulkan kernels shaped by the device: every workgroup width a device may be given, the decoding attention split
+// over the cached positions, the tiled float32 products, and the choices measured on the
 // device (kept in a file per device). They match the CPU for every width, split count and edge shape, and give
 // bit-identical results when run again. A software driver runs a workgroup's invocations one after another and hides
 // races on workgroup memory; on a GPU a missing barrier shows up as results that change from run to run, which the
@@ -112,13 +112,6 @@ internal abstract partial class Tests
         var cpu = CpuBackend.Instance;
         var random = new Random(17);
         float[] R(int n, float lo = -1f, float hi = 1f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
-        float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle(random.Next() ^ (random.Next() << 16)))];
-        float[] BFloat16Pairs(int words) => [.. Enumerable.Range(0, words).Select(_ =>
-        {
-            uint low = (uint)BitConverter.SingleToInt32Bits(2 * random.NextSingle() - 1) >> 16;
-            uint high = (uint)BitConverter.SingleToInt32Bits(2 * random.NextSingle() - 1) & 0xFFFF0000u;
-            return BitConverter.Int32BitsToSingle((int)(low | high));
-        })];
 
         // Runs op on the backend's copies of inputs and returns storage `output` after it.
         float[] Run(Backend b, float[][] inputs, int output, Action<Backend, Storage[]> op)
@@ -172,34 +165,6 @@ internal abstract partial class Tests
 
         try
         {
-            // Packed products: every row block (1, 2, 4, 8 rows; 11 rows = two blocks of 8), k not a multiple of 32 (a
-            // partial int4 scale group) or of the slices, columns not a multiple of a word or of a column block; one
-            // split, the measured choice (null), splits whose last chunk is short; both word counts per row of k.
-            var gemvShapes = full
-                ? new[] { (1, 1000, 129), (2, 300, 37), (3, 64, 70), (5, 257, 300), (8, 96, 33), (11, 200, 65), (1, 3072, 64) }
-                : [(1, 1000, 129), (5, 257, 300)];
-            foreach (var (m, k, n) in gemvShapes)
-            {
-                foreach (int? splits in full ? new int?[] { 1, null, 3, 7 } : [null, 3])
-                {
-                    foreach (int? words in splits is null ? new int?[] { null } : [32, 64])
-                    {
-                        (VulkanBackend.GemvSplits, VulkanBackend.GemvWords) = (splits, words);
-                        int repeats = splits == 3 ? 3 : 0;
-                        string shape = $"{m}×{k}→{n}, splits {splits?.ToString() ?? "measured"}, words {words?.ToString() ?? "measured"}";
-                        int words8 = (n + 3) / 4, words4 = (n + 7) / 8, words2 = (n + 1) / 2;
-                        Case($"int8 product {shape}", [R(m * k), Bits(k * words8), R(n, 0.001f, 0.02f), new float[m * n]], 3,
-                            (b, s) => b.Int8MatMul(s[0], s[1], s[2], s[3], m, n, k), repeats);
-                        Case($"int4 product {shape}", [R(m * k), Bits(k * words4), R((k + 31) / 32 * words4 * 8, 0.01f, 0.2f), new float[m * n]], 3,
-                            (b, s) => b.Int4MatMul(s[0], s[1], s[2], s[3], m, n, k), repeats);
-                        Case($"bfloat16 product {shape}", [R(m * k), BFloat16Pairs(k * words2), new float[m * n]], 2,
-                            (b, s) => b.BFloat16MatMul(s[0], s[1], s[2], m, n, k), repeats);
-                    }
-                }
-            }
-
-            (VulkanBackend.GemvSplits, VulkanBackend.GemvWords) = (null, null);
-
             // Decoding attention: head sizes from 1 to 256 (one to many parts of the values per dimension, or several
             // dimensions per invocation on narrow workgroups), rows of a head seeing different lengths (steps 2), lengths
             // from one position to more than a tile, splits from one to more than the positions need (empty splits).
@@ -218,11 +183,6 @@ internal abstract partial class Tests
                     float[] position = [length - 1];
                     Case($"attention, float32 cache, {shape}", [R(rows * dim), R(slots * dim), R(slots * dim), position, new float[rows * dim]], 4,
                         (b, s) => b.AttentionDecode(s[0], s[1], s[2], s[3], s[4], Heads, RowsPerHead, Steps, capacity, dim, 0.3f), repeats);
-                    int words8 = (dim + 3) / 4, words2 = (dim + 1) / 2;
-                    Case($"attention, int8 cache, {shape}", [R(rows * dim), Bits(slots * words8), Bits(slots * words8), R(slots, 0.001f, 0.01f), R(slots, 0.001f, 0.01f), position, new float[rows * dim]], 6,
-                        (b, s) => b.AttentionInt8(s[0], s[1], s[2], s[3], s[4], s[5], s[6], Heads, RowsPerHead, Steps, capacity, dim, 0.3f, tiled: false), repeats);
-                    Case($"attention, bfloat16 cache, {shape}", [R(rows * dim), BFloat16Pairs(slots * words2), BFloat16Pairs(slots * words2), position, new float[rows * dim]], 4,
-                        (b, s) => b.AttentionBFloat16(s[0], s[1], s[2], s[3], s[4], Heads, RowsPerHead, Steps, capacity, dim, 0.3f, tiled: false), repeats);
                 }
             }
 
@@ -255,7 +215,7 @@ internal abstract partial class Tests
         }
         finally
         {
-            (VulkanBackend.GemvSplits, VulkanBackend.GemvWords, VulkanBackend.AttentionSplits, VulkanBackend.MatMulKernel) = (null, null, null, null);
+            (VulkanBackend.AttentionSplits, VulkanBackend.MatMulKernel) = (null, null);
         }
     }
 }

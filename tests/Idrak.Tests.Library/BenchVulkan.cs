@@ -9,11 +9,11 @@ using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
-// dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan [dispatch|copies|matmul|gemv|attention|sampling|window|decoder …]
+// dotnet run -c Release --project tests/Idrak.Tests -- --bench-vulkan [dispatch|copies|matmul|attention|sampling|window|decoder …]
 
 // Every Vulkan device found (listed or not, so software drivers too), or the ones IDRAK_DEVICES names (vulkan:0, …):
-// dispatch overhead, copies, element-wise bandwidth, matrix products, decoding-sized packed products, decoding attention
-// and whole decoders generating text (all of them, or the sections named).
+// dispatch overhead, copies, element-wise bandwidth, matrix products, decoding attention and whole decoders generating
+// text (all of them, or the sections named).
 internal abstract partial class Tests
 {
     internal static int BenchVulkan(string[] sections)
@@ -81,8 +81,7 @@ internal abstract partial class Tests
             }
 
             string names = string.Join(", ", kernels.Keys.Order(StringComparer.Ordinal));
-            return kernels.Keys.Any(k => k.Contains("_round_", StringComparison.Ordinal)) ? $"cooperative matrices, reduced precision ({names})"
-                : kernels.Keys.Any(k => k.StartsWith("coop_", StringComparison.Ordinal)) ? $"cooperative matrices ({names})" : $"no matrix units ({names})";
+            return kernels.Keys.Any(k => k.StartsWith("coop_", StringComparison.Ordinal)) ? $"cooperative matrices ({names})" : $"no matrix units ({names})";
         }
 
         // Average time of `run` in µs over `repeats` calls (after one warm-up), the device drained before and after.
@@ -118,7 +117,6 @@ internal abstract partial class Tests
             int next = 0;
             Console.WriteLine(Row("tiny kernel, 8 buffers in turn: a barrier every 8", $"{Micros(() => backend.Dispatch(fill, 1, 1, 1, [many[next++ & 7]], push), Batch):F2} µs per dispatch"));
             Console.WriteLine(Row("tiny kernel then wait (round trip)", $"{Micros(() => { backend.Dispatch(fill, 1, 1, 1, [one], push); backend.Synchronize(); }, 200):F1} µs"));
-            Console.WriteLine(Row("host fallback of a tiny operation (AxpyAt via HostCall)", $"{Micros(() => FallbackAxpyAt(backend, one), 200):F1} µs"));
             Console.WriteLine(Row("  (submissions, barriers per dispatch above)",
                 $"{backend.Submissions - submissions}, {(backend.Barriers - barriers) / (double)(backend.Dispatches - dispatches):F2}"));
 
@@ -193,23 +191,18 @@ internal abstract partial class Tests
             gflops1024 ??= gflops;
             Console.WriteLine(Row($"matrix product {size}³ (float32)", $"{gflops:F1} GFLOP/s ({us / 1000:F1} ms), {MatrixPath(Product)}"));
 
-            // Each kernel forced once (the device's width), what the measured choice picks among: tiled, register-blocked,
-            // cooperative matrices at float32 accuracy, and with MixedPrecision bfloat16 the reduced-precision kernel.
-            string Candidates(bool mixed)
+            // Each kernel forced once (the device's width), what the measured choice picks among: tiled, register-blocked and
+            // cooperative matrices at float32 accuracy.
+            string Candidates()
             {
                 var parts = new List<string>();
-                foreach (var (kernel, name) in new[] { (1, "tiled"), (2, "blocked"), (3, "matrix units, float32-accurate"), (4, "matrix units, reduced precision") })
+                foreach (var (kernel, name) in new[] { (1, "tiled"), (2, "blocked"), (3, "matrix units, float32-accurate") })
                 {
-                    if (kernel == 4 && !mixed)
-                    {
-                        continue;
-                    }
-
                     VulkanBackend.MatMulKernel = kernel;
                     try
                     {
                         string path = MatrixPath(Product);
-                        bool ran = kernel switch { 3 => path.Contains("coop_") && !path.Contains("_round_"), 4 => path.Contains("_round_"), _ => !path.Contains("coop_") };
+                        bool ran = kernel switch { 3 => path.Contains("coop_"), _ => !path.Contains("coop_") };
                         parts.Add(ran ? $"{name} {Micros(Product, repeats) / 1000:F1} ms" : $"{name} n/a");
                     }
                     finally
@@ -224,48 +217,12 @@ internal abstract partial class Tests
             bool timeEach = us < 1e6;                                           // each kernel timed when a product takes under a second
             if (timeEach)
             {
-                Console.WriteLine(Row("  kernels (float32)", Candidates(mixed: false)));
+                Console.WriteLine(Row("  kernels (float32)", Candidates()));
             }
 
-            using (MixedPrecision.BFloat16())
-            {
-                double mixedUs = Micros(Product, repeats);
-                Console.WriteLine(Row($"matrix product {size}³ (MixedPrecision bfloat16)",
-                    $"{2.0 * size * size * size / (mixedUs * 1e3):F1} GFLOP/s ({mixedUs / 1000:F1} ms), {MatrixPath(Product)}"));
-                if (timeEach && backend.MatrixShape is not null)
-                {
-                    Console.WriteLine(Row("  kernels (bfloat16)", Candidates(mixed: true)));
-                }
-            }
             a.Release();
             b.Release();
             c.Release();
-        }
-
-        // ---- decoding-sized packed products (one row)
-        if (Run("gemv"))
-        {
-            using var noGrad = Autograd.NoGrad();
-            foreach (var (k, n) in new[] { (1024, 3072), (3072, 1024), (1024, 151_936) })
-            {
-                var weights = Values((long)k * n);
-                using var x = Tensor.From(Values(k), [1, k], device);
-                using var int8 = Int8Weight.Quantize(weights, k, n, device);
-                using var int4 = Int4Weight.Quantize(weights, k, n, device);
-                using var bf16 = BFloat16Weight.FromValues(weights, k, n, device);
-                foreach (var (format, bytes, run) in new (string, double, Action)[]
-                {
-                    ("int8", (double)k * n, () => x.MatMulInt8(int8).Dispose()),
-                    ("int4", k * n / 2.0, () => x.MatMulInt4(int4).Dispose()),
-                    ("bfloat16", k * n * 2.0, () => x.MatMulBFloat16(bf16).Dispose()),
-                })
-                {
-                    long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(backend);
-                    double us = Micros(run, n > 100_000 ? 5 : 20);
-                    string note = Idrak.Abstraction.Operations.Kernels.HostCalls(backend) > fallbacks ? " (host fallback: the weights exceed one binding)" : "";
-                    Console.WriteLine(Row($"{format} product 1 x {k} -> {n}", $"{us,9:F1} µs ({bytes / (us * 1e3):F1} GB/s of weights){note}"));
-                }
-            }
         }
 
         // ---- decoding attention: one new row per query head (8 key/value heads × 2 query heads, head size 128)
@@ -274,19 +231,14 @@ internal abstract partial class Tests
             using var noGrad = Autograd.NoGrad();
             const int Heads = 8, Dim = 128, Capacity = 4096;
             using var q = Tensor.From(Values(Heads * 2 * Dim), [Heads, 2, Dim], device);
-            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+            foreach (var format in new[] { KeyValueFormat.Float32 })
             {
                 using var cache = new KeyValueCache(Heads, Capacity, Dim, device, format);
                 var line = new System.Text.StringBuilder();
                 foreach (int length in new[] { 200, 1000, 4000 })
                 {
                     using var position = Tensor.From([length - 1f], [1], device);
-                    Action run = format switch
-                    {
-                        KeyValueFormat.Float32 => () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f).Dispose(),
-                        KeyValueFormat.Int8 => () => Tensor.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
-                        _ => () => Tensor.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false).Dispose(),
-                    };
+                    Action run = () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f).Dispose();
                     line.Append($"{length}: {Micros(run, 10),8:F1} µs  ");
                 }
 
@@ -331,16 +283,10 @@ internal abstract partial class Tests
             Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 256,
             Rope = new RopeSettings(500f), NormEpsilon = 1e-5f,
         };
-        var medium = new DecoderSpec
-        {
-            Vocabulary = tokenizer.VocabularySize, Dim = 1024, Layers = 8, Heads = 16, KvHeads = 8, HeadDim = 64, FfDim = 3072, MaxPositions = 256,
-            Rope = new RopeSettings(1_000_000f), NormEpsilon = 1e-6f, QkNorm = true,
-        };
         var sampling = new GenerationOptions { Seed = 3, NumPredict = 64, Temperature = 0.8f, TopK = 40, TopP = 0.95f, RepeatPenalty = 1.1f };
         foreach (var (name, spec, options, packed, tokens) in new (string, DecoderSpec, DecoderBuildOptions, string, int)[]
         {
             ("small decoder (dim 16, 2 layers), float32", small, new DecoderBuildOptions { Device = device, Seed = 1 }, "", 64),
-            ("medium decoder (dim 1024, 8 layers), int8", medium, new DecoderBuildOptions { Device = device, Seed = 1, Int8 = true }, "int8", 32),
         })
         {
             using var model = spec.Build(null, options);
@@ -384,12 +330,5 @@ internal abstract partial class Tests
         }
 
         Console.WriteLine();
-    }
-
-    // AxpyAt through the base class's host fallback (download, CPU, upload), for comparison with a dispatch.
-    internal static void FallbackAxpyAt(VulkanBackend backend, Storage storage)
-    {
-        using var call = new HostCall(backend, nameof(Backend.AxpyAt));
-        Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.AxpyAt(call[storage], call[storage], 1, 0.5f);
     }
 }

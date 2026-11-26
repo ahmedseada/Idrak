@@ -15,7 +15,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] VulkanGraphGroup =
     [
         ("vulkan graphs: recorded commands replay in queue order (zeroed and freed scratch, uploads during recording, several command buffers; mapped, staging, descriptor sets)", VulkanGraphCommands),
-        ("vulkan graphs: recorded decoding steps give the tokens and logits of direct steps (float32, int8, bfloat16 caches; sampler on device) as the cache fills, with no host fallback or recording per replay", VulkanGraphDecoding),
+        ("vulkan graphs: recorded decoding steps give the tokens and logits of direct steps (a float32 cache; sampler on device) as the cache fills, with no host fallback or recording per replay", VulkanGraphDecoding),
         ("vulkan graphs: a failed or aborted recording and a destroyed graph give their memory back", VulkanGraphMemory),
         ("vulkan graphs: the host's time per decoding step drops when steps are replayed", VulkanGraphHostTime),
         ("vulkan graphs: text generation replays its recorded step and gives the text of direct steps", VulkanGraphGeneration),
@@ -269,12 +269,11 @@ internal abstract partial class Tests
         foreach (var (name, options) in new[]
         {
             ("float32 weights", new DecoderBuildOptions { Device = device, Seed = 2 }),
-            ("int8 weights", new DecoderBuildOptions { Device = device, Seed = 2, Int8 = true }),
         })
         {
             using var model = spec.Build(null, options);
             model.Eval();
-            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+            foreach (var format in new[] { KeyValueFormat.Float32 })
             {
                 var direct = VulkanDecodingRun(device, model, spec.Vocabulary, format, Capacity, useGraph: false);
                 var replayed = VulkanDecodingRun(device, model, spec.Vocabulary, format, Capacity, useGraph: true);

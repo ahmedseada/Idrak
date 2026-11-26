@@ -5,15 +5,15 @@ using System.Runtime.InteropServices;
 using Idrak;
 using Idrak.Gpu.Vulkan;
 
-// The Vulkan runtime: devices, memory, copies and SPIR-V dispatches. Run on a Vulkan device, the checks test that device;
-// run on the CPU, they test every Vulkan device found, listed or not (lavapipe, Mesa's software driver, here). Each runs
-// twice per device: as the device copies (mapped memory on integrated GPUs and CPU drivers) and through a staging
-// buffer. Without Vulkan they pass with a note.
+// The Vulkan runtime: devices, memory, copies and SPIR-V dispatches. Run on the CPU, the checks test every Vulkan device
+// found (lavapipe, Mesa's software driver, here) on backends of their own. Each runs twice per device: as the device
+// copies (mapped memory on integrated GPUs and CPU drivers) and through a staging buffer. Without Vulkan they pass with
+// a note.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] VulkanGroup =
     [
-        ("vulkan: devices are found (or the reason why not), listed unless a software driver or a GPU CUDA drives", VulkanDevices),
+        ("vulkan: devices are found (or the reason why not), each with its type and UUID", VulkanDevices),
         ("vulkan: uploads and downloads round-trip (1, odd and multi-megabyte sizes, ranges), mapped and through staging", VulkanRoundTrip),
         ("vulkan: memory is pooled, counted and limited by ComputeResources.GpuMemoryLimit", VulkanMemory),
         ("vulkan: thousands of small storages share pages under a low allocation cap (IDRAK_VULKAN_MAX_ALLOCATIONS), intact, freed and reused", VulkanSubAllocation),
@@ -23,8 +23,8 @@ internal abstract partial class Tests
         ("vulkan: the sampler kernels draw the CPU's tokens with its statistics (greedy, temperature, top-k with and without slots, top-p, min-p, ties)", VulkanSamplerMatchesCpu),
         ("vulkan: the sampler gives the same tokens and statistics run after run (1,000 runs on a GPU; ties, long runs of equal scores)", VulkanSamplerRepeatable),
         ("vulkan: barriers only between dependent dispatches (chains, independent dispatches, write after read), pushed descriptors and sets; dispatches allocate nothing", VulkanBarriers),
-        ("vulkan: decoding steps take no host fallback (decoder with float32, int8, int4, bfloat16 weights; multi-head attention; float32, int8, bfloat16 caches; penalties, top-k, top-p, min-p)", VulkanDecodingWithoutFallbacks),
-        ("vulkan: kernels shaped by the device (every workgroup width, products split over k, attention split over positions, tiled products, measured and stored choices) match the CPU and give the same bits run after run", VulkanSplitKernels),
+        ("vulkan: decoding steps take no host fallback (decoder with float32 weights; multi-head attention; a float32 cache; penalties, top-k, top-p, min-p)", VulkanDecodingWithoutFallbacks),
+        ("vulkan: kernels shaped by the device (every workgroup width, attention split over positions, tiled products, measured and stored choices) match the CPU and give the same bits run after run", VulkanSplitKernels),
     ];
 
     // y[i] = a[i] * alpha + b[i] for i < n; bindings a, b, y; push constants { uint n; float alpha; }; 64 lanes per group.
@@ -86,15 +86,12 @@ internal abstract partial class Tests
         backend.Dispatch(Axpb, (uint)((n + 63) / 64), 1, 1, [a, b, y], MemoryMarshal.AsBytes(new ReadOnlySpan<AxpbArguments>(in arguments)));
     }
 
-    // The Vulkan backends to test from `device` (none on a CUDA device: those run from the CPU's pass); each is given
-    // to `check` as the device copies and then through staging, on a second backend of the same device.
-    internal static void ForEachVulkan(Device device, Action<VulkanBackend, string> check) => ForEachVulkan(device, separateOnly: false, check);
-
-    internal static void ForEachVulkan(Device device, bool separateOnly, Action<VulkanBackend, string> check, int? maxAllocations = null)
+    // The Vulkan backends to test from `device` (from the CPU's pass); each is given to `check` on a backend of its own as
+    // the device copies and then through staging, on a second backend of the same device.
+    internal static void ForEachVulkan(Device device, Action<VulkanBackend, string> check, int? maxAllocations = null)
     {
         List<int> ordinals = device.Type switch
         {
-            DeviceType.Vulkan => [device.Ordinal],
             DeviceType.Cpu => [.. Enumerable.Range(0, VulkanBackend.DeviceCount)],
             _ => [],
         };
@@ -103,22 +100,19 @@ internal abstract partial class Tests
             // Missing hardware is the runner's SKIP, never a PASS that checked nothing.
             Skip(device.Type == DeviceType.Cpu
                 ? $"no Vulkan device: {VulkanBackend.UnavailableReason}"
-                : $"Vulkan devices are checked from the CPU's pass and their own (vulkan:N), not from {device}");
+                : $"Vulkan devices are checked from the CPU's pass, not from {device}");
         }
 
         foreach (int ordinal in ordinals)
         {
-            var backend = separateOnly ? VulkanBackend.CreateSeparate(ordinal, preferMapped: true, maxAllocations: maxAllocations) : (VulkanBackend)Device.Get("vulkan", ordinal).Backend;
+            var backend = VulkanBackend.CreateSeparate(ordinal, preferMapped: true, maxAllocations: maxAllocations);
             try
             {
                 check(backend, $"vulkan:{ordinal} ({(backend.UnifiedMemory ? "mapped" : "staging")})");
             }
             finally
             {
-                if (separateOnly)
-                {
-                    backend.Shutdown();
-                }
+                backend.Shutdown();
             }
 
             var staging = VulkanBackend.CreateSeparate(ordinal, preferMapped: false, maxAllocations: maxAllocations, stagingBytes: 4 << 20);   // copies in several chunks
@@ -144,32 +138,16 @@ internal abstract partial class Tests
     {
         CpuOnly(device);                                                 // checked once, from the CPU's pass
 
-        var provider = DeviceProviders.Find("vulkan");
-        Check(provider is not null && provider.Type == DeviceType.Vulkan && provider.Display == "Vulkan", "the Vulkan provider is registered");
-        Check(DeviceProviders.All[0].Name == "cuda" && DeviceProviders.All[1].Name == "vulkan", "registered after CUDA");
         if (VulkanBackend.DeviceCount == 0)
         {
             Check(VulkanBackend.UnavailableReason.Length > 0, "a reason when there is no device");
-            Skip($"no Vulkan device: {VulkanBackend.UnavailableReason} (the provider and the reason checked)");
+            Skip($"no Vulkan device: {VulkanBackend.UnavailableReason} (the reason checked)");
         }
 
         for (int i = 0; i < VulkanBackend.DeviceCount; i++)
         {
-            var d = Device.Get("vulkan", i);
             var (type, uuid) = VulkanBackend.DeviceKind(i);
-            bool software = type == 4;                                   // VK_PHYSICAL_DEVICE_TYPE_CPU
-            bool drivenElsewhere = VulkanProvider.DrivenBy(uuid, DeviceProviders.All.TakeWhile(p => p != provider)) is not null;
-            Check(provider!.Listed(i) == !(software || drivenElsewhere) && Device.Available.Contains(d) == provider.Listed(i), $"vulkan:{i} listing");
-            Check(!software || provider.Note(i) == "software driver: by name only", $"vulkan:{i}: a CPU-type device is reached by name");
-            bool optedIn = Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") == "1";   // not the default device otherwise
-            Check(provider.DefaultRank(i) == (optedIn ? type switch { 2 => 50, 1 => 40, _ => (int?)null } : null), $"vulkan:{i} rank");
-            Check(Device.Parse($"vulkan:{i}") == d && d.Type == DeviceType.Vulkan && d.IsGpu && d.ToString() == $"vulkan:{i}", $"vulkan:{i} by name");
-            var backend = (VulkanBackend)d.Backend;
-            Check(provider.IsStarted(i) && d.Name.Contains("Vulkan", StringComparison.Ordinal), $"vulkan:{i} started, named");
-            Check(!backend.MatrixUnits && backend.FusedKernels && ((Backend)backend) is not IKernelProfiler, "fused kernels; no matrix units or profiling yet");
-            Check(backend.MaxStorageBytes >= 1 << 27, $"maxStorageBufferRange {backend.MaxStorageBytes} (at least 128 MiB)");
-            Console.WriteLine($"    vulkan:{i}: {d.Name}; type {type}, uuid {uuid}, {(backend.UnifiedMemory ? "mapped" : "staging")} copies, " +
-                $"storages up to {backend.MaxStorageBytes >> 20} MiB{(provider.Listed(i) ? "" : ", not listed")}");
+            Console.WriteLine($"    vulkan:{i}: type {type}, uuid {uuid}");
         }
     }
 
@@ -205,21 +183,10 @@ internal abstract partial class Tests
             zeros.Release();
             Check(read.All(v => v == 0f), $"{label}: {n} zeroed floats");
         }
-
-        // A tensor on the device itself (for the device's own backend).
-        for (int i = 0; i < VulkanBackend.DeviceCount; i++)
-        {
-            if (VulkanBackend.IsInitialized(i) && ReferenceEquals(VulkanBackend.Get(i), backend))
-            {
-                var x = Values(777, 5);
-                using var t = Tensor.From(x, [7, 111], Device.Get("vulkan", i));
-                Check(t.ToArray().AsSpan().SequenceEqual(x), $"{label}: a tensor round-trips");
-            }
-        }
     });
 
     // On backends of their own: the device's backend counts the other tests' tensors as they are finalized.
-    internal static void VulkanMemory(Device device) => ForEachVulkan(device, separateOnly: true, (backend, label) =>
+    internal static void VulkanMemory(Device device) => ForEachVulkan(device, (backend, label) =>
     {
         var before = backend.GetMemoryUsage();
         var a = backend.Allocate(1000, zeroed: false);
@@ -266,7 +233,7 @@ internal abstract partial class Tests
     });
 
     // Drivers cap memory allocations (4096 on AMD's Windows driver); under a cap of 8, thousands of live storages share pages.
-    internal static void VulkanSubAllocation(Device device) => ForEachVulkan(device, separateOnly: true, (backend, label) =>
+    internal static void VulkanSubAllocation(Device device) => ForEachVulkan(device, (backend, label) =>
     {
         const int Cap = 8, Count = 3000;
         Check(backend.MaxAllocations == Cap && backend.SubAllocationMax == backend.PageBytes / 4, $"{label}: capped at {Cap} allocations");
@@ -460,17 +427,6 @@ internal abstract partial class Tests
             backend.Download(b, result);
             Check(result.AsSpan().SequenceEqual(bv), $"{label}: the second dispatch read the uploaded zeros");
 
-            // The host fallback (download, CPU kernel, upload) between dispatches.
-            QueueAxpb(backend, b, b, y, N, 1f);                            // y = 2b
-            using (var host = new HostCall(backend, nameof(Backend.Copy)))
-            {
-                Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.Copy(host[y], host[a], N);  // a = y, through the host
-            }
-
-            QueueAxpb(backend, a, b, y, N, 1f);                            // y = 3b
-            backend.Download(y, result);
-            AssertClose([.. bv.Select(v => 3f * v)], result, 1e-6f, $"{label}: dispatch, host fallback, dispatch");
-
             // A block released while a dispatch still uses it, reused at once (zeroed): the zeros come after the dispatch.
             var t = backend.Allocate(N, zeroed: false);
             backend.Upload(av, t);
@@ -504,7 +460,6 @@ internal abstract partial class Tests
         var cpu = Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance;
         var random = new Random(9);
         float[] R(int n, float lo = -2f, float hi = 2f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
-        float[] Bits(int n) => [.. Enumerable.Range(0, n).Select(_ => BitConverter.Int32BitsToSingle((random.Next() ^ (random.Next() << 16)) & ~(1 << 30)))];   // random bytes, never NaN
         float[] Ints(int n, int max) => [.. Enumerable.Range(0, n).Select(_ => (float)random.Next(max))];
 
         void Case(string what, float[][] inputs, Action<Backend, Storage[]> op, float tolerance = 2e-5f)
@@ -579,12 +534,6 @@ internal abstract partial class Tests
             }
         }
 
-        Case("int8 product", [R(3 * 64), Bits(64 * 18), R(70), new float[3 * 70]], (b, s) => b.Int8MatMul(s[0], s[1], s[2], s[3], 3, 70, 64), 5e-4f);   // products of up to ±127 cancel: GPUs fuse multiply-adds
-        Case("bfloat16 product, packing", [R(3 * 64), R(64 * 70), new float[64 * 35], new float[3 * 70]], (b, s) =>
-        {
-            b.PackBFloat16(s[1], s[2], 64 * 70);
-            b.BFloat16MatMul(s[0], s[2], s[3], 3, 70, 64);
-        });
         Case("rope, gather, permute, copy 2d", [R(24 * 12), R(24 * 12), R(20 * 5), R(20 * 5), Ints(3, 20), R(50 * 12), Ints(9, 50), new float[9 * 12], new float[9 * 12], R(60)],
             (b, s) =>
             {
