@@ -48,12 +48,9 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    // The codes' description of a row-scaled description, made once a description's value (equal descriptions made apart,
-    // as int8's rows of one length, share it; the plan and the measured choices made for it are kept by value too).
-    private static readonly ConcurrentDictionary<TypeDescription, TypeDescription> RowCodes = new();
-
     // The codes alone of a description whose row of k values is one block under one scale covering it (its codes one plane
-    // of whole bytes within the block, no minimum, sum or codebook), or null where it is not one.
+    // of whole bytes within the block, no minimum, sum or codebook), or null where it is not one. Made once and held by the
+    // description itself (TypeDescription.CpuRowCodes, by CodesAlone), with its own plan.
     private static TypeDescription? RowCodesOf(TypeDescription d, int k)
     {
         if (d is not { Values: var values, Group: 1, Mins: null or [], Sums: null or [], Scales: [{ Pieces: null } scale], Planes: [{ Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] }
@@ -63,9 +60,12 @@ internal sealed partial class CpuBackend
             return null;
         }
 
-        var codes = RowCodes.GetOrAdd(d, static r => new TypeDescription(1, r.Planes[0].Bits / 8, r.Code, [r.Planes[0] with { Offset = 0 }], r.CodeOffset));
+        var codes = d.CpuRowCodes;
         return codes.Valid ? codes : null;
     }
+
+    // The codes' description of a row-scaled description (RowCodesOf: one plane of whole bytes a value, no scale).
+    internal static TypeDescription CodesAlone(TypeDescription r) => new(1, r.Planes[0].Bits / 8, r.Code, [r.Planes[0] with { Offset = 0 }], r.CodeOffset);
 
     /// <summary>
     /// How the described lane multiplies rows of <paramref name="k"/> values of <paramref name="description"/>: its arithmetic
@@ -304,7 +304,7 @@ internal sealed partial class CpuBackend
     /// does it (the lanes' kernels are generic over it: PortableInstructions, Avx2Instructions, VnniInstructions,
     /// NeonInstructions, DotProdInstructions, WideDotProdInstructions).
     /// </summary>
-    private unsafe interface IInstructions
+    internal unsafe interface IInstructions
     {
         /// <summary>
         /// <paramref name="sum"/> + in each 32-bit lane the dot product of its 4 unsigned bytes of <paramref name="codes"/>
@@ -1856,11 +1856,12 @@ internal sealed partial class CpuBackend
     {
         var (_, vectors, rows, _, _) = ShapeOf(product, m, n, k);
         return string.Create(System.Globalization.CultureInfo.InvariantCulture,
-            $"described {DescriptionFingerprint(product.Description)} {rows}x{k}->{n} {vectors}");
+            $"described {product.Description.CpuFingerprint} {rows}x{k}->{n} {vectors}");
     }
 
     // A description's fingerprint: SHA-256 of its fields as text (each list's items, never a type's name), 16 hex digits.
-    private static string DescriptionFingerprint(TypeDescription d) => s_fingerprints.GetOrAdd(d, static x =>
+    // Made once and held by the description itself (TypeDescription.CpuFingerprint).
+    internal static string FingerprintOf(TypeDescription x)
     {
         var text = new System.Text.StringBuilder();
         static void Number(System.Text.StringBuilder t, NumberType n)
@@ -1913,10 +1914,7 @@ internal sealed partial class CpuBackend
         text.Append(" mins ");
         Scales(text, x.Mins);
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text.ToString())))[..16];
-    });
-
-    // Kept by the description's value (equal descriptions made apart, as int8's rows of one length, share one).
-    private static readonly ConcurrentDictionary<TypeDescription, string> s_fingerprints = new();
+    }
 
     // A weight's candidates as a choice of lanes (Chosen): the described lane by the portable instructions and by each
     // instruction set the CPU has that its plan takes, the 128-bit twins among them for 4 rows of x or more
@@ -2441,7 +2439,7 @@ internal sealed partial class CpuBackend
     // Each by the portable instructions and by each instruction set the CPU has that the arithmetic takes (IInstructions).
 
     // How the described lane computes, by what the type's values allow (DescribedPlan.Make).
-    private enum DescribedMode : byte
+    internal enum DescribedMode : byte
     {
         Integer,
         Single,
@@ -2450,7 +2448,7 @@ internal sealed partial class CpuBackend
 
     // How the integer lane makes a code an unsigned byte: as it is, its sign bit flipped, through a 16-entry byte shuffle, or
     // through a 256-entry table a byte at a time.
-    private enum CodeMap : byte
+    internal enum CodeMap : byte
     {
         Same,
         Flip,
@@ -2476,7 +2474,7 @@ internal sealed partial class CpuBackend
 
     // How the float lanes make a stored value: a 16-bit float by its bits, a 16-bit integer, a float32 as it is, codes of up
     // to 8 bits through a table of their numbers (float32); a float64 as it is, a 64-bit or 32-bit integer (float64).
-    private enum WideRead : byte
+    internal enum WideRead : byte
     {
         Half,
         Short,
@@ -2497,11 +2495,8 @@ internal sealed partial class CpuBackend
     /// than 8 bits that are not one plane of whole bytes a value; a codebook's index of more than 16 bits, or of a radix's
     /// digits).
     /// </summary>
-    private sealed unsafe class DescribedPlan
+    internal sealed unsafe class DescribedPlan
     {
-        // Kept by the description's value (equal descriptions made apart, as int8's rows of one length, share one plan).
-        private static readonly ConcurrentDictionary<TypeDescription, DescribedPlan?> Plans = new();
-
         // The pinned arrays the kernels read through pointers, kept alive with the plan.
         private readonly List<Array> held = [];
 
@@ -2758,9 +2753,6 @@ internal sealed partial class CpuBackend
         private int* signShift;
         private int signMask;
 
-        /// <summary>The plan of <paramref name="d"/>, or null where the lane does not read it.</summary>
-        public static DescribedPlan? Of(TypeDescription d) => Plans.TryGetValue(d, out var plan) ? plan : Plans.GetOrAdd(d, static x => Make(x));
-
         /// <summary>Groups a row of <paramref name="k"/> values takes (the last may be short).</summary>
         public int Groups(int k) => (k + GroupValues - 1) / GroupValues;
 
@@ -2772,7 +2764,11 @@ internal sealed partial class CpuBackend
             return (T*)Unsafe.AsPointer(ref MemoryMarshal.GetArrayDataReference(array));
         }
 
-        private static DescribedPlan? Make(TypeDescription d)
+        /// <summary>
+        /// The plan of <paramref name="d"/>, or null where the lane does not read it: made once a description, by the
+        /// description itself (<see cref="TypeDescription.CpuPlan"/>), which holds it.
+        /// </summary>
+        internal static DescribedPlan? Make(TypeDescription d)
         {
             if (!(BitConverter.IsLittleEndian && d.Valid))
             {
@@ -4815,7 +4811,7 @@ internal sealed partial class CpuBackend
 
         public static bool Reads(TypeDescription description, int k, out DescribedFormat format)
         {
-            format = k > 0 && k % description.UnitValues == 0 && DescribedPlan.Of(description) is { } plan ? new DescribedFormat(plan, k) : default;
+            format = k > 0 && k % description.UnitValues == 0 && description.CpuPlan is { } plan ? new DescribedFormat(plan, k) : default;
             return format.plan is not null;
         }
 

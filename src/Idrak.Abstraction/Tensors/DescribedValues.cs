@@ -16,9 +16,6 @@ namespace Idrak.Abstraction;
 /// </summary>
 internal sealed class DescribedReader
 {
-    // Kept by the description's value (two descriptions made apart and equal share one reader).
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, DescribedReader> Made = new();
-
     private readonly TypeDescription d;
     private readonly int n, size, planes, width, most;
     private readonly NativeKind native;
@@ -30,7 +27,8 @@ internal sealed class DescribedReader
     private readonly Factor[] scales, mins;
     private readonly bool minsAdded, oneByte, twoBytes;
 
-    private DescribedReader(TypeDescription d)
+    // Made once a description, by the description itself (TypeDescription.Reader), which holds it.
+    internal DescribedReader(TypeDescription d)
     {
         this.d = d;
         n = d.UnitValues;
@@ -94,13 +92,6 @@ internal sealed class DescribedReader
             && width == 1 && BitConverter.IsLittleEndian;
         oneByte = alone && planeBits[0] == 8 && size == 1;
         twoBytes = alone && planeBits[0] == 16 && size == 2;
-    }
-
-    /// <summary>The reader of <paramref name="d"/>, made once a description's value.</summary>
-    public static DescribedReader Of(TypeDescription d)
-    {
-        ArgumentNullException.ThrowIfNull(d);
-        return Made.TryGetValue(d, out var made) ? made : Made.GetOrAdd(d, static x => x.Valid ? new DescribedReader(x) : throw new ArgumentException("The description does not hold together; its values are not read.", nameof(d)));
     }
 
     /// <summary>The first <c>values.Length</c> values of <paramref name="stored"/> as float32 (each value's float64 rounded once).</summary>
@@ -430,7 +421,7 @@ internal static class DescribedWriting
     private static DescribedEncoder Encoder(TypeDescription d, int count, int bytes)
     {
         ArgumentNullException.ThrowIfNull(d);
-        var encoder = DescribedEncoder.Of(d) ?? throw new NotSupportedException(DescribedEncoder.Why(d));
+        var encoder = d.Encoder ?? throw new NotSupportedException(d.Unwritten);
         long need = (count + (long)d.UnitValues - 1) / d.UnitValues * d.UnitBytes;
         return bytes >= need ? encoder : throw new ArgumentException($"{count} values take {need} bytes; {bytes} are given.", nameof(bytes));
     }

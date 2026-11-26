@@ -628,6 +628,15 @@ internal abstract partial class Tests
                 wrong.Add($"{row}: worst error {worst} of the magnitudes");
             }
 
+            // The plans are each description object's own: made the first time, then held (the same object again); an equal
+            // description made apart, or a copy, makes its own; none kept by the value.
+            var (mine, theirs, copy) = (row.Description, again.Description, row.Description with { });
+            Check(ReferenceEquals(mine.Reader, mine.Reader) && !ReferenceEquals(mine.Reader, theirs.Reader) && !ReferenceEquals(mine.Reader, copy.Reader)
+                  && mine.Encoder is not null && ReferenceEquals(mine.Encoder, mine.Encoder) && !ReferenceEquals(mine.Encoder, theirs.Encoder) && !ReferenceEquals(mine.Encoder, copy.Encoder)
+                  && (mine.CpuPlan is null ? theirs.CpuPlan is null : ReferenceEquals(mine.CpuPlan, mine.CpuPlan) && theirs.CpuPlan is not null && !ReferenceEquals(mine.CpuPlan, theirs.CpuPlan))
+                  && ReferenceEquals(mine.CpuFingerprint, mine.CpuFingerprint) && mine.CpuFingerprint == theirs.CpuFingerprint && !ReferenceEquals(mine.CpuFingerprint, theirs.CpuFingerprint),
+                $"{row}: each description object makes and holds its own reader, writer and lane plan; an equal one made apart, or a copy, its own");
+
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}, the CPU's product within {worst:0.0e+0}"));
         }
 

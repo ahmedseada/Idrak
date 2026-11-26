@@ -10,7 +10,8 @@ namespace Idrak.Abstraction.Types;
 /// row); a value is its code's number times its row's scale. Read and written by the interface's defaults from that
 /// description alone, with no tensor of scales beside it. Each is made where a row is asked for and kept by the tensor it
 /// describes; two of one element type and length are equal by their descriptions' value (<see cref="TypeDescription"/>),
-/// which is what a device's plans and measured lanes are kept by.
+/// which is what a device's measured lanes are recorded by. Each one's description makes and holds its own plans (its
+/// reader, its writer, a lane's plan) the first time they are needed.
 /// </summary>
 public sealed class RowScale : IElementType
 {

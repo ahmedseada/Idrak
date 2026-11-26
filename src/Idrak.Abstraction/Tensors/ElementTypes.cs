@@ -97,12 +97,12 @@ public interface IElementType
     /// </summary>
     /// <param name="stored">The stored bytes (at least <c>ByteCount(values.Length)</c>).</param>
     /// <param name="values">Where the values go.</param>
-    void Read(ReadOnlySpan<byte> stored, Span<float> values) => DescribedReader.Of(Description).Read(stored, values);
+    void Read(ReadOnlySpan<byte> stored, Span<float> values) => Description.Reader.Read(stored, values);
 
     /// <summary>The first <c>values.Length</c> values stored in <paramref name="stored"/> as the description reads them, in float64 (no value of 64 bits or fewer narrowed).</summary>
     /// <param name="stored">The stored bytes (at least <c>ByteCount(values.Length)</c>).</param>
     /// <param name="values">Where the values go.</param>
-    void Read(ReadOnlySpan<byte> stored, Span<double> values) => DescribedReader.Of(Description).Read(stored, values);
+    void Read(ReadOnlySpan<byte> stored, Span<double> values) => Description.Reader.Read(stored, values);
 
     /// <summary>
     /// <paramref name="values"/> stored as this type into <paramref name="stored"/> (<c>ByteCount(values.Length)</c>
@@ -125,7 +125,7 @@ public interface IElementType
     void Write(ReadOnlySpan<double> values, Span<byte> stored) => DescribedWriting.Write(Description, values, stored);
 
     /// <summary>Why values cannot be written as this type, or null where they can.</summary>
-    string? Unwritable => DescribedEncoder.Why(Description);
+    string? Unwritable => Description.Unwritten;
 
     /// <summary>
     /// The type values are written as row by row when they are rows of <paramref name="length"/> values (a weight's output

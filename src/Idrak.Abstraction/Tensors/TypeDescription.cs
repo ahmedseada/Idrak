@@ -412,10 +412,36 @@ public sealed record BlockSum(NumberType Type, int Values, int Offset, bool OfVa
 /// <param name="Group">Blocks a group holds: more than 1 where a scale level is shared over many blocks (stored after them).</param>
 /// <param name="GroupBytes">Bytes a group takes, its blocks and its shared levels (0: Group · Bytes).</param>
 /// <param name="Sums">A block's fields holding sums over its values (not part of the values), or null: none.</param>
-public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
+public sealed partial record TypeDescription(int Values, int Bytes, NumberType Code, IReadOnlyList<CodePlane> Planes, double CodeOffset = 0,
     IReadOnlyList<BlockScale>? Scales = null, IReadOnlyList<BlockScale>? Mins = null, bool MinsAdded = false, int Group = 1, int GroupBytes = 0,
     IReadOnlyList<BlockSum>? Sums = null)
 {
+    // What the description's consumers make of it, each made the first time it is needed and held by this object, never
+    // kept by a description's value (a description made apart, equal or not, makes its own): the reader of its values
+    // (IElementType.Read's default) and its writer or why it has none (Write's and Unwritable's). The CPU's described
+    // lane holds its own beside them (TypeDescription.Cpu.cs). Not readonly: each is made in place (Once).
+    private Once<DescribedReader> reader;
+    private Once<DescribedEncoder.Made> encoder;
+
+    // A copy (a `with` expression) is a description of its own: its fields copied, none of what was made for the original.
+    // Every positional field is copied here.
+    private TypeDescription(TypeDescription original)
+    {
+        (Values, Bytes, Code, Planes, CodeOffset, Scales, Mins, MinsAdded, Group, GroupBytes, Sums) = (original.Values, original.Bytes, original.Code, original.Planes,
+            original.CodeOffset, original.Scales, original.Mins, original.MinsAdded, original.Group, original.GroupBytes, original.Sums);
+    }
+
+    /// <summary>The reader of the description's values (<see cref="DescribedReader"/>), made the first time it is asked for and held.</summary>
+    /// <exception cref="ArgumentException">The description does not hold together (<see cref="Valid"/>).</exception>
+    internal DescribedReader Reader => reader.Get(this, static d => d.Valid ? new DescribedReader(d)
+        : throw new ArgumentException("The description does not hold together; its values are not read.", nameof(d)))!;
+
+    /// <summary>The writer of the description's values (<see cref="DescribedEncoder"/>), made the first time it is asked for and held; null where it is one the encoder does not write (<see cref="Unwritten"/> says why).</summary>
+    internal DescribedEncoder? Encoder => encoder.Get(this, static d => DescribedEncoder.Make(d))!.Encoder;
+
+    /// <summary>Why the described encoder does not write the description, or null where it does.</summary>
+    internal string? Unwritten => encoder.Get(this, static d => DescribedEncoder.Make(d))!.Why;
+
     /// <summary>Values a group of blocks holds (Group · Values): the unit a row is whole of.</summary>
     public int UnitValues => Group * Values;
 
@@ -478,8 +504,9 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
     /// <summary>
     /// Whether <paramref name="other"/> describes the same bits: every field equal and every list's items one by one (no
     /// scales, minimums or sums null and empty alike). A description is its value: two made apart (int8's rows of one
-    /// length asked twice, <see cref="Types.RowScale"/>) are equal, so what a device keeps by a description (its plans, its
-    /// measured lanes) is kept once a value, whatever object holds it.
+    /// length asked twice, <see cref="Types.RowScale"/>) are equal, so a measured choice recorded for a description (a
+    /// device's lane at a shape) holds for an equal one. Its plans are its own: each description object makes and holds
+    /// its reader, its writer and a lane's plan the first time they are needed, none kept by the value.
     /// </summary>
     public bool Equals(TypeDescription? other) => ReferenceEquals(this, other) || other is not null
         && Values == other.Values && Bytes == other.Bytes && Group == other.Group && GroupBytes == other.GroupBytes && MinsAdded == other.MinsAdded
@@ -565,6 +592,25 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 }
 
 /// <summary>
+/// One thing a description makes of itself, held by the description (a field of it, one a consumer): made the first time
+/// it is asked for, by one thread (the others wait for it), then read without a lock; null is a value made like any other.
+/// A making that throws leaves it unmade. The field is never readonly (it is made in place).
+/// </summary>
+/// <typeparam name="T">What is made.</typeparam>
+internal struct Once<T> where T : class
+{
+    private T? value;
+    private bool made;
+    private object? gate;
+
+    /// <summary>The value, made from <paramref name="owner"/> by <paramref name="make"/> the first time.</summary>
+    public T? Get(TypeDescription owner, Func<TypeDescription, T?> make) => Volatile.Read(ref made) ? value : Make(owner, make);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private T? Make(TypeDescription owner, Func<TypeDescription, T?> make) => LazyInitializer.EnsureInitialized(ref value, ref made, ref gate, () => make(owner));
+}
+
+/// <summary>
 /// The writer of any described type (<see cref="TypeDescription"/>): float32 values stored by the type's description alone,
 /// with no code of the type's own. Per group of blocks it
 /// searches, by measured squared error, for every number the description stores:
@@ -593,9 +639,6 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 /// </summary>
 internal sealed class DescribedEncoder
 {
-    // Kept by the description's value (two descriptions made apart and equal share one writer, or one reason).
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<TypeDescription, object> Made = new();
-
     // A unit's candidate scales put its value of largest magnitude at the codes' extreme moved by these half steps of the
     // extreme's step (outward positive; past the extreme clips the largest values, which the error may favour); with a
     // minimum, also its range over the codes' range moved by these half steps. A codebook's entries cost a nearest-entry
@@ -874,26 +917,33 @@ internal sealed class DescribedEncoder
         bottomStep = numbers.Length > 1 ? numbers[1] - numbers[0] : 1;
     }
 
-    /// <summary>The writer of <paramref name="d"/>, or null where its description is one it does not write (said by <see cref="Why"/>).</summary>
-    public static DescribedEncoder? Of(TypeDescription? d) => d is null ? null : Made.GetOrAdd(d, static x => Make(x)) as DescribedEncoder;
+    /// <summary>What was made for a description (<see cref="TypeDescription.Encoder"/>, held by the description): its writer, or why it has none.</summary>
+    /// <param name="encoder">The writer, or null.</param>
+    /// <param name="why">Why there is no writer, or null where there is one.</param>
+    internal sealed class Made(DescribedEncoder? encoder, string? why)
+    {
+        /// <summary>The writer, or null.</summary>
+        public DescribedEncoder? Encoder => encoder;
 
-    /// <summary>Why <paramref name="d"/> has no writer, or null where it has one.</summary>
-    public static string? Why(TypeDescription d) => Made.GetOrAdd(d, static x => Make(x)) as string;
+        /// <summary>Why there is no writer, or null where there is one.</summary>
+        public string? Why => why;
+    }
 
-    private static object Make(TypeDescription d)
+    /// <summary>The writer of <paramref name="d"/>, or why it has none (its description one the encoder does not write).</summary>
+    internal static Made Make(TypeDescription d)
     {
         if (!d.Valid)
         {
-            return "its description does not hold together";
+            return new(null, "its description does not hold together");
         }
 
         try
         {
-            return new DescribedEncoder(d);
+            return new(new DescribedEncoder(d), null);
         }
         catch (NotSupportedException e)
         {
-            return e.Message;
+            return new(null, e.Message);
         }
     }
 
@@ -2035,8 +2085,6 @@ internal sealed class DescribedEncoder
     /// </summary>
     internal sealed class Grid : LevelNumbers
     {
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Bias), Grid?> Made = new();
-
         private readonly NumberType type;
         private readonly int[] ranks;
         private readonly double[] mids;
@@ -2139,8 +2187,11 @@ internal sealed class DescribedEncoder
 
         public override void Quantize(ReadOnlySpan<float> y, float t, float c0, Span<float> numbers) => Quantize(y, t, c0, numbers, []);
 
-        /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> (made once), or null (not one number of up to 16 bits, or no finite number).</summary>
-        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid ? Made.GetOrAdd((type, bias), static key => Make(key.Type, key.Bias, null)) : null;
+        /// <summary>
+        /// The grid of <paramref name="type"/> plus <paramref name="bias"/>, or null (not one number of up to 16 bits, or no
+        /// finite number): made for the encoder asking, which holds it (the encoder is made once a description, and held by it).
+        /// </summary>
+        public static Grid? Of(NumberType type, double bias) => type.Width == 1 && type.Bits <= 16 && type.Valid ? Make(type, bias, null) : null;
 
         /// <summary>The grid of <paramref name="type"/> plus <paramref name="bias"/> over the codes <paramref name="holds"/> takes (all where null).</summary>
         public static Grid? Of(NumberType type, double bias, Func<ulong, bool>? holds) => holds is null ? Of(type, bias)
@@ -2331,8 +2382,6 @@ internal sealed class DescribedEncoder
     /// </summary>
     internal sealed class Book
     {
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(NumberType Type, double Offset), Book?> Made = new();
-
         // Entries listed a pattern, the most patterns a part lists, the most index bits the parts split by.
         private const int Listed = 16, PatternLimit = 1 << 16, MostSplit = 4;
 
@@ -2369,9 +2418,12 @@ internal sealed class DescribedEncoder
         /// <summary>The distinct numbers the entries it may choose hold, ascending.</summary>
         public double[] Levels { get; }
 
-        /// <summary>The codebook of <paramref name="type"/> plus <paramref name="offset"/> (over the codes <paramref name="holds"/> takes, all where null), or null (not a table of up to 16 bits).</summary>
+        /// <summary>
+        /// The codebook of <paramref name="type"/> plus <paramref name="offset"/> (over the codes <paramref name="holds"/> takes,
+        /// all where null), or null (not a table of up to 16 bits): made for the encoder asking, which holds it.
+        /// </summary>
         public static Book? Of(NumberType type, double offset, Func<ulong, bool>? holds = null) => type is { Kind: NumberKind.Table, Bits: <= 16, Table: not null } && type.Valid
-            ? holds is null ? Made.GetOrAdd((type, offset), static key => new Book(key.Type, key.Offset, null)) : new Book(type, offset, holds)
+            ? new Book(type, offset, holds)
             : null;
 
         private bool Holds(int e) => held is null || held[e];
