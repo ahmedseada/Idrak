@@ -11,7 +11,7 @@ namespace Idrak.Vision.Plugins.Crnn;
 /// <c>ImageModels.Load</c> and reads lines through the library's line-recognition task (<c>model.LineReader()</c>,
 /// <c>idrak predict</c>, <c>idrak train --task line-recognition</c>). <see cref="CrnnRecognizer"/> makes, trains, saves
 /// and reads one. <c>VisionPlugins.RegisterAll</c> registers it with the package's other families (the idrak tool
-/// does at startup); an app may call <see cref="Register"/> alone.
+/// does at startup); an app may call <c>Register</c> alone.
 /// </summary>
 public static class CrnnPlugin
 {
