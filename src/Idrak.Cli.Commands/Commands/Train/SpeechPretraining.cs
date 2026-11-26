@@ -11,9 +11,9 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// <c>idrak pretrain</c> and <c>idrak resume</c> for a speech model (plan 21, S7): a folder whose config.json names an
-/// architecture a speech registry holds (<see cref="SpeechFamilies"/>, <see cref="SpeechSynthesisFamilies"/>; a plug-in
-/// given with <c>-P</c> registers it) trains on transcribed speech through <see cref="SpeechTrainer"/> (a recognizer: its
+/// <c>idrak pretrain</c> and <c>idrak resume</c> for a speech model (plan 21, S7): a folder whose config.json names the
+/// architecture of a speech recognizer or synthesizer family (finding the family by its name is not on the new design
+/// yet) trains on transcribed speech through <see cref="SpeechTrainer"/> (a recognizer: its
 /// objective, "ctc" or "seq2seq", is the model's) or <see cref="SpeechSynthesisTrainer"/> (a synthesizer, on the label
 /// durations of an alignments file). The run folder holds run.json (<see cref="RunFormat"/>), log.jsonl and the
 /// checkpoints, which <c>resume</c> continues and <c>runs show</c> reads.
@@ -39,28 +39,11 @@ internal static class SpeechPretraining
     private static readonly string[] TextFlags = ["--recompute", "--no-packing", "--no-graphs"];
 
     /// <summary>
-    /// Whether <paramref name="folder"/> holds a speech model: its config.json's architecture is registered as a speech
-    /// recognizer or synthesizer family (and not as a decoder's, which <c>PretrainedModel</c> reads).
+    /// Whether <paramref name="folder"/> holds a speech model: its config.json's architecture is a speech recognizer's or
+    /// synthesizer's family (and not a decoder's, which <c>PretrainedModel</c> reads). Finding the family by its name is
+    /// not on the new design yet, so none is.
     /// </summary>
-    public static bool Holds(string folder)
-    {
-        string config = Path.Combine(folder, "config.json");
-        if (!File.Exists(config))
-        {
-            return false;
-        }
-
-        try
-        {
-            var json = JsonNode.Parse(File.ReadAllText(config)) as JsonObject;
-            string? architecture = json?["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : (string?)json?["architecture"];
-            return architecture is not null && (SpeechFamilies.Find(architecture) is not null || SpeechSynthesisFamilies.Find(architecture) is not null);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
+    public static bool Holds(string folder) => false;
 
     /// <summary>Starts a speech training run of <paramref name="modelFolder"/> in <paramref name="run"/>.</summary>
     public static int Run(CommandContext context, string modelFolder, string run, int logEvery)
@@ -297,8 +280,12 @@ internal static class SpeechPretraining
     private static LoadedSpeechModel Load(CommandContext context, string folder)
     {
         string architecture = (string?)(JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))?["architectures"]?[0]) ?? "";
+        // The speech families were registered and the architecture's found by its name, which is not on the new design
+        // yet.
+        bool recognizerFamily = NotOnTheNewDesign.Yet<bool>($"Finding the speech recognizer family '{architecture}' by its name");
+        bool synthesizerFamily = NotOnTheNewDesign.Yet<bool>($"Finding the speech synthesizer family '{architecture}' by its name");
         Exception? refused = null;
-        if (SpeechFamilies.Find(architecture) is not null)
+        if (recognizerFamily)
         {
             try
             {
@@ -325,7 +312,7 @@ internal static class SpeechPretraining
                 recognizer.Dispose();
                 throw new UsageException($"{folder} holds a {recognizer.GetType().Name}, which does not train (its family gives no ITrainableSpeechModel).");
             }
-            catch (Exception e) when (e is InvalidDataException or NotSupportedException && SpeechSynthesisFamilies.Find(architecture) is not null)
+            catch (Exception e) when (e is InvalidDataException or NotSupportedException && synthesizerFamily)
             {
                 refused = e;                                                    // a synthesizer's task, say
             }

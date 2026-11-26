@@ -193,11 +193,12 @@ internal sealed class CreateCommand : Command
         int seed = context.Seed ?? ((int?)file["seed"] ?? 0);
         IDisposable model;
         var options = new Idrak.Audio.SpeechCreateOptions { Device = Idrak.Abstraction.Device.Cpu, Seed = seed, Overwrite = context.Flag("--overwrite") };
-        bool synthesizer = Idrak.Audio.Abstractions.SpeechSynthesisFamilies.Find(architecture) is not null;
+        bool synthesizer = NotOnTheNewDesign.Yet<bool>($"Finding the speech synthesizer family '{architecture}' by its name");
         try
         {
             // A recognizer when its family makes one from this description (ICreatableSpeechFamily.Creates), else a synthesizer's task.
-            if (Idrak.Audio.Abstractions.SpeechFamilies.Find(architecture) is not Idrak.Audio.Abstractions.ICreatableSpeechFamily recognizer
+            if (NotOnTheNewDesign.Yet<Idrak.Audio.Abstractions.ISpeechFamily?>($"Finding the speech recognizer family '{architecture}' by its name")
+                    is not Idrak.Audio.Abstractions.ICreatableSpeechFamily recognizer
                 ? synthesizer
                 : synthesizer && !recognizer.Creates(spec))
             {

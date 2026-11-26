@@ -112,7 +112,6 @@ internal static class HelpTopics
               idrak data audio FILES -o DIR         convert, resample and split into a folder with manifest.jsonl
               idrak data mel FILES -o DIR           a model's log-mel input features as .npy
               idrak audio process IN -o OUT --pipeline P   sound through an audio pipeline, to hear what it does
-              idrak audio processors                the processors a pipeline names, live or whole recording, options
 
             An audio pipeline names processors in order: "highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20".
             transcribe --audio-clean (IDRAK_AUDIO_CLEAN) and speak --audio-clean run one; --clean on pretrain, voice train

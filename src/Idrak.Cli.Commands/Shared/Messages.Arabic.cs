@@ -292,8 +292,6 @@ internal static partial class Messages
             "تدريب صوت على تسجيلات شخص (ضبط نموذج نطق، بموافقته) وتثبيته",
         ["Run a sound file through an audio pipeline (filters, dynamics, noise) and write the result"] =
             "تمرير ملف صوت في سلسلة معالجة صوتية (مرشحات وتحكم في المستوى وإزالة ضوضاء) وكتابة الناتج",
-        ["The audio processors a pipeline can name: live or whole recording, and their options"] =
-            "معالجات الصوت التي تسميها سلسلة المعالجة: حية أو للتسجيل كله، وخياراتها",
         ["Install a voice from a zip idrak voice export wrote, or from a voice folder"] = "تثبيت صوت من ملف zip كتبه idrak voice export، أو من مجلد صوت",
         ["Download a voice folder published on the Hugging Face hub and install it"] = "تنزيل مجلد صوت منشور على Hugging Face وتثبيته",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",
@@ -434,7 +432,6 @@ internal static partial class Messages
         ["Serve models and open a small web chat page in the browser"] = "تقديم النماذج وفتح صفحة محادثة صغيرة في المتصفح",
         ["Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images"] =
             "تدريب شبكة من ملف JSON للبناء، أو ضبط نموذج صور ضبطا دقيقا، على ملف CSV أو مجلدات صور أو صور موسومة",
-        ["{0} Load its plug-in with -P (--plugin)."] = "{0} حمل الإضافة التي تسجله بالخيار -P (--plugin).",
         ["Continue a training run from its last checkpoint (the remaining epochs, or --epochs N more)"] =
             "متابعة تدريب من آخر نقطة حفظ (الحقب المتبقية، أو --epochs N إضافية)",
         ["Training runs (from their JSON Lines logs): epochs, best epoch and loss, time, status"] = "عمليات التدريب (من سجلاتها بصيغة JSON Lines): الحقب وأفضل حقبة والخسارة والوقت والحالة",

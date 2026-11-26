@@ -10,9 +10,8 @@ namespace Idrak.Cli.Shared;
 /// <summary>
 /// Sound files for every command that reads or writes them (<c>transcribe</c>, <c>speak</c>, <c>voice add</c>,
 /// <c>data audio</c>, <c>data mel</c>, <c>--audio</c>): the inputs expanded (files, folders, globs, <c>-</c> for standard
-/// input), decoded by the registered codecs (<see cref="AudioCodecs"/>: WAV and FLAC built in, MP3 through a plug-in),
-/// written by the encoder of the output's extension (<see cref="AudioEncoders"/>), with the <c>-P</c> remedy when a
-/// codec or encoder is missing; and the voice store the voice commands and <c>speak</c> use.
+/// input), decoded by the codec that reads them (<see cref="AudioCodecs"/>: WAV, FLAC and MP3), written by the encoder of
+/// the output's extension (<see cref="AudioEncoders"/>); and the voice store the voice commands and <c>speak</c> use.
 /// </summary>
 internal static class AudioFiles
 {
@@ -28,7 +27,7 @@ internal static class AudioFiles
     /// <summary>
     /// --clean VALUE over <paramref name="stages"/>, <paramref name="settings"/> and <paramref name="processing"/> (a
     /// config's, a checkpoint's). A comma list of bare cleaning stage names (<see cref="AudioCleaners"/>: highpass,
-    /// denoise, trim, normalize, or a plug-in's) is those stages, as before, with --clean-settings; any other value is an
+    /// denoise, trim, normalize) is those stages, as before, with --clean-settings; any other value is an
     /// audio pipeline (<see cref="Pipeline"/>: a value or an option written with '=', or another processor's name), run in
     /// place of the stages; "none" is neither. Without --clean, the given ones (with --clean-settings over the settings).
     /// </summary>
@@ -55,21 +54,18 @@ internal static class AudioFiles
     }
 
     /// <summary>
-    /// Whether <paramref name="text"/> is a comma list of bare cleaning stage names (each registered in
-    /// <see cref="AudioCleaners"/>, with no '=' and no space): the stages --clean took before pipelines.
+    /// Whether <paramref name="text"/> is a comma list of bare cleaning stage names (<see cref="AudioCleaners"/>, with no
+    /// '=' and no space): the stages --clean took before pipelines. A bare name was a stage when a cleaner was registered
+    /// under it; finding one by its name is not on the new design yet, so none is (the value is a pipeline).
     /// </summary>
-    public static bool IsStageList(string text)
-    {
-        var items = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return items.Length > 0 && items.All(item => item.IndexOfAny(['=', ' ', '\t']) < 0 && AudioCleaners.Find(item) is not null);
-    }
+    public static bool IsStageList(string text) => false;
 
     /// <summary>
     /// An audio pipeline given to <paramref name="option"/>: its text (<c>highpass=80, denoise=1.5 quantile=0.2,
     /// normalize=-20</c>; <see cref="AudioPipeline.Parse"/>), a JSON array of steps (<c>["highpass=80", {"name":
     /// "normalize", "value": -20}]</c>), or @FILE holding either; "none" is the empty pipeline.
     /// </summary>
-    /// <exception cref="UsageException">An unknown processor or option (naming the registered ones), a bad value, a missing file or bad JSON.</exception>
+    /// <exception cref="UsageException">An unknown processor or option, a bad value, a missing file or bad JSON.</exception>
     public static AudioPipeline Pipeline(string option, string text)
     {
         string given = text;
@@ -92,7 +88,7 @@ internal static class AudioFiles
         }
         catch (ArgumentException e)
         {
-            throw new UsageException($"{option}: {e.Message} ('idrak audio processors' lists them with their options.)");
+            throw new UsageException($"{option}: {e.Message}");
         }
     }
 
@@ -144,13 +140,9 @@ internal static class AudioFiles
     /// <summary>The argument that stands for standard input.</summary>
     public const string StandardInputName = "-";
 
-    // Sample plug-ins of this repository for formats the library does not decode or encode itself, named in the remedy
-    // (none today: WAV, FLAC and MP3 are the library's).
-    private static readonly Dictionary<string, string> SamplePlugins = new(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>
-    /// The files <paramref name="inputs"/> name, in the order given: a file as it is, a folder's files a registered codec
-    /// reads by extension (all subfolders, sorted), a glob's matches (sorted), and <c>-</c> as itself when
+    /// The files <paramref name="inputs"/> name, in the order given: a file as it is, a folder's files a codec reads by
+    /// extension (all subfolders, sorted), a glob's matches (sorted), and <c>-</c> as itself when
     /// <paramref name="standardInput"/> allows it. A usage error names an input that is not there.
     /// </summary>
     public static IReadOnlyList<string> Expand(IEnumerable<string> inputs, bool standardInput = false)
@@ -184,45 +176,26 @@ internal static class AudioFiles
         return files;
     }
 
-    /// <summary>
-    /// The sound of <paramref name="path"/> (or of standard input for <c>-</c>), decoded by the codec that reads it; a
-    /// file no registered codec reads is refused with the <c>-P</c> remedy.
-    /// </summary>
+    /// <summary>The sound of <paramref name="path"/> (or of standard input for <c>-</c>), decoded by the codec that reads it.</summary>
     public static AudioData Decode(string path)
     {
-        try
+        if (path == StandardInputName)
         {
-            if (path == StandardInputName)
-            {
-                using var input = Console.OpenStandardInput();
-                using var bytes = new MemoryStream();
-                input.CopyTo(bytes);
-                return AudioCodecs.Decode(bytes.GetBuffer().AsSpan(0, (int)bytes.Length));
-            }
+            using var input = Console.OpenStandardInput();
+            using var bytes = new MemoryStream();
+            input.CopyTo(bytes);
+            return AudioCodecs.Decode(bytes.GetBuffer().AsSpan(0, (int)bytes.Length));
+        }
 
-            return AudioCodecs.Decode(path);
-        }
-        catch (InvalidDataException e) when (e.Message.Contains("AudioCodecs.Register", StringComparison.Ordinal))
-        {
-            throw new InvalidDataException(Remedy(e.Message, Path.GetExtension(path)), e);
-        }
+        return AudioCodecs.Decode(path);
     }
 
     /// <summary>
-    /// The encoder that writes <paramref name="path"/> (by its extension), checked before any work is done; none is
-    /// refused with the <c>-P</c> remedy (naming this repository's plug-in for the extension when it has one).
+    /// The encoder that writes <paramref name="path"/> (by its extension), checked before any work is done. The encoders
+    /// were registered and the one of an extension found among them, which is not on the new design yet.
     /// </summary>
-    public static IAudioEncoder EncoderFor(string path)
-    {
-        try
-        {
-            return AudioEncoders.For(path);
-        }
-        catch (NotSupportedException e)
-        {
-            throw new NotSupportedException(Remedy(e.Message, Path.GetExtension(path)), e);
-        }
-    }
+    /// <exception cref="NotSupportedException">Always for now: picking the encoder of the extension is not on the new design yet.</exception>
+    public static IAudioEncoder EncoderFor(string path) => NotOnTheNewDesign.Yet<IAudioEncoder>($"Picking the audio encoder of {path}'s extension");
 
     /// <summary>Writes <paramref name="audio"/> to <paramref name="path"/> with <paramref name="encoder"/> (the folder is created).</summary>
     public static void Save(string path, AudioData audio, IAudioEncoder encoder, AudioEncodeOptions options)
@@ -252,9 +225,9 @@ internal static class AudioFiles
 
     /// <summary>
     /// The voice store of the voice commands and <c>speak</c>: <c>--voices DIR</c>; else, when <c>IDRAK_VOICES</c> is
-    /// not set and the cache folder was given (<c>--cache</c> or the config), voices/ under it; else the registered
-    /// "folder" store (<see cref="VoiceStores"/>: <c>IDRAK_VOICES</c>, else voices/ under <c>IDRAK_CACHE</c> or
-    /// <c>~/.cache/idrak</c>), or the store a plug-in registered over it.
+    /// not set and the cache folder was given (<c>--cache</c> or the config), voices/ under it; else the built-in
+    /// "folder" store (<see cref="FolderVoiceStore.DefaultRoot"/>: <c>IDRAK_VOICES</c>, else voices/ under
+    /// <c>IDRAK_CACHE</c> or <c>~/.cache/idrak</c>), reached directly.
     /// </summary>
     public static IVoiceStore VoiceStore(CommandContext context)
     {
@@ -266,7 +239,7 @@ internal static class AudioFiles
         bool cacheGiven = context.Option("--cache") is not null || context.Config.Get("cache") is not null;
         return cacheGiven && Environment.GetEnvironmentVariable("IDRAK_VOICES") is not { Length: > 0 }
             ? new FolderVoiceStore(Path.Combine(context.CacheFolder, "voices"))
-            : VoiceStores.Get();
+            : new FolderVoiceStore(FolderVoiceStore.DefaultRoot);
     }
 
     /// <summary>A number of seconds for people: "1.50 s".</summary>
@@ -297,9 +270,4 @@ internal static class AudioFiles
     /// <summary>A number option, or null when absent.</summary>
     public static double? OptionalNumber(CommandContext context, string option, double min = double.NegativeInfinity, double max = double.PositiveInfinity) =>
         context.Option(option) is null ? null : Number(context, option, 0, min, max);
-
-    // A registry's refusal of a format with the remedy: load a plug-in that registers it (naming this repository's sample when there is one).
-    private static string Remedy(string message, string extension) =>
-        Messages.T("{0} Load its plug-in with -P (--plugin).", message)
-        + (SamplePlugins.TryGetValue(extension, out var plugin) ? $" For {extension} files: -P {plugin}." : "");
 }

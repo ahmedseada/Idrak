@@ -14,7 +14,7 @@ namespace Idrak.Cli.Commands.Voices;
 
 /// <summary>
 /// <c>idrak voice train NAME --from DATA --base MODEL --consent TEXT</c> (plan 21, S9 route C): fine-tunes a synthesizer
-/// its plug-in trains (an <see cref="IAdversarialSpeechSynthesizer"/>: VITS) on one person's transcribed recordings with
+/// its family trains (an <see cref="IAdversarialSpeechSynthesizer"/>: VITS) on one person's transcribed recordings with
 /// <see cref="AdversarialSynthesisTrainer"/>, then installs the last checkpoint as the voice NAME of kind
 /// <see cref="VoiceKinds.Checkpoint"/>. The run folder (run.json, log.jsonl, checkpoint-STEP) continues with
 /// <c>--resume RUN</c> or <c>idrak resume RUN</c>.
@@ -75,9 +75,9 @@ internal sealed class VoiceTrainCommand : Command
               --clean STAGES|PIPELINE
                                   every recording cleaned before its features: stages, comma-separated, in order:
                                   highpass (DC and rumble out), denoise (the noise floor gated off), trim (silence at the
-                                  ends cut), normalize (speech levelled), or a registered cleaner's name; or an audio
-                                  pipeline with values and options ("highpass=80, dehum=50, denoise=1.5, normalize=-20";
-                                  a JSON array or @FILE; idrak audio processors lists them; default none)
+                                  ends cut), normalize (speech levelled); or an audio pipeline with values and options
+                                  ("highpass=80, dehum=50, denoise=1.5, normalize=-20"; a JSON array or @FILE; default
+                                  none)
               --clean-settings F  the stages' settings as JSON, a file or inline (default the library's; not with a
                                   pipeline, which carries its own)
               --schedule NAME     the rate's schedule: constant, cosine, linear, wsd (default constant)
@@ -142,7 +142,7 @@ internal sealed class VoiceTrainCommand : Command
         }
 
         string statement = Consent(context);
-        string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune; its family a registered plug-in's).");
+        string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune).");
         string baseFolder = Directory.Exists(baseArgument) ? Path.GetFullPath(baseArgument) : ModelChoices.Resolve(context, baseArgument);
         var store = AudioFiles.VoiceStore(context);
         if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install") && !context.Flag("--time-steps"))

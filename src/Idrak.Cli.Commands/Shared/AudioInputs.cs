@@ -13,7 +13,7 @@ namespace Idrak.Cli.Shared;
 /// <see cref="ImageInputs"/>: the files as chat audio parts (<see cref="ChatAudio"/>, the bytes as they are: the model's
 /// audio family decodes them), and how a chat generator reads them: the model's audio part
 /// (<see cref="PretrainedModel.OpenPart"/>, with the trained tensors an adapter or a fine-tune brought), or, for a model
-/// that loaded without it, <see cref="ChatAudioParts"/> over <see cref="AudioLanguage.Attach"/> (a plug-in given with <c>-P</c>).
+/// that loaded without it, <see cref="ChatAudioParts"/> over <see cref="AudioLanguage.Attach"/>.
 /// </summary>
 internal static class AudioInputs
 {
@@ -32,7 +32,7 @@ internal static class AudioInputs
     /// <summary>
     /// How a chat generator reads <paramref name="model"/>'s sounds (a source for <c>ChatGenerator.Parts</c>, disposed by
     /// the caller), or null with the reason when it reads none: a model without <c>audio_config</c> (no reason), or one
-    /// whose audio family is not registered (the registry's message and the <c>-P</c> remedy).
+    /// whose audio family is not found (its message: finding it by its name is not on the new design yet).
     /// </summary>
     public static ISoftPartSource? For(PretrainedModel model, out string? reason)
     {
@@ -49,7 +49,7 @@ internal static class AudioInputs
         }
         catch (NotSupportedException e)
         {
-            reason = Messages.T("{0} Load its plug-in with -P (--plugin).", e.Message);
+            reason = e.Message;
             return null;
         }
     }

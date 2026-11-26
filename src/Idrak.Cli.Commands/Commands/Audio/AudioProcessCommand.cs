@@ -11,7 +11,7 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands;
 
 /// <summary>
-/// <c>idrak audio process IN -o OUT --pipeline P</c> (plan 31, P4): a sound file decoded by the registered codecs, run
+/// <c>idrak audio process IN -o OUT --pipeline P</c> (plan 31, P4): a sound file decoded by the codec that reads it, run
 /// through an audio pipeline (<see cref="AudioPipeline"/>) and written by the encoder of the output's extension, to hear
 /// what a pipeline does; it prints the steps that ran, the sound's length and the real-time factor. With
 /// <c>--block-seconds</c> the sound goes through the pipeline's stage block by block, as live sound does.
@@ -25,12 +25,11 @@ internal sealed class AudioProcessCommand : Command
     public override string Usage => """
         IN -o OUT --pipeline P [options]
 
-        Decodes IN with the registered codecs (WAV, FLAC, MP3; another format with its plug-in, -P), runs it through the
-        audio pipeline P and writes OUT with the encoder of its extension (.wav, .mp3, or a plug-in's), to hear what the
-        pipeline does. Prints each step that ran, the sound's length before and after, the time taken and the real-time
-        factor; -v runs it again warm and prints both (the first call compiles the code). P names processors in order,
-        comma-separated, each with its value and KEY=VALUE options after a space ("highpass=80, dehum=50, denoise=1.5
-        quantile=0.2, normalize=-20 peak=0.9"); idrak audio processors lists them with their options.
+        Decodes IN (WAV, FLAC, MP3), runs it through the audio pipeline P and writes OUT with the encoder of its
+        extension (.wav or .mp3), to hear what the pipeline does. Prints each step that ran, the sound's length before
+        and after, the time taken and the real-time factor; -v runs it again warm and prints both (the first call
+        compiles the code). P names processors in order, comma-separated, each with its value and KEY=VALUE options
+        after a space ("highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20 peak=0.9").
 
         Arguments:
           IN                     the sound file, or - for standard input
@@ -68,7 +67,7 @@ internal sealed class AudioProcessCommand : Command
 
         string output = context.Option("--out") ?? throw new UsageException("Missing -o, --out FILE (the sound to write).");
         var pipeline = AudioFiles.Pipeline("--pipeline", context.Option("--pipeline")
-            ?? throw new UsageException("Missing --pipeline P (such as \"highpass=80, denoise=1.5, normalize=-20\"; idrak audio processors lists them)."));
+            ?? throw new UsageException("Missing --pipeline P (such as \"highpass=80, denoise=1.5, normalize=-20\")."));
         double blockSeconds = AudioFiles.Number(context, "--block-seconds", 0, 0);
         var encoder = AudioFiles.EncoderFor(output);                               // checked before any work is done
         var bits = AudioFiles.Bits(context.Option("--bits"));
@@ -91,7 +90,7 @@ internal sealed class AudioProcessCommand : Command
         var steps = new JsonArray();
         foreach (var step in pipeline.Steps)
         {
-            var processor = AudioProcessors.Get(step.Name);
+            var processor = NotOnTheNewDesign.Yet<IAudioProcessor>($"Picking the audio processor '{step.Name}' by its name");
             steps.Add((JsonNode)new JsonObject { ["step"] = step.ToString(), ["name"] = step.Name, ["label"] = processor.Label, ["live"] = processor.Live });
             context.Write($"  {step}  ({processor.Label}{(processor.Live ? "" : ", whole recording")})");
         }

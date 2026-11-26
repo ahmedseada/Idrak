@@ -12,7 +12,7 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Run;
 
 /// <summary>
-/// <c>idrak transcribe MODEL AUDIO...</c> (plan 21, S7): speech to text through the model's registered family
+/// <c>idrak transcribe MODEL AUDIO...</c> (plan 21, S7): speech to text through the model's family
 /// (<see cref="SpeechModels"/>), one <see cref="ISpeechRecognizer.Transcribe"/> per file in the order given, as text,
 /// JSON, SRT or WebVTT.
 /// </summary>
@@ -29,13 +29,13 @@ internal sealed partial class TranscribeCommand : Command
         MODEL --live [-|FILE] [options]
         --list-inputs
 
-        Transcribes each sound file with the model's family (the tool registers Idrak.Audio.Plugins' families, Whisper
-        among them; another plug-in with -P), in the order given; a progress line shows the file, the stage and the
-        segment. Sound of any rate and channels is mixed to one and resampled to the model's. Without -o the result is
-        printed; with -o it is written: a file for one input, else a folder of NAME.txt, .json, .srt or .vtt. -j prints
-        one JSON document (every file's text, language, segments and stage times). -v adds each file's stage times (the
-        first file cold, the others warm; one file is transcribed again for its warm times) and the device's peak memory.
-        Subtitles take the segments' times, so --format srt and vtt ask the model for timestamps.
+        Transcribes each sound file with the model's family (Idrak.Audio.Plugins' families, Whisper among them; finding
+        a model's family by its name is not on the new design yet), in the order given; a progress line shows the file,
+        the stage and the segment. Sound of any rate and channels is mixed to one and resampled to the model's. Without
+        -o the result is printed; with -o it is written: a file for one input, else a folder of NAME.txt, .json, .srt or
+        .vtt. -j prints one JSON document (every file's text, language, segments and stage times). -v adds each file's
+        stage times (the first file cold, the others warm; one file is transcribed again for its warm times) and the
+        device's peak memory. Subtitles take the segments' times, so --format srt and vtt ask the model for timestamps.
 
         --live transcribes as the sound comes: from the microphone (the system's audio, --capture and --input to choose;
         --list-inputs shows them), from standard input with - (a recorder's WAV or raw PCM: ffmpeg, arecord, sox), or a
@@ -45,15 +45,14 @@ internal sealed partial class TranscribeCommand : Command
 
         --audio-clean PIPELINE runs the sound through an audio pipeline before the model hears it (IDRAK_AUDIO_CLEAN
         gives one when the option is not given; none turns it off): steps comma-separated, each a processor, its value
-        and KEY=VALUE options after a space ("highpass=80, dehum=50, presence=3, agc"; a JSON array or @FILE too;
-        idrak audio processors lists them). A file is cleaned whole before it is read; --live cleans the sound as it
-        comes, so a step that needs the whole recording (normalize, trim, denoise, loudness) is refused, naming its live
-        alternative (agc, loudness-live).
+        and KEY=VALUE options after a space ("highpass=80, dehum=50, presence=3, agc"; a JSON array or @FILE too). A
+        file is cleaned whole before it is read; --live cleans the sound as it comes, so a step that needs the whole
+        recording (normalize, trim, denoise, loudness) is refused, naming its live alternative (agc, loudness-live).
 
         Arguments:
           MODEL                  a model folder (config.json, weights, tokenizer, preprocessor_config.json), a hub id
                                  in the cache or an alias
-          AUDIO                  sound files (WAV, FLAC; MP3 with its plug-in), folders, globs, or - for standard input
+          AUDIO                  sound files (WAV, FLAC, MP3), folders, globs, or - for standard input
 
         Options:
           -l, --language CODE    the spoken language (en, ar, ...; default: detected by the model when it can)
@@ -99,7 +98,7 @@ internal sealed partial class TranscribeCommand : Command
               --silence-floor-db D  and always under this level, dB of full scale (-50)
               --min-speech S     seconds of speech a segment needs to be read: a click or a breath is left out (0.3)
               --agreement N      readings in a row a word must keep before it is final (2)
-              --commit NAME      the commit policy (agreement; a plug-in's)
+              --commit NAME      the commit policy (agreement)
               --every-step       read every step of the sound even when behind (a recording piped in; a FILE does)
               --list-inputs      list the audio interfaces and their input devices, then exit
 
@@ -159,7 +158,7 @@ internal sealed partial class TranscribeCommand : Command
         var files = AudioFiles.Expand(context.Positional.Skip(1), standardInput: true);
         if (files.Count == 0)
         {
-            throw new UsageException($"No sound files in {string.Join(", ", context.Positional.Skip(1))} (the registered codecs read {string.Join(", ", AudioCodecs.Extensions)}).");
+            throw new UsageException($"No sound files in {string.Join(", ", context.Positional.Skip(1))}.");
         }
 
         string? output = context.Option("--out");

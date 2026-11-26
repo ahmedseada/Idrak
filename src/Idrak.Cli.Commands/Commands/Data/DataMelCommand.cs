@@ -12,7 +12,8 @@ namespace Idrak.Cli.Commands.Data;
 /// <summary>
 /// <c>idrak data mel FILE... -o DIR</c> (plan 21, S7): a model's input features of sound files, written as NumPy .npy
 /// files with the options they were taken with (features.json), for inspection and comparison with another
-/// implementation. The features are a registered extractor's (<see cref="AudioFeatureExtractors"/>, "log-mel" built in).
+/// implementation. The features are the library's log-mel (<see cref="Idrak.Audio.LogMelFeatures"/>), reached directly;
+/// another extractor by its name is not on the new design yet.
 /// </summary>
 internal sealed class DataMelCommand : Command
 {
@@ -32,13 +33,13 @@ internal sealed class DataMelCommand : Command
         preprocessor_config.json (--preprocessor FILE, or the model folder holding it), then the options below over them.
 
         Arguments:
-          FILE                   sound files (WAV, FLAC; MP3 with its plug-in), folders or globs
+          FILE                   sound files (WAV, FLAC, MP3), folders or globs
 
         Options:
           -o, --out DIR          the folder to write
               --preprocessor F   a preprocessor_config.json (sampling_rate, n_fft, hop_length, feature_size,
                                  chunk_length), or a model folder that has one
-              --extractor NAME   the registered feature extractor (default log-mel)
+              --extractor NAME   the feature extractor by its name (default: log-mel; another is not on the new design yet)
               --sample-rate R    the features' rate (default 16000)
               --window-size N    the frame's samples, n_fft (default 400)
               --hop-size N       samples between frames (default 160)
@@ -83,15 +84,16 @@ internal sealed class DataMelCommand : Command
         var files = AudioFiles.Expand(context.Positional);
         if (files.Count == 0)
         {
-            throw new UsageException($"No sound files in {string.Join(", ", context.Positional)} (the registered codecs read {string.Join(", ", AudioCodecs.Extensions)}).");
+            throw new UsageException($"No sound files in {string.Join(", ", context.Positional)}.");
         }
 
         var options = Options(context);
-        string name = context.Option("--extractor") ?? "log-mel";
         IAudioFeatureExtractor extractor;
         try
         {
-            extractor = AudioFeatureExtractors.Create(name, options);
+            extractor = context.Option("--extractor") is { } name
+                ? NotOnTheNewDesign.Yet<IAudioFeatureExtractor>($"Picking the audio feature extractor '{name}' by its name")
+                : new Idrak.Audio.LogMelFeatures(options);
             _ = extractor.FramesFor(options.SampleRate);                       // the options are checked now
         }
         catch (Exception e) when (e is NotSupportedException or ArgumentException)

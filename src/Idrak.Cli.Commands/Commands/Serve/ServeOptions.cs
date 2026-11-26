@@ -32,9 +32,8 @@ internal sealed record ServedModel(string Name, string Source, ModelChoices.Mode
     /// <summary>Whether its chat takes images.</summary>
     public bool ReadsImages => false;                                   // finding its vision family by name: not on the new design yet
 
-    /// <summary>Whether its chat takes sounds: an audio-language model whose audio family is registered and whose template renders sounds.</summary>
-    public bool ReadsAudio => Config is not null && Idrak.Audio.Abstractions.AudioFamilies.HasAudio(Config) && Architecture(Config) is { } architecture
-        && Idrak.Audio.Abstractions.AudioFamilies.Find(architecture) is not null && Template?.PartKinds.Contains(ChatParts.Audio) == true;
+    /// <summary>Whether its chat takes sounds.</summary>
+    public bool ReadsAudio => false;                                    // finding its audio family by name: not on the new design yet
 
     /// <summary>The architecture name config.json gives (its first "architectures" entry), or null.</summary>
     public static string? Architecture(JsonObject config) => config["architectures"] is JsonArray { Count: > 0 } names ? (string?)names[0] : null;

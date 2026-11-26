@@ -12,8 +12,8 @@ namespace Idrak.Cli.Commands.Data;
 
 /// <summary>
 /// <c>idrak data audio FILE|DIR... -o DIR</c> (plan 21, S7): sound files converted (channels mixed, resampled, written as
-/// WAV or any registered encoder's format), optionally cut into pieces by a registered splitter
-/// (<see cref="AudioSplitters"/>: at pauses or fixed lengths), with a manifest.jsonl a speech data source reads, and
+/// WAV or MP3), optionally cut into pieces by a splitter (<see cref="AudioSplitters"/>: at pauses or fixed lengths; picking
+/// it by its name is not on the new design yet), with a manifest.jsonl a speech data source reads, and
 /// statistics of the lengths, rates and channels.
 /// </summary>
 internal sealed class DataAudioCommand : Command
@@ -28,7 +28,7 @@ internal sealed class DataAudioCommand : Command
     public override string Usage => """
         FILE|DIR... -o DIR [options]
 
-        Decodes each file (WAV, FLAC; MP3 with its plug-in), mixes its channels to one with --mono, resamples it with
+        Decodes each file (WAV, FLAC, MP3), mixes its channels to one with --mono, resamples it with
         --rate, cuts it into pieces with --split, and writes every piece (NAME.wav, or NAME-0001.wav ... when split; a
         folder's files keep their subfolders) with a line of manifest.jsonl: name, seconds, rate, channels, source,
         start and end in the source, and text when --transcripts has the file's (a split file's pieces get none: its
@@ -48,9 +48,8 @@ internal sealed class DataAudioCommand : Command
               --rate R           resample to R Hz (default: each file's own rate)
               --mono             mix the channels to one (their mean)
               --bits B           the samples written: 16 (default), 24, 32, 8 or float
-              --type EXT         the files written: wav (default), or any extension a registered encoder writes
-              --split S          none (default), silence (the pieces between pauses), seconds (pieces of --max-seconds)
-                                 or a registered splitter's name
+              --type EXT         the files written: wav (default) or mp3
+              --split S          none (default), silence (the pieces between pauses) or seconds (pieces of --max-seconds)
               --silence-db D     a frame more than D dB below the loudest is silence (default 40)
               --min-silence S    a pause of at least S seconds separates two pieces (default 0.3)
               --pad-seconds S    silence kept on both sides of a piece (default 0.1)
@@ -63,9 +62,9 @@ internal sealed class DataAudioCommand : Command
               --clean STAGES|PIPELINE
                                  every piece cleaned before it is written: stages, comma-separated, in order: highpass
                                  (DC and rumble out), denoise (the noise floor gated off), trim (silence at the ends
-                                 cut), normalize (speech levelled), or a registered cleaner's name; or an audio pipeline
-                                 with values and options ("highpass=80, dehum=50, denoise=1.5, normalize=-20"; a JSON
-                                 array or @FILE; idrak audio processors lists them; default none)
+                                 cut), normalize (speech levelled); or an audio pipeline with values and options
+                                 ("highpass=80, dehum=50, denoise=1.5, normalize=-20"; a JSON array or @FILE; default
+                                 none)
               --clean-settings F the stages' settings as JSON, a file or inline (default the library's; not with a
                                  pipeline, which carries its own)
               --transcripts FILE the texts: JSON Lines rows with "file" (or "audio", "path", "name", "id") and "text"
@@ -135,7 +134,7 @@ internal sealed class DataAudioCommand : Command
         var inputs = Inputs(context.Positional);
         if (inputs.Count == 0)
         {
-            throw new UsageException($"No sound files in {string.Join(", ", context.Positional)} (the registered codecs read {string.Join(", ", AudioCodecs.Extensions)}).");
+            throw new UsageException($"No sound files in {string.Join(", ", context.Positional)}.");
         }
 
         int? rate = context.Option("--rate") is null ? null : context.IntOption("--rate", 0) is > 0 and var r ? r : throw new UsageException("--rate needs a whole number of Hz above 0.");
@@ -147,7 +146,7 @@ internal sealed class DataAudioCommand : Command
         IAudioSplitter? splitter;
         try
         {
-            splitter = split == "none" ? null : AudioSplitters.Get(split);
+            splitter = split == "none" ? null : NotOnTheNewDesign.Yet<IAudioSplitter>($"Picking the audio splitter '{split}' by its name");
         }
         catch (NotSupportedException e)
         {
@@ -188,7 +187,7 @@ internal sealed class DataAudioCommand : Command
         IAudioCleaner[] cleaners;
         try
         {
-            cleaners = [.. choice.Stages.Select(AudioCleaners.Get)];
+            cleaners = [.. choice.Stages.Select(stage => NotOnTheNewDesign.Yet<IAudioCleaner>($"Picking the audio cleaning stage '{stage}' by its name"))];
         }
         catch (NotSupportedException e)
         {
@@ -217,7 +216,7 @@ internal sealed class DataAudioCommand : Command
                 if (output is null)
                 {
                     // The statistics need the header only (the length, rate and channels), not the samples.
-                    var info = AudioCodecs.ReadInfo(path) ?? throw new InvalidDataException($"{path}: not an audio format of the registered codecs ({string.Join(", ", AudioCodecs.Names)}).");
+                    var info = AudioCodecs.ReadInfo(path) ?? throw new InvalidDataException($"{path}: not an audio format the codecs read.");
                     sources.Add((path, info.Samples >= 0 ? (double)info.Samples / info.SampleRate : AudioFiles.Decode(path).Duration.TotalSeconds, info.SampleRate, info.Channels));
                     line.Advance();
                     continue;

@@ -324,9 +324,9 @@ idrak voice export ahmed -o ahmed-voice.zip              # idrak voice import ah
 
 ### Audio
 
-Sound through an audio pipeline (plan 31): the registered processors (`AudioProcessors`: filters, dynamics, noise and
-repair, and a plug-in's) named in order, comma-separated, each with its value and `KEY=VALUE` options after a space:
-`highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20 peak=0.9` (after a comma a registered name starts a new
+Sound through an audio pipeline (plan 31): the processors (filters, dynamics, noise and repair; finding one by its name
+is not on the new design yet) named in order, comma-separated, each with its value and `KEY=VALUE` options after a space:
+`highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20 peak=0.9` (after a comma a processor's name starts a new
 step, so an option goes after a space). A pipeline is also a JSON array of steps (`["highpass=80", {"name":
 "normalize", "value": -20}]`) or `@FILE` holding either. A processor runs on live sound as it comes, or needs the whole
 recording (`normalize`, `trim`, `denoise`, `loudness`): a live pipeline refuses the latter, naming its live alternative
@@ -335,18 +335,16 @@ recording (`normalize`, `trim`, `denoise`, `loudness`): a live pipeline refuses 
 | Command | What it does |
 |---|---|
 | `idrak audio process` | Run a sound file through an audio pipeline (filters, dynamics, noise) and write the result |
-| `idrak audio processors` | The audio processors a pipeline can name: live or whole recording, and their options |
 
 The same pipelines go to `idrak transcribe --audio-clean P` (files cleaned whole before they are read; `--live` cleaned as
 the sound comes; `IDRAK_AUDIO_CLEAN` gives one when the option is not given, `none` turns it off), `idrak speak
 --audio-clean P` (the speech before it is written) and `--clean` on `pretrain` (speech), `voice train` and `data audio`.
 There `--clean` keeps its old meaning when it is a comma list of the cleaning stages alone (`highpass,denoise,trim,
-normalize`, or a plug-in's cleaner, with `--clean-settings F`); any other value (a `=`, an option, another processor) is
+normalize`, with `--clean-settings F`); any other value (a `=`, an option, another processor) is
 a pipeline, run in their place and kept in the training options and checkpoints (`"processing"`), and in the feature
 cache key so processed and unprocessed rows stay apart.
 
 ```bash
-idrak audio processors                                                     # -j: the same as JSON
 idrak audio process in.wav -o out.wav --pipeline "denoise=1.5, normalize=-20"
 idrak audio process phone.mp3 -o clear.wav --pipeline "highpass=80, dehum=50, presence=3, agc" -v   # cold and warm
 idrak transcribe ./whisper-small noisy.wav --audio-clean "highpass=80, denoise=1.5, normalize=-20"

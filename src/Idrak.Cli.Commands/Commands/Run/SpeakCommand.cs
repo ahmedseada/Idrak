@@ -11,7 +11,7 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Run;
 
 /// <summary>
-/// <c>idrak speak MODEL TEXT -o out.wav</c> (plan 21, S7): text to speech through the model's registered family
+/// <c>idrak speak MODEL TEXT -o out.wav</c> (plan 21, S7): text to speech through the model's family
 /// (<see cref="SpeechSynthesisModels"/>), in a checkpoint's speaker or an installed voice (<see cref="VoicedSynthesizer"/>:
 /// the checkpoint's speakers first, then the voice store), written by the encoder of the output's extension.
 /// </summary>
@@ -24,13 +24,13 @@ internal sealed class SpeakCommand : Command
     public override string Usage => """
         MODEL TEXT|-|--input FILE -o OUT [options]
 
-        Speaks the text with the model's family (the tool registers Idrak.Audio.Plugins' families, VITS among them;
-        another plug-in with -P) and writes the sound with the encoder of OUT's extension: .wav and .mp3 are built in
-        (IDRAK_MP3_* set the MP3 encoder's bit rate, rate, channels and quality). --voice names a speaker of the
-        checkpoint or a voice installed with idrak voice add; an embedding voice speaks in the model's voice and is
-        converted to the voice's timbre by the converter it was made with (OpenVoice is built in too). -v adds the stage
-        times, cold (the first call compiles and loads) and warm (a second call), and the device's peak memory. The
-        library plays no sound: open the file in any player.
+        Speaks the text with the model's family (Idrak.Audio.Plugins' families, VITS among them; finding a model's
+        family by its name is not on the new design yet) and writes the sound with the encoder of OUT's extension: .wav
+        and .mp3 are built in (IDRAK_MP3_* set the MP3 encoder's bit rate, rate, channels and quality). --voice names a
+        speaker of the checkpoint or a voice installed with idrak voice add; an embedding voice speaks in the model's
+        voice and is converted to the voice's timbre by the converter it was made with (OpenVoice is built in too). -v
+        adds the stage times, cold (the first call compiles and loads) and warm (a second call), and the device's peak
+        memory. The library plays no sound: open the file in any player.
 
         Arguments:
           MODEL                  a model folder (config.json and its weights), a hub id in the cache or an alias
@@ -38,7 +38,7 @@ internal sealed class SpeakCommand : Command
 
         Options:
           -i, --input FILE       read the text from FILE (UTF-8)
-          -o, --out FILE         the sound to write (.wav; .mp3 and others with the plug-in that registers their encoder)
+          -o, --out FILE         the sound to write (.wav or .mp3)
               --voice NAME       a speaker of the checkpoint (--list-voices) or an installed voice (idrak voice list)
               --voice-conversion M  auto (convert an embedding voice with its converter), off (the model's own voice,
                                  to compare) or a converter family's name (refused when the voice was made by another)
@@ -47,7 +47,7 @@ internal sealed class SpeakCommand : Command
               --noise X          the noise scale of the acoustic latents (0: the same samples every time; default: the
                                  model's)
               --duration-noise X the noise scale of the durations (0: deterministic; default: the model's)
-              --vocoder NAME     a registered vocoder for a model that makes a spectrogram (default: the model's own)
+              --vocoder NAME     a vocoder by its name for a model that makes a spectrogram (default: the model's own)
               --sample-rate R    resample the sound to R Hz (default: the model's, or the converter's for a converted voice)
               --split N          speak sentences in pieces of at most N characters (memory follows the piece; 0: one
                                  pass, the default)
@@ -55,7 +55,7 @@ internal sealed class SpeakCommand : Command
                                  samples are the same; 0: one pass; default: the model's)
               --bits B           the samples written: 16 (default), 24, 32, 8 or float
               --audio-clean P    the speech through the audio pipeline P before it is written ("highpass=60,
-                                 presence=2, loudness=-16"; a JSON array or @FILE; idrak audio processors lists them)
+                                 presence=2, loudness=-16"; a JSON array or @FILE)
               --voices DIR      the installed voices' folder (default IDRAK_VOICES, else voices/ under the cache)
               --list-voices      list the checkpoint's speakers and the installed voices, then exit
               --no-warm          with -v, report the cold call only (no second, warm call)
@@ -87,7 +87,7 @@ internal sealed class SpeakCommand : Command
         string? output = context.Option("--out");
         if (!list && output is null)
         {
-            throw new UsageException("Missing -o, --out FILE (the sound to write: .wav, or .mp3 with its plug-in).");
+            throw new UsageException("Missing -o, --out FILE (the sound to write: .wav or .mp3).");
         }
 
         // Everything the command line gives is checked before the model loads: a missing encoder fails at once.

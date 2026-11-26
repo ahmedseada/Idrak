@@ -86,7 +86,7 @@ internal sealed class VoiceAddCommand : Command
     public override string Usage => """
         NAME --from CLIP|DIR... --converter DIR --consent TEXT|--consent-file F [options]
 
-        Decodes the clips (WAV, FLAC; MP3 with its plug-in), cuts the silence at their ends, embeds them with the voice
+        Decodes the clips (WAV, FLAC, MP3), cuts the silence at their ends, embeds them with the voice
         converter's own speaker encoder, and installs the voice: voice.json (the consent, the clips' hashes, lengths
         and agreement, the converter) and the embedding. Each clip's agreement is the cosine of its embedding with the
         voice's: a clip far below the others is another speaker or noise, and is flagged. A voice is a person's
@@ -100,7 +100,7 @@ internal sealed class VoiceAddCommand : Command
         Options:
               --from CLIP|DIR    a clip, a folder of clips or a glob (repeatable; clips after NAME count too); 1 to 3
                                  minutes of one person's normal speech in all
-              --converter DIR    the voice converter's folder (or a hub id in the cache), read by its plug-in
+              --converter DIR    the voice converter's folder (or a hub id in the cache), read by its family
               --consent TEXT     the speaker's agreement, in their words
               --consent-file F   the agreement read from a UTF-8 file
               --speaker WHO      who is speaking (default: NAME)
@@ -148,7 +148,7 @@ internal sealed class VoiceAddCommand : Command
             throw new UsageException("The consent is empty: give the speaker's agreement, in their words.");
         }
 
-        string converterArgument = context.Option("--converter") ?? throw new UsageException("Missing --converter DIR (the voice converter's folder; its family a registered plug-in's).");
+        string converterArgument = context.Option("--converter") ?? throw new UsageException("Missing --converter DIR (the voice converter's folder).");
         double warn = AudioFiles.Number(context, "--warn-agreement", VoiceText.WarnAgreement, -1, 1);
         var defaults = new VoiceAddOptions();
         var options = new VoiceAddOptions

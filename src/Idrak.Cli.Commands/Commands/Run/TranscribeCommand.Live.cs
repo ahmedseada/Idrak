@@ -20,9 +20,9 @@ internal sealed partial class TranscribeCommand
     private static int ListInputs(CommandContext context)
     {
         var captures = new JsonArray();
-        foreach (string name in AudioCaptures.Names.Order(StringComparer.Ordinal))
+        foreach (var capture in NotOnTheNewDesign.Yet<IReadOnlyList<IAudioCapture>>("Listing the registered audio captures").OrderBy(c => c.Name, StringComparer.Ordinal))
         {
-            var capture = AudioCaptures.Get(name);
+            string name = capture.Name;
             bool available = capture.IsAvailable(out string reason);
             var devices = available ? capture.Devices() : [];
             context.Write(available ? $"{name}: {devices.Count} input(s)" : $"{name}: not here ({reason})");
@@ -67,7 +67,7 @@ internal sealed partial class TranscribeCommand
         try
         {
             live.Check();
-            _ = LiveCommitPolicies.Get(live.Policy);
+            _ = NotOnTheNewDesign.Yet<ILiveCommitPolicy>($"Picking the live commit policy '{live.Policy}' by its name");
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException)
         {
@@ -152,7 +152,9 @@ internal sealed partial class TranscribeCommand
         IAudioCapture capture;
         try
         {
-            capture = context.Option("--capture") is { } named ? AudioCaptures.Get(named) : AudioCaptures.ForThisMachine();
+            capture = context.Option("--capture") is { } named
+                ? NotOnTheNewDesign.Yet<IAudioCapture>($"Picking the audio capture '{named}' by its name")
+                : AudioCaptures.ForThisMachine();
             if (!capture.IsAvailable(out string reason))
             {
                 throw new NotSupportedException($"The {capture.Name} capture cannot record here: {reason}.");
