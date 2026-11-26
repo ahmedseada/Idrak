@@ -193,19 +193,18 @@ public sealed unsafe class FileMapping : IDisposable
 /// <summary>
 /// A device whose kernels read system memory in place (the CPU), so it can hold a storage over a file's mapping (plan 37,
 /// W3): the storage's values are the mapped bytes, read where they lie, never copied into the device's memory nor counted
-/// in its use (<see cref="Backend.GetMemoryUsage"/>). The kernels that read stored weights (<see cref="Backend.StoredMatMul"/>,
-/// <see cref="Backend.ExpandStored"/>) read it in place; a copy out of it (a download, a move to another device, an
-/// expansion to float32) is counted in <see cref="MappedWeights"/>.
+/// in its use (<see cref="Backend.GetMemoryUsage"/>). A copy out of it (a download, a move to another device) is counted in
+/// <see cref="MappedWeights"/>.
 /// </summary>
 public interface IMappedStorageBackend
 {
     /// <summary>
-    /// A storage of <paramref name="count"/> elements of <paramref name="type"/> whose bytes are those of
-    /// <paramref name="mapping"/> (exactly <see cref="ElementType.ByteCount"/> of them), read in place. The storage takes the
+    /// A storage of <paramref name="count"/> values described by <paramref name="description"/> whose bytes are those of
+    /// <paramref name="mapping"/> (exactly the bytes of their whole groups of blocks), read in place. The storage takes the
     /// mapping: it is disposed when the storage is released for good, or at once when this throws.
     /// </summary>
-    /// <exception cref="ArgumentException">The mapping's bytes are not the elements' bytes.</exception>
-    Storage MapStorage(FileMapping mapping, ElementType type, long count);
+    /// <exception cref="ArgumentException">The mapping's bytes are not the values' bytes.</exception>
+    Storage MapStorage(FileMapping mapping, TypeDescription description, long count);
 }
 
 /// <summary>

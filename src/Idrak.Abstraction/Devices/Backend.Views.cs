@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Abstraction.Devices;
 
@@ -19,9 +18,5 @@ public abstract partial class Backend
     /// position as <see cref="KeyValueWrite"/> writes it, bit for bit. A device that reads strides here lists this
     /// operation in <see cref="BackendCapabilities.StridedInputs"/>.
     /// </summary>
-    public virtual void KeyValueWriteStridedKernel(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        using var h = new HostCall(this, nameof(KeyValueWriteStrided));
-        CpuBackend.Instance.KeyValueWriteStrided(h[source], sourceLayout, h[cache], h[position], heads, steps, capacity, dim);
-    }
+    public virtual void KeyValueWriteStridedKernel(Storage source, TensorLayout sourceLayout, Storage cache, Storage position, int heads, int steps, int capacity, int dim) => throw NoKernel(nameof(KeyValueWriteStrided));
 }

@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Abstraction.Operations;
 
 namespace Idrak.Abstraction.Devices;
@@ -23,14 +22,10 @@ public abstract partial class Backend
     /// <paramref name="offsets"/>[e] (the first row of expert e when the slots are listed expert by expert, each expert's in
     /// slot order; <paramref name="offsets"/>[experts] = tokens·k), <paramref name="tokenOfRow"/>[row] (the token of that
     /// row) and <paramref name="slotRow"/>[slot] (the row of that slot); indices and offsets are written in the device's
-    /// index type (<see cref="BackendCapabilities.IndexType"/>: int32 on the CPU, exact past 2²⁴ rows).
+    /// index type (int32 where the device's kernels read int32, exact past 2²⁴ rows).
     /// </summary>
     public virtual void RouteTopKKernel(Storage probabilities, Storage weights, Storage offsets, Storage tokenOfRow, Storage slotRow, int tokens, int experts, int k,
-        bool normalize)
-    {
-        using var h = new HostCall(this, nameof(RouteTopK));
-        CpuBackend.Instance.RouteTopK(h[probabilities], h[weights], h[offsets], h[tokenOfRow], h[slotRow], tokens, experts, k, normalize);
-    }
+        bool normalize) => throw NoKernel(nameof(RouteTopK));
 
     /// <summary>
     /// The gate and up projections of a mixture's experts over rows grouped by expert, and their gated activation: for
@@ -41,18 +36,7 @@ public abstract partial class Backend
     /// over just those rows give, bit for bit.
     /// </summary>
     public virtual void ExpertGatedPairKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)> experts, Storage hidden,
-        int rows, int k, int n, int activation)
-    {
-        using var h = new HostCall(this, nameof(ExpertGatedPair));
-        var mirrored = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[experts.Length];
-        for (int e = 0; e < experts.Length; e++)
-        {
-            var (gate, gateBias, up, upBias) = experts[e];
-            mirrored[e] = (h[gate], gateBias is null ? null : h[gateBias], h[up], upBias is null ? null : h[upBias]);
-        }
-
-        CpuBackend.Instance.ExpertGatedPair(h[x], h[offsets], mirrored, h[hidden], rows, k, n, activation);
-    }
+        int rows, int k, int n, int activation) => throw NoKernel(nameof(ExpertGatedPair));
 
     /// <summary>
     /// The products of a mixture's experts over rows grouped by expert: for each expert e, rows offsets[e] to
@@ -60,18 +44,7 @@ public abstract partial class Backend
     /// rows of y [rows, n] = x·weight_e + bias_e, with weight_e [k, n] and bias_e [n] or null. Each expert's rows hold what
     /// its own product (<see cref="MatMul"/>, then the bias added) over just those rows gives, bit for bit.
     /// </summary>
-    public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n)
-    {
-        using var h = new HostCall(this, nameof(ExpertMatMul));
-        var mirrored = new (Storage Weight, Storage? Bias)[experts.Length];
-        for (int e = 0; e < experts.Length; e++)
-        {
-            var (weight, bias) = experts[e];
-            mirrored[e] = (h[weight], bias is null ? null : h[bias]);
-        }
-
-        CpuBackend.Instance.ExpertMatMul(h[x], h[offsets], mirrored, h[y], rows, k, n);
-    }
+    public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n) => throw NoKernel(nameof(ExpertMatMul));
 
     /// <summary>
     /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/>

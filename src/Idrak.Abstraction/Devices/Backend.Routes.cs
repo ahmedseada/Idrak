@@ -9,7 +9,7 @@ public abstract partial class Backend
 {
     /// <summary>
     /// Few-row products of stored weights sharing one input x [m, k] in one pass (the experiment's fused projections:
-    /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one element type, each n_j rows of k
+    /// queries, keys and values; gate and up): y_j = x · W_jᵀ for 2 or 3 weights of one description, each n_j rows of k
     /// values with a scale a row or none (<see cref="StoredMatMulKernel"/>'s layout), each output as its own product
     /// computes it. False where the device has no single pass for them (callers then run the products one by one).
     /// </summary>
@@ -31,11 +31,11 @@ public abstract partial class Backend
     /// </summary>
     /// <param name="kind">0 the gate/up pair, 1 the residual and norm.</param>
     /// <param name="detail">The activation (kind 0) or whether the weight has row scales (kind 1).</param>
-    /// <param name="type">The weight's element type.</param>
+    /// <param name="description">The weight's type description.</param>
     /// <param name="m">Rows of x.</param>
     /// <param name="n">Rows of the weight.</param>
     /// <param name="k">Columns of x.</param>
-    public virtual bool? StoredEpilogueFused(int kind, int detail, ElementType type, int m, int n, int k) => false;
+    public virtual bool? StoredEpilogueFused(int kind, int detail, TypeDescription description, int m, int n, int k) => false;
 
     /// <summary>
     /// A feed-forward block's gate and up products of stored weights (StoredMatMulManyKernel's two, of equal widths) and

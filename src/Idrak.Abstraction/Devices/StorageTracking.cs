@@ -142,7 +142,7 @@ public static class StorageTracking
         type.StartsWith("System.", StringComparison.Ordinal) || type.StartsWith("Microsoft.", StringComparison.Ordinal)
         || type.Contains("Backend", StringComparison.Ordinal) || type.Contains("Storage", StringComparison.Ordinal)
         || type.StartsWith("Idrak.Abstraction.Tensor", StringComparison.Ordinal) || type.Contains("Kernels", StringComparison.Ordinal)
-        || type.Contains("HostCall", StringComparison.Ordinal) || type == "Idrak.Abstraction.Module";
+        || type == "Idrak.Abstraction.Module";
 
     private sealed class Entry(string? site)
     {

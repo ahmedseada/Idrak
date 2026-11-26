@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Devices.Cpu;
 
 namespace Idrak.Abstraction.Devices;
 
@@ -18,11 +17,7 @@ public abstract partial class Backend
     /// view of <paramref name="x"/> (a permutation, a slice, a broadcast with stride 0) copied to the contiguous
     /// <paramref name="y"/> of shape's elements. Every element is copied as it is.
     /// </summary>
-    public virtual void StridedCopyKernel(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
-    {
-        using var h = new HostCall(this, nameof(StridedCopy));
-        CpuBackend.Instance.StridedCopy(h[x], offset, shape, strides, h[y]);
-    }
+    public virtual void StridedCopyKernel(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y) => throw NoKernel(nameof(StridedCopy));
 
     /// <summary>
     /// <see cref="BatchedMatMul"/> with each operand read through its layout (plan 37, V1b): the elements of
@@ -33,11 +28,7 @@ public abstract partial class Backend
     /// <see cref="BackendCapabilities.StridedInputs"/>.
     /// </summary>
     public virtual void BatchedMatMulStridedKernel(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k,
-        bool transA, bool transB, float beta)
-    {
-        using var h = new HostCall(this, nameof(BatchedMatMulStrided));
-        CpuBackend.Instance.BatchedMatMulStrided(h[a], aLayout, h[b], bLayout, h[c], batch, m, n, k, transA, transB, beta);
-    }
+        bool transA, bool transB, float beta) => throw NoKernel(nameof(BatchedMatMulStrided));
 
     /// <summary>
     /// <see cref="AttentionTiled"/> with q, keys and values read through their layouts (plan 37, V1b): row r of q
@@ -47,12 +38,7 @@ public abstract partial class Backend
     /// (its last dimension a multiple of dim, stride 1). The results are <see cref="AttentionTiled"/>'s, bit for bit.
     /// </summary>
     public virtual void AttentionTiledStridedKernel(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout,
-        Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
-    {
-        using var h = new HostCall(this, nameof(AttentionTiledStrided));
-        CpuBackend.Instance.AttentionTiledStrided(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[position], h[y], h.Maybe(logSumExp), heads,
-            rowsPerHead, steps, capacity, dim, scale, variant);
-    }
+        Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) => throw NoKernel(nameof(AttentionTiledStrided));
 
     /// <summary>
     /// <see cref="AttentionTiledBackward"/> with q, keys and values read through their layouts as
@@ -61,10 +47,5 @@ public abstract partial class Backend
     /// </summary>
     public virtual void AttentionTiledStridedBackwardKernel(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values,
         TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
-    {
-        using var h = new HostCall(this, nameof(AttentionTiledStridedBackward));
-        CpuBackend.Instance.AttentionTiledStridedBackward(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[output], h[logSumExp], h[dOutput],
-            h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
-    }
+        int steps, int capacity, int dim, float scale, AttentionVariant variant = default) => throw NoKernel(nameof(AttentionTiledStridedBackward));
 }

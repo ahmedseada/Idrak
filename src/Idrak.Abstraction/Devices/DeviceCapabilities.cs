@@ -48,43 +48,9 @@ public interface IKernelProfiler
 }
 
 /// <summary>
-/// FP8 (e4m3) products on matrix units: a frozen weight quantized once (<see cref="Float8QuantizeWeight"/>) and products
-/// that quantize their input as they read it (<see cref="Float8MatMul"/>). Whether this device has them is read from the
-/// device when it starts (<see cref="PaddedK"/> 0 and the kernels false where the hardware lacks them).
-/// </summary>
-public interface IFloat8Backend
-{
-    /// <summary>
-    /// k rounded up for <see cref="Float8QuantizeWeight"/>'s values, or 0 when this device has no FP8 products: the values
-    /// take n · paddedK bytes, n · paddedK / 4 floats of storage. The library's devices round up to a multiple of 64, the
-    /// padding the conformance kit's cases lay the values out with.
-    /// </summary>
-    int PaddedK(int k);
-
-    /// <inheritdoc cref="Backend.Float8QuantizeWeightKernel"/>
-    bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales);
-
-    /// <inheritdoc cref="Backend.Float8MatMulKernel"/>
-    bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta);
-}
-
-/// <summary>
-/// Masked attention over every slot of a bfloat16 key/value cache in one pass (<see cref="Backend.AttentionMaskedBFloat16"/>),
-/// reading the cache in place: what a cache layout attends with where its result must be the composed products' (the
-/// multi-head attention layer's), without a float32 copy of the whole cache per step. A device without it, or whose
-/// kernel returns false for a shape, attends through the composed operations (the cache expanded, then the products).
-/// </summary>
-public interface IMaskedCacheAttentionBackend
-{
-    /// <inheritdoc cref="Backend.AttentionMaskedBFloat16Kernel"/>
-    bool AttentionMaskedBFloat16(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows,
-        int capacity, int dim, float scale);
-}
-
-/// <summary>
-/// Attention for rows of different lengths decoded together, each row from its own start (<see cref="Backend.AttentionRows"/>,
-/// <see cref="Backend.AttentionRowsBFloat16"/>), run by the device's own kernels. A device without it says what the
-/// segmented attention says (<see cref="Backend.SupportsSegmentedAttention"/>) and runs the rows on the host.
+/// Attention for rows of different lengths decoded together, each row from its own start (<see cref="Backend.AttentionRows"/>),
+/// run by the device's own kernels. A device without it says what the segmented attention says
+/// (<see cref="Backend.SupportsSegmentedAttention"/>).
 /// </summary>
 public interface IRowAttentionBackend
 {
@@ -98,16 +64,11 @@ public interface IRowAttentionBackend
     /// <inheritdoc cref="Backend.AttentionRowsKernel"/>
     bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead,
         int steps, int capacity, int dim, float scale, AttentionVariant variant);
-
-    /// <inheritdoc cref="Backend.AttentionRowsBFloat16Kernel"/>
-    bool AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 }
 
 /// <summary>
 /// Causal attention over packed sequences and its gradient (<see cref="Backend.AttentionSegmented"/>,
-/// <see cref="Backend.AttentionSegmentedBackward"/>), run by the device's own kernels. A device without it asks the CPU
-/// whether a head size runs and runs the attention on the host.
+/// <see cref="Backend.AttentionSegmentedBackward"/>), run by the device's own kernels. A device without it has no such pass.
 /// </summary>
 public interface ISegmentedAttentionBackend
 {
@@ -127,43 +88,8 @@ public interface ISegmentedAttentionBackend
 }
 
 /// <summary>
-/// Fused products of packed weights (<see cref="Backend.FusedKernels"/>): several few-row products in one pass, gate and
-/// up with the activation, a projection with its residual and normalization, the prompt-sized product that expands the
-/// weights as it reads them, and products with a low-rank term. A kernel returns false for a shape it has no pass for
-/// (callers then run the products one by one); without the interface every product runs on its own (same results, more
-/// passes).
-/// </summary>
-public interface IFusedPackedKernels
-{
-    /// <inheritdoc cref="Backend.PrefersPackedMatMul"/>
-    bool PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k);
-
-    /// <inheritdoc cref="Backend.PackedMatMulLargeKernel"/>
-    bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k);
-
-    /// <inheritdoc cref="Backend.PackedMatMulGatedKernel"/>
-    bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k);
-
-    /// <inheritdoc cref="Backend.PackedMatMulAddRmsNormKernel"/>
-    bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual,
-        Storage sum, Storage gain, Storage normalized, float eps, float offset);
-
-    /// <inheritdoc cref="Backend.PackedMatMulManyKernel"/>
-    bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products);
-
-    /// <inheritdoc cref="Backend.PackedMatMulGatedPairKernel"/>
-    bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden);
-
-    /// <inheritdoc cref="Backend.PackedMatMulLowRankKernel"/>
-    bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank);
-}
-
-/// <summary>
 /// Matrix units (tensor cores) the <c>MixedPrecision</c> modes run on (<see cref="Backend.MatrixUnits"/>): the fused
-/// training products, the LoRA products, the bfloat16 products of frozen weights and the strided attention for training.
+/// training products, the LoRA products and the strided attention for training.
 /// Whether this device's units are usable now is read from the device (<see cref="TensorCoresUnavailable"/>).
 /// </summary>
 public interface IMatrixUnitBackend
@@ -176,9 +102,6 @@ public interface IMatrixUnitBackend
 
     /// <inheritdoc cref="Backend.MatMulLowRankKernel"/>
     bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank);
-
-    /// <inheritdoc cref="Backend.BFloat16TransposedMatMulKernel"/>
-    bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank);
 
     /// <inheritdoc cref="Backend.GemmStridedKernel"/>
     bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m,

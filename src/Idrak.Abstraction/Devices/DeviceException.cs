@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Operations;
-
 namespace Idrak.Abstraction.Devices;
 
 /// <summary>
@@ -11,15 +9,12 @@ namespace Idrak.Abstraction.Devices;
 /// device error is seen wherever it surfaces, including an asynchronous GPU error found at a later synchronize.
 /// </summary>
 /// <remarks>
-/// A failing kernel is not retried on the CPU unless its device's <see cref="Backend.RetryOnHost"/> is on (plan 10,
-/// decision 13): the error reaches the caller, and the event's <see cref="DeviceFailed.Hint"/> says how to turn the retry
-/// on. Code that expects a device error and handles it (a probe, a capability check) opens <see cref="Handled"/> around
-/// it, so nothing is reported.
+/// A failing kernel's error reaches the caller. Code that expects a device error and handles it (a probe, a capability
+/// check) opens <see cref="Handled"/> around it, so nothing is reported.
 /// </remarks>
 public class DeviceException : Exception
 {
-    // Open Handled scopes and dispatcher retries on this thread: errors raised inside are not reported here (the caller
-    // handles them, or the dispatcher reports them with the operation).
+    // Open Handled scopes on this thread: errors raised inside are not reported here (the caller handles them).
     [ThreadStatic]
     private static int t_quiet;
 
@@ -34,7 +29,7 @@ public class DeviceException : Exception
         Device = device;
         if (t_quiet == 0 && Telemetry.IsEnabled(TelemetryLevel.Devices))
         {
-            Telemetry.DeviceFailed(new DeviceFailed(device, null, message, RetriedOnHost: false, Kernels.RetriesOnHost(device) ? null : Hint(device)));
+            Telemetry.DeviceFailed(new DeviceFailed(device, null, message, RetriedOnHost: false, Hint: null));
         }
     }
 
@@ -51,21 +46,6 @@ public class DeviceException : Exception
         t_quiet++;
         return new Scope();
     }
-
-    /// <summary>
-    /// What a <see cref="DeviceFailed"/> event says when retry is off for <paramref name="device"/>: both ways to turn it
-    /// on, and what it cannot cover.
-    /// </summary>
-    internal static string Hint(string device) =>
-        $"To run an operation whose {device} kernel fails on the CPU instead, set IDRAK_RETRY_ON_HOST={device} (or 1 for every GPU device), "
-        + "or set Backend.RetryOnHost = true on the device (device.Backend.RetryOnHost). Errors reported after an operation returned "
-        + "(asynchronous GPU errors, found at a later synchronize or copy) can't be retried.";
-
-    // The dispatcher's retry (Backend.NameRegistered): the device's kernel runs with reports off, so a failure is reported
-    // once, by the dispatcher, with the operation.
-    internal static void EnterRetry() => t_quiet++;
-
-    internal static void LeaveRetry() => t_quiet--;
 
     private sealed class Scope : IDisposable
     {

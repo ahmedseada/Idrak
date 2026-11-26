@@ -6,11 +6,10 @@ namespace Idrak.Abstraction.Devices;
 /// <summary>
 /// What every device provides (plan 33): its kind and name, what its kernels can do, its memory, the copies to and from
 /// it, and a point that waits for its work. <see cref="Backend"/> implements it; a new device derives from
-/// <see cref="Backend"/>, which runs every operation through the host fallback until the device adds kernels of its own,
-/// and adds the capability interfaces it has (<see cref="IGraphCaptureBackend"/>, <see cref="IKernelProfiler"/>,
-/// <see cref="IFloat8Backend"/>, <see cref="IRowAttentionBackend"/>, <see cref="IMaskedCacheAttentionBackend"/>,
-/// <see cref="ISegmentedAttentionBackend"/>,
-/// <see cref="IFusedPackedKernels"/>, <see cref="IMatrixUnitBackend"/>, <see cref="IRecurrentKernels"/>,
+/// <see cref="Backend"/>, which has no kernel for an operation until the device adds one of its own, and adds the
+/// capability interfaces it has (<see cref="IGraphCaptureBackend"/>, <see cref="IKernelProfiler"/>,
+/// <see cref="IRowAttentionBackend"/>, <see cref="ISegmentedAttentionBackend"/>, <see cref="IMatrixUnitBackend"/>,
+/// <see cref="IRecurrentKernels"/>,
 /// <see cref="IOffloadingBackend"/>, <see cref="IPeerCopyBackend"/>, <see cref="IMemoryReport"/>,
 /// <see cref="ILongLivedAllocations"/>), each read once when the backend starts.
 /// </summary>
@@ -67,8 +66,7 @@ public interface IDeviceBackend
 
 /// <summary>
 /// A storage whose values are in memory the process reads directly (the CPU device's): callers read and write them in
-/// place instead of copying with <see cref="Backend.Download"/> and <see cref="Backend.Upload"/>, and a host fallback
-/// (<c>HostCall</c>) takes them as they are, without a copy to the device and back.
+/// place instead of copying with <see cref="Backend.Download"/> and <see cref="Backend.Upload"/>.
 /// </summary>
 public interface IHostStorage
 {
