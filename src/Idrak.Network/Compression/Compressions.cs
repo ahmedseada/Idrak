@@ -8,12 +8,15 @@ using Idrak.Networking.Training;
 namespace Idrak.Networking.Compression;
 
 /// <summary>"none": every value, as float32.</summary>
-internal sealed class PlainCompression : IGradientCompression
+public sealed class PlainCompression : IGradientCompression
 {
+    /// <summary>"none".</summary>
     public string Name => "none";
 
+    /// <summary>One line on what it does.</summary>
     public string Summary => "every gradient value travels as float32";
 
+    /// <inheritdoc />
     public IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options) =>
         new DenseCompressor(Name, collectives);
 }

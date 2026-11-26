@@ -21,13 +21,15 @@ internal sealed class AllReduceStopAgreementProvider : IStopAgreementProvider
 /// <see cref="ClusterOptions.StopEvery"/> boundaries. Every rank makes the same collectives between two boundaries, so every
 /// rank decides from the same sum: the run stops at the same boundary on all of them.
 /// </summary>
-internal sealed class AllReduceStopAgreement : StopAgreement, ICarriedStopAgreement, IDisposable
+public sealed class AllReduceStopAgreement : StopAgreement, ICarriedStopAgreement, IDisposable
 {
     private readonly HostValues _values;
     private readonly int _every;
     private float? _carried;
     private long _boundaries;
 
+    /// <summary>The agreement of the ranks of <paramref name="collectives"/>, a one-value all-reduce every <see cref="ClusterOptions.StopEvery"/> boundaries.</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="ClusterOptions.StopEvery"/> is under 1.</exception>
     public AllReduceStopAgreement(ICollectives collectives, ClusterOptions options)
         : base(collectives.Rank, collectives.WorldSize, options.StopWait)
     {
@@ -36,23 +38,29 @@ internal sealed class AllReduceStopAgreement : StopAgreement, ICarriedStopAgreem
         _every = options.StopEvery;
     }
 
+    /// <inheritdoc />
     public override string Name => "all-reduce";
 
+    /// <inheritdoc />
     public float Contribution => Requested ? 1f : 0f;
 
     /// <summary>The boundaries decided by a one-value all-reduce of their own (the rest by a carried sum, or skipped).</summary>
     internal long Exchanges { get; private set; }
 
+    /// <inheritdoc />
     public void Carried(float sum) => _carried = Math.Max(_carried ?? 0f, sum);
 
+    /// <inheritdoc />
     public void Dispose() => _values.Dispose();
 
+    /// <inheritdoc />
     protected override void Began()
     {
         _carried = null;
         _boundaries = 0;
     }
 
+    /// <inheritdoc />
     protected override int Decide(long step)
     {
         long boundary = _boundaries++;

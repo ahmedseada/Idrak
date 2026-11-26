@@ -8,6 +8,8 @@ using Idrak.Abstraction.Cluster;
 using Idrak.Datasets;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Networking.Compression;
+using Idrak.Networking.Training;
 using Idrak.Text.Abstractions;
 using Idrak.Optimizers;
 
@@ -330,14 +332,21 @@ public static partial class Pretrainer
     private const string StateFile = "pretrain-state.json";
     private const string OptimizerFile = "optimizer.safetensors";
 
-    // The stop agreements were registered (StopAgreements) and picked by the cluster options: not on the new design yet.
-    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) => throw new NotSupportedException("The stop agreement picked by the cluster options is not on the new design yet.");
+    // The stop agreements were registered (StopAgreements) and picked for the collectives, which is not on the new design
+    // yet: the library's all-reduce agreement (what the pick fell back on) is constructed directly.
+    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) =>
+        new AllReduceStopAgreement(collectives, options ?? collectives.Context?.Options ?? ClusterOptions.FromEnvironment());
 
     // The pretraining sources were registered (PretrainingSources) and picked by name: not on the new design yet.
     private static IPretrainingSource SourceNamed(string name) => throw new NotSupportedException($"The pretraining source '{name}' by name is not on the new design yet.");
 
-    // The gradient syncs were registered (GradientSyncs) and picked by the cluster options: not on the new design yet.
-    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => throw new NotSupportedException("The gradient sync picked by the cluster options is not on the new design yet.");
+    // The gradient syncs and compressions were registered (GradientSyncs, GradientCompressions) and picked by the cluster
+    // options, which is not on the new design yet: the library's all-reduce with the "none" compression is constructed
+    // directly, and options that pick another (sharded, local SGD, top-k) stop.
+    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
+        options.GradientSyncName == "all-reduce" && options.CompressionName == "none"
+            ? new AllReduceSyncProvider(new PlainCompression()).Create(collectives, optimizer, options)
+            : throw new NotSupportedException($"The gradient sync '{options.GradientSyncName}' with the '{options.CompressionName}' compression, picked by the cluster options, is not on the new design yet.");
 
     // The learning-rate schedules were registered (LearningRateSchedules) and picked by name: not on the new design yet.
     private static ILearningRateScheduler ScheduleNamed(string name, LearningRateScheduleSettings settings, IOptimizer optimizer, int steps) => throw new NotSupportedException($"The learning-rate schedule '{name}' by name is not on the new design yet.");

@@ -11,12 +11,16 @@ namespace Idrak.Networking.Training;
 
 /// <summary>"all-reduce": every step's gradients summed across the ranks, a bucket at a time, each sent while the backward pass goes on.</summary>
 /// <param name="compression">How each bucket is compressed on its way (it was looked up by the options' name).</param>
-internal sealed class AllReduceSyncProvider(IGradientCompression compression) : IGradientSyncProvider
+public sealed class AllReduceSyncProvider(IGradientCompression compression) : IGradientSyncProvider
 {
+    /// <summary>"all-reduce".</summary>
     public string Name => "all-reduce";
 
+    /// <summary>One line on what it does.</summary>
     public string Summary => "every step's gradients summed across the ranks, token-weighted, a bucket at a time, each sent while the backward pass goes on";
 
+    /// <summary>The all-reduce of <paramref name="optimizer"/>'s gradients over <paramref name="collectives"/>.</summary>
+    /// <exception cref="ArgumentException">The options shard the state (all-reduce keeps every rank's state whole).</exception>
     public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
         options.Shard == ShardMode.None
             ? new GradientReduction(collectives, optimizer, options, compression)

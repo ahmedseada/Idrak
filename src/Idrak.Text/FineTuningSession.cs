@@ -6,6 +6,8 @@ using Idrak.Abstraction.Cluster;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
+using Idrak.Networking.Compression;
+using Idrak.Networking.Training;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 
@@ -97,11 +99,18 @@ public sealed class FineTuningSession : IDisposable
         }
     }
 
-    // The gradient syncs were registered (GradientSyncs) and picked by the cluster options: not on the new design yet.
-    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => throw new NotSupportedException("The gradient sync picked by the cluster options is not on the new design yet.");
+    // The gradient syncs and compressions were registered (GradientSyncs, GradientCompressions) and picked by the cluster
+    // options, which is not on the new design yet: the library's all-reduce with the "none" compression is constructed
+    // directly, and options that pick another (sharded, local SGD, top-k) stop.
+    private static IGradientSync GradientSyncFor(ICollectives collectives, Optimizer optimizer, ClusterOptions options) =>
+        options.GradientSyncName == "all-reduce" && options.CompressionName == "none"
+            ? new AllReduceSyncProvider(new PlainCompression()).Create(collectives, optimizer, options)
+            : throw new NotSupportedException($"The gradient sync '{options.GradientSyncName}' with the '{options.CompressionName}' compression, picked by the cluster options, is not on the new design yet.");
 
-    // The stop agreements were registered (StopAgreements) and picked by the cluster options: not on the new design yet.
-    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) => throw new NotSupportedException("The stop agreement picked by the cluster options is not on the new design yet.");
+    // The stop agreements were registered (StopAgreements) and picked for the collectives, which is not on the new design
+    // yet: the library's all-reduce agreement (what the pick fell back on) is constructed directly.
+    private static IStopAgreement StopAgreementFor(ICollectives collectives, ClusterOptions? options) =>
+        new AllReduceStopAgreement(collectives, options ?? collectives.Context?.Options ?? ClusterOptions.FromEnvironment());
 
     // What a run sets up before its steps (FineTuner.Train's order): the image side, adapters (resumed), the trained
     // parameters, FP8 copies, the optimizer, the cluster's sync (its optimizer state loaded) and its start. Begin follows,
