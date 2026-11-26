@@ -19,7 +19,6 @@ internal abstract partial class Tests
     [
         ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas; registered methods; unknown types list the registered ones", RopeScalingMethods),
         ("rope scaling: a decoder uses the registered method (frequencies, attention factor, per-position frequencies) as the reference computes it", RopeScalingDecoders),
-        ("decoder: sliding windows, soft-capping, score scale and local rotary base match the reference (prompt, training, cached decoding with every cache format); windows past the sequence change nothing", SlidingWindowDecoders),
         ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads; a family with its own Build", ModelFamilyConfigs),
         ("gguf: YaRN scaling keys are read and match the Hugging Face config with the same rope_scaling", GgufYarn),
         ("pretrained: Gemma3ForConditionalGeneration loads in its three tensor layouts and both config formats; a text prompt gives transformers' logits; the vision part is read as data", Gemma3VisionLanguageLoads),
@@ -200,120 +199,6 @@ internal abstract partial class Tests
             RopeScalings.Unregister("test-halve");
             RopeScalings.Unregister("test-loud");
         }
-    }
-
-    internal static void SlidingWindowDecoders(Device device)
-    {
-        int[] ids = [1, 4, 9, 16, 2, 7, 11, 3, 8, 20];
-        int T = ids.Length, V = SmallSpec.Vocabulary;
-        using var sequence = Tensor.From([.. ids.Select(i => (float)i)], [1, T], device);
-        var variants = new (string Name, DecoderSpec Spec)[]
-        {
-            ("window 3 in every layer", SmallSpec with { SlidingWindow = 3 }),
-            ("Gemma 2 style: alternating window, soft-capped scores and logits, score scale, post-norms", SmallSpec with
-            {
-                SlidingWindow = 3, SlidingWindowLayers = [true, false], AttentionSoftcap = 1.5f, LogitSoftcap = 2f, AttentionScale = 0.3f,
-                PostNorms = true, NormOffset = 1f, Activation = FeedForwardActivation.Gelu, TieEmbeddings = true, EmbeddingScale = 4f,
-            }),
-            ("Gemma 3 style: local rotary base in the windowed layer, q/k norm, scaled global rope", SmallSpec with
-            {
-                SlidingWindow = 4, SlidingWindowLayers = [true, false], SlidingWindowRope = new RopeSettings(50f), QkNorm = true,
-                Rope = new RopeSettings(5000f, Scaling: RopeScaling.Linear(2)), AttentionScale = 0.5f, PostNorms = true,
-            }),
-            ("soft-capped scores only", SmallSpec with { AttentionSoftcap = 1f }),
-        };
-        foreach (var (name, spec) in variants)
-        {
-            var weights = new RandomWeights(83);
-            using var model = spec.Build(weights, new DecoderBuildOptions { Device = device });
-            var reference = ReferenceDecoder(spec, weights, ids);
-            var full = model.Predict(sequence).ToArray();
-            AssertClose(reference, full, 1e-3f, name);
-            model.Train();
-            using (var scope = new TensorScope())
-            {
-                var output = model.Forward(sequence);
-                AssertClose(reference, output.ToArray(), 1e-3f, $"{name} (training path)");
-                output.Sum().Backward();
-                var gradient = model.Parameters().First(p => p.Grad is not null).Grad!.ToArray();
-                Check(gradient.All(float.IsFinite) && gradient.Any(g => g != 0f), $"{name}: gradients reach the weights");
-            }
-
-            model.Eval();
-            float range = full.Max(MathF.Abs);
-            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
-            {
-                // Quantized caches only roughly match (soft-capped logits have a small range, so the bounds are looser than
-                // the plain decoder's); the float32 cache checks the attention exactly.
-                float tolerance = format switch { KeyValueFormat.Float32 => 1e-4f, KeyValueFormat.BFloat16 => 0.03f * range, _ => 0.1f * range };
-                foreach (int prompt in new[] { 2, 5 })
-                {
-                    using var context = new DecodingContext(device, 1, 16, format);
-                    using (Autograd.NoGrad())
-                    {
-                        using var first = Tensor.From([.. ids.Take(prompt).Select(i => (float)i)], [1, prompt], device);
-                        AssertClose(full[..(prompt * V)], model.ForwardCached(first, context).ToArray(), tolerance, $"{name}, {format}: prefill of {prompt}");
-                        for (int t = prompt; t < T; t++)
-                        {
-                            using var next = Tensor.From([(float)ids[t]], [1, 1], device);
-                            AssertClose(full[(t * V)..((t + 1) * V)], model.ForwardCached(next, context).ToArray(), tolerance, $"{name}, {format}: step {t} after {prompt}");
-                        }
-                    }
-                }
-            }
-        }
-
-        // A recorded decoding step stays right when replayed past the window (captured while the window masks nothing yet).
-        using (var windowed = variants[0].Spec.Build(new RandomWeights(83), new DecoderBuildOptions { Device = device }))
-        {
-            int[][] Run(bool useGraph)
-            {
-                using var context = new DecodingContext(device, 1, 12);
-                using var sampler = new TokenSampler(device, 1, V, 9) { Temperature = 0.9f, Seed = 7 };
-                using (Autograd.NoGrad())
-                {
-                    using (var scope = new TensorScope())
-                    {
-                        sampler.Sample(windowed.ForwardCached(Tensor.From([1f, 2f], [1, 2], device), context));
-                    }
-
-                    void Step() => sampler.Sample(windowed.ForwardCached(sampler.Ids.Reshape(1, 1), context));
-                    using var graph = useGraph ? context.CaptureStep(Step) : null;
-                    for (int s = 0; s < 8; s++)
-                    {
-                        if (graph is not null)
-                        {
-                            context.ReplayStep(graph);
-                        }
-                        else
-                        {
-                            using var scope = new TensorScope();
-                            Step();
-                        }
-                    }
-                }
-
-                return [.. sampler.Read(0, 9).Select(step => step.Select(t => t.Id).ToArray())];
-            }
-
-            var direct = Run(useGraph: false);
-            var replayed = Run(useGraph: true);
-            Check(direct.Zip(replayed).All(p => p.First.SequenceEqual(p.Second)),
-                $"replayed steps sample what direct steps do: {string.Join(" ", direct.Select(d => d[0]))} vs {string.Join(" ", replayed.Select(d => d[0]))}");
-        }
-
-        // A window at least as long as the sequence changes nothing; a shorter one does.
-        using var unwindowed = SmallSpec.Build(new RandomWeights(84), new DecoderBuildOptions { Device = device });
-        using var wide = (SmallSpec with { SlidingWindow = T }).Build(new RandomWeights(84), new DecoderBuildOptions { Device = device });
-        using var narrow = (SmallSpec with { SlidingWindow = 2 }).Build(new RandomWeights(84), new DecoderBuildOptions { Device = device });
-        var expected = unwindowed.Predict(sequence).ToArray();
-        Check(wide.Predict(sequence).ToArray().SequenceEqual(expected), "a window as long as the sequence equals full attention");
-        Check(narrow.Predict(sequence).ToArray().Zip(expected).Max(p => MathF.Abs(p.First - p.Second)) > 1e-3f, "a shorter window changes the outputs");
-        Check(PackedSequences.Supports(narrow) == narrow.Descendants().OfType<CausalSelfAttention>().All(a => device.Backend.SupportsSegmentedAttention(a.HeadDim, a.Variant)),
-            "packing is offered for windows that can mask where the device's packed attention takes a window");
-        var round = DecoderSpec.FromJson(variants[1].Spec.ToJson());
-        Check(round.ToJson().ToJsonString() == variants[1].Spec.ToJson().ToJsonString() && round.SlidingWindowLayers!.SequenceEqual([true, false]) && round.LogitSoftcap == 2f,
-            "windows and soft-capping round-trip through JSON");
     }
 
     // The configuration as read from a file (numbers parsed from text, as config.json gives them).

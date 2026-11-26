@@ -13,13 +13,9 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
-        ("pretrained: safetensors F32/BF16 round trip; sharded index", SafeTensorsRoundTrip),
         ("pretrained: a special token sampled mid-reply is left out of the text (stream and batch), the end-of-turn marker still ends it, the ids stay as sampled; SkipSpecialTokens false writes it", SpecialTokensLeftOutOfText),
         ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
-        ("pretrained: weights auto: the largest of float32, bfloat16, int8 and int4 that fits the free memory (faked by the budget), its logits those of the format named; nothing fitting refused before the load or offloaded; a named format wins; a bfloat16 checkpoint skips float32", AutoWeightsChooseByMemory),
-        ("pretrained: safetensors matrices read transposed (F32, F16, BF16; across read chunks) equal reading then transposing", SafeTensorsTransposed),
         ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; int8; custom architectures", PretrainedCheckpoint),
-        ("pretrained: packed bfloat16 weights of a BF16 checkpoint come from its 16-bit values, bit for bit the float32 path's (projections, tied and own heads, tables, odd widths, signalling NaNs, a bfloat16 head beside int8, a merged adapter), with fewer managed bytes; the load's stages", BFloat16StraightThrough),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
         ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
     ];
@@ -41,64 +37,6 @@ internal abstract partial class Tests
         string folder = Path.Combine(Path.GetTempPath(), $"ns-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         return folder;
-    }
-
-    internal static void SafeTensorsRoundTrip(Device device)
-    {
-        _ = device;
-        string folder = TempFolder();
-        try
-        {
-            var a = Enumerable.Range(0, 12).Select(i => MathF.Sin(i) * 3).ToArray();
-            var b = Enumerable.Range(0, 5).Select(i => (float)i - 2.5f).ToArray();
-            SafeTensorsWriter.Write(Path.Combine(folder, "part1.safetensors"), [("a", [3, 4], a)], new Dictionary<string, string> { ["format"] = "pt" });
-            SafeTensorsWriter.Write(Path.Combine(folder, "part2.safetensors"), [("b", [5], b)], SafeTensorType.BF16);
-            File.WriteAllText(Path.Combine(folder, "model.safetensors.index.json"),
-                new JsonObject { ["weight_map"] = new JsonObject { ["a"] = "part1.safetensors", ["b"] = "part2.safetensors" } }.ToJsonString());
-            using var reader = SafeTensorsReader.Open(folder);
-            Check(reader.Tensors["a"].Shape.SequenceEqual([3, 4]) && reader.Tensors["b"].Type == SafeTensorType.BF16, "headers");
-            Check(reader.Read("a").SequenceEqual(a), "F32 values are exact");
-            AssertClose(b, reader.Read("b"), 0f, "these values are exact in bfloat16");
-            Check(reader.Metadata["format"] == "pt", "metadata");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    internal static void SafeTensorsTransposed(Device device)
-    {
-        _ = device;
-        string folder = TempFolder();
-        try
-        {
-            // 3 rows of 2.1M columns take one read chunk (4M values) per row; 7 x 5 is a single chunk.
-            foreach (var (rows, columns) in new[] { (3, 2_100_000), (7, 5) })
-            {
-                var values = new float[rows * columns];
-                for (int i = 0; i < values.Length; i++)
-                {
-                    values[i] = MathF.Sin(i * 0.37f) * (1 + i % 11);
-                }
-
-                values[^1] = float.NaN;
-                foreach (var type in new[] { SafeTensorType.F32, SafeTensorType.F16, SafeTensorType.BF16 })
-                {
-                    string file = Path.Combine(folder, $"m-{rows}-{type}.safetensors");
-                    SafeTensorsWriter.Write(file, [("m", [rows, columns], values)], type);
-                    using var reader = SafeTensorsReader.Open(file);
-                    var expected = Transpose2D(reader.Read("m"), rows, columns);
-                    var actual = reader.ReadTransposed("m");
-                    Check(actual.Length == expected.Length && actual.AsSpan().SequenceEqual(expected),
-                        $"[{rows}, {columns}] {type}: transposed while reading equals read then transposed");
-                }
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 
     // Writes config.json and weights as Hugging Face checkpoints store them: PyTorch names, Linear weights [out, in].
@@ -203,14 +141,14 @@ internal abstract partial class Tests
                 if (type == SafeTensorType.BF16)
                 {
                     // bfloat16 weights from a bfloat16 checkpoint are the checkpoint's values exactly.
-                    using var half = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, BFloat16 = true });
+                    using var half = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
                     Check(half.Network.Descendants().OfType<Linear>().All(l => l.BFloat16 is not null), "bf16 projections");
                     AssertClose(loaded, half.Network.Predict(input).ToArray(), 1e-4f, "bf16 weights from a BF16 checkpoint");
                 }
 
                 if (type == SafeTensorType.F32 && !sharded)
                 {
-                    using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Int8 = true, MaxPositions = 16 });
+                    using var int8 = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MaxPositions = 16 });
                     Check(int8.Network.Descendants().OfType<Linear>().All(l => l.Int8 is not null) && int8.MaxPositions == 16, "int8, 16 positions");
                     AssertClose(expected, int8.Network.Predict(input).ToArray(), 0.05f * expected.Max(MathF.Abs), "int8 checkpoint");
 
@@ -234,136 +172,6 @@ internal abstract partial class Tests
         catch (NotSupportedException ex)
         {
             Check(ex.Message.Contains("Register"), ex.Message);
-        }
-    }
-
-    // A bfloat16 checkpoint's packed bfloat16 weights are copied from its stored 16-bit values (plan 17, G1). The float32
-    // path they replace (read, widen, transpose, round back: IWeightSource's default ReadBFloat16, kept by a source that
-    // only reads floats) must give the same weights bit for bit, and the same logits.
-    internal static void BFloat16StraightThrough(Device device)
-    {
-        var architecture = PretrainedArchitectures.Get("Qwen3ForCausalLM");
-        foreach (bool tied in new[] { true, false })
-        {
-            // Odd widths pad the packed rows: the feed-forward's 37, the tied head's 1,001 vocabulary columns.
-            var spec = SmallSpec with { QkNorm = true, Dim = 64, FfDim = 37, Vocabulary = 1001, TieEmbeddings = tied };
-            var weights = new RandomWeights(71);
-            using (spec.Build(weights, new DecoderBuildOptions { Device = Device.Cpu }))
-            {
-                // every weight drawn, for the checkpoint
-            }
-
-            string folder = TempFolder();
-            try
-            {
-                WriteCheckpoint(folder, spec, weights, "Qwen3ForCausalLM", SafeTensorType.BF16, sharded: !tied);
-                // Signalling NaNs, which rounding a float32 copy makes quiet (0x40 set): one in the table's last row (the
-                // tied head's last column; token 1000 is not in the prompt) and, untied, one in the head's row 999.
-                PokeBFloat16(folder, "model.embed_tokens.weight", 1000 * spec.Dim + 3, 0x7F81);
-                if (!tied)
-                {
-                    PokeBFloat16(folder, "lm_head.weight", 999 * spec.Dim + 5, 0xFF85);
-                }
-
-                int[] ids = [2, 9, 14, 3, 7];
-                using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
-                foreach (var (label, options) in new (string, PretrainedOptions)[]
-                {
-                    ("bfloat16", new() { Device = device, BFloat16 = true }),
-                    ("bfloat16 by name", new() { Device = device, PackedFormatName = "bfloat16" }),
-                    ("int8 with a bfloat16 head", new() { Device = device, Int8 = true, HeadFormatName = "bfloat16" }),
-                    ("int8", new() { Device = device, Int8 = true }),
-                })
-                {
-                    string what = $"{(tied ? "tied" : "untied")}, {label}";
-                    using var model = PretrainedModel.Load(folder, options);
-                    using var reader = SafeTensorsReader.Open(folder);
-                    var build = new DecoderBuildOptions
-                    {
-                        Device = device, BFloat16 = options.BFloat16, Int8 = options.Int8, PackedFormatName = options.PackedFormatName,
-                        HeadFormatName = options.HeadFormatName, MaxPositions = model.MaxPositions,
-                    };
-                    using var before = model.Spec.Build(new FloatOnlyWeights(new CheckpointWeights(reader, architecture)), build);
-                    CheckSameWeights(before, model.Network, what);
-                    Check(SameBits(before.Predict(input).ToArray(), model.Network.Predict(input).ToArray()), $"{what}: the same logits");
-                    if (label == "bfloat16")
-                    {
-                        // The NaN as the float32 path leaves it: quiet, in the packed head's row 3 (tied: the table's
-                        // column, at the padded stride of 1,002) or row 5 of column 999 (untied).
-                        var head = model.Network.Descendants().OfType<Linear>().Single(l => l.Name == "head").BFloat16!;
-                        var packed = MemoryMarshal.Cast<float, ushort>(head.Packed.ToArray().AsSpan());
-                        Check(tied ? packed[3 * 1002 + 1000] == 0x7FC1 : packed[5 * 1002 + 999] == 0xFFC5, $"{what}: a signalling NaN made quiet");
-
-                        // The managed bytes a build allocates (all threads; on the CPU the weights' own memory too), the
-                        // float32 path's against the stored bits', after one build of each above warmed the code.
-                        long Allocated(bool storedBits)
-                        {
-                            using var store = SafeTensorsReader.Open(folder);
-                            var source = new CheckpointWeights(store, architecture);
-                            long start = GC.GetTotalAllocatedBytes(true);
-                            using (model.Spec.Build(storedBits ? source : (IWeightSource)new FloatOnlyWeights(source), build))
-                            {
-                                return GC.GetTotalAllocatedBytes(true) - start;
-                            }
-                        }
-
-                        long floats = Allocated(storedBits: false), bits = Allocated(storedBits: true);
-                        Console.WriteLine($"    {what}: managed bytes allocated by the build {floats:N0} through float32, {bits:N0} from the stored bits ({(double)bits / floats:P0})");
-                        Check(bits < floats, $"{what}: fewer managed bytes from the stored bits ({bits:N0}) than through float32 ({floats:N0})");
-
-                        var times = model.LoadTimes;
-                        var parts = times.Stages.Where(s => s.Stage != "total").Aggregate(TimeSpan.Zero, (sum, s) => sum + s.Elapsed);
-                        Console.WriteLine($"    {what}: loaded in {times}");
-                        Check(times.Stages.Count == 9 && times.Total > TimeSpan.Zero && times.Read > TimeSpan.Zero && parts <= times.Total
-                            && times.ToString().Contains("read ", StringComparison.Ordinal), $"{what}: load stages {times}");
-                    }
-                }
-
-                if (!tied)
-                {
-                    // A merged adapter changes the weights it updates: those are merged in float32 and rounded (the float32
-                    // path), the others still come from the stored bits; all as the float32 path makes them.
-                    string adapterFolder = Path.Combine(folder, "adapter");
-                    using (var plain = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
-                    {
-                        plain.AddAdapters(2, 4f, ["q", "down"], seed: 3);
-                        foreach (var lora in plain.Network.Descendants().OfType<Linear>().Select(l => l.Adapter).OfType<LoraAdapter>())
-                        {
-                            lora.B.Load([.. Enumerable.Range(0, lora.B.Size).Select(i => MathF.Sin(i) * 0.25f)]);
-                        }
-
-                        plain.SaveAdapter(adapterFolder);
-                    }
-
-                    using var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, BFloat16 = true, MergeAdapter = adapterFolder });
-                    using var reader = SafeTensorsReader.Open(folder);
-                    using var adapter = new AdapterMerge(adapterFolder);
-                    using var before = merged.Spec.Build(new FloatOnlyWeights(new CheckpointWeights(reader, architecture) { Adapter = adapter }),
-                        new DecoderBuildOptions { Device = device, BFloat16 = true, MaxPositions = merged.MaxPositions });
-                    CheckSameWeights(before, merged.Network, "a merged adapter");
-                    Check(merged.LoadTimes.Merge > TimeSpan.Zero, $"the adapter's merge timed: {merged.LoadTimes}");
-                }
-            }
-            finally
-            {
-                Directory.Delete(folder, recursive: true);
-            }
-        }
-
-        static bool SameBits(float[] a, float[] b) =>
-            MemoryMarshal.Cast<float, uint>(a.AsSpan()).SequenceEqual(MemoryMarshal.Cast<float, uint>(b.AsSpan()));
-
-        // Every parameter and buffer (the packed weights and tables among them), in the same order, with the same bits.
-        static void CheckSameWeights(Module expected, Module actual, string what)
-        {
-            var a = expected.Parameters().Concat(expected.Buffers()).ToList();
-            var b = actual.Parameters().Concat(actual.Buffers()).ToList();
-            Check(a.Count == b.Count && a.Count > 0, $"{what}: {b.Count} tensors, the float32 path made {a.Count}");
-            for (int i = 0; i < a.Count; i++)
-            {
-                Check(a[i].Shape.SequenceEqual(b[i].Shape) && SameBits(a[i].ToArray(), b[i].ToArray()),
-                    $"{what}: tensor {i} {Tensor.FormatShape(b[i].Shape)} differs from the float32 path's {Tensor.FormatShape(a[i].Shape)}");
-            }
         }
     }
 

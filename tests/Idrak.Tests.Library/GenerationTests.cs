@@ -20,7 +20,6 @@ internal abstract partial class Tests
         ("generation: keep-alive durations and model host expiry", KeepAliveAndHost),
         ("generation: a model host's failed first load (and one the host's disposal ended) leaves no task nobody observed, with nobody else waiting", FailedLoadObserved),
         ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
-        ("generation: a batch of prompts of different lengths keeps a bfloat16 cache (IRowStartsLayout) and gives each prompt its text alone, greedy, through prompts and steps; float32 and bfloat16 caches give the same texts with recorded steps (UseGraph) as without, through many steps, and the device records the step once", BFloat16RowsBatch),
         ("generation: a measured prompt piece is never fewer than PrefillMinChunk positions (256 by default) however little memory is free, never more than the prompt, and as many as the room holds between", PrefillPieceFloor),
         ("generation: chat end to end yields a final message and stats, each piece counting the tokens sampled so far", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
@@ -298,61 +297,6 @@ internal abstract partial class Tests
         Check(TextGenerator.PieceOf(0, 1000, 256, 100) == 100, "a prompt shorter than the floor: one pass");
         Check(TextGenerator.PieceOf(0, 1000, 0, 3000) == 1, "a floor of 0 counts as 1");
         ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new GenerationOptions { PrefillMinChunk = -1 }, "a negative floor", "PrefillMinChunk");
-    }
-
-    internal static void BFloat16RowsBatch(Device device)
-    {
-        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
-        tiny.Dispose();
-        var spec = new DecoderSpec
-        {
-            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 8, FfDim = 24, MaxPositions = 64,
-            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
-        };
-        using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 5 });
-        var layout = KeyValueLayouts.For(KeyValueFormat.BFloat16);
-        var generator = new TextGenerator(model, tokenizer, 64) { CacheFormat = KeyValueFormat.BFloat16, KeepCache = false };
-        Check(layout is IRowStartsLayout && generator.SupportsBatches, $"bfloat16 attends from per-row starts ({layout is IRowStartsLayout}) and the model batches rows ({generator.SupportsBatches})");
-        var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 14, ChunkSize = 3 };
-        string[] prompts = ["abc", "hello there", "a much longer prompt of words"];
-        var alone = prompts.Select(p => generator.Generate(p, options).Text).ToArray();
-        var together = generator.GenerateBatch(prompts, options).Select(r => r.Text).ToArray();
-        Check(together.SequenceEqual(alone), $"a padded batch with a bfloat16 cache: '{string.Join("' '", together)}', alone: '{string.Join("' '", alone)}'");
-
-        // Recorded steps over rows with starts (their positions advance on the device): the texts of steps run as they are,
-        // through many steps (the cache filling), float32 and bfloat16 caches; the device records the step once.
-        var many = options with { NumPredict = 40, RepeatStop = 0, ChunkSize = 5 };
-        var hook = new StageList();
-        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.BFloat16 })
-        {
-            var rows = new TextGenerator(model, tokenizer, 64) { CacheFormat = format, KeepCache = false };
-            using (var context = new DecodingContext(device, prompts.Length, 64, KeyValueLayouts.For(format)))
-            {
-                context.SetRowStarts([3, 1, 0]);
-                Check(context.Recordable, $"{format}: rows with starts are recordable");
-                context.SetRotaryOffsets([2, 2, 2], 0);
-                Check(!context.Recordable, $"{format}: rows with starts and rotary offsets are not (their rotary positions come from the host)");
-            }
-
-            string[] plain, recorded;
-            int plainCaptures, recordedCaptures;
-            using (Telemetry.Subscribe(hook))
-            {
-                hook.Take();
-                plain = [.. rows.GenerateBatch(prompts, many with { UseGraph = false }).Select(r => r.Text)];
-                plainCaptures = hook.Take().Count(e => e.Stage == InferenceStageKind.GraphCapture);
-                recorded = [.. rows.GenerateBatch(prompts, many with { UseGraph = true }).Select(r => r.Text)];
-                recordedCaptures = hook.Take().Count(e => e.Stage == InferenceStageKind.GraphCapture);
-            }
-
-            // Alone, a prompt has more room (the batch's context holds the longest prompt), so its text begins with the batch's.
-            var aloneMany = prompts.Select(p => rows.Generate(p, many with { UseGraph = false }).Text).ToArray();
-            Check(recorded.SequenceEqual(plain) && plain.Zip(aloneMany).All(x => x.Second.StartsWith(x.First, StringComparison.Ordinal)),
-                $"{format}, a padded batch of up to 40 steps: '{string.Join("' '", recorded)}' recorded, '{string.Join("' '", plain)}' step by step, '{string.Join("' '", aloneMany)}' alone");
-            int expected = device.Backend.SupportsGraphs ? 1 : 0;
-            Check(plainCaptures == 0 && recordedCaptures == expected,
-                $"{format}: the padded batch's step recorded {recordedCaptures} time(s) with UseGraph ({expected} expected on {device}), {plainCaptures} without");
-        }
     }
 
     internal static void DecodingReuse(Device device)

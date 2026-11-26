@@ -30,7 +30,7 @@ internal abstract partial class Tests
         string path = Path.Combine(folder, "windows.bin");
         var bytes = File.ReadAllBytes(PretrainData("tokens.bin"));
         File.WriteAllBytes(path, bytes[..(129 * 2)]);
-        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\", \"type\": \"{Idrak.Abstraction.ElementType.UInt16.Name}\"}}");   // the fixture's ids
+        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\"}}");   // the fixture's ids
         return path;
     }
 
@@ -253,7 +253,7 @@ internal abstract partial class Tests
             Throws<ArgumentException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Schedule = "steps" }] }, folder), "an unknown schedule");
             Throws<NotSupportedException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [new PretrainingSource("parquet", ["x"])] }] }, folder), "an unregistered source");
             Throws<FileNotFoundException>(() => Pretrainer.Train(model, good with { Stages = [good.Stages[0] with { Sources = [new PretrainingSource("tokens", [PretrainData("missing.bin")])] }] }, folder), "a missing file");
-            using var packed = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = Device.Cpu, Int8 = true });
+            using var packed = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = Device.Cpu });
             Throws<InvalidOperationException>(() => Pretrainer.Train(packed, good, folder), "int8 weights");
             Check(PretrainingSources.Names.Contains("tokens") && PretrainingSources.Names.Contains("records") && PretrainingSources.Origin("tokens") == Idrak.Abstraction.Overrides.Library, "the library's source kinds");
         }

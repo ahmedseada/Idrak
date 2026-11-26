@@ -11,8 +11,6 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] Decoding =
     [
         ("fused kernels match their unfused equivalents", FusedKernels),
-        ("KV-cache decoding matches the full forward pass at every position", CachedDecodingMatchesFull),
-        ("KV-cache decoding: paged (a shared pool's pages): a paged context gives the unpaged cache's logits bit for bit in float32, int8 and bfloat16; a context reading another's whole pages gives an unpaged context's fed alike; truncated into a shared page it copies the page and the other's steps are unchanged; settings and refusals by name", PagedCacheMatchesUnpaged),
         ("KV-cache decoding: paged: 4 requests sharing a 48-position prompt hold its pages once and one page each (measured in use against 4 unpaged caches), each with its own cache's logits bit for bit; closed, the pages stay idle up to one context's worth and ReleaseIdle frees them", PagedCacheSharedMemory),
         ("KV-cache decoding: paged generations (TextGenerator.SharePrefix): two interleaved generations share the system prompt's pages and give the kept cache's replies; the telemetry reports pages in use, shared and bytes saved; ReleaseCache frees the idle pages", PagedCacheGenerator),
         ("batched cached decoding matches sequences decoded one by one", BatchedDecoding),
@@ -73,47 +71,6 @@ internal abstract partial class Tests
         }
 
         AssertClose(reference, fused, 1e-5f, "bias + GELU");
-    }
-
-    internal static void CachedDecodingMatchesFull(Device device)
-    {
-        const int T = 10, V = 11;
-        using var model = TinyGpt(device);
-        var ids = new float[T];
-        var random = new Random(52);
-        for (int t = 0; t < T; t++)
-        {
-            ids[t] = random.Next(V);
-        }
-
-        using (Autograd.NoGrad())
-        {
-            using var sequence = Tensor.From(ids, [1, T], device);
-            var full = model.Forward(sequence).ToArray();                                   // [1, T, V]
-
-            using var context = new DecodingContext(device, 1, 12);
-            using var prompt = Tensor.From(ids.AsSpan(0, 4), [1, 4], device);
-            var prefill = model.ForwardCached(prompt, context).ToArray();                   // positions 0-3 at once
-            AssertClose(full[..(4 * V)], prefill, 1e-4f, "prefill logits");
-            for (int t = 4; t < T; t++)
-            {
-                using var next = Tensor.From(ids.AsSpan(t, 1), [1, 1], device);
-                var step = model.ForwardCached(next, context).ToArray();                    // one new position
-                AssertClose(full[(t * V)..((t + 1) * V)], step, 1e-4f, $"cached step {t}");
-            }
-
-            Check(context.Length == T, "context length");
-
-            // An int8 cache: prefill and steps close to the full pass (int8 keys and values round to ~1% of their range).
-            using var context8 = new DecodingContext(device, 1, 12, KeyValueFormat.Int8);
-            float range = full.Max(MathF.Abs);
-            AssertClose(full[..(4 * V)], model.ForwardCached(prompt, context8).ToArray(), 0.05f * range, "int8 prefill logits");
-            for (int t = 4; t < T; t++)
-            {
-                using var next = Tensor.From(ids.AsSpan(t, 1), [1, 1], device);
-                AssertClose(full[(t * V)..((t + 1) * V)], model.ForwardCached(next, context8).ToArray(), 0.05f * range, $"int8 cached step {t}");
-            }
-        }
     }
 
     internal static void BatchedDecoding(Device device)
@@ -335,7 +292,7 @@ internal abstract partial class Tests
         _ = device;
         var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCounts;
         string[] all = [.. Idrak.Gpu.Cuda.PtxKernels.Names, .. Idrak.Gpu.Cuda.PtxKernels.AdvancedNames,
-            .. Idrak.Gpu.Cuda.PtxKernels.DecodingNames, .. Idrak.Gpu.Cuda.PtxKernels.QuantizedNames, .. Idrak.Gpu.Cuda.PtxKernels.DecoderNames, .. Idrak.Gpu.Cuda.PtxKernels.RowNames,
+            .. Idrak.Gpu.Cuda.PtxKernels.DecodingNames, .. Idrak.Gpu.Cuda.PtxKernels.DecoderNames, .. Idrak.Gpu.Cuda.PtxKernels.RowNames,
             .. Idrak.Gpu.Cuda.PtxKernels.ConvolutionNames, .. Idrak.Gpu.Cuda.PtxKernels.ResamplingNames, .. Idrak.Gpu.Cuda.PtxKernels.CtcNames, .. Idrak.Gpu.Cuda.PtxKernels.RecurrentNames,
             .. Idrak.Gpu.Cuda.PtxKernels.PointwiseNames, .. Idrak.Gpu.Cuda.PtxKernels.RoutingNames];
         Check(counts.Count == all.Length && all.All(k => counts.TryGetValue(k, out int n) && n > 0), $"{counts.Count} kernels parsed, {all.Length} expected");

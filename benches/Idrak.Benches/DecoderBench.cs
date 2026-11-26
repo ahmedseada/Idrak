@@ -65,7 +65,6 @@ internal static class DecoderBench
 
             void Step(bool checkpointing, bool bfloat16 = false)
             {
-                using var precision = bfloat16 ? MixedPrecision.BFloat16() : (MixedPrecision.Scope?)null;
                 optimizer.ZeroGrad();
                 var hidden = checkpointing ? Checkpointed(model, input, layers) : model.ForwardFirst(input, layers);
                 var flat = hidden.Reshape(rows, spec.Dim);
@@ -78,9 +77,9 @@ internal static class DecoderBench
             {
                 // Float32 products, the same with the blocks checkpointed, and bfloat16 products (the tensor cores where
                 // the device has them; a device without them runs the float32 path under the same name).
-                foreach (var (checkpointing, bfloat16) in ((bool, bool)[])[(false, false), (true, false), (false, true)])
+                foreach (var (checkpointing, bfloat16) in ((bool, bool)[])[(false, false), (true, false)])
                 {
-                    string label = bfloat16 ? $"step, bfloat16 products, batch {batch}" : checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
+                    string label = checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
                     var (cold, warm) = Bench.Time(device, () => Step(checkpointing, bfloat16), settings.Repeats, settings.Warmup);
                     var views = Views.Start();
                     var census = Bench.Count(() => Step(checkpointing, bfloat16));
@@ -146,7 +145,7 @@ internal static class DecoderBench
         using var model = spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device });
         model.Eval();
         float[] ids = [.. Enumerable.Range(0, prompt).Select(_ => (float)random.Next(spec.Vocabulary))];
-        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+        foreach (var format in new[] { KeyValueFormat.Float32 })
         {
             using var context = new DecodingContext(device, 1, prompt + generated + 1, format);
             double promptMs;

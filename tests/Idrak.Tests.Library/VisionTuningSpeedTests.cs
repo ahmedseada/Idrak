@@ -26,7 +26,6 @@ internal abstract partial class Tests
         ("vision tuning graph: a forward and backward pass with images recorded as a graph through ImagePrefillInputs and replayed for another batch (features, rows and key ranges copied in) gives the ordinary pass's loss and adapter gradients, for Gemma 3 and LLaVA; a device without graphs runs the same pass from the fixed inputs", VisionTuningGraphInputs),
         ("vision tuning tower: Gemma 3's tower exports every SigLIP tensor as the checkpoint stores it (the fused q, k, v split back) and imports it again; gradients reach the tower's weights through the decoder (finite differences); checkpointed tower blocks give the stored gradients bit for bit", VisionTuningTowerGradients),
         ("vision tuning tower: FineTuner.Train trains the tower in the step (pixel values cached, the tower and projector run each step), checkpointing on and off give the same weights, and the tower saved as modules_to_save is read back by LoadAdapter into a new encoder", VisionTuningTowerTrainer),
-        ("vision tuning memory: a trained projector over a bfloat16 checkpoint keeps the tower in bfloat16 (its weight bytes are the bfloat16 tower's plus the float32 projector's), not the whole encoder in float32; the feature cache's keys name the precision the tower computes in (bfloat16 apart from the float32 checkpoint's)", VisionTuningTrainedProjectorMemory),
         ("vision tuning speed: a batch's images through the frozen tower and the projector in one pass give each image's features alone; the time of one pass against one image at a time", VisionTuningBatchedImages),
     ];
 
@@ -470,7 +469,7 @@ internal abstract partial class Tests
             }
         }
 
-        using (var packed = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.BFloat16 }))
+        using (var packed = vision.CreateEncoder(new VisionEncoderOptions { Device = device }))
         {
             string refused = Failure<InvalidOperationException>(() => part.Import(packed, changed)).Message;
             Check(refused.Contains("TrainedParts", StringComparison.Ordinal), $"a bfloat16 tower takes no trained values: {refused}");
@@ -639,78 +638,6 @@ internal abstract partial class Tests
     internal static long WeightBytes(Module module) =>
         module.Parameters().Sum(p => 4L * p.Size) + module.Descendants().OfType<Linear>().Sum(l => l.BFloat16?.Bytes ?? 0L);
 
-    internal static void VisionTuningTrainedProjectorMemory(Device device)
-    {
-        RegisterGemma3Vision();
-        string folder = BFloat16Copy(TestData("vlm/tiny-gemma3"));
-        try
-        {
-            using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            var vision = (Gemma3Vision)model.Vision!;
-            using (var trained = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 }))
-            {
-                Check(model.KeepTrainedVision(trained, [VisionTuningParts.Projector]) == 2, "the projector kept as trained");
-            }
-
-            using var encoder = (Gemma3ImageEncoder)model.CreateVisionEncoder();
-            using var half = vision.CreateEncoder(device);
-            using var full = vision.CreateEncoder(device, weights: EncoderWeights.Float32);
-            long after = WeightBytes(encoder), expected = WeightBytes(half.Encoder) + WeightBytes(full.Projector), wholeFloat32 = WeightBytes(full);
-            Check(encoder.Encoder.Descendants().OfType<Linear>().All(l => l.BFloat16 is not null) && !encoder.Projector.Buffers().Any(),
-                "the tower's projections stay bfloat16, the trained projector is float32");
-            Check(after == expected && after < wholeFloat32, $"the encoder's weights take {after} bytes; bfloat16 tower + float32 projector {expected}; all float32 {wholeFloat32}");
-
-            // The trained projector's values are the ones the encoder uses.
-            var exported = ((IVisionTuningPart)vision).Export(encoder, VisionTuningParts.Projector);
-            using (var trained = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 }))
-            {
-                foreach (var (name, tensor) in ((IVisionTuningPart)vision).Export(trained, VisionTuningParts.Projector))
-                {
-                    Check(tensor.ToArray().SequenceEqual(exported[name].ToArray()), $"{name}: the trained values");
-                    tensor.Dispose();
-                }
-            }
-
-            foreach (var t in exported.Values)
-            {
-                t.Dispose();
-            }
-
-            // The feature cache's keys name the precision the stage is computed in (was "float32" whatever the weights): the
-            // bfloat16 tower's output is another key than the float32 checkpoint's; pixel values are float32 either way; a
-            // bfloat16 product scope counts only where the device runs such products on tensor cores.
-            var page = ChatImage.FromFile(TestData("vlm/image.png"));
-            string bfloat16Tower;
-            using (var tuning = TuningVision.Create(model))
-            {
-                var key = tuning.Key(page, tuning.Images, tuning.CachedStage);
-                bfloat16Tower = key.DType;
-                Check(tuning.CachedStage == FeatureCacheKey.TowerStage && key.DType.Split('+').Contains("bfloat16")
-                      && tuning.Key(page, tuning.Images, FeatureCacheKey.PixelsStage).DType == "float32", $"the bfloat16 tower's key: {key.DType}");
-                using (MixedPrecision.BFloat16())
-                {
-                    string scoped = tuning.Key(page, tuning.Images, tuning.CachedStage).DType;
-                    Check(MixedPrecision.TensorCoresUnavailable(device) is null ? scoped == key.DType + ", bfloat16 products" : scoped == key.DType,
-                        $"under bfloat16 products on {device}: {scoped}");
-                }
-            }
-
-            using (var float32 = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device }))
-            using (var tuning = TuningVision.Create(float32, parts: [VisionTuningParts.Projector]))
-            {
-                Check(tuning.Key(page, tuning.Images, tuning.CachedStage).DType == "float32", $"the float32 checkpoint's key: {tuning.Key(page, tuning.Images, tuning.CachedStage).DType}");
-            }
-
-            Console.WriteLine($"    feature cache precision: {bfloat16Tower} for the bfloat16 tower, float32 for the float32 checkpoint");
-            Console.WriteLine($"    trained projector over a bfloat16 tower: {after} bytes of weights (phase 2 built the whole encoder in float32: {wholeFloat32} bytes; "
-                              + $"the tower's share {WeightBytes(half.Encoder)} against {WeightBytes(full.Encoder)} in float32)");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     internal static void VisionTuningBatchedImages(Device device)
     {
         const int Count = 12, Repeats = 20;
@@ -723,7 +650,7 @@ internal abstract partial class Tests
             var (model, _) = LoadTuningModel(family, device);
             using var owned = model;
             var part = (IVisionTuningPart)model.Vision!;
-            using var encoder = model.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 });
+            using var encoder = model.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device });
             var stages = (IVisionEncoderStages)encoder;
             using var noGrad = Autograd.NoGrad();
             using var scope = new TensorScope();

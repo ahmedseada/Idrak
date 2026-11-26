@@ -49,7 +49,7 @@ if (args is ["compare", .. var logs])
     return CompareLogs(logs);
 }
 
-string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--optim8bit", "--fp32", "--cpu", "--cuda", "--offload", "--profile", "--fp8", "--no-save"];
+string[] flagNames = ["--skip-clean", "--grad-checkpoint", "--optim8bit", "--fp32", "--cpu", "--cuda", "--offload", "--profile", "--no-save"];
 string[] valueNames = ["--corpus", "--clean-out", "--out", "--block", "--batch", "--dmodel", "--heads", "--layers", "--dropout", "--lr", "--min-lr",
     "--warmup", "--steps", "--eval-every", "--eval-steps", "--save-every", "--seed", "--resume", "--bin", "--vocab-file", "--gpu-memory",
     "--log-every", "--loss-log", "--checkpoint", "--prompt", "--tokens", "--temperature", "--top-k", "--top-p", "--repeat-penalty"];

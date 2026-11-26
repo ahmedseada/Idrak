@@ -604,7 +604,7 @@ internal abstract partial class Tests
         }
 
         Check(expected.Count == 3 + 2 * 16 + 2, $"{expected.Count} tensors expected");
-        using var encoder = VisionTransformerEncoder.FromTensors(config, store, "tower.", device, EncoderWeights.Float32);
+        using var encoder = VisionTransformerEncoder.FromTensors(config, store, "tower.", device);
         Check(encoder.Config.Patches == 9 && encoder.Layers.Count == 2 && encoder.LayerWeights.Count == 2 && encoder.ToString().Contains("9 patches"), encoder.ToString());
 
         // The tensors come back as stored, name for name and bit for bit.

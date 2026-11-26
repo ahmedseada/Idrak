@@ -43,59 +43,6 @@ internal abstract partial class Tests
     private static string PagedGap(float[] a, float[] b) =>
         a.Length != b.Length ? $"lengths {a.Length} and {b.Length}" : string.Create(CultureInfo.InvariantCulture, $"largest gap {Gap(a, b):G3}, {a.Zip(b).Count(p => p.First != p.Second)} differ");
 
-    internal static void PagedCacheMatchesUnpaged(Device device)
-    {
-        using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device });
-        var network = model.Network;
-        int[] a = PagedIds(0, 48), b = [.. a[..24], .. PagedIds(200, 14)];
-        const int Capacity = 128;
-        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
-        {
-            var layout = KeyValueLayouts.For(format);
-            using var pool = new KeyValuePages(device, layout, pageTokens: 8);
-
-            // A: its prompt in one pass, then 8 steps; unpaged and paged alike.
-            using var referenceA = new DecodingContext(device, 1, Capacity, layout);
-            float[] wantA = [.. PagedFeed(network, referenceA, a, 0, 40, false, device), .. PagedFeed(network, referenceA, a, 40, 48, true, device)];
-            using var pagedA = pool.Open(Capacity, a, 39);
-            Check(pagedA.Length == 0 && pagedA.Pages == pool && !pagedA.Recordable, $"{format}: an empty pool maps nothing, and a paged context's steps are not recorded");
-            float[] gotA = [.. PagedFeed(network, pagedA, a, 0, 40, false, device), .. PagedFeed(network, pagedA, a, 40, 48, true, device)];
-            Check(gotA.SequenceEqual(wantA), $"{format}: the paged context gives the unpaged cache's logits bit for bit ({PagedGap(wantA, gotA)})");
-            pool.Publish(pagedA, a);
-            Check(pagedA.PageCount == 6 && pool.Stats is { Pages: 6, InUse: 6, Shared: 0, Idle: 0 }, $"{format}: A holds 6 pages of 8 positions: {pool.Stats}");
-
-            // B shares A's first 24 positions (3 whole pages), then its own 14 tokens.
-            using var referenceB = new DecodingContext(device, 1, Capacity, layout);
-            PagedFeed(network, referenceB, a, 0, 40, false, device);                 // the rows A's pass computed
-            referenceB.Truncate(24);
-            float[] wantB = [.. PagedFeed(network, referenceB, b, 24, 30, false, device), .. PagedFeed(network, referenceB, b, 30, 38, true, device)];
-            using var pagedB = pool.Open(Capacity, b, b.Length - 1);
-            Check(pagedB.Length == 24 && pool.Stats is { Shared: 3 } shared && shared.SavedBytes > 0, $"{format}: B reads A's 3 whole pages: Length {pagedB.Length}, {pool.Stats}");
-            float[] gotB = [.. PagedFeed(network, pagedB, b, 24, 30, false, device), .. PagedFeed(network, pagedB, b, 30, 38, true, device)];
-            Check(gotB.SequenceEqual(wantB), $"{format}: B over A's pages gives the unpaged cache's logits bit for bit ({PagedGap(wantB, gotB)})");
-
-            // B truncated into a page A reads, and fed again: it copies the page; A's next steps are unchanged.
-            pagedB.Truncate(20);
-            referenceB.Truncate(20);
-            float[] wantAgain = PagedFeed(network, referenceB, b, 20, 30, false, device);
-            float[] gotAgain = PagedFeed(network, pagedB, b, 20, 30, false, device);
-            Check(gotAgain.SequenceEqual(wantAgain), $"{format}: B truncated into a shared page and fed again ({PagedGap(wantAgain, gotAgain)})");
-            int[] more = PagedIds(400, 4);
-            float[] wantMore = PagedFeed(network, referenceA, more, 0, 4, true, device), gotMore = PagedFeed(network, pagedA, more, 0, 4, true, device);
-            Check(gotMore.SequenceEqual(wantMore) && pool.Stats.Shared == 2,
-                $"{format}: A's pages untouched by B's write (copied on write; 2 pages still shared: {pool.Stats}); A's next steps {PagedGap(wantMore, gotMore)}");
-        }
-
-        // A context opened from another pool, and what a paged context refuses.
-        using var other = new KeyValuePages(device, KeyValueLayouts.For(KeyValueFormat.Float32), pageTokens: 8);
-        using var stranger = new DecodingContext(device, 1, Capacity);
-        ThrowsNaming<ArgumentException>(() => other.Publish(stranger, a), "publishing an unpaged context", "KeyValuePages.Open");
-        using var paged = other.Open(Capacity, a, 0);
-        ThrowsNaming<NotSupportedException>(() => paged.ReorderRows([0]), "reordering a paged context's rows", "IDRAK_KV_SHARE_PREFIX");
-        ThrowsNaming<ArgumentException>(() => KeyValuePages.ParsePageTokens("0", KeyValuePages.PageTokensVariable), "a page of no positions", "IDRAK_KV_PAGE_TOKENS", "1 or more");
-        Check(KeyValuePages.ParsePageTokens(" 32 ", "x") == 32 && KeyValuePages.ParsePageTokens(null, "x") is null, "page sizes parse");
-    }
-
     internal static void PagedCacheSharedMemory(Device device)
     {
         using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device });

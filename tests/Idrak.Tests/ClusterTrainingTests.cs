@@ -29,8 +29,6 @@ internal abstract partial class DesktopTests : Tests
         ("cluster: the all-reduce sync gives every rank the token-weighted gradient and loss, bucket by bucket with a parameter cut across buckets, on f32 and bf16 wires; a rank with no rows adds nothing and gets the gradients it lacked; normalized losses are summed; a step no rank had rows in ends it", ClusterSyncWeighted),
         ("cluster: the starting state: rank 0's values sent to every rank, or every rank's hash checked and a rank that differs named", ClusterStartingState),
         ("cluster: data parallel 2 ranks on sim matches the ddp fixture: each rank's losses, the step 1 gradients within 1e-4 of the largest, three SGD and AdamW (torch's own) steps' losses within 1e-5 and weights within 1e-5 (AdamW: the fixture's measured growth of the gradient gap)", ClusterDdpTrainer),
-        ("cluster: bf16 wire within the fixture's tolerance: the step 1 gradients, three SGD steps' losses and weights against bf16/ within its measured gaps", ClusterDdpBFloat16),
-        ("cluster: int8 and fp8 wires with error feedback within their measured tolerance of float32: three SGD steps' losses against the ddp fixture and ten against Idrak's float32 run, int8 closer with error feedback than without, each step carrying exactly the error of the step before and the residual bounded, the gradients' bytes on the wire 4x fewer", ClusterDdpQuantized),
         ("cluster: 2 ranks equal one process with the global batch (rule 71, Idrak against Idrak): the Trainer, the fine-tuner (accumulation 1 on 2 ranks as 2 in one) and the pretrainer", ClusterEqualsOneProcess),
         ("cluster: 3 ranks with unequal token counts give the token-weighted gradient: the pretrainer's losses and weights as one process's", ClusterUnequalRanks),
         ("cluster: rank 0 alone writes the checkpoint; a 2-rank run resumes as 3 ranks giving the 3-rank run's losses", ClusterResumeOtherWorld),
@@ -60,7 +58,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void ClusterSyncWeighted(Device device)
     {
-        foreach (var wire in new[] { WireType.Float32, WireType.BFloat16 })
+        foreach (var wire in new[] { WireType.Float32 })
         {
             // Values every step of the sum holds exactly (bfloat16 too), so the checks are exact.
             int size = wire == WireType.Float32 ? 50 : 16;
@@ -138,7 +136,7 @@ internal abstract partial class DesktopTests : Tests
     {
         string path = Path.Combine(folder, "windows8.bin");
         File.WriteAllBytes(path, File.ReadAllBytes(PretrainData("tokens.bin"))[..(257 * 2)]);
-        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\", \"type\": \"{Idrak.Abstraction.ElementType.UInt16.Name}\"}}");   // the fixture's ids
+        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\"}}");   // the fixture's ids
         return path;
     }
 
@@ -244,35 +242,6 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static void ClusterDdpBFloat16(Device device)
-    {
-        string folder = TempFolder("cluster-bf16");
-        try
-        {
-            string windows = DdpWindows(folder);
-            var bf16 = JsonNode.Parse(File.ReadAllText(ClusterData("bf16/bf16.json")))!;
-            // The fixture's measured gaps of a bf16 wire against a float32 one: the tolerances of a bf16 run.
-            var measured = bf16["vs_ddp"]!;
-            float gradients = (float)(double)measured["grads-step1"]!, losses = (float)(double)measured["losses"]!, weights = (float)(double)measured["weights-step3"]!;
-            var (_, _, one) = DdpTrain(device, windows, folder, "bf16-1", 1, ps => new Sgd(ps, 0.2f), WireType.BFloat16);
-            var moved = MovedGradients(one, 0.2f);
-            float gradientGap = ReadTensors(ClusterData("bf16/grads-step1.safetensors")).Max(g => Gap(g.Value.Values, moved[g.Key]));
-            Check(gradientGap <= gradients, $"bf16: step 1's gradients within the fixture's measured {gradients:G3}: {gradientGap:G3}");
-            var (curve, _, saved) = DdpTrain(device, windows, folder, "bf16-3", 3, ps => new Sgd(ps, 0.2f), WireType.BFloat16);
-            var expected = bf16["sgd"]!["losses"]!.AsArray().Select(l => (float)(double)l!).ToArray();
-            float lossGap = Gap(expected, curve);
-            Check(lossGap <= losses, $"bf16: three steps' losses within the fixture's measured {losses:G3}: {lossGap:G3}");
-            var after = ReadTensors(Path.Combine(saved, "model.safetensors"));
-            float weightGap = ReadTensors(ClusterData("bf16/weights-step3.safetensors")).Max(t => Gap(t.Value.Values, after[t.Key].Values));
-            Check(weightGap <= weights, $"bf16: the weights after three steps within the fixture's measured {weights:G3}: {weightGap:G3}");
-            Console.WriteLine($"    measured: bf16 gradients {gradientGap:G3}, losses {lossGap:G3}, weights {weightGap:G3}");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     // Measured on the CPU: an int8 or fp8 wire with error feedback (one scale a bucket of 1 MiB) against float32 on the ddp
     // fixture's SGD run, the largest gap of the losses over three steps (against the fixture) and over ten (against Idrak's
     // float32 run). On the fixture made from generic text (2026-11-13): int8 5.15e-4 and 0.011 (0.0133 without error
@@ -288,184 +257,6 @@ internal abstract partial class DesktopTests : Tests
     private const float Int8RunGap = 0.015f;
     private const float Float8FixtureGap = 0.002f;
     private const float Float8RunGap = 0.08f;
-
-    private static void ClusterDdpQuantized(Device device)
-    {
-        const int Steps = 10;
-        string folder = TempFolder("cluster-quantized");
-        try
-        {
-            string windows = DdpWindows(folder);
-            var ddp = JsonNode.Parse(File.ReadAllText(ClusterData("ddp/ddp.json")))!;
-            var fixture = ddp["sgd"]!["losses"]!.AsArray().Select(l => (float)(double)l!).ToArray();
-
-            // One run of SGD (the fixture's rate) with a compression; the bytes rank 0 sent in all-reduces, all-gathers and
-            // all-to-alls. Buckets of a set size, so every run's header all-reduce is the same and the difference is the
-            // gradients'.
-            (float[] Losses, long Reduced, long Gathered, long Exchanged) Run(string compression, bool feedback = true)
-            {
-                var metrics = new MetricsRecorder(TelemetryLevel.Network);
-                float[] losses;
-                using (Telemetry.Subscribe(metrics))
-                {
-                    losses = DdpTrain(device, windows, folder, compression + (feedback ? "" : "-plain"), Steps, ps => new Sgd(ps, 0.2f),
-                        adjust: o => o with { Compression = compression, ErrorFeedback = feedback, BucketBytes = 1L << 20 }).Losses;
-                }
-
-                long Sent(string operation) => metrics.Collectives.Where(c => c.Rank == 0 && c.Operation == operation).Sum(c => c.BytesSent);
-                return (losses, Sent("all-reduce"), Sent("all-gather"), Sent("all-to-all"));
-            }
-
-            var full = Run("none");
-            Check(full.Losses.Length == Steps, $"float32: {full.Losses.Length} steps' losses");
-            // Every run measured first, then held to its tolerance: each wire with and without error feedback.
-            var runs = new[] { ("int8", Int8FixtureGap, Int8RunGap), ("fp8", Float8FixtureGap, Float8RunGap) }
-                .Select(t => (Name: t.Item1, Fixture: t.Item2, Tolerance: t.Item3, With: Run(t.Item1), Without: Run(t.Item1, feedback: false))).ToList();
-            foreach (var (name, _, _, with, without) in runs)
-            {
-                float againstFixture = Gap(fixture, with.Losses[..fixture.Length]), againstFull = Gap(full.Losses, with.Losses), plainGap = Gap(full.Losses, without.Losses);
-                long fullBytes = full.Reduced - with.Reduced, runBytes = with.Exchanged + with.Gathered - full.Gathered - full.Exchanged;
-                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"    {name}: losses {againstFixture:G3} from the fixture's float32 over {fixture.Length} steps, {againstFull:G3} from Idrak's float32 over {Steps} ({plainGap:G3} without error feedback); "
-                    + $"gradients {runBytes:N0} B on the wire against {fullBytes:N0} B ({(double)fullBytes / runBytes:F3}x fewer)"));
-                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"    {name} each step against float32: with error feedback {string.Join(" ", full.Losses.Zip(with.Losses, (a, b) => (b - a).ToString("G2", CultureInfo.InvariantCulture)))}; without {string.Join(" ", full.Losses.Zip(without.Losses, (a, b) => (b - a).ToString("G2", CultureInfo.InvariantCulture)))}"));
-            }
-
-            // What each step carries on rank 0, with and without error feedback: the norm of what the rank meant to send (its
-            // weighted gradient plus the residual it carried in), of the error its codes left, of the residual carried in, and
-            // how many non-zero values its codes sent as zero.
-            var measured = new Dictionary<(string Name, bool Feedback), List<(int Rank, double Meant, double Error, double Carried, int Zeroed, int Values)>>();
-            foreach (string name in (string[])["int8", "fp8"])
-            {
-                foreach (bool feedback in (bool[])[true, false])
-                {
-                    var probe = new ProbeCompression(name);
-                    Idrak.Networking.Abstractions.GradientCompressions.Register(probe);
-                    try
-                    {
-                        DdpTrain(device, windows, folder, $"{name}-probe{(feedback ? "" : "-plain")}", Steps, ps => new Sgd(ps, 0.2f),
-                            adjust: o => o with { Compression = probe.Name, ErrorFeedback = feedback, BucketBytes = 1L << 20 });
-                    }
-                    finally
-                    {
-                        Idrak.Networking.Abstractions.GradientCompressions.Unregister(probe.Name);
-                    }
-
-                    var steps = probe.Steps.Where(s => s.Rank == 0).ToList();
-                    measured[(name, feedback)] = steps;
-                    Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                        $"    {name} {(feedback ? "with" : "without")} error feedback, rank 0 by step: meant {string.Join(" ", steps.Select(s => s.Meant.ToString("G3", CultureInfo.InvariantCulture)))}; "
-                        + $"error {string.Join(" ", steps.Select(s => s.Error.ToString("G3", CultureInfo.InvariantCulture)))}; carried {string.Join(" ", steps.Select(s => s.Carried.ToString("G3", CultureInfo.InvariantCulture)))}; "
-                        + $"sent as zero {string.Join(" ", steps.Select(s => s.Zeroed))} of {steps.FirstOrDefault().Values}"));
-                }
-            }
-
-            foreach (var (name, fixtureTolerance, runTolerance, with, without) in runs)
-            {
-                float againstFixture = Gap(fixture, with.Losses[..fixture.Length]), againstFull = Gap(full.Losses, with.Losses), plainGap = Gap(full.Losses, without.Losses);
-                long fullBytes = full.Reduced - with.Reduced, runBytes = with.Exchanged + with.Gathered - full.Gathered - full.Exchanged;
-                Check(againstFixture <= fixtureTolerance, $"{name}: three steps' losses within {fixtureTolerance} of the ddp fixture's float32: {againstFixture:G3}");
-                Check(againstFull <= runTolerance, $"{name}: {Steps} steps' losses within {runTolerance} of Idrak's float32 run: {againstFull:G3}");
-                if (name == "int8")
-                {
-                    Check(againstFull < plainGap, $"{name}: error feedback keeps the losses closer to float32 than without it: {againstFull:G3} against {plainGap:G3}");
-                }
-
-                // Error feedback as defined: what each step carries in is exactly what the step before left, and it stays
-                // within twice the largest error of a step without feedback.
-                var withSteps = measured[(name, true)];
-                var withoutSteps = measured[(name, false)];
-                Check(withSteps.Count == Steps && withSteps[0].Carried == 0
-                      && Enumerable.Range(1, Steps - 1).All(t => Math.Abs(withSteps[t].Carried - withSteps[t - 1].Error) <= 1e-5 * withSteps[t - 1].Error),
-                    $"{name}: the residual carried into each step is the error of the step before: carried {string.Join(" ", withSteps.Select(x => x.Carried.ToString("G3", CultureInfo.InvariantCulture)))}, "
-                    + $"errors {string.Join(" ", withSteps.Select(x => x.Error.ToString("G3", CultureInfo.InvariantCulture)))}");
-                Check(withSteps.Max(x => x.Carried) <= 2 * withoutSteps.Max(x => x.Error),
-                    $"{name}: the residual stays within twice the largest error without feedback: {withSteps.Max(x => x.Carried):G3} against {withoutSteps.Max(x => x.Error):G3}");
-                Check(runBytes > 0 && fullBytes >= 3.99 * runBytes, $"{name}: the gradients' bytes on the wire 4x fewer than float32: {runBytes:N0} against {fullBytes:N0}");
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    // The library's int8 or fp8 compression under another name, measuring each step before it runs: what the rank means to
-    // send (its values weighted, plus the residual the library's compressor carries, read from it), what the codes of that
-    // leave (the format's own encoding at the scale the library chooses), and the non-zero values sent as zero.
-    private sealed class ProbeCompression(string format) : Idrak.Networking.Abstractions.IGradientCompression
-    {
-        public string Name => format + "-probe";
-
-        public string Summary => $"the library's {format}, measured";
-
-        public System.Collections.Concurrent.ConcurrentQueue<(int Rank, double Meant, double Error, double Carried, int Zeroed, int Values)> Steps { get; } = new();
-
-        public Idrak.Networking.Abstractions.IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options) =>
-            new Probe(Idrak.Networking.Abstractions.GradientCompressions.Default(format)!.Create(collectives, parameters, options), format, collectives.Rank, Steps);
-
-        private sealed class Probe(Idrak.Networking.Abstractions.IGradientCompressor inner, string format, int rank,
-            System.Collections.Concurrent.ConcurrentQueue<(int, double, double, double, int, int)> steps) : Idrak.Networking.Abstractions.IGradientCompressor
-        {
-            public string Name => inner.Name;
-
-            public void Reduce(Span<float> values, float weight, ReadOnlySpan<Idrak.Networking.Abstractions.GradientPiece> pieces)
-            {
-                var residual = (float[]?[])typeof(Idrak.Networking.Compression.QuantizedCompressor)
-                    .GetField("_residual", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(inner)!;
-                var meant = new float[values.Length];
-                var carried = new float[values.Length];
-                for (int i = 0; i < values.Length; i++)
-                {
-                    meant[i] = values[i] * weight;
-                }
-
-                foreach (var piece in pieces)
-                {
-                    if (residual[piece.Parameter] is { } kept)
-                    {
-                        kept.AsSpan(piece.Offset, piece.Count).CopyTo(carried.AsSpan(piece.At, piece.Count));
-                    }
-                }
-
-                for (int i = 0; i < values.Length; i++)
-                {
-                    meant[i] += carried[i];
-                }
-
-                double Norm(float[] v) => Math.Sqrt(v.Sum(x => (double)x * x));
-                var error = (float[])meant.Clone();
-                var codes = new byte[error.Length];
-                float largest = Idrak.Networking.Compression.QuantizedCompressor.LargestMagnitude(error);
-                float top = format == "int8" ? 127f : Idrak.Networking.Compression.Float8E4M3.MaxValue;
-                if (largest > 0f && float.IsFinite(largest))
-                {
-                    if (format == "int8")
-                    {
-                        Idrak.Networking.Compression.QuantizedCompressor.EncodeInt8(error, codes, top / largest, largest / top);
-                    }
-                    else
-                    {
-                        Idrak.Networking.Compression.QuantizedCompressor.EncodeFloat8(error, codes, top / largest, largest / top);
-                    }
-                }
-
-                int zeroed = 0;
-                for (int i = 0; i < meant.Length; i++)
-                {
-                    zeroed += meant[i] != 0f && (codes[i] == 0 || codes[i] == 0x80) ? 1 : 0;
-                }
-
-                steps.Enqueue((rank, Norm(meant), Norm(error), Norm(carried), zeroed, meant.Length));
-                inner.Reduce(values, weight, pieces);
-            }
-
-            public void Forget(ReadOnlySpan<Idrak.Networking.Abstractions.GradientPiece> pieces) => inner.Forget(pieces);
-
-            public void Dispose() => inner.Dispose();
-        }
-    }
 
     // A small classifier without batch norm or dropout, so one process and its ranks compute the same function.
     private static Sequential DpClassifier(Device device)

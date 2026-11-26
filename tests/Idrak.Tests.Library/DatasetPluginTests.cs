@@ -12,68 +12,10 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] DatasetPluginGroup =
     [
-        ("dataset plug-ins: every built-in file format, source and Parquet codec is reached through its registry", DatasetBuiltInsRegistered),
         ("dataset plug-ins: a registered file format is chosen by extension, in folders and by name in recipes", DatasetCustomFormat),
         ("dataset plug-ins: a registered source opens its prefix, with its own options, before the built-ins", DatasetCustomSource),
         ("dataset plug-ins: a registered Parquet codec decompresses the pages of its codec id", DatasetCustomCodec),
     ];
-
-    internal static void DatasetBuiltInsRegistered(Device device)
-    {
-        _ = device;
-        foreach (var format in Enum.GetValues<DataFormat>())
-        {
-            Check(DataFileFormats.Get(format.ToString()).Name == format.ToString(), $"format {format} registered");
-            Check(DataFileFormats.Get(format.ToString().ToLowerInvariant()).Name == format.ToString(), $"format {format} found ignoring case");
-        }
-
-        string[] files = ["a.jsonl", "a.ndjson", "a.json", "a.csv", "a.TSV", "a.parquet", "a.txt", "a.md.gz", "a.cs", "a.py"];
-        DataFormat[] expected = [DataFormat.JsonLines, DataFormat.JsonLines, DataFormat.Json, DataFormat.Csv, DataFormat.Tsv, DataFormat.Parquet,
-            DataFormat.Text, DataFormat.Text, DataFormat.Code, DataFormat.Code];
-        for (int i = 0; i < files.Length; i++)
-        {
-            Check(DataFiles.FormatOf(files[i]) == expected[i] && DataFileFormats.Find(files[i])!.Name == expected[i].ToString(), $"{files[i]} is {expected[i]}");
-        }
-
-        Check(DataFileFormats.Find("a.cs", includeCode: false) is null && DataFiles.FormatOf("a.cs", includeCode: false) is null, "code only when asked");
-        Check(DataFileFormats.Find("a.unknown") is null && DataFiles.FormatOf("a.unknown") is null, "unknown extension");
-
-        Check(string.Join(",", RegisteredSources.Names) == "hf,github,kaggle,zenodo,http,folder,file", $"sources in order: {string.Join(",", RegisteredSources.Names)}");
-        string here = AppContext.BaseDirectory, file = typeof(Tests).Assembly.Location;
-        foreach (var (source, name) in new[] { ("hf:org/name", "hf"), ("GitHub:o/r@v1", "github"), ("kaggle:o/d", "kaggle"), ("zenodo:1", "zenodo"),
-                     ("https://example.com/a.csv", "http"), ("http://example.com/a.csv", "http"), (here, "folder"), (file, "file") })
-        {
-            Check(RegisteredSources.Find(source)?.Name == name && RegisteredSources.Get(name).Name == name, $"{source} opened by {name}");
-        }
-
-        Check(RegisteredSources.Find("nowhere:at/all") is null, "an unknown source is found by none");
-        try
-        {
-            _ = DatasetSpec.Parse("nowhere:at/all").Open();
-            Check(false, "an unknown source should be refused");
-        }
-        catch (FileNotFoundException ex)
-        {
-            Check(ex.Message.Contains("known source", StringComparison.Ordinal), "unknown source explained");
-        }
-
-        Check(string.Join(",", ParquetCodecs.Ids) == "0,1,2,4,7" && string.Join(",", ParquetCodecs.Names) == "Uncompressed,Snappy,Gzip,Brotli,Lz4Raw",
-            $"codecs: {string.Join(",", ParquetCodecs.Names)}");
-        Check(ParquetCodecs.Get(0).Decompress([1, 2, 3], 3).SequenceEqual(new byte[] { 1, 2, 3 }), "uncompressed copies");
-        foreach (var id in new[] { 3, 5, 6 })
-        {
-            try
-            {
-                _ = ParquetCodecs.Get(id);
-                Check(false, $"codec {id} should not be registered");
-            }
-            catch (NotSupportedException ex)
-            {
-                Check(ex.Message.Contains("ParquetCodecs.Register", StringComparison.Ordinal) && (id != 6 || ex.Message.Contains("Zstandard", StringComparison.Ordinal)),
-                    $"codec {id} explained: {ex.Message}");
-            }
-        }
-    }
 
     // ".lines" files: each line a row {"line", "number"}.
     internal sealed class LinesFormat : IDataFileFormat

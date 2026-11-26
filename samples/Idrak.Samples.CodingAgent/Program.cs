@@ -48,13 +48,13 @@ using Idrak.Text.Reinforcement;
 //   (<folder> may also be a Hugging Face model id, for example Qwen/Qwen3-0.6B, a .gguf file or store:name.)
 //   data/agent-demo-*.jsonl: tool-calling transcripts in this layout, to fine-tune a model for the agent with idrak tune.
 //
-// Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 | --int4 | --bf16 (base weights), --kv8 | --kv16 (KV cache), --context N (default
-//          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB, --matmul fp32|bf16|fp8.
+// Options: --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --context N (default
+//          4096), --adapter <dir> (load a PEFT adapter), --no-think, --offload, --gpu-memory GiB.
 TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
 ReinforcementPlugins.RegisterAll();                 // the coding plug-in: the container sandbox (IDRAK_SANDBOX=container) among it
 
 var positional = new List<string>();
-bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
+bool noThink = false;
 int context = 4096;
 string? output = null, adapterFolder = null;
 string? workspace = null, workRoot = null, filter = null;
@@ -65,7 +65,6 @@ string? algorithm = null;
 bool resume = false;
 bool yes = false;                                   // --yes: the interactive agent runs commands and writes files without asking
 float? temperature = null;
-MatMulPrecision? matmul = null;
 Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
 for (int i = 0; i < args.Length; i++)
 {
@@ -75,25 +74,11 @@ for (int i = 0; i < args.Length; i++)
         case "--cpu": device = Device.Cpu; break;
         case "--vulkan": device = Device.Parse("vulkan:0"); break;
         case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
-        case "--int8": int8 = true; break;
-        case "--bf16": bf16 = true; break;
-        case "--int4": int4 = true; break;
-        case "--kv8": kv8 = true; break;
-        case "--kv16": kv16 = true; break;
         case "--no-think": noThink = true; break;
         case "--context": context = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--out": output = args[++i]; break;
         case "--adapter": adapterFolder = args[++i]; break;
         case "--offload": ComputeResources.OffloadToHostMemory = true; break;
-        case "--matmul":
-            matmul = args[++i] switch
-            {
-                "fp32" or "float32" => MatMulPrecision.Float32,
-                "bf16" or "bfloat16" => MatMulPrecision.BFloat16,
-                "fp8" or "float8" => MatMulPrecision.Float8,
-                var other => throw new ArgumentException($"--matmul {other}: use fp32, bf16 or fp8"),
-            };
-            break;
         case "--gpu-memory": ComputeResources.GpuMemoryLimit = (long)(double.Parse(args[++i], CultureInfo.InvariantCulture) * (1L << 30)); break;
         case "--workspace": workspace = args[++i]; break;
         case "--work": workRoot = args[++i]; break;
@@ -122,7 +107,7 @@ if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "age
 {
     Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> [--yes] | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
     Console.WriteLine("       | agent-train <folder> <suite> --out <dir> [--algorithm grpo|ppo|reinforce] [--iterations N] [--group N] [--episodes N] [--resume]");
-    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--no-think] [--matmul fp32|bf16|fp8]");
+    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--context N] [--adapter DIR] [--no-think]");
     return 1;
 }
 
@@ -136,9 +121,8 @@ Console.WriteLine(positional[0] switch
     _ => $"Unattended: the model's commands run and its file writes happen without asking (each task in a fresh copy), {sandboxNote}.",
 });
 
-MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
 Device.Default = device;
-var cacheFormat = kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32;
+var cacheFormat = KeyValueFormat.Float32;
 
 // A model folder, or a Hugging Face model id (owner/name): found in a cache or downloaded (with progress) on first use.
 static string ResolveModel(string model) =>
@@ -171,9 +155,9 @@ PretrainedModel Load(string folder, bool mergeAdapter = true)
     bool merge = mergeAdapter && adapterFolder is not null;
     var model = PretrainedModel.Load(folder, new PretrainedOptions
     {
-        Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
+        Device = device, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
     });
-    Console.WriteLine($"Loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
+    Console.WriteLine($"Loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
     Console.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "
                       + $"vocabulary {model.Spec.Vocabulary}, context {model.MaxPositions}");
     foreach (var note in model.Notes)

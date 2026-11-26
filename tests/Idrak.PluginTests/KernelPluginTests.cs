@@ -27,7 +27,6 @@ public static class KernelPluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP GCN), to the same weights and products", PackedFormatKernel),
         ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP GCN), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
@@ -100,54 +99,6 @@ public static class KernelPluginTests
 
         bool registers = RegistersFormatKernels(device.Backend);
         Check(reports[0].Entries[0].Detail.StartsWith(registers ? "the registered kernel" : "the host kernel", StringComparison.Ordinal), reports[0].Entries[0].Detail);
-    }
-
-    private static void PackedFormatKernel(Device device)
-    {
-        var random = new Random(11);
-        const int Rows = 17, Columns = 9, Batch = 3;
-        var values = Enumerable.Range(0, Rows * Columns).Select(_ => random.NextSingle() * 0.4f - 0.2f).ToArray();
-        var inputs = Enumerable.Range(0, Batch * Rows).Select(_ => random.NextSingle() * 2f - 1f).ToArray();
-        var rounded = values.Select(v => BitConverter.UInt32BitsToSingle(((BitConverter.SingleToUInt32Bits(v) + 0x7FFFu + ((BitConverter.SingleToUInt32Bits(v) >> 16) & 1u)) >> 16) << 16)).ToArray();
-        using var weight = RoundedWeight.Pack(values, Rows, Columns, device);
-        Check(weight.Bytes == 4L * ((Rows * Columns + 1) / 2), $"two values a word: {weight.Bytes} bytes");
-
-        var backend = device.Backend;
-        var unpack = PluginKernels.Unpack;
-        bool registers = RegistersFormatKernels(backend);
-        float[]? product = null;
-        foreach (bool installed in new[] { false, true })
-        {
-            using var kernels = installed ? PluginKernels.Install() : null;
-            var expected = !installed ? (device.Type == DeviceType.Cpu ? KernelSource.Device : KernelSource.Host)
-                : registers ? KernelSource.Registered : KernelSource.Host;
-            Check(Kernels.Chain(backend)[unpack.Index].Source == expected, $"installed {installed}: {Kernels.Chain(backend)[unpack.Index].Source}, expected {expected}");
-
-            using var scope = new TensorScope();
-            float[] expanded;
-            IReadOnlyDictionary<string, long> host;
-            long calls;
-            using (var trace = Kernels.Trace(backend))
-            {
-                expanded = weight.Dequantize().ToArray();
-                host = trace.HostCallsByOperation;
-                calls = trace.Calls(unpack);
-            }
-
-            CheckClose(rounded, expanded, 0f, $"installed {installed}: the unpacked weights");
-            Check(calls == 1 && host.ContainsKey(unpack.Name) == (expected == KernelSource.Host), $"installed {installed}: {calls} calls, host fallbacks {string.Join(", ", host.Keys)}");
-
-            // Through a Linear layer: the same product either way, with the input's gradient.
-            using var linear = Linear.FromPacked(PackedWeightFormats.Pack(RoundedFormat.Instance, values, Rows, Columns, device), null);
-            var x = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);
-            var y = linear.Forward(x);
-            var reference = Tensor.From(inputs, [Batch, Rows], device).MatMul(Tensor.From(rounded, [Rows, Columns], device)).ToArray();
-            CheckClose(reference, y.ToArray(), 1e-5f, $"installed {installed}: the product");
-            y.Sum().Backward();
-            Check(x.Grad is not null, "the input's gradient");
-            product ??= y.ToArray();
-            CheckClose(product, y.ToArray(), 0f, "the same product with the registered kernel");
-        }
     }
 
     private static void CacheLayoutKernel(Device device)

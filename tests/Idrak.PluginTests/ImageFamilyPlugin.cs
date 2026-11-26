@@ -89,7 +89,7 @@ public static class ImageFamilyPluginTests
             }
 
             // Float32 weights throughout: the same values, so the same logits.
-            using (var wide = ImageModels.Load(folder, options with { Weights = EncoderWeights.Float32 }))
+            using (var wide = ImageModels.Load(folder, options))
             using (var wideOutputs = wide.Outputs().Build())
             {
                 Check(wide.Network.Children().OfType<Linear>().Single().BFloat16 is null, "Float32 asked for: the fc weight is float32");

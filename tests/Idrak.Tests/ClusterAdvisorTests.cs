@@ -27,7 +27,6 @@ internal abstract partial class DesktopTests : Tests
     [
         ("cluster: advisor on a slow link (ethernet-1g, a model whose all-reduce is most of the step) suggests --wire bf16 once within the default tolerance (bf16's rounding step), with the network's share and the measured bf16 error in its reason, and accumulation, local SGD and top-k where bf16 alone leaves the share above the threshold", ClusterAdvisorSlowLink),
         ("cluster: advisor on a fast link (a same-device link declared at 1 PB/s) suggests nothing: the network's share is under IDRAK_CLUSTER_SUGGEST_SHARE", ClusterAdvisorFastLink),
-        ("cluster: advisor a bf16 error above the tolerance stops the bf16 suggestion; the others are made on the whole network time", ClusterAdvisorBf16Refused),
         ("cluster: advisor ring over two nodes of two ranks suggests the hierarchical collective; one bucket pinned for every gradient gets a bucket size that lets the network go during the backward pass", ClusterAdvisorHierarchicalAndBuckets),
         ("cluster: advisor the run's losses and weights are the same bit for bit with the advisor on and off; nothing is measured without a listener when it is unset or off, and on it adds its two slice collectives once", ClusterAdvisorChangesNothing),
         ("cluster: advisor cli cluster sim shows each suggestion once above the progress line, the run's log keeps them and idrak suggest RUN lists them", ClusterAdvisorCli),
@@ -102,7 +101,6 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static double ClusterSettingAdvisorTolerance => Idrak.Networking.Training.ClusterSettingAdvisor.DefaultBFloat16Tolerance;
 
     private static string AdvicePct(double share) => (share * 100).ToString("F0", CultureInfo.InvariantCulture) + "%";
 
@@ -170,22 +168,6 @@ internal abstract partial class DesktopTests : Tests
         {
             LinkProfiles.Unregister(ClusterTopology.SameDevice);
         }
-    }
-
-    private static void ClusterAdvisorBf16Refused(Device device)
-    {
-        var options = AdvisorOptions() with { SuggestBFloat16Tolerance = 1e-9 };
-        var (seen, _) = AdvisorRun(NodesOf([1, 1], device.ToString(), "ethernet-1g"), options);
-        var m = seen.Measures.Single();
-        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"    the default tolerance ({ClusterSettingAdvisorTolerance:G3}) {(m.BFloat16Error <= ClusterSettingAdvisorTolerance ? "accepts" : "refuses")} the measured {m.BFloat16Error:G3}"));
-        Console.WriteLine($"    bf16 tolerance 1e-9: {Describe(m)}; suggested {string.Join(", ", seen.Cluster.Select(s => $"{s.Setting}={s.Value}"))}");
-        double exposed = m.Exposed.TotalSeconds, compute = m.Compute.TotalSeconds, threshold = options.SuggestShare;
-        int factor = Math.Max(2, (int)Math.Ceiling(exposed * (1 - threshold) / (threshold * compute)));
-        var accumulate = seen.Cluster.FirstOrDefault(s => s.Setting == "GradientAccumulation");
-        Check(m.BFloat16Error > 1e-9 && seen.Cluster.All(s => s.Setting != "ClusterOptions.Wire"), $"no bf16 suggestion with an error {m.BFloat16Error:G3} above the tolerance");
-        Check(accumulate.Value == factor.ToString(CultureInfo.InvariantCulture) && !accumulate.Reason.Contains("with bf16", StringComparison.Ordinal),
-            $"accumulation by {factor} from the whole exposed time: {accumulate.Value} ({accumulate.Reason})");
     }
 
     private static void ClusterAdvisorHierarchicalAndBuckets(Device device)

@@ -31,7 +31,7 @@ internal abstract partial class Tests
             using var k = Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device);
             using var v = Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device);
             var (starts, ends) = KeySpans.Bidirectional(tokens, tokens).ToTensors(device);
-            Console.WriteLine($"{device} ({device.Backend.Name}): {tokens} tokens, {heads} heads, dim {dim}, precision {MixedPrecision.Current}, "
+            Console.WriteLine($"{device} ({device.Backend.Name}): {tokens} tokens, {heads} heads, dim {dim}, "
                 + $"attention path {AttentionPaths.Forced}, available memory {Megabytes(device.Backend.AvailableMemory())} MB{(training ? ", forward and backward" : "")}");
             q.RequiresGrad = k.RequiresGrad = v.RequiresGrad = training;
             using var w = training ? Tensor.From(RandomArray(random, heads * tokens * dim), [heads, tokens, dim], device) : null;
@@ -86,10 +86,6 @@ internal abstract partial class Tests
                 }
             }
 
-            if (!training && device.Type == DeviceType.Cuda && MixedPrecision.UsesTensorCores)
-            {
-                BenchSpanKernels(q, k, v, starts, ends, scale);
-            }
         }
 
         return 0;

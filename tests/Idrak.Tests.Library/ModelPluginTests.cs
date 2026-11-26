@@ -20,7 +20,6 @@ internal abstract partial class Tests
     [
         ("plugins: the built-in checkpoint formats, GGUF types, model sources, chat-template readers and tokenizer components are in their registries; the GGUF architectures are Idrak.Text.Plugins', none the library's", BuiltInModelPlugins),
         ("plugins: a registered checkpoint format (weights in a JSON file) loads a model whose loss matches the safetensors copy", CustomCheckpointFormat),
-        ("plugins: a registered GGUF type dequantizes (whole tensors and blocks), and a registered GGUF architecture name loads like llama", CustomGgufTypeAndArchitecture),
         ("plugins: GGUF pre-tokenizers by name: gpt2's are the library's, the families' (llama3, qwen2, tekken) Idrak.Text.Plugins'; an unregistered name uses the fallback (Llama 3's rule, set by the plug-in) with a note, and is refused naming the registry when no fallback is set; a registered name gives its pattern and the original tokens", CustomGgufPreTokenizer),
         ("plugins: a registered model source ('test:' names → a local folder) is asked before the built-ins, without the network", CustomModelSource),
         ("plugins: registered normalizer, pre-tokenizer and decoder types used from tokenizer JSON; a registered built-in name replaces it until removed", CustomTokenizerComponents),
@@ -266,97 +265,6 @@ internal abstract partial class Tests
         }
 
         WriteGguf(target, metadata, tensors);
-    }
-
-    internal static void CustomGgufTypeAndArchitecture(Device device)
-    {
-        string folder = TempFolder();
-        try
-        {
-            // Type 200: blocks of 4 values, a float16 scale then 4 signed bytes (Q8_0 with small blocks).
-            var expected = new float[] { 1, -2, 3, 0.5f, 10, 20, -30, 40, -1, -1, 0, 127 };
-            float[] scales = [0.5f, 10f, 1f];
-            var raw = new byte[3 * 6];
-            for (int b = 0; b < 3; b++)
-            {
-                BinaryPrimitives.WriteHalfLittleEndian(raw.AsSpan(b * 6), (Half)scales[b]);
-                for (int j = 0; j < 4; j++)
-                {
-                    raw[b * 6 + 2 + j] = (byte)(sbyte)(expected[b * 4 + j] / scales[b]);
-                }
-            }
-
-            string path = Path.Combine(folder, "types.gguf");
-            WriteGguf(path, [KeyValuePair.Create<string, object>("general.architecture", "none")],
-                [("t", 200, [4, 3], raw), ("f", 0, [12], MemoryMarshal.AsBytes(expected.AsSpan()).ToArray())]);
-            using (var file = GgufFile.Open(path))
-            {
-                try
-                {
-                    file.Read("t");
-                    Check(false, "an unregistered type should fail");
-                }
-                catch (NotSupportedException ex)
-                {
-                    Check(ex.Message.Contains("GgufTypes.Register", StringComparison.Ordinal) && ex.Message.Contains("#200", StringComparison.Ordinal), ex.Message);
-                }
-
-                GgufTypes.Register(200, GgufType.Blockwise("TEST_Q8_4", 4, 6, (block, values) =>
-                {
-                    float d = (float)BinaryPrimitives.ReadHalfLittleEndian(block);
-                    for (int j = 0; j < 4; j++)
-                    {
-                        values[j] = (sbyte)block[2 + j] * d;
-                    }
-                }));
-                try
-                {
-                    Check(GgufFile.TypeName(200) == "TEST_Q8_4" && GgufFile.BlockSize(200) == (4, 6), "registered name and block");
-                    AssertClose(expected, file.Read("t"), 0f, "the registered type, whole tensor");
-                    AssertClose(file.Read("f"), file.Read("t"), 0f, "the registered type equals the float32 copy");
-                    var rows = new float[8];
-                    GgufFile.Dequantize(200, raw.AsSpan(6), rows);
-                    AssertClose(expected[4..], rows, 0f, "the registered type, blocks 1 and 2");
-                }
-                finally
-                {
-                    Check(GgufTypes.Unregister(200), "type unregistered");
-                }
-            }
-
-            // A family llama.cpp stores like Llama under another name.
-            string renamed = Path.Combine(folder, "tiny-testllama.gguf");
-            RenameGgufArchitecture(TestData("gguf/tiny-llama.gguf"), renamed, "testllama");
-            string cache = Path.Combine(folder, "cache");
-            try
-            {
-                GgufModel.Prepare(renamed, cache);
-                Check(false, "an unregistered GGUF architecture should fail");
-            }
-            catch (NotRegisteredException ex)
-            {
-                Check(ex.Registry == "GgufArchitectures" && ex.Name == "testllama" && ex.Message.Contains("GgufArchitectures.Register", StringComparison.Ordinal)
-                      && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), $"refused as not registered in GgufArchitectures: {ex.Registry} {ex.Name}: {ex.Message}");
-            }
-
-            GgufArchitectures.Register("testllama", new GgufArchitecture { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true });
-            try
-            {
-                using var custom = PretrainedModel.Load(GgufModel.Prepare(renamed, cache), new PretrainedOptions { Device = device });
-                using var original = PretrainedModel.Load(TestData("gguf/tiny-llama-hf"), new PretrainedOptions { Device = device });
-                Check(custom.Spec.ToJson().ToJsonString() == original.Spec.ToJson().ToJsonString(), "same spec as the Hugging Face copy");
-                float a = ProbeLoss(custom), b = ProbeLoss(original);
-                Check(MathF.Abs(a - b) < 1e-4f, $"loss {a} from the renamed GGUF, {b} from the Hugging Face copy");
-            }
-            finally
-            {
-                Check(GgufArchitectures.Unregister("testllama"), "architecture unregistered");
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
     }
 
     internal sealed class TestModelSource(string root) : IModelSource

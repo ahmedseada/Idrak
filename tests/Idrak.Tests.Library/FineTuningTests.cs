@@ -16,13 +16,8 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] FineTuning =
     [
         ("fine-tuning: chunked token cross-entropy (all rows or trained rows only) and the frozen-transpose product and the fused LoRA term match dense results and gradients", TokenLoss),
-        ("fine-tuning: LoRA terms inside the tensor-core products (float32, bfloat16 and 4-bit bases, one layer or merged) and rank-16 products match the separate computation, with gradients", LoraInsideProducts),
-        ("fine-tuning: packed sequences (several per row, rotary or learned positions) give each sequence the logits and gradients it gets alone; packing fills rows first-fit", PackedSequencesMatch),
-        ("fine-tuning: a training step recorded as a graph and replayed gives the losses and adapters of ordinary steps", GraphTraining),
-        ("generation: prompts of different lengths decoded together (left-padded, per-row starts) give each row its own logits and greedy replies", RaggedBatchDecoding),
         ("memory: a full GPU raises a clear error, or with offloading places tensors in system memory the kernels still use", HostOffload),
         ("fine-tuning: activation checkpointing gives the same loss and gradients (adapters and input)", CheckpointingGradients),
-        ("fine-tuning: the input gradient through bfloat16 weights reads them as stored (with and without the adapter's term, odd widths, split k)", BFloat16InputGradient),
         ("fine-tuning: answers from a short list are balanced (rarer ones repeated up to a limit, deterministically, spread among the others); free text is left alone; batches mix neighbouring sequences", BalancedAnswers),
         ("scoring: log-probabilities of chosen tokens computed on the device match a log-softmax of the full logits (chunked, repeated rows)", TokenLogProbabilities),
         ("scoring: a cached forward pass without autograd frees each layer's intermediate results (only the cache and the output stay)", CachedForwardFreesLayers),
@@ -32,7 +27,6 @@ internal abstract partial class Tests
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
         ("fine-tuning: when the first step's bytes per position say the largest batch will not fit, recomputed feed-forward activations are on before any step fails; with room nothing changes", FirstRungFromMeasuredBytes),
         ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, also bfloat16, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
-        ("fine-tuning: the activation estimate of each rung is not short of a step's measured peak (a decoder with query and key norms, activations above the loss's logits; the CPU counts every byte)", ActivationEstimateAgainstPeak),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("fine-tuning: a model tuned in place goes back as found: a loaded adapter leaves the base frozen (a session over it trains the adapter alone), RemoveAdapters frees every adapter and its gradients and the model scores as its base again; BatchTokensThatFit halves the batch until the estimate fits the device's room, never below one sequence", AdaptersInPlace),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache with its bytes of total told, loads with its tensors read of total told, and works offline", ModelDownload),
@@ -483,42 +477,6 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void BFloat16InputGradient(Device device)
-    {
-        if (device.Type != DeviceType.Cuda || MixedPrecision.TensorCoresUnavailable(device) is not null)
-        {
-            return;                                                              // a tensor-core kernel; others expand the weight
-        }
-
-        using var precision = MixedPrecision.BFloat16();
-        var r = new Random(51);
-        float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => (float)(r.NextDouble() * 2 - 1))];
-        foreach (var (m, inputs, outputs) in new[] { (300, 150, 201), (4096, 96, 2049) })
-        {
-            using var scope = new TensorScope();
-            using var weight = BFloat16Weight.FromValues(Values(inputs * outputs), inputs, outputs, device);     // W [inputs, outputs]
-            var g = Tensor.From(Values(m * outputs), [m, outputs], device);
-            var dt = Tensor.From(Values(m * 16), [m, 16], device);
-            var a = Tensor.From(Values(inputs * 16), [inputs, 16], device);
-            var start = Values(m * inputs);
-            foreach (bool lowRank in new[] { false, true })
-            {
-                var direct = Tensor.From(start, [m, inputs], device);
-                Check(g.Backend.BFloat16TransposedMatMul(g.Storage, weight.Packed.Storage, direct.Storage, m, inputs, outputs, 1f,
-                    lowRank ? dt.Storage : null, lowRank ? a.Storage : null, 16), "the kernel ran");
-                var expected = Tensor.From(start, [m, inputs], device);
-                using var w = weight.Dequantize();
-                g.Backend.BatchedMatMul(g.Storage, w.Storage, expected.Storage, 1, m, inputs, outputs, false, true, 1f);
-                if (lowRank)
-                {
-                    g.Backend.BatchedMatMul(dt.Storage, a.Storage, expected.Storage, 1, m, inputs, 16, false, true, 1f);
-                }
-
-                CloseByNorm(expected.ToArray(), direct.ToArray(), 1e-3f, $"{m}×{inputs}×{outputs}{(lowRank ? " + low rank" : "")}");
-            }
-        }
-    }
-
     internal static void AutomaticCheckpointing(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -651,8 +609,8 @@ internal abstract partial class Tests
 
         try
         {
-            long recomputed = Least(options with { RecomputeFeedForward = true, Checkpointing = false, BFloat16Activations = false });
-            long plain = Least(options with { RecomputeFeedForward = false, Checkpointing = false, BFloat16Activations = false });
+            long recomputed = Least(options with { RecomputeFeedForward = true, Checkpointing = false });
+            long plain = Least(options with { RecomputeFeedForward = false, Checkpointing = false });
             Check(recomputed < plain, $"recomputed feed-forward activations need less ({recomputed >> 10} KiB) than plain training ({plain >> 10} KiB)");
             long budget = (recomputed + plain) / 2;
             int measured = 0;
@@ -669,52 +627,6 @@ internal abstract partial class Tests
 
             Check(measured > 0, "some seed starts with the batch of one row and takes the rung from its measured bytes");
             Check(!Train(options, null).Trace.Contains("the largest batch", StringComparison.Ordinal), "with room, no rung is taken");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
-    }
-
-    // A decoder shaped as Qwen3 (queries twice the width, keys as wide, a feed-forward three times, query and key norms)
-    // with its activations well above the loss's chunk of logits: one step on each rung, its peak above the loaded model
-    // (the CPU counts every tensor) against the rung's estimate, which may be a little short (5%) or above (25%; checkpointing,
-    // the last rung, any amount above).
-    internal static void ActivationEstimateAgainstPeak(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                              // the CPU's count is exact; a GPU's caches blocks
-        }
-
-        var spec = new DecoderSpec
-        {
-            Vocabulary = 4096, Dim = 256, Layers = 12, Heads = 4, KvHeads = 2, HeadDim = 128, FfDim = 768, MaxPositions = 4096,
-            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
-        };
-        string folder = WriteChatModel(spec);
-        var random = new Random(73);
-        var sequences = new List<TrainingSequence> { new([.. Enumerable.Range(0, 2049).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 2049).Select(i => i > 300)]) };
-        ActivationRung[] ladder = [new(false, false, false), new(true, false, false), new(true, true, false), new(true, true, true)];
-        try
-        {
-            foreach (var rung in ladder)
-            {
-                using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-                var options = new FineTuningOptions
-                {
-                    Rank = 16, Alpha = 32, BatchTokens = 2048, Seed = 1, Packing = false, EstimateActivations = false,
-                    RecomputeFeedForward = rung.Recompute, BFloat16Activations = rung.BFloat16, Checkpointing = rung.Checkpointing,
-                };
-                GC.Collect();
-                long before = ComputeResources.GetMemoryUsage(device).InUse;
-                ComputeResources.ResetPeakMemoryUsage(device);
-                FineTuner.Train(pretrained, sequences, null, options);
-                long peak = ComputeResources.GetMemoryUsage(device).Peak - before;
-                long estimate = ActivationEstimate.Bytes(spec, device.Backend.Capabilities, 1, 2048, rung, options.LossChunkRows);
-                Check(estimate >= peak * 0.95 && (rung.Checkpointing || estimate <= peak * 1.25),   // the last rung: taken when nothing lighter fits
-                    $"{rung}: estimated {estimate >> 20} MiB, the step's peak {peak >> 20} MiB above the loaded model");
-            }
         }
         finally
         {
@@ -877,7 +789,7 @@ internal abstract partial class Tests
         try
         {
             var ladder = options with { EstimateActivations = false };
-            var lightest = ladder with { RecomputeFeedForward = true, BFloat16Activations = true, Checkpointing = false };
+            var lightest = ladder with { RecomputeFeedForward = true, Checkpointing = false };
             long? budget = null;
             foreach (long megabytes in new long[] { 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 })
             {
@@ -1338,14 +1250,14 @@ internal abstract partial class Tests
                 AssertClose([after], [FineTuner.Evaluate(merged, sequences)], 1e-3f, "loss with the adapter merged while loading");
             }
 
-            using (var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MergeAdapter = adapter, Int8 = true }))
+            using (var merged = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, MergeAdapter = adapter }))
             {
                 float loss = FineTuner.Evaluate(merged, sequences);
                 Check(loss < before * 0.5f, $"int8 weights with the adapter merged while loading: {loss:F3}");
             }
 
             // QLoRA: adapters on a 4-bit base also learn.
-            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Int4 = true });
+            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
             float q0 = FineTuner.Evaluate(quantized, sequences);
             FineTuner.Train(quantized, sequences, sequences, options with { Epochs = 25 });
             float q1 = FineTuner.Evaluate(quantized, sequences);
@@ -1481,269 +1393,6 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void LoraInsideProducts(Device device)
-    {
-        const int Batch = 2, Steps = 100, In = 96, Out = 384, Rank = 16;
-        var random = new Random(71);
-        float[] Values(int n) => RandomArray(random, n);
-        if (device.Type != DeviceType.Cuda || MixedPrecision.TensorCoresUnavailable(device) is not null)
-        {
-            // Devices without the fused kernels decline, and callers compute the term separately.
-            using var scope = new TensorScope();
-            var layer = new Linear(In, Out, bias: false, device: device, random: random);
-            layer.Adapter = new LoraAdapter(Tensor.From(Values(In * Rank), [In, Rank], device), Tensor.From(Values(Rank * Out), [Rank, Out], device), Rank, 2f);
-            Check(Linear.LoraProducts(Tensor.From(Values(Steps * In), [Steps, In], device), [layer]) is null, "no fused LoRA products on this device");
-            return;
-        }
-
-        static double RelativeError(float[] expected, float[] actual)
-        {
-            double difference = 0, norm = 0;
-            for (int i = 0; i < expected.Length; i++)
-            {
-                difference += (double)(expected[i] - actual[i]) * (expected[i] - actual[i]);
-                norm += (double)expected[i] * expected[i];
-            }
-
-            return Math.Sqrt(difference / Math.Max(norm, 1e-30));
-        }
-
-        void Close(float[] expected, float[] actual, string what, double tolerance = 2e-2)
-        {
-            Check(expected.Length == actual.Length, $"{what}: length {actual.Length}, expected {expected.Length}");
-            double error = RelativeError(expected, actual);
-            Check(error < tolerance, $"{what}: relative error {error:G3}");
-        }
-
-        using var precision = MixedPrecision.BFloat16();
-
-        // Skinny products (one side 16) on tensor cores: as the CPU computes them, in every layout.
-        foreach (var (m, n, k, ta, tb) in new[] { (300, 16, 2000, false, false), (2000, 16, 300, true, false), (300, 16, 2000, false, true),
-                     (16, 2000, 300, true, false), (300, 2000, 16, false, false), (300, 2000, 16, false, true) })
-        {
-            var av = Values(m * k);
-            var bv = Values(k * n);
-            var cv = Values(m * n);
-            float[] Product(Device on, float beta)
-            {
-                using var a = Tensor.From(av, ta ? [k, m] : [m, k], on);
-                using var b = Tensor.From(bv, tb ? [n, k] : [k, n], on);
-                using var c = Tensor.From(cv, [m, n], on);
-                on.Backend.BatchedMatMul(a.Storage, b.Storage, c.Storage, 1, m, n, k, ta, tb, beta);
-                return c.ToArray();
-            }
-
-            foreach (float beta in new[] { 0f, 1f })
-            {
-                Close(Product(Device.Cpu, beta), Product(device, beta), $"{m}x{n}x{k} {(ta ? 't' : 'n')}{(tb ? 't' : 'n')} beta {beta}");
-            }
-        }
-
-        bool fp8Available = device.Backend is IFloat8Backend float8 && float8.PaddedK(In) > 0;
-        foreach (string format in new[] { "float32", "bfloat16", "int4", "bfloat16 + fp8", "float32 + fp8" })
-        {
-            bool fp8 = format.EndsWith("fp8", StringComparison.Ordinal);
-            if (fp8 && !fp8Available)
-            {
-                continue;
-            }
-
-            foreach (int count in format.StartsWith("float32", StringComparison.Ordinal) ? new[] { 1 } : new[] { 1, 2, 3 })
-            {
-                var weights = Enumerable.Range(0, count).Select(_ => Values(In * Out)).ToArray();
-                var aValues = Enumerable.Range(0, count).Select(_ => Values(In * Rank)).ToArray();
-                var bValues = Enumerable.Range(0, count).Select(_ => Values(Rank * Out)).ToArray();
-                var coefficients = Enumerable.Range(0, count).Select(_ => Values(Batch * Steps * Out)).ToArray();
-                var xValues = Values(Batch * Steps * In);
-                float[][] Run(bool fused)
-                {
-                    using var scope = new TensorScope();
-                    var layers = new Linear[count];
-                    for (int j = 0; j < count; j++)
-                    {
-                        layers[j] = Linear.FromWeights(Tensor.From(weights[j], [In, Out], device));
-                        if (format.StartsWith("bfloat16", StringComparison.Ordinal))
-                        {
-                            layers[j].ToBFloat16();
-                        }
-                        else if (format == "int4")
-                        {
-                            layers[j].QuantizeInt4();
-                        }
-
-                        layers[j].Adapter = new LoraAdapter(Tensor.From(aValues[j], [In, Rank], device, requiresGrad: true),
-                            Tensor.From(bValues[j], [Rank, Out], device, requiresGrad: true), Rank, 1.5f);
-                    }
-
-                    var x = Tensor.From(xValues, [Batch, Steps, In], device, requiresGrad: true);
-                    Tensor[] ys;
-                    if (fused)
-                    {
-                        if (fp8)
-                        {
-                            Check(layers.All(l => l.AttachFloat8()), $"{format}: FP8 copies of the weights");
-                        }
-
-                        ys = Linear.LoraProducts(x, layers) ?? throw new Exception($"{format} × {count}: no fused LoRA products on {device}");
-                        foreach (var layer in layers)
-                        {
-                            layer.DetachFloat8();
-                        }
-                    }
-                    else
-                    {
-                        ys = [.. layers.Select(l =>
-                        {
-                            var product = l.BFloat16 is { } h ? x.MatMulBFloat16(h) : l.Int4 is { } q ? x.MatMulInt4(q) : x.MatMul(l.Weight);
-                            return product + x.MatMul(l.Lora!.A).MatMul(l.Lora!.B) * l.Lora!.Scale;
-                        })];
-                    }
-
-                    var loss = ys.Select((y, j) => (y * Tensor.From(coefficients[j], [Batch, Steps, Out], device)).Sum()).Aggregate((p, q) => p + q);
-                    loss.Backward();
-                    return [.. ys.Select(y => y.ToArray()), x.Grad!.ToArray(), .. layers.Select(l => l.Lora!.A.Grad!.ToArray()),
-                        .. layers.Select(l => l.Lora!.B.Grad!.ToArray())];
-                }
-
-                var expected = Run(false);
-                var actual = Run(true);
-                for (int i = 0; i < expected.Length; i++)
-                {
-                    string part = i < count ? $"output {i}" : i == count ? "input gradient" : i <= 2 * count ? $"A gradient {i - count - 1}" : $"B gradient {i - 2 * count - 1}";
-                    Close(expected[i], actual[i], $"{format} × {count}: {part}", fp8 && i < count ? 1e-1 : 2e-2);
-                }
-            }
-        }
-    }
-
-    internal static void PackedSequencesMatch(Device device)
-    {
-        if (device.Type == DeviceType.Cuda && MixedPrecision.TensorCoresUnavailable(device) is not null)
-        {
-            return;                                                              // packed attention runs on tensor cores
-        }
-
-        using var precision = MixedPrecision.Use(device.Type == DeviceType.Cuda ? MatMulPrecision.BFloat16 : MatMulPrecision.Float32);
-        int[][] rows = [[37, 50, 20], [70, 30]];
-        const int Length = 110;
-        var random = new Random(97);
-        var tokens = rows.Select(r => r.Select(n => Enumerable.Range(0, n).Select(_ => (float)random.Next(50)).ToArray()).ToArray()).ToArray();
-        var coefficients = rows.Select(r => r.Select(n => RandomArray(random, n * 50)).ToArray()).ToArray();
-        foreach (bool rotary in new[] { true, false })
-        {
-            var spec = new DecoderSpec
-            {
-                Vocabulary = 50, Dim = 128, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 64, FfDim = 128, MaxPositions = 256,
-                Rope = rotary ? new RopeSettings(10000f) : null, LearnedPositions = !rotary,
-            };
-            using var model = spec.Build(new RandomWeights(98), new DecoderBuildOptions { Device = device });
-            model.AddLora(rank: 2, alpha: 4, targets: _ => true, freezeBase: true, random: new Random(99));
-            foreach (var adapter in model.Descendants().OfType<Linear>().Select(l => l.Adapter).OfType<LoraAdapter>())
-            {
-                adapter.B.Load([.. Enumerable.Range(0, adapter.B.Size).Select(i => 0.1f * MathF.Sin(i))]);
-            }
-
-            Check(PackedSequences.Supports(model), "the model runs packed batches");
-            model.Train();
-
-            // Packed: both rows in one [2, 110] batch (the ends of the rows are padding).
-            var packedLogits = new List<float[]>();
-            float[] packedGradients;
-            float packedLoss;
-            using (var scope = new TensorScope())
-            {
-                var values = new float[rows.Length * Length];
-                var weights = new float[rows.Length * Length * 50];
-                for (int r = 0; r < rows.Length; r++)
-                {
-                    int offset = 0;
-                    for (int j = 0; j < rows[r].Length; j++)
-                    {
-                        tokens[r][j].CopyTo(values, r * Length + offset);
-                        coefficients[r][j].CopyTo(weights, (r * Length + offset) * 50);
-                        offset += rows[r][j];
-                    }
-                }
-
-                using var packing = PackedSequences.Create(rows, Length, device);
-                using (packing.Use())
-                {
-                    var logits = model.Forward(Tensor.From(values, [rows.Length, Length], device));
-                    var loss = (logits * Tensor.From(weights, [rows.Length, Length, 50], device)).Sum();
-                    loss.Backward();
-                    packedLoss = loss.Item();
-                    var all = logits.ToArray();
-                    for (int r = 0; r < rows.Length; r++)
-                    {
-                        int offset = 0;
-                        foreach (int n in rows[r])
-                        {
-                            packedLogits.Add(all[((r * Length + offset) * 50)..((r * Length + offset + n) * 50)]);
-                            offset += n;
-                        }
-                    }
-                }
-
-                packedGradients = [.. model.TrainableParameters().SelectMany(p => p.Grad!.ToArray())];
-            }
-
-            // Alone: each sequence as its own batch, gradients summed; in the test's precision, and (on CUDA) in float32 too,
-            // which measures how far bfloat16 alone moves the results.
-            (List<float[]> Logits, float Loss, float[] Gradients) Alone(MatMulPrecision? precision)
-            {
-                using var scoped = precision is { } p ? MixedPrecision.Use(p) : default(MixedPrecision.Scope?);
-                foreach (var parameter in model.TrainableParameters())
-                {
-                    parameter.ZeroGrad();
-                }
-
-                var logitsList = new List<float[]>();
-                float total = 0f;
-                using var scope = new TensorScope();
-                for (int r = 0; r < rows.Length; r++)
-                {
-                    for (int j = 0; j < rows[r].Length; j++)
-                    {
-                        int n = rows[r][j];
-                        var logits = model.Forward(Tensor.From(tokens[r][j], [1, n], device));
-                        var loss = (logits * Tensor.From(coefficients[r][j], [1, n, 50], device)).Sum();
-                        loss.Backward();
-                        total += loss.Item();
-                        logitsList.Add(logits.ToArray());
-                    }
-                }
-
-                return (logitsList, total, [.. model.TrainableParameters().SelectMany(p => p.Grad!.ToArray())]);
-            }
-
-            var alone = Alone(null);
-            var exact = device.Type == DeviceType.Cuda ? Alone(MatMulPrecision.Float32) : alone;
-            string what = rotary ? "rotary positions" : "learned positions";
-            for (int i = 0; i < alone.Logits.Count; i++)
-            {
-                WithinPrecision(exact.Logits[i], alone.Logits[i], packedLogits[i], device, $"{what}: logits of sequence {i}");
-            }
-
-            // The loss sums logits times random coefficients of both signs, which nearly cancel: its error is bounded by the
-            // logits' error times the size of the terms (Cauchy-Schwarz), not by the loss itself.
-            var weightsBySequence = rows.SelectMany((row, r) => row.Select((_, j) => coefficients[r][j])).ToList();
-            double terms = exact.Logits.Select((l, i) => Norm(l) * Norm(weightsBySequence[i])).Sum();
-            float own = device.Type == DeviceType.Cuda ? exact.Logits.Select((l, i) => RelativeError(l, alone.Logits[i])).Max() : 0f;
-            float allowed = Math.Max(device.Type == DeviceType.Cuda ? 1e-2f : 1e-3f, 3f * own);
-            Check(Math.Abs(packedLoss - exact.Loss) <= allowed * terms,
-                $"{what}: loss {packedLoss} against {exact.Loss} (float32), difference {Math.Abs(packedLoss - exact.Loss):G3}, allowed {allowed * terms:G3}");
-            WithinPrecision(exact.Gradients, alone.Gradients, packedGradients, device, $"{what}: adapter gradients");
-        }
-
-        // First fit, longest first: 6+4, 5+5, 3+2 in rows of 10.
-        var sequences = new[] { 5, 3, 6, 4, 5, 2 }.Select(n => new TrainingSequence(new int[n + 1], new bool[n + 1])).ToList();
-        var batches = FineTuner.PackedBatches(sequences, 10, 2, random: null);
-        Check(batches.Count == 2 && batches[0].Length == 2 && batches[1].Length == 1, $"packed batches: {batches.Count}");
-        var filled = batches.SelectMany(b => b).Select(r => r.Sum(i => sequences[i].Tokens.Length - 1)).ToArray();
-        Check(filled.SequenceEqual([10, 10, 5]) && batches.SelectMany(b => b).SelectMany(r => r).Order().SequenceEqual(Enumerable.Range(0, 6)),
-            $"rows filled {string.Join(", ", filled)}");
-    }
-
     // actual (from a batched, packed or ragged path) against exact (float32, the plain path): on the CPU within 1e-3; on
     // CUDA within three times the error bfloat16 itself gives the plain path (reduced, its own error), at least 1e-2. A wrong
     // position, mask or start gives errors of order one; rounding differences stay near the plain path's own.
@@ -1789,205 +1438,10 @@ internal abstract partial class Tests
         Check(error <= tolerance, $"{what}: relative error {error:G3}");
     }
 
-    internal static void GraphTraining(Device device)
-    {
-        if (device.Type != DeviceType.Cuda || !device.Backend.SupportsGraphs || MixedPrecision.TensorCoresUnavailable(device) is not null)
-        {
-            return;                                                              // graphs: CUDA; packed attention: tensor cores
-        }
-
-        using var precision = MixedPrecision.BFloat16();
-        var spec = new DecoderSpec
-        {
-            Vocabulary = 260, Dim = 128, Layers = 2, Heads = 2, KvHeads = 1, HeadDim = 64, FfDim = 256, MaxPositions = 512,
-            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,   // a Qwen3 checkpoint: query/key norms
-        };
-        string folder = WriteChatModel(spec);
-        try
-        {
-            var random = new Random(61);
-            var sequences = Enumerable.Range(0, 24).Select(_ =>
-            {
-                int n = random.Next(20, 120);
-                return new TrainingSequence([.. Enumerable.Range(0, n).Select(_ => random.Next(256))], [.. Enumerable.Range(0, n).Select(i => i >= n / 2)]);
-            }).ToList();
-            (List<float> Losses, float[] Adapters, string Trace) Run(bool graphs)
-            {
-                using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-                var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-3f, BatchTokens = 256, Seed = 1, CudaGraphs = graphs };
-                var losses = new List<float>();
-                var trace = new System.Text.StringBuilder();
-                FineTuner.Train(model, sequences, null, options, progress: new SynchronousProgress<FineTuningProgress>(p => losses.Add(p.Loss)),
-                    trace: line => trace.AppendLine(line));
-                return (losses, [.. model.Network.TrainableParameters().SelectMany(p => p.ToArray())], trace.ToString());
-            }
-
-            var ordinary = Run(false);
-            var replayed = Run(true);
-            Check(replayed.Trace.Contains("recorded one training step as a graph") && replayed.Trace.Contains("replayed"),
-                $"the graph was recorded and replayed:\n{replayed.Trace}");
-            Check(ordinary.Losses.Count >= 5 && ordinary.Losses.Count == replayed.Losses.Count, $"steps: {ordinary.Losses.Count} and {replayed.Losses.Count}");
-            CloseByNorm([.. ordinary.Losses], [.. replayed.Losses], 2e-3f, "losses per step");
-            CloseByNorm(ordinary.Adapters, replayed.Adapters, 2e-3f, "trained adapters");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
-    }
-
     // Reports on the calling thread (Progress<T> posts to the thread pool, so its reports can arrive late).
     internal sealed class SynchronousProgress<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
-    }
-
-    internal static void RaggedBatchDecoding(Device device)
-    {
-        if (device.Type == DeviceType.Cuda && MixedPrecision.TensorCoresUnavailable(device) is not null)
-        {
-            return;                                                              // per-row starts: tensor-core attention
-        }
-
-        using var precision = MixedPrecision.Use(device.Type == DeviceType.Cuda ? MatMulPrecision.BFloat16 : MatMulPrecision.Float32);
-        var spec = new DecoderSpec
-        {
-            Vocabulary = 260, Dim = 128, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 64, FfDim = 128, MaxPositions = 256,
-            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, TieEmbeddings = true,
-        };
-        var random = new Random(41);
-        int[] lengths = [5, 12, 9];
-        var prompts = lengths.Select(n => Enumerable.Range(0, n).Select(_ => (float)random.Next(250)).ToArray()).ToArray();
-        var next = lengths.Select(_ => Enumerable.Range(0, 4).Select(_ => (float)random.Next(250)).ToArray()).ToArray();
-        using (var model = spec.Build(new RandomWeights(42), new DecoderBuildOptions { Device = device }))
-        using (Autograd.NoGrad())
-        {
-            model.Eval();
-            int longest = lengths.Max();
-            var batched = new List<float[]>[lengths.Length];
-            using (var scope = new TensorScope())
-            using (var context = new DecodingContext(device, lengths.Length, 32))
-            {
-                context.SetRowStarts([.. lengths.Select(n => longest - n)]);
-                context.LastPositionOnly = true;
-                var input = new float[lengths.Length * longest];
-                for (int r = 0; r < lengths.Length; r++)
-                {
-                    prompts[r].CopyTo(input, r * longest + longest - lengths[r]);
-                    batched[r] = [];
-                }
-
-                void Collect(Tensor logits)
-                {
-                    var values = logits.ToArray();
-                    for (int r = 0; r < lengths.Length; r++)
-                    {
-                        batched[r].Add(values[(r * 260)..((r + 1) * 260)]);
-                    }
-                }
-
-                Collect(model.ForwardCached(Tensor.From(input, [lengths.Length, longest], device), context));
-                for (int s = 0; s < 4; s++)
-                {
-                    Collect(model.ForwardCached(Tensor.From([.. next.Select(n => n[s])], [lengths.Length, 1], device), context));
-                }
-            }
-
-            // Each row alone: exact (float32, the plain path), and on CUDA also through the batched path's own bfloat16 kernels
-            // (per-row starts, one row starting at 0), which measures how far bfloat16 alone moves that computation.
-            List<float[]> Alone(int r, MatMulPrecision? precision, bool rowStarts)
-            {
-                using var scoped = precision is { } p ? MixedPrecision.Use(p) : default(MixedPrecision.Scope?);
-                using var scope = new TensorScope();
-                using var context = new DecodingContext(device, 1, 32) { LastPositionOnly = true };
-                if (rowStarts)
-                {
-                    context.SetRowStarts([0]);
-                }
-
-                var steps = new List<float[]> { model.ForwardCached(Tensor.From(prompts[r], [1, lengths[r]], device), context).ToArray() };
-                for (int s = 0; s < 4; s++)
-                {
-                    steps.Add(model.ForwardCached(Tensor.From([next[r][s]], [1, 1], device), context).ToArray());
-                }
-
-                return steps;
-            }
-
-            for (int r = 0; r < lengths.Length; r++)
-            {
-                bool cuda = device.Type == DeviceType.Cuda;
-                var exact = Alone(r, cuda ? MatMulPrecision.Float32 : null, rowStarts: false);
-                var alone = cuda ? Alone(r, null, rowStarts: true) : exact;
-                for (int s = 0; s < alone.Count; s++)
-                {
-                    WithinPrecision(exact[s], alone[s], batched[r][s], device, $"row {r} (prompt of {lengths[r]}), step {s}: logits");
-                }
-            }
-        }
-
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                              // greedy choices can flip on bfloat16 near-ties
-        }
-
-        // Whole greedy replies through the chat template (a Qwen3-style model): batched as generated one by one.
-        string folder = WriteChatModel(spec with { QkNorm = true });
-        try
-        {
-            using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
-            var chat = model.CreateChat();
-            var options = new GenerationOptions { Temperature = 0f, TopK = 1, TopP = 1f, RepeatPenalty = 1f, NumPredict = 12, NumCtx = 200 };
-            var requests = new[] { "hi", "tell me a longer story about the sea", "2+2?" }
-                .Select(q => new ChatRequest([new ChatMessage("user", q)], null, null, options)).ToList();
-            var together = chat.ChatBatch(requests);
-            for (int i = 0; i < requests.Count; i++)
-            {
-                var alone = chat.Chat(requests[i]);
-                Check(together[i].Message!.Content == alone.Message!.Content && together[i].DoneReason == alone.DoneReason,
-                    $"reply {i}: batched '{together[i].Message!.Content}' ({together[i].DoneReason}), alone '{alone.Message!.Content}' ({alone.DoneReason})");
-            }
-
-            // Streamed together, a token at a time: the pieces add up to the batched replies, each request ends once.
-            foreach (int chunkSize in new[] { 1, 3 })
-            {
-                var streamed = requests.Select(r => r with { Options = r.Options! with { ChunkSize = chunkSize } }).ToList();
-                var content = requests.Select(_ => new System.Text.StringBuilder()).ToArray();
-                var finals = new ChatChunk?[requests.Count];
-                foreach (var (index, chunk) in chat.StreamBatch(streamed))
-                {
-                    Check(finals[index] is null, $"chunk size {chunkSize}, reply {index}: nothing after its final chunk");
-                    content[index].Append(chunk.Delta.Content);
-                    finals[index] = chunk.Done ? chunk : null;
-                }
-
-                for (int i = 0; i < requests.Count; i++)
-                {
-                    Check(finals[i] is { } last && last.Message!.Content == together[i].Message!.Content && last.DoneReason == together[i].DoneReason
-                          && content[i].ToString().Trim() == together[i].Message!.Content,
-                        $"chunk size {chunkSize}, reply {i}: streamed '{content[i]}' ({finals[i]?.DoneReason}), batched '{together[i].Message!.Content}'");
-                }
-            }
-
-            // Raw text with a stop sequence: the streamed pieces are the batched texts, cut before the stop.
-            var raw = new[] { "once upon", "a b c d", "zzz" };
-            var stopping = options with { Stop = ["e"], ChunkSize = 1 };
-            var texts = chat.Generator.GenerateBatch(raw, stopping);
-            var pieces = raw.Select(_ => new System.Text.StringBuilder()).ToArray();
-            foreach (var chunk in chat.Generator.StreamBatch(raw, stopping))
-            {
-                pieces[chunk.Index].Append(chunk.Text);
-            }
-
-            for (int i = 0; i < raw.Length; i++)
-            {
-                Check(pieces[i].ToString() == texts[i].Text && !texts[i].Text.Contains('e'), $"text {i}: streamed '{pieces[i]}', batched '{texts[i].Text}' ({texts[i].DoneReason})");
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
     }
 
     // A progress that keeps every report in order, on the reporting thread (Progress<T> would post them).

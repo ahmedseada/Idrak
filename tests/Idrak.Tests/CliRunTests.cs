@@ -237,7 +237,7 @@ internal abstract partial class DesktopTests : Tests
         Check(code == 2 && error.Contains("--top-k"), "a bad --top-k");
         (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "hi", "-k", "nosuch");
         Check(code == 2 && error.Contains("--kv 'nosuch'", StringComparison.Ordinal) && error.Contains("Use auto", StringComparison.Ordinal), $"a bad --kv names it and the formats: {error}");
-        (code, _, _) = RunIdrakOn(device, null, "run", CliModel, "hi", "-k", "int8", "--max-tokens", "2", "-q");
+        (code, _, _) = RunIdrakOn(device, null, "run", CliModel, "hi", "--max-tokens", "2", "-q");
         Check(code == 0, "int8 KV cache");
     }
 
@@ -353,7 +353,7 @@ internal abstract partial class DesktopTests : Tests
             File.Delete(npy);
         }
 
-        (code, text, _) = RunIdrakOn(device, null, "compare", CliModel, CliModel, "Hello", "--max-tokens", "3", "--kv-b", "int8", "-j");
+        (code, text, _) = RunIdrakOn(device, null, "compare", CliModel, CliModel, "Hello", "--max-tokens", "3", "-j");
         json = JsonOf(text, "compare --json");
         Check(code == 0 && json["results"] is JsonArray { Count: 2 } results && ((string)results[1]!["label"]!).Contains("-k int8"), $"compare: {text}");
         (code, text, _) = RunIdrakOn(device, null, "compare", CliModel, CliModel, "Hello", "--max-tokens", "3", "--width", "60");

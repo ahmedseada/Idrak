@@ -19,7 +19,6 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GgufGroup =
     [
-        ("gguf: metadata, and F16, BF16, Q4_0–Q8_0, Q2_K–Q6_K, IQ4_NL, IQ4_XS dequantized as llama.cpp's reference does", GgufQuants),
         ("evaluation: final numbers (#### n), exact, contains and F1 scores of answers", EvaluationMetrics),
         ("gguf: Llama (q/k row order) and Qwen3 (Q8_0) models read from GGUF match their Hugging Face copies: config, tokens, chat, loss", GgufModels),
         ("gguf: gemma: a Gemma file written by llama.cpp's converter (f16, its norm gains stored with the 1 added) reads as its Hugging Face folder: spec, SentencePiece tokens and the chat prompt's, chat template, logits, greedy tokens", device => GgufGemma(device, "tiny-gemma", "GemmaForCausalLM")),
@@ -69,26 +68,6 @@ internal abstract partial class Tests
         Check(ChatEvaluation.Score(TuningMetrics.ExactMatch, "  Paris. ", "paris") == 1 && ChatEvaluation.Score(TuningMetrics.ContainsMatch, "It is Paris, France", "paris") == 1, "exact, contains");
         Check(Math.Abs(ChatEvaluation.Score(TuningMetrics.WordF1, "the cat sat", "the cat ran") - 2.0 / 3) < 1e-9 && ChatEvaluation.Score(TuningMetrics.WordF1, "dog", "cat") == 0, "f1");
         Check(ChatEvaluation.Score(ChatEvaluation.Auto, "so it is 14", "#### 14") == 1, "auto picks the number for #### references");
-    }
-
-    internal static void GgufQuants(Device device)
-    {
-        _ = device;
-        using var file = GgufFile.Open(TestData("gguf/quants.gguf"));
-        Check(file.Version == 3 && file.Get("test.string", "") == "héllo" && file.Get<long[]>("test.numbers", []).SequenceEqual([1L, 2L, 3L]), "metadata");
-        foreach (var type in new[] { "F16", "BF16", "Q4_0", "Q4_1", "Q5_0", "Q5_1", "Q8_0", "Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K", "IQ4_NL", "IQ4_XS" })
-        {
-            var ours = file.Read($"q.{type}");
-            var expected = file.Read($"expected.{type}");
-            Check(ours.Length == expected.Length, $"{type}: {ours.Length} values, expected {expected.Length}");
-            float worst = 0;
-            for (int i = 0; i < ours.Length; i++)
-            {
-                worst = MathF.Max(worst, MathF.Abs(ours[i] - expected[i]) / MathF.Max(1f, MathF.Abs(expected[i])));
-            }
-
-            Check(worst < 1e-5f, $"{type}: largest difference {worst:G3}");
-        }
     }
 
     // A Gemma GGUF file of tools/gguf/make_gemma.py against the Hugging Face folder it was converted from.

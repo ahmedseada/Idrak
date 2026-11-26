@@ -21,8 +21,6 @@ internal static partial class MauiTests
 
     public static readonly (string Name, Action Run)[] All =
     [
-        ("maui options: applying them sets every ComputeResources limit, the device, the token and the cache folder (the app's storage by default)", OptionsApplied),
-        ("maui options: applied again with empty limits, the library's own values come back; the cache folder waits for the next start; a missing device is named, not thrown", OptionsReapplied),
         ("maui settings: saved and read back, the token in the secret store only; an empty value is the library's own; a bad saved value is skipped and named; clear forgets them", SettingsSavedAndRead),
         ("maui settings: values are checked (a comma reads as the decimal point), and a change to the cache folder or the GPU chunk needs a restart", SettingsChecked),
         ("maui settings page: a refused value saves nothing and says why; a saved restart-only change says so and stays as it runs", SettingsPage),
@@ -50,14 +48,11 @@ internal static partial class MauiTests
         ("maui chat: a model of the store is chosen and loaded (device, formats, load time); an answer streams into its bubble with its count and tokens per second, cold then warm; the request carries the system prompt, the history, thinking and the settings' options; a new chat clears it; copying goes through the page's clipboard", ChatStreams),
         ("maui chat: a thousand tokens make a few UI updates (one a progress interval, the first and the last), the bubble every token", ChatBatched),
         ("maui chat: Stop cancels mid-answer, keeping what came as the answer", ChatStopped),
-        ("maui chat: the settings map to GenerationOptions over the library's defaults, are checked, and give the load request (device, weights, cache format, context)", ChatSettings),
-        ("maui chat: a model is measured before loading (weights by format, the cache by the context) and refused with the limit named when it does not fit; an unregistered family fails as not registered", ChatRefused),
         ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
         ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
         ("maui chat: the composer's microphone dictates into the message after what was typed, live, and stops on the next tap; no speech model says so and offers Models; no dictation says so", ChatDictates),
         ("maui chat: the header's title, avatar and status come from one state: a refresh whose picker drops its choice keeps the chosen and loaded model named, and a model the store no longer lists stays named while loaded", ChatHeaderOneState),
         ("maui chat: the tune sheet holds every generation setting a chat reads with its default (the app's, else the library's), refuses a bad value naming it, rounds a slider to its step, keeps the values per model, and the next reply and load take them; Reset forgets them", ChatTuningSheet),
-        ("maui chat: the app's text families (Qwen, Llama, Gemma 3, Mistral) load from their own configs and answer on the CPU in float32, int8 and int4, and a Gemma 3 whose tokenizer has a token past the model's vocabulary answers", ChatFamiliesLoad),
         ("maui host: the bottom bar steps aside while the soft keyboard is up, and a pushed page's bottom edge follows the keyboard", HostKeyboard),
         ("maui transcribe settings: empty, every value is the library's (live, transcription and capture options); each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", TranscribeSettingsMapped),
         ("maui transcribe: live from a registered capture (a loud tone, a pause, a soft one) through a scripted recognizer: tentative and committed words reach the view model as they come, each finished segment committed on its own line; level, time and lag shown", TranscribeLive),
@@ -89,10 +84,8 @@ internal static partial class MauiTests
         ("maui image: the pipeline runs on the decoded photo (never decoded again), giving the library's own result step by step with times; cold the first time a transform runs in the process, warm after with its mean; the result shown, saved as PNG (its own pixels) and as JPEG at the settings' quality, and shared", ImageApplied),
         ("maui image settings: empty, every value is the library's (the PNG encoder, JpegEncoder's quality, the resampling); each setting maps, is kept and read back over the app's defaults; a bad value is refused saying what is taken", ImageSettingsMapped),
         ("maui image: the image feature is the library's (order 70, needs the camera) and opens its page; a refused camera opens nothing and says how to allow it; a cancelled photo and a phone without a camera are said", ImagePageOpens),
-        ("maui ocr settings: empty, every value is the library's (ImageReadRequest, ImageReaderOptions, the generation context, the reading pages' instruction); each setting maps to the read and the load, is kept and read back over the app's defaults; a bad value is refused saying what is taken", OcrSettingsMapped),
         ("maui ocr: the readers are the store's complete models a registered vision family reads; a page made here is decoded once and prepared once, handed to a scripted reader as prepared with the settings' request; the text streams in a few showings with its tokens per second, cold then warm; copied and shared; another pipeline prepares again without decoding", OcrStreams),
         ("maui ocr: a thousand tokens make a few UI updates (one a progress interval, the first and the last); Stop keeps what came", OcrBatched),
-        ("maui ocr: the tiny Gemma 3 is measured before loading (every value of its checkpoint, the cache by the context) and refused with the limit named when it does not fit; without its vision family it is not listed and refused by name; a text model is not a reader", OcrRefused),
         ("maui ocr: the tiny Gemma 3 reads a page made here through the lab on the CPU, the library's own ImageReader answer with the same pipeline, the page decoded once; cold, warm, and cold again after memory pressure took it", OcrEndToEnd),
         ("maui ocr: the OCR feature is the library's (order 60, needs the camera and a model) and opens its page; no reader in the store, a refused camera and a HEIC photo are said", OcrPageOpens),
         ("maui redesign: every section's view and every lab's page constructs and binds in light and dark, each label's colour one of the theme's; both layouts lay out", RedesignViewsBind),
@@ -181,80 +174,10 @@ internal static partial class MauiTests
         TuningNeighbourOctaves = 2,
         LookupTables = "host",
         CpuVectors = CpuVectorPaths.Portable,
-        PackedWeightCache = !ComputeResources.PackedWeightCache,
-        PackedWeightCacheFolder = PackedFolder,
         HuggingFaceToken = "hf_test_token",
     };
 
     private static readonly string PackedFolder = Path.Combine(Path.GetTempPath(), "idrak-maui-packed");
-
-    private static void OptionsApplied()
-    {
-        string storage = Temp("apply");
-        bool offload = ComputeResources.OffloadToHostMemory, packed = ComputeResources.PackedWeightCache;
-        try
-        {
-            var options = Limits();
-            var report = IdrakMauiStartup.Apply(options, storage);
-            string expected = Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } variable ? Path.GetFullPath(variable) : Path.Combine(storage, "idrak");
-            Check(ComputeResources.CacheFolder == expected && report.CacheFolder == expected && report.AppStorage == storage, $"cache folder {ComputeResources.CacheFolder}, expected {expected}");
-            Check(ComputeResources.MaxCpuThreads == 1, $"threads {ComputeResources.MaxCpuThreads}");
-            Check(ComputeResources.CpuMemoryLimit == 512L << 20 && ComputeResources.GpuMemoryLimit == 1024L << 20 && ComputeResources.GpuMemoryReserve == 64L << 20
-                  && ComputeResources.OffloadReturnHeadroom == 32L << 20, "memory limits in MiB to bytes");
-            Check(ComputeResources.OffloadToHostMemory == !offload, "offload");
-            Check(ComputeResources.GpuChunkBytes == 8L << 20 && ComputeResources.GpuStackBytes == 4096, "GPU chunk and stack");
-            Check(ComputeResources.WorkspaceShare == 0.25 && ComputeResources.TuningBudget == TimeSpan.FromMilliseconds(200) && ComputeResources.TuningNeighbourOctaves == 2,
-                "workspace and tuning");
-            Check(ComputeResources.LookupTables == LookupTablePlacement.HostMemory, $"lookup tables {ComputeResources.LookupTables}");
-            Check(ComputeResources.CpuVectors == CpuVectorPaths.Portable, $"vector paths {ComputeResources.CpuVectors}");
-            Check(ComputeResources.PackedWeightCache == !packed && ComputeResources.PackedWeightCacheFolder == PackedFolder,
-                $"packed-weight cache {ComputeResources.PackedWeightCache} in {ComputeResources.PackedWeightCacheFolder}");
-            Check(Environment.GetEnvironmentVariable("HF_TOKEN") == "hf_test_token", "HF_TOKEN set in the process");
-            Check(Device.Default == Device.Cpu && report.Problems.Count == 0, $"device {Device.Default}; problems: {string.Join("; ", report.Problems)}");
-
-            var own = new IdrakMauiOptions { CacheFolder = Path.Combine(storage, "elsewhere") };
-            IdrakMauiStartup.Apply(own, storage);
-            Check(ComputeResources.CacheFolder == Path.Combine(storage, "elsewhere"), $"the app's own folder: {ComputeResources.CacheFolder}");
-        }
-        finally
-        {
-            Restore(storage);
-        }
-    }
-
-    private static void OptionsReapplied()
-    {
-        string storage = Temp("reapply");
-        int threads = ComputeResources.MaxCpuThreads;
-        long? cpuLimit = ComputeResources.CpuMemoryLimit;
-        double share = ComputeResources.WorkspaceShare;
-        var lookup = ComputeResources.LookupTables;
-        var vectors = ComputeResources.CpuVectors;
-        bool packed = ComputeResources.PackedWeightCache;
-        try
-        {
-            var first = Limits();
-            IdrakMauiStartup.Apply(first, storage);
-            string folder = ComputeResources.CacheFolder;
-            var empty = new IdrakMauiOptions { CacheFolder = Path.Combine(storage, "next-start") };
-            var report = IdrakMauiStartup.Apply(empty, storage, previous: first);
-            Check(ComputeResources.MaxCpuThreads == threads && ComputeResources.CpuMemoryLimit == cpuLimit && ComputeResources.WorkspaceShare == share
-                  && ComputeResources.LookupTables == lookup && ComputeResources.CpuVectors == vectors
-                  && ComputeResources.PackedWeightCache == packed && ComputeResources.PackedWeightCacheFolder != PackedFolder,
-                $"the library's values back: threads {ComputeResources.MaxCpuThreads} (was {threads}), vector paths {ComputeResources.CpuVectors} (was {vectors})");
-            Check(ComputeResources.CacheFolder == folder && report.CacheFolder == folder, "the cache folder changed before a restart");
-            Check(Environment.GetEnvironmentVariable("HF_TOKEN") is null, "the app's token is gone from the process");
-            Check(IdrakMauiSettings.NeedRestart(first, empty).Contains("Cache and models folder"), "the restart is named");
-
-            var missing = IdrakMauiStartup.Apply(new IdrakMauiOptions { Device = "nosuchkind:3" }, storage, previous: empty);
-            Check(missing.Problems.Count == 1 && missing.Problems[0].Contains("nosuchkind:3", StringComparison.Ordinal) && Device.Default == Device.Cpu,
-                $"problems: {string.Join("; ", missing.Problems)}");
-        }
-        finally
-        {
-            Restore(storage);
-        }
-    }
 
     private static void SettingsSavedAndRead()
     {

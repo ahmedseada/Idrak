@@ -613,7 +613,7 @@ internal abstract partial class Tests
             }
 
             // QLoRA with DoRA: a 4-bit base trains too.
-            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Int4 = true });
+            using var quantized = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
             float q0 = FineTuner.Evaluate(quantized, sequences);
             FineTuner.Train(quantized, sequences, null, new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 6, BatchTokens = 512, Dora = true });
             float q1 = FineTuner.Evaluate(quantized, sequences);

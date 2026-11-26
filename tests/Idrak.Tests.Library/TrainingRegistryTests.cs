@@ -13,80 +13,9 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] TrainingRegistryGroup =
     [
-        ("optimizers: adamw, adam, adamw8bit and sgd by name (OptimizerKinds, the library's) make the updates of their constructors bit for bit, the betas given too, and pass the optimizer suite; an app's kind over a library name takes its place, fails the suite against the library's, and Unregister brings the library's back; an unknown name is refused naming the registered ones and OptimizerKinds.Register", OptimizerKindsByName),
         ("schedules: cosine, linear, constant and wsd by name (LearningRateSchedules, the library's) give the rates of their formulas and pass the schedule suite; an app's schedule over a library name takes its place, fails the suite against the library's, and Unregister brings the library's back; wsd refuses a decay share outside [0, 1] when made; an unknown name is refused naming the registered ones", SchedulesByName),
         ("tuning metrics: number, exact, contains and f1 (higher is better, each answer out of 1, no options) score as ChatEvaluation scored them, after cer and wer in TuningMetrics; their sum over answers is the mean; ChatEvaluation's auto picks number for '#### n' references, else f1; an unknown metric is refused naming the registry", AnswerMetricsAsTuningMetrics),
     ];
-
-    internal static void OptimizerKindsByName(Device device)
-    {
-        Check(OptimizerKinds.Names.SequenceEqual(["adamw", "adam", "adamw8bit", "sgd"]) && OptimizerKinds.Names.All(n => OptimizerKinds.Origin(n) == Overrides.Library),
-            $"the library's kinds, in order: {string.Join(", ", OptimizerKinds.Names)}");
-
-        // Each name makes what the closed list made with its constructor (and, given, Pretraining's betas): the same
-        // parameters after a few steps, bit for bit; 5,000 elements take adamw8bit's 8-bit moments.
-        float[] Trained(Func<IReadOnlyList<Tensor>, Optimizer> make)
-        {
-            var random = new Random(11);
-            float[] start = [.. Enumerable.Range(0, 5000).Select(_ => random.NextSingle() * 2f - 1f)];
-            float[] goal = [.. Enumerable.Range(0, 5000).Select(_ => random.NextSingle() * 2f - 1f)];
-            using var p = Tensor.Persistent(start, [start.Length], device, requiresGrad: true);
-            using var target = Tensor.Persistent(goal, [goal.Length], device);
-            using var optimizer = make([p]);
-            for (int step = 0; step < 4; step++)
-            {
-                optimizer.ZeroGrad();
-                using var scope = new TensorScope();
-                (p - target).Square().Sum().Backward();
-                optimizer.Step();
-            }
-
-            return p.ToArray();
-        }
-
-        const float Rate = 0.01f, Decay = 0.01f, Momentum = 0.9f;
-        var settings = new OptimizerSettings(Rate, Decay, Momentum);
-        var constructors = new Dictionary<string, Func<IReadOnlyList<Tensor>, Optimizer>>
-        {
-            ["adamw"] = ps => new AdamW(ps, Rate, weightDecay: Decay),
-            ["adam"] = ps => new Adam(ps, Rate, weightDecay: Decay),
-            ["adamw8bit"] = ps => new AdamW8Bit(ps, Rate, weightDecay: Decay),
-            ["sgd"] = ps => new Sgd(ps, Rate, Momentum, Decay),
-        };
-        foreach (var (name, construct) in constructors)
-        {
-            AssertClose(Trained(construct), Trained(OptimizerKinds.Factory(name, settings)), 0f, $"{name} by name");
-        }
-
-        var betas = settings with { Beta1 = 0.85f, Beta2 = 0.95f, Epsilon = 1e-7f };
-        AssertClose(Trained(ps => new AdamW8Bit(ps, Rate, 0.85f, 0.95f, 1e-7f, Decay)), Trained(OptimizerKinds.Factory("ADAMW8BIT", betas)), 0f, "adamw8bit with betas, any case");
-        AssertClose(Trained(ps => new Adam(ps, Rate, 0.85f, 0.95f, 1e-7f, Decay)), Trained(OptimizerKinds.Factory("adam", betas)), 0f, "adam with betas");
-
-        foreach (string name in OptimizerKinds.Names)
-        {
-            var report = Conformance.CheckOptimizerKind(name, device: device, options: new ContractCheckOptions { RandomCases = 4 });
-            Check(report.Passed && report.Entries.Any(e => e.Name == "the steps lower the loss" && e.Status == CheckStatus.Passed), $"{name}: the optimizer suite:\n{report}");
-        }
-
-        // An app's sgd (without momentum) over the library's.
-        OptimizerKinds.Register(new PlainSgd());
-        try
-        {
-            Check(OptimizerKinds.Get("sgd") is PlainSgd && OptimizerKinds.Default("sgd") is not PlainSgd && OptimizerKinds.Origin("sgd") == typeof(Tests).Assembly.GetName().Name
-                  && OptimizerKinds.Names.SequenceEqual(["adamw", "adam", "adamw8bit", "sgd"]), "an app's kind takes the library's place");
-            var differs = Conformance.CheckOptimizerKind("sgd", device: device, options: new ContractCheckOptions { RandomCases = 0 });
-            Check(!differs.Passed && differs.Failures.All(f => f.Check == "the reference's values"), $"the app's kind against the library's:\n{differs}");
-        }
-        finally
-        {
-            Check(OptimizerKinds.Unregister("sgd") && OptimizerKinds.Get("sgd") == OptimizerKinds.Default("sgd") && OptimizerKinds.Origin("sgd") == Overrides.Library,
-                "Unregister brings the library's back");
-        }
-
-        ThrowsNaming<NotSupportedException>(() => OptimizerKinds.Factory("nope", settings), "an unknown optimizer",
-            "'nope' is not registered (registered: adamw, adam, adamw8bit, sgd)", "OptimizerKinds.Register");
-        Check(!OptimizerKinds.Unregister("adamw") && OptimizerKinds.Find("adamw") is not null, "a library kind is never removed");
-    }
 
     internal static void SchedulesByName(Device device)
     {

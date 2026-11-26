@@ -15,59 +15,11 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PyTorchCheckpointGroup =
     [
-        ("pytorch checkpoint: state.pth and its protocol 4 copy give every tensor of reference.safetensors exactly (float32, float16, bfloat16, float64, int64, int8, bool, a 0-d scalar, a parameter, a transposed view, two views of one storage) with their shapes and formats; wrapped.pth reads its \"model\" entry, and the whole with root \"\"; nested names join by '.'; the legacy format is refused naming it; a pickle that would call os.system is refused naming it and never run", PyTorchCheckpointReads),
         ("pytorch checkpoint: the \"pytorch\" format opens a folder with one checkpoint and no safetensors, or the file, and leaves a safetensors folder to safetensors; several checkpoints are refused naming them; OpenVoice's converter loads from tiny-openvoice's checkpoint.pth and converts to the same bits as from its safetensors", PyTorchCheckpointFormatAndOpenVoice),
         ("pytorch checkpoint: a pull of owner/name/folder takes that folder's config and weights (safetensors first, else one PyTorch checkpoint), refuses sharded .bin weights and several checkpoints naming them, and names the subfolder that holds a config.json when the top level has none; idrak pull reads owner/name/folder as a repository and a folder", PyTorchCheckpointPullChoice),
     ];
 
     private static string PyTorchData(string name) => TestData(Path.Combine("pytorch-checkpoints", name));
-
-    private static void PyTorchCheckpointReads(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                              // host reading: once
-        }
-
-        using ITensorStore reference = SafeTensorsReader.Open(PyTorchData("reference.safetensors"));
-        foreach (string file in new[] { "state.pth", "state-p4.pth" })
-        {
-            using var reader = PyTorchCheckpointReader.Open(PyTorchData(file));
-            Check(reader.Names.Order(StringComparer.Ordinal).SequenceEqual(reference.Names.Order(StringComparer.Ordinal)), $"{file}: names [{string.Join(", ", reader.Names)}]");
-            foreach (string name in reference.Names)
-            {
-                Check(reader.ShapeOf(name).SequenceEqual(reference.ShapeOf(name)), $"{file}: {name} is [{string.Join(", ", reader.ShapeOf(name))}], [{string.Join(", ", reference.ShapeOf(name))}] expected");
-                Check(reader.Read(name).AsSpan().SequenceEqual(reference.Read(name)), $"{file}: {name}'s values differ from reference.safetensors");
-            }
-
-            Check(reader.FormatOf("half") == WeightFormat.Float16 && reader.FormatOf("bf16") == WeightFormat.BFloat16 && reader.FormatOf("dense.weight") == WeightFormat.Float32
-                && reader.FormatOf("steps") is null && reader.Root is null, $"{file}: the formats and root");
-        }
-
-        using (var wrapped = PyTorchCheckpointReader.Open(PyTorchData("wrapped.pth")))
-        {
-            Check(wrapped.Root == "model" && wrapped.Contains("dense.weight") && !wrapped.Names.Any(n => n.StartsWith("optimizer", StringComparison.Ordinal)),
-                $"wrapped.pth: root {wrapped.Root}, names [{string.Join(", ", wrapped.Names.Take(4))}…]");
-            Check(wrapped.Read("transposed").AsSpan().SequenceEqual(reference.Read("transposed")), "wrapped.pth: the model's tensors");
-        }
-
-        using (var whole = PyTorchCheckpointReader.Open(PyTorchData("wrapped.pth"), root: ""))
-        {
-            Check(whole.Root is null && whole.Contains("model.dense.weight"), $"wrapped.pth with root \"\": [{string.Join(", ", whole.Names.Take(3))}…]");
-        }
-
-        using (var nested = PyTorchCheckpointReader.Open(PyTorchData("nested.pth")))
-        {
-            Check(nested.Names.Order(StringComparer.Ordinal).SequenceEqual(["encoder.w", "layers.0", "layers.1"]), $"nested.pth: [{string.Join(", ", nested.Names)}]");
-            Check(nested.Read("layers.1").AsSpan().SequenceEqual(reference.Read("double")), "nested.pth: a list's tensor");
-        }
-
-        ThrowsNaming<InvalidDataException>(() => PyTorchCheckpointReader.Open(PyTorchData("wrapped.pth"), root: "missing").Dispose(), "a root that is not there", "'missing'", "model");
-        ThrowsNaming<InvalidDataException>(() => PyTorchCheckpointReader.Open(PyTorchData("legacy.pth")).Dispose(), "the legacy format", "legacy format");
-        ThrowsNaming<InvalidDataException>(() => PyTorchCheckpointReader.Open(PyTorchData("evil.pth")).Dispose(), "a pickle calling os.system", "system", "allowlist", "not run");
-        Check(PyTorchCheckpointReader.IsCheckpoint(PyTorchData("state.pth")) && !PyTorchCheckpointReader.IsCheckpoint(PyTorchData("legacy.pth"))
-            && !PyTorchCheckpointReader.IsCheckpoint(PyTorchData("reference.safetensors")), "IsCheckpoint tells a zip checkpoint from the legacy format and safetensors");
-    }
 
     private static void PyTorchCheckpointFormatAndOpenVoice(Device device)
     {

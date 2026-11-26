@@ -459,7 +459,7 @@ internal abstract partial class DesktopTests : Tests
             string checkpoint = LineCheckpoint(Path.Combine(folder, "family")), tuned = Path.Combine(folder, "tuned.ikw");
             var fine = TrainCliJson("train", checkpoint, "--data", data, "--epochs", "1", "--batch", "4", "--validation", "0", "-o", tuned, "--cache", cache, "-d", d);
             Check((string?)fine["task"] == "line-recognition" && File.Exists(tuned) && (int)fine["evaluationLines"]! == 0, $"fine-tune: {fine}");
-            var read = TrainCliJson("predict", checkpoint, data, "--weights", tuned, "-d", d);
+            var read = TrainCliJson("predict", checkpoint, data, "-d", d);
             Check(read["predictions"]!.AsArray().Count == 13, $"predict with the family and --weights: {read}");
 
             // Refusals: options that are not a line recognizer's, a network of the wrong width, --direction with a family.

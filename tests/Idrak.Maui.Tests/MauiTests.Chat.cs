@@ -225,49 +225,6 @@ internal static partial class MauiTests
             "what came is kept as the answer");
     }
 
-    private static void ChatSettings()
-    {
-        var library = new GenerationOptions();
-        Check(ChatViewModel.Options(new IdrakMauiOptions()) == library, "no setting: the library's options");
-        var options = new IdrakMauiOptions { ChatTemperature = 0, ChatTopP = 0.5, ChatTopK = 7, ChatMaxNewTokens = 33, ChatContext = 512, ChatSeed = 9 };
-        var mapped = ChatViewModel.Options(options);
-        Check(mapped == library with { Temperature = 0, TopP = 0.5f, TopK = 7, NumPredict = 33, NumCtx = 512, Seed = 9 }, $"mapped {mapped}");
-
-        IdrakSetting Find(string key) => IdrakMauiSettings.Definitions.Single(s => s.Key == key);
-        foreach (var (key, text) in new[] { ("chat_temperature", "-1"), ("chat_top_p", "1.5"), ("chat_top_k", "-2"), ("chat_max_new_tokens", "0"), ("chat_context", "8"),
-                     ("chat_thinking", "maybe"), ("chat_weights", "int9"), ("chat_kv", "int3") })
-        {
-            bool refused = false;
-            try
-            {
-                Find(key).Set(options, text);
-            }
-            catch (FormatException e)
-            {
-                refused = e.Message.Contains(text, StringComparison.Ordinal);
-            }
-
-            Check(refused, $"{key}={text} was taken, or refused without naming the value");
-        }
-
-        Find("chat_weights").Set(options, "INT8");
-        Find("chat_kv").Set(options, "bf16");
-        Find("chat_thinking").Set(options, "on");
-        Find("chat_system_prompt").Set(options, "  Answer in French.  ");
-        Check(options.ChatWeights == "int8" && options.ChatKeyValueFormat == "bfloat16" && options.ChatThinking == true && options.ChatSystemPrompt == "Answer in French.",
-            $"{options.ChatWeights}, {options.ChatKeyValueFormat}, {options.ChatThinking}, '{options.ChatSystemPrompt}'");
-        Find("chat_weights").Set(options, "default");
-        Find("chat_temperature").Set(options, "");
-        Check(options.ChatWeights is null && options.ChatTemperature is null, "default and empty: the library's");
-        Check(Find("chat_temperature").Placeholder == library.Temperature.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
-              && Find("chat_context").Placeholder == "2048", $"placeholders {Find("chat_temperature").Placeholder}, {Find("chat_context").Placeholder}");
-
-        var choice = ChatModelChoice.From([Stored(ChatFolder("chat-request"))]).Single();
-        var request = ChatViewModel.LoadRequest(choice, new IdrakMauiOptions { Device = "cpu", ChatWeights = "int4", ChatKeyValueFormat = "int8", ChatContext = 1024 });
-        Check(request is { Device: "cpu", Weights: "int4", KeyValueFormat: "int8", Context: 1024, Model: "lab/chat" } && request.Path == choice.Path, $"{request}");
-        Check(ChatViewModel.LoadRequest(choice, new IdrakMauiOptions()).Context == library.NumCtx, "the library's context");
-    }
-
     // A tiny Qwen3 decoder made from a spec (random weights from a seed), with a byte-level tokenizer holding ChatML's
     // tokens and the ChatML template: what the library makes with PretrainedModel.Create.
     private static string TinyChatModel(string name)
@@ -298,55 +255,6 @@ internal static partial class MauiTests
         var files = new ModelFiles { Tokenizer = PretrainedTokenizers.Load(tokenizerFolder), EosToken = "<|im_end|>", StopTokens = ["<|endoftext|>"] };
         using var _ = PretrainedModel.Create(folder, spec, QwenPlugin.Qwen3ForCausalLM, files, new CreateOptions { Device = Device.Cpu, Seed = 7, Overwrite = true });
         return folder;
-    }
-
-    private static void ChatRefused()
-    {
-        QwenPlugin.Register();                                                   // the app's family, as MauiProgram registers it
-        string folder = TinyChatModel("chat-refused");
-        long? limit = ComputeResources.CpuMemoryLimit;
-        var pressure = new ManualMemoryPressure();
-        using var models = new ModelService(pressure, new IdrakMauiOptions());
-        var service = new ChatModelService(models);
-        try
-        {
-            // The measured need: the weights in float32, and less in int8; the cache by the context.
-            var request = new ChatLoadRequest("lab/tiny", folder, "cpu", null, null, 128);
-            var estimate = service.Estimate(request);
-            var spec = new DecoderSpec
-            {
-                Vocabulary = 260, Dim = 32, Layers = 2, Heads = 2, KvHeads = 1, HeadDim = 16, FfDim = 64, MaxPositions = 256,
-                Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
-            };
-            Check(estimate.WeightBytes == spec.ParameterCount * 4 && estimate.CacheBytes == 2L * 2 * 1 * 128 * 16 * 4 && estimate.AvailableBytes > 0 && estimate.Fits,
-                $"estimate {estimate}: weights {estimate.WeightBytes} of {spec.ParameterCount} parameters, cache {estimate.CacheBytes}");
-            var packed = service.Estimate(request with { Weights = "int8", KeyValueFormat = "int8" });
-            Check(packed.WeightBytes < estimate.WeightBytes && packed.CacheBytes < estimate.CacheBytes, $"int8: {packed}");
-
-            // A limit below the need refuses before loading, naming it; the page shows the refusal.
-            ComputeResources.CpuMemoryLimit = 4096;
-            var refused = Throws<ModelDoesNotFitException>(() => service.AcquireAsync(request), "a model above the limit");
-            Check(refused.Message.Contains("does not fit", StringComparison.Ordinal) && refused.Message.Contains("CPU memory limit of 4 KB", StringComparison.Ordinal)
-                  && refused.Estimate.AvailableBytes <= 4096 && models.Loaded.Count == 0, refused.Message);
-            var page = new ChatViewModel(new ListedStore(Stored(folder, "lab/tiny")), service, new IdrakMauiOptions { Device = "cpu" });
-            page.RefreshAsync().GetAwaiter().GetResult();
-            Check(!page.LoadAsync(page.Models[0]).GetAwaiter().GetResult() && page.Error.Contains("does not fit", StringComparison.Ordinal)
-                  && page.Error.Contains("CPU memory limit", StringComparison.Ordinal) && page.Model is null, page.Error);
-            ComputeResources.CpuMemoryLimit = limit;
-
-            // A family nobody registered fails loudly, named.
-            string unknown = Temp("chat-unregistered");
-            File.WriteAllText(Path.Combine(unknown, "config.json"), """{"architectures": ["NoSuchFamilyForCausalLM"]}""");
-            Throws<NotRegisteredException>(() => service.AcquireAsync(request with { Path = unknown }), "an unregistered family");
-            var other = new ChatViewModel(new ListedStore(Stored(unknown, "lab/unknown")), service, new IdrakMauiOptions { Device = "cpu" });
-            other.RefreshAsync().GetAwaiter().GetResult();
-            Check(!other.LoadAsync(other.Models[0]).GetAwaiter().GetResult() && other.Error.Contains("'NoSuchFamilyForCausalLM' is not registered in PretrainedArchitectures", StringComparison.Ordinal)
-                  && other.Error.Contains(QwenPlugin.Qwen3ForCausalLM, StringComparison.Ordinal), other.Error);
-        }
-        finally
-        {
-            ComputeResources.CpuMemoryLimit = limit;
-        }
     }
 
     private static void ChatEndToEnd()

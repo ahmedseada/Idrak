@@ -27,7 +27,6 @@ internal abstract partial class Tests
         ("data loaders: PNG (every depth, palette, interlaced), BMP and Netpbm decode as independent encoders wrote them", LoaderCodecs),
         ("data loaders: the image folder source with transforms trains like its in-memory Dataset; codecs register by name", LoaderImageFolder),
         ("data loaders: image transforms flip, shift, rotate and add noise as computed directly, seeded by epoch and sample", LoaderTransforms),
-        ("data loaders: token files and .npy arrays are memory-mapped and train like the same samples in memory", LoaderMappedFiles),
         ("data loaders: a stream is batched in order or shuffled in a buffer, counted after an epoch, and trains like a Dataset", LoaderStreams),
         ("data loaders: SampleSources opens the built-ins by name, registers, unregisters and lists the names in errors", LoaderRegistry),
         ("data loaders: TableSamples reads JSON Lines, Parquet and CSV columns (arrays, classes) and streams them", LoaderTables),
@@ -798,128 +797,6 @@ internal abstract partial class Tests
         var small = Epoch(new DataLoader(data, 7, device: device, seed: 8) { Transforms = transforms });
         AssertClose([.. first.SelectMany(e => e.X)], [.. small.SelectMany(e => e.X)], 0, "large (prefetched) and small batches transform alike");
         Throws<ArgumentException>(() => new RandomShift(1).Apply(new float[4], [], [4], new Random(1)), "image transforms need an image shape");
-    }
-
-    internal static void LoaderMappedFiles(Device device)
-    {
-        string folder = TempFolder();
-        try
-        {
-            // 16-bit token ids, back to back, with no record of their type: the reader is told it.
-            var tokens = Enumerable.Range(0, 1000).Select(i => (ushort)((i * 7919 + i / 3) % 50000)).ToArray();
-            string raw = Path.Combine(folder, "train.bin");
-            File.WriteAllBytes(raw, [.. tokens.SelectMany(BitConverter.GetBytes)]);
-            const int T = 16;
-            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw, T),
-                "a token file with no record and no type is refused naming the settings that give it", "no record of its id type", "--token-type", "\"token_type\"");
-            using (var windows = new TokenFileSource(raw, T, stride: 10, type: Idrak.Abstraction.ElementType.UInt16))
-            {
-                Check(windows.TokenCount == 1000 && windows.Count == (1000 - T - 1) / 10 + 1, $"{windows.Count} windows of {windows.TokenCount} tokens");
-                var x = new List<float>();
-                var y = new List<float>();
-                for (int w = 0; w < windows.Count; w++)
-                {
-                    x.AddRange(tokens.Skip(w * 10).Take(T).Select(t => (float)t));
-                    y.AddRange(tokens.Skip(w * 10 + 1).Take(T).Select(t => (float)t));
-                }
-
-                string[] names = [.. Enumerable.Range(0, T).Select(i => $"t{i}")];
-                var memory = Dataset.FromFlat([.. x], [.. y], windows.Count, names, names);
-                AssertClose(memory.Features.ToArray(), windows.ToDataset().Features.ToArray(), 0, "the windows' tokens");
-                AssertClose(memory.Targets.ToArray(), windows.ToDataset().Targets.ToArray(), 0, "the next tokens");
-                SameTraining(windows, memory, device, "token windows");
-            }
-
-            // The same ids as a one-dimensional int32 .npy file, non-overlapping windows; 32-bit raw ids.
-            string npyTokens = Path.Combine(folder, "tokens.npy");
-            WriteNpy(npyTokens, "<i4", [1000], tokens.SelectMany(t => BitConverter.GetBytes((int)t)));
-            using (var windows = new TokenFileSource(npyTokens, T))
-            {
-                var check = windows.ToDataset();
-                Check(windows.Count == (1000 - T - 1) / T + 1 && check.GetFeatures(2)[0] == tokens[2 * T] && check.GetTargets(2)[T - 1] == tokens[3 * T], "the .npy token file");
-            }
-
-            string raw32 = Path.Combine(folder, "train32.bin");
-            File.WriteAllBytes(raw32, [.. tokens.SelectMany(t => BitConverter.GetBytes((uint)t + 70000u))]);
-            using (var windows = new TokenFileSource(raw32, T, type: Idrak.Abstraction.ElementType.UInt32))
-            {
-                Check(windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "32-bit token ids");
-            }
-
-            Throws<InvalidDataException>(() => _ = new TokenFileSource(raw, 2000, type: Idrak.Abstraction.ElementType.UInt16), "a window longer than the file");
-
-            // The record beside a file says its type (here in the casing records had before the registry's names); a type that
-            // differs is refused naming both.
-            File.WriteAllText(TokenFileRecord.PathOf(raw32), $"{{\"format\": \"{TokenFileRecord.Format}\", \"type\": \"UInt32\"}}");
-            using (var windows = new TokenFileSource(raw32, T))
-            {
-                Check(windows.TokenCount == 1000 && windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "the record's type, with no type given");
-            }
-
-            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw32, T, type: Idrak.Abstraction.ElementType.UInt16), "a type the record contradicts", "uint32", "uint16");
-
-            // Any registered integer type of whole bytes: int16 ids (no type the old closed list had), by the record's name.
-            string raw16 = Path.Combine(folder, "train16.bin");
-            File.WriteAllBytes(raw16, [.. tokens.SelectMany(t => BitConverter.GetBytes((short)(t % 30000 - 15000)))]);
-            File.WriteAllText(TokenFileRecord.PathOf(raw16), $"{{\"format\": \"{TokenFileRecord.Format}\", \"type\": \"int16\"}}");
-            using (var windows = new TokenFileSource(raw16, T))
-            {
-                Check(windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] % 30000 - 15000, "int16 token ids, the type from the registry");
-            }
-
-            Check(ReferenceEquals(TokenFileRecord.Parse("u16"), Idrak.Abstraction.ElementType.UInt16) && ReferenceEquals(TokenFileRecord.Parse("UInt32"), Idrak.Abstraction.ElementType.UInt32)
-                  && ReferenceEquals(TokenFileRecord.Parse("int64"), Idrak.Abstraction.ElementType.Int64), "token types by the registry's names and short names");
-            ThrowsNaming<ArgumentException>(() => TokenFileRecord.Parse("float32"), "a float type is not an id type", "integer type", "uint8", "uint16");
-            Throws<ArgumentException>(() => _ = new TokenFileSource(raw, T, type: Idrak.Abstraction.ElementType.Int4), "int4 is not whole bytes");
-
-            // Images [N, 2, 3] as float32 and int64 class labels; float64 targets [N, 2]; uint8 features.
-            const int N = 40;
-            var random = new Random(5);
-            float[] pixels = [.. Enumerable.Range(0, N * 6).Select(_ => random.NextSingle())];
-            long[] labels = [.. Enumerable.Range(0, N).Select(i => (long)(i % 3))];
-            double[] values = [.. Enumerable.Range(0, N * 2).Select(i => i * 0.25)];
-            WriteNpy(Path.Combine(folder, "x.npy"), "<f4", [N, 2, 3], pixels.SelectMany(BitConverter.GetBytes));
-            WriteNpy(Path.Combine(folder, "labels.npy"), "<i8", [N], labels.SelectMany(BitConverter.GetBytes));
-            WriteNpy(Path.Combine(folder, "y.npy"), "<f8", [N, 2], values.SelectMany(BitConverter.GetBytes), version: 2);
-            using (var classes = new NpySource(Path.Combine(folder, "x.npy"), Path.Combine(folder, "labels.npy"), classes: 3))
-            {
-                Check(classes.Count == N && classes.FeatureShape.SequenceEqual([2, 3]) && classes.TargetShape.SequenceEqual([3]), "the .npy shapes");
-                var features = new float[N, 6];
-                for (int i = 0; i < N; i++)
-                {
-                    for (int j = 0; j < 6; j++)
-                    {
-                        features[i, j] = pixels[i * 6 + j];
-                    }
-                }
-
-                var memory = Dataset.FromClassLabels(features, [.. labels.Select(l => (int)l)], 3).WithFeatureShape(2, 3);
-                AssertClose(memory.Features.ToArray(), classes.ToDataset().Features.ToArray(), 0, ".npy features");
-                AssertClose(memory.Targets.ToArray(), classes.ToDataset().Targets.ToArray(), 0, ".npy one-hot classes");
-                SameTraining(classes, memory, device, ".npy arrays");
-            }
-
-            using (var regression = (NpySource)SampleSources.Open("npy", Path.Combine(folder, "x.npy"), new Dictionary<string, string> { ["targets"] = Path.Combine(folder, "y.npy") }))
-            {
-                AssertClose([.. values.Select(v => (float)v)], regression.ToDataset().Targets.ToArray(), 0, ".npy float64 targets (format version 2)");
-            }
-
-            WriteNpy(Path.Combine(folder, "u8.npy"), "|u1", [3, 2], [1, 2, 3, 250, 0, 9]);
-            using (var bytes = new NpySource(Path.Combine(folder, "u8.npy")))
-            {
-                Check(bytes.TargetShape.SequenceEqual([0]), "no targets");
-                AssertClose([1, 2, 3, 250, 0, 9], bytes.ToDataset().Features.ToArray(), 0, ".npy uint8 features");
-            }
-
-            WriteNpy(Path.Combine(folder, "big.npy"), ">f4", [2], new byte[8]);
-            Throws<InvalidDataException>(() => _ = new NpySource(Path.Combine(folder, "big.npy")), "a big-endian array");
-            WriteNpy(Path.Combine(folder, "short.npy"), "<f4", [100], new byte[8]);
-            Throws<InvalidDataException>(() => _ = new NpySource(Path.Combine(folder, "short.npy")), "an array shorter than its shape");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 
     // A .npy file as numpy.save writes it: magic, version, header length, the header dictionary padded to 64 bytes.

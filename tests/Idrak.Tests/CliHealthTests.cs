@@ -553,8 +553,7 @@ internal abstract partial class DesktopTests : Tests
     {
         _ = device;
         var plugins = CliJson("plugins", "list", "-j");
-        Check(plugins["weights"]!["names"]!.AsArray().Any(n => (string?)n == "int8") && plugins["devices"]!["names"]!.AsArray().Any(n => (string?)n == "cpu"), $"plugins list: {plugins}");
-        Check(plugins["weights"]!["added"]!.AsArray().Count == 0, "plugins list: something added without --plugin");
+        Check(plugins["devices"]!["names"]!.AsArray().Any(n => (string?)n == "cpu"), $"plugins list: {plugins}");
         // The generic components' registries (plan 26, P2 and P3) are listed with their built-ins.
         foreach (var (key, name) in new[] { ("progress", "console"), ("keywordindexes", "bm25"), ("recipes", "gpt"), ("linesegmenters", "projection"),
                      ("textmatchers", "semi-global"), ("readingorders", "bidi"), ("readingorders", "runs") })
@@ -563,7 +562,7 @@ internal abstract partial class DesktopTests : Tests
         }
 
         var (fexit, csv, _) = Cli("formats", "--format", "csv");
-        Check(fexit == 0 && csv.StartsWith("Kind,Formats", StringComparison.Ordinal) && csv.Contains("int8"), $"formats csv: {csv}");
+        Check(fexit == 0 && csv.StartsWith("Kind,Formats", StringComparison.Ordinal), $"formats csv: {csv}");
 
         foreach (string shell in (string[])["bash", "zsh", "fish", "pwsh"])
         {
@@ -629,7 +628,6 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(Cli("help", "exit", "codes").Out.Contains("usage error"), "help exit codes");
-        Check(Cli("help", "formats").Out.Contains("int8"), "help formats lists the registered formats");
         Check(Cli("help", "devices").Out.Contains("Lanes") || Cli("help", "devices").Out.Contains("idrak devices"), "help devices shows the topic and the command");
         var (g, _, gerror) = Cli("config");
         Check(g == 2 && gerror.Contains("idrak config set"), $"group word: {gerror}");

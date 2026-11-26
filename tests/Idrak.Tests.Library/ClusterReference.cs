@@ -121,10 +121,6 @@ internal sealed class NaiveReferenceCollectives(ITransport transport, Device dev
     public void AllReduce(Storage buffer, int count, ReduceOp op, WireType wire = WireType.Float32)
     {
         var values = Download(buffer, count);
-        if (op == ReduceOp.Sum && wire == WireType.BFloat16)
-        {
-            RoundToBFloat16(values);
-        }
 
         if (!skipReduce)
         {
@@ -234,14 +230,4 @@ internal sealed class NaiveReferenceCollectives(ITransport transport, Device dev
         return values;
     }
 
-    // Round to nearest even at bfloat16's 8 bits of mantissa, as a bfloat16 wire sends the values.
-    internal static void RoundToBFloat16(Span<float> values)
-    {
-        foreach (ref float v in values)
-        {
-            uint bits = BitConverter.SingleToUInt32Bits(v);
-            bits = (bits + 0x7FFF + ((bits >> 16) & 1)) & 0xFFFF0000;
-            v = BitConverter.UInt32BitsToSingle(bits);
-        }
-    }
 }

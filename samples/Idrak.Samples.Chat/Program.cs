@@ -29,16 +29,14 @@ using Idrak.Text.Plugins;
 //   downloading models: the idrak tool (idrak tune, idrak pull; src/Idrak.Cli).
 //
 // Options: --offload (when the GPU is full, keep tensors in system memory: slower, but larger models and batches fit),
-//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --int8 (int8 weights), --int4 (4-bit weights), --bf16 (bfloat16 weights), --kv8 (int8 KV cache), --kv16 (bfloat16 KV cache), --context N (default 4096),
-//          --folder F (check: read the model from F instead of the folder named in the reference), --no-think,
-//          --matmul fp32|bf16|fp8 (precision of the larger matrix products: bf16 tensor cores by default, fp32 for check).
+//          --gpu-memory GiB (cap the GPU memory used), --adapter <dir> (load a PEFT adapter), --cuda / --cpu / --vulkan / --device NAME (cpu, cuda:N, vulkan:N), --context N (default 4096),
+//          --folder F (check: read the model from F instead of the folder named in the reference), --no-think.
 TextPlugins.RegisterAll();                          // the model families (Llama, Qwen, Mistral, Gemma, …) are Idrak.Text.Plugins'
 
 var positional = new List<string>();
-bool int8 = false, bf16 = false, int4 = false, kv8 = false, kv16 = false, noThink = false;
+bool noThink = false;
 int context = 4096;
 string? folderOverride = null, adapterFolder = null;
-MatMulPrecision? matmul = null;
 Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
 for (int i = 0; i < args.Length; i++)
 {
@@ -48,25 +46,11 @@ for (int i = 0; i < args.Length; i++)
         case "--cpu": device = Device.Cpu; break;
         case "--vulkan": device = Device.Parse("vulkan:0"); break;
         case "--device": device = Device.Parse(args[++i]); break;     // any name --list-devices shows: cpu, cuda:N, vulkan:N
-        case "--int8": int8 = true; break;
-        case "--bf16": bf16 = true; break;
-        case "--int4": int4 = true; break;
-        case "--kv8": kv8 = true; break;
-        case "--kv16": kv16 = true; break;
         case "--no-think": noThink = true; break;
         case "--context": context = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--folder": folderOverride = args[++i]; break;
         case "--adapter": adapterFolder = args[++i]; break;
         case "--offload": ComputeResources.OffloadToHostMemory = true; break;
-        case "--matmul":
-            matmul = args[++i] switch
-            {
-                "fp32" or "float32" => MatMulPrecision.Float32,
-                "bf16" or "bfloat16" => MatMulPrecision.BFloat16,
-                "fp8" or "float8" => MatMulPrecision.Float8,
-                var other => throw new ArgumentException($"--matmul {other}: use fp32, bf16 or fp8"),
-            };
-            break;
         case "--gpu-memory": ComputeResources.GpuMemoryLimit = (long)(double.Parse(args[++i], CultureInfo.InvariantCulture) * (1L << 30)); break;
         case ['-', '-', ..]:
             Console.Error.WriteLine($"Unknown option {args[i]}.");
@@ -78,17 +62,13 @@ for (int i = 0; i < args.Length; i++)
 if (positional.Count < 2 || positional[0] is not ("info" or "chat" or "check" or "profile"))
 {
     Console.WriteLine("usage: info <folder> | chat <folder> | profile <folder> | check <reference.json>");
-    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--folder F] [--no-think] [--matmul fp32|bf16|fp8]");
+    Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--context N] [--adapter DIR] [--folder F] [--no-think]");
     Console.WriteLine("fine-tuning, evaluating, exporting and downloading models: idrak tune, idrak pull (src/Idrak.Cli)");
     return 1;
 }
 
-// Tensor cores for prompts and larger products (bfloat16) unless asked otherwise; check compares with transformers'
-// float32 logits, so it stays float32 by default.
-MixedPrecision.Default = matmul ?? (positional[0] == "check" ? MatMulPrecision.Float32 : MatMulPrecision.BFloat16);
-
 Device.Default = device;
-var cacheFormat = kv8 ? KeyValueFormat.Int8 : kv16 ? KeyValueFormat.BFloat16 : KeyValueFormat.Float32;
+var cacheFormat = KeyValueFormat.Float32;
 
 // A model folder, or a Hugging Face model id (owner/name): found in a cache or downloaded (with progress) on first use.
 static string ResolveModel(string model) =>
@@ -105,9 +85,9 @@ PretrainedModel Load(string folder)
     bool merge = adapterFolder is not null;
     var model = PretrainedModel.Load(folder, new PretrainedOptions
     {
-        Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
+        Device = device, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
     });
-    Console.WriteLine($"Loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
+    Console.WriteLine($"Loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
     Console.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "
                       + $"vocabulary {model.Spec.Vocabulary}, context {model.MaxPositions}");
     foreach (var note in model.Notes)
@@ -372,8 +352,7 @@ int Check(string referencePath)
         }
 
         bool greedySame = text == expectedText;
-        bool approximate = int8 || int4 || bf16 || kv8 || kv16;
-        bool ok = encodes && top1 && (int8 || int4 || bf16 || maxDiff <= 2e-3f * Math.Max(1f, scale)) && (greedySame || approximate);
+        bool ok = encodes && top1 && (maxDiff <= 2e-3f * Math.Max(1f, scale)) && greedySame;
         failures += ok ? 0 : 1;
         Console.WriteLine($"  {(ok ? "ok  " : "DIFF")} {ids.Length,4} ids: max |Δlogit| {maxDiff:G3} (largest logit {scale:F1}), top-1 {(top1 ? "same" : "DIFFERENT")}, "
                           + $"top-10 overlap {overlap}/10, forward {watch.Elapsed.TotalMilliseconds:F0} ms; greedy {(greedySame ? "identical" : $"first {agree} of {expectedText.Length} characters agree")} "

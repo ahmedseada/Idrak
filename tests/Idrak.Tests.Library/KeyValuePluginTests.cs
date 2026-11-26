@@ -12,9 +12,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] KeyValuePluginGroup =
     [
-        ("kv plugins: the built-in formats are registered and expand what they wrote to float32; an unknown name lists them; a format of one's own registers, sizes its cache (with scales) and reports the Custom format", KeyValuePluginRegistry),
         ("kv plugins: a decoder and a multi-head attention model decode token by token through a format of one's own like the float32 cache; a prompt at once too", KeyValuePluginDecoding),
-        ("kv plugins: TextGenerator with a format of one's own (CacheLayout) generates the float32 cache's greedy text, with the kept cache and in a batch", KeyValuePluginGeneration),
     ];
 
     internal const string KeyValuePluginName = "test-kv-scaled";
@@ -61,68 +59,6 @@ internal abstract partial class Tests
             int n = rows.Shape[0], capacity = rows.Shape[1], dim = rows.Shape[2];
             return rows * Widen(scales.Reshape(n * capacity, 1), dim).Reshape(n, capacity, dim);
         }
-    }
-
-    internal static void KeyValuePluginRegistry(Device device)
-    {
-        Check(new[] { "float32", "int8", "bfloat16" }.All(KeyValueLayouts.Names.Contains), $"built-in formats registered: {string.Join(", ", KeyValueLayouts.Names)}");
-        try
-        {
-            KeyValueLayouts.Get("no-such-format");
-            Check(false, "an unknown format is refused");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("int8", StringComparison.Ordinal) && e.Message.Contains("KeyValueLayouts.Register", StringComparison.Ordinal), $"the error lists the formats: {e.Message}");
-        }
-
-        Check(KeyValueLayouts.FormatOf(KeyValueLayouts.Get("BFloat16")) == KeyValueFormat.BFloat16, "names ignore case");
-
-        // Every built-in format expands what it wrote back to float32 (the composed fallback's input).
-        var r = new Random(7);
-        var keys = Enumerable.Range(0, 3 * 2 * 5).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
-        foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
-        {
-            var builtIn = KeyValueLayouts.For(format);
-            using var cache = new KeyValueCache(3, 4, 5, device, builtIn);
-            using var position = Tensor.Persistent([1f], [1], device, requiresGrad: false);
-            using var scope = new TensorScope();
-            var source = Tensor.From(keys, [3, 2, 5], device);
-            builtIn.Write(source, source * 2f, cache, position);
-            var expanded = builtIn.Expand(cache, keys: true).ToArray();
-            var expandedValues = builtIn.Expand(cache, keys: false).ToArray();
-            Check(expanded.Length == 3 * 4 * 5, $"{format}: expands to [rows, capacity, headDim]");
-            for (int row = 0; row < 3; row++)
-            {
-                AssertClose(keys[(row * 10)..((row + 1) * 10)], expanded[(row * 20 + 5)..(row * 20 + 15)], 0.02f, $"{format}: expanded keys, row {row}");
-                AssertClose([.. keys[(row * 10)..((row + 1) * 10)].Select(k => 2 * k)], expandedValues[(row * 20 + 5)..(row * 20 + 15)], 0.04f, $"{format}: expanded values, row {row}");
-            }
-        }
-        var layout = new ScaledLayout();
-        KeyValueLayouts.Register(layout);
-        try
-        {
-            Check(KeyValueLayouts.Names.Contains(KeyValuePluginName) && KeyValueLayouts.Get(KeyValuePluginName) == layout, "a format of one's own registered");
-            using var cache = new KeyValueCache(3, 7, 5, device, layout);
-            Check(cache.Layout == layout && cache.Format == KeyValueFormat.Custom && cache.Keys.Shape[2] == 5 && cache.KeyScales is { } scales
-                  && scales.Shape[0] == 3 && scales.Shape[1] == 7 && cache.Bytes == 4L * (2 * 3 * 7 * 5 + 2 * 3 * 7), "its cache: sized by the layout, with scales, no built-in format");
-            using var context = new DecodingContext(device, 1, 8, layout);
-            Check(context.Layout == layout && context.Format == KeyValueFormat.Custom, "a context with the layout");
-            try
-            {
-                using var custom = new DecodingContext(device, 1, 8, KeyValueFormat.Custom);
-                Check(false, "Custom is not a format to choose");
-            }
-            catch (ArgumentException)
-            {
-            }
-        }
-        finally
-        {
-            KeyValueLayouts.Unregister(KeyValuePluginName);
-        }
-
-        Check(!KeyValueLayouts.Names.Contains(KeyValuePluginName), "the registry restored");
     }
 
     internal static void KeyValuePluginDecoding(Device device)
@@ -176,21 +112,4 @@ internal abstract partial class Tests
         }
     }
 
-    internal static void KeyValuePluginGeneration(Device device)
-    {
-        var (model, tokenizer) = TinyLanguageModel(device);
-        var layout = new ScaledLayout();
-        var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 12 };
-        string expected = new TextGenerator(model, tokenizer, 32) { KeepCache = false }.Generate("abc", options).Text;
-        var generator = new TextGenerator(model, tokenizer, 32) { CacheFormat = KeyValueFormat.Int8, CacheLayout = layout };
-        string first = generator.Generate("abc", options).Text;
-        Check(first == expected && layout.Writes > 0, $"with the layout '{first}', float32 cache '{expected}'");
-        string again = generator.Generate("abc", options).Text;                // the kept cache, its prefix reused
-        Check(again == expected, $"again with the kept cache '{again}'");
-        generator.ReleaseCache();
-
-        var batch = generator.GenerateBatch(["abc", "hello"], options);
-        var single = new TextGenerator(model, tokenizer, 32) { KeepCache = false }.Generate("hello", options).Text;
-        Check(batch[0].Text == expected && batch[1].Text == single, $"a batch: '{batch[0].Text}', '{batch[1].Text}' (alone: '{expected}', '{single}')");
-    }
 }

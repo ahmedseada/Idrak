@@ -19,7 +19,6 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] AudioAsrGroup =
     [
         ("audio asr: the Whisper plug-in loads tiny-whisper: the encoder output and the first step's logits within 1e-4 of transformers', the language detected from one step (ar, with its logits), the prompts with and without timestamps; an unknown language, and the architecture without the plug-in, refused naming the registry", AudioAsrFixture),
-        ("audio asr: greedy and beam-4 decoding give transformers' ids exactly (12 tokens, the end token suppressed first), and with timestamps (the timestamp rules) greedy and beam-4 do too; the int8 and bfloat16 caches run the same beam search", AudioAsrDecoding),
         ("audio asr: Transcribe on pcm16.wav gives the greedy reference's tokens and text, the language detected; chunks of 0.75 s equal two calls on the halves joined, TranscribeStream equals the chunked call, stereo and 44.1 kHz sound mixed and resampled; the timestamps' segment; the stats and progress; device bytes after any call from the third no more than after the second; cold and warm times", AudioAsrTranscribe),
         ("audio asr: BeamSearch.Sample draws the first token by softmax(logits / T) (6000 draws within 0.025), rows sample apart and end at the end token, best first, suppressed tokens never drawn, a temperature of 0 refused", AudioAsrSampling),
         ("audio asr: Whisper's guards (OpenAI's transcribe): the no-speech check leaves out a segment taken for silence (threshold 1 keeps all, 0 with an unsure decoding drops all) from the step after <|startoftranscript|>; the temperature fallback decodes an unsure segment again at the next temperature; the compression ratio of a loop above 2.4", AudioAsrGuards),
@@ -77,41 +76,6 @@ internal abstract partial class Tests
         WhisperPlugin.Unregister();
         ThrowsNaming<NotSupportedException>(() => SpeechModels.Load(AudioData("tiny-whisper"), new SpeechModelOptions { Device = device }),
             "the family without the plug-in", "WhisperForConditionalGeneration", "not registered", "SpeechFamilies.Register", "Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()");
-    }
-
-    internal static void AudioAsrDecoding(Device device)
-    {
-        using var recognizer = TinyWhisper(device);
-        using var mel = FixtureMel(device);
-        using var encoded = recognizer.Encode(mel);
-        foreach (var (name, beams) in new[] { ("greedy-ids", 1), ("beam4-ids", 4), ("timestamps-ids", 1), ("timestamps-beam4-ids", 4) })
-        {
-            var (prompt, ids) = WhisperReference(name);
-            var hypotheses = recognizer.Decode(encoded, prompt, new TranscriptionOptions { Beams = beams, MaxTokens = ids.Length });
-            Check(hypotheses.Count > 0 && hypotheses[0].Tokens.SequenceEqual(ids), $"{name} on {device}: [{string.Join(" ", hypotheses.FirstOrDefault()?.Tokens ?? [])}], transformers [{string.Join(" ", ids)}]");
-            Check(hypotheses.Count <= beams && hypotheses.All(h => float.IsFinite(h.Score) && float.IsFinite(h.LogProb))
-                  && hypotheses.Zip(hypotheses.Skip(1)).All(p => p.First.Score >= p.Second.Score), $"{name}: {hypotheses.Count} hypotheses, best first");
-        }
-
-        var (beamPrompt, beamIds) = WhisperReference("beam4-ids");
-        foreach (var format in new[] { KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
-        {
-            using var other = TinyWhisper(device, format);
-            var hypotheses = other.Decode(encoded, beamPrompt, new TranscriptionOptions { Beams = 4, MaxTokens = beamIds.Length });
-            var again = other.Decode(encoded, beamPrompt, new TranscriptionOptions { Beams = 4, MaxTokens = beamIds.Length });
-            Check(hypotheses.Count > 0 && hypotheses[0].Tokens.Count == beamIds.Length && hypotheses.All(h => float.IsFinite(h.Score))
-                  && hypotheses.Zip(again).All(p => p.First.Tokens.SequenceEqual(p.Second.Tokens)),
-                $"the {format} cache's beam search on {device}: [{string.Join(" ", hypotheses.FirstOrDefault()?.Tokens ?? [])}] (float32 [{string.Join(" ", beamIds)}]), the same twice");
-        }
-
-        // Sampling: BestOf samples, best first, the same seed the same samples, and a near-zero temperature the greedy ids.
-        var sampled = recognizer.Decode(encoded, beamPrompt, new TranscriptionOptions { Temperature = 0.7f, BestOf = 3, MaxTokens = beamIds.Length, Seed = 4 });
-        var resampled = recognizer.Decode(encoded, beamPrompt, new TranscriptionOptions { Temperature = 0.7f, BestOf = 3, MaxTokens = beamIds.Length, Seed = 4 });
-        var (greedyPrompt, greedyIds) = WhisperReference("greedy-ids");
-        var cold = recognizer.Decode(encoded, greedyPrompt, new TranscriptionOptions { Temperature = 1e-4f, BestOf = 2, MaxTokens = greedyIds.Length });
-        Check(sampled.Count == 3 && sampled.Zip(resampled).All(p => p.First.Tokens.SequenceEqual(p.Second.Tokens)) && sampled.Zip(sampled.Skip(1)).All(p => p.First.Score >= p.Second.Score)
-              && cold.All(h => h.Tokens.SequenceEqual(greedyIds)),
-            $"sampling on {device}: 3 samples best first, the same with the same seed, at temperature 1e-4 the greedy ids [{string.Join(" ", cold.FirstOrDefault()?.Tokens ?? [])}] for [{string.Join(" ", greedyIds)}]");
     }
 
     internal static void AudioAsrGuards(Device device)

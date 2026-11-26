@@ -18,7 +18,6 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OverrideLoopGroup =
     [
-        ("override loop: the library's built-ins are the slots' defaults in every registry, not overrides", OverrideLoopLibraryDefaults),
         ("override loop: each first-party assembly LibraryDefaults lists names its ILibraryRegistrations with the LibraryRegistrations attribute (read once per assembly), the same type LibraryDefaults keeps for trimmed apps; Idrak.Onnx.Runtime's ONNX Runtime is a library default", OverrideLoopLibraryRegistrations),
         ("override loop: under the default policy (Throw) an app's sampler, tokenizer part and RoPE scaling that throw reach the caller, reported with a hint naming FallBack, Shadow and IDRAK_OVERRIDE_POLICY", OverrideLoopDefaultThrows),
         ("override loop: under FallBack (opted into per slot) an app's sampler, tokenizer part and RoPE scaling each throw once and fall back to the default, reported to telemetry", OverrideLoopFallBack),
@@ -162,30 +161,6 @@ internal abstract partial class DesktopTests : Tests
         TokenSamplers.SetPolicy(TokenSamplers.DefaultName, SlotPolicy.Throw);
         TokenizerComponents.SetNormalizerPolicy(LowercaseType, SlotPolicy.Throw);
         RopeScalings.SetPolicy(LinearType, SlotPolicy.Throw);
-    }
-
-    private static void OverrideLoopLibraryDefaults(Device device)
-    {
-        _ = device;
-        const string library = Overrides.Library;
-        Check(RopeScalings.Origin(LinearType) == library && TokenSamplers.Origin(TokenSamplers.DefaultName) == library
-              && TokenizerComponents.NormalizerOrigin(LowercaseType) == library && TokenizerComponents.PreTokenizerOrigin("ByteLevel") == library
-              && TokenizerComponents.DecoderOrigin("ByteFallback") == library, "the slots of the acceptance test start at the library's");
-        // Built-ins registered on first use, from Abstraction, core, Gpu, Data and Text.
-        Check(Idrak.Abstraction.Generation.ToolCallFormats.Origin("json") == library && Idrak.Abstraction.Generation.ChatTemplates.Origin("jinja") == library && PackedWeightFormats.Origin("int4") == library
-              && KeyValueLayouts.Origin("int8") == library && ModelSources.Origin("huggingface") == library && ModelSources.Origin("folder") == library
-              && DeviceProviders.Origin("vulkan") == library && DeviceProviders.Origin("minimal") == "Idrak.Tests", "Abstraction's registries");
-        Check(CheckpointFormats.Origin("gguf") == library && GgufTypes.Origin(8) == library
-              && GgufPreTokenizers.Origin("gpt2") == library
-              && GraphOps.Origin("relu") == library && NetworkOps.Origin("linear") == library && LayerTypes.Origin("linear") == library
-              && ImageCodecs.Origin("png") == library && SampleSources.Origin("csv") == library && OnnxImportOps.Origin("Relu") == library
-              && OnnxExportOps.GraphOpOrigin("relu") == library, $"core's registries; overridden now: {string.Join(", ", Overrides.Report().Select(o => $"{o.Registry}/{o.Name}"))}");
-        Check(Idrak.Data.Abstractions.ParquetCodecs.Origin(1) == library && Idrak.Data.Abstractions.DataFileFormats.Origin("Csv") == library
-              && Idrak.Data.Abstractions.DatasetSources.Origin("hf") == library, "Data's registries");
-        var origins = Overrides.Report().Select(o => o.Origin).ToHashSet();
-        Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision"]),
-            $"no library assembly is reported as overriding: {string.Join(", ", origins)}");
-        Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
     }
 
     private static void OverrideLoopLibraryRegistrations(Device device)

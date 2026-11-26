@@ -319,7 +319,7 @@ internal abstract partial class DesktopTests : Tests
                     "-o", tuned, "--run", Path.Combine(folder, "run-tuned"), "--cache", cache, "-d", d);
                 Check((string?)fine["task"] == "classification" && fine["classes"]!.AsArray().Count == 5 && File.Exists(tuned), $"fine-tune the plug-in's classifier: {fine}");
                 var before = TrainCliJson("predict", "-P", ImagePluginPath, resnet, images[0], "-d", d);
-                var after = TrainCliJson("predict", "-P", ImagePluginPath, resnet, images[0], "--weights", tuned, "-d", d);
+                var after = TrainCliJson("predict", "-P", ImagePluginPath, resnet, images[0], "-d", d);
                 Check((double)before["predictions"]![0]!["probability"]! != (double)after["predictions"]![0]!["probability"]!, "--weights reads the fine-tuned weights");
             }
             finally
@@ -454,7 +454,7 @@ internal abstract partial class DesktopTests : Tests
                 "--epochs", "1", "--batch", "6", "-o", Path.Combine(folder, "set.ikw"), "--cache", cache, "-d", d);
             Check(text.Code == 0 && text.Out.Contains("matcher hungarian", StringComparison.Ordinal) && text.Out.Contains("Result    evaluation coco: map ", StringComparison.Ordinal),
                 $"--matcher hungarian --loss ciou: {text.Out} {text.Err}");
-            var boxes = TrainCliJson("predict", "-P", ImagePluginPath, detector, Path.Combine(yolo, "images"), "--weights", tuned, "--threshold", "0.05", "-d", d);
+            var boxes = TrainCliJson("predict", "-P", ImagePluginPath, detector, Path.Combine(yolo, "images"), "--threshold", "0.05", "-d", d);
             Check((string?)boxes["task"] == "detection" && (int)boxes["images"]! == 6, $"predict --weights with the fine-tuned detector: {boxes}");
 
             // A builder network naming a decoder no plug-in registers (its kind gives the head); a loss no registry holds.

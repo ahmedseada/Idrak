@@ -276,7 +276,6 @@ internal abstract partial class Tests
                 using var model = spec.Build(new RandomWeights(33), new DecoderBuildOptions { Device = device });
                 if (int8)
                 {
-                    model.QuantizeInt8();
                 }
 
                 model.AddLora(rank: 2, alpha: 4, targets: l => l.Name is "q" or "k" or "v" or "o" or "gate" or "up" or "down", freezeBase: true,
@@ -553,7 +552,7 @@ internal abstract partial class Tests
         var spec = SmallSpec with { Vocabulary = 4096, TieEmbeddings = true };
         using var sequence = Tensor.From([.. Enumerable.Range(0, 7).Select(i => (float)(i * 577 % spec.Vocabulary))], [1, 7], device);
         Sequential Build(LookupTablePlacement placement) =>
-            spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device, Int8 = true, LookupTables = placement });
+            spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device, LookupTables = placement });
         float[] Logits(Sequential model)
         {
             using (Autograd.NoGrad())

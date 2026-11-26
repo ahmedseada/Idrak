@@ -37,7 +37,6 @@ internal abstract partial class Tests
         using var adam = new Adam([a, b], 0.01f);
         using var adamW = new AdamW([a, b], 0.01f);
         using var sgd = new Sgd([a, b], 0.1f, momentum: 0.9f);
-        using var eightBit = new AdamW8Bit([a, b]);
         using var grouped = new GroupedOptimizer(new Adam([a], 0.01f), new Sgd([b], 0.1f));
         using var host = new HostOptimizer([a, b], ps => new AdamW(ps, 0.01f));
         using var plain = new PlainStep([a, b]);

@@ -561,7 +561,7 @@ internal abstract partial class Tests
         var notOffered = Failure<NotSupportedException>(() => VisionTuningParts.For(vision, ["projector", "lm_head"]));
         Check(notOffered.Message.Contains("'lm_head'", StringComparison.Ordinal) && notOffered.Message.Contains("it offers: projector, tower", StringComparison.Ordinal), notOffered.Message);
 
-        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 });
+        using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
         var stages = (IVisionEncoderStages)encoder;
         var image = ImageCodecs.Decode(TestData("vlm/image.png"));
         Check(encoder is ITrainableVisionEncoder trainable && ReferenceEquals(trainable.Vision, vision) && ReferenceEquals(VisionTuningParts.Trainable(vision, encoder), encoder),
@@ -588,7 +588,7 @@ internal abstract partial class Tests
         Check(towerParameters.Count(p => p.Grad is { } g && g.ToArray().Any(v => v != 0f)) >= towerParameters.Count / 2, "gradients reach the tower's weights");
 
         // Refusals: bfloat16 weights, another family's encoder, a part not offered.
-        using (var packed = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.BFloat16 }))
+        using (var packed = vision.CreateEncoder(new VisionEncoderOptions { Device = device }))
         {
             Check(Failure<InvalidOperationException>(() => tuning.Parameters(packed, "projector")).Message.Contains("EncoderWeights.Float32", StringComparison.Ordinal), "bfloat16 weights do not train");
         }

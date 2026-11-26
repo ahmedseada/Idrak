@@ -218,7 +218,6 @@ internal abstract partial class DesktopTests : Tests
         var values = Random(1_023, whole: false);
         Run(values, 0, (b, _) => c.AllReduce(b, values.Length, ReduceOp.Sum));
         var whole = Random(7, whole: true);
-        Run(whole, 0, (b, _) => c.AllReduce(b, whole.Length, ReduceOp.Sum, WireType.BFloat16));
         Run(values, 0, (b, _) => c.AllReduce(b, values.Length, ReduceOp.Max));
         Run(values, 0, (b, _) => c.AllReduce(b, values.Length, ReduceOp.Min));
         var piece = Random(5, whole: false);

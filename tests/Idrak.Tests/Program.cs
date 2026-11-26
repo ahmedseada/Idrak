@@ -148,9 +148,9 @@ if (args is ["--bench-conv"])
     return Tests.BenchConv();
 }
 
-if (args is ["--bench-vision", .. var visionArguments] && visionArguments.Length <= 1)
+if (args is ["--bench-vision"])
 {
-    return Tests.BenchVision(visionArguments.FirstOrDefault());
+    return Tests.BenchVision();
 }
 
 if (args is ["--bench-image"])
@@ -161,11 +161,6 @@ if (args is ["--bench-image"])
 if (args is ["--bench-jpeg", .. var jpegArguments] && jpegArguments.Length <= 1)
 {
     return Tests.BenchJpeg(jpegArguments.FirstOrDefault());
-}
-
-if (args is ["--bench-read"])
-{
-    return Tests.BenchRead();
 }
 
 if (args is ["--bench-alloc"])

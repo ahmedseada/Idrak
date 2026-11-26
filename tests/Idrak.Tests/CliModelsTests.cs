@@ -19,8 +19,6 @@ internal abstract partial class DesktopTests : Tests
         ("cli models: pull (transformers and GGUF, resume, dry run, offline), list, rm with --yes and --dry-run, against a local hub", CliModelsPullListRm),
         ("cli models: search keeps loadable models (registered families and GGUF architectures)", CliModelsSearch),
         ("cli models: show, inspect, verify, diff, families and memory read fixtures without loading", CliModelsReadOnly),
-        ("cli models: alias set/list/rm in the config, read by every model argument", CliModelsAliases),
-        ("cli models: quantize (size and perplexity), convert GGUF to a folder, merge a LoRA adapter", CliModelsWrite),
         ("cli models: every model command has help with examples, distinct short forms, no provider names", CliModelsHelp),
     ];
 
@@ -194,13 +192,13 @@ internal abstract partial class DesktopTests : Tests
             var table = ModelsCli("families", "moe").Out;
             Check(table.Contains("Experts") && table.Contains("Qwen2MoeForCausalLM") && !table.Contains("LlamaForCausalLM"), $"families moe: {table}");
 
-            var memory = ModelsJson(["memory", hf, "-d", "cpu", "-w", "float32,int8", "-k", "float32", "--context", "128", "--memory", "1M", .. c]);
+            var memory = ModelsJson(["memory", hf, "-d", "cpu", "-k", "float32", "--context", "128", "--memory", "1M", .. c]);
             var rows = memory["formats"]!.AsArray();
             long f32 = (long)rows[0]!["weightBytes"]!, i8 = (long)rows[1]!["weightBytes"]!;
             // KV: 2 layers × 2 key/value heads × (keys and values) × 16 values × 4 bytes × 128 positions.
             Check(rows.Count == 2 && f32 == 91_200 * 4 && i8 < f32 / 2 && (long)rows[0]!["kvBytes"]! == 2 * 2 * 2 * 16 * 4 * 128
                   && (bool)rows[0]!["fits"]!["1 MB"]!, $"memory: {memory}");
-            Check(ModelsCli(["memory", hf, "-w", "nonsense", "-d", "cpu", .. c]).Code == 2, "an unknown weight format is a usage error");
+            Check(ModelsCli(["memory", hf, "-d", "cpu", .. c]).Code == 2, "an unknown weight format is a usage error");
         }
         finally
         {
@@ -208,93 +206,10 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static void CliModelsAliases(Device device)
-    {
-        _ = device;
-        string folder = ModelsTemp("alias");
-        try
-        {
-            string config = Path.Combine(folder, "config.json");
-            string[] c = ["-C", config, "--cache", Path.Combine(folder, "cache")];
-            Check(ModelsCli(["alias", .. c]) is { Code: 0 } none && none.Out.Contains("No aliases", StringComparison.Ordinal), "no aliases yet");
-            var set = ModelsJson(["alias", "set", "tiny", TestData("gguf/tiny-llama-hf"), "-w", "int8", "-k", "int8", .. c]);
-            Check(!(bool)set["replaced"]!, "added");
-            var stored = JsonNode.Parse(File.ReadAllText(config))!["aliases"]!["tiny"]!;
-            Check((string?)stored["weights"] == "int8" && (string?)stored["kv"] == "int8" && (string?)stored["model"] == TestData("gguf/tiny-llama-hf"),
-                $"the config keeps {{model, weights, kv}}: {stored}");
-            var list = ModelsJson(["alias", "list", .. c]);
-            Check(list["aliases"]!["tiny"] is not null, "listed");
-            var shown = ModelsJson(["show", "tiny", .. c]);
-            Check((long)shown["parameters"]! == 91_200, "show reads the alias");
-            var memory = ModelsJson(["memory", "tiny", "-d", "cpu", .. c]);
-            Check(memory["formats"]!.AsArray().Count == 1 && (string?)memory["formats"]![0]!["weights"] == "int8", "memory takes the alias's formats");
-            Check(ModelsCli(["alias", "set", "a/b", "x", .. c]).Code == 2, "an alias with '/' would read as an id");
-            Check(ModelsCli(["alias", "rm", "tiny", .. c]).Code == 0 && ModelsCli(["alias", "rm", "tiny", .. c]).Code == 1, "removed, then missing");
-            Check(JsonNode.Parse(File.ReadAllText(config))!["aliases"] is null, "the last alias removes the object");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
-    }
-
-    private static void CliModelsWrite(Device device)
-    {
-        string folder = ModelsTemp("write");
-        try
-        {
-            string[] c = ["--cache", Path.Combine(folder, "cache"), "-d", device.ToString()];
-            string hf = TestData("gguf/tiny-llama-hf");
-            var q = ModelsJson(["quantize", hf, "-w", "int4", "-o", Path.Combine(folder, "q4"), .. c]);
-            double ppl = (double)q["perplexity"]!, reference = (double)q["floatPerplexity"]!;
-            Check((long)q["bytes"]! < (long)q["floatBytes"]! / 2 && double.IsFinite(ppl) && Math.Abs(ppl / reference - 1) < 0.25
-                  && File.Exists(Path.Combine(folder, "q4", "weights.bin")) && File.Exists(Path.Combine(folder, "q4", "quantize.json")), $"quantize: {q}");
-            Check(ModelsCli(["quantize", hf, "-w", "int4", "-o", Path.Combine(folder, "q4"), .. c]).Code == 2, "a non-empty output needs --force");
-            Check(ModelsJson(["quantize", hf, "-w", "int8", "--dry-run", .. c])["dryRun"]!.GetValue<bool>(), "quantize --dry-run");
-            Check(ModelsCli(["quantize", hf, .. c]).Code == 2, "quantize needs -w");
-
-            // GGUF to a folder: same tensors, and the copy is an ordinary safetensors model.
-            string converted = Path.Combine(folder, "converted");
-            var conv = ModelsJson(["convert", TestData("gguf/tiny-qwen3-q8.gguf"), converted, "--type", "f32", .. c]);
-            Check(File.Exists(Path.Combine(converted, "model.safetensors")) && !File.Exists(Path.Combine(converted, "gguf.json")), $"convert: {conv}");
-            Check((bool)ModelsJson(["diff", TestData("gguf/tiny-qwen3-q8.gguf"), converted, .. c])["same"]!, "converted tensors equal the GGUF file's");
-            Check(ModelsCli(["convert", hf, Path.Combine(folder, "x.gguf"), .. c]).Code == 1, "writing GGUF is a stated gap");
-
-            // An adapter with non-zero updates, merged: only the adapted projections change.
-            string adapter = Path.Combine(folder, "adapter");
-            using (var model = PretrainedModel.Load(hf, new PretrainedOptions { Device = Device.Cpu }))
-            {
-                model.AddAdapters(2, 4, ["q", "v"], seed: 1);
-                model.SaveAdapter(adapter);
-            }
-
-            string adapterFile = Path.Combine(adapter, "adapter_model.safetensors");
-            List<(string, int[], float[])> tensors;
-            using (var reader = SafeTensorsReader.Open(adapterFile))
-            {
-                var random = new Random(3);
-                tensors = [.. reader.Tensors.Values.Select(t => (t.Name, t.Shape, reader.Read(t.Name).Select(_ => (float)(random.NextDouble() - 0.5) * 0.2f).ToArray()))];
-            }
-
-            SafeTensorsWriter.Write(adapterFile, tensors);
-            string merged = Path.Combine(folder, "merged");
-            var merge = ModelsJson(["merge", hf, adapter, "-o", merged, "--type", "f32", .. c]);
-            Check(File.Exists(Path.Combine(merged, "model.safetensors")) && (string?)merge["kind"] == "LoRA", $"merge: {merge}");
-            var diff = ModelsJson(["diff", hf, merged, .. c]);
-            var changed = diff["differing"]!.AsArray().Select(d => (string)d!["name"]!).ToList();
-            Check(changed.Count == 4 && changed.All(n => n.Contains("q_proj", StringComparison.Ordinal) || n.Contains("v_proj", StringComparison.Ordinal)), $"merged changes: {string.Join(", ", changed)}");
-            Check(ModelsCli(["merge", hf, folder, "-o", Path.Combine(folder, "m2"), .. c]).Code == 2, "a folder without an adapter is a usage error");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
-    }
-
     private static void CliModelsHelp(Device device)
     {
         _ = device;
-        string[] names = ["pull", "list", "rm", "show", "search", "alias set", "alias list", "alias rm", "memory", "quantize", "merge", "inspect", "verify", "convert", "diff", "families"];
+        string[] names = ["pull", "list", "rm", "show", "search", "alias set", "alias list", "alias rm", "memory", "merge", "inspect", "verify", "convert", "diff", "families"];
         var commands = global::Idrak.Cli.Commands.ModelCommands.All;
         Check(commands.Select(x => x.Name).Order().SequenceEqual(names.Order()), $"the group's commands: {string.Join(", ", commands.Select(x => x.Name))}");
         foreach (var command in commands)

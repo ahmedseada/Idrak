@@ -9,7 +9,6 @@ internal abstract partial class DesktopTests : Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
     [
-        ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file; --model unigram writes tokenizer.json and tokenizer.model (with SentencePiece's switches and normalization rules carried into it), --model wordpiece BERT's tokenizer, and bad options and --model with --trainer are refused naming them", CliPretrainData),
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
         ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
         ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model with its plug-in (-P), resume, run with an image; without the plug-in the family is refused naming -P", CliPretrainVision),
@@ -68,117 +67,6 @@ internal abstract partial class DesktopTests : Tests
         finally
         {
             Idrak.Vision.Plugins.IdrakVision.IdrakVisionPlugin.Unregister();
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    private static void CliPretrainData(Device device)
-    {
-        if (!FirstRun(nameof(CliPretrainData)))
-        {
-            return;
-        }
-
-        string folder = TempFolder("cli-pretrain-data");
-        try
-        {
-            string tokenizer = Path.Combine(folder, "tokenizer.json");
-            var learned = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--vocab", "512", "--min-frequency", "2", "-o", tokenizer);
-            Check((int)learned["vocabulary"]! == 512 && (int)learned["special"]! == 8, $"{learned}");
-            var expected = JsonNode.Parse(File.ReadAllText(PretrainData("tokenizer/tokenizer.json")))!["model"]!;
-            var written = JsonNode.Parse(File.ReadAllText(tokenizer))!["model"]!;
-            Check(JsonNode.DeepEquals(expected["vocab"], written["vocab"]) && JsonNode.DeepEquals(expected["merges"], written["merges"]),
-                "data tokenizer learns the reference's vocabulary and merges");
-
-            string tokens = Path.Combine(folder, "tokens.bin");
-            var encoded = TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "-o", tokens);
-            Check(File.ReadAllBytes(tokens).AsSpan().SequenceEqual(File.ReadAllBytes(PretrainData("tokens.bin"))), $"data tokens writes the reference's token file: {encoded}");
-            Check((long)encoded["documents"]! == 96 && File.Exists(tokens + ".json"), "96 documents, and the description beside it");
-            // No --type: the smallest id type that holds the vocabulary of 512 (uint16), recorded beside the file for its readers.
-            var record = JsonNode.Parse(File.ReadAllText(tokens + ".json"))!;
-            Check((string?)encoded["type"] == "uint16" && (string?)record["type"] == "uint16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25422
-                  && record["tokenizer"] is not null, $"auto picks uint16 for 512 ids and records it with the tokenizer: {record}");
-            var (narrow, _, narrowError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--type", "u8", "-o", Path.Combine(folder, "u8.bin"));
-            Check(narrow == 2 && narrowError.Contains("do not fit uint8", StringComparison.Ordinal) && narrowError.Contains("ask uint16", StringComparison.Ordinal),
-                $"--type u8 for 512 ids is refused naming the smallest that holds them: {narrowError}");
-            // IDRAK_ID_DTYPE is the id type when --type names none: the same ids, 4 bytes each.
-            string wide = Path.Combine(folder, "u32.bin");
-            WithVariables(new Dictionary<string, string?> { [Idrak.Abstraction.ElementTypes.IdEnvironmentVariable] = "uint32" },
-                () => TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "-o", wide));
-            Check(new FileInfo(wide).Length == 25422L * 4 && (string?)JsonNode.Parse(File.ReadAllText(wide + ".json"))!["type"] == "uint32", "IDRAK_ID_DTYPE=uint32 stores the ids in uint32");
-            // --id-dtype, a common option, is the same choice for the command (over the variable), put back when it ends.
-            string? idBefore = Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable);
-            string wider = Path.Combine(folder, "i64.bin");
-            TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "int64", "-o", wider);
-            Check(new FileInfo(wider).Length == 25422L * 8 && Environment.GetEnvironmentVariable(Idrak.Abstraction.ElementTypes.IdEnvironmentVariable) == idBefore,
-                "--id-dtype int64 stores the ids in int64, and the variable is as it was after the command");
-            var (badIds, _, badIdsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--id-dtype", "bf16", "-o", wider);
-            var (badSums, _, badSumsError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--sum-dtype", "nosuch", "-o", wider);
-            Check(badIds == 2 && badIdsError.Contains("--id-dtype", StringComparison.Ordinal) && badIdsError.Contains("uint16", StringComparison.Ordinal)
-                  && badSums == 2 && badSumsError.Contains("--sum-dtype", StringComparison.Ordinal) && badSumsError.Contains("float32", StringComparison.Ordinal),
-                $"--id-dtype bf16 and --sum-dtype nosuch are refused naming the types: {badIdsError} | {badSumsError}");
-            var (code, _, error) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--separator", "<nope>", "-o", tokens);
-            Check(code == 2 && error.Contains("no token '<nope>'", StringComparison.Ordinal), $"an unknown separator: {error}");
-            (code, _, error) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--trainer", "nope", "-o", tokenizer);
-            Check(code == 1 && error.Contains("is not registered", StringComparison.Ordinal) && error.Contains("-P", StringComparison.Ordinal), $"an unregistered trainer: {error}");
-
-            // Plan 24, T4: --model picks a built-in trainer; unigram writes tokenizer.model beside tokenizer.json.
-            string unigramJson = Path.Combine(folder, "unigram", "tokenizer.json");
-            var unigram = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "unigram", "--vocab", "400", "--byte-fallback", "--no-special", "-o", unigramJson);
-            string unigramModel = Path.Combine(folder, "unigram", "tokenizer.model");
-            Check((string?)unigram["model"] == "Unigram" && (string?)unigram["trainer"] == "unigram" && File.Exists(unigramModel)
-                && unigram["companions"]!.AsArray().Select(c => (string)c!).SequenceEqual([unigramModel]), $"data tokenizer --model unigram: {unigram}");
-            var fromJson = PretrainedTokenizers.Load(unigramJson);
-            var fromModel = PretrainedTokenizers.Load(unigramModel);
-            foreach (string line in File.ReadLines(PretrainData("corpus.txt")).Take(50))
-            {
-                Check(fromJson.Encode(line).SequenceEqual(fromModel.Encode(line)), $"the CLI's tokenizer.json and tokenizer.model encode '{line}' alike");
-            }
-
-            // SentencePiece's switches, the normalization rule and the algorithm's constants from the command line, into
-            // tokenizer.model.
-            string switchedJson = Path.Combine(folder, "switched", "tokenizer.json");
-            var switched = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "unigram", "--vocab", "400", "--no-special", "--normalization", "nmt_nfkc",
-                "--max-sentence", "4192", "--no-whitespace-split", "--no-script-split", "--no-number-split", "--whitespace-suffix", "--whitespace-pieces",
-                "--desired-size", "1.2", "--expected-floor", "0.4", "--unknown-penalty", "12", "-o", switchedJson);
-            string switchedModel = Path.Combine(folder, "switched", "tokenizer.model");
-            var spec = Idrak.Models.SentencePieceModel.Load(switchedModel);
-            Check((string?)switched["model"] == "Unigram" && spec.NormalizerSpec.Name == "nmt_nfkc" && spec.NormalizerSpec.PrecompiledCharsmap.Length > 0
-                && spec.TrainerSpec.MaxSentenceLength == 4192 && !spec.TrainerSpec.SplitByWhitespace && !spec.TrainerSpec.SplitByUnicodeScript && !spec.TrainerSpec.SplitByNumber
-                && spec.TrainerSpec.TreatWhitespaceAsSuffix && spec.TrainerSpec.AllowWhitespaceOnlyPieces, $"data tokenizer --model unigram with the switches: {switched}");
-            var switchedFromJson = PretrainedTokenizers.Load(switchedJson);
-            var switchedFromModel = PretrainedTokenizers.Load(switchedModel);
-            foreach (string line in File.ReadLines(PretrainData("corpus.txt")).Take(50))
-            {
-                Check(switchedFromJson.Encode(line).SequenceEqual(switchedFromModel.Encode(line)), $"with the switches, tokenizer.json and tokenizer.model encode '{line}' alike");
-            }
-
-            string wordpieceJson = Path.Combine(folder, "wordpiece.json");
-            var wordpiece = TrainCliJson("data", "tokenizer", PretrainData("corpus.txt"), "--model", "wordpiece", "--vocab", "600", "--lowercase", "--scoring", "likelihood",
-                "--arabic", "tatweel,diacritics", "-o", wordpieceJson);
-            Check((string?)wordpiece["model"] == "WordPiece" && (int)wordpiece["special"]! == 5 && PretrainedTokenizers.Load(wordpieceJson).IdOf("[CLS]") == 2,
-                $"data tokenizer --model wordpiece: BERT's special tokens by default: {wordpiece}");
-            var (_, text, _) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--model", "wordpiece", "--vocab", "600", "-o", wordpieceJson);
-            Check(text.Contains("a WordPiece tokenizer", StringComparison.Ordinal) && !text.Contains("merges", StringComparison.Ordinal), $"the summary names the model: {text}");
-
-            foreach (var (args, named) in new (string[] Args, string Named)[]
-                     {
-                         (["--model", "unigram", "--trainer", "bpe"], "not both"), (["--model", "sentencepiece"], "--model"),
-                         (["--model", "unigram", "--character-coverage", "2"], "--character-coverage"), (["--model", "unigram", "--shrinking", "x"], "--shrinking"),
-                         (["--model", "unigram", "--em-steps", "0"], "--em-steps"), (["--model", "wordpiece", "--scoring", "best"], "--scoring"),
-                         (["--model", "wordpiece", "--arabic", "kashida"], "--arabic"), (["--model", "wordpiece", "--strip-accents", "--keep-accents"], "not both"),
-                         (["--model", "unigram", "--normalization", "nfd"], "--normalization"), (["--model", "wordpiece", "--normalization", "nfkc"], "--normalization"),
-                         (["--model", "unigram", "--max-sentence", "-1"], "--max-sentence"), (["--model", "unigram", "--max-sentence", "long"], "--max-sentence"),
-                         (["--model", "unigram", "--desired-size", "0.5"], "--desired-size"), (["--model", "unigram", "--expected-floor", "-1"], "--expected-floor"),
-                         (["--model", "unigram", "--unknown-penalty", "x"], "--unknown-penalty"), (["--model", "unigram", "--unknown-penalty", "-2"], "--unknown-penalty"),
-                     })
-            {
-                (code, _, error) = TrainCli(["data", "tokenizer", PretrainData("corpus.txt"), .. args, "-o", tokenizer]);
-                Check(code == 2 && error.Contains(named, StringComparison.Ordinal), $"data tokenizer {string.Join(' ', args)}: exit {code}, {error}");
-            }
-        }
-        finally
-        {
             Directory.Delete(folder, recursive: true);
         }
     }

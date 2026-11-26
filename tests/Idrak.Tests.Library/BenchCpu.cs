@@ -33,40 +33,17 @@ internal abstract partial class Tests
         {
             const int K = 1536, N = 32_000;
             using var weights = Tensor.From(Values(K * N), [K, N], device);
-            using var bf16 = BFloat16Weight.Convert(weights);
-            foreach (int rows in new[] { 1, 4, 8 })
-            {
-                using var x = Tensor.From(Values(rows * K), [rows, K], device);
-                Console.WriteLine($"{$"bfloat16 product {rows} x {K} x {N}",-44} {Time(() => x.MatMulBFloat16(bf16), 10),12}");
-            }
-
             const int Heads = 16, Dim = 128, Filled = 4000, Capacity = 4096;
             using var q = Tensor.From(Values(Heads * Dim), [Heads, 1, Dim], device);
             using var position = Tensor.From([Filled - 1f], [1], device);
-            foreach (var format in new[] { KeyValueFormat.Float32, KeyValueFormat.Int8, KeyValueFormat.BFloat16 })
+            foreach (var format in new[] { KeyValueFormat.Float32 })
             {
                 using var cache = new KeyValueCache(Heads, Capacity, Dim, device, format);
                 using var fill = Tensor.From(Values(Heads * Filled * Dim), [Heads, Filled, Dim], device);
                 using var zero = Tensor.From([0f], [1], device);
-                Action run;
-                if (format == KeyValueFormat.Float32)
-                {
-                    Tensor.WriteKeyValues(fill, cache.Keys, zero);
-                    Tensor.WriteKeyValues(fill, cache.Values, zero);
-                    run = () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f);
-                }
-                else if (format == KeyValueFormat.Int8)
-                {
-                    Tensor.WriteKeyValuesInt8(fill, cache.Keys, cache.KeyScales!, zero);
-                    Tensor.WriteKeyValuesInt8(fill, cache.Values, cache.ValueScales!, zero);
-                    run = () => Tensor.AttentionInt8(q, cache, position, 1, 0.088f, tiled: false);
-                }
-                else
-                {
-                    Tensor.WriteKeyValuesBFloat16(fill, cache.Keys, zero, Dim);
-                    Tensor.WriteKeyValuesBFloat16(fill, cache.Values, zero, Dim);
-                    run = () => Tensor.AttentionBFloat16(q, cache, position, 1, 0.088f, tiled: false);
-                }
+                Tensor.WriteKeyValues(fill, cache.Keys, zero);
+                Tensor.WriteKeyValues(fill, cache.Values, zero);
+                Action run = () => Tensor.AttentionDecode(q, cache, position, 1, 0.088f);
 
                 Console.WriteLine($"{$"attention, {format} cache, {Filled} positions",-44} {Time(run, 20),12}");
             }

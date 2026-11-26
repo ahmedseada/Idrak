@@ -49,7 +49,7 @@ internal abstract partial class Tests
             }
 
             var backend = device.Backend;
-            Console.WriteLine($"{device} ({backend.Name}): precision {MixedPrecision.Current}; milliseconds per call (forward / input gradient / weight gradient)");
+            Console.WriteLine($"{device} ({backend.Name}): milliseconds per call (forward / input gradient / weight gradient)");
             Console.WriteLine($"{"shape",-56} " + string.Join(" ", paths.Select(p => $"{p.Name,22}")));
             foreach (var (name, g, filters, groups) in shapes)
             {

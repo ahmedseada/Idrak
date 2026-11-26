@@ -46,7 +46,6 @@ internal abstract partial class DesktopTests : Tests
         ("plugins: t5: refused naming the cause: feed_forward_proj other than relu, gated-gelu and gated-silu, relative_attention_num_buckets odd or below 4, relative_attention_max_distance not above the exact buckets, an untied checkpoint without lm_head.weight, a tensor of another shape than the configuration's, a missing decoder tensor", T5Refused),
         ("engine: position bias steps: a decoding step's bias of the \"bucketed\" and \"relative\" kinds (one way and both ways) equals the row of the whole sequence's bias bit for bit, past the max distance and across the widening of the values by distance", PositionBiasSteps),
         ("engine: beam search on the device: BeamSearch.Decode choosing candidates where the logits are (SelectOnDevice) gives the host's hypotheses bit for bit on the CPU (tokens, scores, log-probabilities), with suppressed tokens, begin suppressions, a least length, the n-gram rule, a length penalty and both early-stopping rules; Seq2SeqGenerator.SelectBeamsOnDevice false gives the same", BeamsOnDevice),
-        ("pretrained: SafeTensorsReader.SameValues compares two tensors chunk by chunk (float32 and bfloat16 files of a sharded checkpoint, a difference in the last chunk, another shape, 0 and -0, NaN) as the whole arrays compare, without holding either, also through a RenamedTensorStore", SafeTensorsSameValues),
         ("plugins: t5: a tied checkpoint that also holds lm_head.weight: equal to the shared embedding, the head reads the one table (the parameters and logits of the checkpoint without it); one value apart, the head is its own", T5TiedHead),
         ("cli run: encoder-decoder: idrak run on the tiny T5 folder answers with transformers' greedy text (--temperature 0, \"stop\" at </s>, --json with the architecture, the tokens and the beams) and with the best of --beams 3; --schema, --system and --beams 0 refused naming the option; --beams on a decoder refused", CliRunSeq2Seq),
         ("t5 real: (the owner's: make_tiny_t5.py --real first) google-t5/t5-small and google/mt5-small from the cache give transformers' ids, encoder states and logits within 2e-3 and its greedy generation token for token", T5Real),
@@ -811,61 +810,6 @@ internal abstract partial class DesktopTests : Tests
             var fromHost = new Seq2SeqGenerator(model, tokenizer) { SelectBeamsOnDevice = false }.GenerateBeams(ids, beams);
             Check(fromDevice.Zip(fromHost).All(p => p.First.Tokens.SequenceEqual(p.Second.Tokens)) && fromDevice[0].Tokens.SequenceEqual(Ints(c["beam_early"]![0]!["ids"])),
                 "Seq2SeqGenerator: the same beams with SelectBeamsOnDevice off, transformers' best");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    // SameValues reads both tensors a chunk at a time: the answers of the whole arrays' comparison, and (warm) next to no
-    // allocation for two tensors of a million values and more.
-    private static void SafeTensorsSameValues(Device device)
-    {
-        _ = device;
-        string folder = EngineFolder("same-values");
-        try
-        {
-            int n = (1 << 20) + 37;
-            float[] d = [.. Enumerable.Range(0, n).Select(i => (float)(i % 256 - 128))];       // exact in bfloat16
-            float[] c = (float[])d.Clone(), a = (float[])d.Clone(), b = (float[])d.Clone(), h = (float[])d.Clone();
-            c[n - 1] += 1f;                                                                     // apart from d in the last chunk only
-            (a[0], b[0]) = (0f, -0f);                                                           // equal as floats
-            a[5] = b[5] = float.NaN;
-            h[0] = 0f;                                                                          // a with 0 where a holds NaN
-            SafeTensorsWriter.Write(Path.Combine(folder, "one.safetensors"), [("a", [n], a), ("b", [n], b), ("c", [n], c), ("d", [n], d), ("s", [1, n], d)]);
-            SafeTensorsWriter.Write(Path.Combine(folder, "two.safetensors"), [("g", [n], d), ("h", [n], h)], SafeTensorType.BF16);
-            var map = new JsonObject();
-            foreach (string name in new[] { "a", "b", "c", "d", "s" })
-            {
-                map[name] = "one.safetensors";
-            }
-
-            map["g"] = "two.safetensors";
-            map["h"] = "two.safetensors";
-            File.WriteAllText(Path.Combine(folder, "model.safetensors.index.json"), new JsonObject { ["weight_map"] = map }.ToJsonString());
-            using var reader = SafeTensorsReader.Open(folder);
-            var whole = new TensorDictionary();
-            foreach (string name in reader.Tensors.Keys)
-            {
-                whole.Add(name, reader.Tensors[name].Shape, reader.Read(name));
-            }
-
-            using var renamed = new RenamedTensorStore(reader, name => name[1..], ownsInner: false);
-            foreach (var (x, y, expected) in new[]
-                     {
-                         ("a", "b", true), ("d", "g", true), ("g", "g", true), ("c", "d", false), ("c", "g", false), ("s", "d", false), ("a", "h", false), ("a", "d", false),
-                     })
-            {
-                bool chunked = reader.SameValues(x, y), arrays = ((ITensorStore)whole).SameValues(x, y);
-                Check(chunked == expected && arrays == expected && renamed.SameValues("x" + x, "x" + y) == expected,
-                    $"SameValues({x}, {y}): chunked {chunked}, whole arrays {arrays}, expected {expected}");
-            }
-
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            Check(reader.SameValues("a", "b"), "a equals b");
-            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Check(allocated < 64 * 1024, $"SameValues of two tensors of {n} values allocated {allocated} bytes (warm): no whole copy");
         }
         finally
         {

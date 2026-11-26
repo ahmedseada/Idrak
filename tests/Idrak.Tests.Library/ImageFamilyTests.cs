@@ -20,7 +20,6 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] ImageFamilyGroup =
     [
         ("image families: the library registers no family; an unregistered architecture is refused naming ImageModelFamilies before any weight is opened; a config without an architecture, a folder without config.json and an ONNX file naming none are refused", ImageFamiliesRefuse),
-        ("image families: a family of the test reads a safetensors folder with StoredWeights (Conv2d, BatchNorm, Linear kept bfloat16 as stored; float32 when asked), matches the same layers built by hand, carries labels, preprocessing and notes; a description without a decoder or network is refused", ImageFamiliesLoadTensors),
         ("image families: an ONNX file finds its family by its \"architecture\" and \"config\" metadata (or the options), its network imported once and owned by the model", ImageFamiliesLoadOnnx),
         ("image families: DetectionDecoders has only the generic \"boxes-scores\" (rows and columns, xyxy, xywh, cxcywh, normalized, logits); an unknown name is refused naming the registry; an app's decoder over it falls back under FallBack", ImageFamiliesDecoders),
         ("image families: ModelDetector with a family's preprocessing maps boxes back through the resize and the center crop, per image size in one call, and takes a decoder by name; ModelSegmenter with a preprocessor (a crop refused); predictors refuse the wrong task", ImageFamiliesPredictors),
@@ -141,60 +140,6 @@ internal abstract partial class Tests
                 Notes = ["a note of the family's own"],
             };
             return change is null ? model : change(model);
-        }
-    }
-
-    internal static void ImageFamiliesLoadTensors(Device device)
-    {
-        string folder = TempFolder("image-tensors");
-        var (tensors, reference) = SmallClassifier(device);
-        try
-        {
-            SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors, SafeTensorType.BF16);
-            File.WriteAllText(Path.Combine(folder, "config.json"), $$$"""{"architectures": ["{{{TestFamily}}}"], "id2label": {"1": "dog", "0": "cat"}}""");
-            File.WriteAllText(Path.Combine(folder, "preprocessor_config.json"), """{"do_resize": true, "size": {"height": 8, "width": 8}, "resample": 2, "do_normalize": false}""");
-            ImageModelFamilies.Register(new SmallFamily(TestFamily));
-            ImageModelFamilies.Register(new SmallFamily("IdrakTestNoDecoder", m => m with { Task = ImageTask.Detection }));
-            ImageModelFamilies.Register(new SmallFamily("IdrakTestNoLabels", m => m with { Labels = [] }));
-            try
-            {
-                var options = new ImageModelOptions { Device = device };
-                using var model = ImageModels.Load(folder, options);
-                Check(model.Architecture == TestFamily && model.Task == ImageTask.Classification && model.Labels!.SequenceEqual(["cat", "dog"])
-                      && model.InputShape!.SequenceEqual([3, 8, 8]) && model.Preprocessor is { Height: 8, Normalize: false }, "the description");
-                Check(model.Notes.SequenceEqual(["read by the test's family", "a note of the family's own"]), $"notes: {string.Join("; ", model.Notes)}");
-                Check(!model.Network.IsTraining, "the network is in evaluation mode");
-                var fc = (Linear)model.Network.Children().Last();
-                Check(fc.BFloat16 is not null, "a bfloat16 checkpoint's fc weight stays bfloat16 (as stored)");
-
-                var x = Tensor.From(RandomArray(new Random(3), 2 * 3 * 8 * 8), [2, 3, 8, 8], device);
-                AssertClose(reference.Predict(x).ToArray(), model.Network.Predict(x).ToArray(), 1e-5f, "the family's network and the same layers by hand");
-                using (var wide = ImageModels.Load(Path.Combine(folder, "model.safetensors"), options with { Weights = EncoderWeights.Float32 }))
-                {
-                    Check(((Linear)wide.Network.Children().Last()).BFloat16 is null, "float32 asked for");
-                    AssertClose(reference.Predict(x).ToArray(), wide.Network.Predict(x).ToArray(), 1e-5f, "float32 weights; a .safetensors file names its folder");
-                }
-
-                ExpectRefusal<InvalidOperationException>(() => ImageModels.Load(folder, options with { Architecture = "IdrakTestNoDecoder" }), "a detector without a decoder name", "no decoder");
-                ExpectRefusal<InvalidOperationException>(() => ImageModels.Load(folder, options with { Architecture = "IdrakTestNoLabels" }), "an empty list of labels", "empty labels");
-
-                // A tensor missing: the error names it.
-                SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors.Where(t => t.Name != "bn.running_var"));
-                ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder, options), "'bn.running_var'", "a missing tensor");
-            }
-            finally
-            {
-                ImageModelFamilies.Unregister(TestFamily);
-                ImageModelFamilies.Unregister("IdrakTestNoDecoder");
-                ImageModelFamilies.Unregister("IdrakTestNoLabels");
-            }
-
-            Check(!ImageModelFamilies.Names.Contains(TestFamily), "unregistered");
-        }
-        finally
-        {
-            reference.Dispose();
-            Directory.Delete(folder, recursive: true);
         }
     }
 

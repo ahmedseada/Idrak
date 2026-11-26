@@ -40,8 +40,7 @@ internal abstract partial class Tests
 
     internal static FineTuningOptions SessionOptions(float rate = 5e-3f) => new()
     {
-        Rank = 4, Alpha = 8, LearningRate = rate, BatchTokens = 512, Seed = 7, CudaGraphs = false, Checkpointing = false, RecomputeFeedForward = false,
-        BFloat16Activations = false, Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings()),
+        Rank = 4, Alpha = 8, LearningRate = rate, BatchTokens = 512, Seed = 7, CudaGraphs = false, Checkpointing = false, RecomputeFeedForward = false, Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings()),
     };
 
     internal static float[] TrainedValues(PretrainedModel model) => [.. model.Network.TrainableParameters().SelectMany(p => p.ToArray())];
@@ -59,7 +58,7 @@ internal abstract partial class Tests
             var options = new FineTuningOptions
             {
                 Rank = 4, Alpha = 8, LearningRate = 3e-3f, BatchTokens = 200, Epochs = 3, GradientAccumulation = 64, Seed = 4, CudaGraphs = false,
-                Checkpointing = false, RecomputeFeedForward = false, BFloat16Activations = false,
+                Checkpointing = false, RecomputeFeedForward = false,
             };
             foreach (var (name, run, given) in new (string, FineTuningOptions, IFineTuningLoss?)[]
                      {

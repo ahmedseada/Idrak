@@ -25,7 +25,6 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] GenericComponentGroup =
     [
-        ("generic components: tensor store: RenamedTensorStore shows a map's names only or every name through a function, forwards shapes, values, formats, bfloat16 copies and transposed reads, folds weight-norm (both PyTorch schemes) when asked, refuses missing names, disposes the inner store only when it owns it, and OpenVoice's names read as its copy read them", GenericTensorStore),
         ("generic components: timings probe: time per operation by name and shape and per layer type and depth in a run of its own, the device waited for meanwhile and restored after, nothing subscribed outside the run", GenericTimingsProbe),
         ("generic components: char tokenizer: the default reads UTF-16 units with the ids it always gave on BMP text (and its file as before); whole code points read a surrogate pair as one id, a lone half as U+FFFD, the unknown character may be any code point, files carry the setting; GPT training's rune tokenizer gives the same ids; the tokenizer suite passes", GenericCharTokenizer),
         ("generic components: progress: the console, plain, json and quiet reporters pass the reporter suite (no allocation between showings); console redraws in place as the tool's line did, plain writes lines at intervals, json writes records, quiet nothing; the choice by option, IDRAK_PROGRESS (refused when unknown, in the tool too) or the output; an app's reporter registered and removed", GenericProgress),
@@ -49,67 +48,8 @@ internal abstract partial class DesktopTests : Tests
 
         public float[] Read(string name) => inner.Read(name);
 
-        public WeightFormat? FormatOf(string name) => name.EndsWith("half", StringComparison.Ordinal) ? WeightFormat.BFloat16 : null;
 
         public void Dispose() => Disposed++;
-    }
-
-    private static void GenericTensorStore(Device device)
-    {
-        _ = device;
-        var tensors = new TensorDictionary();
-        tensors.Add("vision.a.weight", [2, 3], [1, 2, 3, 4, 5, 6]);
-        tensors.Add("vision.b.half", [2], [7, 8]);
-        tensors.Add("dec.conv.weight_g", [2, 1, 1], [3f, 5f]);
-        tensors.Add("dec.conv.weight_v", [2, 1, 2], [3, 4, 0, 2]);
-        tensors.Add("dec.mlp.parametrizations.weight.original0", [1, 1], [2f]);
-        tensors.Add("dec.mlp.parametrizations.weight.original1", [1, 2], [0, 7]);
-        tensors.Add("plain.weight", [1, 2], [9, 10]);
-
-        // A map: only its names, forwarded to the stored ones.
-        var counting = new CountingStore(tensors);
-        var map = new RenamedTensorStore(counting, new Dictionary<string, string> { ["a.weight"] = "vision.a.weight", ["b.half"] = "vision.b.half" });
-        ITensorStore view = map;
-        Check(map.Names.Order(StringComparer.Ordinal).SequenceEqual(["a.weight", "b.half"]) && map.Contains("a.weight") && !map.Contains("vision.a.weight"), "a map shows its names only");
-        Check(map.ShapeOf("a.weight").SequenceEqual([2, 3]) && map.Read("a.weight").SequenceEqual([1f, 2, 3, 4, 5, 6]), "shapes and values forwarded");
-        Check(view.ReadTransposed("a.weight").SequenceEqual([1f, 4, 2, 5, 3, 6]), "a transposed read forwarded");
-        Check(view.FormatOf("b.half") == WeightFormat.BFloat16 && view.FormatOf("a.weight") is null, "the stored format forwarded");
-        ThrowsNaming<KeyNotFoundException>(() => map.Read("vision.a.weight"), "a name the map does not show", ["vision.a.weight"]);
-        map.Dispose();
-        Check(counting.Disposed == 1, "a store owning its inner store disposes it");
-
-        // A function with weight-norm folded, the inner store left open.
-        var counted = new CountingStore(tensors);
-        var renamed = new RenamedTensorStore(counted, name => name.StartsWith("decoder.", StringComparison.Ordinal) ? "dec." + name["decoder.".Length..] : name,
-            foldWeightNorm: true, ownsInner: false);
-        view = renamed;
-        Check(renamed.Contains("decoder.conv.weight") && renamed.Contains("decoder.mlp.weight") && renamed.Contains("plain.weight") && !renamed.Contains("decoder.none.weight"),
-            "a function shows every stored name, folded weights included");
-        Check(renamed.Names.SequenceEqual(tensors.Names), "a function's store lists the inner store's names");
-        AssertClose(StoredWeights.FoldWeightNorm([3f, 5f], [3f, 4, 0, 2], [2, 1, 2]), renamed.Read("decoder.conv.weight"), 0f, "weight_g and weight_v folded");
-        AssertClose([0f, 2f], renamed.Read("decoder.mlp.weight"), 1e-6f, "parametrizations folded");
-        Check(renamed.ShapeOf("decoder.conv.weight").SequenceEqual([2, 1, 2]) && renamed.Read("plain.weight").SequenceEqual([9f, 10f]), "a folded weight has the directions' shape; others pass through");
-        Check(view.FormatOf("decoder.conv.weight") is null && !((IBFloat16TensorStore)view).ReadBFloat16("decoder.conv.weight", false, new ushort[4], 2), "a folded weight is float32");
-        AssertClose([0f, 2f], view.ReadTransposed("decoder.mlp.weight"), 1e-6f, "a folded weight read transposed");
-        Check(renamed.Read("dec.conv.weight_g").SequenceEqual([3f, 5f]), "the gains themselves pass through");
-        ThrowsNaming<InvalidDataException>(() => renamed.Read("decoder.none.weight"), "a missing tensor", ["'dec.none.weight'", "'decoder.none.weight'"]);
-        var unfolded = new RenamedTensorStore(tensors, name => "dec." + name, ownsInner: false);
-        Check(!unfolded.Contains("conv.weight"), "nothing folded unless asked");
-        renamed.Dispose();
-        Check(counted.Disposed == 0, "a store not owning its inner store leaves it open");
-
-        // OpenVoice's names through the library's store: its copy read posterior_encoder.conv_pre.weight as enc_q.pre's
-        // weight_g and weight_v folded, flow.flows.1 as flow.flows.2, decoder.upsampler as dec.ups.
-        var voice = new TensorDictionary();
-        voice.Add("enc_q.pre.weight_g", [2, 1, 1], [1f, 2f]);
-        voice.Add("enc_q.pre.weight_v", [2, 1, 1], [4f, -3f]);
-        voice.Add("flow.flows.2.enc.bias", [1], [6f]);
-        voice.Add("dec.ups.0.weight", [1], [8f]);
-        voice.Add("ref_enc.x", [1], [5f]);
-        using var openVoice = OpenVoiceTensors.Over(voice);
-        Check(openVoice.Read("posterior_encoder.conv_pre.weight").SequenceEqual([1f, -2f]) && openVoice.Read("flow.flows.1.wavenet.bias").SequenceEqual([6f])
-              && openVoice.Read("decoder.upsampler.0.weight").SequenceEqual([8f]) && openVoice.Read("ref_enc.x").SequenceEqual([5f]),
-            "OpenVoice's names read as its own store read them");
     }
 
     // ------------------------------------------------------------------ G2: the timings probe
