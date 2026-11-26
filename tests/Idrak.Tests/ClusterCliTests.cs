@@ -13,6 +13,7 @@ using Idrak.Cli;
 using Idrak.Cluster;
 using Idrak.Layers;
 using Idrak.Networking.Abstractions;
+using Idrak.Networking.Transports;
 
 // Plan 23, phase C8a: the command line and calibration. idrak transports; cluster replay over C3's ClusterReplay;
 // cluster calibrate from a run's log and from a bench's JSON (a shared adapter included), the fitted profile then used by
@@ -333,7 +334,7 @@ internal abstract partial class DesktopTests : Tests
             // Two ranks over tcp in this process; the first host-value all-reduce measures (or reads) the chunk.
             long[] Run(ClusterOptions overrides)
             {
-                var (transports, topology, options) = RealGroup("tcp", 2, TimeSpan.FromSeconds(60));
+                var (transports, topology, options) = RealGroup(new TcpProvider(), 2, TimeSpan.FromSeconds(60));
                 options = options with { TuningFile = overrides.TuningFile, ChunkBytes = overrides.ChunkBytes, ChunkProbeBytes = overrides.ChunkProbeBytes };
                 var chunks = new long[2];
                 var ranks = Enumerable.Range(0, 2).Select(r => Task.Factory.StartNew(() =>
