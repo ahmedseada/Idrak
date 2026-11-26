@@ -337,8 +337,7 @@ public sealed class TransportSuite : ContractSuite<TransportUnderTest>
 /// for each case, every operation in turn on buffers with guard values past the count:
 /// <list type="bullet">
 /// <item>each rank reports its rank and the world size;</item>
-/// <item>all-reduce gives the sum (within float rounding of the sum in rank order; exactly for whole numbers, also on a
-/// bfloat16 wire), the largest and the smallest value, and every rank ends with identical bytes;</item>
+/// <item>all-reduce gives the sum (within float rounding of the sum in rank order; exactly for whole numbers), the largest and the smallest value, and every rank ends with identical bytes;</item>
 /// <item>all-gather puts each rank's values in rank order; reduce-scatter leaves each rank its slice of the sum; broadcast
 /// copies the root's values;</item>
 /// <item>values past the count are not touched;</item>
@@ -359,17 +358,16 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
         int seed = 1;
         foreach (int world in (int[])[2, 3, 4, 8])
         {
-            yield return Case($"{world} ranks, 1 whole value", world, 1, "whole", "f32", seed++);
-            yield return Case($"{world} ranks, 7 whole values on a bfloat16 wire", world, 7, "whole", "bf16", seed++);
-            yield return Case($"{world} ranks, 1,023 values", world, 1_023, "random", "f32", seed++);
-            yield return Case($"{world} ranks, 65,537 values", world, 65_537, "random", world == 8 ? "bf16" : "f32", seed++);
+            yield return Case($"{world} ranks, 1 whole value", world, 1, "whole", seed++);
+            yield return Case($"{world} ranks, 1,023 values", world, 1_023, "random", seed++);
+            yield return Case($"{world} ranks, 65,537 values", world, 65_537, "random", seed++);
         }
     }
 
     /// <inheritdoc />
     public override ContractCase RandomCase(Random random, bool large) =>
         Case("random", random.Next(2, large ? 9 : 6), random.Next(1, large ? 300_000 : 5_000), random.Next(2) == 0 ? "whole" : "random",
-            random.Next(3) == 0 ? "bf16" : "f32", random.Next());
+            random.Next());
 
     /// <inheritdoc />
     protected override string Describe(CollectivesUnderTest implementation) => implementation.Name;
@@ -379,18 +377,17 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
     {
         int world = (int)@case.Data["world"]!, count = (int)@case.Data["count"]!, seed = (int)@case.Data["seed"]!;
         bool whole = (string)@case.Data["values"]! == "whole";
-        var wire = (string)@case.Data["wire"]! == "bf16" ? WireType.BFloat16 : WireType.Float32;
         int root = seed % world;
         var inputs = Enumerable.Range(0, world).Select(r => Values(seed, r, count, whole)).ToArray();
         var scattered = Enumerable.Range(0, world).Select(r => Values(seed + 101, r, count * world, whole)).ToArray();
 
-        var first = RunGroup(implementation, world, count, wire, root, inputs, scattered, checks, report: true);
+        var first = RunGroup(implementation, world, count, root, inputs, scattered, checks, report: true);
         if (first is null)
         {
             return;
         }
 
-        var second = RunGroup(implementation, world, count, wire, root, inputs, scattered, checks, report: false);
+        var second = RunGroup(implementation, world, count, root, inputs, scattered, checks, report: false);
         if (second is not null)
         {
             bool same = first.Zip(second).All(p => p.First.Zip(p.Second).All(q => q.First.AsSpan().SequenceEqual(q.Second)));
@@ -437,7 +434,7 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
         var size = Magnitude((r, i) => inputs[r][i], count);
         var max = Reference((r, i) => inputs[r][i], count, ReduceOp.Max);
         var min = Reference((r, i) => inputs[r][i], count, ReduceOp.Min);
-        double epsilon = wire == WireType.BFloat16 ? 1.0 / 256 : 1.2e-7;
+        double epsilon = 1.2e-7;
         string? sumProblem = null, gatherProblem = null, scatterProblem = null, broadcastProblem = null, maxProblem = null;
         for (int r = 0; r < world && sumProblem is null; r++)
         {
@@ -461,7 +458,7 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
     }
 
     // One group: every operation on every rank; null when a rank failed (reported).
-    private static float[][][]? RunGroup(CollectivesUnderTest implementation, int world, int count, WireType wire, int root, float[][] inputs,
+    private static float[][][]? RunGroup(CollectivesUnderTest implementation, int world, int count, int root, float[][] inputs,
         float[][] scattered, CaseChecks checks, bool report)
     {
         var group = implementation.Connect(world, CaseTimeout);
@@ -508,7 +505,7 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
 
                 results[r] =
                 [
-                    Op(inputs[r], count, 0, (b, _) => c.AllReduce(b, count, ReduceOp.Sum, wire)),
+                    Op(inputs[r], count, 0, (b, _) => c.AllReduce(b, count, ReduceOp.Sum)),
                     Op(inputs[r], count, 0, (b, _) => c.AllReduce(b, count, ReduceOp.Max)),
                     Op(inputs[r], count, 0, (b, _) => c.AllReduce(b, count, ReduceOp.Min)),
                     Op(inputs[r], count, world * count, (b, o) => c.AllGather(b, count, o)),
@@ -580,8 +577,8 @@ public sealed class CollectivesSuite : ContractSuite<CollectivesUnderTest>
         return null;
     }
 
-    private static ContractCase Case(string name, int world, int count, string values, string wire, int seed) =>
-        new(name, new JsonObject { ["world"] = world, ["count"] = count, ["values"] = values, ["wire"] = wire, ["seed"] = seed });
+    private static ContractCase Case(string name, int world, int count, string values, int seed) =>
+        new(name, new JsonObject { ["world"] = world, ["count"] = count, ["values"] = values, ["seed"] = seed });
 }
 
 /// <summary>

@@ -64,7 +64,7 @@ internal sealed class KernelsDumpCommand : Command
         if (context.Option("--target") is { } named)
         {
             target = GcnIsaVersion.TryParse(named, out var parsed) && GcnTargets.TryFor(parsed, out _) ? parsed
-                : throw new UsageException($"--target {named}: not a GCN target a registered family handles (families: {string.Join(", ", GcnTargets.Names)}).");
+                : throw new UsageException($"--target {named}: not a GCN target a family handles (families: {string.Join(", ", GcnTargets.All.Select(f => f.Family))}).");
         }
 
         string folder = Path.GetFullPath(context.Option("--out") ?? "kernels");

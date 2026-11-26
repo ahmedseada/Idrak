@@ -107,9 +107,6 @@ public sealed class GlyphPoseSuite(IReadOnlyList<IReadOnlyDictionary<string, str
         }
     }
 
-    /// <inheritdoc />
-    protected override string Describe(IGlyphPose implementation) => $"{implementation.Name} ({implementation.GetType().Name})";
-
     private static ContractCase Case(string name, int settings, int line, float size, int seed, int length) =>
         new(name, new JsonObject { ["settings"] = settings, ["line"] = line, ["size"] = size, ["seed"] = seed, ["length"] = length });
 }

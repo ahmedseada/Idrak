@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of an optimizer kind (<see cref="IOptimizerKind"/>, registered in <see cref="OptimizerKinds"/>), each case a
+/// The checks of an optimizer kind (<see cref="IOptimizerKind"/>, registered in <c>OptimizerKinds</c>), each case a
 /// few parameters of random values pulled towards targets at least 0.2 away by a squared loss for a few steps (rates up to
 /// 0.03, momentum up to 0.5, so a descent method moves towards them):
 /// <list type="bullet">
@@ -82,9 +82,6 @@ public sealed class OptimizerKindSuite(IOptimizerKind? reference = null, Device?
             checks.Compare("the reference's values", Comparisons.Difference(Flat(expected.Values), Flat(result.Values), Tolerance));
         }
     }
-
-    /// <inheritdoc />
-    protected override string Describe(IOptimizerKind implementation) => $"{implementation.GetType().Name} '{implementation.Name}'";
 
     // The case's parameters trained by `kind`: their values after the steps, the loss before each step and after the
     // last, and the untouched parameter's values (cases without weight decay); construction checked when `checks` is given.
@@ -226,9 +223,6 @@ public sealed class LearningRateScheduleSuite(ILearningRateSchedule? reference =
             checks.Compare("the reference's rates", Comparisons.Difference([.. expected.Select(r => r / rate)], [.. rates.Select(r => r / rate)], Tolerance));
         }
     }
-
-    /// <inheritdoc />
-    protected override string Describe(ILearningRateSchedule implementation) => $"{implementation.GetType().Name} '{implementation.Name}'";
 
     // The rate of each step of a schedule of an SGD over one parameter at `rate`; what it works from checked when `checks` is given.
     private static float[] Rates(ILearningRateSchedule kind, LearningRateScheduleSettings settings, int steps, float rate, CaseChecks? checks)

@@ -7,7 +7,7 @@ using Idrak.Abstraction.Text;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of text habits (<see cref="ITextHabits"/>, registered in <see cref="TextHabits"/>) on sample texts:
+/// The checks of text habits (<see cref="ITextHabits"/>, registered in <c>TextHabits</c>) on sample texts:
 /// <list type="bullet">
 /// <item>at chance 0 every text comes back as it was;</item>
 /// <item>the same text and seed give the same result, at every chance;</item>

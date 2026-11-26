@@ -159,9 +159,6 @@ public sealed class GlyphSourceSuite : ContractSuite<IGlyphSource>
         checks.Compare("the same glyphs again and from several threads", again ?? parallel.Select(p => Different(found, p)).FirstOrDefault(d => d is not null));
     }
 
-    /// <inheritdoc />
-    protected override string Describe(IGlyphSource implementation) => $"{implementation.Name} ({implementation.GetType().Name})";
-
     private static void CheckRefusal(IGlyphSource implementation, CaseChecks checks)
     {
         try

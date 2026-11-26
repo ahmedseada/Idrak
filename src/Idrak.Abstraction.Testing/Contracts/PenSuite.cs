@@ -108,9 +108,6 @@ public sealed class PenSuite(IReadOnlyList<IReadOnlyDictionary<string, string>>?
         }
     }
 
-    /// <inheritdoc />
-    protected override string Describe(IPen implementation) => $"{implementation.Name} ({implementation.GetType().Name})";
-
     // The distance from (x, y) to the path's polyline (through its first point again when closed).
     private static float Distance(float x, float y, PenPoint[] path, bool closed)
     {

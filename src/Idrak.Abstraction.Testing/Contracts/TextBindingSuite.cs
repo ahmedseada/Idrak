@@ -91,9 +91,6 @@ public sealed class TextBindingSuite(IReadOnlyList<IReadOnlyDictionary<string, s
             $"label '{string.Join(" / ", bound.Label)}', drawn '{string.Join(" / ", expected)}'");
     }
 
-    /// <inheritdoc />
-    protected override string Describe(ITextBinding implementation) => $"{implementation.Name} ({implementation.GetType().Name})";
-
     private static bool IsSubsequence(List<string> units, string[] source)
     {
         int at = 0;

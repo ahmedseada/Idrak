@@ -15,55 +15,6 @@ namespace Idrak.Abstraction.Testing;
 /// </summary>
 public static class Conformance
 {
-    /// <summary>
-    /// Checks the kernel a plug-in operation runs on <paramref name="device"/> (<see cref="PluginOperation{TKernel}.KernelFor"/>:
-    /// a kernel registered for its kind, or the default) against the operation's default kernel on the CPU, on
-    /// <paramref name="cases"/> cases. <paramref name="run"/> makes one case from its seed on the backend it is given
-    /// (uploads the inputs, calls the kernel with that backend, downloads the outputs) and returns the outputs; they must
-    /// agree within <paramref name="tolerance"/> (<see cref="Comparisons.Close(float, float, float)"/>).
-    /// </summary>
-    /// <example>
-    /// <code>
-    /// Conformance.Check(MyOps.ScaleRows, Device.Get("vulkan:0"), (backend, kernel, seed) =&gt;
-    /// {
-    ///     // inputs from new Random(seed), uploaded to backend; kernel(backend, ...); the outputs downloaded
-    /// }).ThrowIfFailed();
-    /// </code>
-    /// </example>
-    public static ConformanceReport Check<TKernel>(PluginOperation<TKernel> operation, Device device, Func<Backend, TKernel, int, float[]> run, int cases = 8, float tolerance = 1e-5f)
-        where TKernel : Delegate
-    {
-        ArgumentNullException.ThrowIfNull(operation);
-        ArgumentNullException.ThrowIfNull(device);
-        ArgumentNullException.ThrowIfNull(run);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cases);
-        var backend = device.Backend;
-        var source = Kernels.Chain(backend)[operation.Index].Source;
-        var failures = new List<ConformanceFailure>();
-        for (int seed = 0; seed < cases; seed++)
-        {
-            string? difference;
-            try
-            {
-                var expected = run(Device.Cpu.Backend, operation.DefaultKernel, seed);
-                var actual = run(backend, operation.KernelFor(backend), seed);
-                difference = Comparisons.Difference(expected, actual, tolerance);
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                difference = $"{e.GetType().Name}: {e.Message}";
-            }
-
-            if (difference is not null)
-            {
-                failures.Add(new ConformanceFailure(operation.Name, $"seed {seed}", difference));
-            }
-        }
-
-        var entry = new CheckEntry(operation.Name, failures.Count == 0 ? CheckStatus.Passed : CheckStatus.Failed,
-            $"the {source.ToString().ToLowerInvariant()} kernel against the default on the CPU, {cases} cases");
-        return new ConformanceReport($"{operation.Name} on {device} ({device.Name})", [entry], failures, cases);
-    }
 
     /// <summary>Runs a contract's suite (fixed cases, then random ones) on an implementation.</summary>
     public static ConformanceReport Check<T>(T implementation, ContractSuite<T> suite, ContractCheckOptions? options = null)
@@ -89,24 +40,6 @@ public static class Conformance
     /// </summary>
     public static ConformanceReport CheckPretrained(IPretrainedTokenizer tokenizer, IPretrainedTokenizer? reference = null, ContractCheckOptions? options = null) =>
         Check(tokenizer, new PretrainedTokenizerSuite(reference), options);
-
-    /// <summary>
-    /// Checks the RoPE scaling registered as <paramref name="type"/> (or <paramref name="method"/>, when given)
-    /// against the library's method of that name (<see cref="RopeScalings.Default"/>): as many frequencies, finite and
-    /// positive, the same frequencies and attention factor within a tolerance, the same per position, and safe to call
-    /// from several threads (<see cref="RopeScalingSuite"/>).
-    /// </summary>
-    public static ConformanceReport CheckRopeScaling(string type, IRopeScaling? method = null, ContractCheckOptions? options = null) =>
-        Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
-
-    /// <summary>
-    /// Checks the progress reporter registered as <paramref name="name"/> (or <paramref name="kind"/>, when given;
-    /// <see cref="ProgressReporterSuite"/>): it starts as asked, reports and advances (from several threads too) add up,
-    /// a report between showings allocates nothing and does not ask for the detail, the next stage starts afresh, and
-    /// nothing is written after the end. Eight random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    public static ConformanceReport CheckProgressReporter(string name, IProgressReporterKind? kind = null, ContractCheckOptions? options = null) =>
-        Check(kind ?? ProgressReporters.Get(name), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
 
     /// <summary>
     /// Checks a keyword index (Idrak.Text's <c>KeywordIndexes</c>, given as <see cref="KeywordIndexUnderTest"/>;
@@ -153,139 +86,6 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks the fill-in-the-middle format registered as <paramref name="name"/> (or <paramref name="format"/>, when
-    /// given; <see cref="FillInMiddleFormatSuite"/>) with <paramref name="tokenizer"/>, which has its tokens: it detects
-    /// the tokenizer, the prompt holds the prefix and suffix, its ids are its text's, its stops are tokens, a longer prefix
-    /// keeps the text up to the old prefix's end, the snippets it holds are in it, the same prompt again and from several
-    /// threads, and, given a <paramref name="reference"/>, the same prompts.
-    /// </summary>
-    public static ConformanceReport CheckFillInMiddleFormat(string name, IPretrainedTokenizer tokenizer, IFillInMiddleFormat? format = null,
-        IFillInMiddleFormat? reference = null, ContractCheckOptions? options = null) =>
-        Check(format ?? FillInMiddleFormats.Get(name), new FillInMiddleFormatSuite(tokenizer, reference), options);
-
-    /// <summary>
-    /// Checks the text habits registered as <paramref name="name"/> (or <paramref name="habits"/>, when given;
-    /// <see cref="TextHabitsSuite"/>) on <paramref name="texts"/>: nothing changes at chance 0, the same seed gives the
-    /// same texts, at chance 1 the texts the habits hold for change and <paramref name="untouched"/> does not, the same
-    /// from several threads, and the library's set of that name agrees when an app's is checked.
-    /// </summary>
-    public static ConformanceReport CheckTextHabits(string name, IReadOnlyList<string> texts, string untouched, Idrak.Abstraction.Text.ITextHabits? habits = null,
-        ContractCheckOptions? options = null) =>
-        Check(habits ?? Idrak.Abstraction.Text.TextHabits.Get(name), new TextHabitsSuite(texts, untouched, habits is null ? null : Idrak.Abstraction.Text.TextHabits.Default(name)), options);
-
-    /// <summary>
-    /// Checks the font mapper registered as <paramref name="name"/> (or <paramref name="mapper"/>, when given;
-    /// <see cref="FontMapperSuite"/>) on <paramref name="legacy"/>, a font <paramref name="map"/> fits, and
-    /// <paramref name="unicode"/>, one that answers the map's letters itself: the legacy font fits and answers each letter
-    /// with the font's glyph, each form is reached through the made substitutions, a map of glyph ids answers its glyphs,
-    /// the other font is not mapped and stays the same face, the same answers from several threads, and bad maps are
-    /// refused naming the key.
-    /// </summary>
-    public static ConformanceReport CheckFontMapper(string name, IFontFace legacy, FontMap map, IFontFace unicode, IFontMapper? mapper = null,
-        ContractCheckOptions? options = null) =>
-        Check(mapper ?? FontMappers.Get(name), new FontMapperSuite(legacy, map, unicode), options);
-
-    /// <summary>
-    /// Checks the reading order registered as <paramref name="name"/> (or <paramref name="order"/>, when given;
-    /// <see cref="ReadingOrderSuite"/>): its columns reorder the line's characters, a line of its own direction keeps its
-    /// order, a reading turned back gives the same columns (and the text itself when <paramref name="invertible"/>), the
-    /// same again and from several threads, and agrees with the library's order of that name when there is one.
-    /// </summary>
-    public static ConformanceReport CheckReadingOrder(string name, IReadingOrder? order = null, bool invertible = false, ContractCheckOptions? options = null) =>
-        Check(order ?? ReadingOrders.Get(name), new ReadingOrderSuite(order is null ? null : ReadingOrders.Default(name), invertible), options);
-
-    /// <summary>
-    /// Checks a document format (<see cref="DocumentFormatSuite"/>) on files of its own: it accepts their first bytes and
-    /// refuses other formats', its pages count and read with every run inside its page, the same in parallel as one by one,
-    /// images decode or name their encoding, tight limits fail naming the limit, and damaged files fail with an
-    /// <see cref="InvalidDataException"/>, never another exception. Twelve random (damaged) cases unless
-    /// <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="format">The format.</param>
-    /// <param name="samples">Files in its format (at least one valid one), with what they hold when known.</param>
-    /// <param name="foreign">File starts it must refuse; null for <see cref="DocumentFormatSuite.DefaultForeign"/>.</param>
-    /// <param name="documentOptions">The options documents are opened with; null for the defaults.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckDocumentFormat(IDocumentFormat format, IReadOnlyList<DocumentSample> samples, IReadOnlyList<byte[]>? foreign = null,
-        DocumentOptions? documentOptions = null, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(format);
-        return Check(format, new DocumentFormatSuite(samples, foreign, documentOptions), options ?? new ContractCheckOptions { RandomCases = 12 });
-    }
-
-    /// <summary>
-    /// Checks a document writer (<see cref="DocumentWriterSuite"/>): pages of images, paths, text (in <paramref name="face"/>,
-    /// when given), information and an attached file written twice to the same bytes and read back exactly through
-    /// <paramref name="reader"/> (by default the registered format of the writer's name), and a page's memory bounded. Four
-    /// random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="writer">The writer.</param>
-    /// <param name="reader">The format its files are read back with; null for <see cref="DocumentFormats.Get"/> of its name.</param>
-    /// <param name="face">A font for the text pages; null leaves text out.</param>
-    /// <param name="writeOptions">The options documents are written with; null for the defaults.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckDocumentWriter(IDocumentWriter writer, IDocumentFormat? reader = null, IFontFace? face = null, DocumentWriteOptions? writeOptions = null,
-        ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        return Check(writer, new DocumentWriterSuite(reader ?? DocumentFormats.Get(writer.Name), face, writeOptions), options ?? new ContractCheckOptions { RandomCases = 4 });
-    }
-
-    /// <summary>
-    /// Checks a page drawer (<see cref="DocumentPageDrawerSuite"/>) on pages of known paths, glyph runs (in
-    /// <paramref name="face"/>, when given) and images: the page's size, its background, fills and glyphs within
-    /// <paramref name="tolerance"/> of the rasterizer's own coverage, both fill rules, strokes, images in their boxes, parts
-    /// left out when asked, hidden text only when asked, a missing font counted and never thrown, the same pixels again and
-    /// from several threads. Four random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="drawer">The drawer.</param>
-    /// <param name="face">A font for the glyph runs; null leaves them out.</param>
-    /// <param name="tolerance">How far, on average, a drawing may be from the rasterizer's coverage.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckDocumentPageDrawer(IDocumentPageDrawer drawer, IFontFace? face = null, float tolerance = 0.02f, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(drawer);
-        return Check(drawer, new DocumentPageDrawerSuite(face, tolerance), options ?? new ContractCheckOptions { RandomCases = 4 });
-    }
-
-    /// <summary>
-    /// Checks a font writer (<see cref="FontWriterSuite"/>) on <paramref name="faces"/>: each written whole and as subsets to
-    /// the same bytes every time, read back (through <see cref="FontFormats"/>, or <paramref name="read"/>) with the same
-    /// metrics, advances, outlines (the same points when <paramref name="exact"/>), characters and shaping; a subset keeping
-    /// its glyphs and their ids. Six random subsets unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="writer">The writer.</param>
-    /// <param name="faces">The faces written.</param>
-    /// <param name="exact">Whether outlines read back with the same points.</param>
-    /// <param name="read">Reads a written file back as a face; null for <see cref="FontFormats.Read(ReadOnlyMemory{byte}, string)"/>'s first.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckFontWriter(IFontWriter writer, IReadOnlyList<IFontFace> faces, bool exact = true, Func<ReadOnlyMemory<byte>, IFontFace>? read = null,
-        ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        return Check(writer, new FontWriterSuite(faces, exact, read), options ?? new ContractCheckOptions { RandomCases = 6 });
-    }
-
-    /// <summary>
-    /// Checks an outline tracer (<see cref="OutlineTracerSuite"/>) on the suite's shapes and <paramref name="outlines"/>,
-    /// filled into coverage at several sizes and sub-pixel places: the promised tolerance a finite number of pixels, no ink
-    /// traced to an empty outline, the traced outline filled again within the tolerance of the coverage both ways, one
-    /// winding, holes kept, the same outline again and from several threads, an option it does not take refused. Twelve
-    /// random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="tracer">The tracer.</param>
-    /// <param name="outlines">Outlines of one's own to trace besides the suite's (a font's glyphs); null for none.</param>
-    /// <param name="unitsPerEm">The em of <paramref name="outlines"/>, in font units.</param>
-    /// <param name="settings">Option sets to read the tracer's settings from besides its defaults.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckOutlineTracer(IOutlineTracer tracer, IReadOnlyList<GlyphOutline>? outlines = null, int unitsPerEm = 1000,
-        IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(tracer);
-        return Check(tracer, new OutlineTracerSuite(outlines, unitsPerEm, settings), options ?? new ContractCheckOptions { RandomCases = 12 });
-    }
-
-    /// <summary>
     /// Checks a glyph source (<see cref="GlyphSourceSuite"/>) on images of its own, as given, padded with paper and blank:
     /// every glyph on the image with ink and inside its cell or ink piece, labelled once, the known text's characters all
     /// accounted for or reported, the glyphs known found where they are, no glyph on a blank page, the same glyphs again
@@ -300,66 +100,6 @@ public static class Conformance
         ArgumentNullException.ThrowIfNull(source);
         return Check(source, new GlyphSourceSuite(samples), options ?? new ContractCheckOptions { RandomCases = 6 });
     }
-
-    /// <summary>
-    /// Checks a font maker (<see cref="FontMakerSuite"/>) on glyphs of its own, whole and as random parts: every glyph made
-    /// (each fill once) or reported, every character answering with its first fill, each glyph where its ink sat, advances
-    /// holding the ink, the metrics measured, the face written as TrueType and read back the same, the same face again and
-    /// from several threads, no glyphs refused, an option it does not take refused. Two random parts unless
-    /// <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="maker">The maker.</param>
-    /// <param name="samples">Glyphs in its kind (at least one sample).</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckFontMaker(IFontMaker maker, IReadOnlyList<FontMakerSample> samples, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(maker);
-        return Check(maker, new FontMakerSuite(samples), options ?? new ContractCheckOptions { RandomCases = 2 });
-    }
-
-    /// <summary>
-    /// Checks a shape (<see cref="ShapeSuite"/>): the same plan for the same step and context, regions inside the box
-    /// asked for and not overlapping, widths honoured from the start side, paths inside the box give or take their
-    /// stroke, and an option it does not take refused; on <paramref name="steps"/> (its name alone when none: give steps
-    /// for a shape that needs options, such as a polyline's points).
-    /// </summary>
-    public static ConformanceReport CheckShape(string name, IShape? shape = null, IReadOnlyList<ShapeStep>? steps = null, ContractCheckOptions? options = null) =>
-        Check(shape ?? Shapes.Get(name), new ShapeSuite(steps is { Count: > 0 } ? steps : [new ShapeStep(name)]), options);
-
-    /// <summary>
-    /// Checks a pen (<see cref="PenSuite"/>): the same stroke for the same seed, every point within what it declares it
-    /// strays, widths above 0 and inks from 0 to 1, and with <paramref name="exact"/> the path itself; with its defaults and
-    /// each of <paramref name="settings"/>.
-    /// </summary>
-    public static ConformanceReport CheckPen(string name, IPen? pen = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, bool exact = false,
-        ContractCheckOptions? options = null) =>
-        Check(pen ?? Pens.Get(name), new PenSuite(settings, exact), options);
-
-    /// <summary>
-    /// Checks a glyph pose (<see cref="GlyphPoseSuite"/>): the same pose for the same input (one pose a cluster), every
-    /// pose within the bounds its settings declare, neighbouring clusters changing only smoothly, and with
-    /// <paramref name="identity"/> every pose the identity; with its defaults and each of <paramref name="settings"/>.
-    /// </summary>
-    public static ConformanceReport CheckGlyphPose(string name, IGlyphPose? pose = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null, bool identity = false,
-        ContractCheckOptions? options = null) =>
-        Check(pose ?? GlyphPoses.Get(name), new GlyphPoseSuite(settings, identity), options);
-
-    /// <summary>
-    /// Checks a text binding (<see cref="TextBindingSuite"/>): a text per region, the same for the same seed, the texts
-    /// units of the lines in order, and the label exactly the drawn text a line a group; with its defaults and each of
-    /// <paramref name="settings"/>.
-    /// </summary>
-    public static ConformanceReport CheckTextBinding(string name, ITextBinding? binding = null, IReadOnlyList<IReadOnlyDictionary<string, string>>? settings = null,
-        ContractCheckOptions? options = null) =>
-        Check(binding ?? TextBindings.Get(name), new TextBindingSuite(settings), options);
-
-    /// <summary>
-    /// Checks a page layout (<see cref="PageLayoutSuite"/>) drawing <paramref name="contents"/> in <paramref name="style"/>
-    /// (its fonts the caller's): the same seed draws the same page, the text is exactly the drawn text, and every part
-    /// with text is inside the page and inked. Four random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    public static ConformanceReport CheckPageLayout(string name, PageStyle style, IReadOnlyList<PageContent> contents, IPageLayout? layout = null, ContractCheckOptions? options = null) =>
-        Check(layout ?? PageLayouts.Get(name), new PageLayoutSuite(style, contents), options ?? new ContractCheckOptions { RandomCases = 4 });
 
     /// <summary>
     /// Checks a network recipe (Idrak's <c>NetworkRecipes</c>, given as <see cref="NetworkRecipeUnderTest"/>;
@@ -389,16 +129,6 @@ public static class Conformance
         ArgumentNullException.ThrowIfNull(encoder);
         return Check(encoder, new VisionEncoderSuite(cpu, samples, tolerance, visionOptions) { On = encoder.Device }, options ?? new ContractCheckOptions { RandomCases = 6 });
     }
-
-    /// <summary>
-    /// Checks the kind of message part registered as <paramref name="name"/> (or <paramref name="kind"/>, when given): it
-    /// reads parts of its kind, writes JSON that reads back to an equal part, the same every time, and agrees with the
-    /// library's kind of that name when there is one (<see cref="ChatPartKindSuite"/>). A kind of your own needs
-    /// <paramref name="samples"/>, parts of it as JSON.
-    /// </summary>
-    public static ConformanceReport CheckChatPartKind(string name, IChatPartKind? kind = null, IReadOnlyList<System.Text.Json.Nodes.JsonObject>? samples = null,
-        ContractCheckOptions? options = null) =>
-        Check(kind ?? ChatParts.Get(name), new ChatPartKindSuite(name, samples), options);
 
     /// <summary>
     /// Checks a fine-tuning data format (Idrak.Text's <c>ITuningDataFormat</c>, given as its reading: a path in, each
@@ -587,33 +317,6 @@ public static class Conformance
         return Check(profile, new LinkProfileSuite(), options ?? new ContractCheckOptions { RandomCases = 4 });
     }
 
-    /// <summary>
-    /// Checks the optimizer kind registered as <paramref name="name"/> (or <paramref name="kind"/>, when given;
-    /// <see cref="OptimizerKindSuite"/>): it updates the parameters it was given at the rate asked for, its steps lower a
-    /// squared loss with every value finite, a parameter the loss does not reach keeps its values, the same case gives the
-    /// same values, and it agrees with the library's kind of that name when there is one (and it is not that one). Eight
-    /// random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    public static ConformanceReport CheckOptimizerKind(string name, IOptimizerKind? kind = null, Device? device = null, ContractCheckOptions? options = null)
-    {
-        var checkedKind = kind ?? OptimizerKinds.Get(name);
-        var library = OptimizerKinds.Default(name);
-        return Check(checkedKind, new OptimizerKindSuite(ReferenceEquals(checkedKind, library) ? null : library, device), options ?? new ContractCheckOptions { RandomCases = 8 });
-    }
-
-    /// <summary>
-    /// Checks the learning-rate schedule registered as <paramref name="name"/> (or <paramref name="schedule"/>, when given;
-    /// <see cref="LearningRateScheduleSuite"/>): it works from the optimizer and its rate, every rate is finite, not
-    /// negative and not above the optimizer's, the same settings give the same rates, and it agrees with the library's
-    /// schedule of that name when there is one (and it is not that one).
-    /// </summary>
-    public static ConformanceReport CheckLearningRateSchedule(string name, ILearningRateSchedule? schedule = null, ContractCheckOptions? options = null)
-    {
-        var checkedSchedule = schedule ?? LearningRateSchedules.Get(name);
-        var library = LearningRateSchedules.Default(name);
-        return Check(checkedSchedule, new LearningRateScheduleSuite(ReferenceEquals(checkedSchedule, library) ? null : library), options);
-    }
-
     /// <summary>Checks a cluster topology (plan 23, <see cref="TopologySuite"/>).</summary>
     /// <param name="topology">The topology.</param>
     /// <param name="options">The cases to run.</param>
@@ -623,108 +326,4 @@ public static class Conformance
         return Check(topology, new TopologySuite(), options ?? new ContractCheckOptions { RandomCases = 2 });
     }
 
-    /// <summary>
-    /// Checks an environment kind and the environments it creates (<see cref="EnvironmentSuite{TObservation, TAction}"/>)
-    /// on episodes played with actions from <paramref name="act"/>: the kind's types and option keys, the reset and step
-    /// rules (no step before a reset or after an episode ended), observations in their space and finite rewards, a seeded
-    /// replay giving the same steps (the environment reset again, a new one, two at once), and cancellation. Four random
-    /// cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <example>
-    /// <code>
-    /// Conformance.CheckEnvironmentKind&lt;float[], int&gt;(EnvironmentKinds.Get("cartpole"), (random, _) =&gt; random.Next(2)).ThrowIfFailed();
-    /// </code>
-    /// </example>
-    /// <param name="kind">The kind.</param>
-    /// <param name="act">An action for an observation, drawn from the random source given.</param>
-    /// <param name="kindOptions">The kind's options for every environment created; null for its defaults.</param>
-    /// <param name="maxSteps">The steps an episode may take before the suite stops it.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckEnvironmentKind<TObservation, TAction>(IEnvironmentKind kind, Func<Random, TObservation, TAction> act,
-        IReadOnlyDictionary<string, string>? kindOptions = null, int maxSteps = 64, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(kind);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxSteps);
-        return Check(kind, new EnvironmentSuite<TObservation, TAction>(act, kindOptions) { MaxSteps = maxSteps }, options ?? new ContractCheckOptions { RandomCases = 4 });
-    }
-
-    /// <summary>
-    /// Checks a reward function on answers of its own (<see cref="RewardFunctionSuite"/>): a finite score per input, a
-    /// batch scoring what its inputs score one by one, the same scores again and from two calls at once, options and
-    /// cancellation, and, given a <paramref name="reference"/> (by default the library's reward of that name, when there
-    /// is one and it is not the one checked), the same scores. Eight random cases unless <paramref name="options"/> says
-    /// otherwise.
-    /// </summary>
-    /// <param name="reward">The reward function.</param>
-    /// <param name="samples">The answers it is checked on.</param>
-    /// <param name="rewardOptions">Its options for every call; null for its defaults.</param>
-    /// <param name="reference">The reward to agree with; null for the library's of that name.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckRewardFunction(IRewardFunction reward, IReadOnlyList<RewardInput> samples, IReadOnlyDictionary<string, string>? rewardOptions = null,
-        IRewardFunction? reference = null, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(reward);
-        reference ??= RewardFunctions.Default(reward.Name) is { } library && !ReferenceEquals(library, reward) ? library : null;
-        return Check(reward, new RewardFunctionSuite(samples, rewardOptions, reference), options ?? new ContractCheckOptions { RandomCases = 8 });
-    }
-
-    /// <summary>
-    /// Checks an advantage estimator (<see cref="AdvantageEstimatorSuite"/>) on batches of episodes in groups, with and
-    /// without values and truncated episodes: every step written and finite, the same output bit for bit again and from
-    /// several threads (a fixed summation order), wrong lengths and options refused, and, given a
-    /// <paramref name="reference"/> (by default the library's estimator of that name, when there is one and it is not the
-    /// one checked), the same advantages and returns.
-    /// </summary>
-    /// <param name="estimator">The estimator.</param>
-    /// <param name="estimatorOptions">Its options for every call; null for its defaults.</param>
-    /// <param name="reference">The estimator to agree with; null for the library's of that name.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckAdvantageEstimator(IAdvantageEstimator estimator, IReadOnlyDictionary<string, string>? estimatorOptions = null,
-        IAdvantageEstimator? reference = null, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(estimator);
-        reference ??= AdvantageEstimators.Default(estimator.Name) is { } library && !ReferenceEquals(library, estimator) ? library : null;
-        return Check(estimator, new AdvantageEstimatorSuite(estimatorOptions, reference), options);
-    }
-
-    /// <summary>
-    /// Checks a preference-pair source (<see cref="PreferencePairSourceSuite"/>) on drawn episodes in groups, some with a
-    /// verdict and a kept text: every choice names an episode and a step there are and two answers that differ, a group
-    /// source stays in its group, the choices are added after what the list held, the same choices again and from several
-    /// threads, an unknown option refused, and, given a <paramref name="reference"/> (by default the library's source of
-    /// that name, when there is one and it is not the one checked), the same choices.
-    /// </summary>
-    /// <param name="source">The source.</param>
-    /// <param name="sourceOptions">Its options for every call; null for its defaults.</param>
-    /// <param name="reference">The source to agree with; null for the library's of that name.</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckPreferencePairSource(IPreferencePairSource source, IReadOnlyDictionary<string, string>? sourceOptions = null,
-        IPreferencePairSource? reference = null, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        reference ??= PreferencePairSources.Default(source.Name) is { } library && !ReferenceEquals(library, source) ? library : null;
-        return Check(source, new PreferencePairSourceSuite(sourceOptions, reference), options);
-    }
-
-    /// <summary>
-    /// Checks a policy loss (<see cref="PolicyLossSuite"/>) on drawn mini-batches, on- and off-policy, with and without a
-    /// reference and a value head: a finite one-element loss, the same every time, a gradient that reaches the
-    /// log-probabilities and agrees with central differences where the loss is smooth, options refused, and, given a
-    /// <paramref name="reference"/> (by default the library's loss of that name, when there is one and it is not the one
-    /// checked), the same loss. Eight random cases unless <paramref name="options"/> says otherwise.
-    /// </summary>
-    /// <param name="loss">The loss.</param>
-    /// <param name="lossOptions">Its options for every call; null for its defaults.</param>
-    /// <param name="reference">The loss to agree with; null for the library's of that name.</param>
-    /// <param name="needsReference">Every case gives reference log-probabilities (a loss with a KL penalty).</param>
-    /// <param name="needsValues">Every case gives a value head's predictions and targets (a loss with a value term).</param>
-    /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckPolicyLoss(IPolicyLoss loss, IReadOnlyDictionary<string, string>? lossOptions = null, IPolicyLoss? reference = null,
-        bool needsReference = false, bool needsValues = false, ContractCheckOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(loss);
-        reference ??= PolicyLosses.Default(loss.Name) is { } library && !ReferenceEquals(library, loss) ? library : null;
-        return Check(loss, new PolicyLossSuite(lossOptions, reference) { NeedsReference = needsReference, NeedsValues = needsValues },
-            options ?? new ContractCheckOptions { RandomCases = 8 });
-    }
 }
