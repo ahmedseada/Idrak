@@ -25,6 +25,7 @@ internal abstract partial class DesktopTests : Tests
     [
         ("cli train data: help, short forms and examples of every command", CliTrainDataHelp),
         ("cli train data: tune and data usage, errors and exit codes", CliTuneDataUsage),
+        ("cli train data: tune init, tune --config, tune info and tune train on a tiny model", CliTune),
         ("cli train data: data show, count, build, preview, validate, stats", CliDataInspect),
         ("cli train data: data convert, dedupe, split, sample, mix", CliDataTransform),
         ("cli train data: train, predict, runs, resume, package on CSV", CliTrainCsv),
@@ -126,6 +127,52 @@ internal abstract partial class DesktopTests : Tests
         finally
         {
             Directory.Delete(folder, true);
+        }
+    }
+
+    private static void CliTune(Device device)
+    {
+        string model = WriteChatModel(TinyChatSpec());
+        string folder = TempFolder();
+        try
+        {
+            string d = device.ToString();
+            string data = Path.Combine(folder, "chats.jsonl");
+            File.WriteAllLines(data, Enumerable.Range(0, 12).Select(i =>
+                new JsonObject { ["question"] = $"What is {i} plus {i}?", ["answer"] = $"{i + i}" }.ToJsonString()));
+
+            // tune init writes a commented tune.json that tune --config reads (the command line wins).
+            string settings = Path.Combine(folder, "tune.json");
+            var init = TrainCli("tune", "init", "-b", model, "--data", data, "-o", settings, "-d", d);
+            Check(init.Code == 0 && File.ReadAllText(settings).Contains("// What to do", StringComparison.Ordinal), $"tune init: {init.Out}{init.Err}");
+            Check(File.ReadAllText(settings).Contains($"\"format\": \"{TuneCommand.Format}\"", StringComparison.Ordinal), "tune init writes the format");
+            Check(TrainCli("tune", "init", "-b", model, "-o", settings).Code == 1, "tune init does not overwrite without --force");
+            var info = TrainCliJson("tune", "info", "--config", settings);
+            Check((string?)info["command"] == "info" && (string?)info["model"] == model && (string?)info["device"] == d, $"tune info from tune.json: {info}");
+            Check(info["output"]!.AsArray().Any(l => ((string?)l)!.StartsWith("chat template:", StringComparison.Ordinal)), $"tune info output: {info}");
+
+            var defaultDevice = Device.Default;
+
+            // A few steps of LoRA training, through idrak's options (-b, -o, a tune.json for the rest).
+            string adapter = Path.Combine(folder, "adapter");
+            var train = TrainCli("tune", "train", data, "-b", model, "-o", adapter, "--config", settings, "--rank", "4", "--alpha", "8", "--max-length", "64",
+                "--batch-tokens", "256", "--epochs", "1", "--eval-fraction", "0", "-d", d);
+            Check(train.Code == 0 && File.Exists(Path.Combine(adapter, "idrak-tuning.json")), $"tune train: {train.Out}\n{train.Err}");
+            Check(train.Out.Contains("trained in", StringComparison.Ordinal) && train.Out.Contains($"training on {d}", StringComparison.Ordinal), $"tune train output: {train.Out}");
+            Check(Device.Default == defaultDevice, "tune puts back the default device");
+
+            // The adapter folder as the model: its base model and the adapter.
+            var adapted = TrainCli("tune", "info", adapter, "-d", d, "-q");
+            Check(adapted.Code == 0 && adapted.Out.Length == 0, $"tune info ADAPTER -q: {adapted.Code} {adapted.Err}");
+            var unknown = TrainCli("tune", "--config", Path.Combine(folder, "bad.json"));
+            Check(unknown.Code != 0, "a missing tune.json fails");
+            File.WriteAllText(Path.Combine(folder, "bad.json"), "{ \"command\": \"info\", \"model\": \"x\", \"rnak\": 4 }");
+            Check(TrainCli("tune", "--config", Path.Combine(folder, "bad.json")).Err.Contains("unknown key 'rnak'", StringComparison.Ordinal), "a misspelt tune.json key is named");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+            Directory.Delete(model, true);
         }
     }
 

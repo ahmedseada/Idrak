@@ -19,6 +19,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli models: pull (transformers and GGUF, resume, dry run, offline), list, rm with --yes and --dry-run, against a local hub", CliModelsPullListRm),
         ("cli models: search keeps loadable models (registered families and GGUF architectures)", CliModelsSearch),
         ("cli models: show, inspect, verify, diff, families and memory read fixtures without loading", CliModelsReadOnly),
+        ("cli models: alias set/list/rm in the config, read by every model argument", CliModelsAliases),
         ("cli models: every model command has help with examples, distinct short forms, no provider names", CliModelsHelp),
     ];
 
@@ -203,6 +204,33 @@ internal abstract partial class DesktopTests : Tests
         finally
         {
             Directory.Delete(cache, true);
+        }
+    }
+
+    private static void CliModelsAliases(Device device)
+    {
+        _ = device;
+        string folder = ModelsTemp("alias");
+        try
+        {
+            string config = Path.Combine(folder, "config.json");
+            string[] c = ["-C", config, "--cache", Path.Combine(folder, "cache")];
+            Check(ModelsCli(["alias", .. c]) is { Code: 0 } none && none.Out.Contains("No aliases", StringComparison.Ordinal), "no aliases yet");
+            var set = ModelsJson(["alias", "set", "tiny", TestData("gguf/tiny-llama-hf"), .. c]);
+            Check(!(bool)set["replaced"]!, "added");
+            var stored = JsonNode.Parse(File.ReadAllText(config))!["aliases"]!["tiny"]!;
+            Check((string?)stored["model"] == TestData("gguf/tiny-llama-hf"), $"the config keeps the model: {stored}");
+            var list = ModelsJson(["alias", "list", .. c]);
+            Check(list["aliases"]!["tiny"] is not null, "listed");
+            var shown = ModelsJson(["show", "tiny", .. c]);
+            Check((long)shown["parameters"]! == 91_200, "show reads the alias");
+            Check(ModelsCli(["alias", "set", "a/b", "x", .. c]).Code == 2, "an alias with '/' would read as an id");
+            Check(ModelsCli(["alias", "rm", "tiny", .. c]).Code == 0 && ModelsCli(["alias", "rm", "tiny", .. c]).Code == 1, "removed, then missing");
+            Check(JsonNode.Parse(File.ReadAllText(config))!["aliases"] is null, "the last alias removes the object");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
         }
     }
 

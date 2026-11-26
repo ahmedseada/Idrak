@@ -11,6 +11,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] Decoding =
     [
         ("fused kernels match their unfused equivalents", FusedKernels),
+        ("KV-cache decoding matches the full forward pass at every position", CachedDecodingMatchesFull),
         ("KV-cache decoding: paged: 4 requests sharing a 48-position prompt hold its pages once and one page each (measured in use against 4 unpaged caches), each with its own cache's logits bit for bit; closed, the pages stay idle up to one context's worth and ReleaseIdle frees them", PagedCacheSharedMemory),
         ("KV-cache decoding: paged generations (TextGenerator.SharePrefix): two interleaved generations share the system prompt's pages and give the kept cache's replies; the telemetry reports pages in use, shared and bytes saved; ReleaseCache frees the idle pages", PagedCacheGenerator),
         ("batched cached decoding matches sequences decoded one by one", BatchedDecoding),
@@ -71,6 +72,37 @@ internal abstract partial class Tests
         }
 
         AssertClose(reference, fused, 1e-5f, "bias + GELU");
+    }
+
+    internal static void CachedDecodingMatchesFull(Device device)
+    {
+        const int T = 10, V = 11;
+        using var model = TinyGpt(device);
+        var ids = new float[T];
+        var random = new Random(52);
+        for (int t = 0; t < T; t++)
+        {
+            ids[t] = random.Next(V);
+        }
+
+        using (Autograd.NoGrad())
+        {
+            using var sequence = Tensor.From(ids, [1, T], device);
+            var full = model.Forward(sequence).ToArray();                                   // [1, T, V]
+
+            using var context = new DecodingContext(device, 1, 12);
+            using var prompt = Tensor.From(ids.AsSpan(0, 4), [1, 4], device);
+            var prefill = model.ForwardCached(prompt, context).ToArray();                   // positions 0-3 at once
+            AssertClose(full[..(4 * V)], prefill, 1e-4f, "prefill logits");
+            for (int t = 4; t < T; t++)
+            {
+                using var next = Tensor.From(ids.AsSpan(t, 1), [1, 1], device);
+                var step = model.ForwardCached(next, context).ToArray();                    // one new position
+                AssertClose(full[(t * V)..((t + 1) * V)], step, 1e-4f, $"cached step {t}");
+            }
+
+            Check(context.Length == T, "context length");
+        }
     }
 
     internal static void BatchedDecoding(Device device)

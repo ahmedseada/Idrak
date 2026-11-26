@@ -22,7 +22,9 @@ internal abstract partial class DesktopTests : Tests
         ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench usage errors exit with 2", d => { CpuOnly(d); CliBenchErrors(); }),
         ("cli measure: perplexity of a text, float32 and int8 weights", CliPerplexity),
+        ("cli measure: profile times every layer, operation and kernel of one decoding step", CliProfile),
         ("cli measure: eval scores answers on conversations and writes them", CliEval),
+        ("cli measure: check against a reference passes, and a changed reference fails", CliCheck),
         ("cli measure: tuning show reads the CPU, CUDA and Vulkan caches; --reset clears one", d => { CpuOnly(d); CliTuningShow(); }),
     ];
 
@@ -263,6 +265,35 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
+    private static void CliProfile(Device device)
+    {
+        string cache = MeasureTemp();
+        try
+        {
+            var json = IdrakJson(cache, "profile", MeasureModel, "--prompt-tokens", "8", "-d", device.ToString());
+            var layers = json["layers"]!.AsArray();
+            Check(layers.Count == 5 && layers.Select(l => (string)l!["name"]!).SequenceEqual(["embed", "layers.0", "layers.1", "norm", "head"]), json["layers"]!.ToJsonString());
+            Check(json["operations"]!.AsArray().Count > 0 && json["inner_layers"]!.AsArray().Count > 0 && (double)json["step_ms"]! > 0, json.ToJsonString());
+
+            // A step profile is the median of --steps steps (5 by default).
+            Check((int)json["steps"]! == 5 && (bool)json["last_position_only"]!, $"steps and last position: {json.ToJsonString()}");
+            var (code, text, _) = MeasureIdrak(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--top", "3", "--steps", "3", "-d", device.ToString());
+            Check(code == 0 && text.Contains("Layers of the network") && text.Contains("Operations") && text.Contains("the median of 3 steps, each after a collection"), text);
+            Check(MeasureIdrak(cache, "profile", MeasureModel, "--steps", "0").Code == 2, "--steps 0 is a usage error");
+
+            // A prompt pass runs as generation does: the head reads the prompt's last position only (the tiny model's 268
+            // scores for one row, never for each of the 8), in one timed pass.
+            var prompt = IdrakJson(cache, "profile", MeasureModel, "--pass", "prompt", "--prompt-tokens", "8", "-d", device.ToString());
+            var operations = prompt["operations"]!.AsArray().Select(o => (string)o!["name"]!).ToList();
+            Check((int)prompt["steps"]! == 1 && operations.Any(o => o.EndsWith("1x268]", StringComparison.Ordinal)) && !operations.Any(o => o.EndsWith("8x268]", StringComparison.Ordinal)),
+                $"the prompt pass's head over the last position: {string.Join(", ", operations)}");
+        }
+        finally
+        {
+            Directory.Delete(cache, true);
+        }
+    }
+
     private static void CliEval(Device device)
     {
         string cache = MeasureTemp();
@@ -281,6 +312,67 @@ internal abstract partial class DesktopTests : Tests
             Check(json["answers"]!.AsArray().All(a => a!["reference"] is not null && (double)a["score"]! is >= 0 and <= 1), json.ToJsonString());
             Check(File.ReadAllLines(answers).Length == 2, "two answers written");
             Check(MeasureIdrak(cache, "eval", MeasureModel, set, "--metric", "bleu").Code == 2, "unknown metric");
+        }
+        finally
+        {
+            Directory.Delete(cache, true);
+        }
+    }
+
+    private static void CliCheck(Device device)
+    {
+        string cache = MeasureTemp();
+        try
+        {
+            // A reference made from the model itself on this device: what transformers would write, in its layout.
+            JsonObject reference;
+            using var model = PretrainedModel.Load(MeasureModel, new PretrainedOptions { Device = device });
+            var tokenizer = model.Tokenizer!;
+            string text = "hello world, the town by the river";
+            var ids = tokenizer.Encode(text);
+            var messages = new List<ChatMessage> { new("user", "hi there") };
+            float[] logits;
+            using (var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Count], device))
+            using (var predicted = model.Network.Predict(input))
+            {
+                var all = predicted.ToArray();
+                logits = all[^model.Spec.Vocabulary..];
+            }
+
+            var generator = model.CreateGenerator(contextLength: model.MaxPositions);
+            var (generated, _, _) = generator.Generate(text, new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = 6, NumCtx = model.MaxPositions, Seed = 0 });
+            reference = new JsonObject
+            {
+                ["texts"] = new JsonArray(new JsonObject { ["text"] = text, ["ids"] = new JsonArray([.. ids.Select(i => (JsonNode)i)]) }),
+                ["tools"] = new JsonArray(),
+                ["chats"] = new JsonArray(new JsonObject
+                {
+                    ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "hi there" }),
+                    ["tools"] = new JsonArray(),
+                    ["add_generation_prompt"] = true,
+                    ["rendered"] = model.JinjaTemplate!.Render(messages, [], null, true),
+                }),
+                ["runs"] = new JsonArray(new JsonObject
+                {
+                    ["prompt"] = text,
+                    ["ids"] = new JsonArray([.. ids.Select(i => (JsonNode)i)]),
+                    ["logits"] = new JsonArray([.. logits.Select(v => (JsonNode)v)]),
+                    ["generated"] = new JsonArray([.. Enumerable.Range(0, 6).Select(i => (JsonNode)0)]),
+                    ["generated_text"] = generated,
+                }),
+            };
+
+            string path = Path.Combine(cache, "reference.json");
+            File.WriteAllText(path, reference.ToJsonString());
+            var json = IdrakJson(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
+            Check((bool)json["ok"]! && (int)json["failures"]! == 0 && json["runs"]!.AsArray().Count == 1, json.ToJsonString());
+
+            reference["chats"]![0]!["rendered"] = "something else";
+            reference["texts"]![0]!["ids"]![0] = 99999;
+            File.WriteAllText(path, reference.ToJsonString());
+            var (code, output, _) = MeasureIdrak(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
+            Check(code == 1 && output.Contains("DIFF") && output.Contains("2 check(s) differ"), output);
+            Check(MeasureIdrak(cache, "check", MeasureModel).Code == 2, "--reference is required");
         }
         finally
         {
