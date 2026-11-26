@@ -228,7 +228,7 @@ internal sealed unsafe partial class CudaBackend
         int perBlock = 64 >> split;
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
         Launch(functions.Rows[variant], (uint)((n + perBlock - 1) / perBlock), (uint)((m + rows - 1) / rows),
-            PtxKernels.DescribedRowsThreads, 1, P(input), P(w), 0UL, P(y), U(m), U(n), U(k), U(rowBytes), U(split));
+            PtxKernels.DescribedRowsThreads, 1, P(input), P(w), P(y), U(m), U(n), U(k), U(rowBytes), U(split));
         return true;
     }
 
@@ -245,7 +245,7 @@ internal sealed unsafe partial class CudaBackend
 
         long blocks = 0;
         int perBlock = 64 >> split;
-        Span<ulong> args = stackalloc ulong[17];
+        Span<ulong> args = stackalloc ulong[14];
         args.Clear();
         for (int i = 0; i < products.Length; i++)
         {
@@ -255,11 +255,11 @@ internal sealed unsafe partial class CudaBackend
                 return false;
             }
 
-            (args[1 + 3 * i], args[3 + 3 * i], args[13 + i]) = (P(values), P(output), U(columns));
+            (args[1 + 2 * i], args[2 + 2 * i], args[10 + i]) = (P(values), P(output), U(columns));
             blocks += (columns + perBlock - 1) / perBlock;
         }
 
-        args[16] = U(split);
+        args[13] = U(split);
 
         int variant = m <= 1 ? 0 : m <= 2 ? 1 : m <= 4 ? 2 : 3, rows = PtxKernels.DescribedRowCounts[variant];
         var input = x;
@@ -269,7 +269,7 @@ internal sealed unsafe partial class CudaBackend
             Launch(functions.Widen, (uint)((m * k + 255) / 256), 1, 256, 1, P(x), P(input), U(m * k));
         }
 
-        (args[0], args[10], args[11], args[12]) = (P(input), U(m), U(k), U(rowBytes));
+        (args[0], args[7], args[8], args[9]) = (P(input), U(m), U(k), U(rowBytes));
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows);
         Launch(functions.RowsMany[variant], (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, args);
         return true;
@@ -309,8 +309,8 @@ internal sealed unsafe partial class CudaBackend
         }
 
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.Gated);
-        Launch(kernel, (uint)((n + perBlock - 1) / perBlock), 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(gate.Values), 0UL,
-            P(hidden), P(up.Values), 0UL, U(m), U(n), U(k), U(rowBytes), U(split), U(activation));
+        Launch(kernel, (uint)((n + perBlock - 1) / perBlock), 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(gate.Values),
+            P(hidden), P(up.Values), U(m), U(n), U(k), U(rowBytes), U(split), U(activation));
         return true;
     }
 
@@ -342,7 +342,7 @@ internal sealed unsafe partial class CudaBackend
 
         var parts = _describedNormParts.Get(this, blocks * m);
         t_sharedBytes = (uint)PtxKernels.DescribedRowsShared(plan, align, rows, PtxKernels.Epilogue.AddNorm);
-        Launch(kernel, (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(weight), 0UL, P(residual), P(sum), P(gain), P(normalized),
+        Launch(kernel, (uint)blocks, 1, PtxKernels.DescribedRowsThreads, 1, P(input), P(weight), P(residual), P(sum), P(gain), P(normalized),
             P(parts), EpilogueCount(), U(m), U(n), U(k), U(rowBytes), U(split), F(eps), F(offset));
         return true;
     }
@@ -388,7 +388,7 @@ internal sealed unsafe partial class CudaBackend
         var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
         t_sharedBytes = (uint)PtxKernels.DescribedIntShared(plan);
         Launch(functions.Int, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
-            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, 0UL, P(w), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, P(w), P(target), U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
         if (used > 1)
         {
             var sum = SplitSum();
@@ -431,7 +431,7 @@ internal sealed unsafe partial class CudaBackend
         var target = used == 1 ? y : _splitPartials.Get(this, used * m * n);
         t_sharedBytes = (uint)PtxKernels.DescribedNarrowShared(plan, align);
         Launch(functions.Narrow, (uint)((n + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile), (uint)((m + PtxKernels.DescribedMmaTile - 1) / PtxKernels.DescribedMmaTile),
-            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, 0UL, P(w), P(target), sums, U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
+            (uint)used, PtxKernels.DescribedMmaThreads, 1, q, s, P(w), P(target), sums, U(m), U(n), U(k), U(kp), U(rowBytes), U(per));
         if (used > 1)
         {
             var sum = SplitSum();

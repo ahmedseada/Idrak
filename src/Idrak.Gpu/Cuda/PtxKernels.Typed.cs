@@ -1486,8 +1486,8 @@ internal static partial class PtxKernels
         }
     }
 
-    // The kernel's parameters loaded: the pointers (global), then the 32-bit values, and whether p_rs is given.
-    private static (string[] Pointers, string[] Values, string HasScales) DescribedParameters(DescribedEmit e, string[] pointers, string[] values)
+    // The kernel's parameters loaded: the pointers (global), then the 32-bit values.
+    private static (string[] Pointers, string[] Values) DescribedParameters(DescribedEmit e, string[] pointers, string[] values)
     {
         var p = new string[pointers.Length];
         for (int i = 0; i < p.Length; i++)
@@ -1496,8 +1496,6 @@ internal static partial class PtxKernels
             e.L($"ld.param.u64 {p[i]}, [{pointers[i]}];");
         }
 
-        string hasScales = e.P();
-        e.L($"setp.ne.u64 {hasScales}, {p[2]}, 0;");
         for (int i = 0; i < p.Length; i++)
         {
             e.L($"cvta.to.global.u64 {p[i]}, {p[i]};");
@@ -1510,10 +1508,10 @@ internal static partial class PtxKernels
             e.L($"ld.param.u32 {v[i]}, [{values[i]}];");
         }
 
-        return (p, v, hasScales);
+        return (p, v);
     }
 
-    // The rows product: y [m, n] = x [m, k] · Wᵀ (× a scale an output row where p_rs is given) for up to `rows` rows of x a
+    // The rows product: y [m, n] = x [m, k] · Wᵀ for up to `rows` rows of x a
     // block (the grid's y over chunks of rows), W n rows of p_rb bytes as stored. A warp stages its spans of 8 weight rows
     // (DescribedSpan pattern blocks a span) into its two shared stages in turn; lane (g, t) reads weight row g's values of
     // each step at 2t + 0, 1, 8, 9, with x's values there (pairs where k is even). Each lane's sums in k's order; the four
@@ -1538,25 +1536,25 @@ internal static partial class PtxKernels
 
         // p_split: log2 of the warps a group of 8 weight rows takes (1, 2, 4 or 8, measured per shape): the block's 8 warps
         // are 8 >> p_split groups, each over its rows' spans; the block 64 >> p_split rows.
-        string x, w, rs, y, m, n, k, rb, hasScales, row0 = e.B(), blockRow0 = e.B(), split = e.B(), rowShift = e.B();
-        string[] ws, rss;
+        string x, w, y, m, n, k, rb, row0 = e.B(), blockRow0 = e.B(), split = e.B(), rowShift = e.B();
+        string[] ws;
         string act = "", residual = "", sumOut = "", gain = "", normOut = "", partials = "", counter = "", eps = "", offset0 = "";
         if (epilogue == Epilogue.Gated)
         {
-            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_h", "p_w1", "p_rs1"], ["p_m", "p_n", "p_k", "p_rb", "p_split", "p_act"]);
-            (x, w, rs, y, hasScales) = (pointers[0], pointers[1], pointers[2], pointers[3], scaled);
-            (ws, rss) = ([pointers[1], pointers[4]], [pointers[2], pointers[5]]);
+            var (pointers, values) = DescribedParameters(e, ["p_x", "p_w", "p_h", "p_w1"], ["p_m", "p_n", "p_k", "p_rb", "p_split", "p_act"]);
+            (x, w, y) = (pointers[0], pointers[1], pointers[2]);
+            ws = [pointers[1], pointers[3]];
             (m, n, k, rb, act) = (values[0], values[1], values[2], values[3], values[5]);
             e.L($"mov.u32 {split}, {values[4]};");
             e.L($"mov.u32 {row0}, %ctaid.x;");
         }
         else if (epilogue == Epilogue.AddNorm)
         {
-            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_r", "p_sum", "p_gain", "p_out", "p_part", "p_count"],
+            var (pointers, values) = DescribedParameters(e, ["p_x", "p_w", "p_r", "p_sum", "p_gain", "p_out", "p_part", "p_count"],
                 ["p_m", "p_n", "p_k", "p_rb", "p_split"]);
-            (x, w, rs, y, hasScales) = (pointers[0], pointers[1], pointers[2], pointers[4], scaled);
-            (ws, rss) = ([w], [rs]);
-            (residual, sumOut, gain, normOut, partials, counter) = (pointers[3], pointers[4], pointers[5], pointers[6], pointers[7], pointers[8]);
+            (x, w, y) = (pointers[0], pointers[1], pointers[3]);
+            ws = [w];
+            (residual, sumOut, gain, normOut, partials, counter) = (pointers[2], pointers[3], pointers[4], pointers[5], pointers[6], pointers[7]);
             (m, n, k, rb) = (values[0], values[1], values[2], values[3]);
             (eps, offset0) = (e.F(), e.F());
             e.L($"ld.param.f32 {eps}, [p_eps];");
@@ -1566,21 +1564,20 @@ internal static partial class PtxKernels
         }
         else if (!many)
         {
-            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_rb", "p_split"]);
-            (x, w, rs, y, hasScales) = (pointers[0], pointers[1], pointers[2], pointers[3], scaled);
-            (ws, rss) = ([w], [rs]);
+            var (pointers, values) = DescribedParameters(e, ["p_x", "p_w", "p_y"], ["p_m", "p_n", "p_k", "p_rb", "p_split"]);
+            (x, w, y) = (pointers[0], pointers[1], pointers[2]);
+            ws = [w];
             (m, n, k, rb) = (values[0], values[1], values[2], values[3]);
             e.L($"mov.u32 {split}, {values[4]};");
             e.L($"mov.u32 {row0}, %ctaid.x;");
         }
         else
         {
-            // A group of up to three weights sharing x (p_n2 0 for two; all scaled or none): the block's weight by its index
-            // among their blocks.
-            var (pointers, values, scaled) = DescribedParameters(e, ["p_x", "p_w0", "p_rs0", "p_y0", "p_w1", "p_rs1", "p_y1", "p_w2", "p_rs2", "p_y2"],
+            // A group of up to three weights sharing x (p_n2 0 for two): the block's weight by its index among their blocks.
+            var (pointers, values) = DescribedParameters(e, ["p_x", "p_w0", "p_y0", "p_w1", "p_y1", "p_w2", "p_y2"],
                 ["p_m", "p_k", "p_rb", "p_n0", "p_n1", "p_n2", "p_split"]);
-            (x, m, k, rb, hasScales) = (pointers[0], values[0], values[1], values[2], scaled);
-            (w, rs, y, n) = (pointers[1], pointers[2], pointers[3], values[3]);
+            (x, m, k, rb) = (pointers[0], values[0], values[1], values[2]);
+            (w, y, n) = (pointers[1], pointers[2], values[3]);
             e.L($"mov.u32 {split}, {values[6]};");
             string blockIndex = e.B(), first = e.B(), second = e.B(), p1 = e.P(), p2 = e.P(), perBlock = e.B();
             e.L($"neg.s32 {rowShift}, {split};");
@@ -1596,20 +1593,18 @@ internal static partial class PtxKernels
             e.L($"add.u32 {second}, {second}, {first};");
             e.L($"setp.ge.u32 {p1}, {blockIndex}, {first};");
             e.L($"setp.ge.u32 {p2}, {blockIndex}, {second};");
-            e.L($"@{p1} mov.u64 {w}, {pointers[4]};");
-            e.L($"@{p1} mov.u64 {rs}, {pointers[5]};");
-            e.L($"@{p1} mov.u64 {y}, {pointers[6]};");
+            e.L($"@{p1} mov.u64 {w}, {pointers[3]};");
+            e.L($"@{p1} mov.u64 {y}, {pointers[4]};");
             e.L($"@{p1} mov.u32 {n}, {values[4]};");
             e.L($"@{p1} sub.u32 {blockIndex}, {blockIndex}, {first};");
-            e.L($"@{p2} mov.u64 {w}, {pointers[7]};");
-            e.L($"@{p2} mov.u64 {rs}, {pointers[8]};");
-            e.L($"@{p2} mov.u64 {y}, {pointers[9]};");
+            e.L($"@{p2} mov.u64 {w}, {pointers[5]};");
+            e.L($"@{p2} mov.u64 {y}, {pointers[6]};");
             e.L($"@{p2} mov.u32 {n}, {values[5]};");
             string less = e.B();
             e.L($"sub.u32 {less}, {second}, {first};");
             e.L($"@{p2} sub.u32 {blockIndex}, {blockIndex}, {less};");
             e.L($"mov.u32 {row0}, {blockIndex};");
-            (ws, rss) = ([w], [rs]);
+            ws = [w];
         }
 
         string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), xr0 = e.B(), smem = e.B(), group = e.B(), sub = e.B(), warps = e.B();
@@ -1978,23 +1973,7 @@ internal static partial class PtxKernels
             }
 
             e.Mark(sumsDone);
-            string scaleAt = e.W(), scale = e.F(), result = e.F(), noScale = e.Label("NO_SCALE");
-            e.L($"@!{hasScales} bra {noScale};");
-            e.L($"mul.wide.u32 {scaleAt}, {outRow}, 4;");
-            e.L($"add.u64 {scaleAt}, {scaleAt}, {rss[wi]};");
-            e.L($"ld.global.f32 {scale}, [{scaleAt}];");
-            if (wide)
-            {
-                string wideScale = e.G();
-                e.L($"cvt.f64.f32 {wideScale}, {scale};");
-                e.L($"mul.rn.f64 {total}, {total}, {wideScale};");
-            }
-            else
-            {
-                e.L($"mul.rn.f32 {total}, {total}, {scale};");
-            }
-
-            e.Mark(noScale);
+            string result = e.F();
             if (wide)
             {
                 e.L($"cvt.rn.f32.f64 {result}, {total};");
@@ -2048,10 +2027,10 @@ internal static partial class PtxKernels
 
         string parameters = epilogue switch
         {
-            Epilogue.Gated => ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_h, .param .u64 p_w1, .param .u64 p_rs1,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split, .param .u32 p_act",
-            Epilogue.AddNorm => ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_r, .param .u64 p_sum, .param .u64 p_gain, .param .u64 p_out, .param .u64 p_part, .param .u64 p_count,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split, .param .f32 p_eps, .param .f32 p_offset",
-            _ when many => ".param .u64 p_w0, .param .u64 p_rs0, .param .u64 p_y0, .param .u64 p_w1, .param .u64 p_rs1, .param .u64 p_y1, .param .u64 p_w2, .param .u64 p_rs2, .param .u64 p_y2,\n    .param .u32 p_m, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_n0, .param .u32 p_n1, .param .u32 p_n2, .param .u32 p_split",
-            _ => ".param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split",
+            Epilogue.Gated => ".param .u64 p_w, .param .u64 p_h, .param .u64 p_w1,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split, .param .u32 p_act",
+            Epilogue.AddNorm => ".param .u64 p_w, .param .u64 p_r, .param .u64 p_sum, .param .u64 p_gain, .param .u64 p_out, .param .u64 p_part, .param .u64 p_count,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split, .param .f32 p_eps, .param .f32 p_offset",
+            _ when many => ".param .u64 p_w0, .param .u64 p_y0, .param .u64 p_w1, .param .u64 p_y1, .param .u64 p_w2, .param .u64 p_y2,\n    .param .u32 p_m, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_n0, .param .u32 p_n1, .param .u32 p_n2, .param .u32 p_split",
+            _ => ".param .u64 p_w, .param .u64 p_y,\n    .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_rb, .param .u32 p_split",
         };
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{DescribedRowsName(p, align, pairs, rows)}}{{(many ? "_many" : EpilogueSuffix(epilogue))}}(
@@ -2234,7 +2213,7 @@ internal static partial class PtxKernels
         e.Mark(end);
     }
 
-    // The tensor-core product (a bfloat16 run's prompts): y [m, n] = x16 [m, kp] · Wᵀ (× a scale an output row where p_rs
+    // The tensor-core product (a bfloat16 run's prompts): y [m, n] = x16 [m, kp] · Wᵀ
     // is given), x16 x's bfloat16 rows of kp (zero past k), W n rows of p_rb bytes as stored, k split over the grid's z
     // (each split p_per of W's spans, its sums into y's plane z: p_y holds as many planes of [m, n] as the grid's z). A
     // block of 4 warps (2 × 2) computes 64 × 64 outputs; per W span (whole pattern blocks, a multiple of 64 values) its rows
@@ -2248,8 +2227,8 @@ internal static partial class PtxKernels
         var (chunks, stride) = DescribedRow(spanBytes, align);
         int tables = DescribedTablesBytes(p), xBase = tables, wBase = tables + 2 * DescribedXStage, wStage = DescribedMmaTile * stride;
 
-        var (pointers, values, hasScales) = DescribedParameters(e, ["p_x", "p_w", "p_rs", "p_y"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
-        var (x, w, rs, y) = (pointers[0], pointers[1], pointers[2], pointers[3]);
+        var (pointers, values) = DescribedParameters(e, ["p_x", "p_w", "p_y"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
+        var (x, w, y) = (pointers[0], pointers[1], pointers[2]);
         var (m, n, kp, rb, per) = (values[0], values[1], values[3], values[4], values[5]);
         string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), wm = e.B(), wn = e.B(), n0 = e.B(), m0 = e.B(), z = e.B(), smem = e.B();
         e.L($"mov.u32 {tid}, %tid.x;");
@@ -2491,19 +2470,11 @@ internal static partial class PtxKernels
         e.L($"setp.eq.u32 {even}, {tmp}, 0;");
         for (int nt = 0; nt < 4; nt++)
         {
-            string col = e.B(), col1 = e.B(), in0 = e.P(), in1 = e.P(), s0 = e.F(), s1 = e.F(), sAt = e.W(), q0 = e.P(), q1 = e.P();
+            string col = e.B(), col1 = e.B(), in0 = e.P(), in1 = e.P();
             e.L($"add.u32 {col}, {colOut}, {8 * nt};");
             e.L($"add.u32 {col1}, {col}, 1;");
             e.L($"setp.lt.u32 {in0}, {col}, {n};");
             e.L($"setp.lt.u32 {in1}, {col1}, {n};");
-            e.L($"mov.f32 {s0}, 0f3F800000;");
-            e.L($"mov.f32 {s1}, 0f3F800000;");
-            e.L($"mul.wide.u32 {sAt}, {col}, 4;");
-            e.L($"add.u64 {sAt}, {sAt}, {rs};");
-            e.L($"and.pred {q0}, {in0}, {hasScales};");
-            e.L($"and.pred {q1}, {in1}, {hasScales};");
-            e.L($"@{q0} ld.global.f32 {s0}, [{sAt}];");
-            e.L($"@{q1} ld.global.f32 {s1}, [{sAt}+4];");
             for (int mt = 0; mt < 2; mt++)
             {
                 for (int half = 0; half < 2; half++)
@@ -2512,8 +2483,6 @@ internal static partial class PtxKernels
                     string row = e.B(), inRow = e.P(), yAt = e.W(), colWide = e.W(), both = e.P(), single = e.P(), s0p = e.P(), s1p = e.P();
                     e.L($"add.u32 {row}, {rowOut}, {16 * mt + 8 * half};");
                     e.L($"setp.lt.u32 {inRow}, {row}, {m};");
-                    e.L($"mul.rn.f32 {acc[c]}, {acc[c]}, {s0};");
-                    e.L($"mul.rn.f32 {acc[c + 1]}, {acc[c + 1]}, {s1};");
                     e.L($"mul.wide.u32 {yAt}, {row}, {n};");
                     e.L($"cvt.u64.u32 {colWide}, {col};");
                     e.L($"add.u64 {yAt}, {yAt}, {colWide};");
@@ -2535,7 +2504,7 @@ internal static partial class PtxKernels
         e.L($"ret;");
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{DescribedMmaName(p, align)}}(
-                .param .u64 p_x, .param .u64 p_w, .param .u64 p_rs, .param .u64 p_y,
+                .param .u64 p_x, .param .u64 p_w, .param .u64 p_y,
                 .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_kp, .param .u32 p_rb, .param .u32 p_per
             )
             .maxntid {{DescribedMmaThreads}}, 1, 1
@@ -2677,7 +2646,7 @@ internal static partial class PtxKernels
 
     // The integer product (a whole-byte integer code's prompts, a bfloat16 run): y [m, n] = Σ over x's blocks of 32 of the
     // block's scale · Σ over the code's byte planes of 2^(8p) · the int8 dot products of x's codes and the plane's bytes
-    // (× a scale an output row where p_rs is given); q, s: x as DescribedQuant rounds it (rows of kp), W n rows of p_rb bytes
+    //; q, s: x as DescribedQuant rounds it (rows of kp), W n rows of p_rb bytes
     // (a multiple of 16) as stored; k split over the grid's z (each split p_per steps of 32, its sums into y's plane z). A
     // block of 4 warps (2 × 2) computes 64 × 64 outputs, each warp 32 × 32 as mma.sync m16n8k32 tiles (u8 × s8 for the low
     // planes, s8 × s8 for a signed code's top one); x's codes, scales and W's bytes of a step in two cp.async stages; each
@@ -2689,8 +2658,8 @@ internal static partial class PtxKernels
         int bytes = p.IntegerBytes, wRow = DescribedIntWRow(p), stage = DescribedIntStage(p), xsAt = DescribedMmaTile * DescribedIntXRow,
             wAt = xsAt + 4 * DescribedMmaTile, chunks = 2 * bytes;
         bool signed = p.Description.Code.Signed;
-        var (pointers, values, hasScales) = DescribedParameters(e, ["p_q", "p_s", "p_rs", "p_w", "p_y"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
-        var (q, s, rs, w, y) = (pointers[0], pointers[1], pointers[2], pointers[3], pointers[4]);
+        var (pointers, values) = DescribedParameters(e, ["p_q", "p_s", "p_w", "p_y"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
+        var (q, s, w, y) = (pointers[0], pointers[1], pointers[2], pointers[3]);
         var (m, n, kp, rb, per) = (values[0], values[1], values[3], values[4], values[5]);
         string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), wm = e.B(), wn = e.B(), n0 = e.B(), m0 = e.B(), z = e.B(), smem = e.B();
         e.L($"mov.u32 {tid}, %tid.x;");
@@ -2942,11 +2911,11 @@ internal static partial class PtxKernels
         e.L($"bra {loop};");
         e.Mark(done);
         e.L($"cp.async.wait_group 0;");
-        DescribedStores(e, acc, y, rs, hasScales, m, n, z, wm, wn, m0, n0, g, t);
+        DescribedStores(e, acc, y, m, n, z, wm, wn, m0, n0, g, t);
         e.L($"ret;");
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{DescribedIntName(p)}}(
-                .param .u64 p_q, .param .u64 p_s, .param .u64 p_rs, .param .u64 p_w, .param .u64 p_y,
+                .param .u64 p_q, .param .u64 p_s, .param .u64 p_w, .param .u64 p_y,
                 .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_kp, .param .u32 p_rb, .param .u32 p_per
             )
             .maxntid {{DescribedMmaThreads}}, 1, 1
@@ -2974,8 +2943,8 @@ internal static partial class PtxKernels
 
     // The integer product over narrow codes (a bfloat16 run's prompts; DescribedPlan.NarrowChunk): y [m, n] = Σ over x's
     // blocks of 32 of the block's scale · Σ over the block's chunks (32 or 16 values) of (the chunk's scale product · 2^-shift
-    // · the int8 dot product of x's codes and the codes' int8s ± the chunk's minimum product · x's code sum) (× a scale an
-    // output row where p_rs is given). q, s, sums: x as DescribedQuant rounds it (rows of kp; sums of 16 values where the
+    // · the int8 dot product of x's codes and the codes' int8s ± the chunk's minimum product · x's code sum).
+    // q, s, sums: x as DescribedQuant rounds it (rows of kp; sums of 16 values where the
     // plan has minimums); W n rows of p_rb bytes as stored, its spans staged as stored (DescribedMmaSpan, whole pattern
     // blocks) and x's int8 rows 64 values at a time, both in two cp.async stages; k split over the grid's z (each split p_per
     // spans, its sums into y's plane z). A block of 4 warps (2 × 2) computes 64 × 64 outputs, each warp 32 × 32 as
@@ -2993,8 +2962,8 @@ internal static partial class PtxKernels
         bool mins = p.Factors.Any(f => f.Min);
         float unit = MathF.ScaleB(1f, -p.NarrowShift);
 
-        var (pointers, values, hasScales) = DescribedParameters(e, ["p_q", "p_s", "p_rs", "p_w", "p_y", "p_sums"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
-        var (q, s, rs, w, y, xsums) = (pointers[0], pointers[1], pointers[2], pointers[3], pointers[4], pointers[5]);
+        var (pointers, values) = DescribedParameters(e, ["p_q", "p_s", "p_w", "p_y", "p_sums"], ["p_m", "p_n", "p_k", "p_kp", "p_rb", "p_per"]);
+        var (q, s, w, y, xsums) = (pointers[0], pointers[1], pointers[2], pointers[3], pointers[4]);
         var (m, n, kp, rb, per) = (values[0], values[1], values[3], values[4], values[5]);
         string tid = e.B(), lane = e.B(), warp = e.B(), g = e.B(), t = e.B(), wm = e.B(), wn = e.B(), n0 = e.B(), m0 = e.B(), z = e.B(), smem = e.B();
         e.L($"mov.u32 {tid}, %tid.x;");
@@ -3369,11 +3338,11 @@ internal static partial class PtxKernels
         e.L($"bra {spanLoop};");
         e.Mark(spansDone);
         e.L($"cp.async.wait_group 0;");
-        DescribedStores(e, acc, y, rs, hasScales, m, n, z, wm, wn, m0, n0, g, t);
+        DescribedStores(e, acc, y, m, n, z, wm, wn, m0, n0, g, t);
         e.L($"ret;");
         sb.AppendLine(CultureInfo.InvariantCulture, $$"""
             .visible .entry {{DescribedNarrowName(p, align)}}(
-                .param .u64 p_q, .param .u64 p_s, .param .u64 p_rs, .param .u64 p_w, .param .u64 p_y, .param .u64 p_sums,
+                .param .u64 p_q, .param .u64 p_s, .param .u64 p_w, .param .u64 p_y, .param .u64 p_sums,
                 .param .u32 p_m, .param .u32 p_n, .param .u32 p_k, .param .u32 p_kp, .param .u32 p_rb, .param .u32 p_per
             )
             .maxntid {{DescribedMmaThreads}}, 1, 1
@@ -3449,7 +3418,7 @@ internal static partial class PtxKernels
     // The tensor-core products' stores: y's plane z (p_y holds as many planes of [m, n] as the grid's z), tile (mt, nt)'s
     // value c at row m0 + 32 wm + 16 mt + g (+ 8 for c ≥ 2), column n0 + 32 wn + 8 nt + 2t (+ 1 for odd c), times the
     // column's scale where given; two columns a store where n is even.
-    private static void DescribedStores(DescribedEmit e, string[] acc, string y, string rs, string hasScales, string m, string n, string z, string wm, string wn,
+    private static void DescribedStores(DescribedEmit e, string[] acc, string y, string m, string n, string z, string wm, string wn,
         string m0, string n0, string g, string t)
     {
         string plane = e.W(), zWide = e.W(), rowOut = e.B(), colOut = e.B(), even = e.P(), tmp = e.B();
@@ -3467,19 +3436,11 @@ internal static partial class PtxKernels
         e.L($"setp.eq.u32 {even}, {tmp}, 0;");
         for (int nt = 0; nt < 4; nt++)
         {
-            string col = e.B(), col1 = e.B(), in0 = e.P(), in1 = e.P(), s0 = e.F(), s1 = e.F(), sAt = e.W(), q0 = e.P(), q1 = e.P();
+            string col = e.B(), col1 = e.B(), in0 = e.P(), in1 = e.P();
             e.L($"add.u32 {col}, {colOut}, {8 * nt};");
             e.L($"add.u32 {col1}, {col}, 1;");
             e.L($"setp.lt.u32 {in0}, {col}, {n};");
             e.L($"setp.lt.u32 {in1}, {col1}, {n};");
-            e.L($"mov.f32 {s0}, 0f3F800000;");
-            e.L($"mov.f32 {s1}, 0f3F800000;");
-            e.L($"mul.wide.u32 {sAt}, {col}, 4;");
-            e.L($"add.u64 {sAt}, {sAt}, {rs};");
-            e.L($"and.pred {q0}, {in0}, {hasScales};");
-            e.L($"and.pred {q1}, {in1}, {hasScales};");
-            e.L($"@{q0} ld.global.f32 {s0}, [{sAt}];");
-            e.L($"@{q1} ld.global.f32 {s1}, [{sAt}+4];");
             for (int mt = 0; mt < 2; mt++)
             {
                 for (int half = 0; half < 2; half++)
@@ -3488,8 +3449,6 @@ internal static partial class PtxKernels
                     string row = e.B(), inRow = e.P(), yAt = e.W(), colWide = e.W(), both = e.P(), single = e.P(), s0p = e.P(), s1p = e.P();
                     e.L($"add.u32 {row}, {rowOut}, {16 * mt + 8 * half};");
                     e.L($"setp.lt.u32 {inRow}, {row}, {m};");
-                    e.L($"mul.rn.f32 {acc[c]}, {acc[c]}, {s0};");
-                    e.L($"mul.rn.f32 {acc[c + 1]}, {acc[c + 1]}, {s1};");
                     e.L($"mul.wide.u32 {yAt}, {row}, {n};");
                     e.L($"cvt.u64.u32 {colWide}, {col};");
                     e.L($"add.u64 {yAt}, {yAt}, {colWide};");
