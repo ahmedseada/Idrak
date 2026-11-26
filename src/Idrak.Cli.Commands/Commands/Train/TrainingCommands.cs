@@ -893,7 +893,7 @@ internal sealed class PackageCommand : Command
         string metaFile = Path.Combine(folder, "training.json");
         var meta = File.Exists(metaFile) ? JsonNode.Parse(File.ReadAllText(metaFile)) as JsonObject : null;
         string tokenizerFile = Path.Combine(folder, "tokenizer.json");
-        var tokenizer = File.Exists(tokenizerFile) ? Tokenizers.Load(tokenizerFile) : null;
+        var tokenizer = File.Exists(tokenizerFile) ? NotOnTheNewDesign.Yet<ITokenizer>($"Reading the tokenizer {tokenizerFile} by the type its file names") : null;
         TrainSession.Package(model, network, scalers.GetValueOrDefault("features"), scalers.GetValueOrDefault("targets"), meta, output, tokenizer);
         List<string> included = ["network.json", Path.GetFileName(weights), .. scalers.Keys.Select(k => k + ".txt")];
         if (meta is not null)

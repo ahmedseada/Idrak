@@ -99,7 +99,7 @@ internal sealed class ProfileCommand : Command
         var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
         var cache = ModelChoices.CacheLayout(choice);                    // --kv, else the cache in the run's type
-        string kv = cache.Name;
+        string kv = KeyValueLayouts.FormatOf(cache).ToString().ToLowerInvariant();
         TensorOffloading.BeforeInference(device, network);                               // as generation does: room when offloaded
         using var noGrad = Autograd.NoGrad();
         Tensor Prompt() => Tensor.From([.. Enumerable.Range(0, promptTokens).Select(_ => Token())], [1, promptTokens], device);

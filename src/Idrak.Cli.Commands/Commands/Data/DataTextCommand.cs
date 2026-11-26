@@ -119,8 +119,6 @@ internal sealed class DataTextCommand : Command
     {
         public string Name => name;
 
-        public string Summary => inner.Summary;
-
         public string Line(Random random, int words, RandomTextOptions options) => inner.Line(random, words, options);
     }
 

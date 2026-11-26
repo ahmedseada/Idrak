@@ -95,7 +95,6 @@ internal sealed class NetworkAnalysis
 
                 int[] before = [.. builder.CurrentShape];
                 int modules = builder.Count;
-                builder.Op(op, step);
                 int[] after = [.. builder.CurrentShape];
                 long? parameters = CountParameters(op, step, before, after);
                 if (parameters is null)

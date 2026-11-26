@@ -260,7 +260,7 @@ internal sealed class BenchCommand : Command
 
         string prompt = Prompt(tokenizer, promptTokens);
         var layout = ModelChoices.CacheLayout(choice);           // --kv, IDRAK_KV_CACHE_TYPE, else the run's element type (plan 37, T2)
-        string kv = layout.Name;
+        string kv = KeyValueLayouts.FormatOf(layout).ToString().ToLowerInvariant();
         int window = Math.Min(Math.Max(context.IntOption("--num-ctx", promptTokens + tokens + 1), promptTokens + tokens + 1), model.MaxPositions);
         var generator = model.CreateGenerator(layout, window);
         generator.KeepCache = false;                                    // every run reads its whole prompt again

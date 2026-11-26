@@ -155,12 +155,6 @@ internal sealed class ModelFacts
             text += $", {dim} rotary dimensions";
         }
 
-        if (rope.Scaling is { } scaling)
-        {
-            var parameters = scaling.Parameters;
-            text += $", scaling {scaling.Type}" + (parameters["factor"] is { } factor ? $" (factor {factor.ToJsonString()})" : "");
-        }
-
         return text;
     }
 

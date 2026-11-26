@@ -69,7 +69,7 @@ internal sealed class CheckCommand : Command
         int failures = 0;
         // --kv. The reference is float32: a cache held in another format matches it only to its top token.
         var cache = ModelChoices.CacheLayout(choice);
-        bool approximate = cache.Name != "float32";
+        bool approximate = KeyValueLayouts.FormatOf(cache) != KeyValueFormat.Float32;
 
         // 1. Tokenizer: the same ids, and decoding gives the text back.
         context.Write("Tokenizer");
@@ -207,7 +207,7 @@ internal sealed class CheckCommand : Command
         {
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
-            ["kv"] = cache.Name,
+            ["kv"] = KeyValueLayouts.FormatOf(cache).ToString().ToLowerInvariant(),
             ["ok"] = failures == 0,
             ["failures"] = failures,
             ["texts"] = texts,

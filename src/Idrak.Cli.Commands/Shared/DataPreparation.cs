@@ -268,7 +268,7 @@ internal static class DataPreparation
         var decoded = images.Where(i => ImageFiles.IsDecoded(i.Path)).Select(i => (i.Path, i.Class)).ToList();
         if (decoded.Count == 0)
         {
-            throw new InvalidDataException($"None of the images can be decoded here ({string.Join(", ", ImageCodecs.Names)} are read; register a codec for other formats).");
+            throw new InvalidDataException("None of the images can be decoded here.");
         }
 
         var source = new ImageFolderSource(decoded, classes, c, h, w);

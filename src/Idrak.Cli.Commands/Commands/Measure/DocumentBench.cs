@@ -524,7 +524,7 @@ internal static class DocumentBench
                         w.Note(pageImages.Issues);
                         foreach (var image in pageImages.Images)
                         {
-                            w.Add(image.Decode());
+                            w.Add(NotOnTheNewDesign.Yet<ImageData>("Decoding a document's image through the registered image codecs"));
                             w.Items++;
                         }
 
@@ -828,7 +828,7 @@ internal static class DocumentBench
         {
             try
             {
-                var pixels = image.Decode();
+                var pixels = NotOnTheNewDesign.Yet<ImageData>("Decoding a document's image through the registered image codecs");
                 target.Image(pixels, image.Box, encoding);
                 work.Items++;
                 work.Pixels += (long)pixels.Width * pixels.Height;
