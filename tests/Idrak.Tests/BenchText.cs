@@ -24,7 +24,7 @@ using Idrak.Text.Retrieval;
 //               and the bytes allocated per text once warm, for the ids into a reused list (EncodeRange; the target is 0),
 //               the detailed encode (Encode(text, null, options)) and EncodeBatch, detailed and ids-only (Offsets = false),
 //               on one worker and on all (TokenizerOptions.Workers).
-//   trainers    TokenizerTrainers "bpe", "unigram" and "wordpiece" on the training text: time, text a second, bytes
+//   trainers    the bpe, unigram and wordpiece trainers on the training text: time, text a second, bytes
 //               allocated, the managed heap's peak above the start (sampled every millisecond), full collections, the
 //               process's peak working set so far, and the vocabulary learned, on one worker and on all
 //               (TokenizerTrainingOptions.Workers); each trainer's first run, on the fixture text alone, is reported apart
@@ -44,7 +44,6 @@ using Idrak.Text.Retrieval;
 //                                 and data/pretrain/corpus.txt repeated to IDRAK_BENCH_TEXT_TRAIN_MB in a temporary file
 //   IDRAK_BENCH_TEXT_TRAIN_MB     the default training text's size in MB (default 16: a few seconds a run)
 //   IDRAK_BENCH_TEXT_TRAIN_VOCAB  the vocabulary size each trainer learns (default 3000)
-//   IDRAK_BENCH_TEXT_TRAINERS     the trainers timed, comma-separated (default bpe,unigram,wordpiece; a plug-in's name works)
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly string[] BenchTextSections = ["text", "tokenizers", "trainers"];
@@ -358,14 +357,13 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    // TokenizerTrainers "bpe", "unigram" and "wordpiece" (or IDRAK_BENCH_TEXT_TRAINERS) on the training text.
+    // The bpe, unigram and wordpiece trainers on the training text.
     private static void BenchTrainers()
     {
         double megabytes = BenchTextNumber("IDRAK_BENCH_TEXT_TRAIN_MB", 16, 0);
         int vocabulary = (int)BenchTextNumber("IDRAK_BENCH_TEXT_TRAIN_VOCAB", 3000, 1);
         int workers = (int)BenchTextNumber("IDRAK_BENCH_TEXT_WORKERS", 0, 0);
-        string[] names = BenchTextSetting("IDRAK_BENCH_TEXT_TRAINERS", $"{TokenizerTrainers.Bpe},{TokenizerTrainers.Unigram},{TokenizerTrainers.WordPiece}")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        ITokenizerTrainer[] trainers = [new BpeTrainer(), new UnigramTrainer(), new WordPieceTrainer()];
 
         // The text: the files named, or the fixture texts repeated whole into a temporary file to the size asked.
         string[] files = BenchTextFiles("IDRAK_BENCH_TEXT_TRAIN_FILES");
@@ -408,9 +406,9 @@ internal abstract partial class DesktopTests : Tests
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"trainers on {BenchTextMegabytes(textBytes)} of text ({described}), vocabulary {vocabulary:N0}, {Environment.ProcessorCount} threads; "
                 + $"heap peak: the managed heap's largest size above the start, sampled every millisecond; process peak: the working set's peak so far in this process"));
-            foreach (string name in names)
+            foreach (var trainer in trainers)
             {
-                var trainer = TokenizerTrainers.Get(name);
+                string name = trainer.Name;
                 var options = new TokenizerTrainingOptions
                 {
                     VocabularySize = vocabulary,

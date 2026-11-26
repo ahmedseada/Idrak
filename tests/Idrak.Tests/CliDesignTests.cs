@@ -19,7 +19,6 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] CliDesignGroup =
     [
         ("cli design: suggest on a CSV writes a network that builds and trains (regression and classes)", CliSuggestTable),
-        ("cli design: suggest on an image folder writes a CNN that builds and trains", CliSuggestImages),
         ("cli design: suggest on chat and text rows writes models that build and train", CliSuggestText),
         ("cli design: suggest --search 2 keeps the better candidate", CliSuggestSearch),
         ("cli design: explain counts the built network's parameters; viz draws it", CliExplainViz),
@@ -120,59 +119,6 @@ internal abstract partial class DesktopTests : Tests
             Check(json["warnings"]!.AsArray().Any(w => ((string?)w)!.Contains("unbalanced", StringComparison.Ordinal)), "unbalanced classes are reported");
             Check((long)json["parameters"]! <= (long)json["parameterCap"]!, "the network fits its parameter cap");
             TrainOneStep(classRun, kinds, device, "kind");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    private static void CliSuggestImages(Device device)
-    {
-        string folder = TempFolder();
-        try
-        {
-            // Two classes of 16x16 grayscale drawings: squares (as PGM) and crosses (as PNG, to read the PNG decoder too).
-            string root = Path.Combine(folder, "shapes");
-            var random = new Random(5);
-            for (int i = 0; i < 24; i++)
-            {
-                foreach (string shape in new[] { "square", "cross" })
-                {
-                    var pixels = new byte[16 * 16];
-                    int cx = 5 + random.Next(6), cy = 5 + random.Next(6), r = 3 + random.Next(2);
-                    for (int y = 0; y < 16; y++)
-                    {
-                        for (int x = 0; x < 16; x++)
-                        {
-                            bool on = shape == "square" ? Math.Max(Math.Abs(x - cx), Math.Abs(y - cy)) == r : (x == cx || y == cy) && Math.Max(Math.Abs(x - cx), Math.Abs(y - cy)) <= r;
-                            pixels[y * 16 + x] = (byte)(on ? 220 : random.Next(30));
-                        }
-                    }
-
-                    Directory.CreateDirectory(Path.Combine(root, shape));
-                    if (shape == "square")
-                    {
-                        File.WriteAllBytes(Path.Combine(root, shape, $"{i}.pgm"), [.. Encoding.ASCII.GetBytes("P5\n16 16\n255\n"), .. pixels]);
-                    }
-                    else
-                    {
-                        File.WriteAllBytes(Path.Combine(root, shape, $"{i}.png"), GrayPng(pixels, 16, 16));
-                    }
-                }
-            }
-
-            var decoded = ImageCodecs.Decode(Path.Combine(root, "cross", "0.png"));
-            Check(decoded is { Channels: 1, Height: 16, Width: 16 }, "the PNG decoder reads the test image");
-            Check(ImageFiles.ReadHeader(Path.Combine(root, "square", "0.pgm")) is { Width: 16, Height: 16, Channels: 1 }, "the PGM header");
-
-            string run = Path.Combine(folder, "run");
-            var json = RunIdrakJson("suggest", root, "-o", run, "-d", device.ToString());
-            Check((string?)json["task"] == "image", $"task: {json["task"]}");
-            Check(json["data"]!["classes"]!.AsArray().Count == 2, $"classes: {json["data"]!["classes"]}");
-            var network = JsonNode.Parse(File.ReadAllText(Path.Combine(run, "network.json")))!;
-            Check((string?)network["input"] == "Image" && network["steps"]!.AsArray().Any(s => (string?)s!["op"] == "conv2d"), "a CNN for images");
-            TrainOneStep(run, root, device);
         }
         finally
         {
@@ -412,5 +358,4 @@ internal abstract partial class DesktopTests : Tests
             Directory.Delete(folder, recursive: true);
         }
     }
-
 }

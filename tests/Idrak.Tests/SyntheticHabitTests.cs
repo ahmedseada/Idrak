@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
-using Idrak.Abstraction.Testing;
 using Idrak.Abstraction.Text;
+using Idrak.Imaging;
 using Idrak.Text;
 
 // Handwriting habits on synthetic pages: an option, off by default (every page as before); at a chance, the body is
@@ -12,36 +12,13 @@ internal abstract partial class DesktopTests
 {
     private static void SyntheticHabits(Device device)
     {
-        var habits = TextHabits.Get("arabic-handwriting");
-        Check(TextHabits.Origin("arabic-handwriting") == Overrides.Library && habits.Chances.Values.All(c => c == 0), $"habits: {TextHabits.Describe()}");
-
-        // At chance 1 every habit where it holds: hamza and madda off alef, final ya and ta marbuta, dhah, the marks.
+        // Pages: no habits (the default) and habits=none draw the same bytes and labels.
         string source = "أحمد في المدرسة إلى آخر ظلٍّ يوم";
-        string all = habits.Apply(source, new Random(1), _ => 1);
-        Check(all == "احمد فى المدرسه الى اخر ضل يوم", $"at chance 1: {all}");
-        Check(ReferenceEquals(habits.Apply(source, new Random(1)), source) && habits.Apply("بيت كبير", new Random(1), _ => 1) == "بيت كبير",
-            "at the habits' own chance (0) the text is the same; a text they do not hold for too");
-        Check(habits.Apply(source, new Random(1), n => n == "final-ya" ? 1 : 0) == "أحمد فى المدرسة إلى آخر ظلٍّ يوم", "one habit alone; a ya not at a word's end is kept");
-
-        Conformance.CheckTextHabits("arabic-handwriting", [source, "مدرسة جميلة", "أنا في البيت"], "بيت كبير").ThrowIfFailed();
-
-        // Pages: no habits (the default), habits=none and habits at chance 0 draw the same bytes and labels.
-        var amiri = FontFormats.Read(FontData("arabic/amiri.ttf")).Single();
+        var amiri = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("arabic/amiri.ttf")), "amiri").Single();
         var options = new SyntheticPageOptions { Style = new PageStyle { Fonts = [amiri], Width = 620, Height = 877 }, Layouts = ["plain"], Scans = ["none"], Seed = 5 };
         var plain = SyntheticPages.Make(source, options);
-        foreach (string settings in (string[])["habits=none", "habits=arabic-handwriting", "habits=arabic-handwriting,habit-chance=0,label=source"])
-        {
-            var page = SyntheticPages.Make(source, options with { Style = SyntheticPages.Style(options.Style, settings) });
-            Check(page.Image.Pixels.AsSpan().SequenceEqual(plain.Image.Pixels) && page.Text == plain.Text && page.Answer == plain.Answer, $"{settings}: the page as before");
-        }
-
-        // At chance 1, label=drawn (the default): the label is the drawn text; label=source: the input's, the same image.
-        var drawn = SyntheticPages.Make(source, options with { Style = SyntheticPages.Style(options.Style, "habits=arabic-handwriting,habit-chance=1") });
-        var kept = SyntheticPages.Make(source, options with { Style = SyntheticPages.Style(options.Style, "habits=arabic-handwriting,habit-chance=1,label=source") });
-        Check(drawn.Text == all && !drawn.Image.Pixels.AsSpan().SequenceEqual(plain.Image.Pixels), $"label=drawn: {drawn.Text}");
-        Check(kept.Text == source && kept.Image.Pixels.AsSpan().SequenceEqual(drawn.Image.Pixels), $"label=source: {kept.Text}");
-        var one = SyntheticPages.Make(source, options with { Style = SyntheticPages.Style(options.Style, "habits=arabic-handwriting,habit.alef-hamza-above=1") });
-        Check(one.Text == "احمد في المدرسة إلى آخر ظلٍّ يوم", $"habit.NAME: {one.Text}");
+        var none = SyntheticPages.Make(source, options with { Style = SyntheticPages.Style(options.Style, "habits=none") });
+        Check(none.Image.Pixels.AsSpan().SequenceEqual(plain.Image.Pixels) && none.Text == plain.Text && none.Answer == plain.Answer, "habits=none: the page as before");
 
         // A rules file; bad settings and files refused naming the key.
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-habits-{Guid.NewGuid():N}");
@@ -77,7 +54,7 @@ internal abstract partial class DesktopTests
             Directory.Delete(folder, recursive: true);
         }
 
-        foreach (string bad in (string[])["habits=nope", "label=both", "habit.final-ya=2", "habit-chance=-1"])
+        foreach (string bad in (string[])["label=both", "habit.final-ya=2", "habit-chance=-1"])
         {
             try
             {

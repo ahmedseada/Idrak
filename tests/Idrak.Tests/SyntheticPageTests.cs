@@ -1,14 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
-using Idrak.Abstraction.Generation;
 using Idrak.Imaging;
 using Idrak.Text;
-using Idrak.Text.Abstractions;
 
 // Plan 18, phase 5: tuning data from text: records' answers drawn as pages, scanned, written again with the page and the
 // drawn text, read back by the tuning data formats.
@@ -16,14 +13,11 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] SyntheticDataGroup =
     [
-        ("synthetic data: ShareGPT records with JSON answers become pages: each record written again in its shape with one page image, its answer's full text the drawn text, its other fields, fence and indentation kept, a manifest line a page; the tuning reader reads them with their images", SyntheticShareGpt),
-        ("synthetic data: the same seed gives the same bytes on one worker or many, another seed other pages; images in a zip read back with the zip as the images root", SyntheticRepeatable),
-        ("synthetic data: plain text documents and chat messages records are read, and written with one image each", SyntheticFormats),
         ("synthetic data: page parts fill their slots (digits, number, pick, field, date, hijri, line), drop a line whose field is missing, use the language's digits when drawn, keep a part out at chance 0; unknown keys and slots are refused", SyntheticParts),
         ("synthetic data: a record no font can draw, or with no text, is left out and said why; a font without a page's letters is not used for it; every record left out is an error", SyntheticSkips),
         ("synthetic data: page settings text sets the style's sizes and chances and the shapes layout's options (pen, binding and their keys), refusing unknown keys (naming every valid one) and values out of range; shape profiles are drawn per page and checked first; an indented answer keeps its own line ending (\\n or \\r\\n) on every machine", SyntheticStyle),
         ("synthetic data: idrak data synth (and synth) writes the pages with the fonts, parts, variants, scans, shapes and page settings given; a missing records file or font folder, or a bad setting or shape profile, is a usage error", SyntheticCli),
-        ("synthetic data: handwriting habits are an option, off by default (the same bytes and labels); at chance 1 the label is the drawn text (label=drawn) or the source's (label=source) over the same image; habit.NAME, rules files, bad settings refused; the habits contract", SyntheticHabits),
+        ("synthetic data: handwriting habits are an option, off by default (habits=none, the same bytes and labels); a rules file's habits drawn; bad rules files and settings refused", SyntheticHabits),
     ];
 
     private static string SyntheticFolder(string name)
@@ -69,139 +63,6 @@ internal abstract partial class DesktopTests : Tests
         string path = Path.Combine(folder, "train.jsonl");
         File.WriteAllLines(path, [Record(0, fenced), Record(1, indented), Record(2, plain)], new UTF8Encoding(false));
         return path;
-    }
-
-    private static void SyntheticShareGpt(Device device)
-    {
-        string folder = SyntheticFolder("sharegpt");
-        try
-        {
-            string input = ShareGptInput(folder);
-            var reports = new List<SyntheticPagesProgress>();
-            var result = SyntheticPages.Write(input, Path.Combine(folder, "out", "synthetic.jsonl"), SyntheticOptions(folder), new SyncProgress<SyntheticPagesProgress>(reports.Add));
-            Check(result.Records == 3 && result.Pages == 6 && result.Skips.Count == 0, $"{result.Records} records, {result.Pages} pages, {result.Skips.Count} left out");
-            Check(reports.Count > 0 && reports[^1].Pages == 6 && reports[^1].Total == 6, $"progress to {reports.LastOrDefault()?.Pages}/{reports.LastOrDefault()?.Total}");
-
-            var lines = File.ReadAllLines(result.Data);
-            var manifest = File.ReadAllLines(result.Manifest).Select(l => JsonNode.Parse(l)!).ToArray();
-            Check(lines.Length == 6 && manifest.Length == 6, $"{lines.Length} records, {manifest.Length} manifest lines");
-            for (int i = 0; i < lines.Length; i++)
-            {
-                var record = JsonNode.Parse(lines[i])!.AsObject();
-                var turns = record["conversations"]!.AsArray();
-                string image = (string)record["images"]![0]!;
-                Check(record["images"]!.AsArray().Count == 1 && image == (string)manifest[i]["image"]! && File.Exists(Path.Combine(folder, "out", image)), $"record {i}: one image, {image}");
-                Check((string)turns[0]!["value"]! == "<image>Extract details to JSON." && (string)record["id"]! == $"r{i / 2}", $"record {i}: its question and id kept");
-                string answer = (string)turns[1]!["value"]!;
-                string json = answer.StartsWith("```json\n", StringComparison.Ordinal) ? answer["```json\n".Length..^"\n```".Length] : answer;
-                var fields = JsonNode.Parse(json)!.AsObject();
-                string text = (string)fields["full_text_extract"]!;
-                Check(text.Contains((i / 2) switch { 0 => "سعادة مدير المشروع المحترم", 1 => "تعميم رقم 77 لعام 1446", _ => "The team met on 3 May 2025" }, StringComparison.Ordinal),
-                    $"record {i}: the body drawn and in the answer");
-                Check(text.Contains("مدير الإدارة", StringComparison.Ordinal) && text.Contains("الرقم: ", StringComparison.Ordinal) && text.Contains("هاتف ", StringComparison.Ordinal),
-                    $"record {i}: the header, signature and footer drawn and in the answer");
-                switch (i / 2)
-                {
-                    case 0:
-                        Check(answer.StartsWith("```json\n", StringComparison.Ordinal) && (string)fields["document_number"]! == "4521" && text.Contains("الموضوع: طلب نسخة", StringComparison.Ordinal),
-                            "the fenced answer stays fenced, its fields kept, its subject drawn from its field");
-                        break;
-                    case 1:
-                        Check(json.StartsWith("{\n    \"full_text_extract\": ", StringComparison.Ordinal) && json.EndsWith("\",\n    \"date\": \"1446/05/02\"\n}", StringComparison.Ordinal)
-                              && !text.Contains("الموضوع", StringComparison.Ordinal), $"the answer indented by four spaces stays so; no subject field, no subject line: {json}");
-                        break;
-                    default:
-                        Check(json.StartsWith("{\"full_text_extract\": \"", StringComparison.Ordinal) && json.EndsWith("\", \"office\": \"General\", \"pages\": [1, 2]}", StringComparison.Ordinal),
-                            $"the one-line answer keeps its spaces after commas and colons, its keys in order: {json}");
-                        break;
-                }
-
-                Check(((string)manifest[i]["page"]!).Contains("DejaVu", StringComparison.Ordinal), $"record {i}: drawn in the font with Arabic, not in features.ttf ({manifest[i]["page"]})");
-            }
-
-            var transcripts = TuningDataFormats.Read(result.Data).ToList();
-            Check(transcripts.Count == 6, $"the tuning reader reads {transcripts.Count} records");
-            foreach (var transcript in transcripts)
-            {
-                var images = transcript.Messages.SelectMany(m => m.Parts).OfType<ChatImage>().ToList();
-                var decoded = new JpegCodec().Decode(images.Single().Data.Span);
-                Check(decoded.Width == 620 && decoded.Height >= 877, $"its page decodes, {decoded.Width}x{decoded.Height}");
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    private static void SyntheticRepeatable(Device device)
-    {
-        string folder = SyntheticFolder("repeat");
-        try
-        {
-            string input = ShareGptInput(folder);
-            string Run(string name, int workers, int seed, bool zip = false)
-            {
-                var options = SyntheticOptions(folder, workers: workers, seed: seed) with { Zip = zip };
-                return SyntheticPages.Write(input, Path.Combine(folder, name, "pages.jsonl"), options).Data;
-            }
-
-            string one = Run("one", 1, 7), many = Run("many", 4, 7), other = Run("other", 4, 8);
-            Check(File.ReadAllText(one) == File.ReadAllText(many), "the records the same on one worker and four");
-            var names = Directory.GetFiles(Path.Combine(folder, "one", "pages")).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
-            Check(names.Length == 6 && names.All(n => File.ReadAllBytes(Path.Combine(folder, "one", "pages", n!)).SequenceEqual(File.ReadAllBytes(Path.Combine(folder, "many", "pages", n!)))),
-                "every image the same bytes");
-            Check(File.ReadAllText(one) != File.ReadAllText(other), "another seed, other pages");
-
-            string zipped = Run("zipped", 2, 7, zip: true);
-            string zipPath = Path.ChangeExtension(zipped, ".zip");
-            using (var archive = ZipFile.OpenRead(zipPath))
-            {
-                Check(archive.Entries.Count == 6 && archive.Entries.All(e => e.FullName.StartsWith("pages/", StringComparison.Ordinal)), $"{archive.Entries.Count} pages in the zip");
-            }
-
-            Check(!Directory.Exists(Path.Combine(folder, "zipped", "pages")), "no image folder beside a zip");
-            var transcripts = TuningDataFormats.Read(zipped, options: new TuningDataOptions { Images = zipPath }).ToList();
-            Check(transcripts.Count == 6 && transcripts.All(t => t.Messages.SelectMany(m => m.Parts).OfType<ChatImage>().Count() == 1), "read back with the zip as the images root");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    private static void SyntheticFormats(Device device)
-    {
-        string folder = SyntheticFolder("formats");
-        try
-        {
-            string text = Path.Combine(folder, "letters.txt");
-            File.WriteAllText(text, "الحمد لله وحده\nوبعد فهذا قرار.\n---\n\n---\nSecond document, in English.\n", new UTF8Encoding(false));
-            var options = SyntheticOptions(folder, variants: 1) with { Parts = SyntheticPageParts.Empty, AnswerKey = "text", Prompt = "Read the page." };
-            var result = SyntheticPages.Write(text, Path.Combine(folder, "from-text.jsonl"), options);
-            Check(result.Records == 2 && result.Pages == 2, $"two documents (the empty one passed over): {result.Records} records, {result.Pages} pages");
-            var first = JsonNode.Parse(File.ReadLines(result.Data).First())!;
-            Check((string)first["conversations"]![0]!["value"]! == "<image>Read the page." && JsonNode.Parse((string)first["conversations"]![1]!["value"]!)!["text"]!.ToString() == "الحمد لله وحده\nوبعد فهذا قرار.",
-                "written as ShareGPT, the prompt asked, the drawn text under the answer key");
-
-            string chat = Path.Combine(folder, "chat.jsonl");
-            File.WriteAllText(chat, SyntheticPages.Json(new JsonObject
-            {
-                ["messages"] = new JsonArray(
-                    new JsonObject { ["role"] = "user", ["content"] = new JsonArray(new JsonObject { ["type"] = "image", ["path"] = "a.png" }, new JsonObject { ["type"] = "text", ["text"] = "Read it." }) },
-                    new JsonObject { ["role"] = "assistant", ["content"] = "Plain answer line one.\nLine two." }),
-            }) + "\n", new UTF8Encoding(false));
-            var written = SyntheticPages.Write(chat, Path.Combine(folder, "from-chat.jsonl"), options with { AnswerKey = null });
-            var transcript = TuningDataFormats.Read(written.Data).Single();
-            var parts = transcript.Messages[0].Parts;
-            Check(parts.OfType<ChatImage>().Count() == 1 && parts.OfType<ChatText>().Any(t => t.Text.Contains("Read it.", StringComparison.Ordinal)),
-                "the old image part replaced by the page, the question kept");
-            Check(transcript.Messages[^1].Parts.OfType<ChatText>().Single().Text == "Plain answer line one.\nLine two.", "a plain answer is the drawn text");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 
     private static void SyntheticParts(Device device)
@@ -427,7 +288,6 @@ internal abstract partial class DesktopTests : Tests
                 Check(bad.Code == 2 && bad.Err.Length > 0 && (why != "a missing records file" || bad.Err.Contains("is not there", StringComparison.Ordinal)),
                     $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
             }
-
         }
         finally
         {

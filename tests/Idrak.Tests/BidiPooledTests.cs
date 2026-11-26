@@ -118,7 +118,7 @@ internal abstract partial class DesktopTests
     {
         const int Texts = 20_000;
         var random = new Random(20261119);
-        var order = ReadingOrders.Default(ReadingOrders.Bidi) ?? throw new InvalidOperationException("the library registers no bidi reading order");
+        var order = new BidiReadingOrder();
         int compared = 0, failed = 0;
         var first = new List<string>();
         void Expect(bool same, Func<string> what)
