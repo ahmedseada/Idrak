@@ -21,7 +21,7 @@ internal abstract partial class Tests
     internal static (List<float> Losses, float[] Adapters, string Trace) TrainTiny(string folder, Device device, IReadOnlyList<TrainingSequence> sequences,
         FineTuningOptions options)
     {
-        using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+        using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader });
         var losses = new List<float>();
         var trace = new System.Text.StringBuilder();
         FineTuner.Train(model, sequences, null, options, progress: new SynchronousProgress<FineTuningProgress>(p => losses.Add(p.Loss)),

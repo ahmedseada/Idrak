@@ -165,6 +165,14 @@ public sealed record PretrainedOptions
     public ICheckpointFormat? Format { get; init; }
 
     /// <summary>
+    /// The reader of the folder's own chat template, handed over directly (Idrak.Text's <c>JinjaChatTemplate.Reader</c>):
+    /// it reads the checkpoint's own file (tokenizer_config.json's "chat_template", chat_template.jinja, chat_template.json;
+    /// a GGUF file's <c>tokenizer.chat_template</c>, written into its prepared folder), no lookup involved. Null reads none:
+    /// the model then has no <see cref="PretrainedModel.ChatTemplate"/>.
+    /// </summary>
+    public IChatTemplateReader? ChatTemplateReader { get; init; }
+
+    /// <summary>
     /// The type every projection's weight and the token table are written as, by that type's encoder (a model's weights
     /// written to any type: <c>Idrak.Types.Q4_K.Type</c>, a type of one's own); null keeps each as its checkpoint stores it.
     /// A weight whose rows are not whole groups of the type's blocks keeps its stored type.
@@ -333,8 +341,8 @@ public sealed class PretrainedModel : IDisposable
     public ITokenizer? Tokenizer { get; }
 
     /// <summary>
-    /// The model's own chat template (from tokenizer_config.json), or null when the model has none or it is not read
-    /// (reading a folder's own template is not on the new design yet).
+    /// The model's own chat template (its folder's tokenizer_config.json, chat_template.jinja or chat_template.json, read by
+    /// <see cref="PretrainedOptions.ChatTemplateReader"/>), or null when the model has none or no reader was handed over.
     /// </summary>
     public IChatTemplate? ChatTemplate { get; }
 
@@ -574,7 +582,7 @@ public sealed class PretrainedModel : IDisposable
         long tokenizing = Stopwatch.GetTimestamp();
         var tokenizer = PretrainedTokenizers.TryLoad(folder, options.Tokenizer);
         tokenizer?.PadVocabulary(spec.Vocabulary);
-        IChatTemplate? template = null;                                 // reading the folder's own template: not on the new design yet
+        var template = options.ChatTemplateReader?.Read(new ChatTemplateRequest(folder, tokenizer));      // the folder's own file
         long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
             options.Device ?? Idrak.Abstraction.Device.Default, vision);

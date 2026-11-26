@@ -92,7 +92,7 @@ public sealed record TuningManifest
         device ??= options?.Device ?? Device.Cpu;
         var model = PretrainedModel.Load(ModelSource.Resolve(BaseModel), (options ?? new PretrainedOptions()) with
         {
-            Device = device, MergeAdapter = folder,
+            Device = device, MergeAdapter = folder, ChatTemplateReader = options?.ChatTemplateReader ?? JinjaChatTemplate.Reader,
         });
         model.Network.Eval();
         return model;

@@ -121,7 +121,7 @@ internal abstract partial class DesktopTests : Tests
             $"run --adapter takes the saved preparation: {code} {text} {error}");
 
         // The library with the same adapter: its encoder with the trained projector, the saved options.
-        using var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu, MergeAdapter = adapter });
+        using var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu, Families = Idrak.Text.Plugins.BuiltInFamilies.All, MergeAdapter = adapter });
         var vision = model.Vision!;
         using var trained = model.CreateVisionEncoder();
         using var frozen = vision.CreateEncoder(new VisionEncoderOptions { Device = Device.Cpu });

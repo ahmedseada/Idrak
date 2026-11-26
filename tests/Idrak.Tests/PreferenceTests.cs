@@ -94,7 +94,7 @@ internal abstract partial class DesktopTests : Tests
     // A tiny chat model's policy on one prompt, warmed up on "yes" and "no" so the reward has something to choose.
     private static (LanguageModelPolicy Policy, PretrainedModel Model, IReadOnlyList<ChatMessage> Prompt) WarmPolicy(string folder, Device device, int steps = 200)
     {
-        var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+        var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All, ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader });
         var session = new FineTuningSession(model, SessionOptions(1e-2f), totalSteps: steps);
         var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions { MaxNewTokens = 6 });
         IReadOnlyList<ChatMessage> prompt = [new ChatMessage("user", "Q")];

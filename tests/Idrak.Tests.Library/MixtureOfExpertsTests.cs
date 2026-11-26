@@ -420,7 +420,7 @@ internal abstract partial class Tests
             }).ToList();
             foreach (float balance in new[] { 0f, 0.01f })
             {
-                using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+                using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
                 var options = new FineTuningOptions
                 {
                     Rank = 4, Alpha = 8, LearningRate = 2e-2f, Epochs = 15, BatchTokens = 256, WarmupFraction = 0f, Seed = 5,

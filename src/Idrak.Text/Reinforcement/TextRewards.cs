@@ -320,7 +320,7 @@ public sealed class JudgeReward : IRewardFunction
         int maxLength = _maxLength;
         var loaded = _loaded.GetOrAdd((model, device, maxLength), key => new Lazy<(PretrainedModel, AnswerScorer)>(() =>
         {
-            var judge = PretrainedModel.Load(key.Model, new PretrainedOptions { Device = Device.Parse(key.Device) });
+            var judge = PretrainedModel.Load(key.Model, new PretrainedOptions { Device = Device.Parse(key.Device), ChatTemplateReader = JinjaChatTemplate.Reader });
             judge.Network.Eval();
             return (judge, new AnswerScorer(judge, key.MaxLength));
         }));

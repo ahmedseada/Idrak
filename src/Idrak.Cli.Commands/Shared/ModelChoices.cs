@@ -311,6 +311,7 @@ internal static class ModelChoices
                 ExpertPlacement = choice.MoeExperts,
                 Weights = choice.Weights,
                 Families = Idrak.Text.Plugins.BuiltInFamilies.All,
+                ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
             });
             progress.Clear();
         }

@@ -191,7 +191,7 @@ internal abstract partial class Tests
 
     internal static (PretrainedModel Model, JinjaChatTemplate Template) TinyLlamaWithAudio(Device device)
     {
-        var model = PretrainedModel.Load(PretrainData("tiny-llama"), new PretrainedOptions { Device = device });
+        var model = PretrainedModel.Load(PretrainData("tiny-llama"), new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
         return (model, new JinjaChatTemplate(AudioTemplate, ["<|im_end|>"]));
     }
 }

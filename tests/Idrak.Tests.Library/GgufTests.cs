@@ -17,7 +17,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] GgufGroup =
     [
         ("evaluation: final numbers (#### n), exact, contains and F1 scores of answers", EvaluationMetrics),
-        ("gguf: a Qwen3 file loads by its own names (its architecture, tokenizer model and pre-tokenizer), its weights as stored, as its Hugging Face twin reads", GgufQwen3Loads),
+        ("gguf: a Qwen3 file loads by its own names (its architecture, tokenizer model and pre-tokenizer), its weights as stored, as its Hugging Face twin reads; its own chat template read by the reader handed over", GgufQwen3Loads),
     ];
 
     // The tiny Qwen3 GGUF fixture (q8_0 weights) prepared and loaded through the built-in families, each part found by the
@@ -32,10 +32,18 @@ internal abstract partial class Tests
             var families = Idrak.Text.Plugins.BuiltInFamilies.All;
             string folder = GgufModel.Prepare(Path.Combine(DataFolder(), "gguf", "tiny-qwen3-q8.gguf"), cache, families);
             string twin = Path.Combine(DataFolder(), "gguf", "tiny-qwen3-q8-hf");
-            using var gguf = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = families });
+            using var gguf = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = families, ChatTemplateReader = JinjaChatTemplate.Reader });
             using var hf = PretrainedModel.Load(twin, new PretrainedOptions { Device = device, Families = families });
             Check(gguf.Architecture.Names.Contains("Qwen3ForCausalLM") && !gguf.Notes.Any(n => n.Contains("pre-tokenizer", StringComparison.Ordinal)),
                 $"the family and the pre-tokenizer found by the file's own names: {string.Join("; ", gguf.Notes)}");
+            // Its chat template the file's own (tokenizer.chat_template), read by the reader handed over; none without one.
+            using (var file = GgufFile.Open(Path.Combine(DataFolder(), "gguf", "tiny-qwen3-q8.gguf")))
+            {
+                string? own = file.Get<string?>("tokenizer.chat_template", null);
+                Check(own is not null && gguf.ChatTemplate is JinjaChatTemplate template && template.Source == own && hf.ChatTemplate is null,
+                    "the file's own chat template read by the reader handed over (and none read without one)");
+            }
+
             var projections = Linears(gguf.Network).Where(l => l.TiedTo is null).ToList();
             Check(projections.Count > 0 && projections.All(l => l.Stored?.Type == Idrak.Types.Q8_0.Type),
                 $"every projection kept as stored, q8_0: {string.Join(", ", projections.Select(l => l.Stored?.Type.Name ?? "float32"))}");

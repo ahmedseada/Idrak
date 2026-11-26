@@ -118,6 +118,7 @@ public sealed class ChatModelService : IChatModelService
         {
             Device = device,
             MaxPositions = request.Context,
+            ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
         });
         try
         {

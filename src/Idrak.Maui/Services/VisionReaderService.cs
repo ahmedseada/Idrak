@@ -164,6 +164,7 @@ public sealed class VisionReaderService : IVisionReaderService
         {
             Device = device,
             MaxPositions = request.Context,
+            ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
         });
         try
         {

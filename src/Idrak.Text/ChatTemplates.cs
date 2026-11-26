@@ -43,6 +43,23 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// <summary>The Jinja source.</summary>
     public string Source { get; }
 
+    /// <summary>
+    /// The reader of a model folder's own Jinja template (<see cref="Load"/>: chat_template.jinja, chat_template.json or
+    /// tokenizer_config.json's "chat_template"), handed over to loading (Idrak's <c>PretrainedOptions.ChatTemplateReader</c>):
+    /// it reads the checkpoint's own file.
+    /// </summary>
+    public static IChatTemplateReader Reader { get; } = new FolderReader();
+
+    // The folder's own template, as Load reads it.
+    private sealed class FolderReader : IChatTemplateReader
+    {
+        public IChatTemplate? Read(ChatTemplateRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            return Load(request.Folder, request.Tokenizer);
+        }
+    }
+
     /// <summary>The limits every render of it keeps (<see cref="JinjaOptions"/>: steps and output); null for the defaults (their variables, else built in).</summary>
     public JinjaOptions? Limits { get; init; }
 

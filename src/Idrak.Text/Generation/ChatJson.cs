@@ -29,8 +29,12 @@ public static class ChatJson
         return json;
     }
 
-    // A message's content was written through the part kinds (ChatParts): not on the new design yet.
-    private static JsonNode ContentToJson(IReadOnlyList<ChatPart> parts) => throw new NotSupportedException("A message's content written through the chat part kinds is not on the new design yet.");
+    // A message's content: a string when it is text alone (its text parts joined, as ChatMessage.Content reads them; no
+    // part kind involved); a list of parts of other kinds was written through the part kinds (ChatParts), which is not on
+    // the new design yet.
+    private static JsonNode ContentToJson(ChatMessage message) => message.Parts.All(p => p is ChatText)
+        ? JsonValue.Create(message.Content)
+        : throw new NotSupportedException($"A message's content of {string.Join(", ", message.Parts.Where(p => p is not ChatText).Select(p => $"'{p.Kind}'").Distinct())} parts, written through the chat part kinds, is not on the new design yet.");
 
     /// <summary>
     /// The messages; assistant reasoning goes in "reasoning_content", call arguments are JSON objects. Content is a string
@@ -43,7 +47,7 @@ public static class ChatJson
         int calls = 0;
         foreach (var message in messages)
         {
-            var json = new JsonObject { ["role"] = message.Role, ["content"] = ContentToJson(message.Parts) };
+            var json = new JsonObject { ["role"] = message.Role, ["content"] = ContentToJson(message) };
             if (!string.IsNullOrEmpty(message.Thinking))
             {
                 json["reasoning_content"] = message.Thinking;

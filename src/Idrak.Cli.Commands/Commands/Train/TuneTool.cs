@@ -1436,6 +1436,7 @@ internal sealed class TuneTool(ToolConsole console)
             // Training moves no expert between memories: every expert stays resident (plan 37, R1).
             ExpertPlacement = training ? Idrak.Models.Abstractions.ExpertPlacements.Resident : moeExperts,
             Families = Idrak.Text.Plugins.BuiltInFamilies.All,
+            ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
         });
         _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}");
         _out.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "

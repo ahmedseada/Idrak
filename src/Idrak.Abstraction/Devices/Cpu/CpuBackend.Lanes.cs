@@ -48,9 +48,9 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    // The codes' description of a row-scaled description, made once a description (so the plan and the measured choices
-    // made for it are kept with it).
-    private static readonly ConditionalWeakTable<TypeDescription, TypeDescription> RowCodes = new();
+    // The codes' description of a row-scaled description, made once a description's value (equal descriptions made apart,
+    // as int8's rows of one length, share it; the plan and the measured choices made for it are kept by value too).
+    private static readonly ConcurrentDictionary<TypeDescription, TypeDescription> RowCodes = new();
 
     // The codes alone of a description whose row of k values is one block under one scale covering it (its codes one plane
     // of whole bytes within the block, no minimum, sum or codebook), or null where it is not one.
@@ -63,7 +63,7 @@ internal sealed partial class CpuBackend
             return null;
         }
 
-        var codes = RowCodes.GetValue(d, static r => new TypeDescription(1, r.Planes[0].Bits / 8, r.Code, [r.Planes[0] with { Offset = 0 }], r.CodeOffset));
+        var codes = RowCodes.GetOrAdd(d, static r => new TypeDescription(1, r.Planes[0].Bits / 8, r.Code, [r.Planes[0] with { Offset = 0 }], r.CodeOffset));
         return codes.Valid ? codes : null;
     }
 

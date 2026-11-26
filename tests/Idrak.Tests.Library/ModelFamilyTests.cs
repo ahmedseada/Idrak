@@ -199,7 +199,7 @@ internal abstract partial class Tests
             Check(tensors.Any(t => t.Item1 == "model.layers.1.pre_feedforward_layernorm.weight") && tensors.Any(t => t.Item1 == "model.layers.0.post_feedforward_layernorm.weight"),
                 "Gemma 2 norm names");
             SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), tensors);
-            using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All }))
             {
                 Check(model.Notes.Count == 0, string.Join("; ", model.Notes));
                 AssertClose(expected, model.Network.Predict(input).ToArray(), 1e-4f, "Gemma 2 checkpoint");

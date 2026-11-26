@@ -174,7 +174,7 @@ internal abstract partial class Tests
     internal static (float[] Losses, float[] Weights) DpPretrain(Device device, PretrainingOptions options, string folder, Action<string>? trace = null, PretrainingCheckpoint? resume = null,
         string? model = null)
     {
-        using var loaded = PretrainedModel.Load(model ?? TinyLlama, new PretrainedOptions { Device = device });
+        using var loaded = PretrainedModel.Load(model ?? TinyLlama, new PretrainedOptions { Device = device, Families = Idrak.Text.Plugins.BuiltInFamilies.All });
         var result = Pretrainer.Train(loaded, options, folder, resume, trace: trace);
         float[] weights = result.LastCheckpoint is { } last && File.Exists(Path.Combine(last, "model.safetensors"))
             ? [.. ReadTensors(Path.Combine(last, "model.safetensors")).OrderBy(t => t.Key, StringComparer.Ordinal).SelectMany(t => t.Value.Values)]
