@@ -41,18 +41,6 @@ internal sealed partial class VulkanBackend : IRowAttentionBackend
         return true;
     }
 
-    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads,
-        int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
-    {
-        if (!RowsFit(dim, steps, headsPerRow, q, keys, values, position, y, starts))
-        {
-            return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
-        }
-
-        AttendRows(1, [q, keys, values, starts, position, y], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
-        return true;
-    }
-
     // Whether the kernels take the call: a head size they hold, steps and heads per row, every storage in one binding.
     private bool RowsFit(int dim, int steps, int headsPerRow, params ReadOnlySpan<Storage> storages) =>
         dim > 0 && dim <= VulkanKernels.AttentionMaxDim && steps > 0 && headsPerRow > 0 && Fit(storages) && RowsBindable;

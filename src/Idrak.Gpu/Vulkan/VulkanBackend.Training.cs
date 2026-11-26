@@ -343,26 +343,6 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ optimizers
 
-    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
-        float gradientScale, float decay)
-    {
-        if (!Fit(p, g, m, v, absMax, map))
-        {
-            base.AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
-            return;
-        }
-
-        int blocks = (n + EightBitMoments.BlockSize - 1) / EightBitMoments.BlockSize;
-        if (blocks <= 0)
-        {
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[32];
-        Run("adam_8bit", RowGroups(blocks), 1, 1, [p, g, m, v, absMax, map],
-            new Push(b).I(n).F(lr).F(beta1).F(beta2).F(eps).F(gradientScale).F(decay).I(blocks).Bytes);
-    }
-
     // What FusedAdamW keeps between steps: the sizes it was laid out for, each tensor's first partial and partial count
     // of the norm, the partials and the clipping factor.
     private sealed class FusedAdamState(VulkanBackend backend) : IDisposable

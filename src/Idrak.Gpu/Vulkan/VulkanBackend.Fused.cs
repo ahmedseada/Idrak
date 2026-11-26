@@ -11,7 +11,7 @@ namespace Idrak.Gpu.Vulkan;
 // rows than the few-row products take, a format of one's own, more storages than the device binds per stage, storages
 // larger than a binding, kernels off), and the caller then runs the unfused steps. The products' widths, words per row
 // and splits of k come from the device's limits and are measured per shape on first use, as the plain packed products'.
-internal sealed partial class VulkanBackend : IFusedPackedKernels
+internal sealed partial class VulkanBackend
 {
     /// <summary>Tests: true makes the fused operations decline (callers run the unfused steps), to compare the two.</summary>
     internal static bool FusedOff { get; set; }
@@ -34,15 +34,6 @@ internal sealed partial class VulkanBackend : IFusedPackedKernels
 
     private static string FusedGemvKernel(VulkanKernels.FusedMode mode, VulkanKernels.PackedFormat format, int block, int variant) =>
         FusedGemvNames[FusedVariant(mode, format, block) * VulkanKernels.GemvWordCounts.Length + variant];
-
-    // The kernels' format for a built-in packed format (null for one they do not read).
-    private static VulkanKernels.PackedFormat? KernelFormat(PackedFormat format) => format switch
-    {
-        PackedFormat.Int8 => VulkanKernels.PackedFormat.Int8,
-        PackedFormat.Int4 => VulkanKernels.PackedFormat.Int4,
-        PackedFormat.BFloat16 => VulkanKernels.PackedFormat.BFloat16,
-        _ => null,
-    };
 
     // Whether the device binds as many storages per stage as the kernel declares (maxPerStageDescriptorStorageBuffers).
     private bool Bindable(string kernel) => Kernel(kernel).Bindings <= _physical.Properties.MaxPerStageDescriptorStorageBuffers;
@@ -124,67 +115,7 @@ internal sealed partial class VulkanBackend : IFusedPackedKernels
         TuneWithScratch(key, DistinctGemv(GemvCandidates(VulkanKernels.ColumnsPerWord(format), nmax, maxSplits), fallback, format, block, k, partial), fallback,
             operands.ToArray(), writes, run);
 
-    // The prompt-sized product is measured against the few-row kernels on CUDA only; the products with low-rank terms are
-    // CUDA's tensor-core passes. Here: the few-row kernels, and the adapters' products one by one.
-    bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
-
-    bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
-
     // ------------------------------------------------------------------ several products sharing an input
-
-    bool IFusedPackedKernels.PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
-    {
-        if (FusedOff || KernelFormat(format) is not { } f || products.Length is 0 or > 3 || m <= 0 || m > Capabilities.FewRows || k <= 0)
-        {
-            return false;
-        }
-
-        // Operands: x, q0 … q2, scales0 … scales2, bias0 … bias2, y0 … y2 (absent products and storages: harmless stand-ins).
-        int count = products.Length, flags = 0, nmax = 0;
-        Span<int> n = stackalloc int[3];
-        var io = new Operands();
-        io[0] = x;
-        for (int j = 0; j < 3; j++)
-        {
-            var product = products[j < count ? j : 0];
-            if (product.Columns <= 0 || f != VulkanKernels.PackedFormat.BFloat16 && product.Scales is null)
-            {
-                return false;
-            }
-
-            n[j] = j < count ? product.Columns : 0;
-            nmax = Math.Max(nmax, n[j]);
-            io[1 + j] = product.Packed;
-            io[4 + j] = product.Scales ?? product.Output;
-            io[7 + j] = j < count && product.Bias is { } bias ? bias : x;
-            io[10 + j] = product.Output;
-            flags |= j < count && product.Bias is not null ? 1 << j : 0;
-        }
-
-        ReadOnlySpan<Storage> operands = io[..13];
-        int block = GemvBlock(m), rows = VulkanKernels.GemvRowBlocks[block];
-        if (!Fit(operands) || ((long)m + rows - 1) / rows * count > Limits.MaxGroupsZ
-            || !Bindable(FusedGemvKernel(VulkanKernels.FusedMode.Many, f, block, 0)) || !Bindable("gemv_many_reduce"))
-        {
-            return false;
-        }
-
-        var key = new VulkanTuneKey(VulkanTuneOp.FusedGemv, FusedVariant(VulkanKernels.FusedMode.Many, f, block), m, k, n[0], n[1], n[2]);
-        int choice = FusedPlan(key, f, m, k, nmax, out int maxSplits, out bool measure);
-        if (choice < 0)
-        {
-            return false;
-        }
-
-        if (measure)
-        {
-            choice = MeasureMany(key, f, block, choice, maxSplits, operands, count, m, k, n[0], n[1], n[2], flags);
-        }
-
-        return RunMany(f, block, choice, operands, count, m, k, n[0], n[1], n[2], flags);
-    }
 
     private int MeasureMany(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int count, int m, int k, int n0, int n1, int n2, int flags) =>
@@ -240,52 +171,6 @@ internal sealed partial class VulkanBackend : IFusedPackedKernels
 
     // ------------------------------------------------------------------ gate and up with the activation
 
-    bool IFusedPackedKernels.PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
-    {
-        if (FusedOff || KernelFormat(format) is not { } f || products.Length != 2 || products[0].Columns != products[1].Columns || products[0].Columns <= 0
-            || activation is < 0 or > 2 || m <= 0 || m > Capabilities.FewRows || k <= 0
-            || f != VulkanKernels.PackedFormat.BFloat16 && (products[0].Scales is null || products[1].Scales is null))
-        {
-            return false;
-        }
-
-        // Operands: x, q0, q1, scales0, scales1, bias0, bias1, y0, y1, hidden.
-        int n = products[0].Columns, flags = (products[0].Bias is null ? 0 : 1) | (products[1].Bias is null ? 0 : 2);
-        var io = new Operands();
-        io[0] = x;
-        for (int j = 0; j < 2; j++)
-        {
-            io[1 + j] = products[j].Packed;
-            io[3 + j] = products[j].Scales ?? products[j].Output;
-            io[5 + j] = products[j].Bias ?? x;
-            io[7 + j] = products[j].Output;
-        }
-
-        io[9] = hidden;
-        ReadOnlySpan<Storage> operands = io[..10];
-        int block = GemvBlock(m), rows = VulkanKernels.GemvRowBlocks[block];
-        if (!Fit(operands) || ((long)m + rows - 1) / rows > Limits.MaxGroupsZ
-            || !Bindable(FusedGemvKernel(VulkanKernels.FusedMode.Pair, f, block, 0)) || !Bindable("gemv_many_reduce"))
-        {
-            return false;
-        }
-
-        var key = new VulkanTuneKey(VulkanTuneOp.FusedGemv, FusedVariant(VulkanKernels.FusedMode.Pair, f, block), m, k, n, n, activation);
-        int choice = FusedPlan(key, f, m, k, n, out int maxSplits, out bool measure);
-        if (choice < 0)
-        {
-            return false;
-        }
-
-        if (measure)
-        {
-            choice = MeasurePair(key, f, block, choice, maxSplits, operands, m, k, n, flags, activation);
-        }
-
-        return RunPair(f, block, choice, operands, m, k, n, flags, activation);
-    }
-
     private int MeasurePair(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int m, int k, int n, int flags, int activation) =>
         MeasureFused(key, f, block, k, 2L * m * n, n, maxSplits, fallback, operands, 0b111UL << 7, (c, s) => RunPair(f, block, c, s, m, k, n, flags, activation));
@@ -337,40 +222,6 @@ internal sealed partial class VulkanBackend : IFusedPackedKernels
     }
 
     // ------------------------------------------------------------------ a down projection reading the activation
-
-    bool IFusedPackedKernels.PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
-        int m, int n, int k)
-    {
-        if (FusedOff || KernelFormat(format) is not { } f || activation is not (0 or 1) || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
-            || f != VulkanKernels.PackedFormat.BFloat16 && scales is null)
-        {
-            return false;
-        }
-
-        // Operands: gate, up, q, scales, y.
-        var io = new Operands();
-        (io[0], io[1], io[2], io[3], io[4]) = (gate, up, packed, scales ?? y, y);
-        ReadOnlySpan<Storage> operands = io[..5];
-        int block = GemvBlock(m), rows = VulkanKernels.GemvRowBlocks[block];
-        if (!Fit(operands) || ((long)m + rows - 1) / rows > Limits.MaxGroupsZ || !Bindable(FusedGemvKernel(VulkanKernels.FusedMode.Gated, f, block, 0)))
-        {
-            return false;
-        }
-
-        var key = new VulkanTuneKey(VulkanTuneOp.FusedGemv, FusedVariant(VulkanKernels.FusedMode.Gated, f, block), m, k, n, 0, activation);
-        int choice = FusedPlan(key, f, m, k, n, out int maxSplits, out bool measure);
-        if (choice < 0)
-        {
-            return false;
-        }
-
-        if (measure)
-        {
-            choice = MeasureGated(key, f, block, choice, maxSplits, operands, m, n, k, activation);
-        }
-
-        return RunGated(f, block, choice, operands, m, n, k, activation);
-    }
 
     private int MeasureGated(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int m, int n, int k, int activation) =>
@@ -429,67 +280,6 @@ internal sealed partial class VulkanBackend : IFusedPackedKernels
     }
 
     // ------------------------------------------------------------------ a projection, its residual and the next norm
-
-    bool IFusedPackedKernels.PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
-    {
-        if (FusedOff || KernelFormat(format) is not { } f || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
-            || f != VulkanKernels.PackedFormat.BFloat16 && scales is null || !Fit(x, packed, scales ?? x, y, residual, sum, gain, normalized))
-        {
-            return false;
-        }
-
-        int block = GemvBlock(m), rows = VulkanKernels.GemvRowBlocks[block];
-        if (((long)m + rows - 1) / rows > Limits.MaxGroupsZ)
-        {
-            return false;
-        }
-
-        // The product as the plain packed product would run it (its measured choice), its partial sums left for the row pass.
-        int choice = GemvChoice(f, block, x, packed, scales, y, m, n, k);
-        if (choice < 0)
-        {
-            return false;
-        }
-
-        int width = WidthOf(choice), variant = choice & 7, words = VulkanKernels.GemvWordCounts[variant], perWord = VulkanKernels.ColumnsPerWord(f);
-        uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        var (splits, chunk) = GemvPlan(choice, f, block, k, (long)m * n);
-        if (splits == 0)
-        {
-            return false;
-        }
-
-        var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
-        try
-        {
-            string kernel = GemvKernelNames[((int)f * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
-            Span<byte> b = stackalloc byte[32];
-            var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).I(VulkanKernels.GemvChunkAlign).I(0).Bytes;   // the whole weights bound: splits from 0
-            if (scales is null)
-            {
-                RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, packed, output], push);
-            }
-            else
-            {
-                RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, packed, scales, output], push);
-            }
-
-            Span<byte> r = stackalloc byte[24];
-            bool scaled = f == VulkanKernels.PackedFormat.Int8 && splits > 1;
-            Rows("gemv_add_rms_norm", m, n, [output, scales ?? output, residual, y, sum, gain, normalized],
-                new Push(r).I(m).I(n).I(splits).B(scaled).F(eps).F(offset).Bytes);
-        }
-        finally
-        {
-            if (splits > 1)
-            {
-                output.Release();                                              // reused in queue order
-            }
-        }
-
-        return true;
-    }
 
     // ------------------------------------------------------------------ attention heads: norms, rotation, layout, cache
 

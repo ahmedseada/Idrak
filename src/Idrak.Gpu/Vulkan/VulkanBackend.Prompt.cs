@@ -134,20 +134,6 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ packed products for many rows
 
-    bool IFusedPackedKernels.PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
-    {
-        var f = (VulkanKernels.PackedFormat)(int)format;
-        if (m < 1 || n < 1 || k < 1 || f != VulkanKernels.PackedFormat.BFloat16 && scales is null || !FitPacked(x, packed, scales, y))
-        {
-            return false;
-        }
-
-        // Every choice runs here, expanding the weights too: the caller's own expansion would scale int8's weights before
-        // the product, against the one order of the prompt-sized products (VulkanKernels.Order.cs).
-        int choice = PromptChoice(f, x, packed, scales, y, m, n, k);
-        return choice != 0 && RunPrompt(choice, f, x, packed, scales, y, m, n, k);
-    }
-
     // y = x · w for a packed product given to Int4MatMul or BFloat16MatMul (whose callers have no expanding path of their
     // own): above the few-rows limit, the measured prompt path (expansion included); else, or when that cannot run, the
     // few-rows kernels. False when nothing fits the device (the caller falls back).

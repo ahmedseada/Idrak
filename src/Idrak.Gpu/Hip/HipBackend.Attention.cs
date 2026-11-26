@@ -328,26 +328,6 @@ internal sealed unsafe partial class HipBackend
         }
     }
 
-    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        if (!CacheAttention("attention_decode_bf16", q, keys, values, null, null, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale, (dim + 1) / 2,
-                variant))
-        {
-            base.AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
-        }
-    }
-
-    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        if (!CacheAttention("attention_decode_int8", q, keys, values, keyScales, valueScales, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale,
-                (dim + 3) / 4, variant))
-        {
-            base.AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
-        }
-    }
-
     public override void AttentionSpansKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
         int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
     {
@@ -372,35 +352,6 @@ internal sealed unsafe partial class HipBackend
         {
             base.AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
         }
-    }
-
-    public override void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
-    {
-        int words = (dim + 3) / 4;
-        long n = (long)rows * steps * capacity;
-        if (dim <= 0 || steps <= 0 || capacity <= 0 || n >= GcnKernels.ShapeMostElements || (long)rows * steps * dim >= GcnKernels.ShapeMostElements
-            || (long)rows * capacity * words >= GcnKernels.ShapeMostElements || ShapeKernel("attn_scores_int8") is not { } f)
-        {
-            base.AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
-            return;
-        }
-
-        LaunchShape(f, (int)n, Cost(f.Name).Flops * n * dim, P(q), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim), U(words), U((int)n));
-    }
-
-    public override void AttentionContextInt8Kernel(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
-    {
-        int words = (dim + 3) / 4;
-        long n = (long)rows * steps * words;
-        if (dim <= 0 || steps <= 0 || capacity <= 0 || (long)rows * steps * dim >= GcnKernels.ShapeMostElements || (long)rows * steps * capacity >= GcnKernels.ShapeMostElements
-            || (long)rows * capacity * words >= GcnKernels.ShapeMostElements || ShapeKernel("attn_context_int8") is not { } f)
-        {
-            base.AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
-            return;
-        }
-
-        LaunchShape(f, (int)n, Cost(f.Name).Flops * rows * steps * (double)capacity * dim, P(weights), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim),
-            U(words), U((int)n));
     }
 
     // ---- The backward passes (plan 35, G5b) -------------------------------------------------------------------------

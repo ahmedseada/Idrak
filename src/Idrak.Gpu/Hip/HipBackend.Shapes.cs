@@ -52,32 +52,6 @@ internal sealed unsafe partial class HipBackend
         LaunchShape(f, (int)n, 0, P(source), P(cache), P(position), U(steps * dim), U(capacity * dim), U(dim), U((int)n));
     }
 
-    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        int words = (dim + 1) / 2;
-        long n = (long)heads * steps * words;
-        if (dim <= 0 || steps <= 0 || !ShapeFits((long)heads * steps * dim, (long)heads * capacity * words) || ShapeKernel("kv_write_bf16") is not { } f)
-        {
-            base.KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
-            return;
-        }
-
-        LaunchShape(f, (int)n, 0, P(source), P(cache), P(position), U(steps), U(capacity), U(dim), U(words), U((int)n));
-    }
-
-    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        int words = (dim + 3) / 4;
-        long n = (long)heads * steps;
-        if (dim <= 0 || steps <= 0 || capacity <= 0 || !ShapeFits((long)heads * steps * dim, (long)heads * capacity * words) || ShapeKernel("kv_write_int8") is not { } f)
-        {
-            base.KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
-            return;
-        }
-
-        LaunchShape(f, (int)n, Cost(f.Name).Flops * n * dim, P(source), P(cache), P(scales), P(position), U(steps), U(capacity), U(dim), U(words), U((int)n));
-    }
-
     public override void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
     {
         long n = (long)rows * capacity;
@@ -90,31 +64,6 @@ internal sealed unsafe partial class HipBackend
         LaunchShape(f, (int)n, 0, P(position), P(mask), U(capacity), U((int)n));
     }
 
-    // The conversions on the device (no host round trip, recordable), as CUDA's and Vulkan's: the index ones between
-    // float32 and int32, and float32 to and from bfloat16 and float16, bit for bit the CPU's, NaNs included
-    // (GcnKernels.Shapes.cs); any other pair, or one past the shape kernels' bound, takes the host fallback (which checks
-    // every value).
-    public override void ConvertElementsKernel(Storage source, Storage destination)
-    {
-        var (from, to) = (source.ElementType, destination.ElementType);
-        string? name = DeviceConversions.Kernel(from, to);
-        long n = source.ElementCount;
-        if (name is null || n <= 0 || n != destination.ElementCount || !ShapeFits(n) || ShapeKernel(name) is not { } f)
-        {
-            base.ConvertElementsKernel(source, destination);
-            return;
-        }
-
-        if (DeviceConversions.Narrows(name))
-        {
-            int words = (int)((n + 1) / 2);                                    // a work-item per word of two halves
-            LaunchShape(f, words, 0, P(source), P(destination), U((int)n), U(words));
-            return;
-        }
-
-        LaunchShape(f, (int)n, 0, P(source), P(destination), U((int)n));
-    }
-
     public override void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         long n = (long)count * dim;
@@ -125,32 +74,6 @@ internal sealed unsafe partial class HipBackend
         }
 
         LaunchShape(f, (int)n, 0, P(table), P(indices), P(y), U(dim), U(vocabulary - 1), U((int)n));
-    }
-
-    public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        int words = (dim + 1) / 2;
-        long n = (long)count * dim;
-        if (dim <= 0 || vocabulary <= 0 || !ShapeFits(n, (long)vocabulary * words) || ShapeKernel("gather_bf16_f32") is not { } f)
-        {
-            base.GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
-            return;
-        }
-
-        LaunchShape(f, (int)n, 0, P(packed), P(indices), P(y), U(dim), U(vocabulary - 1), U(words), U((int)n));
-    }
-
-    public override void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        int words = (vocabulary + 1) / 2;
-        long n = (long)count * dim;
-        if (dim <= 0 || vocabulary <= 0 || !ShapeFits(n, (long)dim * words) || ShapeKernel("gather_bf16_cols_f32") is not { } f)
-        {
-            base.GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
-            return;
-        }
-
-        LaunchShape(f, (int)n, 0, P(packed), P(indices), P(y), U(dim), U(vocabulary - 1), U(words), U((int)n));
     }
 
     public override void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)

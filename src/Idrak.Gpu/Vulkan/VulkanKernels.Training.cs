@@ -8,9 +8,6 @@ namespace Idrak.Gpu.Vulkan;
 // (partial sums per split, then added split by split), so results are the same run after run; nothing uses atomics.
 internal static partial class VulkanKernels
 {
-    /// <summary>Words of 8-bit moments per block of <see cref="EightBitMoments.BlockSize"/> elements (four bytes each).</summary>
-    public const int AdamBlockWords = EightBitMoments.BlockSize / 4;
-
     /// <summary>Values each partial of the two-pass reductions keeps (count, mean, M2; or two sums and an unused one).</summary>
     public const int PartialStride = 3;
 
@@ -300,7 +297,6 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        yield return ("adam_8bit", Adam8Bit);
         yield return ("attention_backward_dq", AttentionBackwardQueries);
         yield return ("attention_backward_dkv", AttentionBackwardKeys);
     }
@@ -325,87 +321,6 @@ internal static partial class VulkanKernels
         var at = lo.V;
         k.If(at < 255, () => k.If(map[at + (start + 1)] - x < x - map[at + start], () => lo.V = at + 1));
         return lo.V;
-    }
-
-    // 8-bit Adam (see Backend.AdamStep8Bit): a workgroup per block of 256 elements; invocation w < 64 takes the block's
-    // word w (elements 4w … 4w + 3): it decodes the moments, updates them and the parameters, the workgroup finds the
-    // new block scales (largest |m| and v), and it encodes its four moments to the nearest codes. Bytes past n keep their
-    // bits. Invocations beyond the 64 words take part in the reductions only.
-    private static SpirvKernel Adam8Bit()
-    {
-        var k = new KernelBuilder("adam_8bit", Block);
-        var (p, g, m, v, absMax, map) = (k.Buffer("p"), k.Buffer("g"), k.Buffer("m"), k.Buffer("v"), k.Buffer("absMax"), k.Buffer("map"));
-        var (n, lr, beta1, beta2, eps) = (k.PushInt("n"), k.PushFloat("lr"), k.PushFloat("beta1"), k.PushFloat("beta2"), k.PushFloat("eps"));
-        var (gradientScale, decay, blocks) = (k.PushFloat("gradientScale"), k.PushFloat("decay"), k.PushInt("blocks"));
-        var scratch = k.Shared("scratch", Block);
-        var lane = k.LocalX;
-        var (c1, c2) = (1f - beta1, 1f - beta2);
-        var mom = new Var[4];
-        var vel = new Var[4];
-        for (int e = 0; e < 4; e++)
-        {
-            (mom[e], vel[e]) = (k.Local(ScalarKind.Float), k.Local(ScalarKind.Float));
-        }
-
-        EachRow(k, blocks, block =>
-        {
-            var word = block * AdamBlockWords + lane;
-            var first = word * 4;
-            var mine = (lane < AdamBlockWords) & (first < n);
-            var (mScale, vScale) = (absMax[block], absMax[blocks + block]);
-            var (mWord, vWord) = (k.Local(k.UInt(0)), k.Local(k.UInt(0)));
-            var (mMax, vMax) = (k.Local(0f), k.Local(0f));
-            k.If(mine, () =>
-            {
-                mWord.V = m.UInt(word);
-                vWord.V = v.UInt(word);
-                for (int e = 0; e < 4; e++)
-                {
-                    int shift = 8 * e;
-                    var i = first + e;
-                    k.If(i < n, () =>
-                    {
-                        var grad = g[i] * gradientScale;
-                        var mCode = (mWord.V >> shift & 255).ToInt();
-                        var vCode = (vWord.V >> shift & 255).ToInt();
-                        var mo = k.Fma(beta1, map[mCode] * mScale, c1 * grad);
-                        var ve = k.Fma(beta2, map[vCode + 256] * vScale, grad * grad * c2);
-                        p[i] = p[i] * decay - mo / (k.Sqrt(ve) + eps) * lr;
-                        mom[e].V = mo;
-                        vel[e].V = ve;
-                        mMax.V = k.Max(mMax.V, k.Abs(mo));
-                        vMax.V = k.Max(vMax.V, ve);
-                    });
-                }
-            });
-            var mTop = k.ReduceMax(scratch, mMax.V);
-            var vTop = k.ReduceMax(scratch, vMax.V);
-            k.If(mine, () =>
-            {
-                var (mOut, vOut) = (k.Local(mWord.V), k.Local(vWord.V));
-                for (int e = 0; e < 4; e++)
-                {
-                    int shift = 8 * e;
-                    var keep = k.UInt(~(255u << shift));
-                    k.If(first + e < n, () =>
-                    {
-                        var mq = NearestCode(k, map, 0, k.Select(mTop > 0f, Quotient(k, mom[e].V, k.Max(mTop, k.Float(float.Epsilon))), k.Float(0f)));
-                        var vq = NearestCode(k, map, 256, k.Select(vTop > 0f, Quotient(k, vel[e].V, k.Max(vTop, k.Float(float.Epsilon))), k.Float(0f)));
-                        mOut.V = (mOut.V & keep) | mq.ToUInt() << shift;
-                        vOut.V = (vOut.V & keep) | vq.ToUInt() << shift;
-                    });
-                }
-
-                m[word] = mOut.V.AsFloat();
-                v[word] = vOut.V.AsFloat();
-            });
-            k.If(lane.Eq(0), () =>
-            {
-                absMax[block] = mTop;
-                absMax[blocks + block] = vTop;
-            });
-        });
-        return k.Build();
     }
 
     // Dimensions of a head each invocation of the attention gradients keeps (the head size up to AttentionMaxDim over the width).

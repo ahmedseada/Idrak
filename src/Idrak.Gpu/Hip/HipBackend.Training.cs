@@ -208,28 +208,6 @@ internal sealed unsafe partial class HipBackend
         }
     }
 
-    // The gated activation's gradient with gate and up packed as bfloat16 (two to a word): a work-item a word, its two
-    // elements in turn (gated_act_bwd_bf16_f32, CUDA's), no unpacked copy of either.
-    public override void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
-    {
-        if (PointwiseKernel("gated_act_bwd_bf16_f32", n) is not { } f)
-        {
-            base.GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
-            return;
-        }
-
-        if ((flags & 3) != 0 && n > 0)
-        {
-            int words = (n + 1) / 2;
-            if (Profiling)
-            {
-                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{f.Name} {n}"), Cost(f.Name).Flops * n);
-            }
-
-            LaunchKernel(f, PointwiseBlocks(words), 1, P(packedGate), P(packedUp), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n), U(words));
-        }
-    }
-
     public override void SoftmaxBackwardKernel(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
         if (RowKernel("softmax_bwd_f32", cols) is not { } f)
@@ -292,25 +270,6 @@ internal sealed unsafe partial class HipBackend
         }
 
         LaunchPointwise(f, n, P(p), P(g), P(m), P(v), F(lr), F(beta1), F(beta2), F(1f - beta1), F(1f - beta2), F(eps), U(n));
-    }
-
-    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
-        float gradientScale, float decay)
-    {
-        if (EightBitMoments.BlockSize != GcnKernels.Adam8Block || n >= GcnKernels.PointwiseMostElements || Gcn("adam8_f32") is not { } f)
-        {
-            base.AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
-            return;
-        }
-
-        if (n <= 0)
-        {
-            return;
-        }
-
-        int blocks = (n + GcnKernels.Adam8Block - 1) / GcnKernels.Adam8Block;
-        LaunchLabelled(f, GridFor(blocks), 1, n.ToString(CultureInfo.InvariantCulture), TrainingCost(f.Name).Flops * n, P(p), P(g), P(m), P(v), P(absMax), P(map),
-            F(lr), F(beta1), F(beta2), F(1f - beta1), F(1f - beta2), F(eps), U(n), F(gradientScale), F(decay), U(blocks));
     }
 
     // The device tables of FusedAdamW (CUDA's): chunks (tensor, first element) of 4,096 elements, rebuilt when the sizes

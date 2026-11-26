@@ -785,30 +785,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         Grid("one_hot", (long)count * classes, [indices, y], new Push(b).I(count).I(classes).Bytes);
     }
 
-    // The conversions on the device (no host round trip, recordable in a graph), as CUDA's and HIP's: the index ones
-    // between float32 and int32, and float32 to and from bfloat16 and float16, bit for bit the CPU's, NaNs included
-    // (VulkanKernels.Shapes.cs); any other pair, or a storage past one binding, takes the host fallback (which checks
-    // every value).
-    public override void ConvertElementsKernel(Storage source, Storage destination)
-    {
-        var (from, to) = (source.ElementType, destination.ElementType);
-        string? kernel = DeviceConversions.Kernel(from, to);
-        long n = source.ElementCount;
-        if (kernel is null || n != destination.ElementCount || n > int.MaxValue || !Fit(source, destination))
-        {
-            base.ConvertElementsKernel(source, destination);
-            return;
-        }
-
-        if (n == 0)
-        {
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[4];
-        Grid(kernel, DeviceConversions.Narrows(kernel) ? (n + 1) / 2 : n, [source, destination], new Push(b).I((int)n).Bytes);
-    }
-
     public override void ScatterAddKernel(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
         if (!Fit(dy, indices, dtable))
@@ -1000,30 +976,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
         int edge = VulkanKernels.MatSide(width) * (variant == MatBlocked ? VulkanKernels.MatPer : 1);
         RunAt(variant == MatBlocked ? "batched_matmul" : "batched_matmul_tile", width, (uint)((n + edge - 1) / edge), (uint)((m + edge - 1) / edge), gz, [a, b, c], push);
-    }
-
-    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        if (!Fit(x, scales, y) || !PackedProduct(VulkanKernels.PackedFormat.Int8, x, q, scales, y, m, n, k))
-        {
-            base.Int8MatMulKernel(x, q, scales, y, m, n, k);
-        }
-    }
-
-    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.Int4, x, q, scales, y, m, n, k))
-        {
-            base.Int4MatMulKernel(x, q, scales, y, m, n, k);
-        }
-    }
-
-    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
-    {
-        if (!Fit(x, y) || !PackedRows(VulkanKernels.PackedFormat.BFloat16, x, packed, null, y, m, n, k))
-        {
-            base.BFloat16MatMulKernel(x, packed, y, m, n, k);
-        }
     }
 
     // Kernel names by (format · row blocks + row block) · word variants + word variant, built once.
@@ -1337,22 +1289,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
     // The partial sums of split packed products (RunPacked, RunPackedWindows), kept between calls and reused in queue order.
     private readonly KeptScratch _gemvPartials = new();
 
-    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        if (!Fit(q, scales, w))
-        {
-            if (!DequantizeWindows(VulkanKernels.PackedFormat.Int8, q, scales, w, k, n))
-            {
-                base.Int8DequantizeKernel(q, scales, w, k, n);
-            }
-
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[12];
-        Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).I(0).Bytes);
-    }
-
     // The int8 weights as floats without their column scales (the prompt-sized products' expanded weights); false when
     // they do not fit the device (windowed weights included).
     private bool Int8Expand(Storage q, Storage scales, Storage w, int k, int n)
@@ -1365,62 +1301,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         Span<byte> b = stackalloc byte[12];
         Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).I(1).Bytes);
         return true;
-    }
-
-    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        if (!Fit(q, scales, w))
-        {
-            if (!DequantizeWindows(VulkanKernels.PackedFormat.Int4, q, scales, w, k, n))
-            {
-                base.Int4DequantizeKernel(q, scales, w, k, n);
-            }
-
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[8];
-        Grid("int4_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).Bytes);
-    }
-
-    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        if (!Fit(packed, w))
-        {
-            if (!DequantizeWindows(VulkanKernels.PackedFormat.BFloat16, packed, null, w, k, n))
-            {
-                base.BFloat16DequantizeKernel(packed, w, k, n);
-            }
-
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[8];
-        Grid("bf16_dequantize", (long)k * n, [packed, w], new Push(b).I(k).I(n).Bytes);
-    }
-
-    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        if (!Fit(packed, w))
-        {
-            base.Float16DequantizeKernel(packed, w, k, n);                    // larger than one binding: the host widens it
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[8];
-        Grid("f16_dequantize", (long)k * n, [packed, w], new Push(b).I(k).I(n).Bytes);
-    }
-
-    public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
-    {
-        if (!Fit(x, packed))
-        {
-            base.PackBFloat16Kernel(x, packed, n);
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[4];
-        Grid("bf16_pack", (n + 1L) / 2, [x, packed], new Push(b).I(n).Bytes);
     }
 
     // ------------------------------------------------------------------ language models
@@ -1455,38 +1335,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         Grid("gather", (long)count * dim, [table, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
     }
 
-    public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        if (!Fit(packed, indices, y))
-        {
-            if (!GatherWindows("gather_bf16", packed, indices, y, count, dim, vocabulary, (dim + 1) / 2))
-            {
-                base.GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
-            }
-
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[20];
-        Grid("gather_bf16", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(vocabulary).Bytes);
-    }
-
-    public override void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        if (!Fit(packed, indices, y))
-        {
-            if (!GatherColumnWindows(packed, indices, y, count, dim, vocabulary))
-            {
-                base.GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
-            }
-
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[20];
-        Grid("gather_bf16_columns", (long)count * dim, [packed, indices, y], new Push(b).I(count).I(dim).I(vocabulary).I(0).I(dim).Bytes);
-    }
-
     public override void KeyValueWriteKernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
         if (!Fit(source, cache, position))
@@ -1497,31 +1345,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
         Span<byte> b = stackalloc byte[16];
         Grid("key_value_write", (long)heads * steps * dim, [source, cache, position], new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
-    }
-
-    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        if (!Fit(source, cache, position))
-        {
-            base.KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[16];
-        Grid("key_value_write_bf16", (long)heads * steps * ((dim + 1) / 2), [source, cache, position],
-            new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
-    }
-
-    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        if (!Fit(source, cache, scales, position))
-        {
-            base.KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
-            return;
-        }
-
-        Span<byte> b = stackalloc byte[16];
-        Grid("key_value_write_int8", (long)heads * steps, [source, cache, scales, position], new Push(b).I(heads).I(steps).I(capacity).I(dim).Bytes);
     }
 
     public override void DecoderMaskKernel(Storage position, Storage mask, int rows, int capacity)
@@ -1547,32 +1370,6 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
         Span<Storage> storages = [q, keys, values, position, y];
         Attend("attention_decode", 0, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-    }
-
-    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, position, y))
-        {
-            base.AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
-            return;
-        }
-
-        Span<Storage> storages = [q, keys, values, position, y];
-        Attend("attention_bf16", 1, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
-    }
-
-    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        if (dim > VulkanKernels.AttentionMaxDim || !Fit(q, keys, values, keyScales, valueScales, position, y))
-        {
-            base.AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
-            return;
-        }
-
-        Span<Storage> storages = [q, keys, values, keyScales, valueScales, position, y];
-        Attend("attention_int8", 2, storages, heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     // Dispatches an attention kernel (storages: its bindings, the position second to last, the output last): query rows ×

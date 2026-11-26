@@ -25,7 +25,7 @@ namespace Idrak.Gpu.Hip;
 // - The sampler: CUDA's paths (the whole row; top-k ≤ 64 over a vocabulary past four candidate slices through the
 //   candidates; greedy rows sampled by their last candidate block, one launch), each draw the CPU's (GcnKernels' Sampler).
 // Each launch is labelled for --profile with its shape and floating-point operations (Cost, ProductCost).
-internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAttentionBackend, ISegmentedAttentionBackend
+internal sealed unsafe partial class HipBackend : IRowAttentionBackend, ISegmentedAttentionBackend
 {
     /// <summary>
     /// The setting for how a split sum, and a fused decoding kernel's tail, are finished: <c>block</c> (the default, CUDA's
@@ -67,14 +67,6 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
     private readonly record struct AddNormTail(Storage? Residual, Storage? Sum, Storage? Gain, Storage? Normalized, float Eps, float Offset, Storage? YGain, float YEps,
         float YOffset);
 
-    /// <summary>The kernels' format of a built-in packed format.</summary>
-    private static Weights FusedWeights(PackedFormat format) => format switch
-    {
-        PackedFormat.Int8 => Weights.Int8,
-        PackedFormat.Int4 => Weights.Int4,
-        _ => Weights.BFloat16,
-    };
-
     /// <summary>The cost of a decoding kernel (the table at the top of GcnKernels.Decoding.cs; k: a finish's splits); (0, 0) for another.</summary>
     private static (double Flops, double Bytes) DecodingCost(string kernel, int k) => kernel switch
     {
@@ -111,166 +103,6 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
 
     // ---- IFusedPackedKernels ---------------------------------------------------------------------------------------
 
-    // No matrix units here: the few-row kernels serve few rows, and many rows run on the packed products HIP has.
-    bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
-
-    bool IFusedPackedKernels.PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
-
-    bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
-
-    bool IFusedPackedKernels.PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n,
-        int k)
-    {
-        using var operation = EnterOperation();                                  // addresses read until the work is queued (the move guard)
-        var variant = activation == 0 ? GcnKernels.PackedGemvVariant.Silu : GcnKernels.PackedGemvVariant.Gelu;
-        return m >= 1 && m <= GcnKernels.GemvRows && n > 0 && k > 0 && activation is 0 or 1 && (format == PackedFormat.BFloat16 || scales is not null)
-               && PackedFewRows(FusedWeights(format), gate, packed, scales, y, m, n, k, variant, up);
-    }
-
-    bool IFusedPackedKernels.PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual,
-        Storage sum, Storage gain, Storage normalized, float eps, float offset)
-    {
-        using var operation = EnterOperation();
-        return m >= 1 && m <= GcnKernels.GemvRows && n > 0 && k > 0 && (format == PackedFormat.BFloat16 || scales is not null)
-               && PackedFewRows(FusedWeights(format), x, packed, scales, y, m, n, k, tail: new AddNormTail(residual, sum, gain, normalized, eps, offset, null, 0f, 0f));
-    }
-
-    // The sandwich block's projection, the norm after it, the residual addition and the next norm: the product, then one
-    // finishing launch (gemv_addnorm_f32) for the rest; the composed operations where the kernels cannot take it.
-    public override bool PackedMatMulNormAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
-    {
-        if (m >= 1 && m <= GcnKernels.GemvRows && n > 0 && k > 0 && (format == PackedFormat.BFloat16 || scales is not null)
-            && PackedFewRows(FusedWeights(format), x, packed, scales, y, m, n, k, tail: new AddNormTail(residual, sum, gain, normalized, eps, offset, yGain, yEps, yOffset)))
-        {
-            return true;
-        }
-
-        return base.PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
-    }
-
-    bool IFusedPackedKernels.PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
-    {
-        using var operation = EnterOperation();
-        return PackedMany(format, x, m, k, products, -1, null);
-    }
-
-    bool IFusedPackedKernels.PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
-    {
-        using var operation = EnterOperation();
-        return products.Length == 2 && products[0].Columns == products[1].Columns && activation is >= 0 and <= 2 && PackedMany(format, x, m, k, products, activation, hidden);
-    }
-
-    // Products of one input in one launch (grid z), k split as the plain products' (their columns' blocks summed). With
-    // several splits, the last block of each product's column range adds them in split order, scaled, plus the bias; for
-    // a gate/up pair the second of the two products to finish a column range writes hidden = act(gate) · up
-    // (IDRAK_HIP_FINISH=block, the default: one launch). With IDRAK_HIP_FINISH=launch, gemv_multi_finish_f32 does both in
-    // a second launch. One split without a pair: the product writes each output whole. False when the kernels cannot take
-    // it (the caller then runs the products one by one).
-    private bool PackedMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products,
-        int activation, Storage? hidden)
-    {
-        if (m < 1 || m > GcnKernels.GemvRows || k <= 0 || products.Length is 0 or > GcnKernels.MultiGemvProducts)
-        {
-            return false;
-        }
-
-        var weights = FusedWeights(format);
-        int perWord = GcnKernels.ColumnsPerWord(weights), nmax = 0, totalBlocks = 0;
-        foreach (var product in products)
-        {
-            long words = (product.Columns + perWord - 1) / perWord;
-            if (product.Columns <= 0 || words * k >= MostProductElements || weights != Weights.BFloat16 && product.Scales is null)
-            {
-                return false;
-            }
-
-            nmax = Math.Max(nmax, product.Columns);
-            totalBlocks += (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
-        }
-
-        int columnBlocks = ((nmax + perWord - 1) / perWord + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
-        if ((long)m * k >= MostProductElements || 64L * m * nmax * products.Length >= MostProductElements || columnBlocks > DeviceLimits.MaxGridDimX
-            || products.Length > Math.Max(1, DeviceLimits.MaxGridDimZ) || Gcn(GcnKernels.FusedGemvKernel(weights, GcnKernels.PackedGemvVariant.Multi, m)) is not { } function)
-        {
-            return false;
-        }
-
-        int align = weights == Weights.Int4 ? 64 : 1;
-        int wanted = GemvSplitCount(DeviceLimits.ComputeUnits, totalBlocks, k, ForcedGemvSplits);
-        int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
-        int count = (k + chunk - 1) / chunk;
-        bool pair = hidden is not null, lastBlock = FinishByLastBlock;
-        bool finishing = count > 1 || pair;
-        var finish = finishing && !lastBlock ? Gcn("gemv_multi_finish_f32") : null;
-        if (count > DeviceLimits.MaxGridDimY || finishing && !lastBlock && finish is null)
-        {
-            return false;
-        }
-
-        // The splits' parts (the old form: also a pair's, which its finish reads); the counters for the last blocks.
-        var part = count > 1 || finishing && !lastBlock ? Allocate(products.Length * count * m * nmax, zeroed: false) : null;
-        ulong counters = lastBlock && finishing ? P(Counters(GcnKernels.MultiGemvProducts * columnBlocks)) : 0UL;
-        try
-        {
-            Span<ulong> values = stackalloc ulong[11 + 5 * GcnKernels.MultiGemvProducts];
-            (values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8]) =
-                (P(x), part is null ? 0UL : P(part), U(m), U(k), U(chunk), U(count), counters, U(columnBlocks), U(nmax));
-            double flops = 0;
-            for (int j = 0; j < GcnKernels.MultiGemvProducts; j++)
-            {
-                var product = products[j < products.Length ? j : 0];
-                values[9 + 5 * j] = P(product.Packed);
-                values[10 + 5 * j] = product.Scales is null ? 0UL : P(product.Scales);
-                values[11 + 5 * j] = P(product.Output);
-                values[12 + 5 * j] = product.Bias is null ? 0UL : P(product.Bias);
-                values[13 + 5 * j] = j < products.Length ? U(product.Columns) : 0UL;
-                flops += j < products.Length ? 2.0 * m * product.Columns * k : 0;
-            }
-
-            (values[^2], values[^1]) = (pair && lastBlock ? U(activation + 1) : 0UL, pair && lastBlock ? P(hidden!) : 0UL);
-            if (Profiling)
-            {
-                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture,
-                    $"{function.Name} {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}{(count > 1 ? $" split {count}" : "")}{(pair && lastBlock ? " pair" : "")}{(counters != 0 ? " (last block)" : "")}"),
-                    flops + (pair && lastBlock ? Cost("gemv_multi_finish_f32", 1).Flops * m * nmax : 0));
-            }
-
-            LaunchProduct(function, columnBlocks, count, products.Length, values);
-            if (finish is not null)
-            {
-                Span<ulong> finishing2 = stackalloc ulong[6 + 4 * GcnKernels.MultiGemvProducts];
-                (finishing2[0], finishing2[1], finishing2[2], finishing2[3], finishing2[4], finishing2[5]) =
-                    (P(part!), hidden is null ? 0UL : P(hidden), U(count), U(m), U(nmax), pair ? U(activation + 1) : 0UL);
-                for (int j = 0; j < GcnKernels.MultiGemvProducts; j++)
-                {
-                    var product = products[j < products.Length ? j : 0];
-                    finishing2[6 + 4 * j] = weights == Weights.Int8 ? P(product.Scales!) : 0UL;           // int4's group scales are in the product
-                    finishing2[7 + 4 * j] = P(product.Output);
-                    finishing2[8 + 4 * j] = product.Bias is null ? 0UL : P(product.Bias);
-                    finishing2[9 + 4 * j] = j < products.Length ? U(product.Columns) : 0UL;
-                }
-
-                if (Profiling)
-                {
-                    LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{finish.Name} {m}x{nmax}{(pair ? " pair" : "")} split {count}"),
-                        Cost(finish.Name, count).Flops * m * nmax * products.Length);
-                }
-
-                LaunchProduct(finish, (int)PointwiseBlocks((long)m * nmax), pair ? 1 : products.Length, 1, finishing2);
-            }
-        }
-        finally
-        {
-            part?.Release();                                                     // reused in stream order
-        }
-
-        return true;
-    }
-
     // ---- IRowAttentionBackend, ISegmentedAttentionBackend ----------------------------------------------------------
 
     // The head sizes and variants the CPU takes: the kernels take those up to GcnKernels.AttentionMaxDim, the host the rest.
@@ -289,21 +121,6 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         }
 
         return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
-    }
-
-    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
-    {
-        using (EnterOperation())
-        {
-            if (headsPerRow > 0 && CacheAttention("attention_rows_bf16", q, keys, values, null, null, position, y, null, heads, rowsPerHead, steps, capacity, dim, scale,
-                    (dim + 1) / 2, variant, starts, headsPerRow))
-            {
-                return true;
-            }
-        }
-
-        return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     bool ISegmentedAttentionBackend.SupportsSegmented(int dim, AttentionVariant variant) => Device.Cpu.Backend.SupportsSegmentedAttention(dim, variant);

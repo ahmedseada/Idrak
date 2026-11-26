@@ -231,66 +231,6 @@ internal sealed unsafe partial class HipBackend
         return true;
     }
 
-    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        if (m <= 0 || n <= 0)
-        {
-            return;
-        }
-
-        if (k > 0 && (m <= GcnKernels.GemvRows ? PackedFewRows(Weights.Int8, x, q, scales, y, m, n, k) : Int8ManyRows(x, q, scales, y, m, n, k)))
-        {
-            return;
-        }
-
-        base.Int8MatMulKernel(x, q, scales, y, m, n, k);
-    }
-
-    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        if (m <= 0 || n <= 0)
-        {
-            return;
-        }
-
-        if (k > 0 && (m <= GcnKernels.GemvRows ? PackedFewRows(Weights.Int4, x, q, scales, y, m, n, k) : ExpandedProduct(Weights.Int4, x, q, scales, y, m, n, k)))
-        {
-            return;
-        }
-
-        base.Int4MatMulKernel(x, q, scales, y, m, n, k);
-    }
-
-    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
-    {
-        if (m <= 0 || n <= 0)
-        {
-            return;
-        }
-
-        if (k > 0 && (m <= GcnKernels.GemvRows ? PackedFewRows(Weights.BFloat16, x, packed, null, y, m, n, k) : ExpandedProduct(Weights.BFloat16, x, packed, null, y, m, n, k)))
-        {
-            return;
-        }
-
-        base.BFloat16MatMulKernel(x, packed, y, m, n, k);
-    }
-
-    public override void Float16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
-    {
-        if (m <= 0 || n <= 0)
-        {
-            return;
-        }
-
-        if (k > 0 && m <= GcnKernels.GemvRows && PackedFewRows(Weights.Float16, x, packed, null, y, m, n, k))
-        {
-            return;
-        }
-
-        base.Float16MatMulKernel(x, packed, y, m, n, k);                     // widened, then the float32 product (both on kernels)
-    }
-
     // Few rows through packed weights on the kernel written for the fewest rows holding m, k split over grid y: false when
     // the kernels cannot take it. The splits' sums are added in split order by the launch's last block of each column
     // range (IDRAK_HIP_FINISH=block, the default: one launch), or by int8_gemv_finish_f32 (launch). A gated variant reads
@@ -449,38 +389,6 @@ internal sealed unsafe partial class HipBackend
         return true;
     }
 
-    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        if (!Expand(Weights.Int8, q, scales, w, k, n))
-        {
-            base.Int8DequantizeKernel(q, scales, w, k, n);
-        }
-    }
-
-    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        if (!Expand(Weights.Int4, q, scales, w, k, n))
-        {
-            base.Int4DequantizeKernel(q, scales, w, k, n);
-        }
-    }
-
-    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        if (!Expand(Weights.BFloat16, packed, null, w, k, n))
-        {
-            base.BFloat16DequantizeKernel(packed, w, k, n);
-        }
-    }
-
-    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        if (!Expand(Weights.Float16, packed, null, w, k, n))
-        {
-            base.Float16DequantizeKernel(packed, w, k, n);
-        }
-    }
-
     // w[k, n] = the packed weights' float32 values on the expansion kernel: true when done (nothing to do included).
     private bool Expand(Weights format, Storage packed, Storage? scales, Storage w, int k, int n)
     {
@@ -514,27 +422,5 @@ internal sealed unsafe partial class HipBackend
         }
 
         return true;
-    }
-
-    public override void PackBFloat16Kernel(Storage x, Storage packed, int n)
-    {
-        int words = (n + 1) / 2;
-        if (n <= 0)
-        {
-            return;
-        }
-
-        if (n >= MostProductElements || Gcn("bf16_pack_f32") is not { } function)
-        {
-            base.PackBFloat16Kernel(x, packed, n);
-            return;
-        }
-
-        if (Profiling)
-        {
-            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"bf16_pack_f32 {n}"), 0);
-        }
-
-        LaunchProduct(function, (int)PointwiseBlocks(words), 1, 1, P(x), P(packed), U(n), U(words));
     }
 }
