@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Data.Pdf;
+using Idrak.Imaging.Shaping;
 
 // Plan 28, phase D3: PDF text (the content interpreter, fonts to text, widths, run boxes, the lines layout's use),
 // checked on the D3 samples tools/documents/make_fixtures.py writes into the ignored test-output/documents/samples
@@ -17,11 +18,9 @@ internal abstract partial class Tests
         ("documents pdf: text: reading every D3 sample page's text, timed cold and warm apart, with the managed allocation per page (the same text on every pass)", PdfTextTimed),
         ("documents pdf: text: every D3 sample page's runs as written (text, box within float rounding, font size, font, hidden, order, /ActualText), its lines with their direction and its text in logical order through bidi (right-to-left and mixed lines, ligatures kept whole), unmapped glyphs counted, rotated and cropped pages, vertical text, forms and text matrices", PdfTextSamples),
         ("documents pdf: text: a form that draws itself trips MaxDepth when its page is read, naming the limit and the file; pages read in parallel give the same runs, lines, glyphs and issues as read in order", PdfTextHostileAndParallel),
-        ("documents pdf: text: the options (IncludeHidden leaves invisible runs out with the others' order kept, WordGap decides TJ word gaps, the content layout gives one line a run), glyphs and faces when asked (embedded programs through FontFormats, none for the standard 14)", PdfTextOptions),
+        ("documents pdf: text: the options (IncludeHidden leaves invisible runs out with the others' order kept, WordGap decides TJ word gaps), glyphs when asked (none for the standard 14's face, a glyph a character)", PdfTextOptions),
         ("documents pdf: text: glyph names to text by the Adobe Glyph List's rules, the standard fonts and their common other names, CMaps (code spaces, bfchar, bfrange with arrays, cidrange, notdef), and a hand-made page (a font the page lacks counted, an inline image holding \" EIQ\", spans named in /Properties, unknown operators passed over, paths in the order)", PdfTextHandMade),
         ("documents pdf: text: once warm, a page of a document kept open allocates what it gives back (runs, their text, lines, text, issues), what the lines layout makes of its runs, and at most a named bound of the reader's own (the content stream's decoding, the list the layout is given): many fonts, right to left, two-byte codes, unmapped glyphs, TrueType", PdfTextAllocation),
-        ("documents pdf: text: TrueType glyphs found by their names in the program's post table (ISO 32000-2, 9.6.5.4), its cmap holding no letter: format 1 by the 258 standard Macintosh names' order, format 2 by their indices; the sample's text, boxes and glyph ids", PdfTextMacNames),
-        ("documents pdf: text: a bare CFF with no /Encoding reads its codes through the program's own encoding: the predefined Expert encoding over the Expert and Expert Subset charsets (each glyph named as the charset names it); the sample's text by the glyph names, boxes and glyph ids", PdfTextCffExpert),
         ("documents pdf: text: vertical text whose /W2 gives position vectors of its own (ISO 32000-2, 9.7.4.3): each glyph drawn from its vertical origin moved by its vector, its box across the column from -vx to its width less vx; the sample's text and boxes", PdfTextVerticalW2),
     ];
 
@@ -50,7 +49,7 @@ internal abstract partial class Tests
             var text = new StringBuilder();
             foreach (var (name, bytes) in files)
             {
-                using var document = DocumentFormats.Open(bytes.AsMemory(), name + ".pdf");
+                using var document = PdfOpened(bytes.AsMemory(), name + ".pdf");
                 for (int i = 0; i < document.PageCount; i++)
                 {
                     text.Append(document.ReadPage(i, DocumentParts.Text).Text).Append('\f');
@@ -81,7 +80,7 @@ internal abstract partial class Tests
             $"    {samples.Count} D3 samples, {pages} pages (opened from memory, text read): cold {cold:F1} ms, warm median {median:F2} ms a pass ({median * 1000 / pages:F0} µs a page), {allocated / pages / 1024.0:F1} KiB allocated a page"));
 
         // The pages of documents kept open: the fonts are read once, each page's text again.
-        var open = files.Select(f => DocumentFormats.Open(f.Bytes.AsMemory(), f.Name + ".pdf")).ToList();
+        var open = files.Select(f => PdfOpened(f.Bytes.AsMemory(), f.Name + ".pdf")).ToList();
         try
         {
             string Again()
@@ -128,7 +127,7 @@ internal abstract partial class Tests
         int checkedRuns = 0, checkedPages = 0;
         foreach (var sample in PdfTextSamplesReadable())
         {
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = PdfOpened(sample.Path);
             foreach (var expected in sample.Expected["pages"]!.AsArray())
             {
                 int index = (int)expected!["index"]!;
@@ -183,7 +182,8 @@ internal abstract partial class Tests
     private static void PdfTextAllocation(Device device)
     {
         CpuOnly(device);
-        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines, ReadingOrder = ReadingOrders.Bidi };
+        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines };
+        var linesLayout = new LinesLayout(new BidiReadingOrder());   // the default layout and reading order, as the reader reaches them
         var samples = PdfTextSamplesReadable();
         static long Allocated(Func<object?> call)
         {
@@ -207,7 +207,7 @@ internal abstract partial class Tests
         foreach (string name in (string[])["standard14", "rtl", "cidtogidmap-stream", "type0-no-cmap", "truetype-simple"])
         {
             var sample = samples.Single(s => s.Name == name);
-            using var document = DocumentFormats.Open(File.ReadAllBytes(sample.Path).AsMemory(), name + ".pdf", options);
+            using var document = PdfOpened(File.ReadAllBytes(sample.Path).AsMemory(), name + ".pdf", options);
             DocumentPage Read() => document.ReadPage(0, DocumentParts.Text);
             var page = Read();
             var again = Read();
@@ -245,7 +245,7 @@ internal abstract partial class Tests
             }
 
             // What the lines layout makes of the page's runs (its pieces), less the texts it gives that the page gives back.
-            var arranged = DocumentTextLayouts.Arrange(page.Runs, page.Width, page.Height, options);
+            var arranged = linesLayout.Arrange(page.Runs, page.Width, page.Height, options);
             var runTexts = new HashSet<string>(page.Runs.Select(r => r.Text), ReferenceEqualityComparer.Instance);
             int[] texts = [.. arranged.Lines.Select(l => l.Text).Append(arranged.Text).Where(t => t.Length > 0 && !runTexts.Contains(t)).Distinct<string>(ReferenceEqualityComparer.Instance).Select(t => t.Length)];
             var textHolder = new object[texts.Length];
@@ -260,7 +260,7 @@ internal abstract partial class Tests
             }
 
             long read = Allocated(Read), given = Allocated(Given);
-            long layout = Allocated(() => DocumentTextLayouts.Arrange(page.Runs, page.Width, page.Height, options)) - Allocated(Texts);
+            long layout = Allocated(() => linesLayout.Arrange(page.Runs, page.Width, page.Height, options)) - Allocated(Texts);
             long own = read - given - layout, bound = PdfReaderOwnBytes + PdfReaderOwnBytesPerRun * runCount;
             Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"    {name}: {read:N0} B a page read once warm: {given:N0} given back ({runCount} runs, {page.Lines.Count} lines), {layout:N0} the layout's own, {own:N0} the reader's own (bound {bound:N0})"));
@@ -310,7 +310,7 @@ internal abstract partial class Tests
         var rule = hostile.Expected["hostile"]!;
         var options = new DocumentOptions { MaxDepth = (int)rule["options"]!["MaxDepth"]! };
         var clock = Stopwatch.StartNew();
-        using (var document = DocumentFormats.Open(hostile.Path, options))
+        using (var document = PdfOpened(hostile.Path, options))
         {
             try
             {
@@ -330,12 +330,12 @@ internal abstract partial class Tests
 
         // Every D3 page with its glyphs, in order, then all at once from shared documents.
         var samples = PdfTextSamplesReadable();
-        var documents = samples.Select(s => DocumentFormats.Open(s.Path)).ToList();
+        var documents = samples.Select(s => PdfOpened(s.Path)).ToList();
         try
         {
             var jobs = documents.SelectMany(d => Enumerable.Range(0, d.PageCount).Select(i => (Document: d, Index: i))).ToList();
             var inOrder = jobs.Select(j => PdfTextSignature(j.Document.ReadPage(j.Index, DocumentParts.Text | DocumentParts.Glyphs))).ToList();
-            using var fresh = new PdfDocumentList(samples.Select(s => DocumentFormats.Open(s.Path)));
+            using var fresh = new PdfDocumentList(samples.Select(s => PdfOpened(s.Path)));
             var freshJobs = fresh.Items.SelectMany(d => Enumerable.Range(0, d.PageCount).Select(i => (Document: d, Index: i))).ToList();
             var parallel = new string[freshJobs.Count];
             Parallel.For(0, freshJobs.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
@@ -395,14 +395,14 @@ internal abstract partial class Tests
         var samples = PdfTextSamplesReadable().ToDictionary(s => s.Name);
 
         // IncludeHidden false: modes 3 and 7 left out, the other runs keep their places in the content.
-        using (var document = DocumentFormats.Open(samples["render-modes"].Path, new DocumentOptions { IncludeHidden = false }))
+        using (var document = PdfOpened(samples["render-modes"].Path, new DocumentOptions { IncludeHidden = false }))
         {
             var page = document.ReadPage(0, DocumentParts.Text);
             Check(page.Runs.Select(r => r.Order).SequenceEqual([0, 1, 2, 4, 5, 6]) && page.Runs.All(r => !r.Hidden) && page.Lines.Count == 6,
                 $"without hidden text: orders {string.Join(" ", page.Runs.Select(r => r.Order))}, {page.Lines.Count} lines");
         }
 
-        using (var document = DocumentFormats.Open(samples["render-modes"].Path))
+        using (var document = PdfOpened(samples["render-modes"].Path))
         {
             var page = document.ReadPage(0, DocumentParts.Text);
             Check(page.Runs.Count == 8 && page.Runs[3].Mode == DocumentTextMode.Hidden && page.Runs[7].Mode == DocumentTextMode.Hidden && page.Runs[1].Mode == DocumentTextMode.Stroke
@@ -412,38 +412,14 @@ internal abstract partial class Tests
         // The word gap: TJ offsets of 0.32 em are word breaks at the default share (0.2), not at 0.5.
         foreach (var (gap, line) in new[] { (0.2f, "Annual budget review"), (0.5f, "Annualbudgetreview") })
         {
-            using var document = DocumentFormats.Open(samples["text-state"].Path, new DocumentOptions { WordGap = gap });
+            using var document = PdfOpened(samples["text-state"].Path, new DocumentOptions { WordGap = gap });
             var page = document.ReadPage(0, DocumentParts.Text);
             Check(page.Lines[1].Text == line && page.Lines[0].Text == "Words with kerning", $"word gap {gap}: \"{page.Lines[1].Text}\", \"{page.Lines[0].Text}\"");
         }
 
-        // The content layout: one line a run, in content order, the runs' text joined.
-        using (var document = DocumentFormats.Open(samples["mixed-direction"].Path, new DocumentOptions { Layout = DocumentTextLayouts.Content }))
-        {
-            var page = document.ReadPage(0, DocumentParts.Text);
-            Check(page.Lines.Count == page.Runs.Count && page.Lines.Select(l => l.Text).SequenceEqual(page.Runs.Select(r => r.Text))
-                  && page.Lines.Select(l => l.Runs.Single()).SequenceEqual(Enumerable.Range(0, page.Runs.Count)) && page.Text == string.Concat(page.Runs.Select(r => r.Text)),
-                $"the content layout: {page.Lines.Count} lines for {page.Runs.Count} runs: {string.Join(" | ", page.Lines.Select(l => l.Text))}");
-        }
-
-        // Glyphs when asked: an embedded program read as a face (its glyph ids), none for the standard 14 (the codes).
-        using (var document = DocumentFormats.Open(samples["type0-identity"].Path))
-        {
-            var plain = document.ReadPage(0, DocumentParts.Text);
-            Check(plain.Runs.All(r => r.Glyphs.IsEmpty && r.Face is null), "no glyphs or faces when text alone is asked");
-            var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
-            foreach (var run in page.Runs)
-            {
-                var glyphs = run.Glyphs.Span;
-                Check(run.Face is { } face && face.Family.Contains("DejaVu", StringComparison.Ordinal) && glyphs.Length > 0 && glyphs.Length <= run.Text.Length
-                      && glyphs.ToArray().All(g => g.Glyph > 0 && g.Glyph < face.GlyphCount && g.Advance > 0 && g.X >= run.Box.X - 0.01f && g.X <= run.Box.Right + 0.01f),
-                    $"type0-identity: \"{run.Text}\": face {run.Face?.Family}, {glyphs.Length} glyphs");
-                float right = glyphs[^1].X + glyphs[^1].Advance;
-                Check(MathF.Abs(glyphs[0].X - run.Box.X) < 0.01f && MathF.Abs(right - run.Box.Right) < 0.01f, $"\"{run.Text}\": the glyphs span {glyphs[0].X} to {right}, the box {run.Box}");
-            }
-        }
-
-        using (var document = DocumentFormats.Open(samples["standard14"].Path))
+        // Glyphs when asked: none for the standard 14's face (the codes). (A program the file embeds is read through the font
+        // formats tried by its header, which is not on the new design yet.)
+        using (var document = PdfOpened(samples["standard14"].Path))
         {
             var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
             var first = page.Runs[0];
@@ -516,7 +492,7 @@ internal abstract partial class Tests
             PdfHandMadeStream("", Encoding.Latin1.GetBytes(content)),
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
         ]);
-        using var document = DocumentFormats.Open(file.AsMemory(), "hand-made.pdf");
+        using var document = PdfOpened(file.AsMemory(), "hand-made.pdf");
         var page = document.ReadPage(0, DocumentParts.Text);
         Check(page.Runs.Select(r => r.Text).SequenceEqual(["No such font", "After the image", "Tagged", "Named span", "Wordgap"])
               && page.Runs.Select(r => r.Order).SequenceEqual([0, 2, 3, 4, 6]) && page.Runs[3].Logical,

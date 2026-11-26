@@ -16,7 +16,7 @@ internal abstract partial class Tests
     [
         ("image transforms: the JPEG encoder's files decode to the pixels of Pillow's at the same quality (grey, 4:2:0, 4:2:2, 4:4:4, odd sizes, qualities 10 to 100), and so does the jpeg round trip, which makes no file", JpegEncoderMatchesPillow),
         ("image transforms: the JPEG encoder writes its first version's files byte for byte (grey and colour; floats, 8-bit images, planes and 16-bit-like floats; sizes 1 x 1 to 1,001 x 701 not a multiple of 8; qualities 1 to 100; 4:2:0, 4:2:2, 4:4:4; standard and optimized tables), and a warm page encode allocates little beyond its file", JpegEncoderUnchanged),
-        ("image transforms: the jpeg round trip gives its file's pixels without making the file (grey and colour; 8-bit and floats; sizes not a multiple of 8; qualities 1 to 100; 4:2:0, 4:2:2, 4:4:4; pages at the scan profiles' qualities), an app's jpeg codec still decodes a real file, and a warm page round trip allocates its pixels and little else", JpegRoundTripWithoutFile),
+        ("image transforms: the jpeg round trip gives its file's pixels without making the file (grey and colour; 8-bit and floats; sizes not a multiple of 8; qualities 1 to 100; 4:2:0, 4:2:2, 4:4:4; pages at the scan profiles' qualities), and a warm page round trip allocates its pixels and little else", JpegRoundTripWithoutFile),
     ];
 
     internal static string TransformFixtures => Path.Combine(DataFolder(), "image-transforms");

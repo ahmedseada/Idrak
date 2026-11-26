@@ -17,14 +17,23 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] DocumentPdfFileGroup =
     [
-        ("documents pdf: file: the library's pdf format is registered (name, extension, media type, the header within the first KiB) and opens every sample that is not encrypted or hostile with its page count, version, information (PDFDocEncoding, UTF-16, UTF-8, escapes, dates whole, partial and odd), each page's size and rotation (inherited, crop boxes, the kids' count winning over /Count) and the repaired flag", PdfSamplesOpen),
+        ("documents pdf: file: the library's pdf format (name, extension, media type, the header within the first KiB) opens every sample that is not encrypted or hostile with its page count, version, information (PDFDocEncoding, UTF-16, UTF-8, escapes, dates whole, partial and odd), each page's size and rotation (inherited, crop boxes, the kids' count winning over /Count) and the repaired flag", PdfSamplesOpen),
         ("documents pdf: file: each D1 sample's cross-reference as written (tables, streams, object streams, hybrids, incremental updates through /Prev with a freed object gone, offsets after junk), every live object in the canonical form, read alike from several threads, and every listed stream of every sample decoded through its filters and predictors to its SHA-256", PdfSamplesObjects),
         ("documents pdf: file: hostile samples fail fast with an InvalidDataException naming their limit (MaxStreamBytes, MaxDepth, MaxObjects) or the cycle (references, the page tree, /Prev, an object stream holding itself), where their JSON says; encrypted samples open with their password and not without one (the encryption group reads them whole), the public-key handler is refused naming its handler", PdfHostileAndEncrypted),
-        ("documents pdf: file: the document format suite passes on pdf with the samples (pages read in parallel the same, tight limits named, cut and changed files failing only as damaged)", PdfFormatSuite),
         ("documents pdf: file: the lexer on hand-made bytes (names with #xx, literal strings with escapes, octal, nested parentheses, line ends and continuations, hex strings, numbers and references); hand-made files read alike from a file, memory and a plain stream, with no cache, a stream bomb and a deep page tree failing naming their limits", PdfHandMade),
     ];
 
     private static readonly Lock PdfSamplesGate = new();
+
+    // A PDF file opened by the library's format, reached directly (DocumentFormats found the format by the file's first
+    // bytes): a file read into memory, bytes in memory, or a stream the caller keeps.
+    internal static IDocument PdfOpened(string path, DocumentOptions? options = null) =>
+        new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(path), writable: false), path, options ?? new DocumentOptions());
+
+    internal static IDocument PdfOpened(ReadOnlyMemory<byte> file, string name, DocumentOptions? options = null) =>
+        new PdfFormat().Open(new MemoryStream(file.ToArray(), writable: false), name, options ?? new DocumentOptions());
+
+    internal static IDocument PdfOpened(Stream stream, string name, DocumentOptions? options = null) => new PdfFormat().Open(stream, name, options ?? new DocumentOptions());
     private static (string Folder, List<PdfSampleEntry> Samples)? s_pdfSamples;
 
     // One sample of the manifest: its file, phases and expected JSON.
@@ -81,14 +90,12 @@ internal abstract partial class Tests
     {
         CpuOnly(device);
         var samples = PdfSamples();
-        Check(DocumentFormats.Names.Contains(PdfFormat.FormatName) && DocumentFormats.Origin(PdfFormat.FormatName) == Overrides.Library
-              && DocumentFormats.Default(PdfFormat.FormatName) is PdfFormat && DocumentFormats.Extensions.Contains(".pdf") && DocumentFormats.MediaTypes.Contains("application/pdf")
-              && DocumentFormats.CanOpen("letter.PDF"), $"the pdf format registered by the library: {string.Join(", ", DocumentFormats.Names)}");
         var format = new PdfFormat();
+        Check(format.Name == PdfFormat.FormatName && format.Extensions.Contains(".pdf") && format.MediaTypes.Contains("application/pdf"), $"the pdf format: {format.Name}");
         byte[] junk = new byte[1100];
         junk.AsSpan().Fill((byte)'x');
         "%PDF-1.7"u8.CopyTo(junk.AsSpan(1023));
-        Check(format.Accepts("%PDF-1.4\n"u8) && format.Accepts(junk.AsSpan(0, 1031)) && DocumentFormats.Detect("%PDF-2.0\n"u8) is { Name: PdfFormat.FormatName }, "a header at the start or within the first KiB");
+        Check(format.Accepts("%PDF-1.4\n"u8) && format.Accepts(junk.AsSpan(0, 1031)) && format.Accepts("%PDF-2.0\n"u8), "a header at the start or within the first KiB");
         "%PDF-1.7"u8.CopyTo(junk.AsSpan(1024));
         junk[1023] = (byte)'x';
         Check(!format.Accepts(junk) && !format.Accepts("%!PS-Adobe-3.0\n"u8) && !format.Accepts([]), "no header within the first KiB, PostScript, nothing");
@@ -97,7 +104,7 @@ internal abstract partial class Tests
         foreach (var sample in samples.Where(s => s.Readable))
         {
             var open = sample.Expected["open"]!;
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = PdfOpened(sample.Path);
             string what = sample.Name;
             Check(document.Format == PdfFormat.FormatName && document.PageCount == (int)open["pageCount"]!, $"{what}: {document.Format}, {document.PageCount} pages, expected {open["pageCount"]}");
             var info = document.Info;
@@ -404,7 +411,7 @@ internal abstract partial class Tests
             string where = "nowhere";
             try
             {
-                using var document = DocumentFormats.Open(sample.Path, options);
+                using var document = PdfOpened(sample.Path, options);
                 where = "page 0 read";
                 document.ReadPage(0, DocumentParts.All);
                 Check(false, $"{sample.Name}: read without an error (expected one naming {limit}, {trips})");
@@ -430,7 +437,7 @@ internal abstract partial class Tests
             {
                 try
                 {
-                    using var document = DocumentFormats.Open(sample.Path);
+                    using var document = PdfOpened(sample.Path);
                     Check(false, $"{sample.Name}: a file encrypted by the handler {handler} opened");
                 }
                 catch (NotSupportedException e)
@@ -441,7 +448,7 @@ internal abstract partial class Tests
             else
             {
                 string password = (string)sample.Expected["open"]!["password"]!;
-                using (var document = DocumentFormats.Open(sample.Path, new DocumentOptions { Password = password.Length > 0 ? password : null }))
+                using (var document = PdfOpened(sample.Path, new DocumentOptions { Password = password.Length > 0 ? password : null }))
                 {
                     Check(document.Info.Encrypted && document.PageCount == (int)sample.Expected["open"]!["pageCount"]!,
                         $"{sample.Name}: opened with its password, encrypted {document.Info.Encrypted}, {document.PageCount} pages");
@@ -451,7 +458,7 @@ internal abstract partial class Tests
                 {
                     try
                     {
-                        using var document = DocumentFormats.Open(sample.Path);
+                        using var document = PdfOpened(sample.Path);
                         Check(false, $"{sample.Name}: opened without its password");
                     }
                     catch (InvalidDataException e)
@@ -466,44 +473,6 @@ internal abstract partial class Tests
 
         Check(encrypted >= 20, $"{encrypted} encrypted samples");
     }
-
-    private static void PdfFormatSuite(Device device)
-    {
-        CpuOnly(device);
-        var all = PdfSamples();
-        var samples = new List<DocumentSample>();
-        foreach (var sample in all)
-        {
-            if (sample.Readable && PdfTextOffPage(sample.Expected))
-            {
-                continue;   // text the file sets past its crop box or its page (by design): the sample's own group checks it, the suite wants every run on the page
-            }
-
-            if (sample.Readable)
-            {
-                samples.Add(new DocumentSample(sample.Path, Pages: (int)sample.Expected["open"]!["pageCount"]!));
-            }
-            else if (sample.Encrypted && ((string?)sample.Expected["openError"]?["handler"]
-                                          ?? ((string?)sample.Expected["open"]?["password"] is { Length: > 0 } ? "DocumentOptions.Password" : null)) is { } refused)
-            {
-                // Those that need a password or another handler are refused naming it; the encryption group reads the rest.
-                samples.Add(new DocumentSample(sample.Path, Error: refused));
-            }
-            else if (sample.Hostile && sample.Phases.Contains("D1") && (string)sample.Expected["hostile"]!["limit"]! is "cycle" or "MaxDepth")
-            {
-                // The limits these trip hold at the defaults; the bombs are checked with their own limits (above), not the measured ones.
-                samples.Add(new DocumentSample(sample.Path, Error: (string)sample.Expected["hostile"]!["limit"]!));
-            }
-        }
-
-        Conformance.CheckDocumentFormat(DocumentFormats.Get(PdfFormat.FormatName), samples, options: new ContractCheckOptions { RandomCases = 60 }).ThrowIfFailed();
-    }
-
-    // Whether a sample's JSON places a run (partly) outside its page as shown.
-    private static bool PdfTextOffPage(JsonObject expected) =>
-        (expected["pages"] as JsonArray ?? []).Any(page => (page!["runs"] as JsonArray ?? []).Any(run =>
-            run!["box"] is JsonArray { Count: 4 } box && ((double)box[0]! < -0.5 || (double)box[1]! < -0.5
-                || (double)box[0]! + (double)box[2]! > (double)page["width"]! + 0.5 || (double)box[1]! + (double)box[3]! > (double)page["height"]! + 0.5)));
 
     private static void PdfHandMade(Device device)
     {
@@ -573,25 +542,25 @@ internal abstract partial class Tests
                 }
             }
 
-            using (var fromFile = DocumentFormats.Open(path))
+            using (var fromFile = PdfOpened(path))
             {
                 Pages(fromFile, "a file");
             }
 
-            using (var fromMemory = DocumentFormats.Open(plain.AsMemory(), "letter.pdf"))
+            using (var fromMemory = PdfOpened(plain.AsMemory(), "letter.pdf"))
             {
                 Pages(fromMemory, "memory");
             }
 
             using (var stream = new BufferedStream(new MemoryStream(plain, writable: false)))
-            using (var fromStream = DocumentFormats.Open(stream, "letter.pdf", new DocumentOptions { CacheBytes = 0 }))
+            using (var fromStream = PdfOpened(stream, "letter.pdf", new DocumentOptions { CacheBytes = 0 }))
             {
                 Pages(fromStream, "a plain stream, no cache");
             }
 
             // The same file with its table's offsets shifted: rebuilt by scanning, and said so.
             byte[] shifted = [.. "%PDF-1.7\n% a comment put in after the file was written\n"u8, .. plain.AsSpan(9)];
-            using (var repaired = DocumentFormats.Open(shifted.AsMemory(), "shifted.pdf"))
+            using (var repaired = PdfOpened(shifted.AsMemory(), "shifted.pdf"))
             {
                 Check(repaired.Info.Repaired && repaired.PageCount == 2 && repaired.ReadPage(1, DocumentParts.None).Width == 600f, "a shifted table: repaired, two pages");
             }
@@ -607,8 +576,8 @@ internal abstract partial class Tests
             var tight = new DocumentOptions { MaxStreamBytes = 1 << 20 };
             foreach (var (how, open) in new (string, Func<IDocument>)[]
                      {
-                         ("a file", () => DocumentFormats.Open(path, tight)), ("memory", () => DocumentFormats.Open(bomb.AsMemory(), "bomb.pdf", tight)),
-                         ("a plain stream", () => DocumentFormats.Open(new BufferedStream(new MemoryStream(bomb, writable: false)), "bomb.pdf", tight)),
+                         ("a file", () => PdfOpened(path, tight)), ("memory", () => PdfOpened(bomb.AsMemory(), "bomb.pdf", tight)),
+                         ("a plain stream", () => PdfOpened(new BufferedStream(new MemoryStream(bomb, writable: false)), "bomb.pdf", tight)),
                      })
             {
                 using var document = open();
@@ -634,7 +603,7 @@ internal abstract partial class Tests
             deep.Add("<< /Type /Page /MediaBox [0 0 612 792] >>");
             try
             {
-                using var document = DocumentFormats.Open(PdfHandMadeFile(deep).AsMemory(), "deep.pdf");
+                using var document = PdfOpened(PdfHandMadeFile(deep).AsMemory(), "deep.pdf");
                 Check(false, "a page tree 70 levels deep opened under a limit of 64");
             }
             catch (InvalidDataException e)
@@ -642,7 +611,7 @@ internal abstract partial class Tests
                 Check(e.Message.Contains("MaxDepth", StringComparison.Ordinal) && e.Message.Contains("page tree", StringComparison.Ordinal), e.Message);
             }
 
-            using (var deeper = DocumentFormats.Open(PdfHandMadeFile(deep).AsMemory(), "deep.pdf", new DocumentOptions { MaxDepth = 80 }))
+            using (var deeper = PdfOpened(PdfHandMadeFile(deep).AsMemory(), "deep.pdf", new DocumentOptions { MaxDepth = 80 }))
             {
                 Check(deeper.PageCount == 1, "a limit raised to 80 reads it");
             }

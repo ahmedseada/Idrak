@@ -10,8 +10,8 @@ using Idrak.Imaging;
 // (tools/documents/make_fixtures.py writes them into the ignored test-output/documents/samples).
 internal abstract partial class Tests
 {
-    private static readonly Lock DrawSettingsGate = new();
-    private static bool s_drawSettingsDefaults;
+    // A page drawn by the library's drawer, reached directly (DocumentPageDrawers drew with the drawer the options named).
+    internal static DocumentDrawing CoverageDrawn(DocumentPage page, DocumentDrawOptions? options = null) => new CoverageDocumentDrawer().Draw(page, options ?? new DocumentDrawOptions());
 
     private static void PdfDrawSettings(Device device)
     {
@@ -105,7 +105,7 @@ internal abstract partial class Tests
         var small = new DocumentPage(0, 40f, 30f) { Paths = [DocumentPath.Rectangle(new DocumentBox(5f, 5f, 20f, 10f))] };
         try
         {
-            DocumentPageDrawers.Draw(small, new DocumentDrawOptions { MinBandRows = 64, MaxBandRows = 16 });
+            CoverageDrawn(small, new DocumentDrawOptions { MinBandRows = 64, MaxBandRows = 16 });
             Check(false, "a band of at least 64 and at most 16 rows was drawn");
         }
         catch (ArgumentOutOfRangeException e)
@@ -122,7 +122,7 @@ internal abstract partial class Tests
     private static void PdfDrawSettingsEffects()
     {
         string fonts = PdfDrawFonts();
-        var png = ImageCodecs.Get("png");
+        var png = new PngCodec();
         var failures = new List<string>();
         var cases = new (string Sample, string Change, Func<DocumentDrawOptions, DocumentDrawOptions> Apply, bool Within)[]
         {
@@ -144,7 +144,7 @@ internal abstract partial class Tests
             var sample = samples.Single(s => s.Name == group.Key);
             double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
             var expected = png.Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, $"{sample.Name}.p1.png")));
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = PdfOpened(sample.Path);
             var options = new DocumentDrawOptions { Dpi = (float)dpi, Fonts = fonts };
             byte[] standard = PdfInterleaved(document.DrawPage(0, options).Image);
             double tolerance = PdfDrawTolerance(sample, 0);
@@ -179,11 +179,10 @@ internal abstract partial class Tests
     }
 
     // The rasterizer's flatness: the default is the fill as it was, a coarser one flattens a circle into fewer lines, a
-    // flatness that is not more than 0 is refused; an app's rasterizer over a library one gets it through the guard, and
-    // one that does not take it fills by its own measure.
+    // flatness that is not more than 0 is refused.
     private static void PdfDrawSettingsRasterizer()
     {
-        var rasterizer = OutlineRasterizers.Get();
+        var rasterizer = new CoverageRasterizer();
         var circle = DrawSettingsCircle(50f, 50f, 30f);
         float[] Fill(OutlineFill rule, float? flatness)
         {
@@ -220,38 +219,6 @@ internal abstract partial class Tests
             }
         }
 
-        const string guarded = "test-flatness", plain = "test-flatness-plain";
-        lock (DrawSettingsGate)
-        {
-            if (!s_drawSettingsDefaults)
-            {
-                // A stand-in for a library rasterizer, the default for the rest of the process; and one that takes no flatness.
-                Overrides.AsLibraryDefaults(() => OutlineRasterizers.Register(new FlatnessRecorder(guarded)));
-                OutlineRasterizers.Register(new PlainRasterizer(plain));
-                s_drawSettingsDefaults = true;
-            }
-        }
-
-        var page = new DocumentPage(0, 120f, 90f)
-        {
-            Paths = [new DocumentPath([OutlineVerb.Move, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Close], [20f, 45f, 20f, 10f, 100f, 10f, 100f, 45f, 100f, 80f, 20f, 80f, 20f, 45f])],
-        };
-        var app = new FlatnessRecorder(guarded);
-        try
-        {
-            OutlineRasterizers.Register(app);
-            var drawn = DocumentPageDrawers.Draw(page, new DocumentDrawOptions { PixelsPerPoint = 1f, Rasterizer = guarded, FillFlatness = 0.5f });
-            var seen = app.Seen();
-            Check(seen.Count > 0 && seen.All(f => f == 0.5f) && PdfInterleaved(drawn.Image).Any(v => v < 128), $"the app's rasterizer over the library's got the flatness through the guard: {string.Join(", ", seen)}");
-        }
-        finally
-        {
-            OutlineRasterizers.Unregister(guarded);
-        }
-
-        var plainDrawn = DocumentPageDrawers.Draw(page, new DocumentDrawOptions { PixelsPerPoint = 1f, Rasterizer = plain, FillFlatness = 0.5f });
-        var library = DocumentPageDrawers.Draw(page, new DocumentDrawOptions { PixelsPerPoint = 1f, FillFlatness = 1f / 32 });
-        Check(PdfInterleaved(plainDrawn.Image).AsSpan().SequenceEqual(PdfInterleaved(library.Image)), "a rasterizer that takes no flatness fills by its own measure (the library's 1/32 here)");
     }
 
     // Bands never change the drawing: the rule fill of an outline into bands of a target (y moved by whole rows, with a
@@ -260,7 +227,7 @@ internal abstract partial class Tests
     private static void PdfDrawBands(Device device)
     {
         CpuOnly(device);
-        var rasterizer = OutlineRasterizers.Get();
+        var rasterizer = new CoverageRasterizer();
         float[] square = [10f, -10f, 70f, -10f, 70f, -70f, 10f, -70f];
         var outlines = new (string Name, GlyphOutline Outline)[]
         {
@@ -300,7 +267,7 @@ internal abstract partial class Tests
         foreach (var sample in PdfSamples().Where(s => s.Readable && (s.Phases.Contains("D3") || s.Phases.Contains("D4") || s.Phases.Contains("D7"))))
         {
             double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = PdfOpened(sample.Path);
             for (int index = 0; index < document.PageCount; index++)
             {
                 var options = new DocumentDrawOptions { Dpi = (float)dpi, Fonts = fonts };
@@ -337,53 +304,5 @@ internal abstract partial class Tests
             [OutlineVerb.Move, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Cubic, OutlineVerb.Close],
             [cx + r, -cy, cx + r, -(cy + c), cx + c, -(cy + r), cx, -(cy + r), cx - c, -(cy + r), cx - r, -(cy + c), cx - r, -cy,
                 cx - r, -(cy - c), cx - c, -(cy - r), cx, -(cy - r), cx + c, -(cy - r), cx + r, -(cy - c), cx + r, -cy]);
-    }
-
-    // The library's rasterizer, recording the flatness each fill by a rule is asked for.
-    private sealed class FlatnessRecorder(string name) : IOutlineRasterizer
-    {
-        private readonly CoverageRasterizer _inner = new();
-        private readonly Lock _gate = new();
-        private readonly List<float> _seen = [];
-
-        public string Name => name;
-
-        public List<float> Seen()
-        {
-            lock (_gate)
-            {
-                return [.. _seen];
-            }
-        }
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
-            _inner.Fill(outline, scale, x, y, coverage, width, height);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
-            _inner.Fill(outline, scale, x, y, coverage, width, height, rule);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness)
-        {
-            lock (_gate)
-            {
-                _seen.Add(flatness);
-            }
-
-            _inner.Fill(outline, scale, x, y, coverage, width, height, rule, flatness);
-        }
-    }
-
-    // A rasterizer that takes no flatness: the library's fills by a rule as they are.
-    private sealed class PlainRasterizer(string name) : IOutlineRasterizer
-    {
-        private readonly CoverageRasterizer _inner = new();
-
-        public string Name => name;
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
-            _inner.Fill(outline, scale, x, y, coverage, width, height);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
-            _inner.Fill(outline, scale, x, y, coverage, width, height, rule);
     }
 }

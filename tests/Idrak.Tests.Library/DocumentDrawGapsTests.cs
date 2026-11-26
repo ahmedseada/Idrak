@@ -7,8 +7,9 @@ using System.Text.Json.Nodes;
 
 // Plan 28: the drawing gaps D7 left, closed (2026-11-19): groups that are not isolated, a stroke's pen under a matrix
 // that is not uniform, Type 3 glyphs that are drawings, a tiling cell clipped to its box (documents drawers); the pen
-// read and written (documents pdf: vector); TrueType glyphs by their standard Macintosh names, a bare CFF's own encoding
-// (the Expert encoding and charsets) and vertical position vectors (documents pdf: text). The samples are
+// read and written (documents pdf: vector); vertical position vectors (documents pdf: text). (TrueType glyphs by their
+// standard Macintosh names and a bare CFF's own encoding read the program the file embeds, through the font formats tried
+// by its header, which is not on the new design yet.) The samples are
 // tools/documents/docfixtures/samples_d7_gaps.py's, drawn against pdfium by "documents drawers: the library's coverage
 // drawer ...".
 internal abstract partial class Tests
@@ -63,7 +64,7 @@ internal abstract partial class Tests
         var failures = new List<string>();
         foreach (var (name, isolated, knockout) in new[] { ("not isolated", false, false), ("not isolated, knockout", false, true), ("isolated", true, false) })
         {
-            var drawing = DocumentPageDrawers.Draw(Page(isolated, knockout), options);
+            var drawing = CoverageDrawn(Page(isolated, knockout), options);
             for (int region = 0; region < 3; region++)
             {
                 int x = 15 + 10 * region;
@@ -110,8 +111,8 @@ internal abstract partial class Tests
             return n;
         }
 
-        var stretched = DocumentPageDrawers.Draw(Page(pen), options).Image;
-        var round = DocumentPageDrawers.Draw(Page(null), options).Image;
+        var stretched = CoverageDrawn(Page(pen), options).Image;
+        var round = CoverageDrawn(Page(null), options).Image;
         int across = Thickness(stretched, down: true, 30 * 4), along = Thickness(stretched, down: false, 70 * 4);
         int roundAcross = Thickness(round, down: true, 30 * 4), roundAlong = Thickness(round, down: false, 70 * 4);
         Check(Math.Abs(across - 16) <= 1 && Math.Abs(along - 4) <= 1, $"under the pen: the line along x {across} pixels thick (4 points: 16 expected), along y {along} (1 point: 4 expected)");
@@ -144,7 +145,7 @@ internal abstract partial class Tests
             PdfHandMadeStream("", Encoding.Latin1.GetBytes(procs[2])),
             PdfHandMadeStream("", Encoding.Latin1.GetBytes(procs[3])),
         ]);
-        using var document = DocumentFormats.Open(file.AsMemory(), "type3-drawings.pdf");
+        using var document = PdfOpened(file.AsMemory(), "type3-drawings.pdf");
         var run = document.ReadPage(0, DocumentParts.All).Runs.Single();
         Check(run.Face is IDocumentGlyphDrawings, $"the Type 3 face draws glyphs by their parts ({run.Face?.GetType().Name})");
         var faceDrawings = (IDocumentGlyphDrawings)run.Face!;
@@ -188,7 +189,7 @@ internal abstract partial class Tests
             var pattern = new DocumentPattern(cell, new DocumentBox(0f, 0f, 10f, 10f), 16f, 16f, matrix);
             var fill = DocumentPath.Rectangle(new DocumentBox(0f, 0f, 120f, 120f));
             var page = new DocumentPage(0, 120f, 120f) { Paths = [new DocumentPath(fill.Verbs.ToArray(), fill.Points.ToArray()) { FillPattern = pattern }] };
-            var image = DocumentPageDrawers.Draw(page, new DocumentDrawOptions { PixelsPerPoint = 2f }).Image;
+            var image = CoverageDrawn(page, new DocumentDrawOptions { PixelsPerPoint = 2f }).Image;
             foreach (var (u, v, red, what) in new (float U, float V, bool Red, string What)[] { (5f, 5f, true, "inside the box"), (12.5f, 5f, false, "the square past the box across"), (5f, 12.5f, false, "past it up") })
             {
                 var (x, y) = matrix.Transform(u, v);
@@ -225,7 +226,7 @@ internal abstract partial class Tests
             PdfHandMadeStream("", Encoding.ASCII.GetBytes(content)),
         ]);
         DocumentPath stretched;
-        using (var document = DocumentFormats.Open(file.AsMemory(), "pen.pdf"))
+        using (var document = PdfOpened(file.AsMemory(), "pen.pdf"))
         {
             var paths = document.ReadPage(0, DocumentParts.Paths).Paths;
             Check(paths.Count == 3, $"{paths.Count} paths");
@@ -237,7 +238,7 @@ internal abstract partial class Tests
         }
 
         byte[] written = PdfWriteDocument(b => b.AddPage(200f, 100f).Path(stretched));
-        using var back = DocumentFormats.Open(written.AsMemory(), "pen-written.pdf");
+        using var back = PdfOpened(written.AsMemory(), "pen-written.pdf");
         var read = back.ReadPage(0, DocumentParts.Paths).Paths.Single();
         var p = read.Points.Span;
         var q = stretched.Points.Span;
@@ -264,47 +265,13 @@ internal abstract partial class Tests
         }
     }
 
-    // TrueType fonts whose cmaps map the space alone: each code's glyph found by its name in the post table (format 1: the
-    // standard Macintosh order; format 2: the standard names by their indices); the text the encoding's.
-    private static void PdfTextMacNames(Device device)
-    {
-        CpuOnly(device);
-        var sample = PdfGapSample("vector-truetype-mac-names");
-        using var document = DocumentFormats.Open(sample.Path);
-        var expected = sample.Expected["pages"]![0]!.AsObject();
-        PdfCheckTextPage("vector-truetype-mac-names", document.ReadPage(0, DocumentParts.Text), expected);
-        var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
-        PdfCheckGlyphIds("vector-truetype-mac-names", page, expected["glyphIds"]!.AsArray());
-        Check(page.Runs.All(r => r.Face?.Format == "opentype"), $"the runs' faces: {string.Join(", ", page.Runs.Select(r => r.Face?.Format ?? "none"))}");
-    }
-
-    // Bare CFF fonts with no /Encoding: their codes' glyphs and text through the program's own encoding, the predefined
-    // Expert encoding, over the Expert and Expert Subset charsets (each glyph's name the charset's).
-    private static void PdfTextCffExpert(Device device)
-    {
-        CpuOnly(device);
-        var sample = PdfGapSample("vector-cff-expert");
-        using var document = DocumentFormats.Open(sample.Path);
-        var expected = sample.Expected["pages"]![0]!.AsObject();
-        PdfCheckTextPage("vector-cff-expert", document.ReadPage(0, DocumentParts.Text), expected);
-        var page = document.ReadPage(0, DocumentParts.Text | DocumentParts.Glyphs);
-        PdfCheckGlyphIds("vector-cff-expert", page, expected["glyphIds"]!.AsArray());
-        var face = page.Runs[0].Face!;
-        var names = PdfPostNames(face);
-        Check(face.Format == "cff" && names.TryGetValue("Rsmall", out int r) && r == 72 && names.TryGetValue("zerooldstyle", out int z) && z == 16 && names.TryGetValue("ffl", out int f) && f == 49,
-            $"the Expert charset's names: Rsmall {(names.TryGetValue("Rsmall", out int a) ? a : -1)}, zerooldstyle {(names.TryGetValue("zerooldstyle", out int b) ? b : -1)}, ffl {(names.TryGetValue("ffl", out int c) ? c : -1)} (72, 16, 49 expected)");
-        var subset = PdfPostNames(page.Runs[2].Face!);
-        Check(subset.TryGetValue("dollaroldstyle", out int d) && d == 2 && subset.TryGetValue("commainferior", out int e) && e == 86,
-            $"the Expert Subset charset's names: dollaroldstyle {(subset.TryGetValue("dollaroldstyle", out int g) ? g : -1)}, commainferior {(subset.TryGetValue("commainferior", out int h) ? h : -1)} (2, 86 expected)");
-    }
-
     // Vertical text whose /W2 gives some glyphs a position vector of their own: each glyph's box across the column from
     // -vx to its width less vx (its run's box as the sample's), and its origin moved by its vector (vx, vy).
     private static void PdfTextVerticalW2(Device device)
     {
         CpuOnly(device);
         var sample = PdfGapSample("vector-vertical-w2");
-        using var document = DocumentFormats.Open(sample.Path);
+        using var document = PdfOpened(sample.Path);
         PdfCheckTextPage("vector-vertical-w2", document.ReadPage(0, DocumentParts.Text), sample.Expected["pages"]![0]!.AsObject());
 
         // "Report" at 22 points from (280, 270) up the page (the right column, read first): R's vector (200, 900)

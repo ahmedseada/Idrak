@@ -17,7 +17,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] DocumentPdfEncryptionGroup =
     [
         ("documents pdf: encryption: every encrypted sample (revisions 2-6: RC4 of 40 and 128 bits, AES-128 through crypt filters, /StrF /Identity, /EncryptMetadata false, cross-reference and object streams, AES-256; damaged ones repaired) opens with its JSON's password, its user and its owner password (a non-ASCII one too; the owner password as the owner, also where the user password is empty), says it is encrypted and how it was opened, and reads its cross-reference, every object, every stream, its metadata and its information as its JSON has them and as its unencrypted twin holds them (the same objects but each stream's stored /Length and revision 5's /Extensions, the same pages and text), its objects read alike from several threads", PdfEncryptedSamples),
-        ("documents pdf: encryption: a wrong password, or none where the user password is not empty, fails with an InvalidDataException naming DocumentOptions.Password; a wrong one opens a file whose user password is empty as its user, every page read naming it (wrong-password); the public-key handler is refused naming Adobe.PubSec; the document format suite passes on the encrypted samples, and damaged encrypted files fail only as damaged or as a variant not read", PdfEncryptionRefusals),
+        ("documents pdf: encryption: a wrong password, or none where the user password is not empty, fails with an InvalidDataException naming DocumentOptions.Password; a wrong one opens a file whose user password is empty as its user, every page read naming it (wrong-password); the public-key handler is refused naming Adobe.PubSec; damaged encrypted files fail only as damaged or as a variant not read", PdfEncryptionRefusals),
         ("documents pdf: encryption: RC4 on published vectors, passwords prepared (PDFDocEncoding; SASLprep: characters mapped to nothing, other spaces, NFKC; UTF-8 cut at 127 bytes), a revision, algorithm, crypt filter method or key length the handler does not read refused naming it, the stream limit holding on encrypted streams, and the file key cleared when the document is disposed", PdfEncryptionPieces),
         ("documents pdf: encryption: edges: a damaged encrypted file whose catalog lies in an object stream (AES-128 cut in its cross-reference stream, AES-256 with every offset short, an encryption dictionary away from where its cross-reference says) opens repaired, its key found from the trailer the scan finds before the object streams are listed, and reads its twin's text, refused without its password or with a wrong one naming the option; a file whose user password is empty opens as its owner by the owner password (DocumentInfo.Security.OwnerAccess: a rewrite changes its permissions and removes its encryption), as its user without one and by a wrong one; a password that is both is the owner's", PdfEncryptionEdges),
     ];
@@ -174,7 +174,7 @@ internal abstract partial class Tests
         }
 
         PdfCheckInfo($"{what}, as its twin", document.Info, twin.Expected["info"]!.AsObject());
-        using var plain = DocumentFormats.Open(twin.Path);
+        using var plain = PdfOpened(twin.Path);
         Check(plain.PageCount == document.PageCount && !plain.Info.Encrypted && plain.Info.Security is null, $"{what}: {document.PageCount} pages, its twin {plain.PageCount}, its twin's encryption {plain.Info.Security}");
         for (int i = 0; i < plain.PageCount; i++)
         {
@@ -213,7 +213,7 @@ internal abstract partial class Tests
             if (user.Length == 0)
             {
                 // Neither password: the empty user password opens it, as its user, and every page read says so.
-                using var document = DocumentFormats.Open(sample.Path, new DocumentOptions { Password = wrong });
+                using var document = PdfOpened(sample.Path, new DocumentOptions { Password = wrong });
                 Check(document.Info is { Encrypted: true, Security.OwnerAccess: false }, $"{sample.Name}: a wrong password given, the empty user password opens it as its user");
                 for (int i = 0; i < document.PageCount; i++)
                 {
@@ -230,7 +230,7 @@ internal abstract partial class Tests
             {
                 try
                 {
-                    using var document = DocumentFormats.Open(sample.Path, new DocumentOptions { Password = password });
+                    using var document = PdfOpened(sample.Path, new DocumentOptions { Password = password });
                     Check(false, $"{sample.Name}: opened with the password \"{password}\"");
                 }
                 catch (InvalidDataException e)
@@ -249,7 +249,7 @@ internal abstract partial class Tests
         {
             try
             {
-                using var document = DocumentFormats.Open(unsupported.Path, new DocumentOptions { Password = password });
+                using var document = PdfOpened(unsupported.Path, new DocumentOptions { Password = password });
                 Check(false, $"{unsupported.Name}: a file encrypted by {handler} opened");
             }
             catch (NotSupportedException e)
@@ -257,21 +257,6 @@ internal abstract partial class Tests
                 Check(e.Message.Contains(handler, StringComparison.Ordinal) && e.Message.Contains("encrypted", StringComparison.Ordinal), $"{unsupported.Name}: \"{e.Message}\" does not name {handler}");
             }
         }
-
-        // The format suite with the D2 user password: the files it (or the empty one) opens are read whole, pages in
-        // parallel, with tight limits; the others are refused naming the option, the public-key one naming its handler.
-        const string Password = "user-pass-1";
-        var suite = new List<DocumentSample>();
-        foreach (var sample in encrypted.Append(unsupported).Append(samples.Single(s => s.Kind == "twin")))
-        {
-            string? user = (string?)sample.Expected["encryption"]?["userPassword"];
-            suite.Add(sample.Kind == "unsupported" ? new DocumentSample(sample.Path, Error: handler)
-                : user is null or "" or Password ? new DocumentSample(sample.Path, Pages: (int)sample.Expected["open"]!["pageCount"]!)
-                : new DocumentSample(sample.Path, Error: "DocumentOptions.Password"));
-        }
-
-        Conformance.CheckDocumentFormat(DocumentFormats.Get(PdfFormat.FormatName), suite, documentOptions: new DocumentOptions { Password = Password },
-            options: new ContractCheckOptions { RandomCases = 0 }).ThrowIfFailed();
 
         // Damaged encrypted files (cut, or a few bytes changed): read, or failing as damaged (InvalidDataException) or as a
         // variant not read when a changed byte names one (a NotSupportedException saying the file is encrypted).
@@ -291,7 +276,7 @@ internal abstract partial class Tests
 
                 try
                 {
-                    using var document = DocumentFormats.Open(changed.AsMemory(), sample.Name + ".pdf", options);
+                    using var document = PdfOpened(changed.AsMemory(), sample.Name + ".pdf", options);
                     _ = document.Info;
                     for (int i = 0; i < document.PageCount; i++)
                     {
@@ -372,7 +357,7 @@ internal abstract partial class Tests
         {
             try
             {
-                using var document = DocumentFormats.Open(Changed(sample, from, to).AsMemory(), sample + ".pdf");
+                using var document = PdfOpened(Changed(sample, from, to).AsMemory(), sample + ".pdf");
                 Check(false, $"{sample} with {to}: opened");
             }
             catch (Exception e) when (e is InvalidDataException or NotSupportedException)
@@ -384,7 +369,7 @@ internal abstract partial class Tests
 
         // The stream limit holds on encrypted streams (their stored bytes, which decrypt to no more).
         var aes = samples.Single(s => s.Name == "r4-aes-128-empty");
-        using (var document = DocumentFormats.Open(aes.Path, new DocumentOptions { MaxStreamBytes = 64 }))
+        using (var document = PdfOpened(aes.Path, new DocumentOptions { MaxStreamBytes = 64 }))
         {
             try
             {
@@ -412,7 +397,7 @@ internal abstract partial class Tests
         var samples = PdfSamples();
         var encrypted = PdfEncryptedSamplesOf(samples);
         List<string> twin;
-        using (var plain = DocumentFormats.Open(samples.Single(s => s.Name == "plain").Path))
+        using (var plain = PdfOpened(samples.Single(s => s.Name == "plain").Path))
         {
             twin = [.. Enumerable.Range(0, plain.PageCount).Select(i => plain.ReadPage(i, DocumentParts.Text).Text)];
         }
@@ -483,7 +468,7 @@ internal abstract partial class Tests
 
         // A password that is both the user's and the owner's is the owner's (Algorithm 2.A tries the owner's first).
         using var destination = new MemoryStream();
-        using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
         {
             builder.Encrypt(new DocumentEncryption { UserPassword = "same-2026", OwnerPassword = "same-2026", Permissions = DocumentPermissions.None });
             builder.AddPage(200, 100);

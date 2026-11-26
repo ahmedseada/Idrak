@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
+using Idrak.Imaging.Shaping;
 
 // Plan 28, "Bidi pooled" (2026-11-19): with UAX #9's working space taken from the shared pools, a mixed-direction line read
 // through the lines layout and the bidi reading order allocates only what it gives back, as an unmixed line does.
@@ -27,8 +28,9 @@ internal abstract partial class Tests
     private static void LayoutsLinesMixedAllocation(Device device)
     {
         CpuOnly(device);
-        var order = ReadingOrders.Get(ReadingOrders.Bidi);
-        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines, ReadingOrder = ReadingOrders.Bidi };
+        var order = new BidiReadingOrder();
+        var options = new DocumentOptions { Layout = DocumentTextLayouts.Lines };
+        var layout = new LinesLayout(order);   // the default layout with the default reading order, as the PDF reader reaches them
 
         // Three mixed lines in logical order: a release note in Arabic with a year and a product name (right to left), a report
         // line in English with Arabic words, a version and a percentage (left to right), and a long Arabic line of a
@@ -70,7 +72,7 @@ internal abstract partial class Tests
         }
 
         DocumentTextRun[] page = [.. runs];
-        var text = DocumentTextLayouts.Arrange(page, 4100f, 792f, options);
+        var text = layout.Arrange(page, 4100f, 792f, options);
         Check(text.Lines.Count == mixed.Length, $"{text.Lines.Count} lines: \"{text.Text}\"");
         for (int l = 0; l < mixed.Length; l++)
         {
@@ -100,9 +102,9 @@ internal abstract partial class Tests
             return new DocumentText(lines, new string('x', pageLength));
         }
 
-        long given = MixedLinesAllocated(Given), arranged = MixedLinesAllocated(() => DocumentTextLayouts.Arrange(page, 4100f, 792f, options));
+        long given = MixedLinesAllocated(Given), arranged = MixedLinesAllocated(() => layout.Arrange(page, 4100f, 792f, options));
         Check(arranged <= given, $"{page.Length} runs in {text.Lines.Count} mixed lines arranged 1,000 times allocated {arranged} bytes once warm, {given} for what it gives back and asks"
-            + (arranged <= given ? "" : $" ({AllocatedTypes(() => DocumentTextLayouts.Arrange(page, 4100f, 792f, options))})"));
+            + (arranged <= given ? "" : $" ({AllocatedTypes(() => layout.Arrange(page, 4100f, 792f, options))})"));
 
         // The reading order alone on each line: the string it gives back, nothing more.
         for (int l = 0; l < mixed.Length; l++)
