@@ -16,8 +16,8 @@ internal abstract partial class Tests
         ("operations: every compute method of Backend is an operation (a NameKernel, virtual or forwarding to its capability interface, the dispatching Name with the same parameters, a descriptor with the matching kernel delegate); the rest is device plumbing (python3 tools/operations/generate.py)", OperationsMatchBackend),
         ("operations: Kernels.Chain names the kernel each operation runs (the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
         ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
-        ("operations: a failing device kernel throws a DeviceException, reported to telemetry once (a console logger prints it) with a hint naming IDRAK_RETRY_ON_HOST and Backend.RetryOnHost", DeviceFailureReported),
-        ("operations: on a device that builds its kernels when first used, a refused kernel (KernelUnavailableException) falls back from the first call with retry off: the host (the CPU's bits) or the caller's path, told to the device once; other device errors still reach the caller", RefusedKernelFallsBack),
+        ("operations: a failing device kernel throws a DeviceException, reported to telemetry once (a console logger prints it)", DeviceFailureReported),
+        ("operations: on a device that builds its kernels when first used, a refused kernel (KernelUnavailableException) falls back from the first call: the host (the CPU's bits) or the caller's path, told to the device once; other device errors still reach the caller", RefusedKernelFallsBack),
         ("operations: NormStats keeps its precision for one-element groups and large values with a small spread (variance from two passes), also over a group of many chunks (merged by count, mean and sum of squares)", NormStatsPrecision),
     ];
 

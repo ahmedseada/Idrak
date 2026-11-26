@@ -245,7 +245,7 @@ internal abstract partial class DesktopTests : Tests
             string model = TestData("gguf/tiny-llama-hf");
             string[][] commands =
             [
-                ["devices"], ["families"], ["formats"], ["plugins", "list"], ["env", "--all"], ["cache", "info"], ["version"], ["doctor"],
+                ["devices"], ["env", "--all"], ["cache", "info"], ["version"], ["doctor"],
                 ["show", model], ["inspect", TestData("gguf/tiny-llama.gguf")], ["memory", model], ["verify", model], ["tokenize", model, "hello"],
             ];
             foreach (string[] command in commands)

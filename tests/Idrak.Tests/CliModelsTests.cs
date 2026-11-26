@@ -9,16 +9,16 @@ using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Models;
 
-// The idrak model commands (pull, list, rm, show, search, alias, memory, quantize, merge, inspect, verify, convert, diff,
-// families), run in-process through CommandLine.Run with captured output. No network: the hub is a local HTTP server
+// The idrak model commands (pull, list, rm, show, search, alias, memory, merge, inspect, verify, convert, diff), run
+// in-process through CommandLine.Run with captured output. No network: the hub is a local HTTP server
 // (HF_ENDPOINT) serving the tiny fixtures of tests/Idrak.Tests/data/gguf, and every cache is a temporary folder.
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliModelsGroup =
     [
         ("cli models: pull (transformers and GGUF, resume, dry run, offline), list, rm with --yes and --dry-run, against a local hub", CliModelsPullListRm),
-        ("cli models: search keeps loadable models (registered families and GGUF architectures)", CliModelsSearch),
-        ("cli models: show, inspect, verify, diff, families and memory read fixtures without loading", CliModelsReadOnly),
+        ("cli models: search keeps loadable models (the families and GGUF architectures it finds)", CliModelsSearch),
+        ("cli models: show, inspect, verify, diff and memory read fixtures without loading", CliModelsReadOnly),
         ("cli models: alias set/list/rm in the config, read by every model argument", CliModelsAliases),
         ("cli models: every model command has help with examples, distinct short forms, no provider names", CliModelsHelp),
     ];
@@ -129,7 +129,7 @@ internal abstract partial class DesktopTests : Tests
         var ids = found["models"]!.AsArray().Select(m => (string)m!["id"]!).ToList();
         Check(ids.SequenceEqual(["test/tiny-llama", "test/tiny-gguf"]), $"loadable only: {string.Join(", ", ids)}");
         var all = ModelsJson("search", "tiny", "--all");
-        Check(all["models"]!.AsArray().Count == 4 && all["models"]!.AsArray().Any(m => (string?)m!["problem"] == "family BertModel not registered"), $"--all: {all}");
+        Check(all["models"]!.AsArray().Count == 4 && all["models"]!.AsArray().Any(m => (string?)m!["problem"] == "family BertModel: finding it is not on the new design yet"), $"--all: {all}");
         var gguf = ModelsJson("search", "tiny", "--kind", "gguf");
         Check(gguf["models"]!.AsArray().Count == 1, "--kind gguf");
         Check(ModelsCli("search", "tiny", "--limit", "0").Code == 2 && ModelsCli("search").Code == 2, "usage errors");
@@ -180,18 +180,6 @@ internal abstract partial class DesktopTests : Tests
             Check((bool)same["same"]! && (int)same["shared"]! == 20, $"a GGUF file and its Hugging Face copy hold the same tensors: {same}");
             var differ = ModelsJson(["diff", hf, TestData("gguf/tiny-qwen3-q8-hf"), .. c]);
             Check(!(bool)differ["same"]! && differ["onlyB"]!.AsArray().Count > 0, $"Llama vs Qwen3: {differ["onlyB"]}");
-
-            var families = ModelsJson("families");
-            var qwen3 = families["families"]!.AsArray().First(f => (string?)f!["family"] == "Qwen3ForCausalLM")!;
-            var gemma2 = families["families"]!.AsArray().First(f => (string?)f!["family"] == "Gemma2ForCausalLM")!;
-            Check((bool)qwen3["queryKeyNorm"]! && qwen3["gguf"]!.AsArray().Count == 1 && (bool)gemma2["softCapping"]! && !(bool)qwen3["softCapping"]!, $"families: {families}");
-            JsonNode Family(string name) => families["families"]!.AsArray().First(f => (string?)f!["family"] == name)!;
-            Check(new[] { "MixtralForCausalLM", "Qwen2MoeForCausalLM", "Qwen3MoeForCausalLM" }.All(n => (bool)Family(n)["experts"]! && Family(n)["probe"] is null)
-                  && !(bool)qwen3["experts"]! && !(bool)Family("LlamaForCausalLM")["experts"]! && (bool)Family("Qwen3MoeForCausalLM")["queryKeyNorm"]!
-                  && Family("MixtralForCausalLM")["gguf"]!.AsArray().Select(g => (string?)g).SequenceEqual(["llama"])
-                  && Family("Qwen2MoeForCausalLM")["gguf"]!.AsArray().Select(g => (string?)g).SequenceEqual(["qwen2moe"]), $"families with experts: {families}");
-            var table = ModelsCli("families", "moe").Out;
-            Check(table.Contains("Experts") && table.Contains("Qwen2MoeForCausalLM") && !table.Contains("LlamaForCausalLM"), $"families moe: {table}");
 
             var memory = ModelsJson(["memory", hf, "-d", "cpu", "-k", "float32", "--context", "128", "--memory", "1M", .. c]);
             var rows = memory["formats"]!.AsArray();

@@ -11,7 +11,7 @@ internal abstract partial class DesktopTests : Tests
     [
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
         ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
-        ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model with its plug-in (-P), resume, run with an image; without the plug-in the family is refused naming -P", CliPretrainVision),
+        ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model, resume, run with an image", CliPretrainVision),
     ];
 
     private static void CliPretrainVision(Device device)

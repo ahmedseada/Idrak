@@ -10,7 +10,7 @@ using Idrak.Cli.Commands.Health;
 using Idrak.Cli.Shared;
 
 // The idrak tool's Health group and shared foundation, run in-process through CommandLine.Run: doctor, devices,
-// version, report, env, init, cache, config, plugins list, formats, completion, update, login, setup android, help
+// version, report, env, init, cache, config, completion, update, login, setup android, help
 // topics; the common options (@file, --log, --output, --format, --color, --timeout, --threads); and the checks over
 // every command of every group (short forms, provider names, the environment variable table).
 internal abstract partial class DesktopTests : Tests
@@ -28,7 +28,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli health: env set saves variables every run applies (asked or given), the terminal wins; env unset; idrak test passes runner arguments", CliEnvSet),
         ("cli health: cache info and cache clear with --dry-run, --yes and no terminal", CliCache),
         ("cli health: config get/set/unset/list with profiles and hidden tokens; init --yes", CliConfigInit),
-        ("cli health: plugins list, formats, completion scripts and candidates", CliPluginsFormatsCompletion),
+        ("cli health: completion scripts and candidates", CliCompletion),
         ("cli health: update reads the published versions; login and logout store and remove a token", CliUpdateLogin),
         ("cli health: help topics and pages, group words, setup android", CliHelpTopics),
         ("cli health: @file, --log, --output, --format csv/md, --color, --timeout, --threads, progress", CliFoundation),
@@ -549,21 +549,9 @@ internal abstract partial class DesktopTests : Tests
         Directory.Delete(folder, true);
     }
 
-    private static void CliPluginsFormatsCompletion(Device device)
+    private static void CliCompletion(Device device)
     {
         _ = device;
-        var plugins = CliJson("plugins", "list", "-j");
-        Check(plugins["devices"]!["names"]!.AsArray().Any(n => (string?)n == "cpu"), $"plugins list: {plugins}");
-        // The generic components (plan 26, P2 and P3) are listed with their built-ins.
-        foreach (var (key, name) in new[] { ("progress", "console"), ("keywordindexes", "bm25"), ("recipes", "gpt"), ("linesegmenters", "projection"),
-                     ("textmatchers", "semi-global"), ("readingorders", "bidi"), ("readingorders", "runs") })
-        {
-            Check(plugins[key]?["names"]?.AsArray().Any(n => (string?)n == name) == true, $"plugins list: {key} lists {name}: {plugins[key]?.ToJsonString()}");
-        }
-
-        var (fexit, csv, _) = Cli("formats", "--format", "csv");
-        Check(fexit == 0 && csv.StartsWith("Kind,Formats", StringComparison.Ordinal), $"formats csv: {csv}");
-
         foreach (string shell in (string[])["bash", "zsh", "fish", "pwsh"])
         {
             var (exit, script, _) = Cli("completion", shell);
@@ -663,8 +651,8 @@ internal abstract partial class DesktopTests : Tests
 
         // --output / -O, --format csv and md, --color, --plain.
         string file = Path.Combine(folder, "out.md");
-        var written = Cli("formats", "-O", file, "--format", "md");
-        Check(written.Exit == 0 && written.Out.Length == 0 && File.ReadAllText(file).StartsWith("| Kind | Formats |", StringComparison.Ordinal), "-O with --format md");
+        var written = Cli("env", "--all", "-O", file, "--format", "md");
+        Check(written.Exit == 0 && written.Out.Length == 0 && File.ReadAllText(file).StartsWith("| Variable | Value |", StringComparison.Ordinal), "-O with --format md");
         Check(Cli("env", "--all", "--format", "json").Out.TrimStart().StartsWith('{'), "--format json");
         Check(Cli("env", "--format", "xml").Exit == 2 && Cli("env", "--color", "sometimes").Exit == 2, "bad --format or --color");
         var coloured = Cli("doctor", "-d", device.ToString(), "--color", "always");

@@ -63,9 +63,9 @@ internal abstract partial class DesktopTests : Tests
         var selector = new FastestSelector();
         var topology = ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec("cpu", null), new ClusterDeviceSpec("cpu", null)])], null, null);
         var (chosen, reason) = selector.Choose(0, 1, topology,
-            [new("tcp", true, "a route"), new("sim", false, "not in process"), new("mine", true, "a plug-in"), new("shared-memory", true, "one machine")]);
+            [new("tcp", true, "a route"), new("sim", false, "not in process"), new("mine", true, "one of its own"), new("shared-memory", true, "one machine")]);
         Check(chosen == "shared-memory" && reason.Contains("one machine"), $"fastest first: {chosen} ({reason})");
-        Check(selector.Choose(0, 1, topology, [new("mine", true, "a plug-in"), new("udp", false, "lossy")]).Transport == "mine", "a plug-in comes after the known ones but before none");
+        Check(selector.Choose(0, 1, topology, [new("mine", true, "one of its own"), new("udp", false, "lossy")]).Transport == "mine", "a transport of its own comes after the known ones but before none");
         ThrowsNaming<NotSupportedException>(() => selector.Choose(0, 1, topology, [new("tcp", false, "no route"), new("sim", false, "not in process")]), "none available", "no route", "not in process");
     }
 

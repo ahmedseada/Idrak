@@ -120,15 +120,13 @@ internal abstract partial class Tests
             }
 
             Check(thrown is { Device: "faulty" } && thrown.Message.Contains("injected", StringComparison.Ordinal), "the device's error reaches the caller");
-            Check(Kernels.HostCalls(faulty) == hostCalls, "retry off: nothing ran on the host");
+            Check(Kernels.HostCalls(faulty) == hostCalls, "nothing ran on the host");
             var events = failures.Events;
             Check(events.Count == 1, $"one DeviceFailed event, got {events.Count}");
             var e = events[0];
             Check(!e.RetriedOnHost && e.Operation is null && e.Message.Contains("injected", StringComparison.Ordinal), $"the event: {e}");
-            Check(e.Hint is { } hint && hint.Contains("IDRAK_RETRY_ON_HOST", StringComparison.Ordinal) && hint.Contains("RetryOnHost", StringComparison.Ordinal)
-                  && hint.Contains("faulty", StringComparison.Ordinal), $"the hint names both switches: {e.Hint}");
-            Check(printed.ToString().Contains("IDRAK_RETRY_ON_HOST", StringComparison.Ordinal),
-                $"a console logger subscribed for training prints device failures with the hint: {printed}");
+            Check(printed.ToString().Contains("injected", StringComparison.Ordinal),
+                $"a console logger subscribed for training prints device failures: {printed}");
 
             using (DeviceException.Handled())
             {

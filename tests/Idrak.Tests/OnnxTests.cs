@@ -374,7 +374,7 @@ internal abstract partial class DesktopTests : Tests
         }
         catch (NotSupportedException ex)
         {
-            Check(ex.Message.Contains("Times") && ex.Message.Contains("OnnxExportOps.Register"), ex.Message);
+            Check(ex.Message.Contains("Times") && ex.Message.Contains("Module<Times>"), ex.Message);
         }
 
         CheckOnnx(custom, [5, 8], RandomInput(device, r, 2, 5, 8), "an encoder layer with an activation the exporter is given a translator for",

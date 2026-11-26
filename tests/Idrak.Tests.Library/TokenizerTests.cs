@@ -450,7 +450,7 @@ internal abstract partial class Tests
                  "model": {"vocab": {"[UNK]": 0, "a": 1}, "unk_token": "[UNK]"}}
                 """);
             Check(PretrainedTokenizers.Read(wordLevel).ModelType == "WordLevel", "a plain vocabulary without WordPiece's settings is read as WordLevel");
-            Expect<NotSupportedException>(() => PretrainedTokenizers.Load(wordLevel), "'WordLevel' is not registered", "a WordLevel model, which the library does not build");
+            Expect<NotSupportedException>(() => PretrainedTokenizers.Load(wordLevel), "not on the new design yet", "a WordLevel model, which the library does not build");
         }
         finally
         {
