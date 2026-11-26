@@ -84,7 +84,7 @@ public sealed class IdrakSetting
     {
         _ when key.StartsWith("chat_", StringComparison.Ordinal) => "Chat",
         _ when key.StartsWith("terminal.", StringComparison.Ordinal) => "Terminal",
-        "cache_folder" or "hf_token" or "storage_headroom_mb" or "packed_cache" or "packed_cache_folder" => "Storage",
+        "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
         "wide_layout_dp" or "carousel_s" or "progress_interval_ms" or "prebuild_sections" or "section_fade_ms" or "frame_clock" or "live_fps" or "live_level_ms"
             or "window_keep" or "window_min_width_dp" or "window_min_height_dp" => "Layout and motion",
@@ -217,7 +217,7 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             o => o.Device, (o, t) => o.Device = DeviceName(t), placeholder: "auto"),
         new("cpu_vectors", "CPU vector paths", "Which vector paths the CPU's kernels take (ComputeResources.CpuVectors, IDRAK_CPU_VECTORS): automatic (the platform's intrinsics where the runtime reports them, "
             + "else portable 128-bit vectors), native (the intrinsics only), portable (the portable vectors only) or scalar (the plain loops). Every path gives the same results; "
-            + "only the speed differs. The int4 kernels keep the lane shifts they took at their first run until the next start.", IdrakSettingKind.Choice,
+            + "only the speed differs.", IdrakSettingKind.Choice,
             o => o.CpuVectors is { } paths ? VectorName(paths) : "", (o, t) => o.CpuVectors = VectorPaths(t), placeholder: "automatic", choices: ["automatic", "native", "portable", "scalar"]),
         new("theme", "Theme", "The phone's theme, light or dark.", IdrakSettingKind.Choice,
             o => o.Theme.ToString().ToLowerInvariant(), (o, t) => o.Theme = t.Length == 0 ? IdrakThemeChoice.System : Enum.TryParse<IdrakThemeChoice>(t, ignoreCase: true, out var theme) && Enum.IsDefined(theme)
@@ -250,12 +250,6 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             IdrakSettingKind.Number, o => Text(o.TuningNeighbourOctaves), (o, t) => o.TuningNeighbourOctaves = Real(t, minimum: 0), placeholder: "the library's"),
         new("lookup_tables", "Lookup tables", "Where frozen lookup tables live (ComputeResources.LookupTables, IDRAK_LOOKUP_TABLES).", IdrakSettingKind.Choice,
             o => o.LookupTables ?? "", (o, t) => o.LookupTables = Placement(t), placeholder: "default", choices: ["default", "auto", "host", "device"]),
-        new("packed_cache", "Keep packed weights", "Whether int8 and int4 weights are kept between loads, so the next load of a model reads them instead of quantizing again "
-            + "(ComputeResources.PackedWeightCache, IDRAK_PACKED_CACHE). A kept entry is made again when its model's file changes.",
-            IdrakSettingKind.Choice, o => Text(o.PackedWeightCache), (o, t) => o.PackedWeightCache = Switch(t), placeholder: "default", choices: ["default", "on", "off"]),
-        new("packed_cache_folder", "Packed weights folder", "Where kept int8 and int4 weights live (ComputeResources.PackedWeightCacheFolder, IDRAK_PACKED_CACHE_DIR). Empty: \"packed\" in the cache folder.",
-            IdrakSettingKind.Text, o => o.PackedWeightCacheFolder ?? "", (o, t) => o.PackedWeightCacheFolder = t.Length == 0 ? null : Path.IsPathFullyQualified(t) ? t
-                : throw new FormatException($"'{t}' is not a full path."), placeholder: "packed, in the cache folder"),
         new("hf_token", "Hugging Face token", "For gated and private models, kept in the phone's secure storage (HF_TOKEN).", IdrakSettingKind.Secret,
             o => o.HuggingFaceToken ?? "", (o, t) => o.HuggingFaceToken = t.Length == 0 ? null : t, placeholder: "none"),
         new("storage_headroom_mb", "Storage kept free (MiB)", "The free space a model pull leaves; a pull that would leave less is refused before it starts.",
@@ -338,9 +332,7 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             IdrakSettingKind.Number, o => Text(o.ChatSeed), (o, t) => o.ChatSeed = (int?)Whole(t, int.MinValue, int.MaxValue), placeholder: "random"),
         new("chat_thinking", "Chat: thinking", "Whether the chat asks for reasoning, where the model's template has a switch for it (ChatRequest.Think); the chat page switches it too.",
             IdrakSettingKind.Choice, o => Text(o.ChatThinking), (o, t) => o.ChatThinking = Switch(t), placeholder: "default", choices: ["default", "on", "off"]),
-        new("chat_weights", "Chat: weights format", "The format a chat model's projections are kept in once loaded: bfloat16 (half of float32), int8, int4 or another registered packed format (PackedWeightFormats). Default: float32. Taken at the next load.",
-            IdrakSettingKind.Choice, o => o.ChatWeights ?? "", (o, t) => o.ChatWeights = WeightFormat(t), placeholder: "default", choices: ["default", .. WeightFormats()]),
-        new("chat_kv", "Chat: key/value cache format", "How the chat's key/value cache is kept (KeyValueLayouts): int8 or bfloat16 take less memory than float32. Default: float32. Taken at the next load.",
+        new("chat_kv", "Chat: key/value cache format", "How the chat's key/value cache is kept (KeyValueLayouts). Default: float32. Taken at the next load.",
             IdrakSettingKind.Choice, o => o.ChatKeyValueFormat ?? "", (o, t) => o.ChatKeyValueFormat = CacheFormat(t), placeholder: "default",
             choices: ["default", .. KeyValueLayouts.Names.Order(StringComparer.Ordinal)]),
         new("chat_enter_sends", "Chat: Enter sends", "On a desktop keyboard, Enter sends the message and Shift+Enter makes a new line; off, Enter makes a new line and the send button sends. A phone's soft keyboard is not changed.",
@@ -385,27 +377,10 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
     // The library's generation defaults, which an empty chat setting keeps (shown as the placeholders).
     private static GenerationOptions Library => field ??= new GenerationOptions();
 
-    // bfloat16, int8, int4 first, then the other registered packed formats.
-    private static IEnumerable<string> WeightFormats() =>
-        new[] { "bfloat16", "int8", "int4" }.Concat(PackedWeightFormats.Names.Order(StringComparer.Ordinal)).Distinct(StringComparer.OrdinalIgnoreCase);
-
-    // "default" or "float32" is the library's own (null); bf16 is bfloat16's short name; anything else a registered packed format.
-    private static string? WeightFormat(string text)
-    {
-        string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", "bf16" => "bfloat16", var other => other };
-        if (name.Length == 0)
-        {
-            return null;
-        }
-
-        return PackedWeightFormats.Names.Contains(name, StringComparer.OrdinalIgnoreCase) || name is "bfloat16" or "int8" or "int4" ? name
-            : throw new FormatException($"'{text}' is not a weights format: default, {string.Join(", ", WeightFormats())}.");
-    }
-
     // "default" or "float32" is the library's own (null); a registered key/value layout otherwise.
     private static string? CacheFormat(string text)
     {
-        string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", "bf16" => "bfloat16", var other => other };
+        string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", var other => other };
         if (name.Length == 0)
         {
             return null;

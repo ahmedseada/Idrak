@@ -14,7 +14,7 @@ public readonly record struct GradientPiece(int Parameter, int Offset, int Count
 /// <summary>
 /// One rank's compression of gradient buckets on their way across the ranks (plan 23, phase C4): it sums a bucket of this
 /// rank's gradient values over every rank, sending less than the values where it can. Made once per run by its
-/// <see cref="IGradientCompression"/>; any state it keeps (the error-feedback residual of top-k, int8 and fp8) is allocated
+/// <see cref="IGradientCompression"/>; any state it keeps (the error-feedback residual of top-k) is allocated
 /// once and lives with it. <see cref="Reduce"/> is called one bucket at a time, in bucket order, the same buckets on every
 /// rank, from the thread that reduces the step's buckets (not the training thread while the backward pass overlaps): it
 /// works on the host values it is given and on the collectives' host values (<see cref="IHostValueCollectives"/>).
@@ -43,7 +43,7 @@ public interface IGradientCompressor : IDisposable
 /// <summary>One kind of gradient compression, registered by name in <see cref="GradientCompressions"/>.</summary>
 public interface IGradientCompression
 {
-    /// <summary>The name ("none", "bf16", "top-k", "int8", "fp8").</summary>
+    /// <summary>The name ("none", "top-k").</summary>
     string Name { get; }
 
     /// <summary>One line for listings.</summary>
@@ -55,10 +55,8 @@ public interface IGradientCompression
 }
 
 /// <summary>
-/// The gradient compressions, by name (plan 23, phase C4): "none" (float32), "bf16" (bfloat16 on the wire, sums in
-/// float32), "top-k" (the largest share of each bucket's values, by magnitude, with the rest kept for the next step:
-/// error feedback), and "int8" and "fp8" (plan 37, N0 and N0b: every value as one byte times a scale a piece, each rank's
-/// rounding error kept for its next step). A run names one with <see cref="ClusterOptions.Compression"/>
+/// The gradient compressions, by name (plan 23, phase C4): "none" (float32) and "top-k" (the largest share of each
+/// bucket's values, by magnitude, with the rest kept for the next step: error feedback). A run names one with <see cref="ClusterOptions.Compression"/>
 /// (<c>IDRAK_CLUSTER_COMPRESSION</c>).
 /// </summary>
 public static class GradientCompressions
@@ -70,10 +68,7 @@ public static class GradientCompressions
         var table = new SlotTable<string, IGradientCompression>(nameof(GradientCompressions), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a compression's values are summed with every other rank's in the same form, so another cannot answer for one rank");
         table.RegisterDefault("none", new Compression.PlainCompression());
-        table.RegisterDefault("bf16", new Compression.BFloat16Compression());
         table.RegisterDefault("top-k", new Compression.TopKCompression());
-        table.RegisterDefault("int8", new Compression.Int8Compression());
-        table.RegisterDefault("fp8", new Compression.Float8Compression());
         return table;
     }
 

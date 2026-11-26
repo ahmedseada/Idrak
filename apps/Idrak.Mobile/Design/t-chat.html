@@ -86,14 +86,14 @@ body { background: var(--bg); }
     <div class="conv"><b>Explain Vulkan subgroups <small>Sun</small></b><span>A subgroup is the set of lanes that…</span></div>
   </div>
   <div class="mid">
-    <div class="top"><div class="av">Q</div><div><div class="n">Qwen3 0.6B <span data-i="chev"></span></div><div class="m"><i class="dot"></i>int8 · vulkan:0 · loaded in 3.1 s</div></div></div>
+    <div class="top"><div class="av">Q</div><div><div class="n">Qwen3 0.6B <span data-i="chev"></span></div><div class="m"><i class="dot"></i>vulkan:0 · loaded in 3.1 s</div></div></div>
     <div class="feed">
       <div class="u">How can a tablet run a language model without the cloud?</div>
       <div class="a">
         <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
         <div class="think"><span data-i="brain"></span>Thought for 1.4 s<span data-i="chev"></span></div>
         <div class="body">Two things make it fit:
-          <ol><li><b>Small weights</b> — 0.6B parameters in int8 take about 0.7 GB.</li><li><b>The device's GPU</b> — Vulkan kernels, measured on this tablet.</li></ol>
+          <ol><li><b>The device's GPU</b> — Vulkan kernels, measured on this tablet.</li></ol>
           <div class="code"><div class="bar2"><span>C#</span><span>Copy</span></div><pre><span class="k">var</span> model = PretrainedModel.Load(<span class="s">"Qwen3-0.6B"</span>,
     <span class="k">new</span>() { Int8 = <span class="k">true</span>, Device = gpu });</pre></div>
         </div>

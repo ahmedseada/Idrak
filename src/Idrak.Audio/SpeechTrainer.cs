@@ -61,7 +61,7 @@ public sealed record SpeechTrainingOptions
     /// <summary>The rate over the steps: a <see cref="LearningRateSchedules"/> name ("cosine", "linear", "constant", "wsd").</summary>
     public string Schedule { get; init; } = "cosine";
 
-    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "adamw8bit", "sgd").</summary>
+    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "sgd").</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>Weight decay (decoupled for AdamW).</summary>

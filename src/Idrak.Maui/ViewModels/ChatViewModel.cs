@@ -399,8 +399,8 @@ public sealed class ChatViewModel : ViewModel
         OnPropertyChanged(nameof(IsModelLoaded));
     }
 
-    /// <summary>"int8 · vulkan:0 · loaded in 3.1 s", or what is happening.</summary>
-    public string ModelMeta => Model is { } m ? string.Create(CultureInfo.InvariantCulture, $"{m.Weights} · {m.Device} · loaded in {m.LoadTime.TotalSeconds:F1} s")
+    /// <summary>"vulkan:0 · loaded in 3.1 s", or what is happening.</summary>
+    public string ModelMeta => Model is { } m ? string.Create(CultureInfo.InvariantCulture, $"{m.Device} · loaded in {m.LoadTime.TotalSeconds:F1} s")
         : IsLoading ? "Loading…" : SelectedModel is null ? (HasModels ? "Tap to choose one of the store's models" : "Pull one in Models") : "Not loaded";
 
     /// <summary>Whether a model is loaded (the green dot).</summary>
@@ -1061,7 +1061,7 @@ public sealed class ChatViewModel : ViewModel
     /// <summary>Whether a message can be sent now.</summary>
     public bool CanSend => !IsStreaming && SelectedModel is not null && Draft.Trim().Length > 0;
 
-    /// <summary>The model loaded: its device, formats, context and load time ("Qwen/Qwen3-0.6B on cpu · weights int8 · …"), or what to do.</summary>
+    /// <summary>The model loaded: its device, formats, context and load time ("Qwen/Qwen3-0.6B on cpu · cache float32 · …"), or what to do.</summary>
     public string ModelText
     {
         get => _modelText;
@@ -1300,7 +1300,7 @@ public sealed class ChatViewModel : ViewModel
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(options);
-        return new ChatLoadRequest(model.Model.Id, model.Path, options.Device, options.ChatWeights, options.ChatKeyValueFormat, Options(options).NumCtx);
+        return new ChatLoadRequest(model.Model.Id, model.Path, options.Device, options.ChatKeyValueFormat, Options(options).NumCtx);
     }
 
     /// <summary>The messages a request sends: the system prompt (the chosen model's own, else the settings', when set), then the history.</summary>
@@ -1550,7 +1550,7 @@ public sealed class ChatViewModel : ViewModel
         }
 
         ModelText = string.Create(CultureInfo.InvariantCulture,
-            $"{info.Model} on {info.Device} · weights {info.Weights} · cache {info.KeyValueFormat} · {info.Context:N0} tokens · loaded in {info.LoadTime.TotalSeconds:F1} s")
+            $"{info.Model} on {info.Device} · cache {info.KeyValueFormat} · {info.Context:N0} tokens · loaded in {info.LoadTime.TotalSeconds:F1} s")
             + (info.Estimate is { } e ? $"\nMeasured before loading: {e}" : "");
     }
 

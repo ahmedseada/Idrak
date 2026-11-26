@@ -55,9 +55,6 @@ public static class MauiProgram
                 // is the smallest Qwen-VL, a vision-language model the OCR lab reads with (the lab measures whether it fits
                 // this phone before loading it, and refuses it with the limit named when it does not).
                 options.SuggestedModels = ["Qwen/Qwen3-0.6B", "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf", "Qwen/Qwen2-VL-2B-Instruct"];
-
-                // The chat's weights as int8 by default (a quarter of float32's memory); the settings page changes it.
-                options.ChatWeights = "int8";
             });
 
         // The model families the app shows are registered here, each plug-in by its own Register call (the library
@@ -83,9 +80,7 @@ public static class MauiProgram
         QwenVisionPlugin.Register();
         LlavaPlugin.Register();
 
-        // The OCR lab reads with int8 weights by default (a quarter of float32's memory), as the chat does; the lab's
-        // settings change it, and what the user keeps there is applied over this.
-        builder.Services.AddSingleton(new OcrLabOptions { Weights = "int8" });
+        builder.Services.AddSingleton(new OcrLabOptions());
 
         // The Terminal page runs the idrak commands in the app's own process (Idrak.Cli.Commands): one runner for the app (one
         // command at a time), allowing what the Terminal's setting allows (other programs and a network listener on a desktop

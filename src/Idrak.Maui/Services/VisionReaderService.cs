@@ -85,7 +85,7 @@ public sealed class VisionReaderService : IVisionReaderService
         var spec = PretrainedArchitectures.Get(architecture).Spec(config, []);
         int context = Math.Min(request.Context, spec.MaxPositions);
         long vision = VisionParameters.GetOrAdd(Path.GetFullPath(folder), _ => CountVision(folder, spec));
-        long weights = ChatModelService.WeightBytes(spec, request.Weights) + vision * sizeof(float);
+        long weights = ChatModelService.WeightBytes(spec) + vision * sizeof(float);
         long cache = ModelMemory.KeyValueCacheBytes(spec, context, KeyValueLayouts.For(request.CacheFormat));
         var (available, limit) = ChatModelService.Available(device);
         return (new ChatMemoryEstimate(request.Model, device.ToString(), weights, cache, available, limit), folder, architecture);
@@ -159,22 +159,17 @@ public sealed class VisionReaderService : IVisionReaderService
 
         var (request, folder, architecture, estimate) = asked;
         var device = ChatModelService.DeviceOf(request.Device);
-        string? weights = request.Weights?.ToLowerInvariant();
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
         var model = PretrainedModel.Load(folder, new PretrainedOptions
         {
             Device = device,
-            Int8 = weights == "int8",
-            Int4 = weights == "int4",
-            BFloat16 = weights is "bfloat16" or "bf16",
-            PackedFormatName = weights is null or "int8" or "int4" or "bfloat16" or "bf16" ? null : weights,
             MaxPositions = request.Context,
         });
         try
         {
             int context = Math.Min(request.Context, model.MaxPositions);
             var reader = new ImageReader(model, new ImageReaderOptions { ContextLength = context, CacheFormat = request.CacheFormat });
-            var info = new VisionReaderInfo(request.Model, architecture, device.ToString(), weights ?? "float32", request.CacheFormat, context,
+            var info = new VisionReaderInfo(request.Model, architecture, device.ToString(), request.CacheFormat, context,
                 System.Diagnostics.Stopwatch.GetElapsedTime(start), estimate);
             return new HostedReader(model, reader, info);
         }

@@ -107,7 +107,7 @@ internal sealed class ClusterSimCommand : Command
         probes' rows (cpu, memory, the device's kernels where it times them, the network's collectives, transfers and
         gradient buckets, the cluster's simulated links) and the step measured here beside the step predicted for the
         topology's links. The other cluster settings come from the IDRAK_CLUSTER_ variables (idrak env lists them). The
-        settings the library suggests from the first warm steps (a bf16 wire, local SGD, gradient accumulation, the bucket
+        settings the library suggests from the first warm steps (local SGD, gradient accumulation, the bucket
         size, top-k, the hierarchical collective; never applied) are shown once each above the progress line and kept in
         the run's log (idrak suggest RUN lists them). With
         --dashboard the run is shown in a browser while it goes (idrak cluster ui's page): its ranks, links, losses and
@@ -120,7 +120,6 @@ internal sealed class ClusterSimCommand : Command
               --topology FILE    the topology file (idrak cluster init writes one)
               --mode M           in-process (threads, the virtual clock) or localhost (processes) (IDRAK_CLUSTER_MODE)
               --collective NAME  the collective algorithm: ring, naive or hierarchical (hierarchical with several nodes)
-              --wire W           how gradients travel: f32 or bf16 (f32)
               --local-sgd K      average the weights every K steps instead of the gradients every step
               --bucket-bytes N   a gradient bucket's size, such as 64KiB (measured on the first step)
               --topk F           send each rank's largest share F of the gradient values (0 to 1)
@@ -150,7 +149,7 @@ internal sealed class ClusterSimCommand : Command
         """;
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        ["--topology", "--collective", "--wire", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--stage-layers", "--event-log", "--port"];   // --seed: a common option
+        ["--topology", "--collective", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--stage-layers", "--event-log", "--port"];   // --seed: a common option
 
     public override IReadOnlyCollection<string> Flags => ["--check-prediction", "--dashboard", "--no-browser"];
 
@@ -312,7 +311,7 @@ internal sealed class ClusterSimCommand : Command
         string model = options.Simulation.Failures ?? topology.Simulation.Failures;
         int runSeed = options.Simulation.Seed ?? topology.Simulation.Seed;
         options = WithEventLog(context, options, inner);
-        context.Write($"simulating {topology.WorldSize} rank(s) of {path} in this process ({options.CollectiveFor(topology)}, {(options.Wire == WireType.BFloat16 ? "bf16" : "f32")} wire, "
+        context.Write($"simulating {topology.WorldSize} rank(s) of {path} in this process ({options.CollectiveFor(topology)}, "
                       + $"failures {model}, seed {runSeed.ToString(inv)}{(options.Pipelined ? $", pipeline of {options.Stages ?? topology.WorldSize} stage(s)" : "")}): idrak {string.Join(' ', inner)}");
         int[] codes;
         ClusterRunResult result;
@@ -373,7 +372,7 @@ internal sealed class ClusterSimCommand : Command
     }
 
     /// <summary>
-    /// The options and topology a simulated run of <paramref name="inner"/> takes (the file, the collective, wire, seed,
+    /// The options and topology a simulated run of <paramref name="inner"/> takes (the file, the collective, seed,
     /// failures, placement and stages given); null topology when the file cannot be read (the error is written).
     /// </summary>
     internal static (ClusterOptions Options, ClusterTopology? Topology) Prepare(CommandContext context, string path, IReadOnlyList<string> inner)
@@ -393,19 +392,6 @@ internal sealed class ClusterSimCommand : Command
         if (context.Option("--collective") is { } collective)
         {
             options = options with { Collective = collective };
-        }
-
-        if (context.Option("--wire") is { } wire)
-        {
-            options = options with
-            {
-                Wire = wire.ToLowerInvariant() switch
-                {
-                    "f32" or "float32" => WireType.Float32,
-                    "bf16" or "bfloat16" => WireType.BFloat16,
-                    _ => throw new UsageException($"--wire is f32 or bf16, not '{wire}'."),
-                },
-            };
         }
 
         if (context.Option("--local-sgd") is { } localSgd)
@@ -691,7 +677,7 @@ internal sealed class ClusterSimCommand : Command
     /// <summary>The settings a localhost run's processes take from this command beside the environment they inherit.</summary>
     public static Dictionary<string, string> LocalhostEnvironment(ClusterOptions options)
     {
-        var environment = new Dictionary<string, string>(StringComparer.Ordinal) { ["IDRAK_CLUSTER_WIRE"] = options.Wire == WireType.BFloat16 ? "bf16" : "f32" };
+        var environment = new Dictionary<string, string>(StringComparer.Ordinal);
         if (options.Collective is { } collective)
         {
             environment["IDRAK_CLUSTER_COLLECTIVE"] = collective;

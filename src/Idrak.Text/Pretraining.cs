@@ -101,7 +101,7 @@ public sealed record PretrainingOptions
     /// <summary>Weight decay (decoupled, for the AdamW kinds).</summary>
     public float WeightDecay { get; init; } = 0.1f;
 
-    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "adamw8bit", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
+    /// <summary>The optimizer: an <see cref="OptimizerKinds"/> name ("adamw", "adam", "sgd"), made with <see cref="Beta1"/> and <see cref="Beta2"/>.</summary>
     public string Optimizer { get; init; } = "adamw";
 
     /// <summary>The optimizer's first moment decay (AdamW kinds).</summary>

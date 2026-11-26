@@ -9,8 +9,7 @@ namespace Idrak.Networking.Collectives;
 /// <summary>
 /// "naive" (plan 23): every rank sends rank 0 its values, rank 0 combines them in rank order (0, 1, 2, …) and sends the
 /// result back. The simplest correct algorithm and the reference the others agree with (within float rounding; exactly
-/// on whole numbers). On a bfloat16 wire every rank's values are rounded to bfloat16 before they travel; the sum is made
-/// in float32 and comes back as float32.
+/// on whole numbers).
 /// </summary>
 internal sealed class NaiveCollectives(ITransport transport, Device device, ClusterContext context) : HostCollectives(transport, device, context)
 {
@@ -21,11 +20,6 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
     protected override void AllReduceHost(Span<float> values, ReduceOp op, WireType wire)
     {
         var travel = op == ReduceOp.Sum ? wire : WireType.Float32;
-        if (travel == WireType.BFloat16)
-        {
-            WireValues.RoundToBFloat16(values);                    // rank 0's own values too: every rank's travel alike
-        }
-
         if (Rank != 0)
         {
             Send(0, values, ToRoot, travel);
@@ -98,8 +92,7 @@ internal sealed class NaiveCollectives(ITransport transport, Device device, Clus
 /// values instead of rank 0 handling them all. Slice j's reduction starts at rank j+1 and goes round, each rank adding
 /// its own values to what arrived, and ends complete at rank j: an order fixed by the sizes alone (rule 86), so every rank
 /// ends with identical bytes and a rerun gives them again; it differs from naive's rank order, so the two agree within
-/// float rounding. On a bfloat16 wire the partial sums travel as bfloat16 (rounded once a hop), the finished slices as
-/// float32. Each step sends and receives chunk by chunk in turn, so no rank waits on another in a circle.
+/// float rounding. Each step sends and receives chunk by chunk in turn, so no rank waits on another in a circle.
 /// <para>
 /// Phase C6: over a transport that moves device memory (<see cref="HostCollectives.DeviceTransport"/>), a float32 sum,
 /// all-gather, reduce-scatter and broadcast keep their pieces on the device and add them there, the same sums in the same

@@ -11,7 +11,7 @@ namespace Idrak.Optimizers;
 /// SIMD kernels on all cores, and uploads the new values: only gradients and weights cross PCIe, never the state. On a GPU
 /// the copies go through pinned buffers in the background, so one parameter downloads while the previous one is updated
 /// and uploaded. Use it when the optimizer state does not fit on the GPU (full fine-tuning of a model that just fits).
-/// Works with any optimizer that updates each parameter on its own (SGD, Adam, AdamW, AdamW8Bit):
+/// Works with any optimizer that updates each parameter on its own (SGD, Adam, AdamW):
 /// <c>new HostOptimizer(model.Parameters(), ps =&gt; new AdamW(ps, 1e-4f))</c>. In data-parallel training (plan 23) the
 /// gradient synchronisation reduces the gradients on the host copies this optimizer downloads (<see cref="IHostGradients"/>),
 /// and the clipping and the update then read the reduced values there.

@@ -5,17 +5,16 @@ using Idrak.Diagnostics;
 
 namespace Idrak.Maui.Abstractions;
 
-/// <summary>A chat model to load: where it is and how (the device, the weights and the key/value cache formats, the context).</summary>
+/// <summary>A chat model to load: where it is and how (the device, the key/value cache format, the context).</summary>
 /// <param name="Model">Its name as the user knows it ("Qwen/Qwen3-0.6B").</param>
 /// <param name="Path">Its folder (config.json and weights) or its .gguf file.</param>
 /// <param name="Device">The device: "auto" (<see cref="Device.Default"/>), "cpu", "vulkan:0" and the like.</param>
-/// <param name="Weights">The projections' format once loaded ("int8", "int4", "bfloat16", a registered packed format), or null for the library's (float32).</param>
 /// <param name="KeyValueFormat">The key/value cache's format (a registered layout), or null for the library's (float32).</param>
 /// <param name="Context">The context window in tokens (capped by the model's own).</param>
-public sealed record ChatLoadRequest(string Model, string Path, string Device, string? Weights, string? KeyValueFormat, int Context)
+public sealed record ChatLoadRequest(string Model, string Path, string Device, string? KeyValueFormat, int Context)
 {
     /// <summary>The key the model is loaded under in the model service's "chat" host: one loaded model a key.</summary>
-    public string Key => string.Join('\n', System.IO.Path.GetFullPath(Path), Device.ToLowerInvariant(), Weights ?? "", KeyValueFormat ?? "", Context.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public string Key => string.Join('\n', System.IO.Path.GetFullPath(Path), Device.ToLowerInvariant(), KeyValueFormat ?? "", Context.ToString(System.Globalization.CultureInfo.InvariantCulture));
 }
 
 /// <summary>What a chat model needs and what the device has, measured before it is loaded.</summary>
@@ -45,7 +44,7 @@ public sealed class ModelDoesNotFitException : InvalidOperationException
     /// <summary>The refusal of <paramref name="estimate"/>'s model.</summary>
     public ModelDoesNotFitException(ChatMemoryEstimate estimate)
         : base($"{estimate?.Model} does not fit: it needs {estimate} — the limit is {estimate?.Limit}. "
-               + "Choose a smaller weights format (int8, int4) or key/value cache format, a shorter context, another device, or a smaller model in Settings.")
+               + "Choose a smaller key/value cache format, a shorter context, another device, or a smaller model in Settings.")
     {
         Estimate = estimate ?? throw new ArgumentNullException(nameof(estimate));
     }
@@ -57,8 +56,7 @@ public sealed class ModelDoesNotFitException : InvalidOperationException
 /// <summary>A loaded chat model as the chat page shows it.</summary>
 /// <param name="Model">Its name.</param>
 /// <param name="Device">The device it is on ("cpu", "vulkan:0").</param>
-/// <param name="Weights">Its projections' format ("float32", "int8").</param>
-/// <param name="KeyValueFormat">Its key/value cache's format ("float32", "int8").</param>
+/// <param name="KeyValueFormat">Its key/value cache's format.</param>
 /// <param name="Context">Its context window in tokens.</param>
 /// <param name="LoadTime">How long its load took.</param>
 /// <param name="ThinkingDefault">
@@ -66,7 +64,7 @@ public sealed class ModelDoesNotFitException : InvalidOperationException
 /// suppressing it render different prompts); null when it has none.
 /// </param>
 /// <param name="Estimate">What it was measured to need before it was loaded.</param>
-public sealed record ChatModelInfo(string Model, string Device, string Weights, string KeyValueFormat, int Context, TimeSpan LoadTime, bool? ThinkingDefault,
+public sealed record ChatModelInfo(string Model, string Device, string KeyValueFormat, int Context, TimeSpan LoadTime, bool? ThinkingDefault,
     ChatMemoryEstimate? Estimate)
 {
     /// <summary>Whether the template has a reasoning switch.</summary>

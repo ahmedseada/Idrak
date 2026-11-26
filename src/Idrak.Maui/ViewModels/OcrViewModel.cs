@@ -866,7 +866,7 @@ public sealed class OcrViewModel : ViewModel
         }
 
         ModelStatus = string.Create(CultureInfo.InvariantCulture,
-            $"{info.Model} ({info.Architecture}) on {info.Device} · weights {info.Weights} · cache {info.CacheFormat.ToString().ToLowerInvariant()} · {info.Context:N0} tokens · loaded in {info.LoadTime.TotalSeconds:F1} s")
+            $"{info.Model} ({info.Architecture}) on {info.Device} · cache {info.CacheFormat.ToString().ToLowerInvariant()} · {info.Context:N0} tokens · loaded in {info.LoadTime.TotalSeconds:F1} s")
             + (info.Estimate is { } e ? $"\nMeasured before loading: {e}" : "");
     }
 

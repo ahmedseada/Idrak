@@ -114,9 +114,8 @@ internal partial class GradientReduction
         return options.CompressionName.ToLowerInvariant() switch
         {
             "none" => WireType.Float32,
-            "bf16" => WireType.BFloat16,
-            var other => throw new ArgumentException($"A sharded run reduce-scatters its buckets as float32 or bfloat16; the compression '{other}' is not one of them "
-                                                     + "(IDRAK_CLUSTER_COMPRESSION=none or bf16).", nameof(options)),
+            var other => throw new ArgumentException($"A sharded run reduce-scatters its buckets as float32; the compression '{other}' is not one "
+                                                     + "(IDRAK_CLUSTER_COMPRESSION=none).", nameof(options)),
         };
     }
 

@@ -28,7 +28,7 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 /// (parameter, offset, count) pieces packed into buckets in reverse parameter order (<see cref="BucketLayout"/>), never a
 /// packed copy on the device. Each bucket is this rank's values times its tokens (its rows; 1 when the losses are already
 /// the step's shares), summed across the ranks through the run's compression (<see cref="GradientCompressions"/>: none,
-/// bf16, top-k), then divided by the step's tokens over every rank, which a small header collective of float32 values
+/// top-k), then divided by the step's tokens over every rank, which a small header collective of float32 values
 /// gives (the tokens, the loss and which parameters have a gradient on any rank). So the sum is token-weighted: the
 /// gradient one process would compute on every rank's rows.
 /// <para>

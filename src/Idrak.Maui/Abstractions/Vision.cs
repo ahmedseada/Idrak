@@ -5,17 +5,16 @@ using Idrak.Text.Generation;
 
 namespace Idrak.Maui.Abstractions;
 
-/// <summary>A vision-language model to load for reading pages: where it is and how (the device, the weights' format, the context).</summary>
+/// <summary>A vision-language model to load for reading pages: where it is and how (the device, the context).</summary>
 /// <param name="Model">Its name as the user knows it ("Qwen/Qwen2-VL-2B-Instruct").</param>
 /// <param name="Path">Its folder (config.json, the weights and the vision part's files).</param>
 /// <param name="Device">The device: "auto" (<see cref="Device.Default"/>), "cpu", "vulkan:0" and the like.</param>
-/// <param name="Weights">The decoder's projections' format once loaded ("int8", "int4", "bfloat16", a registered packed format), or null for the library's (float32).</param>
 /// <param name="CacheFormat">The attention cache's format (<see cref="ImageReaderOptions.CacheFormat"/>).</param>
 /// <param name="Context">The longest prompt and answer in tokens, the page's image tokens included (capped by the model's own).</param>
-public sealed record VisionLoadRequest(string Model, string Path, string Device, string? Weights, KeyValueFormat CacheFormat, int Context)
+public sealed record VisionLoadRequest(string Model, string Path, string Device, KeyValueFormat CacheFormat, int Context)
 {
     /// <summary>The key the model is loaded under in the model service's vision host: one loaded model a key.</summary>
-    public string Key => string.Join('\n', System.IO.Path.GetFullPath(Path), Device.ToLowerInvariant(), Weights ?? "", CacheFormat.ToString(),
+    public string Key => string.Join('\n', System.IO.Path.GetFullPath(Path), Device.ToLowerInvariant(), CacheFormat.ToString(),
         Context.ToString(System.Globalization.CultureInfo.InvariantCulture));
 }
 
@@ -23,12 +22,11 @@ public sealed record VisionLoadRequest(string Model, string Path, string Device,
 /// <param name="Model">Its name.</param>
 /// <param name="Architecture">The architecture its config.json names (a registered vision family's).</param>
 /// <param name="Device">The device it is on ("cpu", "vulkan:0").</param>
-/// <param name="Weights">Its projections' format ("float32", "int8").</param>
 /// <param name="CacheFormat">Its attention cache's format.</param>
 /// <param name="Context">Its context in tokens.</param>
 /// <param name="LoadTime">How long its load took.</param>
 /// <param name="Estimate">What it was measured to need before it was loaded (its weights with the vision part's, and the attention cache).</param>
-public sealed record VisionReaderInfo(string Model, string Architecture, string Device, string Weights, KeyValueFormat CacheFormat, int Context, TimeSpan LoadTime, ChatMemoryEstimate? Estimate);
+public sealed record VisionReaderInfo(string Model, string Architecture, string Device, KeyValueFormat CacheFormat, int Context, TimeSpan LoadTime, ChatMemoryEstimate? Estimate);
 
 /// <summary>
 /// A model reading pages: each an image and an instruction, the answer streamed. The library's is

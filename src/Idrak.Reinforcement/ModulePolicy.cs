@@ -17,7 +17,7 @@ namespace Idrak.Reinforcement;
 /// </summary>
 public sealed record ModulePolicyOptions
 {
-    /// <summary>The optimizer, by name in <c>OptimizerKinds</c> (adam, adamw, adamw8bit, sgd, or an app's). <c>IDRAK_RL_OPTIMIZER</c>.</summary>
+    /// <summary>The optimizer, by name in <c>OptimizerKinds</c> (adam, adamw, sgd, or an app's). <c>IDRAK_RL_OPTIMIZER</c>.</summary>
     public string Optimizer { get; init; } = "adam";
 
     /// <summary>The optimizer's learning rate, the base of a trainer's schedule. <c>IDRAK_RL_LEARNING_RATE</c>.</summary>

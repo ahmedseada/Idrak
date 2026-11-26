@@ -35,9 +35,6 @@ public sealed class OcrLabOptions
     /// <summary>Ends an answer that repeats one run of tokens this many times in a row (<see cref="ImageReadRequest.RepeatStop"/>, 0 off); null: the library's.</summary>
     public int? RepeatStop { get; set; }
 
-    /// <summary>The decoder's projections' format once loaded: "bfloat16", "int8", "int4" or a registered packed format; null: the library's (float32).</summary>
-    public string? Weights { get; set; }
-
     /// <summary>The attention cache's format (<see cref="ImageReaderOptions.CacheFormat"/>); null: the library's.</summary>
     public KeyValueFormat? CacheFormat { get; set; }
 
@@ -71,7 +68,7 @@ public sealed class OcrLabOptions
 
     /// <summary>What a model at <paramref name="path"/> is loaded as with these settings on <paramref name="device"/>.</summary>
     public VisionLoadRequest ToLoad(string model, string path, string device) =>
-        new(model, path, device, Weights, CacheFormat ?? new ImageReaderOptions().CacheFormat, Context ?? new GenerationOptions().NumCtx);
+        new(model, path, device, CacheFormat ?? new ImageReaderOptions().CacheFormat, Context ?? new GenerationOptions().NumCtx);
 }
 
 /// <summary>
@@ -133,8 +130,6 @@ public static class OcrSettings
                 LabSettingKind.Number, LabSettings.Show(request.MaxTokens), o => LabSettings.Show(o.MaxTokens), (o, t) => o.MaxTokens = LabSettings.Whole(t, 1)),
             new("repeat_stop", "Repetition stop", "Ends an answer that repeats one run of tokens this many times in a row; 0: off (ImageReadRequest.RepeatStop).",
                 LabSettingKind.Number, LabSettings.Show(request.RepeatStop), o => LabSettings.Show(o.RepeatStop), (o, t) => o.RepeatStop = LabSettings.Whole(t, 0)),
-            new("weights", "Weights", "The decoder's projections once loaded (bfloat16, int8, int4 or a registered packed format); empty: the library's float32. Taken at the next load.",
-                LabSettingKind.Choice, "default (float32)", o => o.Weights ?? "", (o, t) => o.Weights = LabSettings.Registered(t, Weights(), "a weights format"), () => ["default", .. Weights()]),
             new("cache_format", "Attention cache", "The attention cache's format (ImageReaderOptions.CacheFormat). Taken at the next load.", LabSettingKind.Choice,
                 $"default ({reader.CacheFormat.ToString().ToLowerInvariant()})", o => o.CacheFormat?.ToString().ToLowerInvariant() ?? "",
                 (o, t) => o.CacheFormat = LabSettings.Registered(t, caches, "a cache format") is { } c ? Enum.Parse<KeyValueFormat>(c, ignoreCase: true) : null, () => ["default", .. caches]),
@@ -144,8 +139,4 @@ public static class OcrSettings
                 LabSettingKind.Number, "the screen's", o => LabSettings.Show(o.PreviewPixels), (o, t) => o.PreviewPixels = LabSettings.Whole(t, 16)),
         ];
     }
-
-    // The weights formats a load takes: the library's three and every registered packed format.
-    private static IReadOnlyList<string> Weights() =>
-        [.. new[] { "bfloat16", "int8", "int4" }.Concat(PackedWeightFormats.Names).Distinct(StringComparer.OrdinalIgnoreCase)];
 }

@@ -18,18 +18,7 @@ internal sealed class PlainCompression : IGradientCompression
         new DenseCompressor(Name, collectives, WireType.Float32);
 }
 
-/// <summary>"bf16" in <see cref="GradientCompressions"/>: every value, as bfloat16 (half the bytes); the sums are made in float32.</summary>
-internal sealed class BFloat16Compression : IGradientCompression
-{
-    public string Name => "bf16";
-
-    public string Summary => "every gradient value travels as bfloat16, half the bytes; the sums are made in float32";
-
-    public IGradientCompressor Create(ICollectives collectives, IReadOnlyList<Tensor> parameters, ClusterOptions options) =>
-        new DenseCompressor(Name, collectives, WireType.BFloat16);
-}
-
-/// <summary>A bucket weighted, then all-reduced on a wire type: the plain and bfloat16 compressions.</summary>
+/// <summary>A bucket weighted, then all-reduced on a wire type: the plain compression.</summary>
 internal sealed class DenseCompressor(string name, ICollectives collectives, WireType wire) : IGradientCompressor
 {
     private readonly HostValues _values = new(collectives);

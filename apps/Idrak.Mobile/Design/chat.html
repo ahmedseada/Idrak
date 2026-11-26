@@ -48,7 +48,7 @@ body { background: radial-gradient(100% 40% at 50% -10%, rgba(99,102,241,.16), t
     <div class="av">Q</div>
     <div style="flex:1">
       <div class="n">Qwen3 0.6B <svg class="ico" style="width:15px;height:15px;color:var(--muted)" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
-      <div class="m"><i class="dot"></i>int8 · vulkan:0 · loaded in 3.1 s</div>
+      <div class="m"><i class="dot"></i>vulkan:0 · loaded in 3.1 s</div>
     </div>
   </div>
   <div class="iconbtn" style="width:46px;height:46px;border-radius:15px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
@@ -60,7 +60,7 @@ body { background: radial-gradient(100% 40% at 50% -10%, rgba(99,102,241,.16), t
     <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
     <div class="think"><svg class="ico" style="width:14px;height:14px" viewBox="0 0 24 24"><path d="M12 5a3 3 0 0 0-5.8 1A3 3 0 0 0 4 11a3 3 0 0 0 2 5 3 3 0 0 0 6 1V5zM12 5a3 3 0 0 1 5.8 1A3 3 0 0 1 20 11a3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>Thought for 1.4 s<svg class="ico" style="width:14px;height:14px" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
     <div class="body">Two things make it fit:
-      <ol><li><b>Small weights</b> — 0.6B parameters in int8 take about 0.7 GB.</li><li><b>The phone's GPU</b> — Vulkan kernels, measured on this device.</li></ol>
+      <ol><li><b>The phone's GPU</b> — Vulkan kernels, measured on this device.</li></ol>
       <div class="code"><div class="bar2"><span>C#</span><span>Copy</span></div><pre><span class="k">var</span> model = PretrainedModel.Load(<span class="s">"Qwen3-0.6B"</span>,
     <span class="k">new</span>() { Int8 = <span class="k">true</span>, Device = gpu });</pre></div>
     </div>

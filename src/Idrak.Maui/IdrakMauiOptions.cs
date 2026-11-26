@@ -98,18 +98,6 @@ public sealed class IdrakMauiOptions
     public string? LookupTables { get; set; }
 
     /// <summary>
-    /// Whether int8 and int4 weights are kept between loads, so the next load of a model reads them instead of quantizing
-    /// again (<see cref="ComputeResources.PackedWeightCache"/>); null: the library's (IDRAK_PACKED_CACHE, else on).
-    /// </summary>
-    public bool? PackedWeightCache { get; set; }
-
-    /// <summary>
-    /// Where kept int8 and int4 weights live (<see cref="ComputeResources.PackedWeightCacheFolder"/>); null:
-    /// IDRAK_PACKED_CACHE_DIR, else "packed" in the cache folder.
-    /// </summary>
-    public string? PackedWeightCacheFolder { get; set; }
-
-    /// <summary>
     /// Which vector paths the CPU's kernels take (<see cref="ComputeResources.CpuVectors"/>): automatic, the platform's
     /// intrinsics only (native), the portable vectors only, or the plain loops (scalar). Every path gives the same results;
     /// they differ in speed. Null: the library's (IDRAK_CPU_VECTORS, else automatic).
@@ -171,18 +159,12 @@ public sealed class IdrakMauiOptions
     public bool? ChatThinking { get; set; }
 
     /// <summary>
-    /// The format a chat model's projections are kept in once loaded: "bfloat16", "int8", "int4" or another registered packed
-    /// format (<see cref="PackedWeightFormats.Names"/>); null: the library's (float32). Taken at the next load.
-    /// </summary>
-    public string? ChatWeights { get; set; }
-
-    /// <summary>
     /// Whether Enter sends the chat's message from a desktop keyboard, Shift+Enter making a new line; null or true: it does,
     /// false: Enter is a new line and the send button sends. A phone's soft keyboard is not changed.
     /// </summary>
     public bool? ChatEnterSends { get; set; }
 
-    /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>: "int8" halves it); null: the library's (float32). Taken at the next load.</summary>
+    /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>); null: the library's (float32). Taken at the next load.</summary>
     public string? ChatKeyValueFormat { get; set; }
 
     /// <summary>

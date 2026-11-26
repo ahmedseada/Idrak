@@ -15,7 +15,7 @@ namespace Idrak.Networking.Training;
 /// time the step waited for (the virtual clock's on a simulated transport, so a simulated step is the cluster's), the
 /// network's time and the backward pass's. On the last of them it copies a sample slice of its own gradient values (the
 /// first bucket's, <see cref="ClusterOptions.SuggestSliceValues"/> at most, weighted as the step weights them) and, as the
-/// step ends, reduces the slice twice, over a float32 and over a bfloat16 wire, with its figures beside the float32 one so
+/// step ends, reduces the slice over a float32 wire, with its figures beside it so
 /// every rank gets the means over the ranks; rank 0 asks the advisors (<see cref="SettingAdvisors.Publish"/>) and the
 /// measurement ends for the run. Nothing a run computes changes: the slice is a copy, reduced after the step's own
 /// reduction. Off, the cost is one field read a step. A group that changes (a fault) ends the measurement on every member.
@@ -157,10 +157,7 @@ internal partial class GradientReduction
     private void Advise(AdviceMeter meter)
     {
         int n = Math.Min(_layout.Size(0), meter.SliceLimit);   // the same on every rank: the layout and the setting are
-        bool dense = _layout.Sharded ? _wire == WireType.Float32 : _compressor.Name == "none";
         var exact = ArrayPool<float>.Shared.Rent(n + 4);
-        var halves = dense && n > 0 ? ArrayPool<float>.Shared.Rent(n) : null;
-        double? error = null;
         double step, exposed, network, backward;
         try
         {
@@ -175,24 +172,7 @@ internal partial class GradientReduction
             exact[n + 1] = (float)meter.Exposed;
             exact[n + 2] = (float)meter.Network;
             exact[n + 3] = (float)meter.Backward;
-            if (halves is not null)
-            {
-                mine.CopyTo(halves);
-            }
-
             Values.AllReduce(exact.AsSpan(0, n + 4), WireType.Float32);
-            if (halves is not null)
-            {
-                Values.AllReduce(halves.AsSpan(0, n), WireType.BFloat16);
-                float largest = 0f, difference = 0f;
-                for (int i = 0; i < n; i++)
-                {
-                    largest = MathF.Max(largest, MathF.Abs(exact[i]));
-                    difference = MathF.Max(difference, MathF.Abs(exact[i] - halves[i]));
-                }
-
-                error = largest > 0f ? difference / (double)largest : null;
-            }
 
             double count = (double)World * Math.Max(1, meter.Steps);
             (step, exposed, network, backward) = (exact[n] / count, exact[n + 1] / count, exact[n + 2] / count, exact[n + 3] / count);
@@ -200,10 +180,6 @@ internal partial class GradientReduction
         finally
         {
             ArrayPool<float>.Shared.Return(exact);
-            if (halves is not null)
-            {
-                ArrayPool<float>.Shared.Return(halves);
-            }
         }
 
         if (Collectives.Rank != 0)
@@ -211,10 +187,10 @@ internal partial class GradientReduction
             return;                                            // rank 0 publishes the run's suggestions
         }
 
-        string compression = _layout.Sharded ? (_wire == WireType.BFloat16 ? "bf16" : "none") : _compressor.Name;
+        string compression = _layout.Sharded ? "none" : _compressor.Name;
         var measure = new ClusterStepMeasure(Options, Name, Collectives.Name, compression, World, Collectives.Context?.Topology.Nodes.Count ?? 1, meter.Steps,
             TimeSpan.FromSeconds(step), TimeSpan.FromSeconds(exposed), TimeSpan.FromSeconds(network), TimeSpan.FromSeconds(backward),
-            (long)_layout.Total * sizeof(float), (long)_layout.BucketValues * sizeof(float), _layout.Count, meter.Simulated, error, halves is null ? 0 : n);
+            (long)_layout.Total * sizeof(float), (long)_layout.BucketValues * sizeof(float), _layout.Count, meter.Simulated, null, 0);
         var published = Run.Published;
         lock (published)
         {

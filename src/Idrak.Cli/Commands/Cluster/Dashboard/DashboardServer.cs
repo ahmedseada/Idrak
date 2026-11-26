@@ -277,11 +277,6 @@ internal sealed class DashboardServer : IClusterDashboard
             options = options with { Collective = collective };
         }
 
-        if ((string?)body["wire"] is { Length: > 0 } wire)
-        {
-            options = options with { Wire = wire is "bf16" or "bfloat16" ? WireType.BFloat16 : wire is "f32" or "float32" ? WireType.Float32 : throw new ArgumentException($"wire is f32 or bf16, not '{wire}'.") };
-        }
-
         if (body["seed"] is { } seed)
         {
             options = options with { Simulation = options.Simulation with { Seed = seed.GetValueKind() == System.Text.Json.JsonValueKind.Number ? seed.GetValue<int>() : int.Parse((string)seed!, CultureInfo.InvariantCulture) } };

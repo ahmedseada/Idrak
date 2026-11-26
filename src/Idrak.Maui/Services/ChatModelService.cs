@@ -24,7 +24,6 @@ public sealed class ChatModelService : IChatModelService
     /// <summary>The name of the model service's host the chat models live in.</summary>
     public const string HostName = "chat";
 
-    private static readonly ConcurrentDictionary<string, double> BytesPerValue = new(StringComparer.OrdinalIgnoreCase);
     private readonly IModelService _models;
     private readonly ConcurrentDictionary<string, (ChatLoadRequest Request, string Folder, ChatMemoryEstimate Estimate)> _requests = new(StringComparer.Ordinal);
     private readonly Lazy<ModelHost<HostedChat>> _host;
@@ -49,22 +48,21 @@ public sealed class ChatModelService : IChatModelService
         var device = DeviceOf(request.Device);
         var (folder, spec) = Read(request.Path);
         int context = Math.Min(request.Context, spec.MaxPositions);
-        long weights = WeightBytes(spec, request.Weights);
+        long weights = WeightBytes(spec);
         var layout = request.KeyValueFormat is { } name ? KeyValueLayouts.Get(name) : KeyValueLayouts.For(KeyValueFormat.Float32);
         long cache = ModelMemory.KeyValueCacheBytes(spec, context, layout);
         var (available, limit) = Available(device);
         return (new ChatMemoryEstimate(request.Model, device.ToString(), weights, cache, available, limit), folder);
     }
 
-    // The decoder's weights in the format asked for: the projections (and a separate head) packed, the token table and the
-    // norms in float32.
-    internal static long WeightBytes(DecoderSpec spec, string? format)
+    // The decoder's weights: the projections (and a separate head), the token table and the norms, in float32.
+    internal static long WeightBytes(DecoderSpec spec)
     {
         long embedding = (long)spec.Vocabulary * spec.Dim;
         long table = embedding * (spec.TieEmbeddings ? 1 : 2) + (spec.LearnedPositions ? (long)spec.MaxPositions * spec.Dim : 0);
         long projections = Math.Max(0, spec.ParameterCount - table);
         long head = spec.TieEmbeddings ? 0 : embedding;
-        return (long)((projections + head) * Bytes(format)) + (table - head) * sizeof(float);
+        return (projections + head) * sizeof(float) + (table - head) * sizeof(float);
     }
 
     /// <inheritdoc />
@@ -115,15 +113,10 @@ public sealed class ChatModelService : IChatModelService
 
         var (request, folder, estimate) = asked;
         var device = DeviceOf(request.Device);
-        string? weights = request.Weights?.ToLowerInvariant();
         long start = System.Diagnostics.Stopwatch.GetTimestamp();
         var model = PretrainedModel.Load(folder, new PretrainedOptions
         {
             Device = device,
-            Int8 = weights == "int8",
-            Int4 = weights == "int4",
-            BFloat16 = weights is "bfloat16" or "bf16",
-            PackedFormatName = weights is null or "int8" or "int4" or "bfloat16" or "bf16" ? null : weights,
             MaxPositions = request.Context,
         });
         try
@@ -136,7 +129,7 @@ public sealed class ChatModelService : IChatModelService
             var layout = request.KeyValueFormat is { } kv ? KeyValueLayouts.Get(kv) : KeyValueLayouts.For(KeyValueFormat.Float32);
             int context = Math.Min(request.Context, model.MaxPositions);
             var chat = model.CreateChat(layout, context);
-            var info = new ChatModelInfo(request.Model, device.ToString(), weights ?? "float32", request.KeyValueFormat ?? "float32", context,
+            var info = new ChatModelInfo(request.Model, device.ToString(), request.KeyValueFormat ?? "float32", context,
                 System.Diagnostics.Stopwatch.GetElapsedTime(start), ThinkingDefault(chat.Template), estimate);
             return new HostedChat(model, chat, info);
         }
@@ -181,21 +174,6 @@ public sealed class ChatModelService : IChatModelService
     private static string Prepared(string path) => CheckpointFormats.For(path).Prepare(path);
 
     internal static Device DeviceOf(string device) => IdrakMauiSettings.IsAuto(device) ? Device.Default : Device.Parse(device);
-
-    // Bytes a weight value takes in the format: 4 in float32, else measured once by packing a sample on the CPU.
-    internal static double Bytes(string? format) => format is null ? sizeof(float) : BytesPerValue.GetOrAdd(format is "bf16" ? "bfloat16" : format, static name =>
-    {
-        const int Side = 256;
-        var values = new float[Side * Side];
-        var random = new Random(1);
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = (float)(random.NextDouble() * 2 - 1);
-        }
-
-        using var weight = PackedWeightFormats.Pack(name, values, Side, Side, Device.Cpu);
-        return weight.Bytes / (double)values.Length;
-    });
 
     // What the device can take now (its own report: free memory and the pool's reusable blocks), within the limit the
     // settings set for its kind; and which of the two bounds it.

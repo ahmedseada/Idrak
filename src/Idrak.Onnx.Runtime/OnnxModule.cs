@@ -12,13 +12,12 @@ namespace Idrak.Onnx.Runtime;
 /// <summary>
 /// An ONNX model run by ONNX Runtime, as a Idrak <see cref="Module"/>: it plugs into <c>Predictor.For</c>, the
 /// inference engine, <see cref="Sequential"/> and the ASP.NET Core endpoints like any other model. It is for inference
-/// only (no gradients, no parameters). The model must have one input and one output; float inputs are passed as is,
-/// int64 and int32 inputs (token ids) are converted from Idrak's float values.
+/// only (no gradients, no parameters). The model must have one input and one output; its input is float32 (any
+/// other type is refused: not on the new design yet).
 /// </summary>
 public sealed class OnnxModule : Module
 {
     private readonly InferenceSession _session;
-    private readonly Type _inputType;
 
     private OnnxModule(InferenceSession session)
     {
@@ -35,11 +34,10 @@ public sealed class OnnxModule : Module
         OutputName = outputName;
         InputShape = input.Dimensions;
         OutputShape = output.Dimensions;
-        _inputType = input.ElementType;
-        if (_inputType != typeof(float) && _inputType != typeof(long) && _inputType != typeof(int))
+        if (input.ElementType != typeof(float))
         {
             session.Dispose();
-            throw new NotSupportedException($"The model's input is {_inputType.Name}; OnnxModule supports float, int64 and int32 inputs.");
+            throw new NotSupportedException($"The model's input is {input.ElementType.Name}: type not on the new design yet.");
         }
 
         Name = "onnx";
@@ -87,40 +85,13 @@ public sealed class OnnxModule : Module
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
-        // The input is read into pooled buffers (returned in finally) and handed to ONNX Runtime as views of them.
+        // The input is read into a pooled buffer (returned in finally) and handed to ONNX Runtime as a view of it.
         int size = input.Size;
         float[] values = ArrayPool<float>.Shared.Rent(size);
-        long[]? longs = null;
-        int[]? ints = null;
         try
         {
             input.CopyTo(values.AsSpan(0, size));
-            NamedOnnxValue value;
-            if (_inputType == typeof(float))
-            {
-                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<float>(values.AsMemory(0, size), input.Shape));
-            }
-            else if (_inputType == typeof(long))
-            {
-                // Token ids as the model's integer type, cast in one loop.
-                longs = ArrayPool<long>.Shared.Rent(size);
-                for (int i = 0; i < size; i++)
-                {
-                    longs[i] = (long)values[i];
-                }
-
-                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<long>(longs.AsMemory(0, size), input.Shape));
-            }
-            else
-            {
-                ints = ArrayPool<int>.Shared.Rent(size);
-                for (int i = 0; i < size; i++)
-                {
-                    ints[i] = (int)values[i];
-                }
-
-                value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<int>(ints.AsMemory(0, size), input.Shape));
-            }
+            var value = NamedOnnxValue.CreateFromTensor(InputName, new DenseTensor<float>(values.AsMemory(0, size), input.Shape));
 
             using var results = _session.Run([value], [OutputName]);
             var output = results[0].AsTensor<float>();
@@ -134,15 +105,6 @@ public sealed class OnnxModule : Module
         finally
         {
             ArrayPool<float>.Shared.Return(values);
-            if (longs is not null)
-            {
-                ArrayPool<long>.Shared.Return(longs);
-            }
-
-            if (ints is not null)
-            {
-                ArrayPool<int>.Shared.Return(ints);
-            }
         }
     }
 

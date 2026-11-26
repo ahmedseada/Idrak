@@ -684,8 +684,7 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
     /// Reduce-scatter around the ring <paramref name="members"/> (ranks in ring order; this rank at
     /// <paramref name="position"/>): after <c>members.Length - 1</c> steps the member at position p holds piece p (values
     /// [offset(p), offset(p) + size(p)) of <paramref name="values"/>) reduced over every member, in the order p+1, p+2, …,
-    /// p: an order fixed by the sizes alone (rule 86). On a bfloat16 wire each member's own values are rounded as they
-    /// first travel and the partial sums travel as bfloat16; the sums are made in float32.
+    /// p: an order fixed by the sizes alone (rule 86).
     /// </summary>
     protected void RingScatter(Span<float> values, ReadOnlySpan<int> members, int position, Func<int, int> offset, Func<int, int> size, ReduceOp op,
         WireType wire, int tag)
@@ -710,19 +709,9 @@ internal abstract partial class HostCollectives : ICollectives, IShardedHostValu
             {
                 int send = Wrap(position - 1 - step, count), take = Wrap(position - 2 - step, count);
                 var outgoing = values.Slice(offset(send), size(send));
-                if (wire == WireType.BFloat16 && step == 0)
-                {
-                    WireValues.RoundToBFloat16(outgoing);          // this rank's own values as they first travel
-                }
-
                 var incoming = arrived.AsSpan(0, size(take));
                 Exchange(next, outgoing, previous, incoming, tag, wire);
                 var mine = values.Slice(offset(take), size(take));
-                if (wire == WireType.BFloat16)
-                {
-                    WireValues.RoundToBFloat16(mine);              // as every rank's own values travel
-                }
-
                 Combine(mine, incoming, op);                       // what arrived, then this rank's own
             }
         }

@@ -152,7 +152,7 @@ public sealed class HomeViewModel : ViewModel
     /// <summary>Whether the chat has a speed to show.</summary>
     public bool HasChatRate => ChatRate.Length > 0;
 
-    /// <summary>The chat's model ("Qwen3-0.6B · int8"), or what to do.</summary>
+    /// <summary>The chat's model ("Qwen3-0.6B"), or what to do.</summary>
     public string ChatModel
     {
         get => _chatModel.Length > 0 ? _chatModel : "Stream a model";
@@ -224,7 +224,7 @@ public sealed class HomeViewModel : ViewModel
         ChatRate = _chat.LastRateText;
         if (_chat.Model is { } model)
         {
-            ChatModel = $"{model.Model[(model.Model.LastIndexOf('/') + 1)..]} · {model.Weights}";
+            ChatModel = model.Model[(model.Model.LastIndexOf('/') + 1)..];
         }
     }
 
