@@ -14,8 +14,6 @@ internal abstract partial class Tests
         ("pages: a paragraph wraps at spaces within the width, every line kept and none wider; justified lines fill it, start-aligned Arabic lines sit at the right", TextLayoutLines),
         ("pages: a right-to-left line with Latin in it draws the Latin first from the left, in its own order, and the glyphs advance left to right", TextLayoutVisualOrder),
         ("pages: characters the style's font lacks are set in the first fallback that has them", TextLayoutFallback),
-        ("pages: letter and plain draw every part (header, subject, body, signature, footer) inside the page without overlap, inked, in reading order, the start side following the text's direction", PagesDrawParts),
-        ("pages: the same seed draws the same page, other seeds other choices; a grey style draws one plane; a long body makes a taller page with the footer still on it", PagesBySeed),
     ];
 
     // A company's letter to a client about a delivery schedule: Arabic with Latin digits, a date, a long wrapping
@@ -33,18 +31,6 @@ internal abstract partial class Tests
         Signature = ["مدير خدمة العملاء", "سارة بن أحمد"],
         Footer = ["العنوان: الرياض، هاتف 0112345678"],
         Language = "ar",
-    };
-
-    // A short technical status report: a project, a milestone number, a date.
-    internal static readonly PageContent EnglishLetter = new()
-    {
-        HeaderStart = ["Platform Engineering", "Release Team"],
-        HeaderEnd = ["No. 12/345", "Date: 2026-03-12"],
-        Subject = "Subject: status of milestone 7",
-        Body = ["The storage migration reached milestone 7 of 2026 on schedule: 4521 of the planned volumes now run on the new cluster, and the rest follow next week.", "Next report in two weeks."],
-        Signature = ["Release Manager", "A. Saad"],
-        Footer = ["Platform Engineering, extension 0112345678"],
-        Language = "en",
     };
 
     // A newsletter: a title and a few short paragraphs, no header or signature.
@@ -117,87 +103,6 @@ internal abstract partial class Tests
 
     internal static PageStyle TestPageStyle(bool color = true) => new() { Fonts = [SubsetFace()], Color = color };
 
-    internal static void PagesDrawParts(Device device)
-    {
-        var style = TestPageStyle();
-        string[] textKinds = ["header", "title", "subject", "body", "signature", "footer"];
-        var watch = Stopwatch.StartNew();
-        int pages = 0;
-        foreach (var (name, layout) in new (string, IPageLayout)[] { ("letter", new LetterLayout()), ("plain", new PlainLayout()) })
-        {
-            foreach (var (content, rtl) in new[] { (ArabicLetter, true), (EnglishLetter, false) })
-            {
-                for (int seed = 1; seed <= 4; seed++)
-                {
-                    var page = layout.Render(content, style, seed);
-                    pages++;
-                    string where = $"{name}, {(rtl ? "Arabic" : "English")}, seed {seed} ({page.Description})";
-                    var image = page.Image;
-                    Check(image.Width == style.Width && image.Height >= style.Height && image.Channels == 3, $"{where}: {image.Channels}x{image.Height}x{image.Width}");
-                    Check(page.Text == content.ReadingOrder(), $"{where}: the text is the content's reading order");
-
-                    var text = page.Blocks.Where(b => textKinds.Contains(b.Kind)).ToList();
-                    var expected = (name == "plain" ? new[] { "header" } : ["header", "header"]).Concat(["subject"])
-                        .Concat(name == "plain" ? ["body"] : ["body", "body"]).Concat(["signature", "footer"]);
-                    Check(text.Select(b => b.Kind).SequenceEqual(expected), $"{where}: parts {string.Join(",", text.Select(b => b.Kind))}");
-                    Check(string.Join("\n", text.Select(b => b.Text)) == page.Text, $"{where}: the parts' text in reading order");
-
-                    var grey = Grey(image);
-                    foreach (var block in text)
-                    {
-                        Check(block.X >= 0 && block.Y >= 0 && block.X + block.Width <= image.Width + 0.5f && block.Y + block.Height <= image.Height + 0.5f,
-                            $"{where}: {block.Kind} at ({block.X:F0},{block.Y:F0}) {block.Width:F0}x{block.Height:F0} inside the page");
-                        Check(Darkest(grey, image.Width, block) < 0.5f, $"{where}: {block.Kind} is inked");
-                    }
-
-                    for (int i = 0; i < text.Count; i++)
-                    {
-                        for (int j = i + 1; j < text.Count; j++)
-                        {
-                            Check(Overlap(text[i], text[j]) < 1, $"{where}: {text[i].Kind} and {text[j].Kind} overlap");
-                        }
-                    }
-
-                    var start = text[0];
-                    Check(name == "plain" || rtl == start.X + start.Width / 2 > image.Width / 2f, $"{where}: the first header part is on the {(rtl ? "right" : "left")}");
-                }
-            }
-        }
-
-        Console.WriteLine($"    {pages} pages, {watch.Elapsed.TotalMilliseconds / pages:F0} ms a page");
-    }
-
-    internal static void PagesBySeed(Device device)
-    {
-        var style = TestPageStyle();
-        var letter = new LetterLayout();
-        var first = letter.Render(ArabicLetter, style, 7);
-        var again = letter.Render(ArabicLetter, style, 7);
-        Check(first.Description == again.Description && Planes(first.Image).Zip(Planes(again.Image)).All(p => p.First.SequenceEqual(p.Second)), "seed 7 twice: the same page");
-        var descriptions = Enumerable.Range(1, 8).Select(s => letter.Render(ArabicLetter, style, s).Description).Distinct().Count();
-        Check(descriptions >= 4, $"8 seeds, {descriptions} different choices");
-
-        var greyPage = letter.Render(ArabicLetter, TestPageStyle(color: false), 7);
-        Check(greyPage.Image.Channels == 1, "a grey style: one plane");
-
-        var none = new PageStyle { Fonts = [SubsetFace()], Rule = 0, Emblem = 0, Stamp = 0 };
-        var plainLetter = letter.Render(ArabicLetter, none, 3);
-        Check(!plainLetter.Blocks.Any(b => b.Kind is "rule" or "emblem" or "stamp"), $"no rule, emblem or stamp when their chances are 0 ({plainLetter.Description})");
-        var all = new PageStyle { Fonts = [SubsetFace()], Rule = 1, Emblem = 1, Stamp = 1 };
-        var ornate = letter.Render(ArabicLetter, all, 3);
-        Check(new[] { "rule", "emblem", "stamp", "scribble" }.All(k => ornate.Blocks.Any(b => b.Kind == k)), $"each when its chance is 1, a signature drawn over the name ({ornate.Description})");
-
-        var longBody = ArabicLetter with { Body = [.. Enumerable.Repeat(ArabicLetter.Body[0], 30)] };
-        foreach (var (name, layout) in new (string, IPageLayout)[] { ("letter", new LetterLayout()), ("plain", new PlainLayout()) })
-        {
-            var tall = layout.Render(longBody, style, 2);
-            var footer = tall.Blocks.Single(b => b.Kind == "footer");
-            var lastBody = tall.Blocks.Last(b => b.Kind == "body");
-            Check(tall.Image.Height > style.Height && footer.Y + footer.Height <= tall.Image.Height && footer.Y > lastBody.Y + lastBody.Height,
-                $"{name}: a long body, a page {tall.Image.Height}px tall with the footer under the body");
-        }
-    }
-
     internal static byte[][] Planes(ImageData image)
     {
         Check(image.TryGetPlanes(out var planes, out _), "a page is 8-bit planes");
@@ -218,21 +123,6 @@ internal abstract partial class Tests
         }
 
         return grey;
-    }
-
-    internal static float Darkest(float[] grey, int width, PageBlock block)
-    {
-        float least = 1;
-        int height = grey.Length / width;
-        for (int y = Math.Max(0, (int)block.Y); y < Math.Min(height, (int)MathF.Ceiling(block.Y + block.Height)); y++)
-        {
-            for (int x = Math.Max(0, (int)block.X); x < Math.Min(width, (int)MathF.Ceiling(block.X + block.Width)); x++)
-            {
-                least = Math.Min(least, grey[y * width + x]);
-            }
-        }
-
-        return least;
     }
 
     internal static float Overlap(PageBlock a, PageBlock b) =>

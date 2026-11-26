@@ -103,7 +103,7 @@ internal abstract partial class Tests
             // C8: the chunk measurement's probe, the measured sizes' file, the event log's flush interval.
             ["IDRAK_CLUSTER_CHUNK_PROBE"] = "1MB", ["IDRAK_CLUSTER_TUNING_FILE"] = "sizes.txt", ["IDRAK_CLUSTER_EVENT_LOG_FLUSH"] = "4",
             // C8c: the cluster advisor's measurement on or off, the warm steps it measures and its slice.
-            ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5", ["IDRAK_CLUSTER_SUGGEST_SLICE"] = "1024",
+            ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5",
             // Plan 27, R7: how the ranks agree on a stop, how often the boundary's own exchange runs, how long an asker waits.
             ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
             // Phase 3: whether the ranks run rank 0's measured kernel choices.

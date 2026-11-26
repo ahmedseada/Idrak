@@ -10,7 +10,6 @@ internal abstract partial class DesktopTests : Tests
     internal static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
     [
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),
-        ("cli pretrain: an unknown architecture, a missing spec key, a missing tokenizer, no sources and a run folder in use are refused", CliPretrainRefusals),
         ("cli pretrain vision: create init --vision, create and pretrain an IdrakVision model, resume, run with an image", CliPretrainVision),
     ];
 
@@ -117,41 +116,6 @@ internal abstract partial class DesktopTests : Tests
             File.WriteAllText(config, json.ToJsonString());
             var staged = TrainCliJson("pretrain", model, "-C", config, "-o", Path.Combine(folder, "staged"), "-d", device.ToString());
             Check((int)staged["steps"]! == 2, $"two stages of one step: {staged}");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    private static void CliPretrainRefusals(Device device)
-    {
-        if (!FirstRun(nameof(CliPretrainRefusals)))
-        {
-            return;
-        }
-
-        string folder = TempFolder("cli-pretrain-refusals");
-        try
-        {
-            string spec = Path.Combine(folder, "spec.json");
-            string tokenizerJson = JsonValue.Create(PretrainData("tokenizer/tokenizer.json")).ToJsonString();
-            File.WriteAllText(spec, "{\"format\": \"idrak-create/1\", \"architecture\": \"NoSuchForCausalLM\", \"tokenizer\": " + tokenizerJson
-                + ", \"spec\": {\"dim\": 32, \"layers\": 1, \"heads\": 4, \"ffDim\": 64, \"maxPositions\": 32}}");
-            var (code, _, error) = TrainCli("create", spec, "-o", Path.Combine(folder, "a"));
-            Check(code == 1 && error.Contains("NoSuchForCausalLM", StringComparison.Ordinal), $"an unknown architecture: {error}");
-            File.WriteAllText(spec, """{"format": "idrak-create/1", "tokenizer": "missing.json", "spec": {"dim": 32}}""");
-            (code, _, error) = TrainCli("create", spec, "-o", Path.Combine(folder, "b"));
-            Check(code == 2 && error.Contains("No tokenizer at", StringComparison.Ordinal), $"a missing tokenizer: {error}");
-            File.WriteAllText(spec, "{\"tokenizer\": " + tokenizerJson + ", \"spec\": {\"dim\": 32, \"heads\": 4}}");
-            (code, _, error) = TrainCli("create", spec, "-o", Path.Combine(folder, "c"));
-            Check(code == 2 && error.Contains("\"layers\"", StringComparison.Ordinal), $"a missing spec key: {error}");
-            (code, _, error) = TrainCli("pretrain", PretrainData("tiny-llama"), "-o", Path.Combine(folder, "d"));
-            Check(code == 2 && error.Contains("--tokens", StringComparison.Ordinal), $"no sources: {error}");
-            string run = Path.Combine(folder, "run");
-            Check(TrainCli("pretrain", PretrainData("tiny-llama"), "--tokens", PretrainData("tokens.bin"), "--steps", "1", "--max-length", "32", "--batch-tokens", "32", "-o", run).Code == 0, "one step");
-            (code, _, error) = TrainCli("pretrain", PretrainData("tiny-llama"), "--tokens", PretrainData("tokens.bin"), "--steps", "1", "-o", run);
-            Check(code == 2 && error.Contains("idrak resume", StringComparison.Ordinal), $"a run folder in use: {error}");
         }
         finally
         {

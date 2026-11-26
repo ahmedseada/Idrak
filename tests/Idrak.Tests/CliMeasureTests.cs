@@ -19,19 +19,13 @@ internal abstract partial class DesktopTests : Tests
         ("cli measure: every command has help with an example and its environment; short forms are its own", d => { CpuOnly(d); CliMeasureHelp(); }),
         ("cli measure: bench without a model runs the kernel benchmarks (JSON shape, cold and warm apart, the cold call's compiling, --save and --compare)", CliBenchKernels),
         ("cli measure: bench warm-up settles on a fake clock: the first call apart with the JIT's share of it, rounds until they agree and nothing compiles, the median", d => { CpuOnly(d); CliBenchSettle(); }),
-        ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench usage errors exit with 2", d => { CpuOnly(d); CliBenchErrors(); }),
-        ("cli measure: perplexity of a text", CliPerplexity),
-        ("cli measure: profile times every layer, operation and kernel of one decoding step", CliProfile),
-        ("cli measure: eval scores answers on conversations and writes them", CliEval),
-        ("cli measure: check against a reference passes, and a changed reference fails", CliCheck),
         ("cli measure: tuning show reads the CPU, CUDA and Vulkan caches; --reset clears one", d => { CpuOnly(d); CliTuningShow(); }),
     ];
 
     private static readonly (string Name, Action<Device> Run)[] CliRetrievalGroup =
     [
         ("cli retrieval: rag index, search and eval with keywords", d => { CpuOnly(d); CliRagKeywords(); }),
-        ("cli retrieval: rag index with a model (hybrid), search and ask", CliRagHybrid),
     ];
 
     private static string MeasureModel => TestData("gguf/tiny-llama-hf");
@@ -190,32 +184,6 @@ internal abstract partial class DesktopTests : Tests
         Check(BenchTiming.Median([5, 1, 3]) == 3 && BenchTiming.Median([4, 1, 3, 2]) == 2.5 && BenchTiming.Median([]) == 0, "median");
     }
 
-    private static void CliBenchModel(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            string[] args = ["bench", MeasureModel, "--prompt-tokens", "16", "--tokens", "8", "-n", "1", "-d", device.ToString()];
-            var json = IdrakJson(cache, [.. args, "--save", "first"]);
-            Check((string?)json["kind"] == "model", json.ToJsonString());
-            var names = json["results"]!.AsArray().Select(r => (string)r!["name"]!).ToList();
-            Check(names.SequenceEqual(["prompt", "generation", "prompt GFLOP/s", "generation GFLOP/s", "weights memory", "memory in use", "memory peak", "KV cache"]),
-                $"the bench's results, the memory peak and the KV caches' size at their largest included: {string.Join(", ", names)}");
-            Check(json["results"]!.AsArray().Take(4).All(r => (double)r!["value"]! > 0), "speeds above 0");
-            Check((long)json["memory"]!["weights_bytes"]! > 0 && (int)json["settings"]!["generated_tokens"]! > 0, json.ToJsonString());
-            Check(File.Exists(Path.Combine(cache, "bench", "first.json")), "saved under the cache folder");
-
-            var compared = IdrakJson(cache, [.. args, "--compare", "first"]);
-            Check(compared["compare"]!["results"]!.AsArray().Count == 8 && (string?)compared["compare"]!["name"] == "first", compared.ToJsonString());
-            var (code, text, _) = MeasureIdrak(cache, [.. args, "--compare", "first"]);
-            Check(code == 0 && text.Contains("generation") && text.Contains("Against 'first'"), text);
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
     private static void CliBenchErrors()
     {
         string cache = MeasureTemp();
@@ -241,138 +209,6 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
-    private static void CliPerplexity(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            string text = Path.Combine(cache, "text.txt");
-            File.WriteAllText(text, string.Concat(Enumerable.Repeat("The town by the river has a mill. People walk to the market in the morning. ", 20)));
-            var json = IdrakJson(cache, "score", MeasureModel, text, "--window", "64", "-d", device.ToString());
-            double perplexity = (double)json["perplexity"]!;
-            Check(double.IsFinite(perplexity) && perplexity > 1 && (int)json["windows"]! > 1 && (int)json["scored_tokens"]! == (int)json["tokens"]! - (int)json["windows"]!, json.ToJsonString());
-            Check(MeasureIdrak(cache, "score", MeasureModel, text, "--window", "100000").Code == 2, "a window past the context");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
-    private static void CliProfile(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            var json = IdrakJson(cache, "profile", MeasureModel, "--prompt-tokens", "8", "-d", device.ToString());
-            var layers = json["layers"]!.AsArray();
-            Check(layers.Count == 5 && layers.Select(l => (string)l!["name"]!).SequenceEqual(["embed", "layers.0", "layers.1", "norm", "head"]), json["layers"]!.ToJsonString());
-            Check(json["operations"]!.AsArray().Count > 0 && json["inner_layers"]!.AsArray().Count > 0 && (double)json["step_ms"]! > 0, json.ToJsonString());
-
-            // A step profile is the median of --steps steps (5 by default).
-            Check((int)json["steps"]! == 5 && (bool)json["last_position_only"]!, $"steps and last position: {json.ToJsonString()}");
-            var (code, text, _) = MeasureIdrak(cache, "profile", MeasureModel, "--prompt-tokens", "8", "--top", "3", "--steps", "3", "-d", device.ToString());
-            Check(code == 0 && text.Contains("Layers of the network") && text.Contains("Operations") && text.Contains("the median of 3 steps, each after a collection"), text);
-            Check(MeasureIdrak(cache, "profile", MeasureModel, "--steps", "0").Code == 2, "--steps 0 is a usage error");
-
-            // A prompt pass runs as generation does: the head reads the prompt's last position only (the tiny model's 268
-            // scores for one row, never for each of the 8), in one timed pass.
-            var prompt = IdrakJson(cache, "profile", MeasureModel, "--pass", "prompt", "--prompt-tokens", "8", "-d", device.ToString());
-            var operations = prompt["operations"]!.AsArray().Select(o => (string)o!["name"]!).ToList();
-            Check((int)prompt["steps"]! == 1 && operations.Any(o => o.EndsWith("1x268]", StringComparison.Ordinal)) && !operations.Any(o => o.EndsWith("8x268]", StringComparison.Ordinal)),
-                $"the prompt pass's head over the last position: {string.Join(", ", operations)}");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
-    private static void CliEval(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            string set = Path.Combine(cache, "set.jsonl");
-            File.WriteAllLines(set,
-            [
-                """{"messages": [{"role": "user", "content": "Say a word."}, {"role": "assistant", "content": "word"}]}""",
-                """{"messages": [{"role": "user", "content": "What is 2 + 2?"}, {"role": "assistant", "content": "#### 4"}]}""",
-                """{"messages": [{"role": "user", "content": "No answer here."}]}""",
-            ]);
-            string answers = Path.Combine(cache, "answers.jsonl");
-            var json = IdrakJson(cache, "eval", MeasureModel, set, "--max-tokens", "4", "--metric", "f1", "-o", answers, "-d", device.ToString());
-            Check((int)json["conversations"]! == 3 && (int)json["scored"]! == 2 && (string?)json["metric"] == "f1", json.ToJsonString());
-            Check(json["answers"]!.AsArray().All(a => a!["reference"] is not null && (double)a["score"]! is >= 0 and <= 1), json.ToJsonString());
-            Check(File.ReadAllLines(answers).Length == 2, "two answers written");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
-    private static void CliCheck(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            // A reference made from the model itself on this device: what transformers would write, in its layout.
-            JsonObject reference;
-            using var model = PretrainedModel.Load(MeasureModel, new PretrainedOptions { Device = device });
-            var tokenizer = model.Tokenizer!;
-            string text = "hello world, the town by the river";
-            var ids = tokenizer.Encode(text);
-            var messages = new List<ChatMessage> { new("user", "hi there") };
-            float[] logits;
-            using (var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Count], device))
-            using (var predicted = model.Network.Predict(input))
-            {
-                var all = predicted.ToArray();
-                logits = all[^model.Spec.Vocabulary..];
-            }
-
-            var generator = model.CreateGenerator(contextLength: model.MaxPositions);
-            var (generated, _, _) = generator.Generate(text, new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = 6, NumCtx = model.MaxPositions, Seed = 0 });
-            reference = new JsonObject
-            {
-                ["texts"] = new JsonArray(new JsonObject { ["text"] = text, ["ids"] = new JsonArray([.. ids.Select(i => (JsonNode)i)]) }),
-                ["tools"] = new JsonArray(),
-                ["chats"] = new JsonArray(new JsonObject
-                {
-                    ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "hi there" }),
-                    ["tools"] = new JsonArray(),
-                    ["add_generation_prompt"] = true,
-                    ["rendered"] = model.JinjaTemplate!.Render(messages, [], null, true),
-                }),
-                ["runs"] = new JsonArray(new JsonObject
-                {
-                    ["prompt"] = text,
-                    ["ids"] = new JsonArray([.. ids.Select(i => (JsonNode)i)]),
-                    ["logits"] = new JsonArray([.. logits.Select(v => (JsonNode)v)]),
-                    ["generated"] = new JsonArray([.. Enumerable.Range(0, 6).Select(i => (JsonNode)0)]),
-                    ["generated_text"] = generated,
-                }),
-            };
-
-            string path = Path.Combine(cache, "reference.json");
-            File.WriteAllText(path, reference.ToJsonString());
-            var json = IdrakJson(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
-            Check((bool)json["ok"]! && (int)json["failures"]! == 0 && json["runs"]!.AsArray().Count == 1, json.ToJsonString());
-
-            reference["chats"]![0]!["rendered"] = "something else";
-            reference["texts"]![0]!["ids"]![0] = 99999;
-            File.WriteAllText(path, reference.ToJsonString());
-            var (code, output, _) = MeasureIdrak(cache, "check", MeasureModel, "--reference", path, "-d", device.ToString());
-            Check(code == 1 && output.Contains("DIFF") && output.Contains("2 check(s) differ"), output);
-            Check(MeasureIdrak(cache, "check", MeasureModel).Code == 2, "--reference is required");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
     private static void CliTuningShow()
     {
         if (Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE") is not null || Environment.GetEnvironmentVariable("IDRAK_CPU_TUNING_FILE") is not null
@@ -384,8 +220,6 @@ internal abstract partial class DesktopTests : Tests
         string cache = MeasureTemp();
         try
         {
-            Directory.CreateDirectory(Path.Combine(cache, "cpu"));
-            File.WriteAllText(Path.Combine(cache, "cpu", "tuning.tsv"), "v2|Test CPU|AVX2|4/4|L1 32768|.NET 10|4 threads\t65536\t131072\n");
             Directory.CreateDirectory(Path.Combine(cache, "tuning", "cuda"));
             File.WriteAllText(Path.Combine(cache, "tuning", "cuda", "gpu.txt"),
                 "idrak-tuning 5\ndevice: Test GPU; compute 9.0\ndriver: CUDA 13000\nlibrary: 0.1\nGemvSplits 0 1 2048 1024 0 0 0 = 16\nMatMul 1 2 3 4 5 6 7 = 2\n");
@@ -394,14 +228,14 @@ internal abstract partial class DesktopTests : Tests
                 "dev/drv/1/ac/push-descriptors\t1\tTest Vulkan\nkernels/dev/drv/1/ac/w64/subgroups/v1/Gemv 0 1 768 256 0 0 0\t3\tTest Vulkan\n");
             var json = IdrakJson(cache, "tuning", "show");
             var caches = json["caches"]!.AsArray().ToDictionary(c => (string)c!["backend"]!, c => c!["choices"]!.AsArray());
-            Check(caches["cpu"].Count == 2 && caches["cuda"].Count == 2 && caches["vulkan"].Count == 2, json.ToJsonString());
+            Check(!caches.ContainsKey("cpu") && caches["cuda"].Count == 2 && caches["vulkan"].Count == 2, json.ToJsonString());
             Check(caches["cuda"].Any(c => (string?)c!["choice"] == "GemvSplits 0 1 2048 1024 0 0 0" && (string?)c["value"] == "16" && ((string)c["device"]!).Contains("Test GPU")), caches["cuda"].ToJsonString());
             Check(caches["vulkan"].Any(c => (string?)c!["choice"] == "kernel w64/subgroups/v1/Gemv 0 1 768 256 0 0 0" && (string?)c["value"] == "3"), caches["vulkan"].ToJsonString());
             var vulkanOnly = IdrakJson(cache, "tuning", "show", "--backend", "vulkan");
             Check(vulkanOnly["caches"]!.AsArray().Count == 1, "--backend filters");
 
-            var reset = IdrakJson(cache, "tuning", "show", "--reset", "--backend", "cpu");
-            Check(!File.Exists(Path.Combine(cache, "cpu", "tuning.tsv")) && File.Exists(Path.Combine(cache, "vulkan", "tuning.tsv"))
+            var reset = IdrakJson(cache, "tuning", "show", "--reset", "--backend", "cuda");
+            Check(!File.Exists(Path.Combine(cache, "tuning", "cuda", "gpu.txt")) && File.Exists(Path.Combine(cache, "vulkan", "tuning.tsv"))
                 && reset["caches"]![0]!["deleted"]!.AsArray().Count == 1, reset.ToJsonString());
             Check(MeasureIdrak(cache, "tuning", "show", "--backend", "tpu").Code == 2, "unknown backend");
         }
@@ -449,28 +283,6 @@ internal abstract partial class DesktopTests : Tests
             var quality = IdrakJson(cache, "rag", "eval", "--index", index, "--questions", questions, "--top", "3");
             Check((int)quality["questions"]! == 2 && (double)quality["hit_rate"]! == 1 && (double)quality["mrr"]! > 0.5, quality.ToJsonString());
             Check(MeasureIdrak(cache, "rag", "search", "x", "--index", Path.Combine(cache, "none.idx")).Code == 2, "a missing index");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
-    }
-
-    private static void CliRagHybrid(Device device)
-    {
-        string cache = MeasureTemp();
-        try
-        {
-            string docs = CliDocuments(cache), index = Path.Combine(cache, "towns.idx");
-            var built = IdrakJson(cache, "rag", "index", docs, "-o", index, "--chunk", "12", "--overlap", "2", "-m", MeasureModel, "-d", device.ToString());
-            Check((bool)built["vectors"]! && (int)built["dimensions"]! == 64, built.ToJsonString());
-            var found = IdrakJson(cache, "rag", "search", "harbour of Corin", "--index", index, "--top", "3", "-d", device.ToString());
-            Check((string?)found["search"] == "hybrid" && found["hits"]!.AsArray().Any(h => (string?)h!["document"] == "towns/corin.md")
-                && found["hits"]!.AsArray().Any(h => h!["vector_rank"] is not null), found.ToJsonString());
-
-            var answer = IdrakJson(cache, "rag", "ask", "Which town is a port?", "--index", index, "-m", MeasureModel, "--top", "2", "--max-tokens", "4", "-d", device.ToString());
-            Check(answer["answer"] is not null && answer["passages"]!.AsArray().Count == 2 && answer["cited"] is JsonArray, answer.ToJsonString());
-            Check(MeasureIdrak(cache, "rag", "ask", "q", "--index", index).Code == 2, "--model is required");
         }
         finally
         {

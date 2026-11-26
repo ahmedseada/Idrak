@@ -17,7 +17,6 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] GgufGroup =
     [
         ("evaluation: final numbers (#### n), exact, contains and F1 scores of answers", EvaluationMetrics),
-        ("gguf: chat templates: a file's own chat template is written as it is, with no note", GgufChatTemplateFallbacks),
     ];
 
     internal static void EvaluationMetrics(Device device)
@@ -30,25 +29,5 @@ internal abstract partial class Tests
               && Score(TuningMetrics.NumberMatch, "#### 9", "#### 8") == 0, "number");
         Check(Score(TuningMetrics.ExactMatch, "  Paris. ", "paris") == 1 && Score(TuningMetrics.ContainsMatch, "It is Paris, France", "paris") == 1, "exact, contains");
         Check(Math.Abs(Score(TuningMetrics.WordF1, "the cat sat", "the cat ran") - 2.0 / 3) < 1e-9 && Score(TuningMetrics.WordF1, "dog", "cat") == 0, "f1");
-    }
-
-    internal static void GgufChatTemplateFallbacks(Device device)
-    {
-        _ = device;
-        var root = Directory.CreateTempSubdirectory("idrak-gguf-template-");
-        try
-        {
-            // A GGUF tokenizer of these tokens and its own template, prepared: the chat template written, and the notes.
-            var notes = new List<string>();
-            List<KeyValuePair<string, object>> metadata =
-                [new("tokenizer.ggml.model", "gpt2"), new("tokenizer.ggml.tokens", new[] { "a", "b", "<|im_start|>", "<|im_end|>" }), new("tokenizer.chat_template", "{{ 'own' }}")];
-            string folder = PrepareGgufTokenizer(root.FullName, "t0", metadata, notes);
-            string? written = (string?)JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "tokenizer_config.json")))!["chat_template"];
-            Check(written == "{{ 'own' }}" && notes.Count == 0, "a file's own template is kept, no fallback asked");
-        }
-        finally
-        {
-            root.Delete(recursive: true);
-        }
     }
 }

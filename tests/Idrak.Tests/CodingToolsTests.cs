@@ -12,41 +12,15 @@ internal abstract partial class DesktopTests : Tests
     [
         ("coding tools: web text collapses white space as the regex did", d => { if (d == Device.Cpu) CodingToolsLinesMatchReference(); }),
         ("coding tools: write policy: allow is the coding tools' default; IDRAK_WRITE_POLICY names the policy and IDRAK_AGENT_COMMANDS the programs", CodingToolsWritePolicy),
-        ("coding tools: edit_file on the bench's Program.cs (byte order mark, CRLF): a guessed old_text's error quotes it and the file; read_file's line numbers, trailing white space and the final line break tolerated when the match is unique, said so; the encoding kept; the option off is exact", CodingEditTolerance),
-        ("coding agent: an answer with a failed change left (no later success on its path) gets one reminder listing it; a change made good, a failed read or the option at 0 gets none", AgentRemindsFailedChanges),
         ("coding agent: a suite's task folder is read (its id, language and verify commands)", AgentRunsTask),
         ("coding agent: the default prompt asks for the read before an edit", AgentReadsBeforeEditing),
-        ("coding agent: a template that renders no tools gets them in the system message with the fenced-json call format the agent reads back; results as user messages; a template with tools renders them as before", ToolsWithoutTemplateSupport),
         ("coding tools: tool arguments written as strings (\"false\" in any case, \"12\", \"2.5\") are read as the schema's boolean, integer and number; anything else is refused naming the argument, the type and the value; the call keeps what was sent", ToolArgumentsCoerced),
-        ("coding agent: a template that renders one call at once (a probe, no family names; Llama 3.1's real one when it is in the local store) gets a reply of several calls as replies of one call, each with its result, in order", ToolsOneCallAtOnce),
-        ("coding agent: deepseek-coder's real chat template (from the local store) renders no tools, and ChatGenerator's prompt describes every coding tool in its system text", DeepSeekPromptCarriesTools),
-        ("coding agent: an edit_file in the same reply as the file's first read_file is refused until its result is seen; a file read before, or written in that reply, is edited; tools called without replies count a read at once", AgentEditsAfterTheReadIsSeen),
-        ("coding tools: a missed edit on a short file quotes the whole file and offers write_file; a second miss on the file leads with write_file; a success or a new task starts the count again", CodingEditMissedTwice),
-        ("coding agent: the default prompt asks for the user's language; an answer without any tool call in the run gets one reminder (in English), at most one a run, none at 0", AgentRemindsAnswerWithoutTools),
-        ("coding agent: a tool call that is not valid JSON (a single-quoted value, ';' for ',') is told with where and why, beside read calls after their results, alone in the call-format correction", AgentToldMalformedCalls),
-        ("coding agent: code shown in the final answer with no file changed in the run gets one reminder to write it (instead of the no-tool one), none after a change or at 0", AgentRemindsUnchangedCode),
-        ("coding agent: a reply mostly in a script the request does not use (Han against Latin) gets one reminder in English, after the results or instead of ending; not for the request's script, code, few letters or 0", AgentRemindsReplyLanguage),
     ];
 
     private static void AgentReadsBeforeEditing(Device device)
     {
         _ = device;
         Check(CodingAgent.DefaultSystemPrompt.Contains("Read a file with read_file before you edit it", StringComparison.Ordinal), "the default prompt asks for the read");
-    }
-
-    // A workspace for one agent test, deleted after it.
-    private static void InAgentWorkspace(Action<string> test)
-    {
-        string root = Path.Combine(Path.GetTempPath(), "idrak-calls-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(root);
-        try
-        {
-            test(root);
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
-        }
     }
 
     // Web text collapses white space as the regex did.

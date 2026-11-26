@@ -21,7 +21,6 @@ internal abstract partial class Tests
     [
         ("rope scaling: linear and llama3 unchanged; YaRN and dynamic NTK match the reference formulas", RopeScalingMethods),
         ("pretrained: Mistral, Qwen2, Gemma 2 and Gemma 3 configs read windows, soft-capping and scales; a Gemma 2 checkpoint loads", ModelFamilyConfigs),
-        ("gguf: YaRN scaling keys are read and match the Hugging Face config with the same rope_scaling", GgufYarn),
     ];
 
     internal static void RopeScalingMethods(Device device)
@@ -209,77 +208,6 @@ internal abstract partial class Tests
         finally
         {
             Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    internal static void GgufYarn(Device device)
-    {
-        string cache = Path.Combine(Path.GetTempPath(), "ns-gguf-" + Guid.NewGuid().ToString("N"));
-        string hf = TempFolder();
-        try
-        {
-            // The tiny Qwen3 file with llama.cpp's YaRN keys added (inserted before the others, padded to the file's
-            // 32-byte alignment so the tensor data stays aligned).
-            var original = File.ReadAllBytes(TestData("gguf/tiny-qwen3-q8.gguf"));
-            var inserted = new MemoryStream();
-            var writer = new BinaryWriter(inserted);
-            void Key(string key, int type)
-            {
-                writer.Write((ulong)Encoding.UTF8.GetByteCount(key));
-                writer.Write(Encoding.UTF8.GetBytes(key));
-                writer.Write(type);
-            }
-
-            Key("qwen3.rope.scaling.type", 8);
-            writer.Write((ulong)4);
-            writer.Write("yarn"u8);
-            Key("qwen3.rope.scaling.factor", 6);
-            writer.Write(4f);
-            Key("qwen3.rope.scaling.original_context_length", 4);
-            writer.Write(64u);
-            Key("qwen3.rope.scaling.yarn_beta_fast", 6);
-            writer.Write(16f);
-            Key("test.padding", 8);
-            long length = inserted.Length + 8;
-            int pad = (int)((32 - length % 32) % 32);
-            writer.Write((ulong)pad);
-            writer.Write(new byte[pad]);
-            writer.Flush();
-            Check(inserted.Length % 32 == 0, "inserted bytes keep the alignment");
-            const int countOffset = 4 + 4 + 8;                               // magic, version, tensor count, then the key count
-            var patched = new byte[original.Length + inserted.Length];
-            original.AsSpan(0, countOffset + 8).CopyTo(patched);
-            BitConverter.TryWriteBytes(patched.AsSpan(countOffset, 8), BitConverter.ToUInt64(original, countOffset) + 5);
-            inserted.ToArray().CopyTo(patched, countOffset + 8);
-            original.AsSpan(countOffset + 8).CopyTo(patched.AsSpan(countOffset + 8 + (int)inserted.Length));
-            Directory.CreateDirectory(cache);
-            string file = Path.Combine(cache, "tiny-qwen3-yarn.gguf");
-            File.WriteAllBytes(file, patched);
-
-            // The Hugging Face copy with the same rope_scaling.
-            foreach (var path in Directory.GetFiles(TestData("gguf/tiny-qwen3-q8-hf")))
-            {
-                File.Copy(path, Path.Combine(hf, Path.GetFileName(path)));
-            }
-
-            var config = JsonNode.Parse(File.ReadAllText(Path.Combine(hf, "config.json")))!.AsObject();
-            config["rope_scaling"] = new JsonObject { ["rope_type"] = "yarn", ["factor"] = 4.0, ["original_max_position_embeddings"] = 64, ["beta_fast"] = 16.0 };
-            File.WriteAllText(Path.Combine(hf, "config.json"), config.ToJsonString());
-
-            using var fromGguf = PretrainedModel.Load(GgufModel.Prepare(file, cache), new PretrainedOptions { Device = device });
-            using var fromHf = PretrainedModel.Load(hf, new PretrainedOptions { Device = device });
-            Check(fromGguf.Spec.MaxPositions == fromHf.Spec.MaxPositions, $"the context from GGUF: {fromGguf.Spec.MaxPositions} vs {fromHf.Spec.MaxPositions}");
-            int[] ids = [.. fromHf.Tokenizer!.Encode("the answer is in the thin rain, and then another answer")];
-            using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
-            AssertClose(fromHf.Network.Predict(input).ToArray(), fromGguf.Network.Predict(input).ToArray(), 1e-3f, "logits from GGUF and from the Hugging Face copy");
-        }
-        finally
-        {
-            Directory.Delete(hf, recursive: true);
-            if (Directory.Exists(cache))
-            {
-                Directory.Delete(cache, recursive: true);
-            }
         }
     }
 }

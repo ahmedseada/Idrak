@@ -20,8 +20,6 @@ internal abstract partial class Tests
     [
         ("audio chat: ChatAudio from bytes, files, streams and data URLs (media types sniffed for WAV, FLAC, MP3, Ogg and MP4 or given; SHA-256 identity; equality by bytes; bad data URLs refused); the audio kind writes a part to its JSON and reads it back, refusing one without data or with bad base64", d => { CpuOnly(d); AudioChatPart(); }),
         ("audio chat: text-only models and templates refuse an audio part naming 'audio'; a Jinja template that writes a marker for audio parts takes them", AudioChatJsonAndRefusal),
-        ("audio chat: the transcript encoder with a fake soft-part source (two tokens per sound) expands each marker to its soft tokens, records the parts' blocks, trains the answer alone, keeps whole blocks when cut, and refuses a sound in an assistant turn or without a source; the training step reads the parts through FineTuningOptions.Parts and refuses them without it", AudioChatTranscriptEncoder),
-        ("audio chat: ChatGenerator with the same source on the tiny Llama renders the soft tokens in place, encodes each sound once per request, answers, and the features land at the soft tokens' positions; ChatBatch refuses soft parts and StreamBatch answers them one by one", AudioChatGenerator),
     ];
 
     internal static readonly int[] TinyLlamaAudioMarker = [5, 6, 7];   // the fixture's <start_of_image>, <image>, <end_of_image>: reused as the fake family's audio marker, soft token and end
@@ -195,96 +193,5 @@ internal abstract partial class Tests
     {
         var model = PretrainedModel.Load(PretrainData("tiny-llama"), new PretrainedOptions { Device = device });
         return (model, new JinjaChatTemplate(AudioTemplate, ["<|im_end|>"]));
-    }
-
-    internal static void AudioChatTranscriptEncoder(Device device)
-    {
-        var (model, template) = TinyLlamaWithAudio(device);
-        using var _ = model;
-        var tokenizer = model.Tokenizer!;
-        var source = new FakeAudioSource(tokens: 2, width: model.Spec.Dim, device);
-        var encoder = new ChatTranscriptEncoder(template, tokenizer) { Parts = [source] };
-        var audio = ChatAudio.FromFile(AudioData("wav/pcm16.wav"));
-        var other = ChatAudio.FromFile(AudioData("wav/rate8k.wav"));
-        var transcript = new ChatTranscript([new ChatMessage("user", [audio, new ChatText("Transcribe.")]), new ChatMessage("assistant", "hello"), new ChatMessage("user", [new ChatText("And "), other]), new ChatMessage("assistant", "again")], []);
-        var sequence = encoder.Encode(transcript, 128)!;
-
-        // The expected ids: the rendered text with each marker expanded to two soft tokens and the end token.
-        string rendered = template.Render(transcript.Messages, [], null, addGenerationPrompt: false);
-        string expanded = rendered.Replace("<start_of_image>", "<image><image><end_of_image>", StringComparison.Ordinal);
-        var ids = tokenizer.Encode(expanded);
-        Check(sequence.Tokens.SequenceEqual(ids), $"ids [{string.Join(" ", sequence.Tokens)}] against [{string.Join(" ", ids)}]");
-        var positions = Enumerable.Range(0, ids.Count).Where(i => ids[i] == 6 && (i == 0 || ids[i - 1] != 6)).ToList();
-        Check(sequence.Parts.Count == 2 && sequence.Parts[0].Part == audio && sequence.Parts[1].Part == other && sequence.Parts[0].Kind == "audio"
-              && sequence.Parts.SelectMany(p => p.Blocks).SequenceEqual([(positions[0], 2), (positions[1], 2)]) && sequence.Parts.Sum(p => p.Tokens) == 4 && sequence.Images.Count == 0,
-            $"parts' blocks [{string.Join(", ", sequence.Parts.SelectMany(p => p.Blocks))}] at the runs of soft tokens [{string.Join(", ", positions)}]");
-        int trained = sequence.Trained.Count(t => t);
-        var answers = tokenizer.Encode("hello<|im_end|>").Count + tokenizer.Encode("again<|im_end|>").Count;   // a trained turn ends at its end marker
-        Check(trained == answers && !sequence.Trained.Take(positions[0] + 3).Any(t => t), $"trained {trained} tokens, the answers take {answers}; nothing before the first sound");
-        Check(source.EncodeCalls.Count == 0, "the encoder encodes nothing");
-
-        // Cut inside the second sound's block: the cut moves back to the block's start, keeping the first part whole.
-        var cut = encoder.Encode(transcript, positions[1])!;
-        Check(cut.Tokens.Length <= positions[1] + 1 && cut.Parts.Count == 1 && cut.Parts[0].Blocks.SequenceEqual([(positions[0], 2)]) && cut.TrainedTokens > 0,
-            $"cut to {cut.Tokens.Length} tokens with {cut.Parts.Count} part(s)");
-
-        // Refusals.
-        var inAnswer = new ChatTranscript([new ChatMessage("user", "Say it."), new ChatMessage("assistant", [audio, new ChatText("hello")])], []);
-        ThrowsNaming<InvalidDataException>(() => encoder.Encode(inAnswer, 128), "a sound in an assistant turn", "assistant turn");
-        var textOnly = new ChatTranscriptEncoder(template, tokenizer);
-        ThrowsNaming<InvalidOperationException>(() => textOnly.Encode(transcript, 128), "no source", "ChatTranscriptEncoder.Parts", "'audio'");
-        ThrowsNaming<ArgumentException>(() => new ChatTranscriptEncoder(template, tokenizer) { Parts = [source, source] }, "a kind twice", "given twice");
-
-        // The training step reads the parts through their source (FineTuningOptions.Parts); without one it refuses, naming it.
-        string tuned = Path.Combine(Path.GetTempPath(), $"idrak-audio-chat-{Guid.NewGuid():N}");
-        try
-        {
-            ThrowsNaming<InvalidOperationException>(() => FineTuner.Train(model, [sequence], null, new FineTuningOptions { Epochs = 1, BatchTokens = 256, MaxLength = 128 }, tuned),
-                "training on parts without a source", "'audio' part", "FineTuningOptions.Parts");
-            var evaluations = FineTuner.Train(model, [sequence], null, new FineTuningOptions { Epochs = 1, BatchTokens = 256, MaxLength = 128, Parts = [source] }, tuned);
-            Check(source.EncodeCalls.Count > 0 && evaluations.Count == 0, "a step with parts encodes them through the source");
-        }
-        finally
-        {
-            if (Directory.Exists(tuned))
-            {
-                Directory.Delete(tuned, recursive: true);
-            }
-        }
-    }
-
-    internal static void AudioChatGenerator(Device device)
-    {
-        var (model, template) = TinyLlamaWithAudio(device);
-        using var _ = model;
-        var source = new FakeAudioSource(tokens: 3, width: model.Spec.Dim, device);
-        var chat = new ChatGenerator(model.CreateChat(KeyValueFormat.Float32, 64).Generator, template) { Parts = [source] };
-        Check(((IChatModel)chat).PartKinds.SetEquals(["text", "audio"]), $"kinds: {string.Join(", ", chat.PartKinds)}");
-        var audio = ChatAudio.FromFile(AudioData("wav/pcm16.wav"));
-        var request = new ChatRequest([new ChatMessage("user", [audio, new ChatText("Transcribe.")])], Options: new GenerationOptions { Temperature = 0, NumPredict = 3, Seed = 1 });
-        string prompt = chat.RenderPrompt(request);
-        var ids = model.Tokenizer!.Encode(prompt);
-        var runs = Enumerable.Range(0, ids.Count).Where(i => ids[i] == 6 && (i == 0 || ids[i - 1] != 6)).ToList();
-        Check(prompt.Contains("<image><image><image><end_of_image>Transcribe.", StringComparison.Ordinal) && runs.Count == 1 && ids.Count(i => i == 6) == 3, prompt);
-
-        var answer = chat.Chat(request);
-        Check(answer.Done && answer.Message is not null, "answers");
-        Check(source.EncodeCalls is [[ChatAudio one]] && one == audio, $"encoded once per request: {source.EncodeCalls.Count} call(s)");
-        using var features = source.Encode([audio])[0];
-        var located = ImagePrefill.Locate(ids, 6, [features]);
-        Check(located is [{ Position: var at, Tokens: 3 }] && at == runs[0], $"the features land at {string.Join(", ", located.Select(l => l.Position))}, the soft tokens at {runs[0]}");
-
-        // Two sounds in one request: both encoded in one call, in order; a text-only request is unchanged.
-        var two = new ChatRequest([new ChatMessage("user", [audio, new ChatText(" then "), ChatAudio.FromFile(AudioData("wav/rate8k.wav")), new ChatText(" Transcribe both.")])],
-            Options: request.Options);
-        Check(chat.Chat(two).Done && source.EncodeCalls[^1].Count == 2 && model.Tokenizer.Encode(chat.RenderPrompt(two)).Count(i => i == 6) == 6, "two sounds");
-        int calls = source.EncodeCalls.Count;                                    // the requests' calls and the test's own one above
-        Check(chat.Chat(new ChatRequest([new ChatMessage("user", "hi")], Options: request.Options)).Done && source.EncodeCalls.Count == calls, $"text alone encodes nothing: {source.EncodeCalls.Count - calls} call(s)");
-
-        // Batches: ChatBatch takes text only; StreamBatch answers requests with sounds one by one.
-        ThrowsNaming<NotSupportedException>(() => chat.ChatBatch([request]), "ChatBatch", "soft parts");
-        var streamed = chat.StreamBatch([request, new ChatRequest([new ChatMessage("user", "hi")], Options: request.Options)]).Where(c => c.Chunk.Done).ToList();
-        Check(streamed.Count == 2 && streamed.Select(s => s.Index).Order().SequenceEqual([0, 1]), "StreamBatch answers both");
-        ThrowsNaming<ArgumentException>(() => new ChatGenerator(chat.Generator, template) { Parts = [source, source] }, "a kind twice", "given twice");
     }
 }

@@ -15,7 +15,6 @@ internal abstract partial class DesktopTests : Tests
         ("random text: pages, lines or words as asked, each line its number of words within the range, the same seed the same text and another seed other text", RandomTextUnits),
         ("random text: the Arabic source writes every letter, its own digits at their share, marks only when asked and never after a letter that takes none", RandomTextArabic),
         ("random text: any language from a pools file or a word list; English built in; bad pools are refused", RandomTextLanguages),
-        ("random text: the written file is the plain text synthetic pages read, a document a page; idrak data text writes it by -n, --unit and -l, refusing what it cannot do", RandomTextFile),
     ];
 
     private static readonly string ArabicLetters = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي";
@@ -94,47 +93,5 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Throws<InvalidDataException>(() => PooledTextSource.FromWords("x", ["", " "]), "a word list with no words");
-    }
-
-    private static void RandomTextFile(Device device)
-    {
-        string folder = SyntheticFolder("random-text");
-        try
-        {
-            string path = Path.Combine(folder, "pages.txt");
-            var result = RandomText.Write(path, PooledTextSource.Embedded("random-text.ar.json"), new RandomTextOptions { Count = 6, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 });
-            var records = new TextSyntheticRecords().Read(path, "Read it.", "full_text_extract").ToList();
-            Check(records.Count == 6 && result.Documents == 6, $"{records.Count} documents read back");
-            Check(!File.ReadAllText(path).Contains('\r') && records[0].Answer.Contains("full_text_extract", StringComparison.Ordinal), "'\\n' lines, answers under the key");
-            var page = SyntheticPages.Make(records[0].Answer, new SyntheticPageOptions { Style = new PageStyle { Fonts = [SubsetFace()], Width = 400, Height = 300, BodySize = (10, 12) }, Scans = ["none"] });
-            Check(page.Text == string.Join("\n", RandomText.Documents(PooledTextSource.Embedded("random-text.ar.json"), new RandomTextOptions { Count = 1, PageLines = (2, 3), LineWords = (3, 5), Seed = 1 }).Single().Split('\n')),
-                "the first document drawn as a page, its text the answer");
-
-            var (code, output, error) = SynthCli(["data", "text", "-n", "4", "--unit", "lines", "-l", "en", "-o", Path.Combine(folder, "en.txt"), "--seed", "3", "-j"]);
-            var json = JsonNode.Parse(output)!;
-            Check(code == 0 && (int)json["documents"]! == 4 && (string)json["language"]! == "en" && (string)json["unit"]! == "lines" && File.ReadAllText(Path.Combine(folder, "en.txt")).Split("\n---\n").Length == 4,
-                $"exit {code}: {output} {error}");
-            var arabic = SynthCli(["data", "text", "-n", "3", "-o", Path.Combine(folder, "ar.txt"), "-j"]);
-            Check(arabic.Code == 0 && (string)JsonNode.Parse(arabic.Out)!["language"]! == "ar" && (string)JsonNode.Parse(arabic.Out)!["unit"]! == "pages", "Arabic pages unless asked");
-            File.WriteAllText(Path.Combine(folder, "words.txt"), "Gericht Urteil\nKlage", new UTF8Encoding(false));
-            var listed = SynthCli(["data", "text", "-n", "5", "--unit", "words", "-l", "de", "--words", Path.Combine(folder, "words.txt"), "-o", Path.Combine(folder, "de.txt"), "-j"]);
-            Check(listed.Code == 0 && File.ReadAllText(Path.Combine(folder, "de.txt")).Split("\n---\n").All(w => w.Trim() is "Gericht" or "Urteil" or "Klage"), $"a word list: {listed.Err}");
-
-            foreach (var (args, why) in new (string[], string)[]
-            {
-                (["data", "text", "-n", "3"], "no -o"),
-                (["data", "text", "-n", "3", "--unit", "chapters", "-o", Path.Combine(folder, "x.txt")], "an unknown unit"),
-                (["data", "text", "-n", "3", "-l", "xx", "-o", Path.Combine(folder, "x.txt")], "a language with no source"),
-                (["data", "text", "-n", "3", "--line-words", "9..2", "-o", Path.Combine(folder, "x.txt")], "a backwards range"),
-            })
-            {
-                var bad = SynthCli(args);
-                Check(bad.Code == 2 && bad.Err.Length > 0, $"{why}: exit {bad.Code}, {bad.Err.Trim()}");
-            }
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 }

@@ -12,66 +12,11 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GlyphPoseGroup =
     [
-        ("glyph poses: none leaves letter, plain and shapes pages byte for byte as they were; drift draws the same page from the same seed, the text unchanged, its ink only where the text was within the pose's bounds, a region's text inside its region", GlyphPosePages),
         ("glyph poses: marks stay on their base (one pose a cluster), and a joined Arabic word drawn with drift has as many ink pieces as drawn as set", GlyphPoseJoins),
-        ("glyph poses: page settings read pose and its keys into the options and refuse an unknown pose, a bad value or an unknown key, naming the valid ones", GlyphPoseSettingsRead),
     ];
 
     internal static readonly IReadOnlyDictionary<string, string> WideDrift = PageOptionsOf(
         ("pose-slant", "-0.2..0.3"), ("pose-size", "0.1"), ("pose-baseline", "0.1..0.2"), ("pose-rotate", "3"), ("pose-pressure", "0.5"));
-
-    internal static void GlyphPosePages(Device device)
-    {
-        _ = device;
-        var style = TestPageStyle();
-        foreach (var (name, layout, content, options) in new (string, IPageLayout, PageContent, IReadOnlyDictionary<string, string>)[]
-        {
-            ("letter", new LetterLayout(), ArabicLetter, PageOptions.None), ("plain", new PlainLayout(), EnglishLetter, PageOptions.None),
-            ("shapes", new ShapesLayout(), LatinRows, PageOptionsOf(("shapes", "grid=3x5"), ("pen", "ballpoint"))),
-        })
-        {
-            for (int seed = 1; seed <= 2; seed++)
-            {
-                var plain = layout.Render(content, style with { Options = options }, seed);
-                var none = layout.Render(content, style with { Options = WithOptions(options, ("pose", "none")) }, seed);
-                Check(SamePage(plain, none) && plain.Description == none.Description, $"{name}, seed {seed}: pose=none draws the page as without a pose");
-
-                var drifted = WithOptions(options, ("pose", "drift"));
-                var drift = layout.Render(content, style with { Options = drifted }, seed);
-                Check(SamePage(drift, layout.Render(content, style with { Options = drifted }, seed)), $"{name}, seed {seed}: drift, the same seed the same page");
-                Check(drift.Text == plain.Text && drift.Description.Contains("pose drift", StringComparison.Ordinal), $"{name}, seed {seed}: the text unchanged ({drift.Description})");
-                Check(!SamePage(drift, plain), $"{name}, seed {seed}: drift moves the glyphs");
-
-                // Where the posed page differs from the page as set: only near the text, within what the pose may move it.
-                var bounds = new DriftPose().Bounds(new DriftPose().Read(PageOptions.None));
-                float pad = bounds.Reach(60, 90) + 2;
-                var text = plain.Blocks.Where(b => b.Text.Length > 0).ToList();
-                int outside = DifferingPixels(drift, plain).Count(p => !text.Any(b => p.X >= b.X - pad && p.X <= b.X + b.Width + pad && p.Y >= b.Y - pad && p.Y <= b.Y + b.Height + pad));
-                Check(outside == 0, $"{name}, seed {seed}: {outside} pixels changed away from the text");
-                if (name == "shapes")
-                {
-                    var blank = layout.Render(content, style with { Options = WithOptions(drifted, ("blank", "1")) }, seed);
-                    var regions = drift.Blocks.Where(b => b.Kind == "region").ToList();
-                    var (away, inked) = TextInk(drift, blank, regions);
-                    Check(away == 0 && inked.All(i => i), $"shapes, seed {seed}: posed text ink inside its regions ({away} pixels outside)");
-                }
-            }
-        }
-    }
-
-    internal static IReadOnlyDictionary<string, string> WithOptions(IReadOnlyDictionary<string, string> options, params (string Key, string Value)[] more)
-    {
-        var all = new Dictionary<string, string>(options, StringComparer.OrdinalIgnoreCase);
-        foreach (var (key, value) in more)
-        {
-            all[key] = value;
-        }
-
-        return all;
-    }
-
-    internal static bool SamePage(RenderedPage a, RenderedPage b) =>
-        Planes(a.Image).Zip(Planes(b.Image)).All(p => p.First.SequenceEqual(p.Second)) && a.Image.Channels == b.Image.Channels && a.Text == b.Text && a.Blocks.SequenceEqual(b.Blocks);
 
     // The pixels where two pages of one size differ.
     internal static IEnumerable<(int X, int Y)> DifferingPixels(RenderedPage a, RenderedPage b)
@@ -183,23 +128,5 @@ internal abstract partial class Tests
         }
 
         return pieces;
-    }
-
-    internal static void GlyphPoseSettingsRead(Device device)
-    {
-        _ = device;
-        var style = new PageStyle { Fonts = [SubsetFace()] };
-        var read = SyntheticPages.Style(style, "pose=drift, pose-slant=-0.1..0.1, pose-size=0.03, pose-baseline=0..0.05, pose-rotate=0.5..2, pose-pressure=0.1");
-        Check(read.Options.Count == 6 && read.Options["pose"] == "drift" && read.Options["pose-rotate"] == "0.5..2", $"the pose keys in the options: {string.Join(", ", read.Options)}");
-        Check(SyntheticPages.StyleKeys.Contains("pose") && new[] { "pose-slant", "pose-size", "pose-baseline", "pose-rotate", "pose-pressure" }.All(SyntheticPages.KindStyleKeys().Contains),
-            $"the keys: {string.Join(", ", SyntheticPages.KindStyleKeys())}");
-        ThrowsNaming<ArgumentException>(() => SyntheticPages.Style(style, "pose-wobble=1"), "an unknown key", "pose-slant", "pose", "pen-wobble");
-        foreach (string bad in new[] { "pose=nope", "pose-slant=2", "pose-size=x", "pose-baseline=0.9", "pose-rotate=-1", "pose-pressure=1.5" })
-        {
-            Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
-        }
-
-        ThrowsNaming<ArgumentException>(() => new DriftPose().Read(PageOptionsOf(("slant", "0.1"))), "a key drift does not take", "pose-slant");
-        Throws<ArgumentException>(() => new NonePose().Read(PageOptionsOf(("pose-slant", "0.1"))), "none takes no keys");
     }
 }

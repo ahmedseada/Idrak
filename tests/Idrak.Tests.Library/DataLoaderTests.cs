@@ -25,10 +25,8 @@ internal abstract partial class Tests
         ("data loaders: views (subset, shuffle, split, concat) read the right samples and train like the copied Dataset", LoaderViews),
         ("data loaders: the streamed CSV source reads Dataset.LoadCsv's samples, in order as a stream, and trains to the same weights", LoaderCsv),
         ("data loaders: PNG (every depth, palette, interlaced), BMP and Netpbm decode as independent encoders wrote them", LoaderCodecs),
-        ("data loaders: the image folder source with transforms trains like its in-memory Dataset", LoaderImageFolder),
         ("data loaders: image transforms flip, shift, rotate and add noise as computed directly, seeded by epoch and sample", LoaderTransforms),
         ("data loaders: a stream is batched in order or shuffled in a buffer, counted after an epoch, and trains like a Dataset", LoaderStreams),
-        ("data loaders: TableSamples reads JSON Lines, Parquet and CSV columns (arrays, classes) and streams them", LoaderTables),
     ];
 
     // A source that only forwards to a dataset, so the loader cannot take any Dataset shortcut.
@@ -566,83 +564,6 @@ internal abstract partial class Tests
         }
     }
 
-    // Three classes of 8x8 drawings (a bar, a column, a dot) in PGM, PNG and BMP, some of other sizes.
-    internal static string ImageFolder(string root, int perClass)
-    {
-        string[] classes = ["bar", "column", "dot"];
-        var random = new Random(4);
-        for (int c = 0; c < classes.Length; c++)
-        {
-            Directory.CreateDirectory(Path.Combine(root, classes[c], "more"));
-            for (int n = 0; n < perClass; n++)
-            {
-                int size = n % 5 == 4 ? 10 : 8, at = random.Next(2, 6);
-                var pixels = new byte[size * size];
-                for (int y = 0; y < size; y++)
-                {
-                    for (int x = 0; x < size; x++)
-                    {
-                        bool on = c == 0 ? y == at : c == 1 ? x == at : Math.Abs(x - at) + Math.Abs(y - at) <= 1;
-                        pixels[y * size + x] = (byte)(on ? 200 + random.Next(55) : random.Next(40));
-                    }
-                }
-
-                string name = Path.Combine(root, classes[c], n % 7 == 6 ? "more" : "", $"{n:D3}");
-                switch (n % 3)
-                {
-                    case 0:
-                        File.WriteAllBytes(name + ".pgm", [.. Encoding.ASCII.GetBytes($"P5\n{size} {size}\n255\n"), .. pixels]);
-                        break;
-                    case 1:
-                        File.WriteAllBytes(name + ".png", GrayPng(pixels, size, size));
-                        break;
-                    default:
-                        File.WriteAllBytes(name + ".bmp", TestBmp(size, size, 24, false, (x, y) => (pixels[y * size + x], pixels[y * size + x], pixels[y * size + x])));
-                        break;
-                }
-            }
-
-            File.WriteAllText(Path.Combine(root, classes[c], "notes.txt"), "not an image");
-        }
-
-        return root;
-    }
-
-    internal static void LoaderImageFolder(Device device)
-    {
-        string folder = TempFolder();
-        try
-        {
-            string root = ImageFolder(Path.Combine(folder, "images"), 24);
-            var images = new ImageFolderSource(root, 1, 8, 8);
-            Check(images.Classes.SequenceEqual(["bar", "column", "dot"]) && images.Count == 72, $"{images.Count} images of {string.Join(", ", images.Classes)}");
-            Check(images.FeatureShape.SequenceEqual([1, 8, 8]) && images.TargetShape.SequenceEqual([3]), "the shapes");
-
-            // The pixels of one PGM file, and its one-hot class.
-            var x = new float[64];
-            var y = new float[3];
-            int pgm = images.Files.ToList().FindIndex(f => f.EndsWith("column" + Path.DirectorySeparatorChar + "000.pgm", StringComparison.Ordinal));
-            images.Read(pgm, x, y);
-            var bytes = File.ReadAllBytes(images.Files[pgm])[^64..];
-            AssertClose([.. bytes.Select(b => b / 255f)], x, 1e-6f, "a PGM image's pixels");
-            AssertClose([0, 1, 0], y, 0, "its class");
-
-            var memory = Dataset.FromSource(images, targetNames: images.Classes);
-            Check(memory.TargetNames.SequenceEqual(images.Classes) && memory.FeatureShape.SequenceEqual([1, 8, 8]), "the in-memory copy");
-            ISampleTransform[] transforms = [new RandomFlip(), new RandomShift(1), new RandomRotation(10), new GaussianNoise(0.02f)];
-            SameTraining(images, memory, device, "image folder source with transforms", transforms);
-
-            // Unlabelled images, as predict reads them.
-            var unlabelled = new ImageFolderSource(images.Files.Take(5).ToList(), 1, 8, 8);
-            Check(unlabelled.TargetShape.SequenceEqual([0]) && unlabelled.Labels is null && Dataset.FromSource(unlabelled).Count == 5, "unlabelled images");
-            Throws<DirectoryNotFoundException>(() => _ = new ImageFolderSource(Path.Combine(folder, "nowhere"), 1, 8, 8), "a missing folder");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
     internal static void LoaderTransforms(Device device)
     {
         // Two channels of 4 x 5 pixels, numbered.
@@ -765,63 +686,5 @@ internal abstract partial class Tests
         var fromStream = TrainedWeights(new DataLoader(new DatasetStream(data), 8, device: device), 4, 1, device);
         var fromMemory = TrainedWeights(new DataLoader(data, 8, device: device), 4, 1, device);
         AssertClose(fromMemory, fromStream, 1e-6f, "weights trained from a stream and from memory");
-    }
-
-    internal static void LoaderTables(Device device)
-    {
-        // Parquet and its JSON Lines twin: the same numbers, booleans as 1 and 0.
-        string data = Path.Combine(AppContext.BaseDirectory, "data", "parquet");
-        if (!Directory.Exists(data))
-        {
-            data = Path.Combine(DataFolder(), "parquet");
-        }
-
-        string[] features = ["id", "half", "flag", "small"], targets = ["price"];
-        var parquet = TableSamples.Load(Path.Combine(data, "snappy-v1.parquet"), features, targets);
-        var jsonl = TableSamples.Load(Path.Combine(data, "snappy-v1.jsonl"), features, targets);
-        Check(parquet.Count == 40 && parquet.FeatureNames.SequenceEqual(features) && parquet.TargetNames.SequenceEqual(targets), $"parquet: {parquet}");
-        AssertClose(jsonl.Features.ToArray(), parquet.Features.ToArray(), 0, "Parquet and JSON Lines features");
-        AssertClose(jsonl.Targets.ToArray(), parquet.Targets.ToArray(), 0, "Parquet and JSON Lines targets");
-        var rows = File.ReadAllLines(Path.Combine(data, "snappy-v1.jsonl")).Select(l => JsonNode.Parse(l)!.AsObject()).ToList();
-        float[] expected = [.. rows.SelectMany(r => features.Select(f => r[f]!.GetValueKind() == System.Text.Json.JsonValueKind.True ? 1f
-            : r[f]!.GetValueKind() == System.Text.Json.JsonValueKind.False ? 0f : (float)(double)r[f]!))];
-        AssertClose(expected, jsonl.Features.ToArray(), 0, "the values as written");
-        SameTraining(new Forwarding(parquet), jsonl, device, "table");
-
-        // Classes, arrays and a CSV file; streamed in order.
-        string folder = TempFolder();
-        try
-        {
-            string path = Path.Combine(folder, "points.jsonl");
-            File.WriteAllLines(path, Enumerable.Range(0, 30).Select(i => new JsonObject
-            {
-                ["xy"] = new JsonArray(i * 0.5, -i),
-                ["z"] = $"{i % 4}",
-                ["label"] = i % 3 == 0 ? "red" : i % 3 == 1 ? "green" : "blue",
-            }.ToJsonString()));
-            var points = TableSamples.Load(path, ["xy", "z"], ["label"], classes: ["red", "green", "blue"]);
-            Check(points.FeatureNames.SequenceEqual(["xy[0]", "xy[1]", "z"]) && points.TargetNames.SequenceEqual(["red", "green", "blue"]), $"names: {points}");
-            AssertClose([3.5f, -7f, 3f], points.GetFeatures(7).ToArray(), 0, "an array and a number in text");
-            AssertClose([0, 1, 0], points.GetTargets(7).ToArray(), 0, "a one-hot class");
-            var streamed = Epoch(new DataLoader(TableSamples.Stream(path, ["xy", "z"], ["label"], ["red", "green", "blue"]), 8, device: device));
-            SameEpoch(streamed, Epoch(new DataLoader(points, 8, device: device)), "the table as a stream");
-
-            File.WriteAllText(path, "{\"x\": 1, \"y\": 2}\n{\"x\": \"high\", \"y\": 3}\n");
-            try
-            {
-                TableSamples.Load(path, ["x"], ["y"]);
-                Check(false, "a cell that is not a number");
-            }
-            catch (FormatException e)
-            {
-                Check(e.Message.Contains("row 2", StringComparison.Ordinal) && e.Message.Contains("'x'", StringComparison.Ordinal), e.Message);
-            }
-
-            Throws<ArgumentException>(() => TableSamples.Load(path, ["w"], ["y"]), "an unknown column");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 }

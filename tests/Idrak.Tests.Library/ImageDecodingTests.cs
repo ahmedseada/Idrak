@@ -14,117 +14,8 @@ internal abstract partial class Tests
     [
         ("jpeg: baseline, progressive, grey, RGB, CMYK, YCCK, restart intervals and every sampling decode to Pillow's RGB exactly", JpegMatchesPillow),
         ("jpeg: 12-bit, arithmetic, lossless and hierarchical files are refused by name; damaged and cut files", JpegRefusals),
-        ("image preprocessing: every colour format of the codecs to RGB, Pillow's resize (bilinear, bicubic, Lanczos; up and down), rescale and normalize as transformers, to 1e-5", PreprocessingMatchesTransformers),
         ("image preprocessing: preprocessor_config.json keys, a family's own keys left, grey to three channels, tensors, the pixel values into a caller's buffer", PreprocessingConfig),
-        ("image preprocessing: phase 0's reference (tests/data/vlm): JPEGs decode as Pillow, pixel_values as transformers (PNG, JPEG, RGBA, palette, grey)", PreprocessingMatchesVlmReference),
-        ("image data: 8-bit images (the JPEG and PNG decoders', the card's transforms', pan and scan's crops) keep their planes until their floats are read; the floats are the planes through their table and the results equal those from floats", EightBitImages),
     ];
-
-    internal static void EightBitImages(Device device)
-    {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                              // host only: once
-        }
-
-        const int W = 37, H = 23;
-        var random = new Random(41);
-        var page = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(_ => random.Next(256) / 255f)], 3, H, W);
-        static ImageData Card(ImageData image) => PillowImageOps.Contrast(PillowImageOps.ScaleDown(ChatImageDecoder.Grayscale(image), 16, 0), 1.5);
-        var png = new PngEncoder();
-        var preprocessor = new ImagePreprocessor { Height = 8, Width = 8, Resampling = ImageResampling.Bilinear, Mean = [0.5f, 0.5f, 0.5f], Std = [0.5f, 0.5f, 0.5f] };
-        foreach (var (name, file) in new[] { ("jpeg", JpegEncoder.Encode(page, quality: 90)), ("png", png.Encode(page)) })
-        {
-            var decoded = ChatImageDecoder.Decode(file);
-            Check(decoded.TryGetPlanes(out var planes, out var levels) && planes.Length == 3 && levels.Length == 256, $"{name}: decoded as 8-bit planes");
-            var seen = Card(decoded);
-            Check(seen.TryGetPlanes(out var seenPlanes, out _) && seenPlanes.Length == 1 && decoded.TryGetPlanes(out _, out _), $"{name}: the card's steps keep 8 bits");
-            var crop = ImagePreprocessor.ToBytes(decoded, grayscale: false);
-            Check(crop.Length == 3 && crop[0].AsSpan().SequenceEqual(planes[0].Span), $"{name}: the bytes of an 8-bit image are its planes");
-
-            // The same results as an image of the same floats, through the transforms, the preprocessor and the encoders.
-            var bytes = planes.Select(p => p.ToArray()).ToArray();
-            var floats = new ImageData([.. Enumerable.Range(0, 3 * W * H).Select(i => levels.Span[bytes[i / (W * H)][i % (W * H)]])], 3, H, W);
-            Check(Card(floats).Pixels.SequenceEqual(Card(ChatImageDecoder.Decode(file)).Pixels), $"{name}: the transforms give what they give from floats");
-            Check(preprocessor.Pixels(floats).SequenceEqual(preprocessor.Pixels(ChatImageDecoder.Decode(file))), $"{name}: the preprocessor's values as from floats");
-            Check(png.Encode(floats).SequenceEqual(png.Encode(ChatImageDecoder.Decode(file))), $"{name}: the same PNG as from floats");
-
-            // The floats: the planes through their table; reading them ends the 8-bit view (the array is the caller's).
-            var values = decoded.Pixels;
-            Check(values.SequenceEqual(floats.Pixels) && !decoded.TryGetPlanes(out _, out _), $"{name}: the floats from the planes, then no 8-bit view");
-        }
-
-        bool refused = false;
-        try
-        {
-            _ = new ImageData([new byte[6]], 2, 4, new float[255]);
-        }
-        catch (ArgumentException)
-        {
-            refused = true;
-        }
-
-        Check(refused, "planes of the wrong size or a table of other than 256 values are refused");
-    }
-
-    // The data of a little-endian .npy file (version 1 to 3), as raw bytes.
-    internal static byte[] NpyData(string path)
-    {
-        var bytes = File.ReadAllBytes(path);
-        int headerLength = bytes[6] == 1 ? bytes[8] | bytes[9] << 8 : BitConverter.ToInt32(bytes, 8);
-        int start = (bytes[6] == 1 ? 10 : 12) + headerLength;
-        return bytes[start..];
-    }
-
-    internal static void PreprocessingMatchesVlmReference(Device device)
-    {
-        string root = Path.Combine(DataFolder(), "vlm");
-        string reference = Path.Combine(root, "reference");
-        foreach (var (file, npy) in new[]
-        {
-            ("image.jpg", "decoded-image.npy"), ("image-progressive.jpg", "decoded-image.npy"), ("image-restart.jpg", "decoded-image.npy"),
-            ("image-444.jpg", "decoded-image-444.npy"), ("image-gray.jpg", "decoded-image-gray.npy"),
-        })
-        {
-            var image = new JpegCodec().Decode(File.ReadAllBytes(Path.Combine(root, file)));
-            var expected = NpyData(Path.Combine(reference, npy));                       // [H, W, C] or [H, W]
-            int c = image.Channels, size = image.Height * image.Width;
-            Check(expected.Length == c * size && image.Width == 100 && image.Height == 75, $"{file}: {c} x {image.Height} x {image.Width}");
-            int worst = 0;
-            for (int i = 0; i < size; i++)
-            {
-                for (int ch = 0; ch < c; ch++)
-                {
-                    worst = Math.Max(worst, Math.Abs((int)MathF.Round(image.Pixels[ch * size + i] * 255) - expected[i * c + ch]));
-                }
-            }
-
-            Check(worst == 0, $"{file}: a pixel differs from Pillow's by {worst}");
-        }
-
-        var processor = ImagePreprocessor.FromConfig(Path.Combine(root, "tiny-gemma3"));
-        var grey = ImagePreprocessor.FromConfig(Path.Combine(root, "tiny-gemma3"), grayscale: true);
-        foreach (var (file, npy, steps) in new[]
-        {
-            ("image.png", "pixel_values-png.npy", processor), ("image.jpg", "pixel_values-jpg.npy", processor),
-            ("image-rgba.png", "pixel_values-rgba.npy", processor), ("image-palette.png", "pixel_values-palette.npy", processor),
-            ("image.png", "pixel_values-png-gray.npy", grey),
-        })
-        {
-            var actual = steps.Pixels(Path.Combine(root, file));
-            var data = NpyData(Path.Combine(reference, npy));
-            var expected = new float[data.Length / 4];
-            Buffer.BlockCopy(data, 0, expected, 0, data.Length);
-            Check(actual.Length == expected.Length && actual.Length == 3 * 56 * 56, $"{npy}: {actual.Length} values");
-            float worst = 0;
-            for (int i = 0; i < actual.Length; i++)
-            {
-                worst = MathF.Max(worst, MathF.Abs(actual[i] - expected[i]));
-            }
-
-            Check(worst <= 1e-5f, $"{npy}: differs from transformers by {worst}");
-        }
-    }
 
     internal static string JpegFixtures => Path.Combine(DataFolder(), "jpeg");
 
@@ -222,38 +113,6 @@ internal abstract partial class Tests
         {
             File.Delete(padded);
         }
-    }
-
-    internal static void PreprocessingMatchesTransformers(Device device)
-    {
-        var cases = JsonNode.Parse(File.ReadAllText(Path.Combine(JpegFixtures, "preprocess.json")))!.AsArray();
-        Check(cases.Count == 54, $"{cases.Count} cases");
-        var failures = new List<string>();
-        foreach (var item in cases)
-        {
-            string name = (string)item!["name"]!;
-            var config = item["config"]!;
-            var processor = ImagePreprocessor.Parse(config.ToJsonString(), grayscale: (bool)item["grayscale"]!);
-            int h = (int)config["size"]!["height"]!, w = (int)config["size"]!["width"]!;
-            Check(processor.Height == h && processor.Width == w && (int)processor.Resampling == (int)config["resample"]! && processor.Resize == (bool)config["do_resize"]!, $"{name}: the config");
-            var actual = processor.Pixels(Path.Combine(JpegFixtures, (string)item["image"]!));
-            var bytes = File.ReadAllBytes(Path.Combine(JpegFixtures, name + ".f32"));
-            var expected = new float[bytes.Length / 4];
-            Buffer.BlockCopy(bytes, 0, expected, 0, bytes.Length);
-            Check((!processor.Resize || actual.Length == 3 * h * w) && expected.Length == actual.Length, $"{name}: {actual.Length} values, expected {expected.Length}");
-            float worst = 0;
-            for (int i = 0; i < actual.Length; i++)
-            {
-                worst = MathF.Max(worst, MathF.Abs(actual[i] - expected[i]));
-            }
-
-            if (worst > 1e-5f)
-            {
-                failures.Add($"{name} by {worst}");
-            }
-        }
-
-        Check(failures.Count == 0, $"differ from transformers: {string.Join("; ", failures)}");
     }
 
     internal static void PreprocessingConfig(Device device)

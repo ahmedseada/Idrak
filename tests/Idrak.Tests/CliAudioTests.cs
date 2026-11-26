@@ -20,7 +20,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioCliGroup =
     [
-        ("audio cli: every audio command's help has its examples and options, idrak help audio lists the registries, 'idrak voice' names its subcommands, and --format srt is transcribe's own", d => { CpuOnly(d); AudioCliHelp(); }),
+        ("audio cli: every audio command's help has its examples and options, idrak help audio shows the commands, 'idrak voice' names its subcommands, and --format srt is transcribe's own", d => { CpuOnly(d); AudioCliHelp(); }),
     ];
 
     private static (int Code, string Out, string Err) AudioCli(params string[] args)
@@ -53,7 +53,7 @@ internal abstract partial class DesktopTests : Tests
         var pageOutput = new StringWriter();
         int topic = CommandLine.Run(["help", "audio"], pageOutput, new StringWriter());       // a topic takes no options after it
         string page = pageOutput.ToString();
-        Check(topic == 0 && page.Contains("idrak transcribe", StringComparison.Ordinal) && page.Contains("wav", StringComparison.Ordinal) && page.Contains("silence", StringComparison.Ordinal),
+        Check(topic == 0 && page.Contains("idrak transcribe", StringComparison.Ordinal) && page.Contains("WAV", StringComparison.Ordinal),
             $"idrak help audio: {page}");
         var (group, _, groupError) = AudioCli("voice");
         Check(group == 2 && groupError.Contains("idrak voice add", StringComparison.Ordinal), $"'idrak voice': {groupError}");

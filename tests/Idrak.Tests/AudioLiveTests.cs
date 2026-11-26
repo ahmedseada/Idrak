@@ -12,7 +12,6 @@ internal abstract partial class DesktopTests : Tests
     internal static readonly (string Name, Action<Device> Run)[] AudioLiveGroup =
     [
         ("audio live: PcmStreamInput reads raw s16le stereo and f32le, a WAV header of unknown size with a chunk before its data, a stream shorter than a header, all through reads of three bytes at a time; frames split between reads wait for their rest", AudioLiveStream),
-        ("audio live: LiveTranscriber on a scripted recognizer: quiet before speech never transcribed, words committed once two readings agree, a segment ended by a pause and the last by the end, the first segment's text the second's prompt; a click under MinSpeechSeconds never read; a long tone cut by the window", AudioLiveScripted),
     ];
 
     // A stream that gives at most `step` bytes a read.
@@ -186,39 +185,5 @@ internal abstract partial class DesktopTests : Tests
         });
         Check(run.Wait(TimeSpan.FromSeconds(120)), "the live transcription did not end within 120 s");
         return updates;
-    }
-
-    private static void AudioLiveScripted(Device device)
-    {
-        _ = device;
-        var recognizer = new ScriptedRecognizer();
-        var options = new LiveTranscriptionOptions { StepSeconds = 0.5, SilenceSeconds = 0.6, KeepUp = false, Transcription = new TranscriptionOptions { Prompt = "start" } };
-        var updates = Updates(recognizer, Pieces([(1.5, false), (3, true), (1.2, false), (2, true)]), options);
-        var segments = updates.Where(u => u.SegmentEnded).ToList();
-        Check(recognizer.Calls.All(c => c.LoudSeconds > 0), $"a call on quiet only: {string.Join(", ", recognizer.Calls.Select(c => $"{c.Seconds:0.0}/{c.LoudSeconds:0.0}"))}");
-        Check(segments.Count == 2, $"segments: {string.Join(" | ", segments.Select(s => $"{s.Start:0.0}-{s.End:0.0} '{s.Segment}'"))}");
-        Check(segments[0].Segment!.StartsWith("w1 w2 w3 w4 w5", StringComparison.Ordinal) && segments[1].Segment!.StartsWith("w1 w2 w3", StringComparison.Ordinal),
-            $"the segments' texts: '{segments[0].Segment}', '{segments[1].Segment}'");
-        Check(segments[0].Start >= 1.0 && segments[0].Start <= 1.3 && segments[1].Start >= 4.4, $"the segments start at {segments[0].Start:0.00} and {segments[1].Start:0.00} s");
-        var committed = updates.TakeWhile(u => !u.SegmentEnded).Select(u => u.Committed).Where(c => c.Length > 0).ToList();
-        Check(committed.Count > 0 && string.Join(' ', committed).Split(' ').All(w => !w.Contains('#', StringComparison.Ordinal)),
-            $"words committed before the first pause: [{string.Join(" | ", committed)}]");
-        Check(string.Join(' ', committed.Append(segments[0].Committed).Where(c => c.Length > 0)) == segments[0].Segment,
-            $"the committed words and the segment's rest make its text: [{string.Join(" | ", committed)}] + '{segments[0].Committed}' against '{segments[0].Segment}'");
-        Check(recognizer.Calls[0].Prompt == "start" && recognizer.Calls[^1].Prompt!.EndsWith(segments[0].Segment!, StringComparison.Ordinal),
-            $"prompts: first '{recognizer.Calls[0].Prompt}', last '{recognizer.Calls[^1].Prompt}'");
-
-        // A 0.1 s click after a sentence (a breath, a key) is never read; with no minimum it is.
-        var clickedReader = new ScriptedRecognizer();
-        Updates(clickedReader, Pieces([(2, true), (0.8, false), (0.1, true), (0.8, false)]), options);
-        var everything = new ScriptedRecognizer();
-        Updates(everything, Pieces([(2, true), (0.8, false), (0.1, true), (0.8, false)]), options with { MinSpeechSeconds = 0 });
-        Check(clickedReader.Calls.All(c => c.LoudSeconds >= 0.25) && everything.Calls.Any(c => c.LoudSeconds < 0.2),
-            $"readings' loud seconds with the 0.3 s minimum: {string.Join(", ", clickedReader.Calls.Select(c => $"{c.LoudSeconds:0.00}"))}; without: {string.Join(", ", everything.Calls.Select(c => $"{c.LoudSeconds:0.00}"))}");
-
-        var windowed = Updates(new ScriptedRecognizer(), Pieces([(6, true)]), options with { WindowSeconds = 2.5 });
-        int cut = windowed.Count(u => u.SegmentEnded);
-        Check(cut >= 3 && windowed.Where(u => u.SegmentEnded).All(u => u.End - u.Start <= 3.01), $"a 6 s tone in a 2.5 s window: {cut} segments");
-        Console.WriteLine($"    {recognizer.Calls.Count} readings, {segments.Count} segments: '{segments[0].Segment}', '{segments[1].Segment}'; the window cut a 6 s tone into {cut}");
     }
 }

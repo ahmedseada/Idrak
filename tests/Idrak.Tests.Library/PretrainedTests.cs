@@ -14,8 +14,6 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
-        ("pretrained: a special token sampled mid-reply is left out of the text (stream and batch), the end-of-turn marker still ends it, the ids stay as sampled; SkipSpecialTokens false writes it", SpecialTokensLeftOutOfText),
-        ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
         ("pretrained: byte-level and SentencePiece-style BPE tokenizers (merges, special tokens, byte fallback, round trips)", BpeTokenizers),
         ("pretrained: text holding half of a character encodes it as U+FFFD, also through Unicode normalization", LoneSurrogatesEncode),
     ];

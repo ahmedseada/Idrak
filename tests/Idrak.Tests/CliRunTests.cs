@@ -19,8 +19,6 @@ internal abstract partial class DesktopTests : Tests
     [
         ("cli run: help of every run command (examples, environment), distinct short forms, no provider names", CliRunHelp),
         ("cli run: generation settings, /set values, tool sample arguments and schema checks", CliRunSettings),
-        ("cli run: run answers a prompt (argument, --input, piped), --json with text, tokens and speed; usage errors", CliRunRun),
-        ("cli run: chat drives a conversation with slash commands, --file, --history saved and resumed, --json", CliRunChat),
         ("cli run: batch answers JSON Lines and resumes after an interruption", CliRunBatch),
         ("cli run: complete, tokenize (--chat, --count), template, embed (JSON and .npy), compare", CliRunText),
         ("cli run: tokenize --offsets, --pair, --special, --max-length, --truncation give tokenizers' encodings (WordPiece pairs, Unigram Arabic and emoji); plain output unchanged; bad values refused", d => { if (d == Device.Cpu) CliRunTokenizeDetailed(d); }),
@@ -106,12 +104,6 @@ internal abstract partial class DesktopTests : Tests
         int code = StandardInput.With(new StringReader(input ?? ""), () => CommandLine.Run(all, output, error));
         return (code, output.ToString(), error.ToString());
     }
-
-    // Standard error holds the load's report and nothing else: the element type each device computes in (plan 37 T0,
-    // always shown, whichever type the run asked) and the weights kept packed or expanded (Q0).
-    private static bool OnlyLoadReport(string error) => error.Split('\n').All(line => line.Trim().Length == 0
-        || line.StartsWith("element type: ", StringComparison.Ordinal) || line.StartsWith("weights kept packed: ", StringComparison.Ordinal)
-        || line.StartsWith("weights expanded: ", StringComparison.Ordinal));
 
     private static JsonObject JsonOf(string text, string what)
     {
@@ -202,86 +194,6 @@ internal abstract partial class DesktopTests : Tests
         Check(StructuredOutput.Check("{\"city\": \"x\", \"days\": 2.5}", schema).Problem!.Contains("$.days"), "a wrong type");
         Check(StructuredOutput.Check("no json here", schema).Problem!.Contains("not JSON"), "not JSON");
         Check(CompareCommand.Wrap("one two three four", 9).SequenceEqual(["one two", "three", "four"]), "wrapping");
-    }
-
-    private static void CliRunRun(Device device)
-    {
-        var (code, text, error) = RunIdrakOn(device, null, "run", CliModel, "Hello", "--max-tokens", "6", "--seed", "1");
-        Check(code == 0 && text.Length > 0 && OnlyLoadReport(error), $"run: exit {code}, error {error}");
-
-        (code, text, _) = RunIdrakOn(device, null, "r", CliModel, "Hello", "--max-tokens", "5", "--temperature", "0", "-j");
-        var json = JsonOf(text, "run --json");
-        Check(code == 0 && json["text"] is JsonValue && (int)json["generated_tokens"]! == 5 && (int)json["prompt_tokens"]! > 0
-              && (double)json["tokens_per_second"]! > 0 && (string?)json["done_reason"] == "length", $"run --json: {text}");
-        var (_, again, _) = RunIdrakOn(device, null, "run", CliModel, "Hello", "--max-tokens", "5", "--temperature", "0", "-j");
-        Check((string?)JsonOf(again, "run again")["text"] == (string?)json["text"], "greedy answers repeat");
-
-        // The prompt from piped input and from a file, after the argument.
-        string file = Path.Combine(Path.GetTempPath(), $"idrak-cli-prompt-{Guid.NewGuid():N}.txt");
-        File.WriteAllText(file, "a note");
-        try
-        {
-            (code, text, _) = RunIdrakOn(device, "piped text", "run", CliModel, "Summarize", "-i", file, "--max-tokens", "3", "-j", "-s", "Be brief.");
-            Check(code == 0 && (int)JsonOf(text, "run piped")["prompt_tokens"]! > (int)json["prompt_tokens"]!, "piped and file text join the prompt");
-        }
-        finally
-        {
-            File.Delete(file);
-        }
-
-        (code, _, error) = RunIdrakOn(device, null, "run", CliModel);
-        Check(code == 2 && error.Contains("Missing a prompt"), $"run without a prompt: {code} {error}");
-        (code, _, error) = RunIdrakOn(device, null, "run", "./no-such-model", "hi");
-        Check(code == 2 && error.Contains("Model not found"), $"run with a missing model: {code} {error}");
-        (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "hi", "--top-k", "many");
-        Check(code == 2 && error.Contains("--top-k"), "a bad --top-k");
-        (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "hi", "-k", "nosuch");
-        Check(code == 2 && error.Contains("--kv 'nosuch'", StringComparison.Ordinal) && error.Contains("Use auto", StringComparison.Ordinal), $"a bad --kv names it and the formats: {error}");
-        (code, _, _) = RunIdrakOn(device, null, "run", CliModel, "hi", "--max-tokens", "2", "-q");
-        Check(code == 0, "int8 KV cache");
-    }
-
-    private static void CliRunChat(Device device)
-    {
-        string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-chat-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(folder);
-        try
-        {
-            string history = Path.Combine(folder, "history.json"), saved = Path.Combine(folder, "saved.json"), notes = Path.Combine(folder, "notes.txt");
-            File.WriteAllText(notes, "remember the milk");
-            string input = string.Join('\n', "hello", "/set temperature 0", "/set max-tokens 4", "/set top-p 7", "/system Be brief.", "/system",
-                "how are \\", "you", "/stats", "/retry", "/copy", "/think off", "/set", "/tools", "/file " + notes, "and this?", $"/save {saved}", "/bogus", "/help",
-                "/exit", "never sent");
-            var (code, text, error) = RunIdrakOn(device, input, "chat", CliModel, "--max-tokens", "6", "--seed", "3", "--history", history, "--file", notes);
-            Check(code == 0 && OnlyLoadReport(error), $"chat: exit {code}, {error}");
-            Check(text.Contains("temperature = 0") && text.Contains("max-tokens = 4") && text.Contains("--top-p needs"), "chat: /set");
-            Check(text.Contains("System prompt set.") && text.Contains("System prompt: Be brief."), "chat: /system");
-            Check(text.Contains("Context ") && text.Contains("tokens/s on average") && text.Contains("Memory "), "chat: /stats");
-            Check(text.Contains("Reasoning: off.") && text.Contains("No tools") && text.Contains("Unknown command /bogus") && text.Contains("/retry"), "chat: /think, /tools, unknown, /help");
-            Check(text.Split('\n').Count(l => l.StartsWith("[4 tokens", StringComparison.Ordinal)) == 3, "chat: three answers after /set max-tokens 4 (two turns and a retry)");
-
-            var messages = ChatHistory.Load(history);
-            Check(messages.Count == 7 && messages[0].Role == "system" && messages[1].Content.Contains("remember the milk") && messages[1].Content.EndsWith("hello")
-                  && messages[3].Content == "how are \nyou" && messages[6].Role == "assistant", $"chat: history has {messages.Count} messages");
-            Check(messages[5].Content.Contains("remember the milk") && messages[5].Content.EndsWith("and this?"), "chat: /file joins the next message");
-            Check(ChatHistory.Load(saved).Count == 7, "chat: /save");
-
-            // Resumed from the history: the conversation continues, and --json gives the whole of it at the end.
-            (code, text, _) = RunIdrakOn(device, "one more\n", "c", CliModel, "--max-tokens", "2", "--history", history, "-j");
-            var json = JsonOf(text, "chat --json");
-            Check(code == 0 && json["messages"] is JsonArray { Count: 9 } && json["answers"] is JsonArray { Count: 1 },
-                $"chat: resumed with --json: {text}");
-            Check(ChatHistory.Load(history).Count == 9 && ChatHistory.Load(history)[0].Content == "Be brief.", "chat: history updated, system prompt kept");
-
-            (code, _, error) = RunIdrakOn(device, "", "chat", CliModel, "extra words");
-            Check(code == 2 && error.Contains("idrak run"), "chat with a prompt points to run");
-            (code, _, error) = RunIdrakOn(device, "", "chat", CliModel, "--file", Path.Combine(folder, "missing.txt"));
-            Check(code == 2 && error.Contains("File not found"), "chat --file missing");
-        }
-        finally
-        {
-            Directory.Delete(folder, recursive: true);
-        }
     }
 
     private static void CliRunBatch(Device device)

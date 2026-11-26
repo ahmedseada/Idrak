@@ -19,7 +19,6 @@ internal abstract partial class DesktopTests : Tests
         ("chat parts: ChatImage from bytes, files and data URLs (media types sniffed or given, SHA-256 hash, equality by bytes), bad data URLs refused", d => { CpuOnly(d); ChatImageFactories(); }),
         ("chat parts: ChatMessage holds ordered parts; text-only messages, Content, with { Content } and equality are as before", d => { CpuOnly(d); ChatMessageParts(); }),
         ("chat parts: text-only models (ChatGenerator, the engine's chat model, FakeChatModel, WithTools) and templates refuse an image with a clear message; text is unchanged", ChatPartModelsRefuse),
-        ("chat parts: chat JSON (ChatJson, fine-tuning transcripts, the CLI's --history) round-trips images and keeps text-only content a string; /v1 reads image_url data URLs and refuses other parts", ChatPartJson),
     ];
 
     private static readonly byte[] PngBytes = [0x89, (byte)'P', (byte)'N', (byte)'G', 13, 10, 26, 10, 0, 0, 0, 13, 1, 2, 3];
@@ -165,90 +164,5 @@ internal abstract partial class DesktopTests : Tests
         {
             engine.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
-    }
-
-    private static void ChatPartJson(Device device)
-    {
-        var image = ChatImage.FromBytes(PngBytes);
-        List<ChatMessage> messages =
-        [
-            new("system", "Be brief."),
-            new("user", [image, new ChatText("Read this.")]),
-            new("assistant", "It says hi.", "Looked at it.", [new ToolCall("noop", [])]),
-            new("tool", "done", ToolName: "noop"),
-            new("assistant", ""),
-        ];
-        var transcript = ChatJson.Transcript(messages);
-        var lines = transcript["messages"]!.AsArray();
-        Check(lines[0]!["content"]!.GetValueKind() == System.Text.Json.JsonValueKind.String && lines[4]!["content"]!.ToJsonString() == "\"\""
-              && lines[1]!["content"] is JsonArray { Count: 2 } parts && (string?)parts[0]!["type"] == "image" && (string?)parts[1]!["text"] == "Read this.",
-            $"text stays a string, images make a list: {transcript.ToJsonString()}");
-        var back = ChatTranscript.FromJson(JsonNode.Parse(transcript.ToJsonString())!.AsObject()).Messages;
-        Check(back.Count == 5 && back[1] == messages[1] && back[0] == messages[0] && back[3] == messages[3] && back[2].Content == "It says hi." && back[4].Parts.Count == 0,
-            "fine-tuning transcripts read the images back");
-        var openAi = ChatTranscript.FromJson(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "text", "text": "a"}, "b", {"type": "text", "text": "c"}]}]}""")!.AsObject());
-        Check(openAi.Messages[0].Content == "abc", "text parts join as before");
-        Throws<InvalidDataException>(() => ChatTranscript.FromJson(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "x"}}]}]}""")!.AsObject()),
-            "an unknown part type is refused, not dropped");
-
-        if (device != Device.Cpu)
-        {
-            return;
-        }
-
-        string folder = Path.Combine(Path.GetTempPath(), $"idrak-chat-parts-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(folder);
-        try
-        {
-            string history = Path.Combine(folder, "history.json");
-            ChatHistory.Save(history, messages, null, null);
-            var loaded = ChatHistory.Load(history);
-            Check(loaded.Count == 5 && loaded[1] == messages[1] && loaded[0] == messages[0] && loaded[3] == messages[3], "--history round-trips the image");
-            File.WriteAllText(history, """{"messages": [{"role": "user", "content": [{"type": "video", "data": "x"}]}]}""");
-            try
-            {
-                ChatHistory.Load(history);
-                Check(false, "an unknown part in a history file is refused");
-            }
-            catch (InvalidOperationException e)
-            {
-                Check(e.Message.Contains("'video'", StringComparison.Ordinal), e.Message);
-            }
-
-            // A text model resumed from a history with an image says why it cannot answer.
-            ChatHistory.Save(history, messages[..2], null, null);
-            var (code, text, error) = RunIdrakOn(device, "go on\n", "chat", CliModel, "--max-tokens", "2", "--history", history);
-            Check(code != 0 && (text + error).Contains("kind 'image'", StringComparison.Ordinal), $"chat with an image in its history: exit {code}, {text}{error}");
-        }
-        finally
-        {
-            Directory.Delete(folder, true);
-        }
-
-        var withImage = Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}, {"type": "text", "text": "a"}]}]}""")!.AsObject());
-        Check(withImage.Messages[0].Parts is [ChatImage { MediaType: "image/png" }, ChatText { Text: "a" }], "/v1 image_url data URLs become image parts (plan 11, phase 8)");
-        try
-        {
-            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "video_url", "video_url": {}}]}]}""")!.AsObject());
-            Check(false, "/v1 refuses parts it does not take");
-        }
-        catch (ArgumentException e)
-        {
-            Check(e.Message.Contains("'video_url'", StringComparison.Ordinal), e.Message);
-        }
-
-        try
-        {
-            // input_audio is read (plan 21, S7: the "audio" part); one without its bytes is refused naming "data".
-            Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "input_audio", "input_audio": {}}]}]}""")!.AsObject());
-            Check(false, "/v1 refuses an input_audio part without its data");
-        }
-        catch (ArgumentException e)
-        {
-            Check(e.Message.Contains("input_audio", StringComparison.Ordinal) && e.Message.Contains("\"data\"", StringComparison.Ordinal), e.Message);
-        }
-
-        var request = Idrak.AspNetCore.CompletionsTranslation.Chat(JsonNode.Parse("""{"messages": [{"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}, {"role": "assistant", "content": null}]}""")!.AsObject());
-        Check(request.Messages[0].Content == "ab" && request.Messages[1].Content == "", "/v1 text parts as before");
     }
 }

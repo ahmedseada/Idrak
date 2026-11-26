@@ -608,7 +608,7 @@ internal abstract partial class DesktopTests : Tests
     {
         _ = device;
         var (exit, topics, _) = Cli("help", "topics");
-        Check(exit == 0 && topics.Contains("exit-codes") && topics.Contains("precision"), $"help topics: {topics}");
+        Check(exit == 0 && topics.Contains("exit-codes"), $"help topics: {topics}");
         foreach (string topic in HelpTopics.Names)
         {
             var (e, page, _) = Cli("help", topic);

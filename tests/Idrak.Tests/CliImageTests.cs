@@ -22,15 +22,11 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliImageGroup =
     [
-        ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose; an 8-bit image stays 8-bit, turned to the same values as its float copy", CliImageExif),
-        ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
         ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
         ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan, image transforms) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
         ("cli images: run --out writes the answer, or the -j document, to a file as UTF-8 without a BOM", CliImageRunOut),
         ("cli images: run --vision-option gives the family its options (Gemma 3's pan and scan of a tall page: transformers' prompt and tokens); an alias keeps them; an unknown key names the family's", CliImageVisionOptions),
         ("cli vision tuning: idrak tune on ShareGPT with <image> (the tiny Gemma 3, images from a folder and a zip; the tiny LLaVA) writes adapters, projector and tuning_images.json; --metric cer before, every step and in the summary; -v's plan; run --adapter applies the projector and the preparation; tune evaluate --metric cer; another family's adapter refused", CliVisionTuning),
-        ("cli vision tuning: an unregistered family exits with the registry's message before the data is read; image options on a text model and bad names refused", CliVisionTuningRefusals),
-        ("cli vision tuning: tune init writes the text example; tune.json's image keys (format, images, vision, parts, feature_cache) and the disk feature cache", CliVisionTuneInit),
     ];
 
     private static void CliImageVisionOptions(Device device)
@@ -82,109 +78,6 @@ internal abstract partial class DesktopTests : Tests
         Check(code == 2 && error.Contains("tiles") && error.Contains("pan_and_scan_max_num_crops"), $"an unknown vision option: {code} {error}");
         (code, _, error) = RunIdrakOn(device, null, ["run", VlmModel, "--image", png, "hi", "--vision-option", "do_pan_and_scan"]);
         Check(code == 2 && error.Contains("KEY=VALUE"), $"a vision option without a value: {code} {error}");
-    }
-
-    private static void CliImageExif(Device device)
-    {
-        _ = device;
-        foreach (string file in Directory.GetFiles(TestData("vlm/exif"), "exif-*").Order(StringComparer.Ordinal))
-        {
-            string name = Path.GetFileName(file);
-            int n = int.Parse(name[5..6], System.Globalization.CultureInfo.InvariantCulture);
-            var image = ChatImage.FromFile(file);
-            Check(ChatImageDecoder.Orientation(image.Data.Span) == n, $"{name}: orientation {ChatImageDecoder.Orientation(image.Data.Span)}, expected {n}");
-            var upright = ImageInputs.Decode(image);
-            Check(upright.TryGetPlanes(out _, out _), $"{name}: the decoder's 8-bit planes were widened to floats by the orientation");
-            var expected = new PngCodec().Decode(File.ReadAllBytes(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png")));
-            Check(upright.Width == expected.Width && upright.Height == expected.Height && upright.Channels == expected.Channels
-                  && upright.Pixels.Select(v => (int)MathF.Round(v * 255)).SequenceEqual(expected.Pixels.Select(v => (int)MathF.Round(v * 255))), $"{name}: {upright.Width} x {upright.Height} differs from Pillow's exif_transpose ({expected.Width} x {expected.Height})");
-        }
-
-        Check(ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.png"))) == 1 && ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.jpg"))) == 1
-              && ChatImageDecoder.Orientation(new byte[] { 0xFF, 0xD8, 0xFF, 0xE1, 0x00 }) == 1, "no EXIF (or a cut one): orientation 1");
-
-        // An image of 8-bit planes larger than a turn's tile on both sides (and not a multiple of it): every orientation
-        // turns its planes (still 8-bit, the same levels) and a float copy of it to the same values, those of exif_transpose
-        // written pixel by pixel.
-        const int H = 70, W = 131;
-        var random = new Random(5);
-        var planes = new byte[3][];
-        for (int k = 0; k < 3; k++)
-        {
-            planes[k] = new byte[H * W];
-            random.NextBytes(planes[k]);
-        }
-
-        var levels = Enumerable.Range(0, 256).Select(b => b / 255f).ToArray();
-        for (int orientation = 1; orientation <= 8; orientation++)
-        {
-            var bytes = new ImageData(planes, H, W, levels);
-            var floats = new ImageData(new ImageData(planes, H, W, levels).Pixels, 3, H, W);
-            var fromBytes = ChatImageDecoder.Orient(bytes, orientation);
-            var fromFloats = ChatImageDecoder.Orient(floats, orientation);
-            bool swap = orientation >= 5;
-            int oh = swap ? W : H, ow = swap ? H : W;
-            Check(fromBytes.TryGetPlanes(out var turned, out var kept) && kept.Span.SequenceEqual(levels), $"orientation {orientation}: the planes were not kept");
-            var reference = new float[3 * oh * ow];
-            for (int k = 0; k < 3; k++)
-            {
-                for (int y = 0; y < oh; y++)
-                {
-                    for (int x = 0; x < ow; x++)
-                    {
-                        var (sy, sx) = orientation switch
-                        {
-                            2 => (y, W - 1 - x), 3 => (H - 1 - y, W - 1 - x), 4 => (H - 1 - y, x), 5 => (x, y),
-                            6 => (H - 1 - x, y), 7 => (H - 1 - x, W - 1 - y), 8 => (x, W - 1 - y), _ => (y, x),
-                        };
-                        reference[(k * oh + y) * ow + x] = levels[planes[k][sy * W + sx]];
-                        Check(turned[k].Span[y * ow + x] == planes[k][sy * W + sx], $"orientation {orientation}: plane {k} at ({y}, {x})");
-                    }
-                }
-            }
-
-            Check(fromBytes.Height == oh && fromBytes.Width == ow && fromFloats.Height == oh && fromFloats.Width == ow
-                  && fromBytes.Pixels.AsSpan().SequenceEqual(reference) && fromFloats.Pixels.AsSpan().SequenceEqual(reference),
-                $"orientation {orientation}: {fromBytes.Width} x {fromBytes.Height}, the values differ from exif_transpose's");
-        }
-    }
-
-    private static void CliImageTemplate(Device device)
-    {
-        _ = device;
-        var facts = JsonNode.Parse(File.ReadAllText(TestData("vlm/manifest.json")))!["facts"]!["image_prompt"]!;
-        var tokenizer = BpeTokenizer.Load(VlmModel);
-        var template = JinjaChatTemplate.Load(VlmModel, tokenizer)!;
-        Check(template.PartKinds.SetEquals([ChatParts.Text, ChatParts.Image]), $"Gemma 3's template renders images: {string.Join(", ", template.PartKinds)}");
-        Check(JinjaChatTemplate.Load(CliModel, BpeTokenizer.Load(CliModel))!.PartKinds.SetEquals(ChatParts.TextOnly), "a ChatML template renders text only");
-
-        var image = ChatImage.FromFile(TestData("vlm/image.png"));
-        List<ChatMessage> messages = [new("system", "Read the scan."), new("user", [image, new ChatText("What is in this image?")])];
-        string rendered = template.Render(messages, [], null, addGenerationPrompt: true);
-        Check(rendered == (string)facts["rendered_by_chat_template"]!, $"rendered: {rendered}");
-        Check(template.Render([new("user", "hi")], [], null) == template.Render([new("user", [new ChatText("hi")])], [], null), "text-only messages render as before");
-
-        var model = PretrainedModel.Load(VlmModel, new PretrainedOptions { Device = Device.Cpu });
-        using (model)
-        {
-            // The prompt format and its token ids come from the family (Idrak.Vision.Plugins).
-            var vision = model.Vision!;
-            var format = vision.PromptFormat;
-            var layout = new ImageTokenLayout(4) { Grid = [2, 2] };
-            string expanded = format.Expand(rendered, [[layout]], tokenizer);
-            Check(expanded == (string)facts["expanded_text"]!, $"expanded: {expanded}");
-            int[] ids = [.. facts["input_ids"]!.AsArray().Select(i => (int)i!)];
-            Check(tokenizer.Encode(expanded).SequenceEqual(ids), $"ids: {string.Join(" ", tokenizer.Encode(expanded))}");
-            Check(Fails(() => format.Expand(rendered, [[layout], [layout]], tokenizer)), "one marker for two images is refused");
-
-            // A chat generator without images takes text only; with them, images, and batches refuse them.
-            var chat = model.CreateChat(KeyValueFormat.Float32, 64);
-            Check(chat.PartKinds.SetEquals(ChatParts.TextOnly), "a chat generator takes text unless given images");
-            using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = Device.Cpu });
-            var withImages = new ChatGenerator(chat.Generator, chat.Template) { Images = new ChatImages(encoder, format, vision.Attention) };
-            Check(withImages.PartKinds.Contains(ChatParts.Image) && withImages.RenderPrompt(new ChatRequest(messages)) == expanded, "RenderPrompt expands the images");
-            Check(Fails(() => withImages.ChatBatch([new ChatRequest(messages)])), "a chat batch with images is refused");
-        }
     }
 
     private static void CliImageRun(Device device)

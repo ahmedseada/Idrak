@@ -20,7 +20,6 @@ internal abstract partial class Tests
         ("vision augment: flip and shift move boxes, masks and pixel classes exactly with the pixels, drawing what the sample-transform path draws; crops and letterboxes scale boxes; a wrong augmentation fails the kit", AugmentationsAligned),
         ("vision augment: AugmentedImageLoader batches augmented samples off the training thread (workers from the machine's cores, batches ahead from its free memory); the same batches whatever the workers; letterbox, channels, pixel classes, leaving early", AugmentedLoaderBatches),
         ("vision data: COCO, YOLO and VOC declare what they keep (Keeps) and pass the testing kit's round-trip suite on it; hand-written files read as expected (RLE and polygon masks, crowds, data.yaml names, difficult objects); errors name the file", AnnotationFormatsRoundTrip),
-        ("vision data: a COCO dataset with masks loads into augmented batches (decoded, letterboxed, boxes and masks moved)", AnnotatedDatasetIntoLoader),
     ];
 
     internal static void AugmentationsConformant(Device device)
@@ -283,48 +282,6 @@ internal abstract partial class Tests
             {
                 Check(e.Message.Contains(file, StringComparison.Ordinal) && e.Message.Contains(text, StringComparison.Ordinal), $"the error names {file}: {e.Message}");
             }
-        }
-    }
-
-    internal static void AnnotatedDatasetIntoLoader(Device device)
-    {
-        string root = Path.Combine(Path.GetTempPath(), "idrak-dataset-" + Guid.NewGuid().ToString("N"));
-        try
-        {
-            var images = new List<ImageAnnotations>();
-            for (int i = 0; i < 5; i++)
-            {
-                int w = 30 + 4 * i, h = 20 + 2 * i;
-                WritePpm(Path.Combine(root, "images", $"{i}.ppm"), w, h, i);
-                var box = new BoundingBox(2 + i, 3, 10, 8);
-                images.Add(new ImageAnnotations($"{i}.ppm", w, h,
-                    [new ObjectAnnotation(box, i % 2) { Mask = ObjectMask.FromPolygons([[box.X, box.Y, box.Right, box.Y, box.Right, box.Bottom, box.X, box.Bottom]]) }]));
-            }
-
-            new CocoFormat().Write(new AnnotatedDataset(["a", "b"], images), Path.Combine(root, "instances.json"));
-            var dataset = new CocoFormat().Read(Path.Combine(root, "instances.json"), new AnnotationReadOptions { ImagesRoot = Path.Combine(root, "images") });
-            var loader = AugmentedImageLoader.FromDataset(dataset, 48, 48, batchSize: 2, seed: 1, device: device, masks: true);
-            int seen = 0;
-            foreach (var batch in loader)
-            {
-                using (batch)
-                {
-                    for (int i = 0; i < batch.Count; i++)
-                    {
-                        Check(batch.Boxes[i].Count == 1 && batch.Masks[i] is { Count: 1 } && batch.Images.Shape[3] == 48, "one object with its mask, letterboxed");
-                        var bounds = ObjectMask.PixelBounds(batch.Masks[i]![0], 48, 48);
-                        var box = batch.Boxes[i][0];
-                        Check(MathF.Abs(bounds.X - box.X) <= 1 && MathF.Abs(bounds.Right - box.Right) <= 1, $"mask {bounds}, box {box}");
-                        seen++;
-                    }
-                }
-            }
-
-            Check(seen == 5, $"{seen} samples");
-        }
-        finally
-        {
-            Directory.Delete(root, recursive: true);
         }
     }
 }

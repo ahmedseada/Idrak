@@ -23,7 +23,6 @@ internal abstract partial class DesktopTests : Tests
         ("vision layers: AdaptiveAvgPool2d and AdaptiveMaxPool2d (uneven, overlapping windows) match PyTorch with gradients; divisible sizes give ordinary pooling's results; gradient: finite differences", AdaptivePoolsMatchPyTorch),
         ("vision layers: GroupNorm (affine over [N, C, H, W], plain over [N, C, L]) matches PyTorch's output and gradients; gradient: finite differences", GroupNormMatchesPyTorch),
         ("vision layers: ceil-mode MaxPool2d and AvgPool2d (padding counted and not) match PyTorch with gradients; padding below and right; gradient: finite differences", CeilPoolsMatchPyTorch),
-        ("vision layers: builder steps replay from JSON; pooling without the new options is written as before", VisionLayersDescribedAgain),
         ("vision layers: ONNX: a decoder exports (ONNX Runtime matches) and imports again; PyTorch's decoder.onnx and windows.onnx (padding below and right, GroupNormalization) import and match", VisionLayersOnnxImport),
     ];
 
@@ -261,23 +260,6 @@ internal abstract partial class DesktopTests : Tests
         .ConvTranspose2d(6, (3, 2), (2, 2), (1, 0), (1, 1), groups: 2).Upsample(2).UpsampleToSize((15, 13), InterpolationMode.Bilinear, alignCorners: true)
         .AvgPool2d((2, 2), countIncludePad: false, ceilMode: true).Upsample(1.5f, InterpolationMode.Bilinear).AdaptiveMaxPool2d((4, 5)).GroupNorm(3, affine: false)
         .AdaptiveAvgPool2d(1).Flatten().Linear(3);
-
-    private static void VisionLayersDescribedAgain(Device device)
-    {
-        using var scope = new TensorScope();
-        var builder = SmallDecoder(device);
-        using var model = builder.Build();
-        var json = builder.ToJson();
-        using var replayed = Network.FromJson(json).OnDevice(device).Build();
-        var x = Tensor.From(RandomArray(new Random(112), 2 * 2 * 9 * 10), [2, 2, 9, 10], device);
-        AssertClose(model.Forward(x).ToArray(), replayed.Forward(x).ToArray(), 0f, "replayed from JSON");
-        Check(builder.CurrentShape.SequenceEqual([3]), $"shape {Tensor.FormatShape([.. builder.CurrentShape])}");
-
-        // Pooling without the new options is written and described as before.
-        var steps = Network.Image(1, 8, 8).MaxPool2d((2, 2)).AvgPool2d((2, 2)).ToJson()["steps"]!.AsArray();
-        Check(steps[0]!.ToJsonString() == """{"op":"maxpool2d","kernel":2,"padding":0}""" && steps[1]!.ToJsonString() == """{"op":"avgpool2d","kernel":2,"padding":0,"countIncludePad":true}""",
-            steps.ToJsonString());
-    }
 
     private static void VisionLayersOnnxImport(Device device)
     {

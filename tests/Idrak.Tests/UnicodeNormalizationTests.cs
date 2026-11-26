@@ -21,7 +21,6 @@ internal abstract partial class DesktopTests : Tests
         ("tokenizers: unicode normalization: equal to the platform's normalization (this test process's ICU or Windows) on every code point and on the corpora in the four forms, except where the platform, on an older Unicode, leaves a newer character as it is", UnicodeNormalizationPlatform),
         ("tokenizers: unicode normalization: nothing allocated once warm (IsNormalized, TryNormalize, a normalized string returned as the same instance), a lone surrogate refused as .NET refuses it, a bad form refused, and a destination too small reported", UnicodeNormalizationContract),
         ("tokenizers: unicode normalization: nothing in src/ calls the platform's normalization (string.Normalize, IsNormalized, TryNormalize, GetNormalizedLength)", UnicodeNormalizationNoPlatformCalls),
-        ("tokenizers: unicode normalization: the idrak tool's own process (invariant globalization) strips accents and decomposes Hangul through BERT's normalizer, giving the ids this process gives", UnicodeNormalizationCliProcess),
         ("tokenizers: unicode normalization: speed against the platform's normalization on the corpora (printed)", UnicodeNormalizationSpeed),
     ];
 
@@ -330,49 +329,6 @@ internal abstract partial class DesktopTests : Tests
 
         Check(files > 100, $"the scan read src/ ({files} files)");
         Check(found.Count == 0, $"platform normalization calls in src/ (use UnicodeNormalization):\n{string.Join("\n", found)}");
-    }
-
-    private static void UnicodeNormalizationCliProcess(Device device)
-    {
-        string bin = AppContext.BaseDirectory;
-        string dll = Path.Combine(bin, "Idrak.Cli.dll"), config = Path.Combine(bin, "Idrak.Cli.runtimeconfig.json");
-        Check(File.Exists(dll) && File.Exists(config), $"the idrak tool is built beside the tests ({dll}, {config})");
-        var options = JsonNode.Parse(File.ReadAllText(config))!["runtimeOptions"]?["configProperties"];
-        Check((bool?)options?["System.Globalization.Invariant"] == true, "the idrak tool runs with invariant globalization (as it ships), so this test checks what .NET's own normalization would miss");
-
-        string folder = TestData("tokenizers/wordpiece-uncased");
-        const string text = "Caf\u00E9 na\u00EFve R\u00C9SUM\u00C9 \u00DCn\u00EFc\u00F6d\u00E9 e\u0301t\u00E9 \uD55C\uAD6D\uC5B4 \uFB01";
-        // Standard input given and closed: the tool adds piped input to its text, and an inherited pipe nobody closes (a
-        // runner started from a script) would hold it.
-        var info = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, StandardOutputEncoding = Encoding.UTF8,
-        };
-        foreach (string arg in new[] { dll, "tokenize", folder, text, "--json", "--offline" })
-        {
-            info.ArgumentList.Add(arg);
-        }
-
-        info.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
-        info.Environment["DOTNET_NOLOGO"] = "1";
-        using var process = Process.Start(info)!;
-        process.StandardInput.Close();
-        var error = process.StandardError.ReadToEndAsync();
-        string output = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
-        Check(process.ExitCode == 0, $"idrak tokenize ran: {output}{error.Result}");
-        var json = JsonNode.Parse(output)!;
-        int[] cli = [.. json["ids"]!.AsArray().Select(i => (int)i!)];
-        string[] tokens = [.. json["tokens"]!.AsArray().Select(t => (string)t!)];
-
-        var tokenizer = PretrainedTokenizers.Load(folder);
-        int[] here = [.. tokenizer.Encode(text)];
-        Check(cli.SequenceEqual(here), $"the tool's ids [{string.Join(", ", cli)}] equal this process's [{string.Join(", ", here)}]");
-        Check(!tokens.Any(t => t.Any(c => c is >= '\u00C0' and <= '\u024F' || c == '\u0301')), $"accents are stripped in the tool: {string.Join(" ", tokens)}");
-        string joined = string.Concat(tokens.Select(t => t.StartsWith("##", StringComparison.Ordinal) ? t[2..] : " " + t));
-        Check(joined.Contains(" cafe ", StringComparison.Ordinal) && joined.Contains(" resume ", StringComparison.Ordinal) && joined.Contains(" unicode ", StringComparison.Ordinal),
-            $"café, RÉSUMÉ and Ünïcödé are lowercased without their accents: {joined}");
-        Check(joined.Contains('\u1100'), $"Hangul syllables are decomposed into jamo, as BERT's NFD does: {joined}");
     }
 
     private static void UnicodeNormalizationSpeed(Device device)

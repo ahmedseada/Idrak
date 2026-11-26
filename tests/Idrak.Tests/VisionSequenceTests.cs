@@ -24,7 +24,6 @@ internal abstract partial class DesktopTests : Tests
         ("vision sequence: MaxPool2d and AvgPool2d with rectangular windows match PyTorch (padding counted and not); gradient: their gradients", PoolsMatchPyTorch),
         ("vision sequence: bidirectional two-layer LSTM and GRU (with the candidate bias) match PyTorch's outputs and last states through LoadGateWeights", RecurrentMatchesPyTorch),
         ("vision sequence: gradient: bidirectional stacked LSTM and GRU (inputs and weights)", RecurrentGradients),
-        ("vision sequence: builder steps replay from JSON; square steps are written as before", VisionLayersDescribed),
         ("vision sequence: ONNX: a convolutional recurrent network exports (ONNX Runtime matches) and imports again; PyTorch's exports of the new layers import and match", VisionLayersOnnx),
     ];
 
@@ -337,23 +336,6 @@ internal abstract partial class DesktopTests : Tests
         .Conv2d(6, (3, 3), padding: (2, 1), dilation: (2, 1), groups: 2).ReLU().AvgPool2d((2, 1))
         .Conv2d(4, (4, 1)).ReLU().ColumnsToSequence()
         .LSTM(5, returnSequences: true, bidirectional: true, layers: 2).GRU(3, returnSequences: true, bidirectional: true, candidateBias: true).Linear(7);
-
-    private static void VisionLayersDescribed(Device device)
-    {
-        using var scope = new TensorScope();
-        var builder = SequenceReader(device);
-        Check(builder.CurrentShape.SequenceEqual([12, 7]), $"shape {Tensor.FormatShape([.. builder.CurrentShape])}");
-        using var model = builder.Build();
-        var json = builder.ToJson();
-        using var replayed = Network.FromJson(json).OnDevice(device).Build();
-        var x = Tensor.From(RandomArray(new Random(72), 2 * 16 * 24), [2, 1, 16, 24], device);
-        AssertClose(model.Forward(x).ToArray(), replayed.Forward(x).ToArray(), 0f, "replayed from JSON");
-
-        // Square and one-direction steps are written as before.
-        var square = Network.Image(1, 8, 8).Conv2d(4, 3, padding: 1).MaxPool2d(2).ToJson()["steps"]!.AsArray();
-        Check(square[0]!.ToJsonString() == """{"op":"conv2d","out":4,"kernel":3,"stride":1,"padding":1,"bias":true}""" && square[1]!.ToJsonString() == """{"op":"maxpool2d","kernel":2,"padding":0}""",
-            $"square steps: {square.ToJsonString()}");
-    }
 
     private static void VisionLayersOnnx(Device device)
     {

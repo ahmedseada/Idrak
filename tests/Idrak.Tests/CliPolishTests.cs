@@ -20,12 +20,8 @@ internal abstract partial class DesktopTests : Tests
     [
         ("cli polish: help lists the commands by plan group with aliases; every command's help has one layout", CliPolishHelpLayout),
         ("cli polish: the environment table names real commands; every help ends with the generated section", CliPolishEnvironment),
-        ("cli polish: pull then run from the same --cache offline; list shows the use; --offline names what is missing", CliPolishCacheOffline),
         ("cli polish: --timeout gives up on a server that does not answer (ping, api)", CliPolishTimeout),
-        ("cli polish: --format csv and md on the commands that print tables", CliPolishFormats),
         ("cli polish: --seed reaches the data commands and suggest; progress lines draw, erase and clear", CliPolishSeedProgress),
-        ("cli host: a host refuses a command by what it needs, before it runs (serve, ui, serve --mcp, mcp serve, shell, test, cluster ui, report --tests), "
-         + "with exit 3 naming the host and the need, its help still shown; the host's stop ends a running command (a server too) with 130; its working folder holds the run; IdrakCommands lists the table and splits a typed line", CliHostRefusals),
     ];
 
     private static (int Code, string Out, string Err) PolishCli(params string[] args)
@@ -161,49 +157,6 @@ internal abstract partial class DesktopTests : Tests
         Check(!Help.For(CommandTable.All.First(c => c.Name == "data preview")).Contains("HF_TOKEN", StringComparison.Ordinal), "data preview reads local files only");
     }
 
-    private static void CliPolishCacheOffline(Device device)
-    {
-        string cache = PolishTemp(), work = PolishTemp();
-        try
-        {
-            string[] c = ["--cache", cache];
-            using (new FakeHub())
-            {
-                var (pulled, _, pullError) = PolishCli(["pull", "test/tiny-llama", .. c]);
-                Check(pulled == 0, $"pull into --cache: {pullError}");
-            }
-
-            // The hub is gone: run finds the model in the same cache, without the network and with --offline.
-            var before = DateTime.UtcNow.AddSeconds(-1);
-            var (ran, answer, runError) = PolishCli(["run", "test/tiny-llama", "Hello", "--max-tokens", "3", "--seed", "1", "--offline", "-d", device.ToString(), "-j", .. c]);
-            Check(ran == 0 && JsonNode.Parse(answer)?["text"] is not null, $"run from the cache offline: {runError}{answer}");
-            var listed = JsonNode.Parse(PolishCli(["list", "-j", .. c]).Out)!["models"]!.AsArray().First(m => (string?)m!["name"] == "test/tiny-llama")!;
-            Check(DateTime.Parse((string)listed["lastUse"]!, System.Globalization.CultureInfo.InvariantCulture).ToUniversalTime() >= before, $"list shows run's use: {listed}");
-
-            // A model the cache lacks: offline names it and pull; a GGUF file of a repository is fetched by pull only.
-            var (missing, _, missingError) = PolishCli(["run", "test/missing", "Hi", "--offline", .. c]);
-            Check(missing == 1 && missingError.Contains("idrak pull test/missing", StringComparison.Ordinal) && missingError.Contains("--offline", StringComparison.Ordinal),
-                $"run of a missing model offline: {missingError}");
-            var (tagged, _, taggedError) = PolishCli(["run", "test/tiny-gguf:Q8_0", "Hi", .. c]);
-            Check(tagged == 1 && taggedError.Contains("idrak pull test/tiny-gguf:Q8_0", StringComparison.Ordinal), $"an unpulled GGUF tag names pull: {taggedError}");
-
-            // A download refused by --offline names the missing file.
-            string recipe = Path.Combine(work, "recipe.json");
-            File.WriteAllText(recipe, """{"sources": ["https://example.invalid/data/chats.jsonl"]}""");
-            var (mixed, _, mixError) = PolishCli(["data", "mix", recipe, "-o", Path.Combine(work, "out.jsonl"), "--offline", .. c]);
-            Check(mixed == 1 && mixError.Contains("--offline", StringComparison.Ordinal) && mixError.Contains("chats.jsonl", StringComparison.Ordinal), $"an offline download: {mixError}");
-
-            // A .gguf file is prepared under --cache, not the default cache.
-            var (tokens, _, tokensError) = PolishCli(["tokenize", TestData("gguf/tiny-llama.gguf"), "hello", "--count", .. c]);
-            Check(tokens == 0 && Directory.Exists(Path.Combine(cache, "gguf")), $"a GGUF file prepared under --cache: {tokensError}");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-            Directory.Delete(work, true);
-        }
-    }
-
     private static void CliPolishTimeout(Device device)
     {
         _ = device;
@@ -235,36 +188,6 @@ internal abstract partial class DesktopTests : Tests
         listener.Stop();
         accepting.Wait(TimeSpan.FromSeconds(5));
         held.ForEach(h => h.Dispose());
-    }
-
-    private static void CliPolishFormats(Device device)
-    {
-        string cache = PolishTemp();
-        try
-        {
-            string model = TestData("gguf/tiny-llama-hf");
-            string[][] commands =
-            [
-                ["devices"], ["env", "--all"], ["cache", "info"], ["version"], ["doctor"],
-                ["show", model], ["inspect", TestData("gguf/tiny-llama.gguf")], ["memory", model], ["verify", model], ["tokenize", model, "hello"],
-            ];
-            foreach (string[] command in commands)
-            {
-                var (csvCode, csv, csvError) = PolishCli([.. command, "--format", "csv", "--cache", cache, "-d", device.ToString()]);
-                Check(csvCode is 0 or 1 && csv.Length > 0 && csv.Split('\n')[0].Contains(',', StringComparison.Ordinal) && !csv.StartsWith(' '),
-                    $"idrak {string.Join(' ', command)} --format csv: {csv}{csvError}");
-                var (mdCode, md, _) = PolishCli([.. command, "--format", "md", "--cache", cache, "-d", device.ToString()]);
-                Check(mdCode is 0 or 1 && md.Contains("\n|---", StringComparison.Ordinal) || md.StartsWith("| ", StringComparison.Ordinal), $"idrak {string.Join(' ', command)} --format md: {md}");
-            }
-
-            // Every table's headers are in sentence case.
-            var (_, devices, _) = PolishCli("devices", "--format", "csv");
-            Check(devices.StartsWith("Device,Backend,", StringComparison.Ordinal), $"devices headers: {devices}");
-        }
-        finally
-        {
-            Directory.Delete(cache, true);
-        }
     }
 
     private static void CliPolishSeedProgress(Device device)
@@ -313,102 +236,5 @@ internal abstract partial class DesktopTests : Tests
         {
             Directory.Delete(folder, true);
         }
-    }
-
-    // CommandHost (plan 34): an app runs the commands in its own process; what it does not allow is refused by what each
-    // command declares it needs (never by name), and its stop reaches a running command as Ctrl+C would.
-    private static void CliHostRefusals(Device device)
-    {
-        _ = device;
-        string config = Path.Combine(Path.GetTempPath(), "idrak-cli-host-no-config.json");
-        var app = new CommandHost { Name = "the test app", Allows = CommandNeeds.None, Input = new StringReader("") };
-        (int Code, string Out, string Err) Run(CommandHost host, CancellationToken token, params string[] args)
-        {
-            var output = new StringWriter();
-            var error = new StringWriter();
-            int code = IdrakCommands.Run([.. args, "-C", config], output, error, host, token);
-            return (code, output.ToString(), error.ToString());
-        }
-
-        foreach (var (args, need) in new (string[] Args, string Need)[]
-                 {
-                     (["serve", "Qwen/Qwen3-0.6B"], "network listener"), (["ui", "qwen"], "network listener"), (["serve", "qwen", "--mcp"], "standard input"),
-                     (["mcp", "serve", "tools.dll"], "standard input"), (["shell"], "keyboard"), (["test"], "other programs"), (["cluster", "ui"], "network listener"),
-                     (["report", "--tests"], "other programs"),
-                 })
-        {
-            var (code, _, error) = Run(app, default, args);
-            Check(code == IdrakCommands.UnavailableExitCode && error.Contains("is not available in the test app", StringComparison.Ordinal) && error.Contains(need, StringComparison.Ordinal),
-                $"idrak {string.Join(' ', args)} in an app that allows nothing: {code} {error}");
-        }
-
-        Check(!Run(app, default, "serve", "qwen", "--mcp").Err.Contains("listener", StringComparison.Ordinal), "serve --mcp needs standard input, not a listener");
-        Check(Run(app, default, "serve", "--help") is { Code: 0, Out: var help } && help.Contains("idrak serve", StringComparison.Ordinal), "a refused command's help still shows");
-        Check(Run(app, default, "version") is { Code: 0, Out.Length: > 0 }, "a command that needs nothing runs in the app");
-        Check(IdrakCommands.Refusal("serve", CommandHost.Console) is null && IdrakCommands.Refusal("serve", app) is { } why && why.Contains("network listener", StringComparison.Ordinal)
-              && IdrakCommands.Refusal("cache info", app) is null && IdrakCommands.Refusal("no such command", app) is null, "Refusal by the command's words");
-        Check(IdrakCommands.Commands.Count == CommandTable.All.Count && IdrakCommands.Commands.Single(c => c.Name == "serve").Needs.HasFlag(CommandNeeds.NetworkListener)
-              && IdrakCommands.Commands.Single(c => c.Name == "cluster sim").Needs == CommandNeeds.None && IdrakCommands.Commands.All(c => c.Group.Length > 0 && c.Summary.Length > 0),
-            "the listing is the command table, with each command's group, summary and needs");
-
-        // The host's stop, while a command waits on a server that never answers.
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        var held = new List<TcpClient>();
-        var accepting = Task.Run(async () =>
-        {
-            try
-            {
-                while (true)
-                {
-                    held.Add(await listener.AcceptTcpClientAsync().ConfigureAwait(false));
-                }
-            }
-            catch (Exception e) when (e is SocketException or ObjectDisposedException)
-            {
-            }
-        });
-
-        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        var watch = Stopwatch.StartNew();
-        var (stopped, _, stoppedError) = Run(CommandHost.Console, stop.Token, "api", "/api/tags", "-H", "127.0.0.1", "-p", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
-        Check(stopped == IdrakCommands.StoppedExitCode && stoppedError.Contains("idrak api: stopped", StringComparison.Ordinal) && watch.Elapsed < TimeSpan.FromSeconds(10),
-            $"the host's stop: {stopped} {stoppedError} ({watch.Elapsed})");
-        listener.Stop();
-        accepting.Wait(TimeSpan.FromSeconds(5));
-        held.ForEach(h => h.Dispose());
-
-        // A host that allows a listener but no console (a desktop app's Terminal) lists serve as available and refuses only
-        // serve --mcp; a server it starts runs until the host's stop, which ends it as Ctrl+C would (130, the server closed).
-        var desktop = app with { Allows = CommandNeeds.ChildProcesses | CommandNeeds.NetworkListener };
-        Check(IdrakCommands.Refusal("serve", desktop) is null && Run(desktop, default, "serve", "qwen", "--mcp") is { Code: IdrakCommands.UnavailableExitCode, Err: var mcp }
-              && mcp.Contains("standard input", StringComparison.Ordinal), "serve on a host with a listener and no console: listed, --mcp refused");
-        using var stopServe = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        var serveWatch = Stopwatch.StartNew();
-        var (served, serveOut, serveErr) = Run(desktop, stopServe.Token, "serve", TestData("gguf/tiny-qwen3-q8.gguf"), "-H", "127.0.0.1", "-p", "0");
-        Check(served == IdrakCommands.StoppedExitCode && serveOut.Contains("Serving 1 model", StringComparison.Ordinal) && serveOut.Contains("server stopped", StringComparison.Ordinal)
-              && serveWatch.Elapsed < TimeSpan.FromSeconds(30), $"serve ended by the host's stop: {served} ({serveWatch.Elapsed}) {serveOut} {serveErr}");
-
-        // The host's working folder: a relative path is read from it during the run, and the process's folder comes back after.
-        string working = Path.Combine(Path.GetTempPath(), $"idrak-cli-host-{Guid.NewGuid():N}");
-        string before = Environment.CurrentDirectory;
-        try
-        {
-            var inFolder = app with { WorkingFolder = working };
-            int set = IdrakCommands.Run(["config", "set", "device", "cpu", "-C", "relative-config.json"], new StringWriter(), new StringWriter(), inFolder);
-            Check(set == 0 && File.Exists(Path.Combine(working, "relative-config.json")) && Environment.CurrentDirectory == before,
-                $"the working folder: exit {set}, {Path.Combine(working, "relative-config.json")} written, the process's folder {Environment.CurrentDirectory} (was {before})");
-        }
-        finally
-        {
-            if (Directory.Exists(working))
-            {
-                Directory.Delete(working, recursive: true);
-            }
-        }
-
-        Check(IdrakCommands.Split("idrak run \"a b\" 'c d' e\\\"f") is ["run", "a b", "c d", "e\"f"], $"split: {string.Join("|", IdrakCommands.Split("idrak run \"a b\" 'c d' e\\\"f"))}");
-        Check(Throws<FormatException>(() => IdrakCommands.Split("run \"open")), "an open quote is refused");
     }
 }

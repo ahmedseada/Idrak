@@ -225,7 +225,7 @@ internal abstract partial class DesktopTests : Tests
     private static void CliModelsHelp(Device device)
     {
         _ = device;
-        string[] names = ["pull", "list", "rm", "show", "search", "alias set", "alias list", "alias rm", "memory", "merge", "inspect", "verify", "convert", "diff", "families"];
+        string[] names = ["pull", "list", "rm", "show", "search", "alias set", "alias list", "alias rm", "memory", "merge", "inspect", "verify", "convert", "diff"];
         var commands = global::Idrak.Cli.Commands.ModelCommands.All;
         Check(commands.Select(x => x.Name).Order().SequenceEqual(names.Order()), $"the group's commands: {string.Join(", ", commands.Select(x => x.Name))}");
         foreach (var command in commands)

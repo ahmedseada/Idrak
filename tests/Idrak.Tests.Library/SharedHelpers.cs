@@ -103,46 +103,6 @@ internal abstract partial class Tests
     internal static Tensor RandomIds(Device device, Random r, int vocabulary, params int[] shape) =>
         Tensor.From([.. Enumerable.Range(0, shape.Aggregate(1, (a, b) => a * b)).Select(_ => (float)r.Next(vocabulary))], shape, device);
 
-    // From CliDesignTests.cs.
-    // A grayscale 8-bit PNG (filter 0 on every row), with real CRCs.
-    internal static byte[] GrayPng(byte[] pixels, int width, int height)
-    {
-        var raw = new MemoryStream();
-        for (int y = 0; y < height; y++)
-        {
-            raw.WriteByte(0);
-            raw.Write(pixels, y * width, width);
-        }
-
-        var compressed = new MemoryStream();
-        using (var z = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
-        {
-            z.Write(raw.ToArray());
-        }
-
-        var png = new MemoryStream();
-        png.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-        void Chunk(string type, byte[] data)
-        {
-            var header = new byte[4];
-            BinaryPrimitives.WriteInt32BigEndian(header, data.Length);
-            png.Write(header);
-            byte[] body = [.. Encoding.ASCII.GetBytes(type), .. data];
-            png.Write(body);
-            BinaryPrimitives.WriteUInt32BigEndian(header, Crc32(body));
-            png.Write(header);
-        }
-
-        var ihdr = new byte[13];
-        BinaryPrimitives.WriteInt32BigEndian(ihdr, width);
-        BinaryPrimitives.WriteInt32BigEndian(ihdr.AsSpan(4), height);
-        ihdr[8] = 8;                                                                    // bit depth; colour type 0 (gray)
-        Chunk("IHDR", ihdr);
-        Chunk("IDAT", compressed.ToArray());
-        Chunk("IEND", []);
-        return png.ToArray();
-    }
-
     internal static uint Crc32(byte[] data)
     {
         uint crc = 0xFFFFFFFF;
