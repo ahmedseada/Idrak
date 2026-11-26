@@ -72,8 +72,8 @@ public static class MauiProgram
             return new IdrakCommandRunner(allows: () => options.TerminalAllowInEffect);
         });
 
-        // The app's own features, after the library's (UseIdrak registered those).
-        AppFeatures.Register();
+        // The app's own features (Self-test, AppFeatures) were registered after the library's: registering a feature is not
+        // on the new design yet.
         return builder.Build();
     }
 }

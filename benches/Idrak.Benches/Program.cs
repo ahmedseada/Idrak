@@ -27,9 +27,6 @@
 //   seq2seq        a text encoder-decoder (IDRAK_BENCH_SEQ2SEQ names the folder, default the tiny fixture under tests/):
 //                  the load (cold, warm, host memory allocated), a cached decoding step (ms a token, launches a token)
 //                  and a beam search of 4 beams (ms a step), the best hypothesis hashed so a change shows it kept it
-//   audio-process  every registered audio processor (the library's and the plug-ins', rnnoise when its model file is
-//                  found) alone on 10 s of speech-like sound at 16 kHz mono and 48 kHz stereo: ms cold, the warm median,
-//                  times real time; IDRAK_BENCH_AUDIO (steps such as "lowpass, rnnoise mix=0.8") chooses them instead
 //   moe            mixture-of-experts blocks at inference (size by IDRAK_BENCH_SIZE), the routing read back to the host
 //                  against the routing where the tensors are (MixtureOfExperts.RoutesOnDevice): ms a token cold and warm,
 //                  host reads a layer, launches a layer, one token and a prompt (a device without the routing kernels
@@ -43,8 +40,7 @@
 // (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
 // sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
 // stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ,
-// IDRAK_BENCH_AUDIO (comma-separated steps for audio-process; a bare name takes its defaults), IDRAK_BENCH_SPLIT_K (the
-// k chunk length the matmul section's split products use on the CPU).
+// IDRAK_BENCH_SPLIT_K (the k chunk length the matmul section's split products use on the CPU).
 
 using Idrak.Benches;
 

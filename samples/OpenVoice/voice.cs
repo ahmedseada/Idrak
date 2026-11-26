@@ -20,9 +20,7 @@ using Idrak.Audio.Abstractions;
 using Idrak.Audio.Plugins.OpenVoice;
 using Idrak.Audio.Plugins.Vits;
 
-OpenVoicePlugin.Register();
-VitsPlugin.Register();
-var store = VoiceStores.Get();
+var store = new FolderVoiceStore(FolderVoiceStore.DefaultRoot, VoiceStores.FolderName);
 if (args.Length == 0)
 {
     Console.Error.WriteLine("voice.cs add|list|show|remove|export|import|speak ... (see the top of samples/OpenVoice/voice.cs)");

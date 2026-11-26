@@ -17,7 +17,6 @@ using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Audio.Plugins.Whisper;
 
-WhisperPlugin.Register();
 var positional = new List<string>();
 var options = new Dictionary<string, string>(StringComparer.Ordinal);
 for (int i = 0; i < args.Length; i++)
