@@ -260,8 +260,7 @@ public sealed class CrnnRecognizer : IDisposable
     {
         ArgumentException.ThrowIfNullOrEmpty(folder);
         Directory.CreateDirectory(folder);
-        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), [.. CrnnFamily.Tensors(Network).Select(t => (t.Name, t.Tensor.Shape.ToArray(), t.Tensor.ToArray()))],
-            SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), [.. CrnnFamily.Tensors(Network).Select(t => (t.Name, t.Tensor.Shape.ToArray(), t.Tensor.ToArray()))]);
         var json = new JsonObject { ["architectures"] = new JsonArray(CrnnPlugin.Architecture) };
         foreach (var (key, value) in Settings.ToJson())
         {

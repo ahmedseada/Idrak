@@ -4,13 +4,12 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
-using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
 /// <summary>A tensor's entry in a GGUF file.</summary>
 /// <param name="Name">Its name (llama.cpp's naming, e.g. blk.0.attn_q.weight).</param>
-/// <param name="Type">The ggml type (0 F32, 1 F16, 8 Q8_0, 12 Q4_K, 14 Q6_K, 30 BF16 …).</param>
+/// <param name="Type">The ggml type id the file stores it in (0 is float32, the one type read).</param>
 /// <param name="Dimensions">Sizes, innermost first (ggml's ne: [columns, rows, …]).</param>
 /// <param name="Offset">Byte offset of its data in the file.</param>
 public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, long Offset)
@@ -23,12 +22,10 @@ public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, lo
 }
 
 /// <summary>
-/// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and tensors dequantized to
-/// float32 from F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS,
-/// IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 (ggml's values bit for bit), and any type registered with
-/// <see cref="GgufTypes.Register"/>.
+/// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and the float32
+/// tensors. A tensor stored in any other type is refused: its type is not on the new design yet.
 /// </summary>
-public sealed partial class GgufFile : IDisposable
+public sealed class GgufFile : IDisposable
 {
     private readonly FileStream _file;
     private readonly Dictionary<string, GgufTensorInfo> _tensors = new(StringComparer.Ordinal);
@@ -101,506 +98,50 @@ public sealed partial class GgufFile : IDisposable
         }
     }
 
-    /// <summary>The tensor <paramref name="name"/> dequantized to float32 (row-major, as stored).</summary>
+    /// <summary>The float32 tensor <paramref name="name"/> (row-major, as stored).</summary>
+    /// <exception cref="NotSupportedException">The tensor is stored in another type: not on the new design yet.</exception>
     public float[] Read(string name)
     {
-        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}' in {Path}.");
-        long count = info.Count;
-        var (blockValues, blockBytes) = BlockSize(info.Type, name);
-        if (count % blockValues != 0)
-        {
-            throw new InvalidDataException($"{name}: {count} values is not a whole number of {blockValues}-value blocks.");
-        }
-
-        long bytes = count / blockValues * blockBytes;
-        var raw = GC.AllocateUninitializedArray<byte>(checked((int)bytes));
-        ReadAt(raw, info.Offset);
-        var values = GC.AllocateUninitializedArray<float>(checked((int)count));
-        Dequantize(info.Type, raw, values);
+        var info = Float32Entry(name);
+        var values = GC.AllocateUninitializedArray<float>(checked((int)info.Count));
+        ReadFloats(values, info.Offset);
         return values;
     }
 
     /// <summary>
-    /// Rows [<paramref name="firstRow"/>, + n) of the 2-D tensor <paramref name="name"/> (shape [rows, columns]) dequantized
-    /// into <paramref name="values"/> (n whole rows), through <paramref name="raw"/> (at least <see cref="RowBytes"/> · n bytes).
+    /// Rows [<paramref name="firstRow"/>, + n) of the 2-D float32 tensor <paramref name="name"/> (shape [rows, columns])
+    /// into <paramref name="values"/> (n whole rows).
     /// </summary>
-    internal void ReadRows(string name, int firstRow, Span<float> values, byte[] raw)
+    internal void ReadRows(string name, long firstRow, Span<float> values)
     {
-        var info = _tensors[name];
+        var info = Float32Entry(name);
         long columns = info.Dimensions[0];
-        var (blockValues, _) = BlockSize(info.Type, name);
-        if (columns % blockValues != 0 || values.Length % columns != 0)
+        if (columns == 0 || values.Length % columns != 0)
         {
-            throw new InvalidDataException($"{name}: rows of {columns} values are not whole {blockValues}-value blocks.");
+            throw new InvalidDataException($"{name}: {values.Length} values are not whole rows of {columns}.");
         }
 
-        long rowBytes = RowBytes(name);
-        int bytes = checked((int)(values.Length / columns * rowBytes));
-        ReadAt(raw.AsSpan(0, bytes), info.Offset + firstRow * rowBytes);
-        Dequantize(info.Type, raw.AsSpan(0, bytes), values);
+        ReadFloats(values, info.Offset + firstRow * columns * sizeof(float));
     }
 
-    /// <summary>
-    /// The stored bytes of rows [<paramref name="firstRow"/>, + n) of the 2-D tensor <paramref name="name"/> into
-    /// <paramref name="destination"/> (n whole rows of <see cref="RowBytes"/>), as the file holds them (plan 37, Q0).
-    /// </summary>
-    internal void ReadStoredRows(string name, long firstRow, Span<byte> destination)
+    // The entry of the tensor name, stored as float32; any other stored type is refused.
+    private GgufTensorInfo Float32Entry(string name)
     {
-        var info = _tensors[name];
-        long rowBytes = RowBytes(name);
-        if (rowBytes == 0 || destination.Length % rowBytes != 0)
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw new KeyNotFoundException($"No tensor named '{name}' in {Path}.");
+        return info.Type == 0 ? info
+            : throw new NotSupportedException($"{name} in {Path} is stored as ggml type #{info.Type}: type not on the new design yet.");
+    }
+
+    // Little-endian float32 values from the file at offset into values.
+    private void ReadFloats(Span<float> values, long offset)
+    {
+        ReadAt(MemoryMarshal.AsBytes(values), offset);
+        if (!BitConverter.IsLittleEndian)
         {
-            throw new InvalidDataException($"{name}: {destination.Length} bytes are not whole rows of {rowBytes}.");
-        }
-
-        ReadAt(destination, info.Offset + firstRow * rowBytes);
-    }
-
-    /// <summary>Stored bytes per row (innermost dimension) of the tensor <paramref name="name"/>.</summary>
-    internal long RowBytes(string name)
-    {
-        var info = _tensors[name];
-        var (blockValues, blockBytes) = BlockSize(info.Type, name);
-        return info.Dimensions[0] / blockValues * blockBytes;
-    }
-
-    /// <summary>Values per block and bytes per block of a ggml type (registered in <see cref="GgufTypes"/>).</summary>
-    public static (int Values, int Bytes) BlockSize(int type, string? name = null)
-    {
-        var info = GgufTypes.Find(type) ?? throw NotSupported(type, name);
-        return (info.BlockValues, info.BlockBytes);
-    }
-
-    /// <summary>A ggml type's name (also of types not registered in <see cref="GgufTypes"/>).</summary>
-    public static string TypeName(int type) => GgufTypes.Find(type)?.Name ?? type switch
-    {
-        0 => "F32", 1 => "F16", 2 => "Q4_0", 3 => "Q4_1", 6 => "Q5_0", 7 => "Q5_1", 8 => "Q8_0", 9 => "Q8_1", 10 => "Q2_K", 11 => "Q3_K",
-        12 => "Q4_K", 13 => "Q5_K", 14 => "Q6_K", 15 => "Q8_K", 16 => "IQ2_XXS", 17 => "IQ2_XS", 18 => "IQ3_XXS", 19 => "IQ1_S", 20 => "IQ4_NL",
-        21 => "IQ3_S", 22 => "IQ2_S", 23 => "IQ4_XS", 24 => "I8", 25 => "I16", 26 => "I32", 27 => "I64", 28 => "F64", 29 => "IQ1_M", 30 => "BF16",
-        34 => "TQ1_0", 35 => "TQ2_0", 39 => "MXFP4", _ => $"#{type}",
-    };
-
-    private static NotRegisteredException NotSupported(int type, string? name) =>
-        new(nameof(GgufTypes), GgufTypes.Text(type), GgufTypes.Ids.Select(GgufTypes.Text),
-            $"{(name is null ? "" : name + ": ")}ggml type {TypeName(type)} is not supported yet "
-            + $"(supported: {string.Join(", ", GgufTypes.Ids.Select(TypeName))}); add it with GgufTypes.Register.");
-
-    /// <summary>
-    /// Dequantizes blocks of <paramref name="type"/> into float32 values (in parallel over blocks): the type is looked up
-    /// once in <see cref="GgufTypes"/>, then its <see cref="IGgufType.Dequantize"/> runs on all the blocks.
-    /// </summary>
-    public static void Dequantize(int type, ReadOnlySpan<byte> raw, Span<float> values)
-    {
-        var info = GgufTypes.Find(type) ?? throw NotSupported(type, null);
-        int blocks = values.Length / info.BlockValues;
-        if (raw.Length < (long)blocks * info.BlockBytes)
-        {
-            throw new ArgumentException($"{raw.Length} bytes hold fewer than {blocks} blocks of {info.Name}.", nameof(raw));
-        }
-
-        info.Dequantize(raw, values);
-    }
-
-    // The built-in types, which LibraryRegistrations registers in GgufTypes: id, name, values and bytes per block.
-    internal static IEnumerable<(int Id, IGgufType Type)> BuiltInTypes() =>
-        new (int Id, string Name, int BlockValues, int BlockBytes)[]
-        {
-            (0, "F32", 1, 4), (1, "F16", 1, 2), (30, "BF16", 1, 2), (2, "Q4_0", 32, 18), (3, "Q4_1", 32, 20), (6, "Q5_0", 32, 22),
-            (7, "Q5_1", 32, 24), (8, "Q8_0", 32, 34), (10, "Q2_K", 256, 84), (11, "Q3_K", 256, 110), (12, "Q4_K", 256, 144),
-            (13, "Q5_K", 256, 176), (14, "Q6_K", 256, 210), (20, "IQ4_NL", 32, 18), (23, "IQ4_XS", 256, 136),
-            (16, "IQ2_XXS", 256, 66), (17, "IQ2_XS", 256, 74), (18, "IQ3_XXS", 256, 98), (19, "IQ1_S", 256, 50), (21, "IQ3_S", 256, 110),
-            (22, "IQ2_S", 256, 82), (29, "IQ1_M", 256, 56), (34, "TQ1_0", 256, 54), (35, "TQ2_0", 256, 66), (39, "MXFP4", 32, 17),
-        }.Select(t => (t.Id, (IGgufType)new BuiltInType(t.Id, t.Name, t.BlockValues, t.BlockBytes)));
-
-    // A built-in ggml type (DequantizeBuiltIn).
-    private sealed class BuiltInType(int id, string name, int blockValues, int blockBytes) : IGgufType
-    {
-        public string Name => name;
-
-        public int BlockValues => blockValues;
-
-        public int BlockBytes => blockBytes;
-
-        public void Dequantize(ReadOnlySpan<byte> raw, Span<float> values) => DequantizeBuiltIn(id, blockValues, blockBytes, raw, values);
-
-        public override string ToString() => name;
-    }
-
-    // A built-in type's blocks (see BuiltInTypes).
-    internal static void DequantizeBuiltIn(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
-    {
-        int blocks = values.Length / blockValues;
-        if (type == 0)
-        {
-            StoredFloats.ReadFloat32(raw, values);                     // little-endian on every machine
-            return;
-        }
-
-        if (type is not (1 or 30) && blocks <= 1024)
-        {
-            // One chunk (a stored product's tile, a row): on this thread, with no parallel loop or closure to make.
-            for (int b = 0; b < blocks; b++)
-            {
-                DequantizeBlock(type, raw.Slice(b * blockBytes, blockBytes), values.Slice(b * blockValues, blockValues));
-            }
-
-            return;
-        }
-
-        DequantizeBuiltInParallel(type, blockValues, blockBytes, raw, values);
-    }
-
-    // DequantizeBuiltIn's threads: blocks are independent, split across them. The workers cannot capture spans, so they read
-    // and write the pinned memory through pointers (no copies of the input or the output).
-    private static unsafe void DequantizeBuiltInParallel(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
-    {
-        int blocks = values.Length / blockValues;
-        fixed (byte* input = raw)
-        fixed (float* output = values)
-        {
-            nint source = (nint)input, target = (nint)output;
-            switch (type)
-            {
-                case 1:
-                    Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
-                        StoredFloats.WidenFloat16(new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first)),
-                            new Span<float>((float*)target + first, last - first)));
-                    return;
-                case 30:
-                    Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
-                        StoredFloats.WidenBFloat16(new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first)),
-                            new Span<float>((float*)target + first, last - first)));
-                    return;
-            }
-
-            Parallel.For(0, (blocks + 1023) / 1024, chunk =>
-            {
-                int first = chunk * 1024, last = Math.Min(blocks, first + 1024);
-                for (int b = first; b < last; b++)
-                {
-                    DequantizeBlock(type, new ReadOnlySpan<byte>((byte*)source + (long)b * blockBytes, blockBytes),
-                        new Span<float>((float*)target + (long)b * blockValues, blockValues));
-                }
-            });
+            var bits = MemoryMarshal.Cast<float, uint>(values);
+            BinaryPrimitives.ReverseEndianness(bits, bits);
         }
     }
-
-    private static readonly sbyte[] Iq4Values = [-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113];
-
-    private static float Half(ReadOnlySpan<byte> b) => (float)BinaryPrimitives.ReadHalfLittleEndian(b);
-
-    // One block, as ggml's dequantize_row_* functions do it.
-    private static void DequantizeBlock(int type, ReadOnlySpan<byte> x, Span<float> y)
-    {
-        switch (type)
-        {
-            case 2:                                                 // Q4_0: d, 16 bytes of nibbles
-            {
-                float d = Half(x);
-                var qs = x[2..];
-                for (int j = 0; j < 16; j++)
-                {
-                    y[j] = ((qs[j] & 0xF) - 8) * d;
-                    y[j + 16] = ((qs[j] >> 4) - 8) * d;
-                }
-
-                return;
-            }
-
-            case 3:                                                 // Q4_1: d, m, nibbles
-            {
-                float d = Half(x), m = Half(x[2..]);
-                var qs = x[4..];
-                for (int j = 0; j < 16; j++)
-                {
-                    y[j] = (qs[j] & 0xF) * d + m;
-                    y[j + 16] = (qs[j] >> 4) * d + m;
-                }
-
-                return;
-            }
-
-            case 6:                                                 // Q5_0: d, 32 high bits, nibbles
-            {
-                float d = Half(x);
-                uint qh = BinaryPrimitives.ReadUInt32LittleEndian(x[2..]);
-                var qs = x[6..];
-                for (int j = 0; j < 16; j++)
-                {
-                    int h0 = (int)(((qh >> j) << 4) & 0x10), h1 = (int)((qh >> (j + 12)) & 0x10);
-                    y[j] = (((qs[j] & 0x0F) | h0) - 16) * d;
-                    y[j + 16] = (((qs[j] >> 4) | h1) - 16) * d;
-                }
-
-                return;
-            }
-
-            case 7:                                                 // Q5_1: d, m, high bits, nibbles
-            {
-                float d = Half(x), m = Half(x[2..]);
-                uint qh = BinaryPrimitives.ReadUInt32LittleEndian(x[4..]);
-                var qs = x[8..];
-                for (int j = 0; j < 16; j++)
-                {
-                    int h0 = (int)(((qh >> j) << 4) & 0x10), h1 = (int)((qh >> (j + 12)) & 0x10);
-                    y[j] = ((qs[j] & 0x0F) | h0) * d + m;
-                    y[j + 16] = ((qs[j] >> 4) | h1) * d + m;
-                }
-
-                return;
-            }
-
-            case 8:                                                 // Q8_0: d, 32 signed bytes
-            {
-                float d = Half(x);
-                var codes = MemoryMarshal.Cast<byte, sbyte>(x.Slice(2, 32));
-                int j = 0;
-                if (System.Numerics.Vector.IsHardwareAccelerated && System.Numerics.Vector<sbyte>.Count <= 32)
-                {
-                    // Whole vectors: each code widened to float32 (exact), then times d, one rounding as below.
-                    int width = System.Numerics.Vector<sbyte>.Count, quarter = System.Numerics.Vector<int>.Count;
-                    var scale = new System.Numerics.Vector<float>(d);
-                    for (; j <= 32 - width; j += width)
-                    {
-                        System.Numerics.Vector.Widen(new System.Numerics.Vector<sbyte>(codes[j..]), out System.Numerics.Vector<short> low, out System.Numerics.Vector<short> high);
-                        System.Numerics.Vector.Widen(low, out System.Numerics.Vector<int> a, out System.Numerics.Vector<int> b);
-                        System.Numerics.Vector.Widen(high, out System.Numerics.Vector<int> c, out System.Numerics.Vector<int> e);
-                        (System.Numerics.Vector.ConvertToSingle(a) * scale).CopyTo(y[j..]);
-                        (System.Numerics.Vector.ConvertToSingle(b) * scale).CopyTo(y[(j + quarter)..]);
-                        (System.Numerics.Vector.ConvertToSingle(c) * scale).CopyTo(y[(j + 2 * quarter)..]);
-                        (System.Numerics.Vector.ConvertToSingle(e) * scale).CopyTo(y[(j + 3 * quarter)..]);
-                    }
-                }
-
-                for (; j < 32; j++)
-                {
-                    y[j] = codes[j] * d;
-                }
-
-                return;
-            }
-
-            case 10:                                                // Q2_K: scales[16], qs[64], d, dmin
-            {
-                var scales = x[..16];
-                var q = x[16..80];
-                float d = Half(x[80..]), min = Half(x[82..]);
-                int o = 0, s = 0;
-                for (int n = 0; n < 256; n += 128)
-                {
-                    int shift = 0;
-                    for (int j = 0; j < 4; j++)
-                    {
-                        byte sc = scales[s++];
-                        float dl = d * (sc & 0xF), ml = min * (sc >> 4);
-                        for (int l = 0; l < 16; l++)
-                        {
-                            y[o++] = dl * ((q[l] >> shift) & 3) - ml;
-                        }
-
-                        sc = scales[s++];
-                        dl = d * (sc & 0xF);
-                        ml = min * (sc >> 4);
-                        for (int l = 0; l < 16; l++)
-                        {
-                            y[o++] = dl * ((q[l + 16] >> shift) & 3) - ml;
-                        }
-
-                        shift += 2;
-                    }
-
-                    q = q[32..];
-                }
-
-                return;
-            }
-
-            case 11:                                                // Q3_K: hmask[32], qs[64], scales[12], d
-            {
-                var hm = x[..32];
-                var q = x[32..96];
-                float dAll = Half(x[108..]);
-                const uint kmask1 = 0x03030303, kmask2 = 0x0f0f0f0f;
-                Span<uint> aux = stackalloc uint[4];
-                aux[0] = BinaryPrimitives.ReadUInt32LittleEndian(x[96..]);
-                aux[1] = BinaryPrimitives.ReadUInt32LittleEndian(x[100..]);
-                aux[2] = BinaryPrimitives.ReadUInt32LittleEndian(x[104..]);
-                uint tmp = aux[2];
-                aux[2] = ((aux[0] >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4);
-                aux[3] = ((aux[1] >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4);
-                aux[0] = (aux[0] & kmask2) | (((tmp >> 0) & kmask1) << 4);
-                aux[1] = (aux[1] & kmask2) | (((tmp >> 2) & kmask1) << 4);
-                if (!BitConverter.IsLittleEndian)
-                {
-                    BinaryPrimitives.ReverseEndianness(aux, aux);               // the scales are the words' little-endian bytes
-                }
-
-                var scales = MemoryMarshal.Cast<uint, sbyte>(aux);
-                int o = 0, s = 0;
-                byte m = 1;
-                for (int n = 0; n < 256; n += 128)
-                {
-                    int shift = 0;
-                    for (int j = 0; j < 4; j++)
-                    {
-                        float dl = dAll * (scales[s++] - 32);
-                        for (int l = 0; l < 16; l++)
-                        {
-                            y[o++] = dl * (((q[l] >> shift) & 3) - ((hm[l] & m) != 0 ? 0 : 4));
-                        }
-
-                        dl = dAll * (scales[s++] - 32);
-                        for (int l = 0; l < 16; l++)
-                        {
-                            y[o++] = dl * (((q[l + 16] >> shift) & 3) - ((hm[l + 16] & m) != 0 ? 0 : 4));
-                        }
-
-                        shift += 2;
-                        m <<= 1;
-                    }
-
-                    q = q[32..];
-                }
-
-                return;
-            }
-
-            case 12:                                                // Q4_K: d, dmin, scales[12], qs[128]
-            {
-                float d = Half(x), min = Half(x[2..]);
-                var scales = x[4..16];
-                var q = x[16..];
-                int o = 0, s = 0;
-                for (int j = 0; j < 256; j += 64)
-                {
-                    var (sc1, m1) = ScaleMin(s, scales);
-                    var (sc2, m2) = ScaleMin(s + 1, scales);
-                    float d1 = d * sc1, mm1 = min * m1, d2 = d * sc2, mm2 = min * m2;
-                    for (int l = 0; l < 32; l++)
-                    {
-                        y[o++] = d1 * (q[l] & 0xF) - mm1;
-                    }
-
-                    for (int l = 0; l < 32; l++)
-                    {
-                        y[o++] = d2 * (q[l] >> 4) - mm2;
-                    }
-
-                    q = q[32..];
-                    s += 2;
-                }
-
-                return;
-            }
-
-            case 13:                                                // Q5_K: d, dmin, scales[12], qh[32], qs[128]
-            {
-                float d = Half(x), min = Half(x[2..]);
-                var scales = x[4..16];
-                var qh = x[16..48];
-                var ql = x[48..];
-                int o = 0, s = 0;
-                int u1 = 1, u2 = 2;
-                for (int j = 0; j < 256; j += 64)
-                {
-                    var (sc1, m1) = ScaleMin(s, scales);
-                    var (sc2, m2) = ScaleMin(s + 1, scales);
-                    float d1 = d * sc1, mm1 = min * m1, d2 = d * sc2, mm2 = min * m2;
-                    for (int l = 0; l < 32; l++)
-                    {
-                        y[o++] = d1 * ((ql[l] & 0xF) + ((qh[l] & u1) != 0 ? 16 : 0)) - mm1;
-                    }
-
-                    for (int l = 0; l < 32; l++)
-                    {
-                        y[o++] = d2 * ((ql[l] >> 4) + ((qh[l] & u2) != 0 ? 16 : 0)) - mm2;
-                    }
-
-                    ql = ql[32..];
-                    s += 2;
-                    u1 <<= 2;
-                    u2 <<= 2;
-                }
-
-                return;
-            }
-
-            case 14:                                                // Q6_K: ql[128], qh[64], scales[16], d
-            {
-                var ql = x[..128];
-                var qh = x[128..192];
-                var sc = MemoryMarshal.Cast<byte, sbyte>(x[192..208]);
-                float d = Half(x[208..]);
-                int o = 0;
-                for (int n = 0; n < 256; n += 128)
-                {
-                    for (int l = 0; l < 32; l++)
-                    {
-                        int s = l / 16;
-                        int q1 = ((ql[l] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
-                        int q2 = ((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
-                        int q3 = ((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
-                        int q4 = ((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
-                        y[o + l] = d * sc[s] * q1;
-                        y[o + l + 32] = d * sc[s + 2] * q2;
-                        y[o + l + 64] = d * sc[s + 4] * q3;
-                        y[o + l + 96] = d * sc[s + 6] * q4;
-                    }
-
-                    o += 128;
-                    ql = ql[64..];
-                    qh = qh[32..];
-                    sc = sc[8..];
-                }
-
-                return;
-            }
-
-            case 20:                                                // IQ4_NL: d, nibbles into a non-linear table
-            {
-                float d = Half(x);
-                var qs = x[2..];
-                for (int j = 0; j < 16; j++)
-                {
-                    y[j] = d * Iq4Values[qs[j] & 0xF];
-                    y[j + 16] = d * Iq4Values[qs[j] >> 4];
-                }
-
-                return;
-            }
-
-            case 23:                                                // IQ4_XS: d, scales_h, scales_l[4], qs[128]
-            {
-                float d = Half(x);
-                int scalesH = BinaryPrimitives.ReadUInt16LittleEndian(x[2..]);
-                var scalesL = x[4..8];
-                var qs = x[8..];
-                for (int ib = 0; ib < 8; ib++)
-                {
-                    int ls = ((scalesL[ib / 2] >> (4 * (ib % 2))) & 0xF) | (((scalesH >> (2 * ib)) & 3) << 4);
-                    float dl = d * (ls - 32);
-                    for (int j = 0; j < 16; j++)
-                    {
-                        y[ib * 32 + j] = dl * Iq4Values[qs[j] & 0xF];
-                        y[ib * 32 + j + 16] = dl * Iq4Values[qs[j] >> 4];
-                    }
-
-                    qs = qs[16..];
-                }
-
-                return;
-            }
-
-            default:
-                DequantizeLowBit(type, x, y);                       // IQ1-IQ3, TQ1_0, TQ2_0, MXFP4 (GgufFile.LowBit.cs)
-                return;
-        }
-    }
-
-    // The 6-bit scale and minimum of sub-block j in a K-quant's 12 packed bytes.
-    private static (int Scale, int Min) ScaleMin(int j, ReadOnlySpan<byte> q) => j < 4
-        ? (q[j] & 63, q[j + 4] & 63)
-        : ((q[j + 4] & 0xF) | ((q[j - 4] >> 6) << 4), (q[j + 4] >> 4) | ((q[j] >> 6) << 4));
 
     /// <inheritdoc />
     public void Dispose() => _file.Dispose();

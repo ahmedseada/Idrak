@@ -783,14 +783,13 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                 Model.Save(Path.Combine(partial, StopWeightsFile));
                 if (saved is not null)
                 {
-                    Models.SafeTensorsWriter.Write(Path.Combine(partial, StopOptimizerFile), saved.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), Models.SafeTensorType.F32,
+                    Models.SafeTensorsWriter.Write(Path.Combine(partial, StopOptimizerFile), saved.Select(e => (e.Key, e.Value.Shape, e.Value.Values)),
                         new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
                 }
 
                 if (state.BestWeights is { } best)
                 {
-                    Models.SafeTensorsWriter.Write(Path.Combine(partial, BestWeightsFile), best.Select((values, i) => (i.ToString(CultureInfo.InvariantCulture), (int[])[values.Length], values)),
-                        Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-best-weights" });
+                    Models.SafeTensorsWriter.Write(Path.Combine(partial, BestWeightsFile), best.Select((values, i) => (i.ToString(CultureInfo.InvariantCulture), (int[])[values.Length], values)), new Dictionary<string, string> { ["format"] = "idrak-best-weights" });
                 }
 
                 var json = new System.Text.Json.Nodes.JsonObject

@@ -237,7 +237,7 @@ internal sealed class VitsTraining : IDisposable
 
         string target = Path.Combine(folder, "model.safetensors");
         string staging = target + ".writing";
-        SafeTensorsWriter.Write(staging, rows, SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "pt" });
+        SafeTensorsWriter.Write(staging, rows, new Dictionary<string, string> { ["format"] = "pt" });
         File.Move(staging, target, overwrite: true);
         _discriminators?.Save(folder);
     }

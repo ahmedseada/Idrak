@@ -207,7 +207,7 @@ internal static class OnnxBuiltIns
 
     private static OnnxValue Linear(OnnxGraph g, Layers.Linear linear, OnnxValue x, IReadOnlyList<int>? shape)
     {
-        var weight = linear.WeightValues();                                      // int8 weights are exported dequantized
+        var weight = linear.WeightValues();
         if (linear.Adapter is { } a)
         {
             // The adapter folded in, as MergeLora does.

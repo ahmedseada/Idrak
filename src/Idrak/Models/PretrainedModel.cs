@@ -85,9 +85,6 @@ public sealed record CreateOptions
     /// </summary>
     public float? InitStd { get; init; } = 0.02f;
 
-    /// <summary>How the weights are stored in model.safetensors (float32 for a model that will train, the default).</summary>
-    public SafeTensorType Type { get; init; } = SafeTensorType.F32;
-
     /// <summary>Write into a folder that already holds files (they are replaced); otherwise such a folder is refused.</summary>
     public bool Overwrite { get; init; }
 
@@ -139,52 +136,6 @@ public sealed record PretrainedOptions
     /// <summary>Where the model is created (the default device when null).</summary>
     public Device? Device { get; init; }
 
-    /// <summary>Store the projections as int8 (quantized as they are read; about a quarter of the float32 memory).</summary>
-    public bool Int8 { get; init; }
-
-    /// <summary>Store the projections as bfloat16: half the float32 memory, exact for bfloat16 checkpoints (most are).</summary>
-    public bool BFloat16 { get; init; }
-
-    /// <summary>Store the projections as 4-bit weights (one scale per 32 rows and column; about 5 bits per weight).</summary>
-    public bool Int4 { get; init; }
-
-    /// <summary>
-    /// Store the projections in the packed format registered under this name (<see cref="PackedWeightFormats.Names"/>; a
-    /// format of your own is added with <see cref="PackedWeightFormats.Register"/>). Takes precedence over Int8, Int4 and BFloat16.
-    /// </summary>
-    public string? PackedFormatName { get; init; }
-
-    /// <summary>
-    /// Store the output head in this registered packed format (for example "bfloat16" beside int8 or int4 projections:
-    /// the checkpoint's own next-token scores, and for tied embeddings the only vocabulary table, so less memory than a
-    /// packed head beside a separate table; slower per generated token). Null packs it as the projections.
-    /// </summary>
-    public string? HeadFormatName { get; init; }
-
-    /// <summary>
-    /// Where the separate token table of int8, int4 or packed weights lives (one beside a head of another format) on a
-    /// device that can keep it in system memory, where a lookup reads its rows in place: null takes
-    /// <see cref="ComputeResources.LookupTables"/> (IDRAK_LOOKUP_TABLES; automatic: on the device until it is full).
-    /// </summary>
-    public LookupTablePlacement? LookupTables { get; init; }
-
-    /// <summary>
-    /// Keep the int8 or int4 weights this load packs on disk and, on the next load of the same checkpoint in the same
-    /// format, read them back instead of reading the checkpoint's values and quantizing again (the same bits): true or false
-    /// here, or null for <see cref="ComputeResources.PackedWeightCache"/> (IDRAK_PACKED_CACHE; on). An entry is made again
-    /// when its tensor's file changes (path, size, time of change), the format's packing version changes or the library's
-    /// cache layout does; a tensor with a merged adapter is not kept. <see cref="PretrainedModel.PackedCache"/> says what
-    /// this load read and made.
-    /// </summary>
-    public bool? PackedCache { get; init; }
-
-    /// <summary>
-    /// The folder of the packed-weight cache (<see cref="PackedCache"/>): null for
-    /// <see cref="ComputeResources.PackedWeightCacheFolder"/> (IDRAK_PACKED_CACHE_DIR; "packed" in
-    /// <see cref="ComputeResources.CacheFolder"/>).
-    /// </summary>
-    public string? PackedCacheFolder { get; init; }
-
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
@@ -203,8 +154,7 @@ public sealed record PretrainedOptions
 
     /// <summary>
     /// A folder holding a PEFT LoRA adapter (from <see cref="PretrainedModel.SaveAdapter"/> or peft) to merge into the
-    /// weights as they are read: the model then runs as fast as the base model, and int8 / int4 / bfloat16 weights are
-    /// packed with the update included. Use <see cref="PretrainedModel.LoadAdapter"/> instead to keep the adapter separate
+    /// weights as they are read: the model then runs as fast as the base model. Use <see cref="PretrainedModel.LoadAdapter"/> instead to keep the adapter separate
     /// (to train it further, or export it).
     /// </summary>
     public string? MergeAdapter { get; init; }
@@ -214,39 +164,24 @@ public sealed record PretrainedOptions
     /// weight checked against the checkpoint's header and given its tensor's place in the file, and a weight's bytes are
     /// read when its module moves to a device (<see cref="Module.To(Device)"/>), one tensor at a time. A pipeline stage
     /// (<c>PipelineStage.Place</c>) or a parameters shard (the pretrainer) so reads only its own tensors, and no process
-    /// builds or holds the whole model. The weights are float32 (no packed format, no merged adapter); a family whose
+    /// builds or holds the whole model. The weights are float32 (no merged adapter); a family whose
     /// weights the checkpoint names do not cover (<see cref="PretrainedModel.StoredTensors"/>) is refused naming the tensor.
     /// Move the network to a device before running it (<see cref="PretrainedModel.Place"/>).
     /// </summary>
     public bool Deferred { get; init; }
 
     /// <summary>
-    /// Choose the weights' format before reading any weight (<see cref="Models.AutoWeights"/>): the largest of
-    /// <see cref="AutoWeightsFormats"/> (float32, bfloat16, int8, int4) whose weights, the key/value caches for
-    /// <see cref="AutoWeightsContext"/> tokens and <see cref="AutoWeightsHeadroom"/> fit the memory the device reports
-    /// free (<see cref="AutoWeightsBudget"/> when given). When none fits, the load is refused before anything is read
-    /// (<see cref="InsufficientMemoryException"/>, naming what would fit), or, with
-    /// <see cref="ComputeResources.OffloadToHostMemory"/> on, goes on with the smallest format and part of it in system
-    /// memory. A format named here (<see cref="Int8"/>, <see cref="Int4"/>, <see cref="BFloat16"/>,
-    /// <see cref="PackedFormatName"/>) wins, and a deferred load keeps float32. <see cref="PretrainedModel.Weights"/> says
-    /// what was chosen. Off by default: float32 projections unless a format is named.
-    /// </summary>
-    public bool AutoWeights { get; init; }
-
-    /// <summary>
-    /// The tokens the weights choice keeps key/value room for (<see cref="AutoWeights"/>): null takes
-    /// <see cref="MaxPositions"/> when given, else <see cref="Models.AutoWeights.DefaultContext"/> (both within the model's).
+    /// The tokens the weight and expert placements keep key/value room for (<see cref="WeightPlacement"/>,
+    /// <see cref="ExpertPlacement"/>): null takes <see cref="MaxPositions"/> when given, else
+    /// <see cref="Models.AutoWeights.DefaultContext"/> (both within the model's).
     /// </summary>
     public int? AutoWeightsContext { get; init; }
 
-    /// <summary>The share of the weights' bytes the choice keeps free beside the working memory (<see cref="Models.AutoWeights.DefaultHeadroom"/>, 0.1, by default).</summary>
+    /// <summary>The share of the weights' bytes the placements keep free beside the working memory (<see cref="Models.AutoWeights.DefaultHeadroom"/>, 0.1, by default).</summary>
     public double AutoWeightsHeadroom { get; init; } = Models.AutoWeights.DefaultHeadroom;
 
-    /// <summary>The bytes the choice may take instead of the memory the device reports free (a budget of one's own); null measures the device.</summary>
+    /// <summary>The bytes the placements may take instead of the memory the device reports free (a budget of one's own); null measures the device.</summary>
     public long? AutoWeightsBudget { get; init; }
-
-    /// <summary>The formats the choice tries, the largest first; null for <see cref="Models.AutoWeights.Formats"/>.</summary>
-    public IReadOnlyList<string>? AutoWeightsFormats { get; init; }
 
     /// <summary>
     /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1): "device"
@@ -292,40 +227,6 @@ public sealed record PretrainedOptions
     public bool? ColdExpertsOnCpu { get; init; }
 
     /// <summary>
-    /// The element type the run computes in (plan 37, T0 and T2): "auto" (what the device computes natively: bfloat16,
-    /// float16, else float32), "float32" (every result as before T2), "bfloat16" or "float16" (bf16, f16 for short); null
-    /// takes <see cref="ElementTypes.EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else auto. A 16-bit run multiplies in its
-    /// type where the device computes it (float32 sums); with <see cref="AutoWeights"/> its weights' format is chosen among
-    /// the 16-bit and smaller ones (float32 weights would give the same products in twice the memory). Weights a load does
-    /// not choose by memory stay as named (float32 by default: a training run's trainable weights).
-    /// <see cref="PretrainedModel.ElementType"/> says what was chosen and how.
-    /// </summary>
-    public string? ElementType { get; init; }
-
-    /// <summary>Where <see cref="ElementType"/> came from, as the choice and a refusal name it ("--dtype"; an app's own option name).</summary>
-    public string ElementTypeSource { get; init; } = "--dtype";
-
-    /// <summary>
-    /// Keep weights stored in a format of their own (a GGUF block format such as q4_k, F8 or I8 with scales) in that format
-    /// in memory (plan 37, Q0), where the device multiplies it: about the file's size instead of float32's, the same
-    /// products bit for bit. False expands them to float32 at load, as before; null takes
-    /// <see cref="WeightStorage.EnvironmentVariable"/> (IDRAK_KEEP_PACKED), on unless it says off.
-    /// <see cref="PretrainedModel.KeptWeights"/> says what the load did.
-    /// </summary>
-    public bool? KeepPacked { get; init; }
-
-    /// <summary>
-    /// Whether a decoder's weights are read in place from the checkpoint's file mapping (plan 37, W3,
-    /// <see cref="WeightMappings"/>): "map" (a split model's CPU layers and lazily built layers read their weights where the
-    /// file's pages lie, on the CPU, where the file stores them as they are computed, float32, or as the load keeps them,
-    /// <see cref="KeepPacked"/>: the operating system's page cache holds them once, the same products bit for bit), "copy"
-    /// (every weight copied into memory, as before), or a mapping of one's own. Null takes
-    /// <see cref="WeightMappings.DefaultName"/> (IDRAK_WEIGHT_MAPPING; map). What was read in place and every copy taken
-    /// instead is counted in <see cref="MappedWeights"/>.
-    /// </summary>
-    public string? WeightMapping { get; init; }
-
-    /// <summary>
     /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
     /// device's measured free memory changes (more on the device when memory frees, fewer under pressure; plan 37 W2):
     /// null takes <see cref="WeightPlacements.DefaultGrow"/> (IDRAK_WEIGHT_GROW; on).
@@ -340,9 +241,6 @@ public sealed record PretrainedOptions
     /// (IDRAK_LAZY_LOAD; off). <see cref="PretrainedModel.LayersBuilt"/> counts the layers built so far.
     /// </summary>
     public bool? LazyLayers { get; init; }
-
-    // Whether the options name a weights' format (which wins over the choice).
-    internal bool NamesFormat => Int8 || Int4 || BFloat16 || PackedFormatName is not null;
 }
 
 /// <summary>A weight of a model as its checkpoint stores it (<see cref="PretrainedModel.StoredTensors"/>).</summary>
@@ -358,22 +256,21 @@ public sealed record StoredTensor(string Name, int[] Shape, Tensor Tensor, bool 
 /// </summary>
 /// <param name="Open">Reading config.json and the checkpoint's headers, and opening a merged adapter.</param>
 /// <param name="Read">Reading the weights' bytes from storage (zero when the store does not measure it, <c>ITensorStore.ReadTime</c>: then part of <paramref name="Convert"/>).</param>
-/// <param name="Convert">Turning the bytes read into the layers' layout: widening to float32, transposing, copying bfloat16 values.</param>
+/// <param name="Convert">Turning the bytes read into the layers' layout: transposing.</param>
 /// <param name="Merge">Adding a merged adapter's updates to the weights (<see cref="PretrainedOptions.MergeAdapter"/>).</param>
-/// <param name="Upload">Putting the bfloat16 weights read as their stored bits on the device: their memory and the upload.</param>
-/// <param name="Build">The rest of building the network: packing from float32 values (rounding, quantizing), the other weights' memory and uploads, the layers.</param>
+/// <param name="Build">The rest of building the network: the weights' memory and uploads, the layers.</param>
 /// <param name="Vision">Reading the vision part of a vision-language checkpoint (its encoder is built on first use, not here).</param>
 /// <param name="Tokenizer">Reading the tokenizer and the chat template.</param>
 /// <param name="Total">The whole load.</param>
-public sealed record PretrainedLoadTimes(TimeSpan Open, TimeSpan Read, TimeSpan Convert, TimeSpan Merge, TimeSpan Upload, TimeSpan Build,
+public sealed record PretrainedLoadTimes(TimeSpan Open, TimeSpan Read, TimeSpan Convert, TimeSpan Merge, TimeSpan Build,
     TimeSpan Vision, TimeSpan Tokenizer, TimeSpan Total)
 {
     /// <summary>
-    /// The stages in order with their names ("open", "read", "convert", "merge", "upload", "build", "vision", "tokenizer",
+    /// The stages in order with their names ("open", "read", "convert", "merge", "build", "vision", "tokenizer",
     /// "total"), for a log line or a profile's stages (<see cref="ProfileRun.Stage(string, TimeSpan)"/>).
     /// </summary>
     public IReadOnlyList<(string Stage, TimeSpan Elapsed)> Stages =>
-        [("open", Open), ("read", Read), ("convert", Convert), ("merge", Merge), ("upload", Upload), ("build", Build), ("vision", Vision), ("tokenizer", Tokenizer), ("total", Total)];
+        [("open", Open), ("read", Read), ("convert", Convert), ("merge", Merge), ("build", Build), ("vision", Vision), ("tokenizer", Tokenizer), ("total", Total)];
 
     /// <summary>"open 0.01 s, read 1.20 s, …, total 4.90 s" (invariant culture).</summary>
     public override string ToString() =>
@@ -429,13 +326,6 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec"/>).</summary>
     public IReadOnlyList<string> Notes { get; }
 
-    /// <summary>
-    /// What the packed-weight cache did for this load (<see cref="PretrainedOptions.PackedCache"/>): the int8 or int4 weights
-    /// read back from it (a warm load) and those packed and kept (a cold one); null when the load kept none (the cache off,
-    /// a deferred load, or no format that is kept).
-    /// </summary>
-    public PackedWeightCacheUse? PackedCache { get; private init; }
-
     /// <summary>The longest sequence the loaded model supports.</summary>
     public int MaxPositions { get; }
 
@@ -460,18 +350,16 @@ public sealed class PretrainedModel : IDisposable
 
     /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file, or any path a format registered with
-    /// <see cref="CheckpointFormats"/> reads). Every weight is read from disk one tensor at a time and (with
-    /// <see cref="PretrainedOptions.Int8"/>) quantized on the host, so the model is never held twice.
+    /// <see cref="CheckpointFormats"/> reads). Every weight is read from disk one tensor at a time, so the model is never
+    /// held twice.
     /// </summary>
     public static PretrainedModel Load(string folder, PretrainedOptions? options = null)
     {
         long started = Stopwatch.GetTimestamp();
         options ??= new PretrainedOptions();
-        if (options.Deferred && (options.Int8 || options.Int4 || options.BFloat16 || options.PackedFormatName is not null || options.HeadFormatName is not null
-            || options.MergeAdapter is not null))
+        if (options.Deferred && options.MergeAdapter is not null)
         {
-            throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without Int8, Int4, BFloat16, "
-                + "a packed format or a merged adapter.", nameof(options));
+            throw new ArgumentException("A deferred load (PretrainedOptions.Deferred) reads float32 weights where they are placed: load without a merged adapter.", nameof(options));
         }
 
         var format = CheckpointFormats.For(folder);
@@ -494,7 +382,6 @@ public sealed class PretrainedModel : IDisposable
         var notes = new List<string>();
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
-        WeightsChoice? weightsChoice = null;
 
         // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit.
         var placementTarget = options.Device ?? Idrak.Abstraction.Device.Default;
@@ -502,49 +389,14 @@ public sealed class PretrainedModel : IDisposable
         var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? WeightPlacements.Get(placementName) : null;
         bool mayLeaveDevice = placement is not null && !placement.Name.Equals(WeightPlacements.AllOnDevice, StringComparison.OrdinalIgnoreCase);
 
-        // The run's element type (plan 37, T0 and T2): chosen before any weight is read, so a value nobody accepts fails at
-        // once, and the weights' format follows it. Auto picks what the device computes natively (bfloat16, float16, else
-        // float32); the user's --dtype or IDRAK_DEFAULT_DTYPE wins.
-        var elementType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource, placementTarget);
-        bool sixteenBits = ReferenceEquals(elementType.Type, Abstraction.ElementType.BFloat16) || ReferenceEquals(elementType.Type, Abstraction.ElementType.Float16);
-        if (options.AutoWeights && !options.NamesFormat && !options.Deferred)
-        {
-            // The weights' format chosen before any weight is read: the largest that fits what the device reports free (the
-            // smallest, when nothing fits and part of the model may leave the device).
-            var target = placementTarget;
-            int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
-            // A bfloat16 checkpoint's values are bfloat16 already: float32 would hold the same values in twice the memory.
-            // A run computing in 16 bits rounds its products' operands to 16 bits anyway: float32 weights would be the same
-            // products in twice the memory (plan 37, T2).
-            IReadOnlyList<string> formats = options.AutoWeightsFormats
-                ?? (sixteenBits || reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key == WeightFormat.BFloat16
-                    ? [.. AutoWeights.Formats.Where(f => f != "float32")] : AutoWeights.Formats);
-            weightsChoice = AutoWeights.Choose(spec, context, options.AutoWeightsBudget ?? target.Backend.AvailableMemory(), ComputeResources.OffloadToHostMemory || mayLeaveDevice,
-                options.AutoWeightsHeadroom, formats, $"{name} on {target}");
-            options = weightsChoice.Format switch
-            {
-                "bfloat16" => options with { BFloat16 = true },
-                "int8" => options with { Int8 = true },
-                "int4" => options with { Int4 = true },
-                _ => options,
-            };
-            notes.Add($"weights {weightsChoice}.");
-        }
-
-        ElementTypes.Report(elementType, placementTarget);
-
-        // Whether layers read their weights from the file's mapping (plan 37, W3): looked up before any weight is read.
-        var weightMapping = WeightMappings.Get(options.WeightMapping ?? WeightMappings.DefaultName);
-
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
         // placement, which then counts only the experts kept on the device.
         ExpertPlan? expertPlan = null;
-        string loadFormat = options.PackedFormatName ?? (options.Int8 ? "int8" : options.Int4 ? "int4" : options.BFloat16 ? "bfloat16" : "float32");
         int loadContext = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
         ExpertPlacementRequest? expertRequest = null;
         if (spec.Experts > 0 && !options.Deferred && architecture is not INetworkBuildingArchitecture)
         {
-            expertRequest = AutoWeights.ExpertRequest(spec, loadFormat, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
+            expertRequest = AutoWeights.ExpertRequest(spec, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceExpertBytes ?? ExpertPlacements.DefaultCacheBytes, options.ColdExpertsOnCpu ?? ExpertPlacements.DefaultColdOnCpu, options.AutoWeightsHeadroom);
             expertPlan = ExpertPlacements.Get(options.ExpertPlacement ?? ExpertPlacements.DefaultName).Place(expertRequest);
             if (expertPlan.Offload && placementTarget.Type == DeviceType.Cpu)
@@ -562,9 +414,8 @@ public sealed class PretrainedModel : IDisposable
         WeightPlacementRequest? placedRequest = null;
         if (placement is not null)
         {
-            string placedFormat = loadFormat;
             int context = loadContext;
-            var request = AutoWeights.PlacementRequest(spec, placedFormat, context, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
+            var request = AutoWeights.PlacementRequest(spec, context, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceLayers ?? WeightPlacements.DefaultDeviceLayers, options.AutoWeightsHeadroom);
             if (expertPlan is { Offload: true } && expertRequest is not null)
             {
@@ -595,7 +446,6 @@ public sealed class PretrainedModel : IDisposable
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
         weights.Progress?.Begin();
         var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
-        var packedCache = PackedWeightCache.For(options, folder);
         // W2: layers built on first use (the checkpoint kept open for them), and layers following the memory at step boundaries.
         bool buildsOwnNetwork = architecture is INetworkBuildingArchitecture;
         bool lazy = (options.LazyLayers ?? WeightPlacements.DefaultLazy) && !options.Deferred && options.MergeAdapter is null && !buildsOwnNetwork;
@@ -609,8 +459,7 @@ public sealed class PretrainedModel : IDisposable
         var lazyReader = lazy ? format.Open(folder) : null;
         var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
-            LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep,
-            WeightMapping = weightMapping };
+            LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, MaxPositions = maxPositions };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -630,13 +479,6 @@ public sealed class PretrainedModel : IDisposable
 
         long buildEnded = Stopwatch.GetTimestamp();
         fileTime = reader.ReadTime - fileTime;
-        PackedWeightCacheUse? cacheUse = null;
-        if (packedCache?.Use is { } use && (use.Read > 0 || use.Written > 0 || use.Problem is not null))
-        {
-            packedCache.Prune();                                    // the entries of this model's formats the load did not use
-            notes.Add(packedCache.Describe());
-            cacheUse = use;
-        }
 
         var vision = visionFamily?.Read(new VisionCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
         long visionRead = Stopwatch.GetTimestamp();
@@ -685,7 +527,7 @@ public sealed class PretrainedModel : IDisposable
         var template = ChatTemplates.Load(folder, tokenizer);
         long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
-            options.Device ?? Idrak.Abstraction.Device.Default, vision) { PackedCache = cacheUse };
+            options.Device ?? Idrak.Abstraction.Device.Default, vision);
         foreach (var (stored, value) in visionTensors ?? [])
         {
             model._vision[stored] = value;
@@ -701,30 +543,9 @@ public sealed class PretrainedModel : IDisposable
             model._parts[stored] = value;
         }
 
-        model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
         model._loadBytes = reader.BytesRead;
-        model.Weights = weightsChoice;
         model.Placement = plan;
         model.ExpertPlacement = expertPlan;
-        model.ElementType = elementType;
-        model.DeviceElementTypes = [elementType];
-        if (plan is { Split: true } && placementTarget.Type != DeviceType.Cpu)
-        {
-            // The layers the CPU computes (W1's split): its own choice, said beside the device's (auto: float32 there).
-            var cpuType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource, Abstraction.Device.Cpu);
-            ElementTypes.Report(cpuType, Abstraction.Device.Cpu);
-            model.DeviceElementTypes = [elementType, cpuType];
-        }
-
-        // The products in the run's type, unless the caller chooses (a MixedPrecision scope, IDRAK_MATMUL): bfloat16 or
-        // float16 operands where the device computes them, float32 sums; a float32 run as before (plan 37, T2).
-        network.Precision = ReferenceEquals(elementType.Type, Abstraction.ElementType.Float32) ? null : MixedPrecision.For(elementType.Type);
-        model.KeptWeights = buildWeights.StoredSummary;                      // weights kept as stored or expanded (plan 37, Q0)
-        model.WeightsMapped = buildWeights.MappedSummary;                    // read in place from the file, or copied and why (W3)
-        if (model.KeptWeights is { } keptWeights)
-        {
-            WeightStorage.Report(keptWeights, options.Device ?? Abstraction.Device.Default);
-        }
         model._lazyReader = lazyReader;
         try
         {
@@ -748,11 +569,11 @@ public sealed class PretrainedModel : IDisposable
         }
 
         // The store's file time (when it measures it) apart from the rest of its reads; what the build did besides reading,
-        // merging and the bfloat16 uploads is packing and the other weights' uploads.
+        // and merging is the weights' uploads and the layers.
         var read = fileTime ?? TimeSpan.Zero;
-        var others = Stopwatch.GetElapsedTime(building, buildEnded) - weights.ReadTime - weights.MergeTime - weights.UploadTime;
+        var others = Stopwatch.GetElapsedTime(building, buildEnded) - weights.ReadTime - weights.MergeTime;
         model.LoadTimes = new PretrainedLoadTimes(Stopwatch.GetElapsedTime(started, building), read, Max(weights.ReadTime - read), weights.MergeTime,
-            weights.UploadTime, Max(others), Stopwatch.GetElapsedTime(buildEnded, visionRead), Stopwatch.GetElapsedTime(tokenizing, tokenized),
+            Max(others), Stopwatch.GetElapsedTime(buildEnded, visionRead), Stopwatch.GetElapsedTime(tokenizing, tokenized),
             Stopwatch.GetElapsedTime(started));
         try
         {
@@ -836,7 +657,6 @@ public sealed class PretrainedModel : IDisposable
         }
 
         config["architectures"] = new JsonArray((JsonNode)architecture);
-        config["torch_dtype"] = options.Type switch { SafeTensorType.F32 => "float32", SafeTensorType.F16 => "float16", _ => "bfloat16" };
         config["bos_token_id"] = bos;
         config["eos_token_id"] = stops.Count == 1 ? eos : new JsonArray([.. stops.Select(i => (JsonNode)i)]);
         config["pad_token_id"] = pad;
@@ -878,7 +698,7 @@ public sealed class PretrainedModel : IDisposable
         using (var drawn = new PretrainedModel(folder, config, spec, network, tokenizer, null, [], spec.MaxPositions, family, cpu, null))
         {
             var extra = (vision?.Tensors ?? []).Concat(parts.SelectMany(p => p.Tensors));
-            drawn.WriteTensors(folder, options.Type, extra.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
+            drawn.WriteTensors(folder, extra.Select(t => (t.Name, t.Shape, (Func<float[]>)(() => t.Values))));
         }
 
         foreach (var (name, text) in (vision?.Files ?? new Dictionary<string, string>()).Concat(parts.SelectMany(p => p.Files)))
@@ -927,24 +747,12 @@ public sealed class PretrainedModel : IDisposable
     }
 
     /// <summary>
-    /// The format most of the checkpoint's tensors are stored in (float32, float16 or bfloat16), or null when its store does
-    /// not say (<see cref="ITensorStore.FormatOf"/>).
-    /// </summary>
-    public WeightFormat? CheckpointFormat { get; private set; }
-
-    /// <summary>
     /// The sampling the model's makers recommend (its generation_config.json: temperature, top_p, top_k, min_p,
     /// repetition_penalty, do_sample; a GGUF file's general.sampling keys, written there when the file is prepared), or
     /// null when the folder has none. The generators made from the model carry it (<c>TextGenerator.RecommendedSampling</c>);
     /// an app lays it under its explicit values with <see cref="Abstraction.Generation.SamplingSettings.Resolve"/>.
     /// </summary>
     public Abstraction.Generation.SamplingSettings? RecommendedSampling { get; private set; }
-
-    /// <summary>
-    /// The weights' format the load chose (<see cref="PretrainedOptions.AutoWeights"/>) with the bytes it counted and the
-    /// memory it measured; null when the format was named or the choice was off.
-    /// </summary>
-    public WeightsChoice? Weights { get; private set; }
 
     /// <summary>
     /// Where the load placed the decoder's layers (<see cref="PretrainedOptions.WeightPlacement"/>): on the device, split with
@@ -961,46 +769,15 @@ public sealed class PretrainedModel : IDisposable
     public ExpertPlan? ExpertPlacement { get; private set; }
 
     /// <summary>
-    /// The element type the load chose for the run on its device and how (<see cref="PretrainedOptions.ElementType"/>, plan
-    /// 37 T0 and T2): "element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float32 natively (...))",
-    /// or "(selected by the user (IDRAK_DEFAULT_DTYPE))". The network's products run in it (<see cref="Sequential.Precision"/>),
-    /// and a format chosen by memory (<see cref="PretrainedOptions.AutoWeights"/>) is a 16-bit or smaller one for a 16-bit
-    /// run. Published to telemetry when chosen.
+    /// The key/value cache format generation with the model uses unless one is named: IDRAK_KV_CACHE_TYPE, else auto
+    /// (<see cref="KeyValueLayouts.Choose"/>). Pass its <see cref="KeyValueLayoutChoice.Layout"/> to <c>CreateGenerator</c>.
     /// </summary>
-    public ElementTypeChoice ElementType { get; private set; } = new(Abstraction.ElementType.Float32, Picked: true, Source: null);
-
-    /// <summary>
-    /// The element type of each device the run computes on (plan 37, T2): the model's device first, then the CPU when the
-    /// load split the layers with it (<see cref="Placement"/>), each chosen and said on its own.
-    /// </summary>
-    public IReadOnlyList<ElementTypeChoice> DeviceElementTypes { get; private set; } = [];
-
-    /// <summary>
-    /// The key/value cache format generation with the model uses unless one is named (plan 37, T2): IDRAK_KV_CACHE_TYPE,
-    /// else auto, which keeps the run's compute type (<see cref="KeyValueLayouts.Choose"/>: a bfloat16 cache for a
-    /// bfloat16 run, float32 for a float32 one). Pass its <see cref="KeyValueLayoutChoice.Layout"/> to <c>CreateGenerator</c>.
-    /// </summary>
-    public KeyValueLayoutChoice CacheChoice => _cacheChoice ??= KeyValueLayouts.Choose(null, ElementType.Type, KeyValueLayouts.EnvironmentVariable);
+    public KeyValueLayoutChoice CacheChoice => _cacheChoice ??= KeyValueLayouts.Choose(null);
 
     private KeyValueLayoutChoice? _cacheChoice;
 
-    /// <summary>
-    /// What the load did with the weights stored in a format of their own (plan 37, Q0, <see cref="PretrainedOptions.KeepPacked"/>):
-    /// "weights kept packed: 14 matrices (q8_0), 1.2 MB; 0 expanded to float32 (0 MB)"; null when the checkpoint has none.
-    /// Published to telemetry when the load ends.
-    /// </summary>
-    public StoredWeightsSummary? KeptWeights { get; private set; }
-
-    /// <summary>
-    /// What the load read in place from the checkpoint's file mapping and what it copied instead (plan 37, W3,
-    /// <see cref="PretrainedOptions.WeightMapping"/>): "weights mapped: 12 matrices read in place from the file (1.2 MB); 0
-    /// copied into memory (0 MB)"; null when no layer built at load asked for the mapping (a model on one device; a lazy
-    /// load, whose layers count in <see cref="MappedWeights"/> as they are built).
-    /// </summary>
-    public string? WeightsMapped { get; private set; }
-
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
-    public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);
+    public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default);
 
     // The trained vision tensors (a vision part's fine-tuned modules), by their checkpoint names, in the checkpoint's layout.
     private readonly Dictionary<string, (int[] Shape, float[] Values)> _vision = new(StringComparer.Ordinal);
@@ -1375,7 +1152,7 @@ public sealed class PretrainedModel : IDisposable
             tensors.Add(($"base_model.model.{name}", shape, values));
         }
 
-        SafeTensorsWriter.Write(Path.Combine(folder, "adapter_model.safetensors"), tensors, SafeTensorType.F32,
+        SafeTensorsWriter.Write(Path.Combine(folder, "adapter_model.safetensors"), tensors,
             new Dictionary<string, string> { ["format"] = "pt" });
         var config = new JsonObject
         {
@@ -1495,27 +1272,26 @@ public sealed class PretrainedModel : IDisposable
     }
 
     /// <summary>
-    /// Writes the model as a Hugging Face checkpoint (model.safetensors in <paramref name="type"/>, with config.json,
-    /// the tokenizer and chat template files copied from the original folder): LoRA adapters are merged into the
-    /// weights first. The model must hold float32 weights (load it without Int8 / Int4 / BFloat16 to export).
+    /// Writes the model as a Hugging Face checkpoint (model.safetensors of float32 tensors, with config.json, the tokenizer
+    /// and chat template files copied from the original folder): LoRA adapters are merged into the weights first.
     /// </summary>
-    public void SaveHuggingFace(string folder, SafeTensorType type = SafeTensorType.BF16) => SaveHuggingFace(folder, type, null);
+    public void SaveHuggingFace(string folder) => SaveHuggingFace(folder, null);
 
     /// <summary>
-    /// <see cref="SaveHuggingFace(string, SafeTensorType)"/> with the vision part's tensors: each of
+    /// <see cref="SaveHuggingFace(string)"/> with the vision part's tensors: each of
     /// <see cref="PretrainedVision.StoredTensors"/> from <paramref name="vision"/> when it holds that name (a trained
     /// part's, from <see cref="IVisionTuningPart.Export"/>), else the model's trained vision tensors
     /// (<see cref="TrainedVisionTensors"/>), else the checkpoint's own, as stored.
     /// </summary>
-    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision) => SaveHuggingFace(folder, type, vision, null);
+    public void SaveHuggingFace(string folder, IReadOnlyDictionary<string, Tensor>? vision) => SaveHuggingFace(folder, vision, null);
 
     /// <summary>
-    /// <see cref="SaveHuggingFace(string, SafeTensorType, IReadOnlyDictionary{string, Tensor})"/> with each weight's values
+    /// <see cref="SaveHuggingFace(string, IReadOnlyDictionary{string, Tensor})"/> with each weight's values
     /// from <paramref name="values"/> (in the model's layout, asked for one tensor at a time as it is written, in the order
     /// of <see cref="StoredTensors"/>), or from the tensor itself when null: a checkpoint streamed from the ranks holding a
     /// model's parts (plan 23, C8b) writes the file one process writes, holding one tensor at a time.
     /// </summary>
-    public void SaveHuggingFace(string folder, SafeTensorType type, IReadOnlyDictionary<string, Tensor>? vision, Func<StoredTensor, float[]>? values)
+    public void SaveHuggingFace(string folder, IReadOnlyDictionary<string, Tensor>? vision, Func<StoredTensor, float[]>? values)
     {
         using var source = Vision is null && _partTensors.Count == 0 ? null : CheckpointFormats.For(Folder).Open(Folder);
         var visionTensors = Vision is null ? [] : Vision.StoredTensors.Order(StringComparer.Ordinal).Select(name =>
@@ -1526,7 +1302,7 @@ public sealed class PretrainedModel : IDisposable
         var partTensors = _partTensors.Values.SelectMany(owned => owned).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(name =>
             _parts.TryGetValue(name, out var kept) ? (name, kept.Shape, (Func<float[]>)(() => kept.Values))
             : (name, source!.ShapeOf(name), (Func<float[]>)(() => source!.Read(name)))).ToList();
-        WriteTensors(folder, type, [.. visionTensors, .. partTensors], values);
+        WriteTensors(folder, [.. visionTensors, .. partTensors], values);
         string target = Path.GetFullPath(folder);
         foreach (string file in Directory.GetFiles(Folder))
         {
@@ -1544,14 +1320,9 @@ public sealed class PretrainedModel : IDisposable
     }
 
     // model.safetensors of the network (LoRA merged first), each weight under its checkpoint name and layout.
-    private void WriteTensors(string folder, SafeTensorType type, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null,
+    private void WriteTensors(string folder, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null,
         Func<StoredTensor, float[]>? values = null)
     {
-        if (Network.Descendants().OfType<IPackableLinear>().Any(l => l.PackedWeight is not null) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
-        {
-            throw new InvalidOperationException("Exporting needs float32 weights: load the model without Int8, Int4 or BFloat16 (then LoadAdapter) to merge and save.");
-        }
-
         Network.MergeLora();
         Directory.CreateDirectory(folder);
         // The header is written from the shapes; each tensor is copied to the host (and transposed) only when it is written.
@@ -1573,7 +1344,7 @@ public sealed class PretrainedModel : IDisposable
 
         string path2 = Path.Combine(folder, "model.safetensors");
         string temporary = path2 + ".writing";
-        SafeTensorsWriter.Write(temporary, tensors, type, new Dictionary<string, string> { ["format"] = "pt" });
+        SafeTensorsWriter.Write(temporary, tensors, new Dictionary<string, string> { ["format"] = "pt" });
         File.Move(temporary, path2, overwrite: true);                 // a model saved over its own file reads it to the end first
     }
 

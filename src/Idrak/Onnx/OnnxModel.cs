@@ -153,7 +153,6 @@ internal sealed class OnnxTensor
         var dims = new List<long>();
         var floats = new List<float>();
         var longs = new List<long>();
-        var doubles = new List<double>();
         int type = 0;
         string name = "";
         ReadOnlySpan<byte> raw = default;
@@ -165,24 +164,9 @@ internal sealed class OnnxTensor
                 case 1: r.Ints(wire, dims); break;
                 case 2: type = (int)r.Varint(); break;
                 case 4: r.Floats(wire, floats); break;
-                case 5 or 7: r.Ints(wire, longs); break;                  // int32_data (also float16 bits) / int64_data
+                case 5 or 7: r.Ints(wire, longs); break;                  // int32_data / int64_data
                 case 8: name = r.String(); break;
                 case 9: raw = r.Bytes(); hasRaw = true; break;                 // read in place: no copy of the weights
-                case 10:
-                    if (wire == 1)
-                    {
-                        doubles.Add(r.Fixed64());
-                    }
-                    else
-                    {
-                        var packed = r.Bytes();
-                        for (int i = 0; i + 8 <= packed.Length; i += 8)
-                        {
-                            doubles.Add(BinaryPrimitives.ReadDoubleLittleEndian(packed.Slice(i, 8)));
-                        }
-                    }
-
-                    break;
                 case 14:
                     if (r.Varint() == 1)
                     {
@@ -199,11 +183,9 @@ internal sealed class OnnxTensor
         return type switch
         {
             1 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. floats] : Copy(raw, count, b => BinaryPrimitives.ReadSingleLittleEndian(b)) },
-            11 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. doubles.Select(d => (float)d)] : Decode(raw, 8, count, b => (float)BinaryPrimitives.ReadDoubleLittleEndian(b)) },
-            10 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. longs.Select(v => (float)BitConverter.UInt16BitsToHalf((ushort)v))] : Halves(raw, count) },
-            16 => new OnnxTensor { Name = name, Dims = shape, Floats = !hasRaw ? [.. longs.Select(v => BitConverter.Int32BitsToSingle((int)v << 16))] : BFloat16s(raw, count) },
             7 => new OnnxTensor { Name = name, Dims = shape, Longs = !hasRaw ? [.. longs] : Copy(raw, count, b => BinaryPrimitives.ReadInt64LittleEndian(b)) },
             6 or 5 or 3 or 2 or 4 or 12 or 13 => new OnnxTensor { Name = name, Dims = shape, Longs = !hasRaw ? [.. longs] : DecodeInt(raw, type, count) },
+            10 or 11 or 16 => throw new NotSupportedException($"Tensor '{name}' has ONNX data type {type}: type not on the new design yet."),
             _ => throw new NotSupportedException($"Tensor '{name}' has ONNX data type {type}, which the importer does not read."),
         };
     }
@@ -233,24 +215,6 @@ internal sealed class OnnxTensor
 
         var values = new T[count];
         raw[..(count * Unsafe.SizeOf<T>())].CopyTo(MemoryMarshal.AsBytes(values.AsSpan()));
-        return values;
-    }
-
-    private static float[] Halves(ReadOnlySpan<byte> raw, int count)
-    {
-        var values = new float[count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(raw.Slice(i * 2, 2));
-        }
-
-        return values;
-    }
-
-    private static float[] BFloat16s(ReadOnlySpan<byte> raw, int count)
-    {
-        var values = new float[count];
-        Idrak.Models.StoredFloats.WidenBFloat16(raw, values);
         return values;
     }
 

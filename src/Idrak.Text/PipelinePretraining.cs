@@ -456,8 +456,8 @@ public static partial class Pretrainer
                     }
                 }
 
-                model.SaveHuggingFace(folder, SafeTensorType.F32);
-                SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)), SafeTensorType.F32,
+                model.SaveHuggingFace(folder);
+                SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
                     new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name, ["pipeline"] = pipe.Layout.Stages.ToString(CultureInfo.InvariantCulture) });
                 WritePipelineState(pipe, options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
             }
@@ -495,7 +495,7 @@ public static partial class Pretrainer
 
             var owners = Enumerable.Range(1, pipe.Layout.Stages - 1).Select(s => pipe.Layout.RankOf(s, 0)).ToList();
             var entries = owners.Select(rank => StreamedCheckpoint.AskEntries(transport, rank)).ToList();
-            model.SaveHuggingFace(folder, SafeTensorType.F32, null, stored =>
+            model.SaveHuggingFace(folder, null, stored =>
             {
                 int index = global[stored.Tensor];
                 int holder = pipe.HolderOf(index);
@@ -510,7 +510,7 @@ public static partial class Pretrainer
                 tensors.AddRange(entries[o].Select((e, i) => ($"{PipelineKey}.{s}.{e.Name}", e.Shape, (Func<float[]>)(() => StreamedCheckpoint.AskEntry(transport, rank, i)))));
             }
 
-            SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), tensors, SafeTensorType.F32,
+            SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), tensors,
                 new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name, ["pipeline"] = pipe.Layout.Stages.ToString(CultureInfo.InvariantCulture) });
             owners.ForEach(rank => StreamedCheckpoint.Finish(transport, rank));
             WritePipelineState(pipe, options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);

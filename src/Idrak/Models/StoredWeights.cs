@@ -87,8 +87,7 @@ public static class StoredWeights
     /// <summary>
     /// A <see cref="Layers.Conv2d"/> from PyTorch's tensors <c>{name}.weight</c> [out, in / groups, kh, kw] and, when the
     /// checkpoint has it, <c>{name}.bias</c> [out]; the kernel size comes from the weight. The weight is read once, straight
-    /// into the layer's [out, in / groups · kh · kw] tensor (float32: a convolution has no narrower form; a bfloat16
-    /// checkpoint's values are kept exactly).
+    /// into the layer's [out, in / groups · kh · kw] tensor.
     /// </summary>
     /// <exception cref="InvalidDataException">The weight is missing or not 4-D, or the bias does not match it.</exception>
     public static Conv2d Conv2d(ITensorStore store, string name, (int Height, int Width)? stride = null, (int Height, int Width)? padding = null,

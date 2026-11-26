@@ -95,9 +95,6 @@ public sealed class ModelPackageWriter
     /// <summary>A module's weights under <paramref name="name"/>.</summary>
     public ModelPackageWriter Weights(string name, Module model) => Add(PackageEntryKind.Weights, name, model.Save);
 
-    /// <summary>A module's weights under <paramref name="name"/> in <paramref name="format"/> (Float16/BFloat16 halve them; int8 layers stay int8).</summary>
-    public ModelPackageWriter Weights(string name, Module model, WeightFormat format) => Add(PackageEntryKind.Weights, name, s => model.Save(s, format));
-
     /// <summary>Only the trainable parameters of <paramref name="model"/> (for example LoRA adapters or a new head).</summary>
     public ModelPackageWriter TrainableWeights(string name, Module model) => Add(PackageEntryKind.TrainableWeights, name, model.SaveTrainable);
 

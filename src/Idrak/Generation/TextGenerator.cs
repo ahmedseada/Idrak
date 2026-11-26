@@ -76,8 +76,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
     public Device Device =>Model.Parameters().Concat(Model.Buffers()).First().Device;
 
     /// <summary>
-    /// How the KV cache stores keys and values while generating: <see cref="KeyValueFormat.Int8"/> takes about a quarter
-    /// of the memory (longer contexts, more parallel sequences) at a small cost in accuracy.
+    /// How the KV cache stores keys and values while generating.
     /// </summary>
     public KeyValueFormat CacheFormat { get; init; } = KeyValueFormat.Float32;
 
@@ -171,18 +170,6 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         var context = pool.Open(capacity, ids, ids.Count - 1);
         return (context, ids.GetRange(0, context.Length));
     }
-
-    /// <summary>
-    /// The arithmetic of a prompt's pass (<see cref="MixedPrecision.Use"/> around the prefill alone), or null for the
-    /// caller's (<see cref="MixedPrecision.Current"/>). <see cref="MatMulPrecision.BFloat16"/> runs the prompt's matrix
-    /// products on tensor cores where the device has them (a long prompt, or an image's tokens, several times faster); the
-    /// decoding steps keep the caller's arithmetic. The cached keys and values come within bfloat16's rounding of float32:
-    /// compare a model's answers before relying on it.
-    /// </summary>
-    public MatMulPrecision? PrefillPrecision { get; set; }
-
-    // The scope a prompt's pass runs in (PrefillPrecision), or none.
-    private MixedPrecision.Scope? PrefillScope() => PrefillPrecision is { } precision ? MixedPrecision.Use(precision) : null;
 
     // The modules a prompt's pieces before the last run through (ForwardPieces): up to the last cached (attention) layer,
     // the norm and head after it skipped, their logits never sampled; 0 when the model has no cached layer (one pass).
@@ -299,7 +286,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
     // shapes), the rows' ids [rows, length] read from the host: each piece's keys and values are cached before the next
     // piece attends to them, so the pass holds one piece's activations at a time instead of the whole prompt's. The pieces
     // before the last stop at the last cached layer (their logits are never sampled); the last one's logits are returned
-    // as one pass returns them. The caller's arithmetic (PrefillScope) and gradient mode apply.
+    // as one pass returns them. The caller's gradient mode applies.
     internal Tensor ForwardPieces(ReadOnlySpan<float> ids, int rows, int length, DecodingContext decoding, int piece)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(piece);
@@ -720,8 +707,8 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, SampledVocabulary(), limit + 1, 1, options) { Tokenizer = Tokenizer });   // no penalties here
-        // Rows of different lengths need a cache whose format attends from per-row starts (IRowStartsLayout: float32,
-        // bfloat16); another format decodes them in float32.
+        // Rows of different lengths need a cache whose format attends from per-row starts (IRowStartsLayout: float32);
+        // another format decodes them in float32.
         var batchLayout = !padded || Layout is IRowStartsLayout ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
         using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout)
         {
@@ -751,7 +738,6 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         using (var scope = new TensorScope())
         {
             Tensor logits;
-            using (PrefillScope())
             {
                 if (prefillPiece < promptLength)
                 {
@@ -1045,10 +1031,9 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             images.Count == 0 ? images : [.. images.Where(i => i.Position >= start).Select(i => i with { Position = i.Position - start })];
 
         // A prefill (cached when a decoding context is given) with these images, attending by the family's rule; none: the
-        // plain one. In PrefillPrecision's arithmetic.
+        // plain one.
         Tensor WithImages(Tensor ids, IReadOnlyList<PromptImage> from, DecodingContext? cached)
         {
-            using (PrefillScope())
             {
                 return from.Count == 0 ? cached is null ? Model.Forward(ids) : Model.ForwardCached(ids, cached)
                     : cached is null ? Model.Forward(ids, from, attention!) : Model.ForwardCached(ids, from, attention!, cached);
@@ -1174,7 +1159,6 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                         return WithImages(Window(keep), ImagesFrom(start), decoding);
                     }
 
-                    using (PrefillScope())
                     {
                         return ForwardPieces(WindowValues(keep), 1, keep, decoding, prefillPiece);
                     }

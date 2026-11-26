@@ -7,7 +7,7 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The model-loading built-ins Idrak registers (from <c>LibraryRegistrations</c>, each when its registry is first used): the checkpoint formats (safetensors,
-/// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the ggml tensor types, the GGUF
+/// PyTorch zip checkpoints read without running them, GGUF), the model sources (folder, local model store, .gguf file), the GGUF
 /// pre-tokenizer patterns that are no family's (GPT-2's own rule), the GGUF fallback chat template that is no family's (ChatML), and the tokenizer models (BPE) and tokenizer file readers (tokenizer.json, sentencepiece). Idrak.Data adds the Hugging Face model source.
 /// The model families (pretrained and GGUF architectures, their pre-tokenizers and fallback chat templates) are plug-ins' (Idrak.Text.Plugins).
 /// </summary>
@@ -28,14 +28,6 @@ internal static class LibraryModelFormats
         foreach (var source in Enumerable.Reverse(ModelSource.BuiltIn))
         {
             ModelSources.Register(source);
-        }
-    }
-
-    public static void RegisterGgufTypes()
-    {
-        foreach (var (id, type) in GgufFile.BuiltInTypes())
-        {
-            GgufTypes.Register(id, type);
         }
     }
 

@@ -220,7 +220,7 @@ internal sealed class DiskFeatureCache : IFeatureCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            SafeTensorsWriter.Write(temporary, [(TensorName, shape, values)], SafeTensorType.F32,
+            SafeTensorsWriter.Write(temporary, [(TensorName, shape, values)],
                 new Dictionary<string, string> { ["format"] = Format, ["key"] = key.ToJson().ToJsonString() });
             File.Move(temporary, path, overwrite: true);
             return true;

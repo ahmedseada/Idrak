@@ -139,7 +139,6 @@ public sealed partial class TextGenerator
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
                     Tensor logits;
-                    using (PrefillScope())
                     {
                         if (count <= piece)
                         {
@@ -697,7 +696,6 @@ public sealed partial class TextGenerator
                 using var scope = new TensorScope();
                 _decoding.Cancellation = count > 1 ? cancellationToken : CancellationToken.None;   // a long pass stops between layers
                 Tensor logits;
-                using (_owner.PrefillScope())
                 {
                     if (count <= piece)
                     {

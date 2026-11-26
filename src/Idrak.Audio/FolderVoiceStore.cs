@@ -169,7 +169,7 @@ public sealed class FolderVoiceStore : ICheckpointVoiceStore
         Directory.CreateDirectory(staging);
         try
         {
-            SafeTensorsWriter.Write(Path.Combine(staging, EmbeddingFile), [("embedding", [embedding.Length], embedding)], SafeTensorType.F32);
+            SafeTensorsWriter.Write(Path.Combine(staging, EmbeddingFile), [("embedding", [embedding.Length], embedding)]);
             var clipList = new JsonArray();
             for (int i = 0; i < clips.Count; i++)
             {

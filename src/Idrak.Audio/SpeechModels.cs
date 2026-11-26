@@ -110,7 +110,7 @@ public static class SpeechModels
         var config = (JsonObject)created.Config.DeepClone();
         config["architectures"] = new JsonArray((JsonNode)architecture);
         Directory.CreateDirectory(folder);
-        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), created.Tensors, SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), created.Tensors);
         foreach (var (name, text) in created.Files)
         {
             File.WriteAllText(Path.Combine(folder, name), text);

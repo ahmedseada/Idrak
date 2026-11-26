@@ -14,7 +14,7 @@ internal static class LibrarySampleSources
     public static void RegisterAll()
     {
         SampleSources.Register(new SourceKind("csv", "CsvSource: rows of a CSV file (target required, comma-separated)", new OptionKeys("target", "ignore", "delimiter", "header"), OpenCsv));
-        SampleSources.Register(new SourceKind("tokens", "TokenFileSource: windows of a token file (length required)", new OptionKeys("length", "stride", "type"), OpenTokens));
+        SampleSources.Register(new SourceKind("tokens", "TokenFileSource: windows of a token file (length required)", new OptionKeys("length", "stride"), OpenTokens));
         SampleSources.Register(new SourceKind("npy", "NpySource: the rows of a .npy file, with targets from a second one", new OptionKeys("targets", "classes"), OpenNpy));
     }
 
@@ -51,8 +51,7 @@ internal static class LibrarySampleSources
     {
         int length = int.Parse(options.GetValueOrDefault("length") ?? throw new ArgumentException("The tokens source needs the option 'length' (tokens per window)."), CultureInfo.InvariantCulture);
         int? stride = options.TryGetValue("stride", out var s) ? int.Parse(s, CultureInfo.InvariantCulture) : null;
-        Abstraction.ElementType? type = options.TryGetValue("type", out var t) ? TokenFileRecord.Parse(t) : null;   // null: the file's record says it
-        return new TokenFileSource(path, length, stride, type);
+        return new TokenFileSource(path, length, stride);
     }
 
     private static NpySource OpenNpy(string path, IReadOnlyDictionary<string, string> options)

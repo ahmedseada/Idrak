@@ -4,89 +4,33 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
-using Idrak.Layers;
-using Idrak.Layers.Abstractions;
-using Idrak.Models.Abstractions;
 
 namespace Idrak;
 
 /// <summary>
-/// Weights files of modules (.ikw): <see cref="Save(Module, string)"/> writes every parameter and buffer, with the packed
-/// weights of linear layers (<see cref="IPackableLinear"/>: <see cref="Linear"/>) and <see cref="Embedding"/> layers as they are; <see cref="Load(Module, string)"/> reads
-/// them back into a module of the same architecture.
+/// Weights files of modules (.ikw): <see cref="Save(Module, string)"/> writes every parameter and buffer as float32;
+/// <see cref="Load(Module, string)"/> reads them back into a module of the same architecture.
 /// </summary>
 public static class ModuleFiles
 {
     private const uint FileMagic = 0x3257_4B49; // "IKW2": parameters followed by buffers (float32)
-    private const uint FileMagic3 = 0x3357_4B49; // "IKW3": int8 layers, then tensors each with an element type
-    private const uint FileMagic4 = 0x3457_4B49; // "IKW4": int8 layers, bfloat16 layers, then tensors as in IKW3
-    private const uint FileMagic5 = 0x3557_4B49; // "IKW5": int8, bfloat16, int4 layers, bfloat16 embeddings, then tensors as in IKW3
+    private const uint FileMagic3 = 0x3357_4B49; // "IKW3": packed layers, then tensors each with a stored type
+    private const uint FileMagic4 = 0x3457_4B49; // "IKW4": as IKW3, with a second list of packed layers
+    private const uint FileMagic5 = 0x3557_4B49; // "IKW5": as IKW4, with two more lists of packed layers
 
     /// <summary>Writes all parameter values to a binary file (float32).</summary>
-    public static void Save(this Module module, string path) => Save(module, path, WeightFormat.Float32);
-
-    /// <summary>
-    /// Writes all parameter values to a binary file in <paramref name="format"/>: Float16 and BFloat16 halve the file
-    /// (values are rounded; they are float32 again after loading). Packed weights (int8, 4-bit, bfloat16 and formats of
-    /// one's own) are always stored as they are.
-    /// </summary>
-    public static void Save(this Module module, string path, WeightFormat format)
+    public static void Save(this Module module, string path)
     {
         using var stream = File.Create(path);
-        module.Save(stream, format);
+        module.Save(stream);
     }
 
     /// <summary>Writes all parameter values to <paramref name="stream"/> (the same format as <see cref="Save(Module, string)"/>); the stream stays open.</summary>
-    public static void Save(this Module module, Stream stream) => Save(module, stream, WeightFormat.Float32);
-
-    /// <summary>Writes all parameter values to <paramref name="stream"/> in <paramref name="format"/>; the stream stays open.</summary>
-    public static void Save(this Module module, Stream stream, WeightFormat format)
+    public static void Save(this Module module, Stream stream)
     {
-        // IKW3: the int8 layers (by position among the packable linear layers), then each tensor with its element type.
-        var linears = module.Descendants().OfType<IPackableLinear>().ToList();
-        var int8 = Holding(linears, PackedFormat.Int8);
-        var half = Holding(linears, PackedFormat.BFloat16);
-        var int4 = Holding(linears, PackedFormat.Int4);
-        var tables = module.Descendants().OfType<Embedding>().Select((e, i) => (e, i)).Where(p => p.e.BFloat16 is not null).ToList();
-        var exact = int8.SelectMany(p => new[] { p.Weight.PackedValues, p.Weight.ScaleValues! }).Concat(half.Select(p => p.Weight.PackedValues))
-            .Concat(int4.SelectMany(p => new[] { p.Weight.PackedValues, p.Weight.ScaleValues! }))
-            .Concat(tables.Select(p => p.e.BFloat16!.Packed))
-            .Concat(linears.Where(l => l.PackedWeight is { } packed && packed is not IKernelPackedWeight).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
-            .ToHashSet(ReferenceEqualityComparer.Instance);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         var parameters = module.Parameters().Concat(module.Buffers()).ToList();
-        bool five = int4.Count > 0 || tables.Count > 0;
-        writer.Write(five ? FileMagic5 : half.Count > 0 ? FileMagic4 : FileMagic3);
-        writer.Write(int8.Count);
-        foreach (var (_, index) in int8)
-        {
-            writer.Write(index);
-        }
-
-        if (half.Count > 0 || five)
-        {
-            writer.Write(half.Count);
-            foreach (var (_, index) in half)
-            {
-                writer.Write(index);
-            }
-        }
-
-        if (five)
-        {
-            writer.Write(int4.Count);
-            foreach (var (_, index) in int4)
-            {
-                writer.Write(index);
-            }
-
-            writer.Write(tables.Count);
-            foreach (var (_, index) in tables)
-            {
-                writer.Write(index);
-            }
-        }
-
+        writer.Write(FileMagic);
         writer.Write(parameters.Count);
         foreach (var p in parameters)
         {
@@ -96,33 +40,15 @@ public static class ModuleFiles
                 writer.Write(d);
             }
 
-            var type = exact.Contains(p) ? WeightFormat.Float32 : format;
-            writer.Write((byte)type);
             var values = p.ToArray();
-            if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
+            if (!BitConverter.IsLittleEndian)
             {
-                writer.Write(MemoryMarshal.AsBytes(values.AsSpan()));                  // the values are the stored bytes
+                var bits = MemoryMarshal.Cast<float, uint>(values.AsSpan());
+                BinaryPrimitives.ReverseEndianness(bits, bits);
             }
-            else
-            {
-                writer.Write(Encode(values, type));
-            }
-        }
-    }
 
-    // The layers holding weights in the built-in `format`, each with its position among `linears` (what the file records).
-    private static List<(IKernelPackedWeight Weight, int Index)> Holding(List<IPackableLinear> linears, PackedFormat format)
-    {
-        var holding = new List<(IKernelPackedWeight, int)>();
-        for (int i = 0; i < linears.Count; i++)
-        {
-            if (linears[i].PackedWeight is IKernelPackedWeight weight && weight.Format == format)
-            {
-                holding.Add((weight, i));
-            }
+            writer.Write(MemoryMarshal.AsBytes(values.AsSpan()));                  // the values are the stored bytes
         }
-
-        return holding;
     }
 
     /// <summary>Reads parameter values written by <see cref="Save(Module, string)"/> into this module. The architecture must match.</summary>
@@ -144,58 +70,17 @@ public static class ModuleFiles
             throw new InvalidDataException($"{source} is not a Idrak weights file.");
         }
 
-        if (magic is FileMagic3 or FileMagic4 or FileMagic5)
+        bool typed = magic is FileMagic3 or FileMagic4 or FileMagic5;
+        if (typed)
         {
-            // Layers stored as int8, int4 or bfloat16 get room for their packed weights first (allocated, not computed: the
-            // file's values replace them).
-            var linears = module.Descendants().OfType<IPackableLinear>().ToList();
-            int quantized = reader.ReadInt32();
-            for (int i = 0; i < quantized; i++)
+            // An older file lists its packed layers first: only a file with none holds float32 values alone.
+            int lists = magic == FileMagic3 ? 1 : magic == FileMagic4 ? 2 : 4;
+            for (int list = 0; list < lists; list++)
             {
-                int index = reader.ReadInt32();
-                if (index >= linears.Count)
+                if (reader.ReadInt32() != 0)
                 {
-                    throw new InvalidDataException($"The file quantizes Linear layer {index}, but the model has {linears.Count}.");
+                    throw new NotSupportedException($"{source} holds packed layers: type not on the new design yet.");
                 }
-
-                linears[index].Reserve(PackedFormat.Int8);
-            }
-
-            int halves = magic is FileMagic4 or FileMagic5 ? reader.ReadInt32() : 0;
-            for (int i = 0; i < halves; i++)
-            {
-                int index = reader.ReadInt32();
-                if (index >= linears.Count)
-                {
-                    throw new InvalidDataException($"The file stores Linear layer {index} as bfloat16, but the model has {linears.Count}.");
-                }
-
-                linears[index].Reserve(PackedFormat.BFloat16);
-            }
-
-            int nibbles = magic == FileMagic5 ? reader.ReadInt32() : 0;
-            for (int i = 0; i < nibbles; i++)
-            {
-                int index = reader.ReadInt32();
-                if (index >= linears.Count)
-                {
-                    throw new InvalidDataException($"The file stores Linear layer {index} as int4, but the model has {linears.Count}.");
-                }
-
-                linears[index].Reserve(PackedFormat.Int4);
-            }
-
-            var embeddings = module.Descendants().OfType<Embedding>().ToList();
-            int tables = magic == FileMagic5 ? reader.ReadInt32() : 0;
-            for (int i = 0; i < tables; i++)
-            {
-                int index = reader.ReadInt32();
-                if (index >= embeddings.Count)
-                {
-                    throw new InvalidDataException($"The file stores Embedding {index} as bfloat16, but the model has {embeddings.Count}.");
-                }
-
-                embeddings[index].LoadAsBFloat16();
             }
         }
 
@@ -206,10 +91,8 @@ public static class ModuleFiles
             throw new InvalidDataException($"The file has {count} parameter tensors but the model has {parameters.Count}.");
         }
 
-        // One buffer for the stored bytes and one for decoded values, grown to the largest tensor, instead of new arrays
-        // for every tensor.
-        byte[] buffer = [];
-        float[] decoded = [];
+        // One buffer for the stored values, grown to the largest tensor, instead of new arrays for every tensor.
+        float[] buffer = [];
         foreach (var p in parameters)
         {
             var shape = new int[reader.ReadInt32()];
@@ -223,40 +106,25 @@ public static class ModuleFiles
                 throw new InvalidDataException($"Shape mismatch: file has {Tensor.FormatShape(shape)}, model has {Tensor.FormatShape(p.Shape)}.");
             }
 
-            var type = magic is FileMagic3 or FileMagic4 or FileMagic5 ? (WeightFormat)reader.ReadByte() : WeightFormat.Float32;
-            var codec = WeightCodec.For(type);
-            int length = p.Size * codec.BytesPerValue;
-            if (buffer.Length < length)
+            if (typed && reader.ReadByte() is var stored && stored != 0)
             {
-                buffer = GC.AllocateUninitializedArray<byte>(length);
+                throw new NotSupportedException($"{source} stores a tensor of {Tensor.FormatShape(shape)} in stored type #{stored}: type not on the new design yet.");
             }
 
-            var bytes = buffer.AsSpan(0, length);
-            reader.BaseStream.ReadExactly(bytes);
-            if (type == WeightFormat.Float32 && BitConverter.IsLittleEndian)
+            if (buffer.Length < p.Size)
             {
-                p.Load(MemoryMarshal.Cast<byte, float>(bytes));                       // the stored bytes are the values
+                buffer = GC.AllocateUninitializedArray<float>(p.Size);
             }
-            else
-            {
-                if (decoded.Length < p.Size)
-                {
-                    decoded = GC.AllocateUninitializedArray<float>(p.Size);
-                }
 
-                var values = decoded.AsSpan(0, p.Size);
-                codec.Decode(bytes, values);
-                p.Load(values);
+            var values = buffer.AsSpan(0, p.Size);
+            reader.BaseStream.ReadExactly(MemoryMarshal.AsBytes(values));
+            if (!BitConverter.IsLittleEndian)
+            {
+                var bits = MemoryMarshal.Cast<float, uint>(values);
+                BinaryPrimitives.ReverseEndianness(bits, bits);
             }
+
+            p.Load(values);
         }
-    }
-
-    // Little-endian bytes of the values in `format` (see WeightCodec).
-    private static byte[] Encode(float[] values, WeightFormat format)
-    {
-        var codec = WeightCodec.For(format);
-        var bytes = new byte[values.Length * codec.BytesPerValue];
-        codec.Encode(values, bytes);
-        return bytes;
     }
 }

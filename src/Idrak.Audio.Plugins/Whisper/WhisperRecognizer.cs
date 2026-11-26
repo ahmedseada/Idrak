@@ -782,7 +782,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
 
         generation["task"] = Task;
         File.WriteAllText(Path.Combine(target, "generation_config.json"), generation.ToJsonString(options) + "\n");
-        SafeTensorsWriter.Write(Path.Combine(target, "model.safetensors"), source.Layout.Tensors, SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "pt" });
+        SafeTensorsWriter.Write(Path.Combine(target, "model.safetensors"), source.Layout.Tensors, new Dictionary<string, string> { ["format"] = "pt" });
     }
 
     // Each stored tensor's gradient under transformers' name and layout (the tests compare them with transformers').

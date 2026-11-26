@@ -1084,7 +1084,7 @@ public static partial class Pretrainer
                 }
             }
 
-            model.SaveHuggingFace(folder, Idrak.Models.SafeTensorType.F32, exported);
+            model.SaveHuggingFace(folder, exported);
         }
         finally
         {
@@ -1095,8 +1095,7 @@ public static partial class Pretrainer
         }
 
         var state = joinedState ?? optimizer.RequireState().SaveState();               // a sharded run's: every rank's share joined (C6)
-        Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
-            Idrak.Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
+        Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)), new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
         WriteState(options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
         return folder;
     }
@@ -1126,7 +1125,7 @@ public static partial class Pretrainer
 
                 var ranks = Enumerable.Range(1, sync.WorldSize - 1).ToList();
                 var entries = ranks.Select(rank => StreamedCheckpoint.AskEntries(transport, rank)).ToList();
-                model.SaveHuggingFace(folder, Idrak.Models.SafeTensorType.F32, null, stored =>
+                model.SaveHuggingFace(folder, null, stored =>
                     index.TryGetValue(stored.Tensor, out int i) && sync.Owner(stored.Tensor) is { } owner && owner != 0
                         ? StreamedCheckpoint.AskWeight(transport, owner, i)
                         : stored.Tensor.ToArray());
@@ -1138,7 +1137,7 @@ public static partial class Pretrainer
                     tensors.AddRange(entries[r].Select((e, i) => (e.Name, e.Shape, (Func<float[]>)(() => StreamedCheckpoint.AskEntry(transport, rank, i)))));
                 }
 
-                Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), tensors, Idrak.Models.SafeTensorType.F32,
+                Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), tensors,
                     new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
                 ranks.ForEach(rank => StreamedCheckpoint.Finish(transport, rank));
                 WriteState(options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);

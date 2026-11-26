@@ -502,7 +502,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         _spread?.Save(Path.Combine(path, SpreadFile));
         _reference?.Save(Path.Combine(path, ReferenceFile));
         var state = Optimizer.RequireState().SaveState();
-        SafeTensorsWriter.Write(Path.Combine(path, OptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
+        SafeTensorsWriter.Write(Path.Combine(path, OptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)),
             new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
         File.WriteAllText(Path.Combine(path, StateFile), new JsonObject
         {

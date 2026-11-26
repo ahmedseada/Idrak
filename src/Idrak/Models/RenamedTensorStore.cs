@@ -9,7 +9,7 @@ namespace Idrak.Models;
 /// weight-normed read folded: a <c>….weight</c> the store lacks, held as gains and directions (PyTorch's
 /// <c>weight_g</c> and <c>weight_v</c>, or <c>parametrizations.weight.original0</c> and <c>original1</c>), reads as
 /// <see cref="StoredWeights.FoldWeightNorm"/> folds them. A tensor read under its stored name keeps everything the store
-/// gives (its format, bfloat16 copies, transposed reads, read time and bytes); nothing is read until asked for.
+/// gives (transposed reads, read time and bytes); nothing is read until asked for.
 /// </summary>
 /// <example>
 /// <code>
@@ -19,7 +19,7 @@ namespace Idrak.Models;
 /// var renamed = new RenamedTensorStore(checkpoint, name => name.Replace("decoder.", "dec."), foldWeightNorm: true, ownsInner: false);
 /// </code>
 /// </example>
-public sealed class RenamedTensorStore : IBFloat16TensorStore
+public sealed class RenamedTensorStore : ITensorStore
 {
     private const string Weight = ".weight";
     private readonly ITensorStore _inner;
@@ -107,17 +107,6 @@ public sealed class RenamedTensorStore : IBFloat16TensorStore
         var shape = _inner.ShapeOf(norm.Value.Directions);
         return HostParallel.Transpose(Read(name), shape[0], shape.Length > 1 ? shape[1] : 1);
     }
-
-    /// <inheritdoc />
-    public WeightFormat? FormatOf(string name) => Resolve(name) is (var stored, null) ? _inner.FormatOf(stored) : null;   // a folded weight is computed in float32
-
-    /// <inheritdoc />
-    public bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride) =>
-        _inner is IBFloat16TensorStore inner && Resolve(name) is (var stored, null) && inner.ReadBFloat16(stored, transposed, destination, stride);
-
-    /// <inheritdoc />
-    public bool ReadBFloat16Rows(string name, int first, int count, Span<ushort> destination) =>
-        _inner is IBFloat16TensorStore inner && Resolve(name) is (var stored, null) && inner.ReadBFloat16Rows(stored, first, count, destination);
 
     /// <inheritdoc />
     public bool ReadRows(string name, int first, int count, Span<float> destination) =>

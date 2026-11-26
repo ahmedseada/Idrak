@@ -94,7 +94,7 @@ public sealed partial class RMSNorm : Module, INamedWeights
 /// Causal self-attention for decoder-only language models: separate query, key and value projections (named "q", "k",
 /// "v"; output "o"), grouped-query attention (fewer key/value heads, each shared by a group of query heads),
 /// a head size independent of the model width, optional biases, optional RMS normalization of each head's queries and
-/// keys, and rotary position embeddings. Works with the KV cache (float32 or int8) for incremental decoding.
+/// keys, and rotary position embeddings. Works with the KV cache for incremental decoding.
 /// <para>
 /// Optionally (<see cref="SlidingWindow"/>, <see cref="ScoreSoftcap"/>): each position attends only to the last positions
 /// up to a window (Mistral, Qwen2, Gemma 2 and 3), and the scores are soft-capped, cap · tanh(score / cap) (Gemma 2).
@@ -459,7 +459,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
             // Rows of different lengths: positions per token, and each row attends from its own start.
             if (cache.RowStartsLayout is not { } rowLayout)
             {
-                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout.Name}.");
             }
 
             if (!PlainCausal && !WindowKernels)
@@ -517,7 +517,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
         {
             if (cache.RowStartsLayout is null)
             {
-                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout), not {cache.Layout.Name}.");
             }
 
             var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);

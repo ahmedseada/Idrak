@@ -168,7 +168,7 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         Directory.CreateDirectory(folder);
         File.WriteAllText(Path.Combine(folder, "config.json"), Config.ToJson().ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
-        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), Export(), SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, "model.safetensors"), Export());
         Tokenizer.Save(Path.Combine(folder, "tokenizer.json"));
     }
 

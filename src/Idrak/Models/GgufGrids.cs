@@ -5,8 +5,8 @@ namespace Idrak.Models;
 
 /// <summary>
 /// The lookup grids of ggml's IQ types (GgufGrids.g.cs holds them as gguf-py packs them), decoded once on first use into
-/// one value per byte: entry e's values at [e · width, (e + 1) · width). The IQ dequantizers read a block's values from
-/// these as ggml reads its iq*_grid tables.
+/// one value per byte: entry e's values at [e · width, (e + 1) · width). The IQ types' descriptions (Descriptions) build
+/// their codebooks from these.
 /// </summary>
 internal static partial class GgufGrids
 {

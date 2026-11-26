@@ -1394,7 +1394,7 @@ public static class FineTuner
     internal static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step, ActivationRung? rung = null)
     {
         Directory.CreateDirectory(folder);
-        SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
+        SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)),
             new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
         var json = new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-tune-state/1", ["step"] = step };
         if (rung is { } settled)

@@ -887,7 +887,7 @@ public static class SpeechTrainer
     }
 
     internal static void WriteState(string path, Optimizer optimizer) =>
-        SafeTensorsWriter.Write(path, optimizer.RequireState().SaveState().Select(p => (p.Key, p.Value.Shape, p.Value.Values)), SafeTensorType.F32,
+        SafeTensorsWriter.Write(path, optimizer.RequireState().SaveState().Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
             new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
 
     private static string SaveCheckpoint(SpeechTrainee model, Optimizer optimizer, SpeechTrainingOptions options, SpeechSource train, SpeechSource? evaluation,

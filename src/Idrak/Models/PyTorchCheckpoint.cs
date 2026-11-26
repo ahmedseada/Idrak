@@ -15,7 +15,8 @@ namespace Idrak.Models;
 /// call, only those that rebuild a tensor or a dictionary (<c>collections.OrderedDict</c>,
 /// <c>torch._utils._rebuild_tensor_v2</c>, <c>_rebuild_parameter</c>, the <c>torch.*Storage</c> types). Any other
 /// name or opcode is refused, naming it: a pickle that would run code is never run. The values are read from the zip's
-/// storage entries when a tensor is read, one tensor at a time.
+/// storage entries when a tensor is read, one tensor at a time: float32 storages; a tensor of any other storage is refused
+/// when read (its type is not on the new design yet).
 /// </summary>
 /// <remarks>
 /// Names are the dictionary keys joined by '.'. A checkpoint that wraps its weights (<c>{"model": state_dict, ...}</c>
@@ -138,18 +139,14 @@ public sealed class PyTorchCheckpointReader : ITensorStore
     public int[] ShapeOf(string name) => (int[])Entry(name).Shape.Clone();
 
     /// <inheritdoc />
-    public WeightFormat? FormatOf(string name) => Entry(name).Storage.Type switch
-    {
-        StorageType.Float32 => WeightFormat.Float32,
-        StorageType.Float16 => WeightFormat.Float16,
-        StorageType.BFloat16 => WeightFormat.BFloat16,
-        _ => null,
-    };
-
-    /// <inheritdoc />
     public float[] Read(string name)
     {
         var entry = Entry(name);
+        if (entry.Storage.Type != FloatStorage)
+        {
+            throw new NotSupportedException($"{Path}: tensor '{name}' is stored as torch.{entry.Storage.Type}: type not on the new design yet.");
+        }
+
         long count = 1;
         foreach (int d in entry.Shape)
         {
@@ -162,7 +159,7 @@ public sealed class PyTorchCheckpointReader : ITensorStore
             return values;
         }
 
-        int size = Size(entry.Storage.Type);
+        const int size = sizeof(float);
         long first = entry.Offset, last = entry.Offset;                         // the span of storage elements the view touches
         for (int d = 0; d < entry.Shape.Length; d++)
         {
@@ -194,7 +191,7 @@ public sealed class PyTorchCheckpointReader : ITensorStore
 
         if (IsContiguous(entry.Shape, entry.Stride))
         {
-            Convert(raw, 0, entry.Storage.Type, values, 0, values.Length);
+            Convert(raw, 0, values, 0, values.Length);
             return values;
         }
 
@@ -208,7 +205,7 @@ public sealed class PyTorchCheckpointReader : ITensorStore
                 at += index[d] * entry.Stride[d];
             }
 
-            Convert(raw, at * size, entry.Storage.Type, values, i, 1);
+            Convert(raw, at * size, values, i, 1);
             for (int d = index.Length - 1; d >= 0 && ++index[d] == entry.Shape[d]; d--)
             {
                 index[d] = 0;
@@ -261,48 +258,20 @@ public sealed class PyTorchCheckpointReader : ITensorStore
         }
     }
 
-    private static int Size(StorageType type) => type switch
-    {
-        StorageType.Float64 or StorageType.Int64 => 8,
-        StorageType.Float32 or StorageType.Int32 => 4,
-        StorageType.Float16 or StorageType.BFloat16 or StorageType.Int16 => 2,
-        _ => 1,
-    };
-
-    // `count` values of `type` from raw[byteOffset..] into target[at..].
-    private static void Convert(byte[] raw, long byteOffset, StorageType type, float[] target, long at, long count)
+    // `count` float32 values (little-endian) from raw[byteOffset..] into target[at..].
+    private static void Convert(byte[] raw, long byteOffset, float[] target, long at, long count)
     {
         var source = raw.AsSpan((int)byteOffset);
         var destination = target.AsSpan((int)at, (int)count);
-        switch (type)
+        if (BitConverter.IsLittleEndian)
         {
-            case StorageType.Float32:
-                System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(source[..(destination.Length * 4)]).CopyTo(destination);
-                break;
-            case StorageType.Float16:
-                for (int i = 0; i < destination.Length; i++) destination[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(source[(2 * i)..]);
-                break;
-            case StorageType.BFloat16:
-                StoredFloats.WidenBFloat16(source, destination);
-                break;
-            case StorageType.Float64:
-                for (int i = 0; i < destination.Length; i++) destination[i] = (float)BinaryPrimitives.ReadDoubleLittleEndian(source[(8 * i)..]);
-                break;
-            case StorageType.Int64:
-                for (int i = 0; i < destination.Length; i++) destination[i] = BinaryPrimitives.ReadInt64LittleEndian(source[(8 * i)..]);
-                break;
-            case StorageType.Int32:
-                for (int i = 0; i < destination.Length; i++) destination[i] = BinaryPrimitives.ReadInt32LittleEndian(source[(4 * i)..]);
-                break;
-            case StorageType.Int16:
-                for (int i = 0; i < destination.Length; i++) destination[i] = BinaryPrimitives.ReadInt16LittleEndian(source[(2 * i)..]);
-                break;
-            case StorageType.Int8:
-                for (int i = 0; i < destination.Length; i++) destination[i] = (sbyte)source[i];
-                break;
-            default:                                                             // uint8 and bool
-                for (int i = 0; i < destination.Length; i++) destination[i] = source[i];
-                break;
+            System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(source[..(destination.Length * 4)]).CopyTo(destination);
+            return;
+        }
+
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = BinaryPrimitives.ReadSingleLittleEndian(source[(4 * i)..]);
         }
     }
 
@@ -382,9 +351,11 @@ public sealed class PyTorchCheckpointReader : ITensorStore
         }
     }
 
-    internal enum StorageType { Float32, Float16, BFloat16, Float64, Int64, Int32, Int16, Int8, UInt8, Bool }
+    // The storage class of float32 values, the one read.
+    private const string FloatStorage = "FloatStorage";
 
-    internal sealed record StorageRef(StorageType Type, string Key, long Elements);
+    // A storage: its torch class name (FloatStorage, HalfStorage, ...), its key in the zip and its element count.
+    internal sealed record StorageRef(string Type, string Key, long Elements);
 
     internal sealed record TensorEntry(StorageRef Storage, long Offset, int[] Shape, long[] Stride);
 
@@ -437,13 +408,6 @@ public sealed class PyTorchCheckpointReader : ITensorStore
     // The restricted pickle machine (protocols 2 to 5, the opcodes torch.save writes).
     private sealed class Unpickler(byte[] data, string path)
     {
-        private static readonly Dictionary<string, StorageType> Storages = new(StringComparer.Ordinal)
-        {
-            ["FloatStorage"] = StorageType.Float32, ["HalfStorage"] = StorageType.Float16, ["BFloat16Storage"] = StorageType.BFloat16,
-            ["DoubleStorage"] = StorageType.Float64, ["LongStorage"] = StorageType.Int64, ["IntStorage"] = StorageType.Int32,
-            ["ShortStorage"] = StorageType.Int16, ["CharStorage"] = StorageType.Int8, ["ByteStorage"] = StorageType.UInt8, ["BoolStorage"] = StorageType.Bool,
-        };
-
         private static readonly HashSet<string> Allowed = new(StringComparer.Ordinal)
         {
             "collections.OrderedDict", "torch._utils._rebuild_tensor_v2", "torch._utils._rebuild_tensor", "torch._utils._rebuild_parameter",
@@ -515,9 +479,9 @@ public sealed class PyTorchCheckpointReader : ITensorStore
 
         private object Name(string module, string name)
         {
-            if (module == "torch" && Storages.TryGetValue(name, out var type))
+            if (module == "torch" && name.EndsWith("Storage", StringComparison.Ordinal))
             {
-                return type;
+                return new Global(module, name);                            // a storage class, named in a persistent id
             }
 
             string full = module + "." + name;
@@ -532,12 +496,12 @@ public sealed class PyTorchCheckpointReader : ITensorStore
 
         private StorageRef Persistent(object? id)
         {
-            if (id is not object?[] { Length: >= 5 } t || t[0] is not string kind || kind != "storage" || t[1] is not StorageType type || t[2] is not string key)
+            if (id is not object?[] { Length: >= 5 } t || t[0] is not string kind || kind != "storage" || t[1] is not Global { Module: "torch" } type || t[2] is not string key)
             {
                 throw new InvalidDataException($"{path}: a persistent id the reader does not know ({Describe(id)}).");
             }
 
-            return new StorageRef(type, key, t[4] is long n ? n : 0);
+            return new StorageRef(type.Name, key, t[4] is long n ? n : 0);
         }
 
         private object? Call(object? callable, object? args)

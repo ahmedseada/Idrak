@@ -22,7 +22,7 @@ internal static class GgufBuiltIns
 /// Models from GGUF files (the format of llama.cpp and of the local model store). <see cref="Prepare"/> writes a small folder with what the
 /// file's metadata describes, in the Hugging Face layout (config.json, tokenizer.json, tokenizer_config.json with the chat
 /// template, generation_config.json), and <see cref="PretrainedModel.Load"/> reads the weights from the GGUF file itself,
-/// dequantized tensor by tensor, with llama.cpp's names and layouts turned back into the Hugging Face ones (the family's
+/// float32 tensor by tensor (another stored type is refused: not on the new design yet), with llama.cpp's names and layouts turned back into the Hugging Face ones (the family's
 /// <see cref="GgufArchitecture.TensorName"/>, less what the converter added to their values, <see cref="GgufArchitecture.StoredOffset"/>).
 /// Architectures: those registered with <see cref="GgufArchitectures.Register"/> (the library registers none;
 /// Idrak.Text.Plugins registers its families'). Experts stored together (blk.N.ffn_gate_exps, [experts, ff, dim]) are read
@@ -90,8 +90,6 @@ public static class GgufModel
             ["architecture"] = arch,
             ["name"] = file.Get("general.name", name),
             ["notes"] = new JsonArray([.. notes.Select(n => (JsonNode?)JsonValue.Create(n))]),
-            ["types"] = new JsonObject([.. file.Tensors.Values.GroupBy(t => GgufFile.TypeName(t.Type))
-                .Select(g => KeyValuePair.Create(g.Key, (JsonNode?)JsonValue.Create(g.Count())))]),
         });
         if (Directory.Exists(folder))
         {
@@ -132,7 +130,6 @@ public static class GgufModel
             ["rope_theta"] = file.Get($"{arch}.rope.freq_base", 10000.0),
             ["tie_word_embeddings"] = !file.Tensors.ContainsKey("output.weight"),
             ["hidden_act"] = "silu",
-            ["torch_dtype"] = "bfloat16",
         };
         int experts = file.Get($"{arch}.expert_count", 0);
         if (experts > 0)
@@ -300,7 +297,7 @@ public static class GgufModel
     }
 
     // The GGUF file's tensors under Hugging Face names, in Hugging Face layouts.
-    private sealed class GgufTensors : IStoredWeightStore, IMappedTensorStore
+    private sealed class GgufTensors : ITensorStore
     {
         // A Hugging Face tensor: the GGUF tensor holding it, which expert of a tensor of all the experts (-1 for the whole
         // tensor), its shape, and what llama.cpp added to its values (subtracted on reading).
@@ -405,7 +402,7 @@ public static class GgufModel
                 // One expert's rows of the tensor of all the experts.
                 int rows = source.Shape[0], columns = source.Shape[1];
                 var slice = GC.AllocateUninitializedArray<float>(checked(rows * columns));
-                _file.ReadRows(gguf, source.Expert * rows, slice, new byte[checked((int)(rows * _file.RowBytes(gguf)))]);
+                _file.ReadRows(gguf, (long)source.Expert * rows, slice);
                 Subtract(slice, source.Offset);
                 return slice;
             }
@@ -456,7 +453,7 @@ public static class GgufModel
                 throw new ArgumentException($"'{name}' is [{string.Join(", ", shape)}], not a matrix.", nameof(name));
             }
 
-            // Chunks of stored rows are dequantized through pooled buffers and scattered into the transposed result (with
+            // Chunks of stored rows are read through a pooled buffer and scattered into the transposed result (with
             // Llama's q / k rows put back in order on the way), so the stored order never exists as a full array.
             int rows = shape[0], columns = shape[1], start = Math.Max(0, source.Expert) * rows;   // an expert's first row
             int? heads = Permuted(gguf);
@@ -464,13 +461,12 @@ public static class GgufModel
             var values = GC.AllocateUninitializedArray<float>(checked(rows * columns));
             int chunkRows = Math.Max(1, (1 << 22) / Math.Max(1, columns));
             float[] chunk = System.Buffers.ArrayPool<float>.Shared.Rent(chunkRows * columns);
-            byte[] raw = System.Buffers.ArrayPool<byte>.Shared.Rent(checked((int)(chunkRows * _file.RowBytes(gguf))));
             try
             {
                 for (int r0 = 0; r0 < rows; r0 += chunkRows)
                 {
                     int n = Math.Min(chunkRows, rows - r0), first = r0;
-                    _file.ReadRows(gguf, start + r0, chunk.AsSpan(0, n * columns), raw);
+                    _file.ReadRows(gguf, start + r0, chunk.AsSpan(0, n * columns));
                     Idrak.Abstraction.Devices.HostParallel.For(columns, Math.Max(1, (1 << 14) / n), (c0, c1) =>
                     {
                         const int Tile = 64;
@@ -494,90 +490,10 @@ public static class GgufModel
             finally
             {
                 System.Buffers.ArrayPool<float>.Shared.Return(chunk);
-                System.Buffers.ArrayPool<byte>.Shared.Return(raw);
             }
 
             Subtract(values, source.Offset);
             return values;
-        }
-
-        // A matrix in one of ggml's block formats, read with nothing added to its values, is kept as stored (plan 37, Q0):
-        // its registered block format (GgufElementTypes registers each GGUF block type under its lower-case name).
-        public ElementType? StoredTypeOf(string name)
-        {
-            if (!_names.TryGetValue(name, out var source) || source.Offset != 0 || source.Shape.Length != 2
-                || GgufTypes.Find(_file.Tensors[source.Gguf].Type) is not { BlockValues: > 1 } type)
-            {
-                return null;
-            }
-
-            return ElementTypes.Find(type.Name.ToLowerInvariant()) is { } stored && stored.BlockSize == type.BlockValues && stored.BlockBits == type.BlockBytes * 8
-                ? stored
-                : null;
-        }
-
-        // The matrix's stored rows (an expert's of a tensor of all the experts), Llama's q / k rows put back in order as Read
-        // puts the values back: whole rows of blocks moved.
-        public bool ReadStored(string name, Span<byte> destination)
-        {
-            if (StoredTypeOf(name) is null)
-            {
-                return false;
-            }
-
-            var source = _names[name];
-            string gguf = source.Gguf;
-            int rows = source.Shape[0];
-            long rowBytes = _file.RowBytes(gguf);
-            if (destination.Length != rows * rowBytes)
-            {
-                return false;
-            }
-
-            long first = (long)Math.Max(0, source.Expert) * rows;
-            if (Permuted(gguf) is not { } heads)
-            {
-                _file.ReadStoredRows(gguf, first, destination);
-                return true;
-            }
-
-            var stored = GC.AllocateUninitializedArray<byte>(destination.Length);
-            _file.ReadStoredRows(gguf, first, stored);
-            int headDim = rows / heads, half = headDim / 2, width = checked((int)rowBytes);
-            for (int from = 0; from < rows; from++)
-            {
-                int to = from - from % headDim + from % headDim % 2 * half + from % headDim / 2;
-                stored.AsSpan(from * width, width).CopyTo(destination.Slice(to * width, width));
-            }
-
-            return true;
-        }
-
-        // A matrix's bytes in the file (plan 37, W3): float32 as stored (on a little-endian machine) or a block format kept as
-        // stored (StoredTypeOf), its rows (an expert's of a tensor of all the experts) in the order Read gives them.
-        public StoredLocation? Locate(string name, out string? why)
-        {
-            why = null;
-            if (!_names.TryGetValue(name, out var source) || source.Shape.Length != 2)
-            {
-                why = "not a matrix of the file";
-                return null;
-            }
-
-            var info = _file.Tensors[source.Gguf];
-            var type = info.Type == 0 ? (BitConverter.IsLittleEndian ? ElementType.Float32 : null) : StoredTypeOf(name);
-            why = source.Offset != 0 ? "a value the converter added is taken off on reading"
-                : Permuted(source.Gguf) is not null ? "its rows are put back in order on reading (interleaved q / k heads)"
-                : type is null ? info.Type == 0 ? "float32 stored little-endian, on a machine of the other byte order" : $"stored as {GgufFile.TypeName(info.Type)}, computed in float32 (widened at load)"
-                : null;
-            if (why is not null)
-            {
-                return null;
-            }
-
-            int rows = source.Shape[0];
-            long rowBytes = _file.RowBytes(source.Gguf), first = (long)Math.Max(0, source.Expert) * rows;
-            return new StoredLocation(_file.Path, info.Offset + first * rowBytes, rows * rowBytes, type!);
         }
 
         // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (families that store them so), else null.

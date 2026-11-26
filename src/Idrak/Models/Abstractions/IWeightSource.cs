@@ -28,22 +28,6 @@ public interface IWeightSource
     bool ReadRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination) => false;
 
     /// <summary>
-    /// Reads output rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the weight
-    /// matrix <paramref name="name"/> [inputs, outputs] (<paramref name="shape"/>, as <see cref="Read"/> takes it) into
-    /// <paramref name="destination"/>, each of inputs values: the columns of what <see cref="Read"/> gives, read in the order
-    /// a file storing the matrix [outputs, inputs] holds them. So a format keeping a row an output (a stored format, the
-    /// product routes') packs a block of rows at a time (<c>PackedWeightFormats.PackRows</c>), with no float32 copy of the
-    /// matrix and no transposition. False, having written nothing, when the source cannot (the default): the caller reads
-    /// the matrix whole.
-    /// </summary>
-    /// <param name="name">The tensor's name.</param>
-    /// <param name="shape">Its shape, [inputs, outputs].</param>
-    /// <param name="first">The first output row.</param>
-    /// <param name="count">The rows.</param>
-    /// <param name="destination">At least <paramref name="count"/> rows of inputs values.</param>
-    bool ReadOutputRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination) => false;
-
-    /// <summary>
     /// A text that changes whenever the values <see cref="Read"/> gives for <paramref name="name"/> [<paramref name="shape"/>]
     /// may change (where the stored tensor is, its file's size and time of change), for a cache of what is made from them
     /// (packed weights): the tensor counts as used, as a read would make it. Null when the source cannot say (the default,

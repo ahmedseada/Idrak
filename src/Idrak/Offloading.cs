@@ -289,8 +289,8 @@ internal static class Offloading
         }
     }
 
-    // The tensors a layer only reads while it computes: its parameters (changed by optimizer steps, between passes) and a
-    // linear layer's int8 / int4 / bfloat16 weights, as the layer says (IOffloadableLayer; else its parameters). Embedding
+    // The tensors a layer only reads while it computes: its parameters (changed by optimizer steps, between passes), as the
+    // layer says (IOffloadableLayer; else its parameters). Embedding
     // tables are left out: a lookup reads only the rows it needs, which system memory serves without copying the whole
     // table. With `mark`, frozen ones are marked cold.
     private static List<(Tensor Tensor, Storage Storage)> ReadOnlyTensors(object layer, bool mark)

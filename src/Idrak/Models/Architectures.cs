@@ -375,7 +375,7 @@ public static class PretrainedFamilies
 /// </summary>
 internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitecture architecture) : IWeightSource
 {
-    private long _readTicks, _mergeTicks, _uploadTicks;
+    private long _readTicks, _mergeTicks;
 
     public HashSet<string> Used { get; } = [];
 
@@ -390,9 +390,6 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
 
     /// <summary>The time spent adding the adapter's updates to the weights so far.</summary>
     public TimeSpan MergeTime => Stopwatch.GetElapsedTime(0, _mergeTicks);
-
-    /// <summary>The time spent putting weights on the device so far (memory and upload).</summary>
-    public TimeSpan UploadTime => Stopwatch.GetElapsedTime(0, _uploadTicks);
 
     /// <summary>
     /// A deferred build (plan 23, C8b): each weight is checked against the checkpoint's header and answered with a placeholder
@@ -434,32 +431,6 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
     public bool ReadRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination)
     {
         if (Stored(name, shape) is not { } stored || !AsStored(name, stored))
-        {
-            return false;
-        }
-
-        long start = Stopwatch.GetTimestamp();
-        bool read = reader.ReadRows(stored, first, count, destination);
-        _readTicks += Stopwatch.GetTimestamp() - start;
-        return read;
-    }
-
-    // A weight the file stores [outputs, inputs] (read transposed), nothing added on reading (an adapter): its file rows are
-    // its output rows.
-    private string? AsOutputRows(string name, IReadOnlyList<int> shape)
-    {
-        if (Deferred || shape.Count != 2 || !architecture.Transposed(name) || Stored(name, shape) is not { } stored
-            || Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(stored[..^".weight".Length]))
-        {
-            return null;
-        }
-
-        return stored;
-    }
-
-    public bool ReadOutputRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination)
-    {
-        if (AsOutputRows(name, shape) is not { } stored)
         {
             return false;
         }

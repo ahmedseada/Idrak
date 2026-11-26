@@ -277,7 +277,7 @@ public sealed class HifiGanDiscriminators : IDisposable
     public void Save(string folder)
     {
         ArgumentException.ThrowIfNullOrEmpty(folder);
-        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), _stored.Trained.Select(p => (p.Name, p.Stored, p.Values())), SafeTensorType.F32);
+        SafeTensorsWriter.Write(Path.Combine(folder, WeightsFile), _stored.Trained.Select(p => (p.Name, p.Stored, p.Values())));
         File.WriteAllText(Path.Combine(folder, ConfigFile), Config.ToJson().ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
     }
 
