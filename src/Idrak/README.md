@@ -22,11 +22,11 @@ through its driver alone.
 
 | Area | What is there |
 |------|---------------|
-| Tensors | N-D tensors with automatic differentiation, float32, bfloat16 and FP8 precision, int8 / int4 / bfloat16 weights |
+| Tensors | N-D tensors with automatic differentiation |
 | Layers | Linear, Conv2d, Conv1d and ConvTranspose1d with weight norm, pooling, BatchNorm, LayerNorm, Embedding, LSTM, GRU, multi-head and relative-position attention, transformer layers, convolutional feed-forward, mixture of experts, dilated depth-separable convolution, coupling flows (rational-quadratic spline, element-wise affine), padded-batch masks; graph modules with skip connections and branches; `StoredLayers` reads a checkpoint into them by name |
 | Training | `Trainer` and `TrainingRun`, losses, metrics, early stopping, SGD, Adam, AdamW (fused on the GPU), 8-bit Adam, schedules, gradient clipping, memory offloading |
 | Datasets | In-memory datasets and lazy sources (streamed CSV, memory-mapped token files and .npy arrays), views, scalers, the `DataLoader` (`Idrak.Datasets`; image folders, augmentation and codecs are in `Idrak.Imaging`) |
-| Pretrained models | Decoder models of a registered family (the families, such as Llama, Qwen, Mistral and Gemma, from `Idrak.Text.Plugins`) by Hugging Face id, folder or GGUF file: safetensors and quantized GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
+| Pretrained models | Decoder models of a registered family (the families, such as Llama, Qwen, Mistral and Gemma, from `Idrak.Text.Plugins`) by Hugging Face id, folder or GGUF file: safetensors and GGUF weights, BPE tokenizers, LoRA and DoRA adapters in the PEFT layout (`Idrak.Models`) |
 | Inference | Predictors, model packages (`.ikm`), an inference engine with batching and keep-alive (text and chat models are added by `Idrak.Text`) |
 | Vision | Channel normalization layer; per-pixel loss for segmentation (region classification and content framing are in `Idrak.Vision`) |
 | ONNX | Export to `.onnx` (opset 17) that ONNX Runtime, TensorRT, OpenVINO, DirectML and other runtimes can run; import of `.onnx` files into layers or graph modules; no dependencies (the protobuf is read and written here) |
@@ -42,7 +42,7 @@ defaults of their slots: an app's registration under a built-in name overrides i
 `Unregister` brings it back (`Default(name)`, `Origin(name)`). Under the default policy, `Throw`, a failure of the
 app's version reaches the caller and is reported with a hint. `SetPolicy(name, ...)` (or `IDRAK_OVERRIDE_POLICY`) opts
 a slot into `FallBack`, where the library's answers instead: per call for graph operations, layer descriptions, image
-codecs, checkpoint formats and GGUF dequantizers; when the object is made for tokenizer parts, layers, sample sources and
+codecs and checkpoint formats; when the object is made for tokenizer parts, layers, sample sources and
 checkpoint stores; or into `Shadow`. Network steps, ONNX
 translators and the GGUF and family descriptions are used as registered (they change a builder or graph as they run, or
 are data).
@@ -63,7 +63,7 @@ both, so `dotnet add package Idrak` gives every device.
 | Backend | How it works | Needs |
 |---------|--------------|-------|
 | CPU | SIMD kernels (AVX2, AVX-512, NEON), register-tiled products sized from the CPU's caches, multi-threading measured per machine | .NET 10 |
-| CUDA | The NVIDIA driver API directly; PTX kernels generated in C#; bfloat16 and FP8 tensor cores, flash attention, CUDA graphs | An NVIDIA display driver |
+| CUDA | The NVIDIA driver API directly; PTX kernels generated in C#; flash attention, CUDA graphs | An NVIDIA display driver |
 | Vulkan | SPIR-V kernels generated in C# for NVIDIA, AMD, Intel and phone GPUs; fused decoding, recorded graphs, cooperative matrices | A Vulkan 1.1+ driver |
 | HIP | AMD GPUs; Idrak's own GCN kernels as they land, the rest through host fallbacks | The AMD graphics driver (Windows) or ROCm's runtime (Linux); no SDK |
 
@@ -157,7 +157,7 @@ has one with 2,500 rows).
 This package loads decoder models from Hugging Face folders or GGUF files, with their own tokenizers
 (`PretrainedModel`); the families (Llama, Qwen, Mistral, their mixtures of experts, Gemma, …) are registered by the
 plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`). The companion package `Idrak.Text` generates and chats with them (using
-each model's own chat template), fine-tunes them (LoRA, DoRA, LoRA over a frozen int4 or int8 base, preference losses, distillation) and answers from
+each model's own chat template), fine-tunes them (LoRA, DoRA, preference losses, distillation) and answers from
 documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it brings along:
 
 ```csharp
