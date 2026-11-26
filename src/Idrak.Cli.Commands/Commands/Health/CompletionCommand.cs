@@ -137,7 +137,7 @@ internal sealed class CompletionCommand : Command
                 "--device" => DeviceListing.Backends.SelectMany(b => Enumerable.Range(0, b.Count).Select(i => $"{b.Kind}:{i}")).Prepend("cpu"),
                 "--format" => ["text", "json", "csv", "md"],
                 "--color" => ["auto", "always", "never"],
-                "--kv" => Registries.Snapshot().First(c => c.Key == "kv").Names,
+                "--kv" => ["float32"],
                 "--config-profile" => context.Config.Root["profiles"] is JsonObject p ? p.Select(x => x.Key) : [],
                 _ => [],
             };

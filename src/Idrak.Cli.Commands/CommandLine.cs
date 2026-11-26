@@ -1,13 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using Idrak.Abstraction.Plugins;
-using Idrak.Audio.Plugins;
 using Idrak.Cli.Shared;
-using Idrak.Imaging.Plugins;
-using Idrak.Reinforcement.Plugins;
-using Idrak.Text.Plugins;
-using Idrak.Vision.Plugins;
 
 namespace Idrak.Cli;
 
@@ -18,68 +12,6 @@ namespace Idrak.Cli;
 /// </summary>
 internal static class CommandLine
 {
-    /// <summary>
-    /// The plug-in packages the tool ships with (plans 26, 27 and 28), in the order they are registered (text first: a vision,
-    /// audio or reinforcement family may build on a text one; the image and font formats last, building on none), each with
-    /// its short name in <see cref="PluginPackagesVariable"/>. Registered before
-    /// every command: before <c>plugins list</c> takes its snapshot (they are the tool's own, not added) and before the
-    /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
-    /// model: only the families' and formats' names.
-    /// </summary>
-    internal static readonly (string Name, IIdrakPluginPackage Package)[] PluginPackages =
-    [
-        ("text", TextPlugins.Package),
-        ("vision", VisionPlugins.Package),
-        ("audio", AudioPlugins.Package),
-        ("reinforcement", ReinforcementPlugins.Package),
-        ("imaging", ImagingPlugins.Package),
-    ];
-
-    /// <summary>
-    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all five,
-    /// "none" for none, or a comma list of their short names (text, vision, audio, reinforcement, imaging); <c>-P</c>
-    /// plug-ins load either way.
-    /// </summary>
-    internal const string PluginPackagesVariable = "IDRAK_PLUGIN_PACKAGES";
-
-    /// <summary>
-    /// The packages <paramref name="value"/> (the variable's value) chooses, in <see cref="PluginPackages"/>' order.
-    /// </summary>
-    /// <exception cref="UsageException">A name that is not one of the packages (the message names the variable).</exception>
-    internal static IReadOnlyList<(string Name, IIdrakPluginPackage Package)> ChosenPluginPackages(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
-        {
-            return PluginPackages;
-        }
-
-        if (value.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
-        {
-            return [];
-        }
-
-        var names = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (string name in names)
-        {
-            if (!PluginPackages.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
-            {
-                throw new UsageException($"{PluginPackagesVariable}={value}: '{name}' is not a plug-in package; give none, all, or a comma list of "
-                                         + $"{string.Join(", ", PluginPackages.Select(p => p.Name))}.");
-            }
-        }
-
-        return [.. PluginPackages.Where(p => names.Contains(p.Name, StringComparer.OrdinalIgnoreCase))];
-    }
-
-    /// <summary>Registers every family of the packages <see cref="PluginPackagesVariable"/> chooses (once: again changes nothing).</summary>
-    internal static void RegisterPluginPackages()
-    {
-        foreach (var (_, package) in ChosenPluginPackages(Environment.GetEnvironmentVariable(PluginPackagesVariable)))
-        {
-            IdrakPlugins.RegisterAll(package);
-        }
-    }
-
     /// <summary>The name of the idrak tool's program assembly (src/Idrak.Cli), which a localhost cluster starts once per rank.</summary>
     internal const string ToolAssemblyName = "Idrak.Cli";
 
@@ -252,8 +184,6 @@ internal static class CommandLine
 
             profile = Shared.CommandProfile.Start(context, args);              // --profile: watched from here to the end
             verbose = Shared.VerboseLines.Start(context);                      // --verbose: the library's work as it happens
-            RegisterPluginPackages();
-            command.BeforePlugins(context);
             context.LoadPlugins();
             exit = command.Run(context);
             return exit = context.Stopped && exit == ExitCodes.Ok ? ExitCodes.Stopped : exit;   // a command that stops itself cleanly on the host's stop
@@ -520,7 +450,7 @@ internal static class Help
     internal const string CommonOptions =
         "Common options:\n" +
         "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
-        "  -P, --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
+        "  -P, --plugin PATH   load a plug-in assembly (not on the new design yet)\n" +
         "  -j, --json          machine-readable output\n" +
         "  -q, --quiet         less output; -v, --verbose: more, and the library's work as it happens (prompt passes,\n" +
         "                      decoding, kernel choices measured, host fallbacks; IDRAK_VERBOSE=1)\n" +

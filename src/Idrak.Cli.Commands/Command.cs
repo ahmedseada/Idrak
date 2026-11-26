@@ -47,10 +47,6 @@ internal abstract class Command
     /// <summary>What it needs with the options of <paramref name="context"/> (<see cref="Needs"/> unless an option changes it).</summary>
     public virtual CommandNeeds NeedsFor(CommandContext context) => Needs;
 
-    /// <summary>Called before the <c>--plugin</c> assemblies load (e.g. to note what was registered before them).</summary>
-    public virtual void BeforePlugins(CommandContext context)
-    {
-    }
 
     /// <summary>Runs the command; returns the exit code (<see cref="ExitCodes"/>).</summary>
     public abstract int Run(CommandContext context);

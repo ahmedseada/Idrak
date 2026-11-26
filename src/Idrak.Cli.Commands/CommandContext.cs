@@ -7,7 +7,7 @@ using System.Reflection;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
+
 
 namespace Idrak.Cli;
 
@@ -396,48 +396,16 @@ internal sealed class CommandContext : IDisposable
     }
 
     /// <summary>
-    /// Loads the assemblies given with <c>--plugin</c> (and in the config's "plugins" list) and registers what each
-    /// declares (<see cref="IdrakPlugins.Load"/>): the plug-ins of its package (<c>[assembly: IdrakPluginPackage(typeof(X))]</c>,
-    /// <c>X : IIdrakPluginPackage</c>), or a library assembly's built-ins (<c>[assembly: LibraryRegistrations]</c>).
+    /// The assemblies given with <c>--plugin</c> (and in the config's "plugins" list): loading them, which registered
+    /// what each declared, is not on the new design yet.
     /// </summary>
-    /// <exception cref="UsageException">A file that is missing, or an assembly that declares neither.</exception>
+    /// <exception cref="UsageException">A plug-in is given.</exception>
     internal void LoadPlugins()
     {
         var paths = Options("--plugin").Concat(Config.List("plugins")).ToList();
-        if (paths.Count == 0)
+        if (paths.Count > 0)
         {
-            return;
-        }
-
-        if (Shared.ToolAssemblies.CanLoad)
-        {
-            LoadPlugins(paths);
-            return;
-        }
-
-        throw Shared.ToolAssemblies.Refusal("--plugin");                   // a trimmed host: the loading code is not there
-    }
-
-    [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Loads plug-in assemblies from files.")]
-    [System.Diagnostics.CodeAnalysis.RequiresDynamicCode("Loads plug-in assemblies from files.")]
-    private void LoadPlugins(List<string> paths)
-    {
-        foreach (string path in paths)
-        {
-            string full = Path.GetFullPath(path);
-            if (!File.Exists(full))
-            {
-                throw new UsageException($"Plug-in not found: {full}");
-            }
-
-            if (!IdrakPlugins.Load(Assembly.LoadFrom(full)))
-            {
-                throw new UsageException($"{full} declares no plug-in package: add [assembly: IdrakPluginPackage(typeof(YourPackage))] with "
-                                         + "YourPackage : IIdrakPluginPackage (Idrak.Abstraction.Plugins), whose All lists its plug-ins; "
-                                         + "a public static RegisterIdrakPlugin() is not called.");
-            }
-
-            Detail($"plug-in loaded: {full}");
+            throw new UsageException($"Loading plug-ins ({string.Join(", ", paths)}) is not on the new design yet.");
         }
     }
 }

@@ -12,7 +12,7 @@ internal static class HealthCommands
     [
         new DoctorCommand(), new DevicesCommand(), new VersionCommand(), new ReportCommand(), new EnvCommand(), new EnvSetCommand(), new EnvUnsetCommand(), new EnvResetCommand(), new InitCommand(),
         new CacheInfoCommand(), new CacheClearCommand(), new ConfigGetCommand(), new ConfigSetCommand(), new ConfigUnsetCommand(),
-        new ConfigListCommand(), new PluginsListCommand(), new FormatsCommand(), new CompletionCommand(), new UpdateCommand(),
+        new ConfigListCommand(),  new CompletionCommand(), new UpdateCommand(),
         new LoginCommand(), new LogoutCommand(), new SetupAndroidCommand(),
     ];
 }

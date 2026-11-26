@@ -2,13 +2,12 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
-using Idrak.Cli.Commands.Health;
 
 namespace Idrak.Cli.Shared;
 
 /// <summary>
 /// Concept pages for <c>idrak help topics</c> and <c>idrak help TOPIC</c>: devices, formats, models, plugins,
-/// config, env and exit codes. The format and model lists are read from the registries, so plug-ins show up.
+/// config, env and exit codes. Listing what is registered is not on the new design yet.
 /// </summary>
 internal static class HelpTopics
 {
@@ -18,7 +17,7 @@ internal static class HelpTopics
         ("devices", "Device names, the default device, backends and what each device reports"),
         ("formats", "KV cache, checkpoint, dataset and tool-call formats"),
         ("models", "Model names (hub ids, folders, GGUF, .ikm, aliases) and the supported families"),
-        ("plugins", "Loading assemblies that add formats, families, ops and devices"),
+        ("plugins", "Loading plug-in assemblies (not on the new design yet)"),
         ("config", "The config file, its keys and profiles"),
         ("env", "Every environment variable Idrak reads"),
         ("exit-codes", "What the tool's exit codes mean"),
@@ -90,20 +89,15 @@ internal static class HelpTopics
             weights (safetensors, GGUF, ...); dataset file formats read rows (Parquet, JSON Lines, CSV, ...); tool-call
             formats parse the calls a model writes, detected from its chat template.
 
-            Registered now:
+            Listing the registered formats is not on the new design yet.
 
+            Commands: idrak inspect.
             """);
-        foreach (var c in Registries.Snapshot().Where(c => c.Format))
-        {
-            text.Append("  ").Append(c.Title).Append(": ").Append(string.Join(", ", c.Names)).Append('\n');
-        }
-
-        return text.Append("\nCommands: idrak formats, idrak plugins list, idrak inspect.\n").ToString();
+        return text.ToString();
     }
 
     private static string Audio()
     {
-        static string Names(IEnumerable<string> names) => names.Order(StringComparer.OrdinalIgnoreCase).ToList() is { Count: > 0 } list ? string.Join(", ", list) : "none (a plug-in brings them: -P)";
         return $$$"""
             idrak help audio
 
@@ -126,16 +120,8 @@ internal static class HelpTopics
             and data audio takes one too (a comma list of the cleaning stages alone keeps --clean-settings). --live takes
             only live processors: a whole-recording one is refused, naming its live alternative.
 
-            Registered now (with the -P plug-ins of this command):
-              audio processors: {{{string.Join(", ", Idrak.Audio.Abstractions.AudioProcessors.Names)}}}
-              codecs (read): {{{Names(Idrak.Audio.Abstractions.AudioCodecs.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioCodecs.Extensions)}}})
-              encoders (write): {{{Names(Idrak.Audio.Abstractions.AudioEncoders.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioEncoders.Extensions)}}})
-              feature extractors: {{{Names(Idrak.Audio.Abstractions.AudioFeatureExtractors.Names)}}}
-              speech recognition families: {{{Names(Idrak.Audio.Abstractions.SpeechFamilies.Names)}}}
-              speech synthesis families: {{{Names(Idrak.Audio.Abstractions.SpeechSynthesisFamilies.Names)}}}
-              vocoders: {{{Names(Idrak.Audio.Abstractions.Vocoders.Names)}}}
-              voice converter families: {{{Names(Idrak.Audio.Abstractions.VoiceConverters.Names)}}}
-              splitters (data audio --split): {{{Names(Idrak.Audio.Abstractions.AudioSplitters.Names)}}}
+            Listing what is registered (processors, codecs, encoders, feature extractors, families, vocoders, voice
+            converters, splitters) is not on the new design yet.
 
             Installed voices live in {{{Idrak.Audio.FolderVoiceStore.DefaultRoot}}} (IDRAK_VOICES; --voices DIR for one command).
             A voice is a person's likeness: voice add records their consent, voice show prints it; the library cannot
@@ -146,16 +132,6 @@ internal static class HelpTopics
 
     private static string Reinforcement()
     {
-        static string Names(IEnumerable<string> names) => names.ToList() is { Count: > 0 } list ? string.Join(", ", list) : "none (a plug-in brings them: -P)";
-        try
-        {
-            CommandLine.RegisterPluginPackages();          // the tool's plug-in packages, as every command registers them (idempotent)
-        }
-        catch (UsageException)
-        {
-            // IDRAK_PLUGIN_PACKAGES names no package: the page lists what is registered, and the command says what is wrong.
-        }
-
         return $$$"""
             idrak help reinforcement
 
@@ -199,14 +175,8 @@ internal static class HelpTopics
                                                       paused, resumed and stopped at an iteration, every rank at the same one;
                                                       its iterations, rewards and pass rate shown from DIR/log.jsonl
 
-            Registered now (with the -P plug-ins of this command):
-              environments: {{{Names(Idrak.Abstraction.Reinforcement.EnvironmentKinds.Names)}}}
-              rewards: {{{Names(Idrak.Abstraction.Reinforcement.RewardFunctions.Names)}}}
-              algorithms (policy losses): {{{Names(Idrak.Abstraction.Reinforcement.PolicyLosses.Names)}}}, and distill
-              off-policy algorithms (Q-learning losses): {{{Names(Idrak.Reinforcement.Abstractions.QLosses.Names)}}}
-              advantage estimators: {{{Names(Idrak.Abstraction.Reinforcement.AdvantageEstimators.Names)}}}
-              command sandboxes: {{{Names(CommandSandboxes.Names)}}}
-              teacher divergences: {{{Names(Idrak.Text.Abstractions.TeacherDivergences.Names)}}}
+            Listing what is registered (environments, rewards, policy and Q-learning losses, advantage estimators,
+            command sandboxes, teacher divergences) is not on the new design yet.
 
             A run is reproducible from its seed (--seed, IDRAK_RL_SEED) on every device and thread count; it writes
             checkpoints into DIR/checkpoints and goes on from the latest with --resume. A coding episode runs the model's
@@ -219,7 +189,6 @@ internal static class HelpTopics
 
     private static string Models()
     {
-        var families = Registries.Snapshot();
         return $$$"""
             idrak help models
 
@@ -228,9 +197,7 @@ internal static class HelpTopics
             ("aliases": {"qwen": {"model": "Qwen/Qwen3-0.6B"}}). Hub models are downloaded into the cache once
             (idrak pull) and found there afterwards; -k/--kv chooses the KV cache format, --context the context length.
 
-            Families (config.json "model_type"): {{{string.Join(", ", families.First(c => c.Key == "families").Names)}}}
-            GGUF architectures: {{{string.Join(", ", families.First(c => c.Key == "gguf").Names)}}}
-            RoPE scalings: {{{string.Join(", ", families.First(c => c.Key == "rope").Names)}}}
+            Listing the registered families, GGUF architectures and RoPE scalings is not on the new design yet.
 
             Commands: idrak pull, list, show, memory, chat, run, serve, alias set.
             Variables: HF_TOKEN, HF_HOME, HF_ENDPOINT, IDRAK_CACHE (idrak help env).
@@ -240,19 +207,11 @@ internal static class HelpTopics
     private const string Plugins = """
         idrak help plugins
 
-        -P/--plugin PATH (repeatable), or the config's "plugins" list, loads an assembly before the command runs and
-        registers the plug-ins of its package, which it names with [assembly: IdrakPluginPackage(typeof(X))] (X an
-        IIdrakPluginPackage, Idrak.Abstraction.Plugins): they register KV formats, model families, RoPE
-        scalings, tool-call formats, checkpoint and dataset formats, graph ops, layer types, ONNX ops or device kinds
-        through the libraries' public Register methods. A library assembly (Idrak.Onnx.Runtime) registers its
-        built-ins instead. Everything it adds is then available to every command.
+        -P/--plugin PATH (repeatable), or the config's "plugins" list, named an assembly whose plug-ins registered
+        formats, families, ops or devices: loading plug-ins is not on the new design yet, and a command given one
+        stops saying so.
 
-        The tool itself registers the model families of Idrak.Text.Plugins, Idrak.Vision.Plugins and
-        Idrak.Audio.Plugins, the environment families of Idrak.Reinforcement.Plugins and the font formats of
-        Idrak.Imaging.Plugins (woff, read and written), first, so a -P plug-in can still take a family's place
-        (IDRAK_PLUGIN_PACKAGES chooses which).
-
-        Commands: idrak plugins list (with -P: what the assembly added, marked "+"), idrak formats, idrak new plugin.
+        Commands: idrak new plugin.
         """;
 
     private const string Arabic = """
