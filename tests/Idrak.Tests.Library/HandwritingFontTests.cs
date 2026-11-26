@@ -341,8 +341,6 @@ internal abstract partial class Tests
 
         public string Summary => $"the toy source, broken: {how}";
 
-        public IReadOnlySet<string> Keys => toy.Keys;
-
         public GlyphSourceSettings Read(IReadOnlyDictionary<string, string> options) =>
             how == "greedy" ? toy.Read(PageOptions.None) : toy.Read(options);
 
