@@ -77,11 +77,11 @@ public static class ImageModelPredictors
 
     /// <summary>
     /// A line reader over the model (<see cref="ImageTask.LineRecognition"/>): its line settings, labels and channels, the
-    /// CTC decoder <paramref name="decoder"/> (<see cref="CtcDecoders"/>) with <paramref name="options"/>.
+    /// CTC decoder <paramref name="decoder"/> (<c>CtcDecoders</c>) with <paramref name="options"/>.
     /// </summary>
     /// <exception cref="InvalidOperationException">The model is not a line recognizer.</exception>
     /// <exception cref="NotSupportedException">The decoder or the model's reading order is not registered.</exception>
-    public static ModelLineReader LineReader(this ImageModel model, string decoder = CtcDecoders.Greedy, CtcDecodeOptions? options = null, Device? device = null)
+    public static ModelLineReader LineReader(this ImageModel model, string decoder = "greedy", CtcDecodeOptions? options = null, Device? device = null)
     {
         Require(model, ImageTask.LineRecognition);
         return new ModelLineReader(model.Network, model.Labels!, model.Lines!, model.Channels, decoder, options, device);

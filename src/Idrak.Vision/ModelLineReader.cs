@@ -27,7 +27,7 @@ public sealed record RecognizedLine(string Text, int[] Labels, double LogProbabi
 /// A line recognizer over a network (<see cref="ImageTask.LineRecognition"/>; <c>model.LineReader()</c> for a model loaded
 /// through its family): each line prepared as <see cref="LineRecognitionSettings"/> say (scaled to the height keeping its
 /// aspect, ink high, flipped for right to left), a batch padded with 0 on the right to its widest line, the network's
-/// [N, steps, classes] scores decoded by a CTC decoder (<see cref="CtcDecoders"/>), the labels' text turned to logical
+/// [N, steps, classes] scores decoded by a CTC decoder (<c>CtcDecoders</c>), the labels' text turned to logical
 /// order by the model's reading order (<see cref="ReadingOrders"/>). It uses the network without owning it. A line in a
 /// batch is padded to the widest; a network that reads its padding (a recurrent layer running backwards) reads lines of
 /// similar widths best together, so callers batch lines by width.
@@ -38,17 +38,26 @@ public sealed class ModelLineReader
     private readonly Dictionary<string, int> _index;
     private readonly IReadingOrder? _order;
 
+    // The CTC decoders and the reading orders were registered (CtcDecoders, ReadingOrders) and picked by name: not on the
+    // new design yet.
+    private static object CtcDecoderNamed(string name) => throw new NotSupportedException($"The CTC decoder '{name}' by name is not on the new design yet.");
+
+    private static IReadingOrder OrderNamed(string name) => throw new NotSupportedException($"The reading order '{name}' by name is not on the new design yet.");
+
+    private static IReadOnlyList<CtcHypothesis>[] DecodeNamed(Tensor logProbs, IReadOnlyList<int>? lengths, string name, CtcDecodeOptions options, bool batchFirst) =>
+        throw new NotSupportedException($"The CTC decoder '{name}' by name is not on the new design yet.");
+
     /// <summary>A reader over <paramref name="network"/>.</summary>
     /// <param name="network">Images [N, <paramref name="channels"/>, height, width] in, [N, steps, classes] scores out.</param>
     /// <param name="labels">Each class's text, in output order (the blank's empty).</param>
     /// <param name="settings">How lines are prepared and readings turned to text.</param>
     /// <param name="channels">The network's input channels (the grey line repeated to them).</param>
-    /// <param name="decoder">The CTC decoder (<see cref="CtcDecoders"/>; "greedy" unless given).</param>
+    /// <param name="decoder">The CTC decoder (<c>CtcDecoders</c>; "greedy" unless given).</param>
     /// <param name="options">The decoder's settings (its blank is the settings').</param>
     /// <param name="device">Where the network runs (its weights' device unless given).</param>
     /// <exception cref="ArgumentException">The settings do not fit the labels.</exception>
     /// <exception cref="NotSupportedException">The decoder or the reading order is not registered.</exception>
-    public ModelLineReader(Module network, IReadOnlyList<string> labels, LineRecognitionSettings settings, int channels = 1, string decoder = CtcDecoders.Greedy,
+    public ModelLineReader(Module network, IReadOnlyList<string> labels, LineRecognitionSettings settings, int channels = 1, string decoder = "greedy",
         CtcDecodeOptions? options = null, Device? device = null)
     {
         ArgumentNullException.ThrowIfNull(network);
@@ -60,7 +69,7 @@ public sealed class ModelLineReader
             throw new ArgumentException($"Line recognition settings with {labels.Count} labels: {problem}.", nameof(settings));
         }
 
-        _ = CtcDecoders.Get(decoder);                                              // refused here, not at the first line
+        _ = CtcDecoderNamed(decoder);                                              // refused here, not at the first line
         _network = network;
         Labels = labels;
         Settings = settings;
@@ -68,7 +77,7 @@ public sealed class ModelLineReader
         Decoder = decoder;
         Options = (options ?? new CtcDecodeOptions()) with { Blank = settings.Blank };
         Device = device ?? network.WeightsDevice ?? Device.Default;
-        _order = settings.ReadingOrder is { } order ? ReadingOrders.Get(order) : null;
+        _order = settings.ReadingOrder is { } order ? OrderNamed(order) : null;
         _index = new Dictionary<string, int>(StringComparer.Ordinal);
         for (int i = 0; i < labels.Count; i++)
         {
@@ -228,7 +237,7 @@ public sealed class ModelLineReader
             steps[n] = Math.Min(steps[n], available);
         }
 
-        var decoded = CtcDecoders.Decode(LogProbabilities(scores), steps, Decoder, Options, batchFirst: true);
+        var decoded = DecodeNamed(LogProbabilities(scores), steps, Decoder, Options, batchFirst: true);
         var result = new RecognizedLine[lines.Count];
         for (int n = 0; n < lines.Count; n++)
         {

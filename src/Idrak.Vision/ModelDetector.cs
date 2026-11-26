@@ -55,13 +55,17 @@ public sealed class ModelDetector : IObjectDetector
         _device = device ?? model.WeightsDevice ?? Device.Default;
     }
 
+    // The detection decoders were registered (DetectionDecoders) and made by name: not on the new design yet.
+    private static DetectionDecoder DecoderNamed(string name, DetectionDecoderRequest request) =>
+        throw new NotSupportedException($"The detection decoder '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// A detector whose decoder is the one registered as <paramref name="decoder"/> in <see cref="DetectionDecoders"/>,
     /// made for this input size, <paramref name="options"/>' classes and <paramref name="settings"/>.
     /// </summary>
     /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
     public ModelDetector(Module model, int channels, int height, int width, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
-        : this(model, channels, height, width, DetectionDecoders.Create(decoder, new DetectionDecoderRequest(height, width, options?.Classes, settings ?? [])), options, device)
+        : this(model, channels, height, width, DecoderNamed(decoder, new DetectionDecoderRequest(height, width, options?.Classes, settings ?? [])), options, device)
     {
     }
 
@@ -85,7 +89,7 @@ public sealed class ModelDetector : IObjectDetector
     /// </summary>
     /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
     public ModelDetector(Module model, ImagePreprocessor preprocessor, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
-        : this(model, preprocessor, DetectionDecoders.Create(decoder, ContextFor(preprocessor, options, settings)), options, device)
+        : this(model, preprocessor, DecoderNamed(decoder, ContextFor(preprocessor, options, settings)), options, device)
     {
     }
 

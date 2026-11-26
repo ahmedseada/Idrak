@@ -10,7 +10,7 @@ namespace Idrak.Vision;
 
 /// <summary>
 /// Loads image models (classifiers, detectors, segmenters, backbones, line recognizers) through their registered family
-/// (<see cref="ImageModelFamilies"/>). Idrak.Vision turns the result into a predictor ready for images
+/// (<c>ImageModelFamilies</c>). Idrak.Vision turns the result into a predictor ready for images
 /// (<c>model.Classifier()</c>, <c>model.Detector()</c>, <c>model.Segmenter()</c>, <c>model.LineReader()</c>).
 /// </summary>
 /// <remarks>
@@ -22,14 +22,21 @@ namespace Idrak.Vision;
 /// </remarks>
 public static class ImageModels
 {
+    // The image model families were registered (ImageModelFamilies) and the checkpoint formats found by the path
+    // (CheckpointFormats): not on the new design yet.
+    private static IImageModelFamily FamilyNamed(string architecture) =>
+        throw new NotSupportedException($"The image model family '{architecture}' by name is not on the new design yet.");
+
+    private static ICheckpointFormat FormatFor(string path) => throw new NotSupportedException($"{path}: a checkpoint format found by the path is not on the new design yet.");
+
     /// <summary>
     /// Reads the image model at <paramref name="path"/>: a model folder (config.json and safetensors weights, or any folder a
-    /// registered <see cref="CheckpointFormats">checkpoint format</see> reads), a .safetensors file in such a folder, an .onnx
+    /// registered checkpoint format reads), a .safetensors file in such a folder, an .onnx
     /// file, or a folder holding one .onnx file and no safetensors. The architecture is config.json's ("architectures") or,
     /// for an ONNX file without one, its "architecture" metadata; the family registered under that name reads the rest.
     /// Tensors are read one at a time as the family makes its layers, so the checkpoint is never held whole in memory.
     /// </summary>
-    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <see cref="ImageModelFamilies"/>.</exception>
+    /// <exception cref="NotSupportedException">No family is registered under the architecture; the message names <c>ImageModelFamilies</c>.</exception>
     /// <exception cref="InvalidDataException">The checkpoint names no architecture, or its family cannot read it.</exception>
     public static ImageModel Load(string path, ImageModelOptions? options = null)
     {
@@ -42,12 +49,12 @@ public static class ImageModels
 
         string target = File.Exists(path) && (path.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) || Path.GetFileName(path) == "config.json")
             ? Path.GetDirectoryName(Path.GetFullPath(path))! : path;
-        var format = CheckpointFormats.For(target);
+        var format = FormatFor(target);
         string folder = format.Prepare(target);
         var config = ReadConfig(folder) ?? throw new InvalidDataException($"{folder} has no config.json (it names the image model's architecture).");
         string architecture = options.Architecture ?? ArchitectureOf(config)
             ?? throw new InvalidDataException($"{Path.Combine(folder, "config.json")} names no architecture (\"architectures\"); pass ImageModelOptions.Architecture.");
-        var family = ImageModelFamilies.Get(architecture);                    // refused before any weight is opened
+        var family = FamilyNamed(architecture);                    // refused before any weight is opened
         var notes = new List<string>(format.Notes(folder));
         using var tensors = format.Open(folder);
         var checkpoint = new ImageCheckpoint(architecture, config, path, folder, tensors, null, options, notes);
@@ -78,7 +85,7 @@ public static class ImageModels
                         $"{file} names no architecture: give a config.json beside it, an \"architecture\" metadata entry, or ImageModelOptions.Architecture.");
             }
 
-            var family = ImageModelFamilies.Get(architecture);
+            var family = FamilyNamed(architecture);
             var notes = new List<string>();
             ImportedNetwork Import()
             {

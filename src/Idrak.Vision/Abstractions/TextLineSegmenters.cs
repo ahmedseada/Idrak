@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
-
 namespace Idrak.Vision.Abstractions;
 
 /// <summary>A text line found on a page: its place (in the deskewed page's pixels) and its pixels (grey, as on the page).</summary>
@@ -66,7 +64,7 @@ public sealed record LineSegmentationOptions
 /// <summary>
 /// Cuts a page image into its text lines: each line's place and pixels, top to bottom, with the page's skew undone. The
 /// library's is "projection" (<see cref="ProjectionLineSegmenter"/>); register another with
-/// <see cref="TextLineSegmenters.Register"/> (a learned layout model, a column-aware one), and readers and apps use it by
+/// <c>TextLineSegmenters.Register</c> (a learned layout model, a column-aware one), and readers and apps use it by
 /// name.
 /// </summary>
 public interface ITextLineSegmenter
@@ -81,8 +79,8 @@ public interface ITextLineSegmenter
 /// <summary>
 /// The text line segmenters, by name (ignoring case). The library's: <see cref="Projection"/> (the page binarized, its skew
 /// measured by the sharpest row profile and undone, rows with ink grouped into bands, marks joined to their line, each band
-/// cut out with padding). Register another with <see cref="Register"/>; one under the library's name takes its place, which
-/// stays behind it (see <see cref="SetPolicy"/>: an app's segmenter may fall back on the library's per page, or run beside
+/// cut out with padding). Register another with <c>Register</c>; one under the library's name takes its place, which
+/// stays behind it (see <c>SetPolicy</c>: an app's segmenter may fall back on the library's per page, or run beside
 /// it and be compared).
 /// </summary>
 public static class TextLineSegmenters
@@ -90,87 +88,10 @@ public static class TextLineSegmenters
     /// <summary>"projection": lines by horizontal projection of the binarized, deskewed page.</summary>
     public const string Projection = "projection";
 
-    private static readonly SlotTable<string, ITextLineSegmenter> Table = new(nameof(TextLineSegmenters), Guard, StringComparer.OrdinalIgnoreCase);
-
-    static TextLineSegmenters() => Overrides.AsLibraryDefaults(() => Register(new ProjectionLineSegmenter()));
-
-    /// <summary>Registers <paramref name="segmenter"/> under its <see cref="ITextLineSegmenter.Name"/>; under the library's name it takes its place.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITextLineSegmenter segmenter)
-    {
-        ArgumentNullException.ThrowIfNull(segmenter);
-        ArgumentException.ThrowIfNullOrWhiteSpace(segmenter.Name);
-        Table.Register(segmenter.Name, segmenter, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's segmenter <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The segmenter <paramref name="name"/> (an app's guarded by its policy), or null.</summary>
-    public static ITextLineSegmenter? Find(string name) => Table.TryGet(name, out var segmenter) ? segmenter : null;
-
-    /// <summary>The segmenter <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static ITextLineSegmenter Get(string name) => Find(name)
-        ?? throw new NotRegisteredException(nameof(TextLineSegmenters), name, Table.Keys,
-            $"Text line segmenter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextLineSegmenters.Register.");
-
-    /// <summary>The library's segmenter <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ITextLineSegmenter? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the segmenter <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered segmenter as "name: what it does", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Keys.Select(k => $"{k}: {Table.Find(k)}"));
-
     /// <summary>
-    /// What happens when the app's segmenter <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> cuts the page with the library's), or whether it only runs beside the library's
-    /// (<see cref="SlotPolicy.Shadow"/>: the library's lines are used, the two are compared).
+    /// The lines of <paramref name="page"/>, cut by the library's projection segmenter (<see cref="ProjectionLineSegmenter"/>,
+    /// reached directly: the segmenters were registered and picked by name, which is not on the new design yet).
     /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>The lines of <paramref name="page"/> by the segmenter <paramref name="name"/> (<see cref="Projection"/> unless given).</summary>
-    /// <exception cref="NotSupportedException">No segmenter has that name.</exception>
-    public static PageLines Segment(ImageData page, LineSegmentationOptions? options = null, string name = Projection)
-    {
-        ArgumentNullException.ThrowIfNull(page);
-        return Get(name).Find(page, options ?? new LineSegmentationOptions());
-    }
-
-    private static ITextLineSegmenter Guard(Slot slot, ITextLineSegmenter app, ITextLineSegmenter library) => new GuardedSegmenter(slot, app, library);
-
-    // An app's segmenter over the library's: each page falls back on its own, or is compared with the library's lines.
-    private sealed class GuardedSegmenter(Slot slot, ITextLineSegmenter app, ITextLineSegmenter library) : ITextLineSegmenter
-    {
-        public string Name => app.Name;
-
-        public PageLines Find(ImageData page, LineSegmentationOptions options) =>
-            slot.Call(() => app.Find(page, options), () => library.Find(page, options), Difference);
-
-        public override string ToString() => app.ToString() ?? app.Name;
-
-        private static string? Difference(PageLines a, PageLines b)
-        {
-            if (a.Lines.Count != b.Lines.Count)
-            {
-                return $"{a.Lines.Count} lines, the library's {b.Lines.Count}";
-            }
-
-            for (int i = 0; i < a.Lines.Count; i++)
-            {
-                var (x, y) = (a.Lines[i], b.Lines[i]);
-                if (x.X != y.X || x.Y != y.Y || x.Width != y.Width || x.Height != y.Height)
-                {
-                    return $"line {i + 1} at ({x.X}, {x.Y}) {x.Width} x {x.Height}, the library's at ({y.X}, {y.Y}) {y.Width} x {y.Height}";
-                }
-            }
-
-            return a.Skew == b.Skew ? null : $"skew {a.Skew}, the library's {b.Skew}";
-        }
-    }
+    public static PageLines Segment(ImageData page, LineSegmentationOptions? options = null) =>
+        new ProjectionLineSegmenter().Find(page, options ?? new LineSegmentationOptions());
 }

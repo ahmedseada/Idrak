@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
@@ -117,7 +116,7 @@ public sealed record ImageModelOptions
 
 /// <summary>
 /// What an image model family reads a checkpoint from (<see cref="IImageModelFamily.Read"/>): a safetensors folder (or any
-/// folder a registered <see cref="CheckpointFormats">checkpoint format</see> reads) with its config.json, or an ONNX file.
+/// folder a registered checkpoint format reads) with its config.json, or an ONNX file.
 /// </summary>
 /// <param name="Architecture">The architecture name the checkpoint was matched by.</param>
 /// <param name="Config">The model's config.json (an empty object for an ONNX file that came without one).</param>
@@ -247,7 +246,7 @@ public sealed record ImageModel : IDisposable
 
 /// <summary>
 /// An image model family: how its checkpoints become an <see cref="ImageModel"/> (the network built from layers or imported
-/// from ONNX, its task, preprocessing, labels and decoder). Registered in <see cref="ImageModelFamilies"/> under the
+/// from ONNX, its task, preprocessing, labels and decoder). Registered in <c>ImageModelFamilies</c> under the
 /// architecture name its checkpoints give.
 /// </summary>
 public interface IImageModelFamily
@@ -260,50 +259,3 @@ public interface IImageModelFamily
     ImageModel Read(ImageCheckpoint checkpoint);
 }
 
-/// <summary>
-/// The image model families (classifiers, detectors, segmenters, backbones, line recognizers), by architecture name (config.json's
-/// "architectures", or an ONNX file's "architecture" metadata). The library registers none: a family (its configuration,
-/// tensor names, layers, preprocessing defaults and decoder) is an application of these contracts, registered by the
-/// plug-in or app that brings it (the plug-in package Idrak.Vision.Plugins registers the CRNN line recognizer; the test
-/// plug-ins in <c>tests/Idrak.PluginTests</c> register a small ResNet-style classifier and a grid detector). A checkpoint is matched to its own family by that exact name; one whose name has no
-/// family is refused, naming this registry: nothing falls back to another family. Load one with <see cref="ImageModels.Load"/>.
-/// </summary>
-public static class ImageModelFamilies
-{
-    private static readonly SlotTable<string, IImageModelFamily> Registry = new(nameof(ImageModelFamilies), comparer: StringComparer.Ordinal,
-        unguarded: "a family's network, preprocessing, labels and decoder must agree with one another, so two registrations cannot be mixed");
-
-    /// <summary>Registers <paramref name="family"/> under its <see cref="IImageModelFamily.Name"/>; under a library name it takes that family's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IImageModelFamily family)
-    {
-        ArgumentNullException.ThrowIfNull(family);
-        ArgumentException.ThrowIfNullOrEmpty(family.Name);
-        Registry.Register(family.Name, family, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's family <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered architecture names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The family registered as <paramref name="name"/>, or null.</summary>
-    public static IImageModelFamily? Find(string name) => Registry.Find(name);
-
-    /// <summary>The family registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names <see cref="Register"/>.</exception>
-    public static IImageModelFamily Get(string name) => Registry.Find(name) ?? throw NotRegistered(name);
-
-    /// <summary>The library's family <paramref name="name"/>, whatever an app registered over it; null when the library has none (it has none).</summary>
-    public static IImageModelFamily? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    internal static NotRegisteredException NotRegistered(string name) =>
-        new(nameof(ImageModelFamilies), name, Registry.Keys,
-            $"Image model family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-            + "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
-            + "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll().");
-}

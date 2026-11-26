@@ -17,10 +17,10 @@ public sealed record DetectionObjectiveOptions
     /// <summary>The matcher's settings (default: thresholds 0.5 and 0.4, every truth keeping its best candidates).</summary>
     public BoxMatchOptions Match { get; init; } = new() { AllowLowQuality = true };
 
-    /// <summary>The <see cref="VisionLosses"/> entry for the matched candidates' boxes against their truths' (default "giou").</summary>
+    /// <summary>The <c>VisionLosses</c> entry for the matched candidates' boxes against their truths' (default "giou").</summary>
     public string BoxLoss { get; init; } = "giou";
 
-    /// <summary>The <see cref="VisionLosses"/> entry for the class logits against one-hot targets (default "focal").</summary>
+    /// <summary>The <c>VisionLosses</c> entry for the class logits against one-hot targets (default "focal").</summary>
     public string ClassLoss { get; init; } = "focal";
 
     /// <summary>The losses' settings (their reduction is ignored: each candidate's loss is weighted and summed here).</summary>
@@ -41,8 +41,8 @@ public sealed record DetectionObjectiveOptions
 
 /// <summary>
 /// The training loss of a detector: its candidates (<see cref="DetectionCandidates"/>, from the head of
-/// its decoder, <see cref="IDetectionHeadKind"/>) matched to each image's true boxes by a registered <see cref="BoxMatchers">matcher</see>, then the
-/// matched candidates' boxes scored by a registered <see cref="VisionLosses">box loss</see> and the class logits by a
+/// its decoder, <c>IDetectionHeadKind</c>) matched to each image's true boxes by a registered <see cref="BoxMatchers">matcher</see>, then the
+/// matched candidates' boxes scored by a registered box loss and the class logits by a
 /// registered class loss (one-hot targets: the matched truth's class, nothing for background), each summed over the
 /// candidates and divided by the matched count (at least 1). With an objectness logit the class loss reads the matched
 /// candidates only, and a binary cross-entropy teaches the objectness (matched 1, background 0, averaged over both);
@@ -50,6 +50,12 @@ public sealed record DetectionObjectiveOptions
 /// </summary>
 public static class DetectionObjective
 {
+    // The box matchers and vision losses were registered (BoxMatchers, VisionLosses) and picked by name: not on the new
+    // design yet.
+    private static IBoxMatcher MatcherNamed(string name) => throw new NotSupportedException($"The box matcher '{name}' by name is not on the new design yet.");
+
+    private static IVisionLoss LossNamed(string name) => throw new NotSupportedException($"The vision loss '{name}' by name is not on the new design yet.");
+
     /// <summary>
     /// The loss (a scalar with gradients to the candidates) of <paramref name="candidates"/> against each image's
     /// <paramref name="boxes"/> (in the network input's pixels) and <paramref name="labels"/>.
@@ -74,7 +80,7 @@ public static class DetectionObjective
             throw new ArgumentException($"{n} images of candidates, {boxes.Count} of boxes and {labels.Count} of labels.");
         }
 
-        var matcher = BoxMatchers.Get(options.Matcher);
+        var matcher = MatcherNamed(options.Matcher);
         bool set = string.Equals(options.Matcher, BoxMatchers.Hungarian, StringComparison.OrdinalIgnoreCase);
         float[] predicted = candidates.Boxes.ToArray();
         float[]? probabilities = set ? [.. candidates.ClassLogits.ToArray().Select(v => 1f / (1f + PortableMathF.Exp(-v)))] : null;
@@ -152,8 +158,8 @@ public static class DetectionObjective
         var device = candidates.Boxes.Device;
         float normalizer = Math.Max(1, matched);
         var lossOptions = options.Losses with { Reduction = LossReduction.None };
-        var boxLoss = VisionLosses.Get(options.BoxLoss).Compute(candidates.Boxes.Reshape(rows, 4), Tensor.From(boxTargets, [rows, 4], device), lossOptions);
-        var classLoss = VisionLosses.Get(options.ClassLoss).Compute(candidates.ClassLogits.Reshape(rows, c), Tensor.From(classTargets, [rows, c], device), lossOptions);
+        var boxLoss = LossNamed(options.BoxLoss).Compute(candidates.Boxes.Reshape(rows, 4), Tensor.From(boxTargets, [rows, 4], device), lossOptions);
+        var classLoss = LossNamed(options.ClassLoss).Compute(candidates.ClassLogits.Reshape(rows, c), Tensor.From(classTargets, [rows, c], device), lossOptions);
         var total = Weighted(boxLoss, boxWeights, rows, device) * (options.BoxWeight / normalizer)
                     + Weighted(classLoss, classWeights, rows, device) * (options.ClassWeight / normalizer);
         if (candidates.Objectness is not { } logits)

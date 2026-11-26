@@ -113,6 +113,9 @@ public sealed class AugmentedImageLoader : IEnumerable<DetectionBatch>
         Device = device ?? Device.Default;
     }
 
+    // The image codecs were registered (ImageCodecs) and a file decoded by the one that reads it: not on the new design yet.
+    private static ImageData Decode(string path) => throw new NotSupportedException($"{path}: decoding an image through the registered image codecs is not on the new design yet.");
+
     /// <summary>
     /// A loader over an annotated dataset's images (decoded with <see cref="ImageCodecs"/> when read): each image's boxes and
     /// classes and, with <paramref name="masks"/>, its objects' masks (crowd and difficult objects left out).
@@ -121,7 +124,7 @@ public sealed class AugmentedImageLoader : IEnumerable<DetectionBatch>
         Device? device = null, bool masks = false)
     {
         ArgumentNullException.ThrowIfNull(dataset);
-        return new AugmentedImageLoader(dataset.Images.Count, i => dataset.Images[i].ToSample(ImageCodecs.Decode(dataset.PathOf(i)), masks), width, height, batchSize, shuffle,
+        return new AugmentedImageLoader(dataset.Images.Count, i => dataset.Images[i].ToSample(Decode(dataset.PathOf(i)), masks), width, height, batchSize, shuffle,
             seed, device);
     }
 
@@ -143,7 +146,7 @@ public sealed class AugmentedImageLoader : IEnumerable<DetectionBatch>
     /// <summary>Where the batches go.</summary>
     public Device Device { get; }
 
-    /// <summary>The augmentations, in order (none by default); <see cref="Augmentations.Parse"/> reads them from text.</summary>
+    /// <summary>The augmentations, in order (none by default); <c>Augmentations.Parse</c> reads them from text.</summary>
     public IReadOnlyList<IAugmentation> Augmentations { get; init; } = [];
 
     /// <summary>The batch's channels: 3 (colour) by default, or 1 (grey); images of the other kind are converted.</summary>

@@ -22,7 +22,7 @@ public sealed record SegmentationScore(double PixelAccuracy, IReadOnlyList<doubl
 }
 
 /// <summary>
-/// Scores segmentation masks ("miou" in <see cref="VisionMetrics"/>); add any number of (predicted, true) pairs, then read
+/// Scores segmentation masks ("miou" in <c>VisionMetrics</c>); add any number of (predicted, true) pairs, then read
 /// <see cref="Score"/> (or <see cref="Compute()"/>: <c>miou</c>, <c>pixel_accuracy</c>, <c>mean_accuracy</c>, <c>fwiou</c>,
 /// then <c>iou/CLASS</c> per class). Pixels whose true class is <paramref name="ignoreClass"/> are left out.
 /// </summary>

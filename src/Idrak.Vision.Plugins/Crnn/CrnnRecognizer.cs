@@ -212,7 +212,7 @@ public sealed class CrnnRecognizer : IDisposable
 
     /// <summary>
     /// The recognizer saved in <paramref name="folder"/>: read through its family (<see cref="ImageModels.Load"/>, so the
-    /// family registered under <see cref="CrnnPlugin.Architecture"/> reads it: <see cref="CrnnPlugin.Register"/>), or, for
+    /// family registered under <see cref="CrnnPlugin.Architecture"/> reads it: <c>CrnnPlugin.Register</c>), or, for
     /// a folder of the earlier layout, from its model package.
     /// </summary>
     /// <param name="folder">The model folder.</param>
@@ -303,7 +303,7 @@ public sealed class CrnnRecognizer : IDisposable
     public Tensor LogProbabilities(Tensor images) => Network.Forward(images).LogSoftmax();
 
     /// <summary>
-    /// Reads <paramref name="lines"/> with the CTC decoder <paramref name="decoder"/> (<see cref="CtcDecoders"/>), in
+    /// Reads <paramref name="lines"/> with the CTC decoder <paramref name="decoder"/> (<c>CtcDecoders</c>), in
     /// batches measured on the device (<paramref name="batches"/>), widest lines first so each batch pads little.
     /// </summary>
     public IReadOnlyList<RecognizedLine> Read(IReadOnlyList<ImageData> lines, string decoder, CtcDecodeOptions options, MeasuredLineBatches batches)

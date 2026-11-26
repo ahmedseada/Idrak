@@ -32,7 +32,7 @@ public sealed record DetectionCandidates(Tensor Boxes, Tensor ClassLogits, Tenso
 }
 
 /// <summary>
-/// The training side of a detection decoder (<see cref="IDetectionHeadKind.CreateHead"/>): reads the network's outputs
+/// The training side of a detection decoder (<c>IDetectionHeadKind.CreateHead</c>): reads the network's outputs
 /// for a batch, [N, ...], as the <see cref="DetectionCandidates"/> the decoder would turn into detections, but as tensors
 /// that carry gradients.
 /// </summary>
