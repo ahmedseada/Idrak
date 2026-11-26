@@ -28,9 +28,6 @@ public static class DeferredTensors
     [ThreadStatic]
     private static int _staying;
 
-    /// <summary>The device deferred tensors live on: no memory, values read from their source when they leave it.</summary>
-    public static Device Device => Device.Get(Kind);
-
     /// <summary>Whether <paramref name="tensor"/> lives on the deferred device.</summary>
     public static bool IsDeferred(Tensor tensor)
     {
@@ -272,28 +269,3 @@ internal sealed class DeferredBackend : Backend
     }
 }
 
-/// <summary>The provider of the deferred device (by name only: never listed, never the default).</summary>
-internal sealed class DeferredProvider : IDeviceProvider
-{
-    private volatile bool _started;
-
-    public string Name => DeferredTensors.Kind;
-
-    public string Summary => "a model's tensors before they are read (a pipeline stage's or a shard's load), each read from its source when it moves to a device";
-
-    public DeviceType Type => DeviceType.Other;
-
-    public int Count => 1;
-
-    public Backend Create(int ordinal)
-    {
-        _started = true;
-        return DeferredBackend.Instance;
-    }
-
-    public bool IsStarted(int ordinal) => _started;
-
-    public bool Listed(int ordinal) => false;
-
-    public string? Note(int ordinal) => "a model's tensors before they are read (a pipeline stage's or a shard's load): by name only";
-}

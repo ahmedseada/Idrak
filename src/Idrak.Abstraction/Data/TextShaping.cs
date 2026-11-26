@@ -71,90 +71,12 @@ public interface ITextShaper
 /// <summary>
 /// The text shapers, by script (ISO 15924 code, ignoring case). A script with no shaper of its own is shaped by the one
 /// registered under <see cref="AnyScript"/>. Built in (Idrak.Imaging): "general" under <see cref="AnyScript"/> (the
-/// character map, then the font's GSUB and GPOS features for the script: right for scripts that neither join nor reorder,
-/// such as Latin, Greek, Cyrillic, Armenian, Georgian, Hebrew and the CJK scripts) and "arabic" for Arab, Syrc, Nkoo,
-/// Mong, Mand, Mani, Phlp, Adlm, Rohg, Sogd and Ougr (cursive joining). Register a shaper for another script with
-/// <see cref="Register"/>.
+/// character map, then the font's GSUB and GPOS features for the script: right for scripts that neither join nor
+/// reorder, such as Latin, Greek, Cyrillic, Armenian, Georgian, Hebrew and the CJK scripts) and "arabic" for Arab,
+/// Syrc, Nkoo, Mong, Mand, Mani, Phlp, Adlm, Rohg, Sogd and Ougr (cursive joining).
 /// </summary>
 public static class TextShapers
 {
     /// <summary>The key of the shaper for every script without its own.</summary>
     public const string AnyScript = "*";
-
-    private static readonly SlotTable<string, ITextShaper> Registry =
-        new(nameof(TextShapers), (slot, app, library) => new GuardedShaper(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static TextShapers() => LibraryDefaults.Ensure(typeof(TextShapers));
-
-    /// <summary>Registers <paramref name="shaper"/> for <paramref name="script"/> (or <see cref="AnyScript"/>), over the library's for that script, which stays behind it.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string script, ITextShaper shaper)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(script);
-        ArgumentNullException.ThrowIfNull(shaper);
-        Registry.Register(script, shaper, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's shaper for <paramref name="script"/> (the library's, if any, answers again).</summary>
-    public static bool Unregister(string script) => Registry.Unregister(script);
-
-    /// <summary>The scripts with a shaper of their own, and <see cref="AnyScript"/>.</summary>
-    public static IReadOnlyCollection<string> Scripts => Registry.Keys;
-
-    /// <summary>The shaper of <paramref name="script"/>, else the one for <see cref="AnyScript"/>.</summary>
-    /// <exception cref="NotSupportedException">Neither is registered.</exception>
-    public static ITextShaper Get(string script) => Registry.Find(script) ?? Registry.Find(AnyScript)
-        ?? throw new NotRegisteredException(nameof(TextShapers), script, Scripts,
-            $"No text shaper is registered for '{script}' or for every script ('{AnyScript}'); add one with TextShapers.Register.");
-
-    /// <summary>The library's shaper registered for <paramref name="script"/>, or null.</summary>
-    public static ITextShaper? Default(string script) => Registry.Default(script);
-
-    /// <summary>Who registered the shaper for <paramref name="script"/>.</summary>
-    public static string? Origin(string script) => Registry.Origin(script);
-
-    /// <summary>What happens when the app's shaper for <paramref name="script"/> fails.</summary>
-    public static void SetPolicy(string script, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(script, policy, shadowRate);
-
-    /// <summary>Shapes a run with the shaper of its script.</summary>
-    public static ShapedGlyph[] Shape(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features = null) =>
-        Get(run.Script).Shape(font, text, run, features);
-
-    // An app's shaper over the library's: a failed run is shaped by the library's, or both are compared.
-    private sealed class GuardedShaper(Slot slot, ITextShaper app, ITextShaper library) : ITextShaper
-    {
-        public string Name => app.Name;
-
-        public ShapedGlyph[] Shape(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features = null)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var shadow = slot.Shadow();
-                var answer = library.Shape(font, text, run, features);
-                if (shadow is not null)
-                {
-                    shadow.Answered();
-                    try
-                    {
-                        shadow.Done(Comparisons.Exact(string.Join(" ", answer), string.Join(" ", app.Shape(font, text, run, features))));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        shadow.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Shape(font, text, run, features);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Shape(font, text, run, features);
-            }
-        }
-    }
 }

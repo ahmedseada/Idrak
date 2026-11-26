@@ -7,15 +7,16 @@ using Idrak.Abstraction.Devices;
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// How a <see cref="KeyValueCache"/> stores keys and values and attends over them: the attention layers write and read a
+/// How a <see cref="KeyValueCache"/> stores keys and values and attends over them: the attention layers write and read
+/// a
 /// cache through its layout instead of branching on the format. Chosen once when the cache is created (decoding steps
-/// recorded as CUDA graphs keep the same kernels). Registered by its <see cref="IKind.Name"/> in
+/// recorded as CUDA graphs keep the same kernels). Registered by its <c>Name</c> in
 /// <see cref="KeyValueLayouts"/>. <see cref="KeyValueLayout"/> is a base that attends through basic operations every
 /// backend has; what a format can do beyond that is an interface of its own, tested once when the cache is made
 /// (<see cref="IScaledLayout"/>, <see cref="IRecordableLayout"/>, <see cref="ISlidingWindowLayout"/>,
 /// <see cref="IFusedWriteLayout"/>, <see cref="IRowStartsLayout"/>).
 /// </summary>
-public interface IKeyValueLayout : IKind
+public interface IKeyValueLayout
 {
     /// <summary>
     /// Elements (four bytes each) per cached row of <paramref name="headDim"/> values: <see cref="KeyValueCache.Keys"/> and
@@ -130,18 +131,13 @@ public interface IMergedHeadsLayout : IKeyValueLayout
 public interface IFusedWriteLayout : IKeyValueLayout;
 
 /// <summary>
-/// A base for a key/value cache format of one's own (<see cref="IKeyValueLayout"/>): it implements
-/// <see cref="RowWidth"/>, <see cref="Write"/> and <see cref="Expand"/>, and attends through the default
-/// <see cref="Attend"/> (keys and values expanded to float32, then masked products), which runs on every backend. The
-/// built-in formats (<see cref="KeyValueFormat"/>) use their own kernels. Register a format by its name with
-/// <see cref="KeyValueLayouts.Register"/>; what it can do beyond the base is the interface of that capability
-/// (<see cref="IScaledLayout"/> when its rows have scales, <see cref="IRecordableLayout"/> when it only queues device work).
+/// A base for a key/value cache format of one's own (<see cref="IKeyValueLayout"/>): it implements <see cref="RowWidth"/>, <see cref="Write"/> and <see cref="Expand"/>, and attends through the default <see cref="Attend"/> (keys and values expanded to float32, then masked products), which runs on every backend. The
+/// built-in formats (<see cref="KeyValueFormat"/>) use their own kernels. Register a format by its name with <c>Register</c>; what it can do beyond the base is the interface of that capability (<see cref="IScaledLayout"/> when its rows have scales, <see cref="IRecordableLayout"/> when it only queues device work).
 /// </summary>
 /// <example>
-/// <code>
-/// KeyValueLayouts.Register(new MyLayout());                                 // its Name: "my-format"
-/// using var context = new DecodingContext(device, batch: 1, capacity: 512, KeyValueLayouts.Get("my-format"));
-/// var generator = new TextGenerator(model, tokenizer, 512) { CacheLayout = KeyValueLayouts.Get("my-format") };
+/// <code> KeyValueLayouts.Register(new MyLayout()); // its Name: "my-format" using var context = new
+/// DecodingContext(device, batch: 1, capacity: 512, KeyValueLayouts.Get("my-format")); var generator = new
+/// TextGenerator(model, tokenizer, 512) { CacheLayout = KeyValueLayouts.Get("my-format") };
 /// </code>
 /// </example>
 public abstract class KeyValueLayout : IKeyValueLayout
@@ -254,40 +250,11 @@ public interface IRowStartsLayout : IKeyValueLayout
     Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow, AttentionVariant variant);
 }
 
-/// <summary>Which key/value cache format a run uses and how it was chosen (<see cref="KeyValueLayouts.Choose"/>).</summary>
-/// <param name="Layout">The format.</param>
-/// <param name="Picked">Whether "auto" picked it, else the user selected it.</param>
-/// <param name="Source">Where the user's choice came from ("--kv", "IDRAK_KV_CACHE_TYPE"), else null.</param>
-/// <param name="How">"picked by auto", or "selected by the user (--kv)".</param>
-public sealed record KeyValueLayoutChoice(IKeyValueLayout Layout, bool Picked, string? Source, string How)
-{
-    /// <summary>"kv cache: float32 (picked by auto)".</summary>
-    public override string ToString() => $"kv cache: {Layout.Name} ({How})";
-}
-
-/// <summary>
-/// The key/value cache formats by name: "float32" (the built-in <see cref="KeyValueFormat"/>) is registered; add formats of
-/// one's own with <see cref="Register"/>, so options and tools can choose them by name. A run's format is chosen by
-/// <see cref="Choose"/>: the user's (<c>--kv</c>, IDRAK_KV_CACHE_TYPE), else float32.
-/// </summary>
+/// <summary></summary>
 public static class KeyValueLayouts
 {
     // The built-ins, indexed by their format.
     private static readonly IKeyValueLayout[] BuiltIn = [new Float32Layout()];
-
-    private static readonly KindTable<IKeyValueLayout> Registry = Layouts();
-
-    private static KindTable<IKeyValueLayout> Layouts()
-    {
-        var table = new KindTable<IKeyValueLayout>(nameof(KeyValueLayouts), "Key/value cache format", "add it with KeyValueLayouts.Register",
-            comparer: StringComparer.OrdinalIgnoreCase, unguarded: "a layout holds a cache's rows through a whole sequence, so it cannot change half-way");
-        foreach (var layout in BuiltIn)
-        {
-            table.RegisterDefault(layout);
-        }
-
-        return table;
-    }
 
     /// <summary>The built-in layout storing <paramref name="format"/>.</summary>
     public static IKeyValueLayout For(KeyValueFormat format) =>
@@ -300,65 +267,6 @@ public static class KeyValueLayouts
         ArgumentNullException.ThrowIfNull(layout);
         int index = Array.IndexOf(BuiltIn, layout);
         return index < 0 ? KeyValueFormat.Custom : (KeyValueFormat)index;
-    }
-
-    /// <summary>
-    /// Registers <paramref name="layout"/> under its <see cref="IKind.Name"/> (names ignore case); under a built-in name it
-    /// overrides the library's layout until <see cref="Unregister"/>. A cache keeps the layout it was made with through
-    /// its sequence, so a layout does not fall back to the library's when it fails. Choosing a built-in
-    /// <see cref="KeyValueFormat"/> always uses the built-in layout, whatever is registered under its name.
-    /// </summary>
-    /// <param name="layout">How the format stores and attends.</param>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IKeyValueLayout layout) => Registry.Register(layout, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered format names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Names;
-
-    /// <summary>The layout registered as <paramref name="name"/> (any case).</summary>
-    public static IKeyValueLayout Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(KeyValueLayouts), name.ToString(), Registry.Names,
-            $"No key/value cache format '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
-
-    /// <summary>The library's layout <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IKeyValueLayout? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>The variable naming a run's key/value cache format: "IDRAK_KV_CACHE_TYPE".</summary>
-    public const string EnvironmentVariable = "IDRAK_KV_CACHE_TYPE";
-
-    /// <summary>The cache format the library picks (the default): float32.</summary>
-    public const string Auto = "auto";
-
-    /// <summary>
-    /// The key/value cache format of a run: <paramref name="asked"/> (a run's option, named <paramref name="source"/>) when
-    /// given, else <see cref="EnvironmentVariable"/>, else <see cref="Auto"/> (float32). A name is a registered format's.
-    /// </summary>
-    /// <exception cref="NotRegisteredException">No format of the name is registered (the message names the source and the registered ones).</exception>
-    public static KeyValueLayoutChoice Choose(string? asked, string source = "--kv")
-    {
-        string? value = asked, from = source;
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            value = Environment.GetEnvironmentVariable(EnvironmentVariable);
-            from = EnvironmentVariable;
-        }
-
-        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals(Auto, StringComparison.OrdinalIgnoreCase))
-        {
-            return new KeyValueLayoutChoice(BuiltIn[(int)KeyValueFormat.Float32], Picked: true, Source: null, "picked by auto");
-        }
-
-        var name = value.AsSpan().Trim();
-        var layout = Registry.Find(name)
-            ?? throw new NotRegisteredException(nameof(KeyValueLayouts), name.ToString(), Registry.Names,
-                $"{from} '{value}': no key/value cache format of that name is registered ({Auto}, {string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
-        return new KeyValueLayoutChoice(layout, Picked: false, Source: from, $"selected by the user ({from})");
     }
 
     // Whether the built-in formats' tiled pass over `cache` writes q's output token-major on q's device: q [rows, group ·

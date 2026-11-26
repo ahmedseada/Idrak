@@ -31,7 +31,8 @@ public sealed record FillInMiddleContext(IPretrainedTokenizer Tokenizer, string 
 }
 
 /// <summary>
-/// A fill-in-the-middle prompt (<see cref="IKind{TRequest, T}.Create"/> of an <see cref="IFillInMiddleFormat"/>): what to feed the model and the tokens that end
+/// A fill-in-the-middle prompt (<c>Create</c> of an <see cref="IFillInMiddleFormat"/>): what
+/// to feed the model and the tokens that end
 /// the middle. A text model (<see cref="ITextModel"/>) takes <see cref="Text"/> with <see cref="Stop"/> as
 /// <see cref="GenerationOptions.Stop"/> (<see cref="FillInMiddleFormats.Options"/>); a caller that feeds ids takes
 /// <see cref="Ids"/>, the same prompt.
@@ -66,12 +67,13 @@ public sealed record FillInMiddlePrompt(string Text, IReadOnlyList<int> Ids, IRe
     : IFillInMiddlePrompt;
 
 /// <summary>
-/// A fill-in-the-middle format, registered by its <see cref="IKind.Name"/> in <see cref="FillInMiddleFormats"/>:
-/// <see cref="Detect"/> says from a model's tokenizer (its special tokens) whether the model was trained to fill in this
-/// way, and <see cref="IKind{TRequest, T}.Create"/> lays a context out as a prompt. The library's two layouts
+/// A fill-in-the-middle format, registered by its <c>Name</c> in <see cref="FillInMiddleFormats"/>:
+/// <see cref="Detect"/> says from a model's tokenizer (its special tokens) whether the model was trained to fill in
+/// this
+/// way, and <c>Create</c> lays a context out as a prompt. The library's two layouts
 /// (<see cref="FillInMiddleLayout"/>) are the building blocks; a family's plug-in names its tokens.
 /// </summary>
-public interface IFillInMiddleFormat : IKind<FillInMiddleContext, IFillInMiddlePrompt>
+public interface IFillInMiddleFormat
 {
     /// <summary>Whether <paramref name="tokenizer"/> has the format's special tokens (the model can be prompted this way).</summary>
     bool Detect(IPretrainedTokenizer tokenizer);
@@ -184,9 +186,6 @@ public sealed class FillInMiddleLayout : IFillInMiddleFormat
 
     /// <inheritdoc />
     public string Summary { get; }
-
-    /// <inheritdoc />
-    public IReadOnlySet<string> Keys => OptionKeys.None;
 
     /// <summary>The order the prefix and suffix are written in.</summary>
     public FillInMiddleOrder Order { get; }
@@ -389,82 +388,10 @@ public sealed class FillInMiddleLayout : IFillInMiddleFormat
 
 /// <summary>
 /// The fill-in-the-middle formats by name (<see cref="IFillInMiddleFormat"/>). The library registers none: each is a
-/// family's (Idrak.Text.Plugins registers "qwen", "deepseek", "gemma" and "mistral", each with its family, on
-/// <see cref="FillInMiddleLayout"/>), or an app's. A model's format is detected from its tokenizer
-/// (<see cref="Detect"/>, the most recently registered format asked first); a model whose family registers none has
-/// no format (null), and asking for one by name that nobody registered is refused as not registered.
+/// family's (Idrak.Text.Plugins registers "qwen", "deepseek", "gemma" and "mistral", each with its family, on <see cref="FillInMiddleLayout"/>), or an app's.
 /// </summary>
 public static class FillInMiddleFormats
 {
-    // In the order they are asked: the most recently registered first.
-    private static readonly KindTable<IFillInMiddleFormat> Table = new(nameof(FillInMiddleFormats), "Fill-in-the-middle format",
-        "add it with FillInMiddleFormats.Register", Guard, StringComparer.Ordinal, newestFirst: true);
-
-    private static IFillInMiddleFormat Guard(Slot slot, IFillInMiddleFormat app, IFillInMiddleFormat library) => new GuardedFormat(slot, app, library);
-
-    /// <summary>
-    /// Registers <paramref name="format"/> under its <see cref="IKind.Name"/>: under a registered name it takes that
-    /// format's place; a new name is asked before every format registered so far. Names are matched exactly.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFillInMiddleFormat format) => Table.Register(format, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the format <paramref name="name"/>; false when none is registered.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered format names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>Who registered the format <paramref name="name"/>: the registering assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>The library's format <paramref name="name"/>: always null (the library registers none).</summary>
-    public static IFillInMiddleFormat? Default(string name) => Table.Default(name);
-
-    /// <summary>What happens when the app's format <paramref name="name"/> fails, as every registry's policy (<see cref="SlotPolicy"/>).</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>The format registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
-    public static IFillInMiddleFormat Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(FillInMiddleFormats), name.ToString(), Table.Names,
-            $"No fill-in-the-middle format '{name}' is registered ({(Table.Names.Count == 0 ? "none" : string.Join(", ", Table.Names))}); add it with "
-            + "FillInMiddleFormats.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
-
-    /// <summary>The prompt the format registered as <paramref name="name"/> makes for <paramref name="context"/>.</summary>
-    public static IFillInMiddlePrompt Create(ReadOnlySpan<char> name, FillInMiddleContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        return Get(name).Create(context);
-    }
-
-    /// <summary>
-    /// The name of the first registered format (the most recently registered first) whose tokens <paramref name="tokenizer"/>
-    /// has; null when none has them (the model has no registered format: a caller falls back to completing the prefix
-    /// alone, and says so).
-    /// </summary>
-    public static string? Detect(IPretrainedTokenizer tokenizer)
-    {
-        ArgumentNullException.ThrowIfNull(tokenizer);
-        foreach (var format in Table.Kinds)
-        {
-            if (format.Detect(tokenizer))
-            {
-                return format.Name;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>The format <see cref="Detect"/> finds for <paramref name="tokenizer"/>.</summary>
-    /// <exception cref="NotRegisteredException">No registered format's tokens are in the tokenizer.</exception>
-    public static IFillInMiddleFormat For(IPretrainedTokenizer tokenizer) => Detect(tokenizer) is { } name ? Get(name)
-        : throw new NotRegisteredException(nameof(FillInMiddleFormats), "", Table.Names,
-            $"No fill-in-the-middle format registered for this tokenizer (registered: {(Table.Names.Count == 0 ? "none" : string.Join(", ", Table.Names))}, "
-            + "none of whose tokens it has); register the model's family (reference Idrak.Text.Plugins and call TextPlugins.RegisterAll()) or add its "
-            + "format with FillInMiddleFormats.Register.");
-
     /// <summary><paramref name="options"/> with the prompt's stops added to <see cref="GenerationOptions.Stop"/> (each once).</summary>
     public static GenerationOptions Options(IFillInMiddlePrompt prompt, GenerationOptions options)
     {
@@ -473,16 +400,4 @@ public static class FillInMiddleFormats
         return options with { Stop = [.. options.Stop.Concat(prompt.Stop).Distinct(StringComparer.Ordinal)] };
     }
 
-    private sealed class GuardedFormat(Slot slot, IFillInMiddleFormat app, IFillInMiddleFormat library) : IFillInMiddleFormat
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public bool Detect(IPretrainedTokenizer tokenizer) => slot.Call(() => app.Detect(tokenizer), () => library.Detect(tokenizer), Comparisons.Exact);
-
-        public IFillInMiddlePrompt Create(FillInMiddleContext request) => slot.Call(() => app.Create(request), () => library.Create(request));
-    }
 }

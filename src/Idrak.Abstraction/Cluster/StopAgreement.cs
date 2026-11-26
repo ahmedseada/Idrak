@@ -7,14 +7,14 @@ using System.Runtime.CompilerServices;
 namespace Idrak.Abstraction.Cluster;
 
 /// <summary>
-/// One rank's part in the ranks' agreement on a stop (Plan 27, R7). A rank that wants the run to stop (its token cancelled
-/// by Ctrl+C or a timeout, a stop request) does not leave on its own: it asks (<see cref="Request"/>), and the ranks agree,
-/// at the same step boundary, that the run stops there (<see cref="Agree"/>, which every rank calls at every boundary and
-/// which gives every rank the same answer); every rank then leaves at that boundary, with no collective left half-done,
-/// and the trainer ends the run as a stopped run ends (one checkpoint, written by rank 0). The flag travels in a collective
-/// the ranks make anyway where the agreement takes one (<see cref="ICarriedStopAgreement"/>: a gradient reduction adds its
-/// contribution to its header and hands the sum back), else in a one-value all-reduce at the boundary. A run in one
-/// process has no agreement: its token stops it as before. <see cref="StopAgreements.For"/> gives a rank's agreement.
+/// One rank's part in the ranks' agreement on a stop (Plan 27, R7). A rank that wants the run to stop (its token
+/// cancelled by Ctrl+C or a timeout, a stop request) does not leave on its own: it asks (<see cref="Request"/>), and
+/// the ranks agree, at the same step boundary, that the run stops there (<see cref="Agree"/>, which every rank calls at
+/// every boundary and which gives every rank the same answer); every rank then leaves at that boundary, with no
+/// collective left half-done, and the trainer ends the run as a stopped run ends (one checkpoint, written by rank 0).
+/// The flag travels in a collective the ranks make anyway where the agreement takes one (<see cref="ICarriedStopAgreement"/>: a gradient reduction adds its contribution to its header and hands the sum back),
+/// else in a one-value all-reduce at the boundary. A run in one process has no agreement: its token stops it as before.
+/// <c>For</c> gives a rank's agreement.
 /// </summary>
 public interface IStopAgreement
 {
@@ -304,90 +304,14 @@ public abstract class StopAgreement : IStopAgreement
 /// The stop agreements, by name (Plan 27, R7). Idrak.Network registers "all-reduce" (the flag carried in the gradient
 /// reduction's header, else a one-value all-reduce at the boundary: for ranks that are processes of their own, on one
 /// machine or many); Idrak.Cluster registers "shared" (an in-process simulated cluster's ranks agree through the run's
-/// memory, no message, whatever ranks take part in a step). <see cref="ClusterOptions.StopAgreement"/> names the one a run
-/// uses; "auto" takes "shared" for collectives whose group can change from step to step (<see cref="IStepGroup"/>) when it
+/// memory, no message, whatever ranks take part in a step). <c>StopAgreement</c> names the one a
+/// run
+/// uses; "auto" takes "shared" for collectives whose group can change from step to step (<see cref="IStepGroup"/>) when
+/// it
 /// is registered, else "all-reduce".
 /// </summary>
 public static class StopAgreements
 {
-    /// <summary>The name that lets the collectives choose (<see cref="NameFor"/>).</summary>
-    public const string Automatic = "auto";
-
-    private static readonly SlotTable<string, IStopAgreementProvider> Table = new(nameof(StopAgreements), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a rank's agreement holds its place in the ranks' order of boundaries, so another cannot take over a run");
-
-    // One agreement per rank's collectives, shared by every trainer and synchronisation over them.
-    private static readonly ConditionalWeakTable<ICollectives, IStopAgreement> Made = new();
-
-    static StopAgreements() => LibraryDefaults.Ensure(typeof(StopAgreements));
-
-    /// <summary>The registered agreements, in registration order.</summary>
-    public static IReadOnlyList<IStopAgreementProvider> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="provider"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IStopAgreementProvider provider)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-        ArgumentException.ThrowIfNullOrWhiteSpace(provider.Name);
-        Table.Register(provider.Name, provider, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's agreement of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The agreement of that name, or null.</summary>
-    public static IStopAgreementProvider? Find(string name) => Table.Find(name);
-
-    /// <summary>The agreement of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IStopAgreementProvider Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(StopAgreements), name, Table.Keys,
-            $"Stop agreement '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with StopAgreements.Register, or reference Idrak.Network.");
-
-    /// <summary>The library's agreement of that name, or null.</summary>
-    public static IStopAgreementProvider? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the agreement of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each agreement as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
-
-    /// <summary>
-    /// The agreement a run over <paramref name="collectives"/> uses: <see cref="ClusterOptions.StopAgreement"/>, or for
-    /// "auto" "shared" when the collectives' group can change from step to step (<see cref="IStepGroup"/>) and "shared" is
-    /// registered, else "all-reduce".
-    /// </summary>
-    public static string NameFor(ICollectives collectives, ClusterOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(collectives);
-        ArgumentNullException.ThrowIfNull(options);
-        return !string.Equals(options.StopAgreement, Automatic, StringComparison.OrdinalIgnoreCase) ? options.StopAgreement
-            : collectives is IStepGroup && Table.Find("shared") is not null ? "shared" : "all-reduce";
-    }
-
-    /// <summary>
-    /// This rank's agreement over <paramref name="collectives"/>: made on the first call (by <see cref="NameFor"/>, with
-    /// <paramref name="options"/>, else the collectives' own, else <see cref="ClusterOptions.FromEnvironment"/>), then the same
-    /// one for every trainer and synchronisation over these collectives.
-    /// </summary>
-    public static IStopAgreement For(ICollectives collectives, ClusterOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(collectives);
-        if (Made.TryGetValue(collectives, out var made))
-        {
-            return made;
-        }
-
-        var o = options ?? collectives.Context?.Options ?? ClusterOptions.FromEnvironment();
-        var agreement = Get(NameFor(collectives, o)).Create(collectives, o);
-        return Made.GetValue(collectives, _ => agreement);
-    }
-
     /// <summary>
     /// Ties <paramref name="token"/> to <paramref name="agreement"/>: a cancellation asks for a stop (<paramref name="reason"/>)
     /// instead of leaving; disposing unties it. Already cancelled: it asks at once.

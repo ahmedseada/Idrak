@@ -106,13 +106,14 @@ public sealed class PenStroke : IDisposable
 /// draws, points with a width and an ink per point, as a hand with a ballpoint would (a slow wobble, a little jitter,
 /// pressure along the stroke, an overshoot at its ends) or exactly (<c>ideal</c>). Its settings are read once per page
 /// (<see cref="Read"/>), then every stroke of the page is drawn with them. The same path, settings and seed give the
-/// same stroke, and no point strays from the path further than <see cref="Stray"/> says. Register one with
-/// <see cref="Pens.Register"/>.
+/// same stroke, and no point strays from the path further than <see cref="Stray"/> says. Register one with <c>Register</c>.
 /// </summary>
-public interface IPen : IConfigurableKind
+public interface IPen
 {
-    /// <summary>The pen's settings from <paramref name="options"/> (its own keys, <see cref="IConfigurableKind.Keys"/>; defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad value.</exception>
+    /// <summary>The pen's settings from <paramref name="options"/> (its own keys, <c>Keys</c>;
+    /// defaults for those not given).</summary>
+    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad
+    /// value.</exception>
     PenSettings Read(IReadOnlyDictionary<string, string> options);
 
     /// <summary>The most a point of a stroke drawn with <paramref name="settings"/> strays from its ideal path, in pixels, for a stroke <paramref name="width"/> pixels wide.</summary>
@@ -129,144 +130,9 @@ public interface IPen : IConfigurableKind
 /// The pens, by name (ignoring case). Built in (Idrak.Imaging): <c>ideal</c> (the path exactly, at its width) and
 /// <c>ballpoint</c> (a hand's ballpoint: a slow wobble, a little jitter, pressure along the stroke, an overshoot or a
 /// short stop at its ends, a slight drift; its keys pen-wobble, pen-jitter, pen-pressure, pen-overshoot and pen-tilt).
-/// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
-/// <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
 /// </summary>
 public static class Pens
 {
     /// <summary>The pen that draws a path exactly.</summary>
     public const string Ideal = "ideal";
-
-    private static readonly KindTable<IPen> Table = new(nameof(Pens), "Pen", "add it with Pens.Register",
-        (slot, app, library) => new GuardedPen(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static Pens() => LibraryDefaults.Ensure(typeof(Pens));
-
-    /// <summary>Registers <paramref name="pen"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPen pen) => Table.Register(pen, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's pen <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The pen registered as <paramref name="name"/>, or null.</summary>
-    public static IPen? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The pen registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IPen Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's pen <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IPen? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the pen <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's pen <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> draws with the library's; <see cref="SlotPolicy.Shadow"/> lets the library's draw and
-    /// compares the app's on a sample of strokes).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered pen as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The keys of every registered pen, each once, in registration order.</summary>
-    public static IReadOnlyList<string> AllKeys() => [.. Table.Kinds.SelectMany(p => p.Keys).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    // The app's settings and the library's, read from the same options (the library's null when it refuses them).
-    private sealed class GuardedSettings(PenSettings app, PenSettings? library, IReadOnlyDictionary<string, string> options) : PenSettings(options)
-    {
-        public PenSettings App => app;
-
-        public PenSettings? Library => library;
-    }
-
-    // An app's pen over the library's: each stroke falls back on its own, or is compared with the library's.
-    private sealed class GuardedPen(Slot slot, IPen app, IPen library) : IPen
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public PenSettings Read(IReadOnlyDictionary<string, string> options)
-        {
-            var own = app.Read(options);
-            PenSettings? theirs;
-            try
-            {
-                theirs = library.Read(PageOptions.Only(options, library.Keys));
-            }
-            catch (ArgumentException)
-            {
-                theirs = null;
-            }
-
-            return new GuardedSettings(own, theirs, options);
-        }
-
-        public float Stray(PenSettings settings, float width) => app.Stray(settings is GuardedSettings g ? g.App : settings, width);
-
-        public void Stroke(ReadOnlySpan<PenPoint> path, bool closed, PenSettings settings, int seed, PenStroke stroke)
-        {
-            var (own, theirs) = settings is GuardedSettings g ? (g.App, g.Library) : (settings, settings);
-            if (slot.Policy == SlotPolicy.Shadow && theirs is not null)
-            {
-                var run = slot.Shadow();
-                library.Stroke(path, closed, theirs, seed, stroke);
-                if (run is not null)
-                {
-                    run.Answered();
-                    using var other = new PenStroke(stroke.Count);
-                    try
-                    {
-                        app.Stroke(path, closed, own, seed, other);
-                        run.Done(Compare(stroke, other));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return;
-            }
-
-            try
-            {
-                app.Stroke(path, closed, own, seed, stroke);
-            }
-            catch (Exception e) when (theirs is not null && slot.Failed(e))
-            {
-                library.Stroke(path, closed, theirs, seed, stroke);
-            }
-        }
-
-        private static string? Compare(PenStroke a, PenStroke b)
-        {
-            if (a.Count != b.Count)
-            {
-                return string.Create(CultureInfo.InvariantCulture, $"{a.Count} points, {b.Count} from the override");
-            }
-
-            for (int i = 0; i < a.Count; i++)
-            {
-                var (p, q) = (a.Points[i], b.Points[i]);
-                if (Comparisons.Close(p.X, q.X, 1e-3f) && Comparisons.Close(p.Y, q.Y, 1e-3f) && Comparisons.Close(p.Width, q.Width, 1e-3f))
-                {
-                    continue;
-                }
-
-                return string.Create(CultureInfo.InvariantCulture, $"point {i}: ({p.X:F3}, {p.Y:F3}) {p.Width:F3} wide, the override's ({q.X:F3}, {q.Y:F3}) {q.Width:F3}");
-            }
-
-            return null;
-        }
-    }
 }

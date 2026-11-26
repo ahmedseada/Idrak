@@ -79,45 +79,6 @@ public static class SequencePoolers
     /// <summary>Each feature's largest value over the sequence: "max".</summary>
     public const string Max = "max";
 
-    private static readonly SlotTable<string, ISequencePooler> Registry = BuiltIn();
-
-    private static SlotTable<string, ISequencePooler> BuiltIn()
-    {
-        var table = new SlotTable<string, ISequencePooler>(nameof(SequencePoolers), comparer: StringComparer.Ordinal,
-            unguarded: "a pooled vector feeds a head or an index trained with it, so an app's pooler and the library's cannot be mixed");
-        table.RegisterDefault(First, new FirstPooler());
-        table.RegisterDefault(Mean, new MeanPooler());
-        table.RegisterDefault(Max, new MaxPooler());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="pooler"/> under its <see cref="ISequencePooler.Name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ISequencePooler pooler)
-    {
-        ArgumentNullException.ThrowIfNull(pooler);
-        ArgumentException.ThrowIfNullOrEmpty(pooler.Name);
-        Registry.Register(pooler.Name, pooler, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's pooler <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered poolers.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The pooler <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
-    public static ISequencePooler Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(SequencePoolers), name, Registry.Keys,
-            $"Sequence pooler '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SequencePoolers.Register.");
-
-    /// <summary>The library's pooler <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ISequencePooler? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the pooler <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
     /// <summary>
     /// The batch, time and width of <paramref name="hidden"/> [batch, time, width], checked against
     /// <paramref name="lengths"/> (one per sequence, 0 to time): what a pooler of one's own checks first.
@@ -150,84 +111,84 @@ public static class SequencePoolers
 
         return (n, t, hidden.Shape[2]);
     }
+}
 
-    // The first position: [batch, width].
-    private sealed class FirstPooler : ISequencePooler
+// The first position: [batch, width].
+internal sealed class FirstPooler : ISequencePooler
+{
+    public string Name => SequencePoolers.First;
+
+    public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
     {
-        public string Name => First;
-
-        public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
-        {
-            var (n, _, d) = Check(hidden, lengths);
-            return hidden.Narrow(1, 0, 1).Reshape(n, d);
-        }
+        var (n, _, d) = SequencePoolers.Check(hidden, lengths);
+        return hidden.Narrow(1, 0, 1).Reshape(n, d);
     }
+}
 
-    // A weighted sum over time with each real position weighing 1 / length (an empty sequence: its first position), as one
-    // batched product [batch, 1, time] · [batch, time, width]; the same arithmetic as TextEncoder's average always had.
-    private sealed class MeanPooler : ISequencePooler
+// A weighted sum over time with each real position weighing 1 / length (an empty sequence: its first position), as one
+// batched product [batch, 1, time] · [batch, time, width]; the same arithmetic as TextEncoder's average always had.
+internal sealed class MeanPooler : ISequencePooler
+{
+    public string Name => SequencePoolers.Mean;
+
+    public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
     {
-        public string Name => Mean;
-
-        public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
+        var (n, t, d) = SequencePoolers.Check(hidden, lengths);
+        float[] weights = ArrayPool<float>.Shared.Rent(n * t);
+        Tensor mean;
+        try
         {
-            var (n, t, d) = Check(hidden, lengths);
-            float[] weights = ArrayPool<float>.Shared.Rent(n * t);
-            Tensor mean;
-            try
+            for (int b = 0; b < n; b++)
             {
-                for (int b = 0; b < n; b++)
+                int length = lengths?[b] ?? t;
+                var row = weights.AsSpan(b * t, t);
+                row.Clear();
+                row[..length].Fill(1f / Math.Max(length, 1));
+                if (length == 0)
                 {
-                    int length = lengths?[b] ?? t;
-                    var row = weights.AsSpan(b * t, t);
-                    row.Clear();
-                    row[..length].Fill(1f / Math.Max(length, 1));
-                    if (length == 0)
-                    {
-                        row[0] = 1f;                                        // an empty sequence averages its first (padding) position
-                    }
+                    row[0] = 1f;                                        // an empty sequence averages its first (padding) position
                 }
-
-                mean = Tensor.From(weights.AsSpan(0, n * t), [n, 1, t], hidden.Device);
-            }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(weights);
             }
 
-            return mean.MatMul(hidden).Reshape(n, d);
+            mean = Tensor.From(weights.AsSpan(0, n * t), [n, 1, t], hidden.Device);
         }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(weights);
+        }
+
+        return mean.MatMul(hidden).Reshape(n, d);
     }
+}
 
-    // Each feature's largest value over the sequence's positions: the padded rows pushed far below any state (a row-wise
-    // affine, x · 0 - 1e30), then one max pool over time of [batch, width, 1, time].
-    private sealed class MaxPooler : ISequencePooler
+// Each feature's largest value over the sequence's positions: the padded rows pushed far below any state (a row-wise
+// affine, x · 0 - 1e30), then one max pool over time of [batch, width, 1, time].
+internal sealed class MaxPooler : ISequencePooler
+{
+    public string Name => SequencePoolers.Max;
+
+    public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
     {
-        public string Name => Max;
-
-        public Tensor Pool(Tensor hidden, IReadOnlyList<int>? lengths)
+        var (n, t, d) = SequencePoolers.Check(hidden, lengths);
+        var x = hidden;
+        if (lengths is not null && lengths.Any(l => l < t))
         {
-            var (n, t, d) = Check(hidden, lengths);
-            var x = hidden;
-            if (lengths is not null && lengths.Any(l => l < t))
+            var scale = new float[n * t];
+            var shift = new float[n * t];
+            for (int b = 0; b < n; b++)
             {
-                var scale = new float[n * t];
-                var shift = new float[n * t];
-                for (int b = 0; b < n; b++)
-                {
-                    int length = Math.Max(lengths[b], 1);                   // an empty sequence: its first position
-                    scale.AsSpan(b * t, length).Fill(1f);
-                    shift.AsSpan(b * t + length, t - length).Fill(-1e30f);
-                }
-
-                var scales = Tensor.From(scale, [n * t], hidden.Device);
-                var shifts = Tensor.From(shift, [n * t], hidden.Device);
-                x = hidden.GroupAffine(scales, shifts, n * t, d);
+                int length = Math.Max(lengths[b], 1);                   // an empty sequence: its first position
+                scale.AsSpan(b * t, length).Fill(1f);
+                shift.AsSpan(b * t + length, t - length).Fill(-1e30f);
             }
 
-            var columns = x.Permute(0, 2, 1).Reshape(n, d, 1, t);
-            return columns.MaxPool(new Devices.ConvGeometry(n, d, 1, t, 1, t, 1, t, 0, 0)).Reshape(n, d);
+            var scales = Tensor.From(scale, [n * t], hidden.Device);
+            var shifts = Tensor.From(shift, [n * t], hidden.Device);
+            x = hidden.GroupAffine(scales, shifts, n * t, d);
         }
+
+        var columns = x.Permute(0, 2, 1).Reshape(n, d, 1, t);
+        return columns.MaxPool(new Devices.ConvGeometry(n, d, 1, t, 1, t, 1, t, 0, 0)).Reshape(n, d);
     }
 }
 

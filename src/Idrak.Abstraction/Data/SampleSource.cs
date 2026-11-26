@@ -69,13 +69,8 @@ public interface ISampleTransform
     void Apply(Span<float> features, Span<float> targets, IReadOnlyList<int> featureShape, Random random);
 }
 
-/// <summary>What a sample source kind opens (<see cref="ISampleSourceKind"/>): a path and named options.</summary>
+/// <summary>What a sample source kind opens (<c>ISampleSourceKind</c>): a path and named options.</summary>
 /// <param name="Path">The file or folder.</param>
-/// <param name="Options">Options by name (names ignore case); a kind refuses names it does not take (<see cref="IConfigurableKind.Keys"/>).</param>
+/// <param name="Options">Options by name (names ignore case); a kind refuses names it does not take (<c>Keys</c>).</param>
 public sealed record SampleSourceRequest(string Path, IReadOnlyDictionary<string, string> Options);
 
-/// <summary>
-/// A kind of sample source, registered by its <see cref="IKind.Name"/> in <see cref="SampleSources"/>: the options it
-/// takes (<see cref="IConfigurableKind.Keys"/>) and the source it opens from a path and those options.
-/// </summary>
-public interface ISampleSourceKind : IKind<SampleSourceRequest, ISampleSource>;

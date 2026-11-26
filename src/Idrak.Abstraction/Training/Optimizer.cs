@@ -64,18 +64,8 @@ public interface IStatefulOptimizer : IOptimizer
 }
 
 /// <summary>
-/// An optimizer whose <see cref="IOptimizer.Step"/> multiplies the gradients by <see cref="GradientScale"/> as it reads
-/// them, so <see cref="Optimizer.ClipGradientNorm"/> needs no separate pass over them; the step then resets it to 1.
-/// </summary>
-public interface IScaledGradientStep : IOptimizer
-{
-    /// <summary>Factor for the gradients of the next <see cref="IOptimizer.Step"/> (1 when nothing scales them).</summary>
-    float GradientScale { get; set; }
-}
-
-/// <summary>
 /// An optimizer that updates each parameter where it lives and keeps every parameter's gradient buffer from step to step,
-/// by construction (the library's SGD, Adam, AdamW and 8-bit AdamW): a recorded training step (its forward and backward
+/// by construction (the library's SGD, Adam and AdamW): a recorded training step (its forward and backward
 /// pass replayed as a graph, writing the same buffers) can let it update without checking the buffers first. An
 /// optimizer that moves the update elsewhere (to the host) does not implement it.
 /// </summary>
@@ -98,8 +88,6 @@ public interface IGroupedOptimizer : IOptimizer
 /// </summary>
 public abstract class Optimizer : IOptimizer
 {
-    private readonly IScaledGradientStep? _scaled;
-
     /// <summary>Creates an optimizer for the given parameters (usually <c>model.Parameters()</c>).</summary>
     protected Optimizer(IEnumerable<Tensor> parameters, float learningRate)
     {
@@ -110,7 +98,6 @@ public abstract class Optimizer : IOptimizer
         }
 
         LearningRate = learningRate;
-        _scaled = this as IScaledGradientStep;                             // read once: clipping asks at every step
     }
 
     /// <summary>The tensors this optimizer updates.</summary>
@@ -276,7 +263,6 @@ public abstract class Optimizer : IOptimizer
     /// <summary>
     /// Scales all gradients down so their global L2 norm is at most <paramref name="maxNorm"/> (no change when
     /// already smaller). Prevents exploding gradients, especially in recurrent networks. Returns the norm before clipping.
-    /// An <see cref="IScaledGradientStep"/> scales them as its next step reads them instead of in a pass of their own.
     /// </summary>
     public double ClipGradientNorm(float maxNorm)
     {
@@ -284,12 +270,6 @@ public abstract class Optimizer : IOptimizer
         if (norm > maxNorm && norm > 0)
         {
             float factor = (float)(maxNorm / norm);
-            if (_scaled is not null)
-            {
-                _scaled.GradientScale = factor;                     // applied as the next Step reads the gradients
-                return norm;
-            }
-
             foreach (var p in Parameters)
             {
                 if (p.Grad is { } g)

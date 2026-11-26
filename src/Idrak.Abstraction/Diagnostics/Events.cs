@@ -350,8 +350,8 @@ public readonly record struct KeyValuePagesReported(string Device, int PageToken
 /// Published at <c>TelemetryLevel.Suggestions</c>: a setting worth changing, computed from what the device reports (its
 /// memory, its matrix units) and what a run measured; nothing is suggested where a figure is missing.
 /// </summary>
-/// <param name="Setting">The option, as the library names it ("ImageReaderOptions.MaxBatch", "PretrainedOptions.BFloat16").</param>
-/// <param name="Value">The suggested value, as text ("3", "BFloat16", "true").</param>
+/// <param name="Setting">The option, as the library names it ("ImageReaderOptions.MaxBatch").</param>
+/// <param name="Value">The suggested value, as text ("3", "true").</param>
 /// <param name="Reason">Why, with the figures it came from.</param>
 /// <param name="Device">The device it is for.</param>
 /// <param name="Source">The advisor that suggested it (a registered name).</param>
@@ -571,12 +571,13 @@ public readonly record struct PipelineStagePlaced(int Rank, int Stage, int Stage
 public readonly record struct TransportChosen(int RankA, int RankB, string Transport, string Reason);
 
 /// <summary>
-/// Published at <c>TelemetryLevel.Network</c> once per rank after rank 0 as a cluster run starts (<c>ClusterOptions.ShareTuning</c>):
-/// whether the rank runs rank 0's measured kernel choices (<see cref="Devices.MeasuredChoiceProviders"/>) or keeps its own, and why.
+/// Published at <c>TelemetryLevel.Network</c> once per rank after rank 0 as a cluster run starts
+/// (<c>ClusterOptions.ShareTuning</c>): whether the rank runs rank 0's measured kernel choices (<c>MeasuredChoiceProviders</c>) or keeps its own, and why.
 /// </summary>
 /// <param name="Rank">The rank.</param>
 /// <param name="Device">Its device.</param>
-/// <param name="Taken">Whether it runs rank 0's choices; false: it keeps its own (another device, driver or kind than rank 0's).</param>
+/// <param name="Taken">Whether it runs rank 0's choices; false: it keeps its own (another device, driver or kind than
+/// rank 0's).</param>
 /// <param name="Choices">How many of rank 0's choices it took (those known then).</param>
 /// <param name="Detail">What happened, or why not.</param>
 public readonly record struct MeasuredChoicesShared(int Rank, string Device, bool Taken, int Choices, string Detail);

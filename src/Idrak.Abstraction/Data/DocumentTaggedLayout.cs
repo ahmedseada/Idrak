@@ -8,9 +8,9 @@ namespace Idrak.Abstraction.Data;
 // block after them; artifacts are left out of the lines and the text. Each block is laid out by "lines" (its runs grouped
 // into lines by their places, words split at gaps, the reading order), and the lines follow one another, the text joined by
 // line feeds. A page with no tagged run is laid out by "lines" as it is: the layout reads any file, tagged or not.
-internal sealed class TaggedLayout : IDocumentTextLayout
+internal sealed class TaggedLayout(IReadingOrder order) : IDocumentTextLayout
 {
-    private readonly LinesLayout _lines = new();
+    private readonly LinesLayout _lines = new(order);
 
     public string Name => DocumentTextLayouts.Tagged;
 

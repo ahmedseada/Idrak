@@ -117,22 +117,21 @@ public sealed record PageStyle
 
     /// <summary>
     /// Settings a layout reads by key (keys ignore case), values as text: the "shapes" layout's <c>shapes</c> (a shape
-    /// profile's name or text), <c>pen</c>, <c>bind</c>, <c>blue-pen</c>, <c>cell-align</c>, <c>stroke</c>, <c>least-size</c> and the chosen
+    /// profile's name or text), <c>pen</c>, <c>bind</c>, <c>blue-pen</c>, <c>cell-align</c>, <c>stroke</c>,
+    /// <c>least-size</c> and the chosen
     /// pen's and text binding's own keys; the "letter" layout's <c>emblem-shapes</c>, <c>stamp-shapes</c> and
-    /// <c>signature-shapes</c> (shape profiles between '|', one drawn per page, <see cref="ShapeProfiles.Choices"/>),
+    /// <c>signature-shapes</c> (shape profiles between '|', one drawn per page, <c>Choices</c>),
     /// <c>emblem-pen</c>, <c>stamp-pen</c> (ideal) and <c>signature-pen</c> (ballpoint) with the pens' own keys,
     /// <c>stamp-turn</c> (degrees, a range; -12..12), <c>stamp-ink</c> (how uneven a stamp's ink is, 0 to 1, a range;
-    /// 0.2..0.65), <c>stamp-black</c> (the chance a colour page's stamp is black; 0.2) and <c>signature</c> (the chance a
+    /// 0.2..0.65), <c>stamp-black</c> (the chance a colour page's stamp is black; 0.2) and <c>signature</c> (the chance
+    /// a
     /// signature is drawn over the signature block's name; 1); every built-in layout's <c>pose</c> (a glyph pose,
     /// <see cref="GlyphPoses"/>; none by default) and that pose's own keys. A layout reads its own keys and leaves the
     /// others; none by default.
     /// </summary>
     public IReadOnlyDictionary<string, string> Options { get; init; } = PageOptions.None;
 
-    /// <summary>
-    /// The handwriting habits the page's body is written with (<see cref="TextHabits"/>); null, the default: the text as
-    /// given, and every page as it was.
-    /// </summary>
+    /// <summary></summary>
     public ITextHabits? Habits { get; init; }
 
     /// <summary>Every habit's chance (0 to 1), over each habit's own; null, the default: each its own (0 unless its data gives one).</summary>
@@ -216,7 +215,7 @@ public sealed record RenderedPage(ImageData Image, string Text, IReadOnlyList<Pa
     public IPageVectors? Vectors { get; init; }
 }
 
-/// <summary>Draws a page's content in one arrangement (a letter, a plain page); register one with <see cref="PageLayouts.Register"/>.</summary>
+/// <summary>Draws a page's content in one arrangement (a letter, a plain page); register one with <c>Register</c>.</summary>
 public interface IPageLayout
 {
     /// <summary>The layout's name ("letter").</summary>
@@ -231,85 +230,10 @@ public interface IPageLayout
 
 /// <summary>
 /// The page layouts, by name. Built in (Idrak.Imaging): "letter" (an official letter: a header of three places with an
-/// optional emblem, a rule, subject, body, a signature block with a pen-drawn signature, an optional stamp, footer), "plain" (header lines, title, body, footer, no ornament)
-/// and "shapes" (shapes drawn by a pen, <see cref="Shapes"/> and <see cref="Pens"/>, the body's lines set in the regions
-/// they make, <see cref="TextBindings"/>; it reads <see cref="PageStyle.Options"/>). Register another with
-/// <see cref="Register"/>.
+/// optional emblem, a rule, subject, body, a signature block with a pen-drawn signature, an optional stamp, footer),
+/// "plain" (header lines, title, body, footer, no ornament) and "shapes" (shapes drawn by a pen, <see cref="Shapes"/>
+/// and <see cref="Pens"/>, the body's lines set in the regions they make, <see cref="TextBindings"/>; it reads <see cref="PageStyle.Options"/>).
 /// </summary>
 public static class PageLayouts
 {
-    private static readonly SlotTable<string, IPageLayout> Registry =
-        new(nameof(PageLayouts), (slot, app, library) => new GuardedLayout(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static PageLayouts() => LibraryDefaults.Ensure(typeof(PageLayouts));
-
-    /// <summary>Registers <paramref name="layout"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPageLayout layout)
-    {
-        ArgumentNullException.ThrowIfNull(layout);
-        ArgumentException.ThrowIfNullOrWhiteSpace(layout.Name);
-        Registry.Register(layout.Name, layout, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's layout of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The layout of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IPageLayout Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(PageLayouts), name, Names,
-            $"No page layout '{name}' is registered ({string.Join(", ", Names)}); add it with PageLayouts.Register.");
-
-    /// <summary>The library's layout of that name, or null.</summary>
-    public static IPageLayout? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the layout of that name.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>What happens when the app's layout of that name fails.</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
-    private sealed class GuardedLayout(Slot slot, IPageLayout app, IPageLayout library) : IPageLayout
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public RenderedPage Render(PageContent content, PageStyle style, int seed)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Render(content, style, seed);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        var other = app.Render(content, style, seed);
-                        run.Done(Comparisons.Exact(answer.Text, other.Text));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Render(content, style, seed);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Render(content, style, seed);
-            }
-        }
-    }
 }

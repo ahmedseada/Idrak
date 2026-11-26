@@ -82,7 +82,7 @@ public interface IProgressReporter : IProgress<long>, IDisposable
     void Clear();
 }
 
-/// <summary>What a progress reporter is made for (see <see cref="ProgressReporters.Register"/>).</summary>
+/// <summary>What a progress reporter is made for (see <c>Register</c>).</summary>
 /// <param name="Label">What is in progress.</param>
 /// <param name="Total">The amount when known.</param>
 /// <param name="Unit">What the amounts are.</param>
@@ -110,12 +110,6 @@ public sealed record ProgressOptions
 }
 
 /// <summary>
-/// A kind of progress reporter, registered by its <see cref="IKind.Name"/> in <see cref="ProgressReporters"/>: makes the
-/// reporter of one piece of work from a <see cref="ProgressRequest"/> (<see cref="IKind{TRequest, T}.Create"/>).
-/// </summary>
-public interface IProgressReporterKind : IKind<ProgressRequest, IProgressReporter>;
-
-/// <summary>
 /// The progress reporters, by name (ignoring case). The library's:
 /// <list type="bullet">
 /// <item>"console": one line redrawn in place ("label  45%  12.3 MB / 27.0 MB  3.1 MB/s  4s left"), at most ten times a
@@ -125,9 +119,8 @@ public interface IProgressReporterKind : IKind<ProgressRequest, IProgressReporte
 /// <item>"quiet": nothing; counts only, at the cost of a field write.</item>
 /// </list>
 /// <see cref="Start"/> picks one by <see cref="ProgressOptions.Reporter"/>, else <c>IDRAK_PROGRESS</c>, else by the output:
-/// "console" for the console's own stream on a terminal, "plain" for it redirected, "quiet" for any other writer. Register
-/// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
-/// brings back. The registry has no guard: a reporter holds what it has shown, so it cannot be swapped half-way.
+/// "console" for the console's own stream on a terminal, "plain" for it redirected, "quiet" for any other writer. The
+/// reporters are a fixed list, each picked by its own name.
 /// </summary>
 public static class ProgressReporters
 {
@@ -146,64 +139,51 @@ public static class ProgressReporters
     /// <summary>The environment variable that names the reporter when the options do not.</summary>
     public const string EnvironmentVariable = "IDRAK_PROGRESS";
 
-    private static readonly KindTable<IProgressReporterKind> Table = new(nameof(ProgressReporters), "Progress reporter", "add it with ProgressReporters.Register",
-        comparer: StringComparer.OrdinalIgnoreCase, unguarded: "a reporter holds what it has shown from its start to its end, so it cannot be swapped half-way");
+    // The reporters, each under its own name: a fixed list, built once.
+    private static readonly Reporter[] Reporters =
+    [
+        new(ConsoleReporter, "one line redrawn in place on the output: what, how far, speed, time left (at most 10 times a second)",
+            request => new LineProgressReporter(request, inPlace: true)),
+        new(PlainReporter, "the same text as a new line at intervals (a minute by default), for redirected output",
+            request => new LineProgressReporter(request, inPlace: false)),
+        new(JsonReporter, "one JSON object a line at intervals (a second by default) and at each stage's end", request => new JsonProgressReporter(request)),
+        new(QuietReporter, "nothing shown", request => new QuietProgressReporter(request)),
+    ];
 
-    static ProgressReporters() => Overrides.AsLibraryDefaults(() =>
+    /// <summary>The reporters' names, in order.</summary>
+    public static IReadOnlyCollection<string> Names { get; } = [.. Reporters.Select(r => r.Name)];
+
+    // The reporter named `name` (any case), or null.
+    private static Reporter? Named(ReadOnlySpan<char> name)
     {
-        Register(new BuiltInKind(ConsoleReporter, "one line redrawn in place on the output: what, how far, speed, time left (at most 10 times a second)",
-            request => new LineProgressReporter(request, inPlace: true)));
-        Register(new BuiltInKind(PlainReporter, "the same text as a new line at intervals (a minute by default), for redirected output",
-            request => new LineProgressReporter(request, inPlace: false)));
-        Register(new BuiltInKind(JsonReporter, "one JSON object a line at intervals (a second by default) and at each stage's end", request => new JsonProgressReporter(request)));
-        Register(new BuiltInKind(QuietReporter, "nothing shown", request => new QuietProgressReporter(request)));
-    });
+        foreach (var reporter in Reporters)
+        {
+            if (name.Equals(reporter.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                return reporter;
+            }
+        }
 
-    /// <summary>
-    /// Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (as options and <c>IDRAK_PROGRESS</c> give it),
-    /// made for each piece of work (over the library's of that name, which stays behind it).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IProgressReporterKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
+        return null;
+    }
 
-    /// <summary>Removes the app's reporter <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The reporter kind registered as <paramref name="name"/>, or null.</summary>
-    public static IProgressReporterKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The reporter kind registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
-    public static IProgressReporterKind Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's reporter kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IProgressReporterKind? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the reporter <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered reporter as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    // A library reporter.
-    private sealed class BuiltInKind(string name, string summary, Func<ProgressRequest, IProgressReporter> create) : IProgressReporterKind
+    // A reporter of the list: its name, a line for listings, and how it is made for one piece of work.
+    private sealed class Reporter(string name, string summary, Func<ProgressRequest, IProgressReporter> create)
     {
         public string Name => name;
 
         public string Summary => summary;
 
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
         public IProgressReporter Create(ProgressRequest request) => create(request);
     }
+
+    /// <summary>Each reporter as "name: summary", one per line.</summary>
+    public static string Describe() => string.Join("\n", Reporters.Select(r => $"{r.Name}: {r.Summary}"));
 
     /// <summary>
     /// The reporter named by <c>IDRAK_PROGRESS</c>, or null when it is not set.
     /// </summary>
-    /// <exception cref="ArgumentException">It names no registered reporter (the message names the variable and the registered ones).</exception>
+    /// <exception cref="ArgumentException">It names no reporter (the message names the variable and the reporters).</exception>
     public static string? FromEnvironment() => FromValue(Environment.GetEnvironmentVariable(EnvironmentVariable));
 
     internal static string? FromValue(string? value)
@@ -214,8 +194,8 @@ public static class ProgressReporters
         }
 
         string name = value.Trim();
-        return Table.Contains(name) ? name
-            : throw new ArgumentException($"{EnvironmentVariable}={value} is not a registered progress reporter (registered: {string.Join(", ", Table.Names)}).");
+        return Named(name) is not null ? name
+            : throw new ArgumentException($"{EnvironmentVariable}={value} is not a progress reporter (reporters: {string.Join(", ", Names)}).");
     }
 
     /// <summary>
@@ -247,11 +227,13 @@ public static class ProgressReporters
     /// <param name="total">The amount when known.</param>
     /// <param name="unit">What the amounts are.</param>
     /// <param name="options">The reporter, the output and the interval (see <see cref="ProgressOptions"/>).</param>
-    /// <exception cref="NotSupportedException">The reporter named is not registered.</exception>
+    /// <exception cref="NotSupportedException">No reporter has the name given.</exception>
     public static IProgressReporter Start(string label, long? total = null, ProgressUnit unit = ProgressUnit.Items, ProgressOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(label);
-        return Get(Choose(options)).Create(new ProgressRequest(label, total, unit, options?.Output ?? Console.Error, options?.Interval));
+        string name = Choose(options);
+        var reporter = Named(name) ?? throw new NotSupportedException($"No progress reporter '{name}' (reporters: {string.Join(", ", Names)}).");
+        return reporter.Create(new ProgressRequest(label, total, unit, options?.Output ?? Console.Error, options?.Interval));
     }
 
     /// <summary>

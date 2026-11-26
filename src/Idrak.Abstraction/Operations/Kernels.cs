@@ -8,83 +8,31 @@ using Idrak.Abstraction.Devices;
 namespace Idrak.Abstraction.Operations;
 
 /// <summary>
-/// The kernel table and dispatcher (plan 9): kernels registered for an operation on a kind of device ("cpu", "cuda",
-/// "vulkan", …), each with an optional requirement on the device. A call to an operation (<c>Backend.Name(...)</c>) runs
-/// the kernel registered last whose requirement holds, else the device's own (<c>Backend.NameKernel</c>, whose default
-/// body is the host fallback, a composition of other operations, or none). <see cref="Chain"/> tells which one each
-/// operation runs on a device, <see cref="Trace"/> counts the calls, and <see cref="HostCalls"/> the host fallbacks.
-/// Operations a plug-in declares (<see cref="PluginOperations"/>) take kernels the same way: a packed weight format, a
-/// key/value cache layout, a graph operation or an <see cref="Autograd.Function"/> gets a fast path on a device instead
-/// of its default kernel.
+/// Which kernel each operation runs on a device (plan 9): a call to an operation (<c>Backend.Name(...)</c>) runs the
+/// device's own (<c>Backend.NameKernel</c>, whose default body is the host fallback, a composition of other operations,
+/// or none). <see cref="Chain"/> tells which one each operation runs on a device, <see cref="Trace"/> counts the calls,
+/// and <see cref="HostCalls"/> the host fallbacks.
 /// </summary>
-/// <remarks>
-/// Each device resolves its slots on its first call and again after a registration changes; a device with nothing
-/// registered for it and no trace pays one field read per call (a plug-in operation, one array read).
-/// </remarks>
 public static class Kernels
 {
-    private static readonly List<Registration> Registry = [];
-
-    private static readonly List<WeakReference<Backend>> Devices = [];
+    // Starting and ending a device's trace.
+    private static readonly Lock TraceGate = new();
 
     // Per backend type, which operations it has a kernel of its own for.
     private static readonly ConcurrentDictionary<Type, OwnKernelSet> Overrides = new();
 
     /// <summary>
-    /// Registers <paramref name="kernel"/> for <paramref name="operation"/> (one of <see cref="Ops"/>, or a plug-in's
-    /// <see cref="PluginOperation{TKernel}"/>) on devices of <paramref name="deviceKind"/> (any case); it runs instead of
-    /// the device's own kernel wherever <paramref name="requirement"/> holds (always when null). A later registration for
-    /// the same operation and kind takes precedence. Returns a handle that removes it. The kernel's type is the
-    /// operation's (<see cref="Operation.KernelType"/>), checked by the compiler.
-    /// </summary>
-    /// <remarks>
-    /// A kernel receives the device's backend first, so it can run the device's own kernel for the cases it does not
-    /// handle (<c>backend.SoftmaxKernel(...)</c>). A requirement reads what the device reports
-    /// (<see cref="Backend.Capabilities"/>), never a card's name. For a plug-in operation,
-    /// <see cref="PluginOperation{TKernel}.KernelFor"/> returns it on such devices instead of the operation's default kernel.
-    /// </remarks>
-    public static IDisposable Register<TKernel>(Operation<TKernel> operation, string deviceKind, TKernel kernel, Func<Backend, bool>? requirement = null)
-        where TKernel : Delegate
-    {
-        ArgumentNullException.ThrowIfNull(operation);
-        ArgumentException.ThrowIfNullOrWhiteSpace(deviceKind);
-        ArgumentNullException.ThrowIfNull(kernel);
-        var registration = new Registration(operation, deviceKind, kernel, requirement);
-        lock (Registry)
-        {
-            Registry.Add(registration);
-        }
-
-        Changed();
-        return registration;
-    }
-
-    /// <summary>
     /// Which kernel each operation runs on <paramref name="backend"/> now, in <see cref="Operation.Index"/> order (the
-    /// library's operations, <see cref="Ops.All"/>, then the plug-ins', <see cref="PluginOperations.All"/>): a registered
-    /// one, the device's own, the composed default, the host fallback, or none.
+    /// library's operations, <see cref="Ops.All"/>): the device's own, the composed default, the host fallback, or none.
     /// </summary>
     public static IReadOnlyList<KernelChoice> Chain(Backend backend)
     {
         ArgumentNullException.ThrowIfNull(backend);
-        var registered = Resolve(backend);
         var own = backend.OwnKernels;
-        var plugins = ResolvePlugins(backend, out var pluginRegistered);
-        var chain = new KernelChoice[Ops.All.Count + plugins.Length];
+        var chain = new KernelChoice[Ops.All.Count];
         foreach (var operation in Ops.All)
         {
-            var source = registered[operation.Index] is not null ? KernelSource.Registered
-                : own.Contains(operation) ? KernelSource.Device
-                : operation.Fallback;
-            chain[operation.Index] = new KernelChoice(operation, source);
-        }
-
-        var declared = PluginOperations.All;
-        for (int slot = 0; slot < plugins.Length; slot++)
-        {
-            var operation = declared[slot];
-            var source = pluginRegistered[slot] ? KernelSource.Registered
-                : operation.Fallback == KernelSource.Host && OnHost(backend) ? KernelSource.Device
+            var source = own.Contains(operation) ? KernelSource.Device
                 : operation.Fallback;
             chain[operation.Index] = new KernelChoice(operation, source);
         }
@@ -102,7 +50,7 @@ public static class Kernels
     {
         ArgumentNullException.ThrowIfNull(backend);
         var trace = new KernelTrace(backend);
-        lock (Devices)
+        lock (TraceGate)
         {
             if (backend.Trace is not null)
             {
@@ -135,20 +83,10 @@ public static class Kernels
     /// <summary>A fresh marker meaning "resolve again" (a new instance each time, so a resolution that raced a change is not kept).</summary>
     internal static Delegate?[] Unresolved() => new Delegate?[0];
 
-    /// <summary>Remembers a device so it is told when the registered kernels change.</summary>
-    internal static void Track(Backend backend)
-    {
-        lock (Devices)
-        {
-            Devices.RemoveAll(d => !d.TryGetTarget(out _));
-            Devices.Add(new(backend));
-        }
-    }
-
     /// <summary>Ends <paramref name="trace"/> on its device.</summary>
     internal static void EndTrace(KernelTrace trace)
     {
-        lock (Devices)
+        lock (TraceGate)
         {
             if (ReferenceEquals(trace.Backend.Trace, trace))
             {
@@ -161,77 +99,7 @@ public static class Kernels
     internal static Delegate?[] Resolve(Backend backend)
     {
         var slots = new Delegate?[OperationIndex.Count];
-        Registration[] registrations;
-        lock (Registry)
-        {
-            registrations = [.. Registry];
-        }
-
-        foreach (var r in registrations)
-        {
-            if (!r.Operation.IsPlugin && r.DeviceKind.Equals(backend.Kind, StringComparison.OrdinalIgnoreCase) && (r.Requirement is null || r.Requirement(backend)))
-            {
-                slots[r.Operation.Index] = r.Kernel;   // in registration order: the last that applies wins
-            }
-        }
-
         return slots;
-    }
-
-    /// <summary>
-    /// The kernel each plug-in operation runs on <paramref name="backend"/>, by its place in <see cref="PluginOperations.All"/>:
-    /// the one registered last whose requirement holds, else its default kernel, or null where that default is the host
-    /// fallback of a device that is not the host (the call then counts it). <paramref name="registered"/> tells which
-    /// came from a registration.
-    /// </summary>
-    internal static Delegate?[] ResolvePlugins(Backend backend, out bool[] registered)
-    {
-        var operations = PluginOperations.All;
-        var slots = new Delegate?[operations.Count];
-        registered = new bool[operations.Count];
-        bool host = OnHost(backend);
-        for (int slot = 0; slot < slots.Length; slot++)
-        {
-            var operation = operations[slot];
-            slots[slot] = operation.Fallback == KernelSource.Host && !host ? null : operation.Default;
-        }
-
-        Registration[] registrations;
-        lock (Registry)
-        {
-            registrations = [.. Registry];
-        }
-
-        foreach (var r in registrations)
-        {
-            int slot = r.Operation.Index - OperationIndex.Count;
-            if (slot >= 0 && slot < slots.Length && r.DeviceKind.Equals(backend.Kind, StringComparison.OrdinalIgnoreCase)
-                && (r.Requirement is null || r.Requirement(backend)))
-            {
-                slots[slot] = r.Kernel;              // in registration order: the last that applies wins
-                registered[slot] = true;
-            }
-        }
-
-        return slots;
-    }
-
-    // Whether the device runs on the host already (the CPU device): a plug-in's host default is its own kernel there.
-    private static bool OnHost(Backend backend) => backend is Devices.Cpu.CpuBackend;
-
-    // Every device resolves its slots again on its next call.
-    private static void Changed()
-    {
-        lock (Devices)
-        {
-            foreach (var d in Devices)
-            {
-                if (d.TryGetTarget(out var backend))
-                {
-                    backend.KernelsChanged();
-                }
-            }
-        }
     }
 
     // Which operations the backend has a kernel of its own for (Backend.OwnKernels), built once per device type: the
@@ -239,32 +107,6 @@ public static class Kernels
     internal static OwnKernelSet OwnKernels(Backend backend) =>
         Overrides.GetOrAdd(backend.GetType(), static (_, b) => new OwnKernelSet(Backend.OwnKernelsOf(b)), backend);
 
-    private static void Remove(Registration registration)
-    {
-        bool removed;
-        lock (Registry)
-        {
-            removed = Registry.Remove(registration);
-        }
-
-        if (removed)
-        {
-            Changed();
-        }
-    }
-
-    private sealed class Registration(Operation operation, string deviceKind, Delegate kernel, Func<Backend, bool>? requirement) : IDisposable
-    {
-        public Operation Operation { get; } = operation;
-
-        public string DeviceKind { get; } = deviceKind;
-
-        public Delegate Kernel { get; } = kernel;
-
-        public Func<Backend, bool>? Requirement { get; } = requirement;
-
-        public void Dispose() => Remove(this);
-    }
 }
 
 /// <summary>The library's operations a device has a kernel of its own for (<see cref="Backend.OwnKernels"/>), by index.</summary>
@@ -278,7 +120,7 @@ internal sealed class OwnKernelSet(bool[] own) : IReadOnlySet<Operation>
     // Whether the device has a kernel of its own for the operation at `index` (a library operation's).
     public bool Has(int index) => _own[index];
 
-    public bool Contains(Operation item) => item is { IsPlugin: false } && _own[item.Index];
+    public bool Contains(Operation item) => item is not null && _own[item.Index];
 
     public IEnumerator<Operation> GetEnumerator()
     {
@@ -320,7 +162,6 @@ public readonly record struct KernelChoice(Operation Operation, KernelSource Sou
 public sealed class KernelTrace : IDisposable
 {
     private readonly long[] _calls = new long[Ops.All.Count];
-    private readonly ConcurrentDictionary<int, long> _pluginCalls = new();
     private readonly ConcurrentDictionary<string, long> _hostCalls = new(StringComparer.Ordinal);
 
     internal KernelTrace(Backend backend) => Backend = backend;
@@ -329,13 +170,12 @@ public sealed class KernelTrace : IDisposable
     public Backend Backend { get; }
 
     /// <summary>
-    /// The calls of <paramref name="operation"/> through the dispatcher so far: <c>Backend.Name(...)</c> for the library's
-    /// operations, <see cref="PluginOperation{TKernel}.KernelFor"/> for a plug-in's.
+    /// The calls of <paramref name="operation"/> through the dispatcher so far (<c>Backend.Name(...)</c>).
     /// </summary>
     public long Calls(Operation operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        return operation.IsPlugin ? _pluginCalls.GetValueOrDefault(operation.Index) : Interlocked.Read(ref _calls[operation.Index]);
+        return Interlocked.Read(ref _calls[operation.Index]);
     }
 
     /// <summary>The host fallbacks so far.</summary>
@@ -352,14 +192,7 @@ public sealed class KernelTrace : IDisposable
 
     internal void Called(int operation)
     {
-        if (operation < _calls.Length)
-        {
-            Interlocked.Increment(ref _calls[operation]);
-        }
-        else
-        {
-            _pluginCalls.AddOrUpdate(operation, 1, static (_, n) => n + 1);
-        }
+        Interlocked.Increment(ref _calls[operation]);
     }
 
     internal void HostCalled(string operation) => _hostCalls.AddOrUpdate(operation, 1, static (_, n) => n + 1);

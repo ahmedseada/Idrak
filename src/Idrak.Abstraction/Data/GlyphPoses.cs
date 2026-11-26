@@ -77,12 +77,13 @@ public class GlyphPoseSettings
 /// (<see cref="Read"/>) and declare their bounds (<see cref="Bounds"/>); then each cluster of each line gets its pose
 /// (<see cref="Pose"/>), the same for the same input, within the bounds. Joined script stays joined: between
 /// neighbouring clusters the move, slant and turn change only smoothly with the distance along the line. Register one
-/// with <see cref="GlyphPoses.Register"/>.
+/// with <c>Register</c>.
 /// </summary>
-public interface IGlyphPose : IConfigurableKind
+public interface IGlyphPose
 {
-    /// <summary>The pose's settings from <paramref name="options"/> (its own keys, <see cref="IConfigurableKind.Keys"/>; defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad value.</exception>
+    /// <summary>The pose's settings from <paramref name="options"/> (its own keys, <c>Keys</c>; defaults for those not given).</summary>
+    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad
+    /// value.</exception>
     GlyphPoseSettings Read(IReadOnlyDictionary<string, string> options);
 
     /// <summary>The most a pose drawn with <paramref name="settings"/> moves a glyph.</summary>
@@ -93,98 +94,12 @@ public interface IGlyphPose : IConfigurableKind
 }
 
 /// <summary>
-/// The glyph poses, by name (ignoring case). Built in (Idrak.Imaging): <c>none</c> (every glyph as set; the default) and
-/// <c>drift</c> (a slow drift along the line and a little noise per cluster; its keys pose-slant, pose-size,
-/// pose-baseline, pose-rotate and pose-pressure). Register another with <see cref="Register"/>; one under a library name
-/// shadows the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
+/// The glyph poses, by name (ignoring case). Built in (Idrak.Imaging): <c>none</c> (every glyph as set; the default)
+/// and <c>drift</c> (a slow drift along the line and a little noise per cluster; its keys pose-slant, pose-size,
+/// pose-baseline, pose-rotate and pose-pressure).
 /// </summary>
 public static class GlyphPoses
 {
     /// <summary>The pose that draws every glyph as set.</summary>
     public const string None = "none";
-
-    private static readonly KindTable<IGlyphPose> Table = new(nameof(GlyphPoses), "Glyph pose", "add it with GlyphPoses.Register",
-        (slot, app, library) => new GuardedPose(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static GlyphPoses() => LibraryDefaults.Ensure(typeof(GlyphPoses));
-
-    /// <summary>Registers <paramref name="pose"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IGlyphPose pose) => Table.Register(pose, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's pose <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The pose registered as <paramref name="name"/>, or null.</summary>
-    public static IGlyphPose? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The pose registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IGlyphPose Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's pose <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IGlyphPose? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the pose <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's pose <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> poses with the library's; <see cref="SlotPolicy.Shadow"/> lets the library's pose and
-    /// compares the app's on a sample of glyphs).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered pose as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The keys of every registered pose, each once, in registration order.</summary>
-    public static IReadOnlyList<string> AllKeys() => [.. Table.Kinds.SelectMany(p => p.Keys).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    // The app's settings and the library's, read from the same options (the library's null when it refuses them).
-    private sealed class GuardedSettings(GlyphPoseSettings app, GlyphPoseSettings? library, IReadOnlyDictionary<string, string> options) : GlyphPoseSettings(options)
-    {
-        public GlyphPoseSettings App => app;
-
-        public GlyphPoseSettings? Library => library;
-    }
-
-    private sealed class GuardedPose(Slot slot, IGlyphPose app, IGlyphPose library) : IGlyphPose
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public GlyphPoseSettings Read(IReadOnlyDictionary<string, string> options)
-        {
-            var own = app.Read(options);
-            GlyphPoseSettings? theirs;
-            try
-            {
-                theirs = library.Read(PageOptions.Only(options, library.Keys));
-            }
-            catch (ArgumentException)
-            {
-                theirs = null;
-            }
-
-            return new GuardedSettings(own, theirs, options);
-        }
-
-        public GlyphPoseBounds Bounds(GlyphPoseSettings settings) => app.Bounds(settings is GuardedSettings g ? g.App : settings);
-
-        public GlyphPose Pose(in GlyphPoseInput glyph, GlyphPoseSettings settings)
-        {
-            var (own, theirs) = settings is GuardedSettings g ? (g.App, g.Library) : (settings, settings);
-            var input = glyph;
-            return theirs is null
-                ? app.Pose(input, own)
-                : slot.Call(() => app.Pose(input, own), () => library.Pose(input, theirs), (a, b) => Comparisons.Exact(a, b));
-        }
-    }
 }

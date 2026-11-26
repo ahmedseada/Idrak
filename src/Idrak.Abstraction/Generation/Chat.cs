@@ -136,13 +136,6 @@ public interface IChatTemplate
     ToolCallFormat ToolCalls { get; }
 
     /// <summary>
-    /// The name of the registered tool-call format (<see cref="ToolCallFormats"/>) the model writes calls in: each reply's
-    /// calls are parsed by that format's parser. A template whose calls no registered format reads registers a format of
-    /// its own (an <see cref="IToolCallFormat"/>).
-    /// </summary>
-    string ToolCallFormatName { get; }
-
-    /// <summary>
     /// Appends the prompt for the next assistant turn to <paramref name="prompt"/> (the caller's buffer: what it holds
     /// already is kept, and nothing else is copied). <paramref name="think"/>: true asks for reasoning, false suppresses
     /// it (the template closes an empty reasoning block), null leaves it to the model.
@@ -163,9 +156,6 @@ public abstract class ChatTemplate : IChatTemplate
 
     /// <inheritdoc />
     public virtual ToolCallFormat ToolCalls => ToolCallFormat.Tagged;
-
-    /// <summary>The name of the registered tool-call format (see <see cref="ToolCallFormats"/>) the model writes calls in; "json" by default.</summary>
-    public virtual string ToolCallFormatName => ToolCallFormats.Json;
 
     /// <inheritdoc />
     public abstract IReadOnlyList<string> StopSequences { get; }
@@ -340,7 +330,8 @@ public sealed record ChatDelta(string Content, string Thinking, IReadOnlyList<To
 /// <summary>
 /// Splits streamed assistant text into reasoning (inside the think tags), answer text and tool calls. The reasoning is
 /// taken out here; the answer goes through a parser of the template's tool-call format
-/// (<see cref="IChatTemplate.ToolCallFormatName"/>, one of the <see cref="ToolCallFormats"/>), which finds the calls in the
+/// (<c>ToolCallFormatName</c>, one of the <see cref="ToolCallFormats"/>), which finds the calls in
+/// the
 /// model's format. Feed text as it arrives;
 /// partial tags are held back until they can be decided. In the default JSON format without opening text (the answer
 /// is the call's JSON), an answer that starts with '{' or '[' is held to the end of the turn and becomes calls if it
@@ -386,7 +377,7 @@ public sealed class ChatOutputParser
         _template = template;
         _separateThinking = separateThinking;
         _toolNames = toolNames;
-        _calls = ToolCallFormats.Create(template.ToolCallFormatName, new ToolCallContext(template, tools ?? [], toolNames));
+        _calls = new JsonToolCallParser(new ToolCallContext(template, tools ?? [], toolNames));
     }
 
     /// <summary>Processes new text.</summary>

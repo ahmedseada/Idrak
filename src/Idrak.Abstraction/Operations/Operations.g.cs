@@ -149,7 +149,7 @@ internal static class OperationIndex
 
 /// <summary>
 /// The kernel delegate of each operation (<see cref="Operation.KernelType"/>): the device's backend, then the operation's
-/// arguments. A kernel registered with <see cref="Kernels.Register"/> has its operation's type, checked by the compiler.
+/// arguments.
 /// </summary>
 public static class OperationKernels
 {
@@ -1159,7 +1159,7 @@ public static class OperationKernels
 
 /// <summary>
 /// The operations of the device contract (plan 9), one descriptor each, in slot order. A device runs each through
-/// <c>Backend.Name(...)</c>; <see cref="Kernels.Register"/> adds kernels for them.
+/// <c>Backend.Name(...)</c>.
 /// </summary>
 public static partial class Ops
 {

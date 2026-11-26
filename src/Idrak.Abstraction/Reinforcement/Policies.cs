@@ -131,14 +131,19 @@ public interface IPolicy<TObservation, TAction> : IDisposable
     ValueTask<PolicyActions<TAction>> ActAsync(IReadOnlyList<TObservation> observations, ActionSampling sampling, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// One optimizer step on the episodes <paramref name="episodes"/> of <paramref name="batch"/> (all when null), whose
+    /// One optimizer step on the episodes <paramref name="episodes"/> of <paramref name="batch"/> (all when null),
+    /// whose
     /// advantages and returns are estimated: the log-probabilities of the actions taken under the current weights
-    /// (and the reference's, when <paramref name="loss"/> asks), given to <paramref name="loss"/>, its gradient applied.
+    /// (and the reference's, when <paramref name="loss"/> asks), given to <paramref name="loss"/>, its gradient
+    /// applied.
     /// </summary>
-    /// <param name="batch">The episodes played, with <see cref="RolloutBatch{TObservation, TAction}.Advantages"/> and <see cref="RolloutBatch{TObservation, TAction}.Returns"/> filled.</param>
+    /// <param name="batch">The episodes played, with <see cref="RolloutBatch{TObservation, TAction}.Advantages"/> and
+    /// <see cref="RolloutBatch{TObservation, TAction}.Returns"/> filled.</param>
     /// <param name="loss">The policy loss.</param>
-    /// <param name="episodes">The mini-batch: indices into <see cref="RolloutBatch{TObservation, TAction}.Trajectories"/>; null for the whole batch.</param>
-    /// <param name="lossOptions">The loss's options by key (<see cref="IConfigurableKind.Keys"/>), null for its defaults.</param>
+    /// <param name="episodes">The mini-batch: indices into <see cref="RolloutBatch{TObservation,
+    /// TAction}.Trajectories"/>; null for the whole batch.</param>
+    /// <param name="lossOptions">The loss's options by key (<c>Keys</c>), null for its
+    /// defaults.</param>
     UpdateStats Update(RolloutBatch<TObservation, TAction> batch, IPolicyLoss loss, IReadOnlyList<int>? episodes = null, IReadOnlyDictionary<string, string>? lossOptions = null);
 
     /// <summary>Saves what the policy learned (its weights or adapters, and what resuming needs) to <paramref name="path"/>.</summary>

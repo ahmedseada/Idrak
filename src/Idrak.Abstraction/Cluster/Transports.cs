@@ -26,7 +26,7 @@ public readonly record struct TransportCapabilities(double BandwidthBytesPerSeco
 /// </summary>
 public interface ITransport : IDisposable
 {
-    /// <summary>The transport's name in <see cref="Transports"/> ("sim", "tcp", …).</summary>
+    /// <summary>The transport's name in <c>Transports</c> ("sim", "tcp", …).</summary>
     string Name { get; }
 
     /// <summary>This end's rank, from 0.</summary>
@@ -108,7 +108,7 @@ public sealed record ClusterContext(IClusterTopology Topology, int Rank, Cluster
 }
 
 /// <summary>
-/// One kind of transport, registered by name in <see cref="Transports"/>: it says whether it can join two ranks here and
+/// One kind of transport, registered by name in <c>Transports</c>: it says whether it can join two ranks here and
 /// connects a rank's end. Ranks rendezvous at <see cref="ClusterOptions.Coordinator"/>, an address for a network
 /// transport, a name for one inside a process.
 /// </summary>
@@ -130,60 +130,13 @@ public interface ITransportProvider
     ITransport Connect(ClusterContext context, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// The connection this transport's pairs ride on: transports of one carrier are connected once for a group that mixes
-    /// them (<see cref="TransportPlan.Connect"/>), so "direct-link" pairs and "tcp" pairs share one mesh of sockets. Its
+    /// The connection this transport's pairs ride on: transports of one carrier are connected once for a group that
+    /// mixes
+    /// them (<c>Connect</c>), so "direct-link" pairs and "tcp" pairs share one mesh of sockets.
+    /// Its
     /// own name unless it says otherwise.
     /// </summary>
     string Carrier => Name;
-}
-
-/// <summary>
-/// The transports, by name (plan 23). None is built into Idrak.Abstraction: Idrak.Cluster registers "sim" (ranks inside
-/// one process, charged on a virtual clock) and Idrak.Network the real ones ("shared-memory", "pcie-host", "nvlink",
-/// "direct-link", "tcp"); "udp" and "rdma" are names a plug-in may fill.
-/// </summary>
-public static class Transports
-{
-    private static readonly SlotTable<string, ITransportProvider> Table = new(nameof(Transports), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a transport holds connections and each rank's state, and a group never falls back to another transport mid-run");
-
-    static Transports() => LibraryDefaults.Ensure(typeof(Transports));
-
-    /// <summary>The registered providers, in registration order.</summary>
-    public static IReadOnlyList<ITransportProvider> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="provider"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITransportProvider provider)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-        ArgumentException.ThrowIfNullOrWhiteSpace(provider.Name);
-        Table.Register(provider.Name, provider, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's transport of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The transport of that name, or null.</summary>
-    public static ITransportProvider? Find(string name) => Table.Find(name);
-
-    /// <summary>The transport of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static ITransportProvider Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(Transports), name, Table.Keys,
-            $"Transport '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with Transports.Register.");
-
-    /// <summary>The library's transport of that name, or null.</summary>
-    public static ITransportProvider? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the transport of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each transport as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(t => $"{t.Name}: {t.Summary}"));
 }
 
 // The registered names for "not registered" messages.

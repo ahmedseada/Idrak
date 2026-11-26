@@ -130,20 +130,20 @@ public sealed class PolicyLossInput
     }
 }
 
-/// <summary>
-/// A policy-gradient loss, registered in <see cref="PolicyLosses"/> under its <see cref="IKind.Name"/>: REINFORCE, PPO's clipped
-/// ratio with a value loss and an entropy bonus, GRPO's clipped ratio with a KL penalty to the reference. It is a
-/// composition of tensor operations on a <see cref="PolicyLossInput"/>, so autograd carries its gradient to the
-/// log-probabilities (and values) the policy computed; sums run in a fixed order. Its option keys
-/// (<see cref="IConfigurableKind.Keys"/>) are the ones <see cref="Loss"/> takes: clip, KL weight and estimator, value and
-/// entropy weights, normalization. Thread-safe: it keeps no state between calls.
+/// <summary>REINFORCE, PPO's clipped ratio with a value loss and an entropy bonus, GRPO's clipped ratio with a KL
+/// penalty to the reference. It is a composition of tensor operations on a <see cref="PolicyLossInput"/>, so autograd
+/// carries its gradient to the log-probabilities (and values) the policy computed; sums run in a fixed order. Its
+/// option keys (<c>Keys</c>) are the ones <see cref="Loss"/> takes: clip, KL weight and
+/// estimator, value and entropy weights, normalization. Thread-safe: it keeps no state between calls.
 /// </summary>
-public interface IPolicyLoss : IConfigurableKind
+public interface IPolicyLoss
 {
     /// <summary>The mini-batch's loss, one element, finite; its gradient flows to <see cref="PolicyLossInput.LogProbabilities"/>.</summary>
     /// <param name="input">The log-probabilities, advantages and the rest, for the mini-batch.</param>
-    /// <param name="options">The loss's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
-    /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <see cref="IConfigurableKind.Keys"/>), a bad value, or an input without what the loss needs (a reference, values).</exception>
+    /// <param name="options">The loss's options by key (<c>Keys</c>), values as text; null for
+    /// its defaults.</param>
+    /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <c>Keys</c>), a bad value, or an input without what the loss needs (a reference,
+    /// values).</exception>
     Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null);
 
     /// <summary>
@@ -156,103 +156,3 @@ public interface IPolicyLoss : IConfigurableKind
     bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => true;
 }
 
-/// <summary>
-/// The policy losses a trainer can use, by name (ignoring case): its algorithm. The library's (REINFORCE, PPO, GRPO) come
-/// with Idrak.Reinforcement, registered when it ships with the application; Idrak.Abstraction holds the registry so that
-/// any package's policy (Idrak.Text's language-model policy among them) reaches them. Register another with
-/// <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/> brings back,
-/// guarded by its <see cref="SetPolicy">policy</see>.
-/// </summary>
-public static class PolicyLosses
-{
-    private static readonly KindTable<IPolicyLoss> Table = new(nameof(PolicyLosses), "Policy loss",
-        "add it with PolicyLosses.Register, or reference Idrak.Reinforcement (its losses register themselves when it ships with the application)",
-        (slot, app, library) => new GuardedLoss(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static PolicyLosses() => LibraryDefaults.Ensure(typeof(PolicyLosses));
-
-    /// <summary>Registers <paramref name="loss"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPolicyLoss loss) => Table.Register(loss, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's loss <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The loss registered as <paramref name="name"/>, or null.</summary>
-    public static IPolicyLoss? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The loss registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones and the package to reference.</exception>
-    public static IPolicyLoss Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's loss <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IPolicyLoss? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the loss <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's loss <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> computes the library's; <see cref="SlotPolicy.Shadow"/> lets the library's answer
-    /// and compares the app's value on a sample of calls).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered loss as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    // An app's loss over the library's: each call falls back on its own, or is compared with the library's. A compared
-    // call computes the app's loss without recording it (the library's is the one trained on).
-    private sealed class GuardedLoss(Slot slot, IPolicyLoss app, IPolicyLoss library) : IPolicyLoss
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        // The library's loss may answer in the app's place (a fall-back, a shadow), so the reference is given when either reads it.
-        public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => app.NeedsReference(options) || library.NeedsReference(options);
-
-        public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Loss(input, options);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        Tensor other;
-                        using (Autograd.NoGrad())
-                        {
-                            other = app.Loss(input, options);
-                        }
-
-                        run.Done(Comparisons.Difference(answer.ToArray(), other.ToArray(), 1e-5f));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Loss(input, options);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Loss(input, options);
-            }
-        }
-    }
-}

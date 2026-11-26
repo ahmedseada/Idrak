@@ -10,18 +10,25 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// What a cached feature depends on, all of it: the part's bytes (their SHA-256, as <see cref="ChatImage.Hash"/> gives an
-/// image's), the transforms and the options it was prepared with (Idrak.Text's <c>TuningImages</c> for an image), and the
+/// What a cached feature depends on, all of it: the part's bytes (their SHA-256, as <see cref="ChatImage.Hash"/> gives
+/// an
+/// image's), the transforms and the options it was prepared with (Idrak.Text's <c>TuningImages</c> for an image), and
+/// the
 /// encoder that made it (its family, a hash of its checkpoint), and which stage's output
-/// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder. Idrak.Text
+/// it is. Change any and the cache misses: a cached feature is never one of another part, preparation or encoder.
+/// Idrak.Text
 /// keys an image's (<c>FeatureCacheKey.For</c>), Idrak.Audio a sound's.
 /// </summary>
-/// <param name="Image">The SHA-256 of the part's encoded bytes, as <see cref="ChatImage.Hash"/> gives an image's.</param>
-/// <param name="Transforms">The image transforms' text (<see cref="ImageTransformPipeline.ToString"/>; "" for none).</param>
-/// <param name="VisionOptions">The vision options' text (<see cref="VisionOptions.ToString"/>; "none" for none).</param>
+/// <param name="Image">The SHA-256 of the part's encoded bytes, as <see cref="ChatImage.Hash"/> gives an
+/// image's.</param>
+/// <param name="Transforms">The image transforms' text (<c>ToString</c>; "" for
+/// none).</param>
+/// <param name="VisionOptions">The vision options' text (<see cref="VisionOptions.ToString"/>; "none" for
+/// none).</param>
 /// <param name="Family">The vision family's name (the architecture name).</param>
 /// <param name="Checkpoint">A hash identifying the checkpoint's weights (any text that changes when they do).</param>
-/// <param name="Stage">Which output is cached: <see cref="TowerStage"/> (the frozen tower's) unless another is named.</param>
+/// <param name="Stage">Which output is cached: <see cref="TowerStage"/> (the frozen tower's) unless another is
+/// named.</param>
 public sealed record FeatureCacheKey(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string Stage = FeatureCacheKey.TowerStage)
 {
     /// <summary>The vision tower's output (before the projector): what a frozen tower lets the tuner keep.</summary>
@@ -63,12 +70,16 @@ public sealed record FeatureCacheOptions
 }
 
 /// <summary>
-/// A store of encoded features (the frozen vision tower's output, so a fine-tune encodes each image once, not every epoch;
+/// A store of encoded features (the frozen vision tower's output, so a fine-tune encodes each image once, not every
+/// epoch;
 /// a sound's soft tokens, so a chat encodes each sound once),
-/// by <see cref="FeatureCacheKey"/>. Values go in as tensors on any device and come out as new tensors on the device asked
-/// for, which the caller owns; the cache keeps its own copy (float32), so what was put can be disposed. A cache may forget
+/// by <see cref="FeatureCacheKey"/>. Values go in as tensors on any device and come out as new tensors on the device
+/// asked
+/// for, which the caller owns; the cache keeps its own copy (float32), so what was put can be disposed. A cache may
+/// forget
 /// entries (a bounded one evicts the least recently used): a miss is never an error, and a hit is exactly what was put.
-/// Thread-safe. Made by <see cref="FeatureCaches.Create"/>; the testing kit checks one (<c>Conformance.CheckFeatureCache</c>).
+/// Thread-safe. Made by <c>Create</c>; the testing kit checks one
+/// (<c>Conformance.CheckFeatureCache</c>).
 /// </summary>
 public interface IFeatureCache : IDisposable
 {
@@ -98,80 +109,14 @@ public interface IFeatureCache : IDisposable
 }
 
 /// <summary>
-/// A kind of feature cache, registered by its <see cref="IKind.Name"/> in <see cref="FeatureCaches"/>: makes a cache from
-/// <see cref="FeatureCacheOptions"/> (<see cref="IKind{TRequest, T}.Create"/>).
-/// </summary>
-public interface IFeatureCacheKind : IKind<FeatureCacheOptions, IFeatureCache>;
-
-/// <summary>
-/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Text registers them):
-/// <list type="bullet">
-/// <item><see cref="Memory"/>: in this process's memory, least recently used entries evicted to stay within a byte
-/// budget (<see cref="FeatureCacheOptions.Budget"/>, or half of the system memory available when it is made).</item>
-/// <item><see cref="Disk"/>: one safetensors file per entry (float32, the key in its metadata) in a folder
-/// (<see cref="FeatureCacheOptions.Folder"/>, or <see cref="DefaultFolder"/>), written whole before it replaces anything,
-/// so a cache survives the process and serves later runs and other processes.</item>
-/// </list>
-/// Register another with <see cref="Register"/>; one under a library name shadows the library's (<see cref="SetPolicy"/>:
-/// under <see cref="SlotPolicy.FallBack"/> the library's is made when the app's cannot be; a cache holds entries across
-/// calls, so it falls back when it is made, not per call, and under <see cref="SlotPolicy.Shadow"/> only the library's is
-/// made, since making one may create its folder).
+/// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Text registers them).
 /// </summary>
 public static class FeatureCaches
 {
-    /// <summary>The cache in memory.</summary>
-    public const string Memory = "memory";
-
-    /// <summary>The cache on disk.</summary>
-    public const string Disk = "disk";
-
-    private static readonly KindTable<IFeatureCacheKind> Table = new(nameof(FeatureCaches), "Feature cache", "add it with FeatureCaches.Register",
-        (slot, app, library) => new GuardedKind(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static FeatureCaches() => LibraryDefaults.Ensure(typeof(FeatureCaches));
-
     /// <summary>
     /// The folder the disk cache uses unless told otherwise: <c>features</c> under the library's cache folder
     /// (<see cref="ComputeResources.CacheFolder"/>: <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
     /// </summary>
     public static string DefaultFolder => Path.Combine(ComputeResources.CacheFolder, "features");
 
-    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFeatureCacheKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's cache <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The cache kind <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
-    public static IFeatureCacheKind Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(FeatureCaches), name.ToString(), Table.Names,
-            $"Feature cache '{name}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with FeatureCaches.Register.");
-
-    /// <summary>A new cache of the kind <paramref name="name"/>, made with <paramref name="options"/> (the kind's defaults when null). Dispose it when done.</summary>
-    public static IFeatureCache Create(ReadOnlySpan<char> name, FeatureCacheOptions? options = null) => Get(name).Create(options ?? new FeatureCacheOptions());
-
-    /// <summary>The library's cache kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IFeatureCacheKind? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the cache <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's cache <paramref name="name"/> cannot be made (<see cref="SlotPolicy.Throw"/> unless set; <see cref="SlotPolicy.FallBack"/> makes the library's).</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    private sealed class GuardedKind(Slot slot, IFeatureCacheKind app, IFeatureCacheKind library) : IFeatureCacheKind
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public IFeatureCache Create(FeatureCacheOptions request) => slot.Call(() => app.Create(request), () => library.Create(request), effects: true);
-    }
 }

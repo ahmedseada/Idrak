@@ -10,18 +10,15 @@ namespace Idrak.Abstraction.Data;
 
 /// <summary>
 /// One drawing step of a page's shapes (a line, a box, a grid, a circle, ...): pure geometry, it never touches pixels.
-/// Given its step (<see cref="ShapeStep"/>: its value and options) and the box it is placed in
-/// (<see cref="ShapeContext"/>), it plans what to draw as data (<see cref="ShapePlan"/>): ideal paths a pen strokes,
-/// filled areas, and the regions it makes for text. Register one with <see cref="Shapes.Register"/>; a pipeline
-/// (<see cref="ShapePipeline"/>) names shapes in the order they are drawn.
+/// Given its step (<see cref="ShapeStep"/>: its value and options) and the box it is placed in (<see cref="ShapeContext"/>), it plans what to draw as data (<see cref="ShapePlan"/>): ideal paths a pen strokes, filled
+/// areas, and the regions it makes for text.
 /// </summary>
 /// <remarks>
-/// Its <see cref="IKind.Name"/> is what a pipeline uses (<c>grid</c>; names compare ignoring case), its
-/// <see cref="IKind.Summary"/> one line on what it draws and what its value is, and its <see cref="IConfigurableKind.Keys"/>
-/// the option keys it takes besides the ones every shape takes (<see cref="Shapes.CommonKeys"/>). The same step and
+/// Its <c>Name</c> is what a pipeline uses (<c>grid</c>; names compare ignoring case), its <c>Summary</c> one line on what it draws and what its value is, and its <c>Keys</c>
+/// the option keys it takes besides the ones every shape takes (<c>CommonKeys</c>). The same step and
 /// context give the same plan.
 /// </remarks>
-public interface IShape : IConfigurableKind
+public interface IShape
 {
     /// <summary>Throws <see cref="ArgumentException"/> when <paramref name="step"/>'s value or own options are not ones it takes (checked when a pipeline is parsed).</summary>
     void Check(ShapeStep step);
@@ -29,11 +26,6 @@ public interface IShape : IConfigurableKind
     /// <summary>What to draw for <paramref name="step"/> in <paramref name="context"/>'s box (already placed by the step's <c>at</c>, <c>size</c> and <c>margin</c>).</summary>
     ShapePlan Plan(ShapeStep step, ShapeContext context);
 
-    /// <summary>
-    /// The keys ("" for the value) whose ranges a shape profile draws as whole numbers; the others are drawn with
-    /// fractions. A plain set (an <see cref="OptionKeys"/> takes no empty key); none by default.
-    /// </summary>
-    IReadOnlySet<string> WholeKeys => OptionKeys.None;
 }
 
 /// <summary>
@@ -405,7 +397,7 @@ public sealed class ShapePlan
 /// <summary>
 /// One step of a shape pipeline: a shape's name, its value (<c>3x4</c> in <c>grid=3x4</c>; null when none is given) and
 /// its options (<c>widths=1:2:1</c>), with typed readers for both (key "" reads the value) and for the options every
-/// shape takes (<see cref="Shapes.CommonKeys"/>). Immutable.
+/// shape takes (<c>CommonKeys</c>). Immutable.
 /// </summary>
 public sealed class ShapeStep : IEquatable<ShapeStep>
 {
@@ -572,7 +564,8 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
         var text => PageOptions.Number(What("valign") + " (center, top, bottom or a share from 0 to 1)", text, 0, 1),
     };
 
-    /// <summary>Reads every common option (<see cref="Shapes.CommonKeys"/>), throwing on a bad one, and that the shape's box stays inside the box it is placed in.</summary>
+    /// <summary>Reads every common option (<c>CommonKeys</c>), throwing on a bad one, and that the
+    /// shape's box stays inside the box it is placed in.</summary>
     /// <exception cref="ArgumentException">A bad common option.</exception>
     public void CheckCommon()
     {
@@ -594,20 +587,6 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
         _ = Lines();
         _ = HoldsParagraphs();
         _ = Vertical();
-    }
-
-    /// <summary>Throws unless every option is one the shape takes: one of <paramref name="keys"/> or a common one (<see cref="Shapes.CommonKeys"/>), naming them.</summary>
-    /// <exception cref="ArgumentException">An option it does not take.</exception>
-    public void ThrowIfUnknownOptions(IReadOnlySet<string> keys)
-    {
-        ArgumentNullException.ThrowIfNull(keys);
-        foreach (string key in _options.Keys)
-        {
-            if (!keys.Contains(key) && !Shapes.CommonKeys.Contains(key))
-            {
-                throw new ArgumentException($"The shape {Name} does not take '{key}'; it takes: {(keys.Count == 0 ? "" : string.Join(", ", keys) + ", and ")}every shape's {Shapes.CommonKeys}.");
-            }
-        }
     }
 
     /// <summary>As a pipeline writes it: <c>name</c>, <c>name=value</c>, then <c>,key=value</c> per option.</summary>
@@ -640,257 +619,19 @@ public sealed class ShapeStep : IEquatable<ShapeStep>
 }
 
 /// <summary>
-/// Shapes in the order they are drawn, each a registered <see cref="IShape"/>. Written as text, comma-separated:
-/// <c>box,grid=3x4,in=last,widths=1:2:1:1</c>; an item whose name is an option of the step before it (its own or a
-/// common one, <see cref="Shapes.CommonKeys"/>) belongs to that step. As JSON: that text, or an array whose items are such
-/// texts or objects <c>{"name": "grid", "value": "3x4", "widths": "1:2:1:1"}</c>. An unknown name or option is an
-/// <see cref="ArgumentException"/> naming what is registered. Immutable; equal when their text is.
-/// </summary>
-public sealed class ShapePipeline : IEquatable<ShapePipeline>
-{
-    /// <summary>The steps <paramref name="steps"/>, checked against the registry.</summary>
-    /// <exception cref="ArgumentException">A step names no registered shape, or one that refuses its value or options.</exception>
-    public ShapePipeline(IEnumerable<ShapeStep> steps)
-    {
-        ArgumentNullException.ThrowIfNull(steps);
-        Steps = [.. steps];
-        foreach (var step in Steps)
-        {
-            Check(Shapes.Find(step.Name) ?? throw Unknown(step.Name), step);
-        }
-    }
-
-    /// <summary>No steps: nothing drawn.</summary>
-    public static ShapePipeline Empty { get; } = new([]);
-
-    /// <summary>The steps, in order.</summary>
-    public IReadOnlyList<ShapeStep> Steps { get; }
-
-    /// <summary>Whether there are no steps.</summary>
-    public bool IsEmpty => Steps.Count == 0;
-
-    /// <summary>Checks <paramref name="step"/> as <paramref name="shape"/> takes it: its options known, the common ones good, its value and own options as the shape checks them.</summary>
-    /// <exception cref="ArgumentException">An option it does not take, or a bad value.</exception>
-    public static void Check(IShape shape, ShapeStep step)
-    {
-        ArgumentNullException.ThrowIfNull(shape);
-        ArgumentNullException.ThrowIfNull(step);
-        step.ThrowIfUnknownOptions(shape.Keys);
-        step.CheckCommon();
-        shape.Check(step);
-    }
-
-    /// <summary>The pipeline written as text (see the class); null, empty or "none" give <see cref="Empty"/>.</summary>
-    /// <exception cref="ArgumentException">An unknown shape or option, a bad value, or an item that is not NAME or NAME=VALUE.</exception>
-    public static ShapePipeline Parse(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text) || text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
-        {
-            return Empty;
-        }
-
-        var steps = new List<(string Name, string? Value, List<KeyValuePair<string, string>> Options)>();
-        foreach (string raw in text.Split(','))
-        {
-            string item = raw.Trim();
-            if (item.Length == 0)
-            {
-                continue;
-            }
-
-            int at = item.IndexOf('=', StringComparison.Ordinal);
-            string name = (at < 0 ? item : item[..at]).Trim().ToLowerInvariant();
-            string? value = at < 0 ? null : item[(at + 1)..].Trim();
-            if (name.Length == 0)
-            {
-                throw new ArgumentException($"A shape is NAME or NAME=VALUE (such as grid=3x4), not '{item}'.");
-            }
-
-            if (Shapes.Find(name) is not null)
-            {
-                steps.Add((name, value, []));
-                continue;
-            }
-
-            if (steps.Count > 0 && value is not null && Takes(Shapes.Get(steps[^1].Name), name))
-            {
-                steps[^1].Options.Add(KeyValuePair.Create(name, value));
-                continue;
-            }
-
-            throw Unknown(name, steps.Count > 0 ? steps[^1].Name : null);
-        }
-
-        return new ShapePipeline(steps.Select(s => new ShapeStep(s.Name, s.Value, s.Options)));
-    }
-
-    /// <summary>The pipeline in JSON: null, a string (as <see cref="Parse"/>), or an array of strings and objects (<c>{"name", "value", ...options}</c>).</summary>
-    /// <exception cref="ArgumentException">An unknown shape or option, a bad value, or JSON of another shape.</exception>
-    public static ShapePipeline FromJson(JsonNode? json)
-    {
-        switch (json)
-        {
-            case null:
-                return Empty;
-            case JsonValue value when value.GetValueKind() == JsonValueKind.String:
-                return Parse(value.GetValue<string>());
-            case JsonArray array:
-            {
-                var steps = new List<ShapeStep>();
-                foreach (var item in array)
-                {
-                    if (item is JsonValue text && text.GetValueKind() == JsonValueKind.String)
-                    {
-                        steps.AddRange(Parse(text.GetValue<string>()).Steps);
-                    }
-                    else if (item is JsonObject step)
-                    {
-                        string name = step["name"] is JsonValue n && n.GetValueKind() == JsonValueKind.String ? n.GetValue<string>()
-                            : throw new ArgumentException($"A shape object needs a \"name\": {step.ToJsonString()}.");
-                        if (Shapes.Find(name) is null)
-                        {
-                            throw Unknown(name);
-                        }
-
-                        var options = step.Where(p => p.Key is not "name" and not "value" && p.Value is not null)
-                            .Select(p => KeyValuePair.Create(p.Key, Text(p.Value!, p.Key))).ToList();
-                        steps.Add(new ShapeStep(name, step["value"] is { } v ? Text(v, "value") : null, options));
-                    }
-                    else
-                    {
-                        throw new ArgumentException($"A shape is a string or an object, not {item?.ToJsonString() ?? "null"}.");
-                    }
-                }
-
-                return new ShapePipeline(steps);
-            }
-
-            default:
-                throw new ArgumentException($"Shapes are a string or an array, not {json.ToJsonString()}.");
-        }
-
-        static string Text(JsonNode node, string key) => node.GetValueKind() switch
-        {
-            JsonValueKind.String => node.GetValue<string>(),
-            JsonValueKind.Number => node.ToJsonString(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            var kind => throw new ArgumentException($"The shape's '{key}' is {kind.ToString().ToLowerInvariant()}: give a string, a number or true/false."),
-        };
-    }
-
-    /// <summary>This pipeline's steps, then <paramref name="next"/>'s.</summary>
-    public ShapePipeline Then(ShapePipeline? next) =>
-        next is null || next.IsEmpty ? this : IsEmpty ? next : new ShapePipeline(Steps.Concat(next.Steps));
-
-    /// <summary>The pipeline as JSON text (a string; null when empty).</summary>
-    public JsonNode? ToJson() => IsEmpty ? null : JsonValue.Create(ToString());
-
-    /// <summary>The steps written as text, comma-separated; "" when empty.</summary>
-    public override string ToString() => string.Join(",", Steps);
-
-    /// <inheritdoc />
-    public bool Equals(ShapePipeline? other) => other is not null && other.ToString() == ToString();
-
-    /// <inheritdoc />
-    public override bool Equals(object? obj) => Equals(obj as ShapePipeline);
-
-    /// <inheritdoc />
-    public override int GetHashCode() => StringComparer.Ordinal.GetHashCode(ToString());
-
-    // Whether `key` is an option `shape` takes: its own or a common one.
-    internal static bool Takes(IShape shape, string key) => shape.Keys.Contains(key) || Shapes.CommonKeys.Contains(key);
-
-    private static ArgumentException Unknown(string name, string? after = null)
-    {
-        string also = after is not null && Shapes.Find(after) is { } owner
-            ? $"; after {after} it can also be one of its options: {(owner.Keys.Count > 0 ? string.Join(", ", owner.Keys) + ", " : "")}{Shapes.CommonKeys}" : "";
-        return new ArgumentException($"Unknown shape '{name}' (registered: {string.Join(", ", Shapes.Names)}{also}).");
-    }
-}
-
-/// <summary>
 /// The shapes a pipeline can name, by name (ignoring case). Built in (Idrak.Imaging): <c>line</c>, <c>polyline</c>,
 /// <c>polygon</c>, <c>box</c>, <c>grid</c>, <c>circle</c>, <c>ellipse</c>, <c>arc</c>, <c>arrow</c>, <c>fill</c> and
-/// <c>hatch</c>. Every shape also takes the common options (<see cref="CommonKeys"/>): <c>at=X:Y</c> and <c>size=W:H</c>
+/// <c>hatch</c>. Every shape also takes the common options (<c>CommonKeys</c>): <c>at=X:Y</c> and <c>size=W:H</c>
 /// (shares of the box it is placed in, X from the start side), <c>in=page|last</c> (<c>last</c>: drawn once inside each
 /// region the step before made), <c>margin</c>, <c>width</c> (a factor of the stroke width), <c>dash</c>
-/// (solid|dashed|dotted), <c>tone</c>, <c>flow</c> (page|down: stacked below the parts before it, its height from what it
-/// holds), <c>gap</c> (below a stacked step, line heights), <c>height</c> (a stacked step's own, line heights),
+/// (solid|dashed|dotted), <c>tone</c>, <c>flow</c> (page|down: stacked below the parts before it, its height from what
+/// it holds), <c>gap</c> (below a stacked step, line heights), <c>height</c> (a stacked step's own, line heights),
 /// <c>lines</c> (N|rest: how many of the page's lines it takes), <c>holds</c> (lines|paragraphs) and <c>valign</c>
-/// (center|top|bottom|a share: where wrapped paragraphs sit down their region). Built in also:
-/// <c>text</c> (no lines drawn, one region of wrapped paragraphs), and the emblems', stamps' and signatures' pieces:
-/// <c>ring-text</c> (a text round a ring), <c>lettering</c> (a line of text across its box), <c>star</c>, <c>shield</c>
-/// and <c>scribble</c> (a hand's signature-like scribble, never text). Register another with <see cref="Register"/>; one under a library name shadows
-/// the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
+/// (center|top|bottom|a share: where wrapped paragraphs sit down their region). Built in also: <c>text</c> (no lines
+/// drawn, one region of wrapped paragraphs), and the emblems', stamps' and signatures' pieces: <c>ring-text</c> (a text
+/// round a ring), <c>lettering</c> (a line of text across its box), <c>star</c>, <c>shield</c> and <c>scribble</c> (a
+/// hand's signature-like scribble, never text).
 /// </summary>
 public static class Shapes
 {
-    private static readonly KindTable<IShape> Table = new(nameof(Shapes), "Shape", "add it with Shapes.Register",
-        (slot, app, library) => new GuardedShape(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static Shapes() => LibraryDefaults.Ensure(typeof(Shapes));
-
-    /// <summary>The options every shape takes besides its own: at, size, in, margin, width, dash, tone, flow, gap, height, lines, holds, valign.</summary>
-    public static OptionKeys CommonKeys { get; } = new("at", "size", "in", "margin", "width", "dash", "tone", "flow", "gap", "height", "lines", "holds", "valign");
-
-    /// <summary>Registers <paramref name="shape"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    /// <exception cref="ArgumentException">A name with ',' or '=', or one that is a common option's key.</exception>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IShape shape)
-    {
-        ArgumentNullException.ThrowIfNull(shape);
-        ArgumentException.ThrowIfNullOrWhiteSpace(shape.Name);
-        if (shape.Name.Contains(',') || shape.Name.Contains('=') || shape.Name.Contains('@') || CommonKeys.Contains(shape.Name.ToLowerInvariant()))
-        {
-            throw new ArgumentException($"A shape's name has no ',', '=' or '@' and is not a common option ({CommonKeys}): '{shape.Name}'.", nameof(shape));
-        }
-
-        Table.Register(shape, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's shape <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The shape registered as <paramref name="name"/>, or null.</summary>
-    public static IShape? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The shape registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IShape Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's shape <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IShape? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the shape <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's shape <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> plans with the library's; <see cref="SlotPolicy.Shadow"/> lets the library's plan
-    /// and compares the app's on a sample of calls).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered shape as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    private sealed class GuardedShape(Slot slot, IShape app, IShape library) : IShape
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public IReadOnlySet<string> WholeKeys => app.WholeKeys;
-
-        public void Check(ShapeStep step) => app.Check(step);
-
-        public ShapePlan Plan(ShapeStep step, ShapeContext context) =>
-            slot.Call(() => app.Plan(step, context), () => library.Plan(step, context), (a, b) => Comparisons.Exact(a.ToString(), b.ToString()));
-    }
 }

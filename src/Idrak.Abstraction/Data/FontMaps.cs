@@ -791,10 +791,11 @@ public sealed record FontMapDrawing
 
 /// <summary>
 /// Applies a <see cref="FontMap"/> to a font: gives back a face that answers the map's Unicode code points with the
-/// font's glyphs and carries the layout tables (GSUB, GDEF, GPOS) made from the map, which the text shapers read as they
-/// read any font's. Registered in <see cref="FontMappers"/> under its <see cref="IKind.Name"/>; thread-safe.
+/// font's glyphs and carries the layout tables (GSUB, GDEF, GPOS) made from the map, which the text shapers read as
+/// they
+/// read any font's. Registered in <see cref="FontMappers"/> under its <c>Name</c>; thread-safe.
 /// </summary>
-public interface IFontMapper : IKind
+public interface IFontMapper
 {
     /// <summary>
     /// The face <paramref name="map"/> makes of <paramref name="face"/>, or null when the map does not fit it. With
@@ -807,100 +808,21 @@ public interface IFontMapper : IKind
 }
 
 /// <summary>
-/// The font mappers, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (the map's substitutions, classes and
-/// mark positions as OpenType tables, with mark anchors measured from the font's ink). Register another with
-/// <see cref="Register"/>; one under a library name shadows the library's, guarded by its <see cref="SetPolicy">policy</see>.
+/// The font mappers, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (the map's substitutions, classes
+/// and mark positions as OpenType tables, with mark anchors measured from the font's ink).
 /// </summary>
 public static class FontMappers
 {
     /// <summary>The library's mapper.</summary>
     public const string OpenType = "opentype";
-
-    private static readonly KindTable<IFontMapper> Table = new(nameof(FontMappers), "Font mapper", "add it with FontMappers.Register, or reference Idrak.Imaging",
-        (slot, app, library) => new GuardedMapper(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static FontMappers() => LibraryDefaults.Ensure(typeof(FontMappers));
-
-    /// <summary>Registers <paramref name="mapper"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFontMapper mapper) => Table.Register(mapper, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's mapper <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The mapper registered as <paramref name="name"/>, or null.</summary>
-    public static IFontMapper? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The mapper registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IFontMapper Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's mapper <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IFontMapper? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the mapper <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's mapper <paramref name="name"/> fails.</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered mapper as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    // An app's mapper over the library's: a failed map is made by the library's, or both are compared on a sample.
-    private sealed class GuardedMapper(Slot slot, IFontMapper app, IFontMapper library) : IFontMapper
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IFontFace? Map(IFontFace face, FontMap map, bool detect, FontMapDrawing drawing)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Map(face, map, detect, drawing);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        run.Done(Comparisons.Exact(Answers(answer, map), Answers(app.Map(face, map, detect, drawing), map)));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Map(face, map, detect, drawing);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Map(face, map, detect, drawing);
-            }
-        }
-
-        private static string Answers(IFontFace? face, FontMap map) =>
-            face is null ? "none" : string.Join(" ", map.Letters.Keys.Order().Select(cp => face.Glyph(cp).ToString(CultureInfo.InvariantCulture)));
-    }
 }
 
 /// <summary>
-/// The font maps fonts are matched against as they are read (<see cref="FontFormats.Read(string)"/>), by name (ignoring
-/// case). The library ships its maps as data with Idrak.Imaging (legacy layouts shared by many fonts); an app adds its
-/// own with <see cref="Register"/> (tried before the library's; one of a library name replaces it). A font file with a
-/// map beside it (FONT.ttf and FONT<see cref="SidecarSuffix"/>) is mapped by that map. Nothing is fixed: the library's
-/// maps (<see cref="Builtin"/>), the maps beside fonts (<see cref="Sidecars"/>), the drawn glyphs (<see cref="Drawing"/>)
-/// and the mapper (<see cref="Mapper"/>) are settings. A font no map fits is given back as it was read: the same face.
+/// The font maps fonts are matched against as they are read (<c>Read</c>), by name (ignoring
+/// case). A font file with a map beside it (FONT.ttf and FONT<see cref="SidecarSuffix"/>) is mapped by that map.
+/// Nothing is fixed: the library's maps (<see cref="Builtin"/>), the maps beside fonts (<see cref="Sidecars"/>), the
+/// drawn glyphs (<see cref="Drawing"/>) and the mapper (<see cref="Mapper"/>) are settings. A font no map fits is given
+/// back as it was read: the same face.
 /// </summary>
 public static class FontMaps
 {
@@ -913,12 +835,7 @@ public static class FontMaps
     /// <summary>What a map beside a font file is named after the font's name without its extension: FONT.ttf, FONT.map.json.</summary>
     public const string SidecarSuffix = ".map.json";
 
-    private static readonly SlotTable<string, FontMap> Registry = new(nameof(FontMaps), guard: null, StringComparer.OrdinalIgnoreCase, newestFirst: true,
-        unguarded: "font maps are data: an app's map is tried before the library's and replaces one of its name");
-
     private static readonly ConditionalWeakTable<IFontFace, FontMap> Mapped = [];
-
-    static FontMaps() => LibraryDefaults.Ensure(typeof(FontMaps));
 
     /// <summary>Whether the library's maps are matched against fonts (on unless <see cref="BuiltinVariable"/> turns them off).</summary>
     public static bool Builtin { get; set; } = !ComputeResources.SwitchedOff(Environment.GetEnvironmentVariable(BuiltinVariable));
@@ -932,37 +849,6 @@ public static class FontMaps
     /// <summary>The mapper that applies maps (<see cref="FontMappers.OpenType"/>).</summary>
     public static string Mapper { get; set; } = FontMappers.OpenType;
 
-    /// <summary>Registers <paramref name="map"/> under its name: tried before the library's, replacing one of its name.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(FontMap map)
-    {
-        ArgumentNullException.ThrowIfNull(map);
-        Registry.Register(map.Name, map, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's map <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names, in the order they are tried.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The map registered as <paramref name="name"/>, or null.</summary>
-    public static FontMap? Find(string name) => Registry.Find(name);
-
-    /// <summary>The map registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotRegisteredException">None is.</exception>
-    public static FontMap Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(FontMaps), name, Names, $"No font map '{name}' is registered ({string.Join(", ", Names)}); add it with FontMaps.Register(FontMap.Read(path)).");
-
-    /// <summary>The library's map <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static FontMap? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the map <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>Each registered map as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Registry.Values.Select(m => $"{m.Name}: {m.Summary}"));
-
     /// <summary>
     /// The map that made <paramref name="face"/> (also of the converted font <see cref="FontCache"/> gave back for a face
     /// it made), or null for a face no map made.
@@ -973,95 +859,10 @@ public static class FontMaps
         return Mapped.TryGetValue(face, out var map) ? map : null;
     }
 
-    // A converted font is the map's work too: MappedBy names the map for it.
-    internal static void Remember(IFontFace face, FontMap map) => Mapped.AddOrUpdate(face, map);
-
     /// <summary>The map file that belongs beside the font file <paramref name="fontPath"/>: FONT.ttf, FONT.map.json.</summary>
     public static string SidecarOf(string fontPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fontPath);
         return Path.Combine(Path.GetDirectoryName(fontPath) ?? "", Path.GetFileNameWithoutExtension(fontPath) + SidecarSuffix);
-    }
-
-    /// <summary>
-    /// <paramref name="face"/> made usable by the first registered map that fits it (the app's first, then the library's
-    /// while <see cref="Builtin"/>); the face itself when none fits.
-    /// </summary>
-    public static IFontFace Apply(IFontFace face)
-    {
-        ArgumentNullException.ThrowIfNull(face);
-        var maps = Registry.Values;
-        if (maps.Count == 0)
-        {
-            return face;
-        }
-
-        IFontMapper? mapper = null;
-        var drawing = Drawing;
-        foreach (var map in maps)
-        {
-            if (!Builtin && Registry.Origin(map.Name) == Overrides.Library)
-            {
-                continue;
-            }
-
-            mapper ??= FontMappers.Get(Mapper);
-            if (mapper.Map(face, map, detect: true, drawing) is { } mapped)
-            {
-                Mapped.AddOrUpdate(mapped, map);
-                return mapped;
-            }
-        }
-
-        return face;
-    }
-
-    /// <summary>Each of <paramref name="faces"/> through <see cref="Apply(IFontFace)"/>; the same list when no face changed.</summary>
-    public static IReadOnlyList<IFontFace> Apply(IReadOnlyList<IFontFace> faces)
-    {
-        ArgumentNullException.ThrowIfNull(faces);
-        IFontFace[]? changed = null;
-        for (int i = 0; i < faces.Count; i++)
-        {
-            var face = Apply(faces[i]);
-            if (!ReferenceEquals(face, faces[i]))
-            {
-                changed ??= [.. faces];
-                changed[i] = face;
-            }
-        }
-
-        return changed ?? faces;
-    }
-
-    /// <summary><paramref name="face"/> made usable by <paramref name="map"/>, given for it (no detection).</summary>
-    /// <exception cref="InvalidDataException">None of the map's letters is in the font.</exception>
-    public static IFontFace Apply(IFontFace face, FontMap map)
-    {
-        ArgumentNullException.ThrowIfNull(face);
-        ArgumentNullException.ThrowIfNull(map);
-        var mapped = FontMappers.Get(Mapper).Map(face, map, detect: false, Drawing)
-            ?? throw new InvalidDataException($"{map.Source}: none of the map's {map.Letters.Count} letters is in the font {face.Family} {face.Style}.");
-        Mapped.AddOrUpdate(mapped, map);
-        return mapped;
-    }
-
-    /// <summary>
-    /// The faces read from the font file <paramref name="path"/>, mapped: by the map beside it when there is one (and
-    /// <see cref="Sidecars"/>), else as <see cref="Apply(IReadOnlyList{IFontFace})"/> matches them.
-    /// </summary>
-    /// <exception cref="InvalidDataException">The map beside the font is not valid, or fits none of its faces.</exception>
-    public static IReadOnlyList<IFontFace> ForFile(string path, IReadOnlyList<IFontFace> faces)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        ArgumentNullException.ThrowIfNull(faces);
-        string sidecar = SidecarOf(path);
-        if (!Sidecars || !File.Exists(sidecar))
-        {
-            return Apply(faces);
-        }
-
-        var map = FontMap.Read(sidecar);
-        return [.. faces.Select(f => Apply(f, map))];
     }
 }

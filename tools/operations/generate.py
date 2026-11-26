@@ -10,8 +10,7 @@ followed by the default. From those declarations and their documentation this sc
   src/Idrak.Abstraction/Operations/Operations.g.cs    a descriptor per operation (Ops), its index and its kernel
                                                       delegate (OperationKernels), with what its default body does
   src/Idrak.Abstraction/Devices/Backend.Operations.g.cs
-                                                      `Name(...)` on Backend, which runs the kernel registered for the
-                                                      device (Kernels.Register) or else `NameKernel`
+                                                      `Name(...)` on Backend, which runs `NameKernel`
 
 Every `NameKernel` needs a `<summary>`: the descriptor, the delegate and `Name(...)` reuse it.
 
@@ -258,7 +257,7 @@ def generate():
     o.append("")
     o.append("/// <summary>")
     o.append("/// The kernel delegate of each operation (<see cref=\"Operation.KernelType\"/>): the device's backend, then the operation's")
-    o.append("/// arguments. A kernel registered with <see cref=\"Kernels.Register\"/> has its operation's type, checked by the compiler.")
+    o.append("/// arguments.")
     o.append("/// </summary>")
     o.append("public static class OperationKernels")
     o.append("{")
@@ -275,7 +274,7 @@ def generate():
     o.append("")
     o.append("/// <summary>")
     o.append("/// The operations of the device contract (plan 9), one descriptor each, in slot order. A device runs each through")
-    o.append("/// <c>Backend.Name(...)</c>; <see cref=\"Kernels.Register\"/> adds kernels for them.")
+    o.append("/// <c>Backend.Name(...)</c>.")
     o.append("/// </summary>")
     o.append("public static partial class Ops")
     o.append("{")
@@ -308,9 +307,7 @@ def generate():
     o.append("}")
 
     d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]
-    d.append("// Name(...) runs the kernel registered for the device, else its own NameKernel. A registered kernel is an app's or a")
-    d.append("// plug-in's choice for this device (it may handle some cases itself and pass others to the device's kernel or")
-    d.append("// elsewhere); its errors reach the caller. An operation the device has no kernel for runs its default: a composition")
+    d.append("// Name(...) runs the device's own NameKernel. An operation the device has no kernel for runs its default: a composition")
     d.append("// of other operations, or none (false, or it throws that the device has no kernel for it).")
     d.append("// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.")
     d.append("// On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a")
@@ -333,7 +330,7 @@ def generate():
             d.append("")
         # The fast path (no kernel registered for this device and no trace: one field read) is inlined into the call
         # site; the registered path stays out of line.
-        runs = f"Runs <see cref=\"Ops.{op}\"/>: the kernel registered for this device (<see cref=\"Kernels.Register\"/>), else <c>{method}Kernel</c>."
+        runs = f"Runs <see cref=\"Ops.{op}\"/>: <c>{method}Kernel</c>."
         if any("</remarks>" in line for line in docs):
             d.extend(f"    /// {line.replace('</remarks>', f'<para>{runs}</para></remarks>')}".rstrip() for line in docs)
         else:

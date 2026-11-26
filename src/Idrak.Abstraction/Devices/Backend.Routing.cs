@@ -47,11 +47,9 @@ public abstract partial class Backend
     public virtual void ExpertMatMulKernel(Storage x, Storage offsets, ReadOnlySpan<(Storage Weight, Storage? Bias)> experts, Storage y, int rows, int k, int n) => throw NoKernel(nameof(ExpertMatMul));
 
     /// <summary>
-    /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/>
-    /// and <see cref="ExpertMatMul"/>) with kernels of its own or registered ones (<see cref="Kernels.Register"/>). Where
-    /// it does not, a mixture-of-experts layer reads its routing back and routes on the host, counted as a host fallback
-    /// of <see cref="RouteTopK"/> (<see cref="CountHostFallback"/>), instead of mirroring every expert's weights through the
-    /// operations' host fallbacks.
+    /// Whether this device runs the mixture-of-experts operations (<see cref="RouteTopK"/>, <see cref="ExpertGatedPair"/> and <see cref="ExpertMatMul"/>) with kernels of its own or registered ones (<c>Register</c>). Where it does not, a mixture-of-experts layer reads its routing back and routes on
+    /// the host, counted as a host fallback of <see cref="RouteTopK"/> (<see cref="CountHostFallback"/>), instead of
+    /// mirroring every expert's weights through the operations' host fallbacks.
     /// </summary>
     public bool RoutesExperts =>
         RunsKernel(OperationIndex.RouteTopK) && RunsKernel(OperationIndex.ExpertGatedPair) && RunsKernel(OperationIndex.ExpertMatMul);

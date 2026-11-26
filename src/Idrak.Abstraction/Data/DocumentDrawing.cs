@@ -80,11 +80,11 @@ public sealed partial record DocumentDrawOptions
 public sealed record DocumentDrawing(ImageData Image, IReadOnlyList<DocumentIssue> Issues);
 
 /// <summary>
-/// Draws any <see cref="DocumentPage"/> (its paths, glyph runs and images, in content order, under their clips) to pixels,
-/// whatever format read it; register one with <see cref="DocumentPageDrawers.Register"/>. Safe to use from several threads
-/// at once.
+/// Draws any <see cref="DocumentPage"/> (its paths, glyph runs and images, in content order, under their clips) to
+/// pixels, whatever format read it; register one with <c>Register</c>. Safe to use from
+/// several threads at once.
 /// </summary>
-public interface IDocumentPageDrawer : IKind
+public interface IDocumentPageDrawer
 {
     /// <summary>
     /// <paramref name="page"/> drawn to an image of its size times <see cref="DocumentDrawOptions.PixelsPerPoint"/>
@@ -95,56 +95,12 @@ public interface IDocumentPageDrawer : IKind
 }
 
 /// <summary>
-/// The page drawers, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Coverage"/>. Register another with
-/// <see cref="Register"/>; one registered under a library name takes its place, which stays behind it (see
-/// <see cref="SetPolicy"/>).
+/// The page drawers, by name (ignoring case). Built in (Idrak.Imaging): <see cref="Coverage"/>.
 /// </summary>
 public static class DocumentPageDrawers
 {
     /// <summary>"coverage": the library's drawer's name (exact area coverage through <see cref="OutlineRasterizers"/>).</summary>
     public const string Coverage = "coverage";
-
-    /// <summary>How far two drawings' pixels may differ and still agree, under <see cref="SlotPolicy.Shadow"/>: two levels of 255.</summary>
-    public const float ShadowTolerance = 2f / 255f;
-
-    private static readonly KindTable<IDocumentPageDrawer> Table = new(nameof(DocumentPageDrawers), "Document page drawer",
-        "add it with DocumentPageDrawers.Register, or reference a package that registers one (DocumentDrawOptions.Drawer names it)",
-        (slot, app, library) => new GuardedDrawer(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static DocumentPageDrawers() => LibraryDefaults.Ensure(typeof(DocumentPageDrawers));
-
-    /// <summary>Registers <paramref name="drawer"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IDocumentPageDrawer drawer) => Table.Register(drawer, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's drawer <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The drawer registered as <paramref name="name"/>, or null.</summary>
-    public static IDocumentPageDrawer? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The drawer registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones and what to do.</exception>
-    public static IDocumentPageDrawer Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's drawer <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IDocumentPageDrawer? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the drawer <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's drawer <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> draws with the library's), or whether it only runs beside the library's
-    /// (<see cref="SlotPolicy.Shadow"/>: the library's pixels are used, the two compared within <see cref="ShadowTolerance"/>).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered drawer as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
 
     /// <summary>The image size a page is drawn at: its width and height times the pixels per point, rounded, at least one pixel each.</summary>
     public static (int Width, int Height) PixelSize(DocumentPage page, DocumentDrawOptions options)
@@ -159,72 +115,5 @@ public static class DocumentPageDrawers
     {
         ArgumentNullException.ThrowIfNull(options);
         return (options.Parts & DocumentParts.Text) != 0 ? options.Parts | DocumentParts.Glyphs : options.Parts;
-    }
-
-    /// <summary><paramref name="page"/> drawn by the drawer <paramref name="options"/> names.</summary>
-    /// <exception cref="NotRegisteredException">That drawer is not registered.</exception>
-    public static DocumentDrawing Draw(DocumentPage page, DocumentDrawOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(page);
-        options ??= new DocumentDrawOptions();
-        return Get(options.Drawer).Draw(page, options);
-    }
-
-    /// <summary>
-    /// Page <paramref name="index"/> of <paramref name="document"/> read with the parts drawing needs and drawn: what
-    /// <see cref="IDocument.DrawPage"/> does for a format whose pages can be drawn.
-    /// </summary>
-    /// <exception cref="NotRegisteredException">The drawer the options name is not registered.</exception>
-    public static DocumentDrawing DrawPage(IDocument document, int index, DocumentDrawOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(document);
-        options ??= new DocumentDrawOptions();
-        var drawer = Get(options.Drawer);
-        return drawer.Draw(document.ReadPage(index, PartsFor(options)), options);
-    }
-
-    /// <summary>
-    /// Pages <paramref name="indices"/> of <paramref name="document"/> read with the parts drawing needs and drawn, in the
-    /// order given: several at once over the cores (<see cref="ComputeResources.ParallelOptions"/>) when
-    /// <paramref name="parallel"/>, else one after another (each page's own drawing still spread over the cores).
-    /// </summary>
-    /// <exception cref="NotRegisteredException">The drawer the options name is not registered.</exception>
-    public static IReadOnlyList<DocumentDrawing> DrawPages(IDocument document, IReadOnlyList<int> indices, DocumentDrawOptions? options = null, bool parallel = true)
-    {
-        ArgumentNullException.ThrowIfNull(document);
-        ArgumentNullException.ThrowIfNull(indices);
-        options ??= new DocumentDrawOptions();
-        var drawer = Get(options.Drawer);
-        var parts = PartsFor(options);
-        var drawings = new DocumentDrawing[indices.Count];
-        if (!parallel || indices.Count < 2)
-        {
-            for (int i = 0; i < drawings.Length; i++)
-            {
-                drawings[i] = drawer.Draw(document.ReadPage(indices[i], parts), options);
-            }
-
-            return drawings;
-        }
-
-        Parallel.For(0, drawings.Length, ComputeResources.ParallelOptions, i => drawings[i] = drawer.Draw(document.ReadPage(indices[i], parts), options));
-        return drawings;
-    }
-
-    // The library's drawing against the app's: the same size, every pixel within the tolerance, the same issue kinds.
-    internal static string? CompareDrawings(DocumentDrawing expected, DocumentDrawing actual) =>
-        Comparisons.Exact((expected.Image.Channels, expected.Image.Height, expected.Image.Width), (actual.Image.Channels, actual.Image.Height, actual.Image.Width))
-        ?? Comparisons.Difference(expected.Image.Pixels, actual.Image.Pixels, ShadowTolerance)
-        ?? Comparisons.Exact(string.Join(",", expected.Issues.Select(i => i.Kind)), string.Join(",", actual.Issues.Select(i => i.Kind)));
-
-    // An app's drawer over the library's: each call falls back on its own, or is compared with the library's pixels.
-    private sealed class GuardedDrawer(Slot slot, IDocumentPageDrawer app, IDocumentPageDrawer library) : IDocumentPageDrawer
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public DocumentDrawing Draw(DocumentPage page, DocumentDrawOptions options) =>
-            slot.Call(() => app.Draw(page, options), () => library.Draw(page, options), (a, b) => CompareDrawings(a, b));
     }
 }

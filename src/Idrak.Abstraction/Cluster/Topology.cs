@@ -108,12 +108,7 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
     private readonly int[] _rankNode;
     private readonly int[] _rankLocal;
     private readonly int[][] _nodeRanks;
-    private readonly Dictionary<(int, int), ILinkProfile> _overrides = [];
     private readonly Dictionary<(int Node, int Peer), string> _cableAddresses = [];
-    private readonly Dictionary<(int, int), ILinkProfile> _shared = [];
-    private readonly ILinkProfile? _intra;
-    private readonly ILinkProfile? _inter;
-    private readonly ILinkProfile? _same;
     private readonly Dictionary<string, int> _byName = new(StringComparer.OrdinalIgnoreCase);
 
     private ClusterTopology(IReadOnlyList<ClusterNodeSpec> nodes, string? intraNode, string? interNode, IReadOnlyList<ClusterLinkOverride> overrides,
@@ -131,7 +126,7 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
         Simulation = simulation;
 
         int world = 0;
-        bool repeatsDevice = false, mixesDevices = false;
+        bool mixesDevices = false;
         for (int n = 0; n < nodes.Count; n++)
         {
             var node = nodes[n];
@@ -165,7 +160,6 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
 
                 if (!seen.Add(device.Device))
                 {
-                    repeatsDevice = true;
                 }
             }
 
@@ -188,33 +182,6 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
             }
         }
 
-        if (mixesDevices)
-        {
-            _intra = intraNode is null
-                ? throw new InvalidDataException("A node has more than one device, so the topology needs \"links\": { \"intra-node\": … } (nvlink, pcie, shared-memory).")
-                : LinkProfiles.Resolve(intraNode);
-        }
-        else if (intraNode is not null)
-        {
-            _intra = LinkProfiles.Resolve(intraNode);
-        }
-
-        if (nodes.Count > 1)
-        {
-            _inter = interNode is null
-                ? throw new InvalidDataException("The topology has more than one node, so it needs \"links\": { \"inter-node\": … } (ethernet-1g, direct-link, infiniband, …).")
-                : LinkProfiles.Resolve(interNode);
-        }
-        else if (interNode is not null)
-        {
-            _inter = LinkProfiles.Resolve(interNode);
-        }
-
-        if (repeatsDevice)
-        {
-            _same = LinkProfiles.Resolve(SameDevice);
-        }
-
         foreach (var o in overrides)
         {
             if (!_byName.TryGetValue(o.A, out int a) || !_byName.TryGetValue(o.B, out int b))
@@ -225,11 +192,6 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
             if (a == b)
             {
                 throw new InvalidDataException($"The link override names node '{o.A}' twice; an override joins two different nodes.");
-            }
-
-            if (!_overrides.TryAdd((Math.Min(a, b), Math.Max(a, b)), LinkProfiles.Resolve(o.Link)))
-            {
-                throw new InvalidDataException($"Two link overrides join '{o.A}' and '{o.B}'.");
             }
 
             foreach (var (node, peer, address) in new[] { (a, b, o.AddressA), (b, a, o.AddressB) })
@@ -290,18 +252,7 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
             throw new ArgumentException($"Rank {rankA} has no link to itself.");
         }
 
-        int a = _rankNode[rankA], b = _rankNode[rankB];
-        if (a == b)
-        {
-            var devices = Nodes[a].Devices;
-            return string.Equals(devices[_rankLocal[rankA]].Device, devices[_rankLocal[rankB]].Device, StringComparison.OrdinalIgnoreCase)
-                ? _same!
-                : _intra!;
-        }
-
-        var key = (Math.Min(a, b), Math.Max(a, b));
-        var link = _overrides.TryGetValue(key, out var own) ? own : _inter!;
-        return link is LinkProfile { AdapterBytesPerSecond: > 0 } shared ? Shared(key, shared) : link;
+        throw new InvalidOperationException($"The topology has no link profile between ranks {rankA} and {rankB}: its links were named profiles.");
     }
 
     /// <inheritdoc />
@@ -311,26 +262,6 @@ public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
         CheckRank(from);
         int node = _rankNode[rank], peer = _rankNode[from];
         return node != peer && _cableAddresses.TryGetValue((node, peer), out var cable) ? cable : Nodes[node].Address;
-    }
-
-    // A link whose machines share one network adapter among their ranks (a calibration found it, plan 23 C8): each pair
-    // gets the adapter's rate over the ranks of the larger of the two nodes, never more than the pair's own link. A static
-    // share (every rank of a machine crossing at once, as the hierarchical collective's columns do), so the virtual clock
-    // stays the same bit for bit whatever order the rank threads charge it in.
-    private ILinkProfile Shared((int A, int B) nodes, LinkProfile link)
-    {
-        lock (_shared)
-        {
-            if (!_shared.TryGetValue(nodes, out var share))
-            {
-                int ranks = Math.Max(_nodeRanks[nodes.A].Length, _nodeRanks[nodes.B].Length);
-                double each = link.AdapterBytesPerSecond / ranks;
-                share = link.BandwidthBytesPerSecond > 0 && link.BandwidthBytesPerSecond <= each ? link : link.With(bandwidthBytesPerSecond: each);
-                _shared[nodes] = share;
-            }
-
-            return share;
-        }
     }
 
     /// <inheritdoc />

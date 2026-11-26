@@ -251,8 +251,8 @@ public sealed class RolloutBatch<TObservation, TAction> : IDisposable
     public AdvantageInput Input => new(Rewards, Values, Lengths, Truncated, FinalValues, Groups);
 
     /// <summary>Writes <see cref="Advantages"/> and <see cref="Returns"/> with <paramref name="estimator"/>.</summary>
-    /// <param name="estimator">The estimator (an <see cref="AdvantageEstimators"/> entry).</param>
-    /// <param name="options">Its options by key (<see cref="IConfigurableKind.Keys"/>); null for its defaults.</param>
+    /// <param name="estimator">The estimator (an <c>AdvantageEstimators</c> entry).</param>
+    /// <param name="options">Its options by key (<c>Keys</c>); null for its defaults.</param>
     public void Estimate(IAdvantageEstimator estimator, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(estimator);

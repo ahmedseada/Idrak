@@ -325,11 +325,6 @@ public sealed record DecoderSpec
             r["rotaryDim"] = rotary;
         }
 
-        if (rope.Scaling is { } s)
-        {
-            r["scaling"] = new JsonObject { ["type"] = s.Type, ["parameters"] = s.Parameters };
-        }
-
         if (rope.Sections is { } sections)
         {
             r["sections"] = new JsonArray([.. sections.Pairs.Select(p => (JsonNode?)p)]);
@@ -340,16 +335,7 @@ public sealed record DecoderSpec
 
     private static RopeSettings RopeFromJson(JsonObject r)
     {
-        RopeScaling? scaling = r["scaling"] is not JsonObject s ? null
-            : s["parameters"] is JsonObject parameters ? new((string)s["type"]!, parameters)
-            : (string)s["type"]! == "llama3"                                  // written before scalings were registered
-                ? new RopeScaling("llama3", new JsonObject
-                {
-                    ["factor"] = (double)s["factor"]!, ["low_freq_factor"] = (double)s["lowFrequencyFactor"]!, ["high_freq_factor"] = (double)s["highFrequencyFactor"]!,
-                    ["original_max_position_embeddings"] = (int)s["originalMaxPositions"]!,
-                })
-                : new((string)s["type"]!, new JsonObject { ["factor"] = (double)s["factor"]! });
-        return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!, scaling)
+        return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!)
         {
             Sections = r["sections"] is JsonArray sections ? new RotarySections([.. sections.Select(p => (int)p!)]) : null,
         };

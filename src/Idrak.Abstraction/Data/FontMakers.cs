@@ -86,7 +86,8 @@ public sealed record MadeFontMetrics(int UnitsPerEm, int Ascender, int Descender
 /// <summary>
 /// A font a font maker made: the face (its outlines, advances, characters and metrics, and the layout tables that shape
 /// its forms, ligatures, marks and alternates), used like any face and written through <see cref="FontWriters"/>; the
-/// font map it made as data and applied (<see cref="FontMaps.Apply(IFontFace, FontMap)"/>); the metrics it measured; each
+/// font map it made as data and applied (<c>Apply</c>); the metrics it measured;
+/// each
 /// glyph made from a labelled glyph; and what it left out, with why (its source's left-out characters among them).
 /// </summary>
 /// <param name="Face">The made face.</param>
@@ -113,20 +114,20 @@ public sealed record MadeFont(IFontFace Face, FontMap Map, MadeFontMetrics Metri
 }
 
 /// <summary>
-/// The stage from labelled glyphs to a font: each glyph's ink traced into its outline (an <see cref="IOutlineTracer"/>),
-/// the face's metrics measured from the ink and the baselines and sizes the glyphs were written at, each glyph's advance
-/// and side bearings from its ink, and the forms, ligatures, marks and alternates the glyphs were labelled with made into
-/// the layout tables that shape them (through a font map, as data). A character's several fills are kept, the first as
-/// its glyph and the others as its alternates (<see cref="MadeGlyph.Fill"/>), or reported left out with why; every glyph
-/// given is made or reported. Which characters and forms there are is data (the labels): nothing here names a script.
-/// Its settings are read once (<see cref="Read"/>); the same glyphs and settings make the same face, from any thread. The
-/// face it makes is written through <see cref="FontWriters"/> and read back through <see cref="FontFormats"/> like any
-/// font. Register one with <see cref="FontMakers.Register"/>.
+/// The stage from labelled glyphs to a font: each glyph's ink traced into its outline (an <see cref="IOutlineTracer"/>), the face's metrics measured from the ink and the baselines and sizes the glyphs were
+/// written at, each glyph's advance and side bearings from its ink, and the forms, ligatures, marks and alternates the
+/// glyphs were labelled with made into the layout tables that shape them (through a font map, as data). A character's
+/// several fills are kept, the first as its glyph and the others as its alternates (<see cref="MadeGlyph.Fill"/>), or
+/// reported left out with why; every glyph given is made or reported. Which characters and forms there are is data (the
+/// labels): nothing here names a script. Its settings are read once (<see cref="Read"/>); the same glyphs and settings
+/// make the same face, from any thread. The face it makes is written through <see cref="FontWriters"/> and read back
+/// through <see cref="FontFormats"/> like any font. Register one with <c>Register</c>.
 /// </summary>
-public interface IFontMaker : IConfigurableKind
+public interface IFontMaker
 {
-    /// <summary>The maker's settings from <paramref name="options"/> (its own keys, <see cref="IConfigurableKind.Keys"/>; defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad value.</exception>
+    /// <summary>The maker's settings from <paramref name="options"/> (its own keys, <c>Keys</c>; defaults for those not given).</summary>
+    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad
+    /// value.</exception>
     FontMakerSettings Read(IReadOnlyDictionary<string, string> options);
 
     /// <summary>The font made from <paramref name="request"/>'s glyphs.</summary>
@@ -135,109 +136,12 @@ public interface IFontMaker : IConfigurableKind
 }
 
 /// <summary>
-/// The font makers, by name (ignoring case). Built in (Idrak.Imaging): "traced" (<see cref="Traced"/>: each glyph traced,
-/// the metrics and advances measured from the ink, the forms, ligatures, marks and alternates made into a font map's
-/// layout tables, the digits and marks the glyphs lack drawn). A package registers its own with <see cref="Register"/>,
-/// and one registered under a library name shadows the library's, which <see cref="Unregister"/> brings back, guarded by
-/// its <see cref="SetPolicy">policy</see>.
+/// The font makers, by name (ignoring case). Built in (Idrak.Imaging): "traced" (<see cref="Traced"/>: each glyph
+/// traced, the metrics and advances measured from the ink, the forms, ligatures, marks and alternates made into a font
+/// map's layout tables, the digits and marks the glyphs lack drawn).
 /// </summary>
 public static class FontMakers
 {
     /// <summary>The library's maker (Idrak.Imaging): glyphs traced, measured and shaped through a font map.</summary>
     public const string Traced = "traced";
-
-    private static readonly KindTable<IFontMaker> Table = new(nameof(FontMakers), "Font maker",
-        "add it with FontMakers.Register, or reference a package that registers it (Idrak.Imaging registers traced)",
-        (slot, app, library) => new GuardedMaker(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static FontMakers() => LibraryDefaults.Ensure(typeof(FontMakers));
-
-    /// <summary>Registers <paramref name="maker"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFontMaker maker) => Table.Register(maker, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's maker <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The maker registered as <paramref name="name"/>, or null.</summary>
-    public static IFontMaker? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The maker registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones and what to do.</exception>
-    public static IFontMaker Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's maker <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IFontMaker? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the maker <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's maker <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> makes the font with the library's; <see cref="SlotPolicy.Shadow"/> lets the
-    /// library's make it and compares the app's (its metrics and each labelled glyph's advance) on a sample of requests).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered maker as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The keys of every registered maker, each once, in registration order.</summary>
-    public static IReadOnlyList<string> AllKeys() => [.. Table.Kinds.SelectMany(m => m.Keys).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    // The app's settings and the library's, read from the same options (the library's null when it refuses them).
-    private sealed class GuardedSettings(FontMakerSettings app, FontMakerSettings? library, IReadOnlyDictionary<string, string> options) : FontMakerSettings(options)
-    {
-        public FontMakerSettings App => app;
-
-        public FontMakerSettings? Library => library;
-    }
-
-    // An app's maker over the library's: a failed font is made by the library's, or both are compared on a sample.
-    private sealed class GuardedMaker(Slot slot, IFontMaker app, IFontMaker library) : IFontMaker
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public FontMakerSettings Read(IReadOnlyDictionary<string, string> options)
-        {
-            var own = app.Read(options);
-            FontMakerSettings? theirs;
-            try
-            {
-                theirs = library.Read(PageOptions.Only(options, library.Keys));
-            }
-            catch (ArgumentException)
-            {
-                theirs = null;
-            }
-
-            return new GuardedSettings(own, theirs, options);
-        }
-
-        public MadeFont Make(FontMakerRequest request)
-        {
-            ArgumentNullException.ThrowIfNull(request);
-            var (own, theirs) = request.Settings is GuardedSettings g ? (g.App, g.Library) : (request.Settings, request.Settings);
-            var mine = request with { Settings = own };
-            if (theirs is null)
-            {
-                return app.Make(mine);
-            }
-
-            var forLibrary = request with { Settings = theirs };
-            return slot.Call(() => app.Make(mine), () => library.Make(forLibrary), (a, b) => Comparisons.Exact(Described(a), Described(b)));
-        }
-
-        // The metrics, then each labelled glyph's text, form, fill and advance (ids may differ between makers).
-        private static string Described(MadeFont made) =>
-            $"{made.Metrics.UnitsPerEm} {made.Face.Metrics} | "
-            + string.Join("; ", made.Glyphs.Select(g => string.Create(CultureInfo.InvariantCulture, $"{g.Text}/{g.Form}/{g.Fill} {made.Face.Advance(g.Glyph)}")));
-    }
 }

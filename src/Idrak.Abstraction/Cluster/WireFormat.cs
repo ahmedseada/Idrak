@@ -42,9 +42,6 @@ public enum WireElement : byte
 
     /// <summary>Float32 values, little-endian.</summary>
     Float32 = 1,
-
-    /// <summary>BFloat16 values, little-endian.</summary>
-    BFloat16 = 2,
 }
 
 /// <summary>A message's header (<see cref="WireFormat"/>).</summary>

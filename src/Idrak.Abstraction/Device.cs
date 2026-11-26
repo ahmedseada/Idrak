@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Collections.Concurrent;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Devices.Cpu;
 
@@ -19,7 +18,7 @@ public enum DeviceType
     /// <summary>A GPU driven through Vulkan compute (Intel, AMD and others), with kernels generated as SPIR-V.</summary>
     Vulkan,
 
-    /// <summary>A device whose backend was registered by name (see <see cref="Device.Get"/>).</summary>
+    /// <summary>Another kind of device.</summary>
     Other,
 
     /// <summary>An AMD GPU driven through the HIP runtime (the graphics driver's on Windows, ROCm's on Linux), with Idrak's own GCN kernels; no SDK.</summary>
@@ -28,94 +27,34 @@ public enum DeviceType
 
 /// <summary>
 /// A place where tensors live and where their math runs.
-/// Use <see cref="Cpu"/>, <see cref="Cuda(int)"/>, <see cref="Get"/> / <see cref="Parse"/> ("vulkan:0"), or
-/// <see cref="Default"/>, which picks the best GPU found and the CPU otherwise.
+/// Use <see cref="Cpu"/>, <see cref="Get"/> / <see cref="Parse"/> ("cpu"), or <see cref="Default"/> (the CPU unless set).
 /// </summary>
 public sealed class Device
 {
-    private static readonly ConcurrentDictionary<(string Kind, int Ordinal), Device> Devices = new();
-
-    private readonly IDeviceProvider? _provider;
-    private string? _text;
-
-    private Device(DeviceType type, int ordinal, IDeviceProvider? provider)
+    private Device(DeviceType type, int ordinal)
     {
         Type = type;
         Ordinal = ordinal;
-        _provider = provider;
     }
 
     /// <summary>The host CPU.</summary>
-    public static Device Cpu { get; } = new(DeviceType.Cpu, 0, null);
+    public static Device Cpu { get; } = new(DeviceType.Cpu, 0);
 
-    // The default a host set, or null; the best device found, kept with the providers it was chosen among.
+    // The default a host set, or null.
     private static Device? s_setDefault;
-    private static BestDevice? s_best;
 
-    /// <summary>
-    /// The device new tensors and layers use when none is given. Defaults to the best GPU found (a CUDA GPU first, then
-    /// a Vulkan one), otherwise the CPU; chosen again when the registered providers change (a host that loads Idrak.Gpu
-    /// from a plug-in's folder after something read the default gets its GPU, not the CPU chosen before the GPU's
-    /// providers were there), else kept: one reference comparison a read. Set it to change the default for the process.
-    /// </summary>
+    /// <summary>The device new tensors and layers use when none is given: the CPU unless set. Set it to change the default for the process.</summary>
     public static Device Default
     {
-        get
-        {
-            if (s_setDefault is { } set)
-            {
-                return set;
-            }
-
-            var providers = DeviceProviders.All;
-            var best = s_best;
-            if (best is null || !ReferenceEquals(best.Providers, providers))
-            {
-                best = new BestDevice(providers, Best(providers));
-                s_best = best;
-            }
-
-            return best.Device;
-        }
+        get => s_setDefault ?? Cpu;
         set => s_setDefault = value ?? throw new ArgumentNullException(nameof(value));
     }
 
-    /// <summary>True when an NVIDIA driver is installed and at least one CUDA GPU was found.</summary>
-    public static bool IsCudaAvailable => CudaDeviceCount > 0;
+    /// <summary>The devices found: the CPU.</summary>
+    public static IReadOnlyList<Device> Available => [Cpu];
 
-    /// <summary>The number of CUDA GPUs the driver reports (0 when there is no driver).</summary>
-    public static int CudaDeviceCount => DeviceProviders.Find("cuda")?.Count ?? 0;
-
-    /// <summary>Returns the CUDA GPU with the given ordinal.</summary>
-    /// <exception cref="InvalidOperationException">CUDA is not available or the ordinal is out of range.</exception>
-    public static Device Cuda(int ordinal = 0) => Get("cuda", ordinal);
-
-    /// <summary>
-    /// The devices found: the CPU, then each GPU every backend lists (devices a backend can drive but does not list,
-    /// such as a software Vulkan driver, are reached by name with <see cref="Get"/>).
-    /// </summary>
-    public static IReadOnlyList<Device> Available
-    {
-        get
-        {
-            var devices = new List<Device> { Cpu };
-            foreach (var provider in DeviceProviders.All)
-            {
-                for (int i = 0; i < provider.Count; i++)
-                {
-                    if (provider.Listed(i))
-                    {
-                        devices.Add(Get(provider.Name, i));
-                    }
-                }
-            }
-
-            return devices;
-        }
-    }
-
-    /// <summary>The device of a kind ("cpu", "cuda", "vulkan", …) with the given ordinal.</summary>
-    /// <exception cref="InvalidOperationException">No backend of that kind, or the ordinal is out of range.</exception>
+    /// <summary>The device of a kind ("cpu") with the given ordinal.</summary>
+    /// <exception cref="InvalidOperationException">No device of that kind, or the ordinal is out of range.</exception>
     public static Device Get(string kind, int ordinal = 0)
     {
         ArgumentNullException.ThrowIfNull(kind);
@@ -124,19 +63,10 @@ public sealed class Device
             return ordinal == 0 ? Cpu : throw new InvalidOperationException("There is one CPU device, cpu:0.");
         }
 
-        var provider = DeviceProviders.Find(kind) ?? throw new InvalidOperationException(
-            $"No device kind '{kind}' (known: cpu, {string.Join(", ", DeviceProviders.All.Select(p => p.Name))}).");
-        if ((uint)ordinal >= (uint)provider.Count)
-        {
-            throw new InvalidOperationException(provider.Count == 0
-                ? $"{provider.Display} is not available: {provider.UnavailableReason}"
-                : $"{provider.Display} device {ordinal} does not exist; {provider.Count} device(s) found.");
-        }
-
-        return Devices.GetOrAdd((provider.Name, ordinal), static (key, p) => new Device(p.TypeOf(key.Ordinal), key.Ordinal, p), provider);
+        throw new InvalidOperationException($"No device kind '{kind}' (known: cpu).");
     }
 
-    /// <summary>The device a name such as "cpu", "cuda", "cuda:1" or "vulkan:0" stands for (no ordinal: 0).</summary>
+    /// <summary>The device a name such as "cpu" or "cpu:0" stands for (no ordinal: 0).</summary>
     public static Device Parse(string name)
     {
         ArgumentNullException.ThrowIfNull(name);
@@ -151,8 +81,8 @@ public sealed class Device
     /// <summary>The device's index among those of its kind; always 0 for the CPU.</summary>
     public int Ordinal { get; }
 
-    /// <summary>The kind of backend driving the device: "cpu", "cuda", "vulkan", ….</summary>
-    public string Kind => _provider?.Name ?? "cpu";
+    /// <summary>The kind of backend driving the device: "cpu".</summary>
+    public string Kind => "cpu";
 
     /// <summary>A human-readable name, such as the GPU model.</summary>
     public string Name => Backend.Name;
@@ -163,24 +93,14 @@ public sealed class Device
     /// </summary>
     public bool IsGpu => Type != DeviceType.Cpu;
 
-    /// <summary>The CPU and every GPU whose backend has been started (by a tensor or model placed on it).</summary>
+    /// <summary>The devices whose backend has been started: the CPU.</summary>
     internal static IEnumerable<Device> InUse()
     {
         yield return Cpu;
-        foreach (var provider in DeviceProviders.All)
-        {
-            for (int i = 0; i < provider.Count; i++)
-            {
-                if (provider.IsStarted(i))
-                {
-                    yield return Get(provider.Name, i);
-                }
-            }
-        }
     }
 
     /// <summary>The device's backend (the device contract: memory, copies and kernels), started on first use.</summary>
-    public Backend Backend => field ??= _provider is null ? CpuBackend.Instance : _provider.Create(Ordinal);
+    public Backend Backend => CpuBackend.Instance;
 
     /// <summary>
     /// A new backend of this device, apart from <see cref="Backend"/>: its own memory pool, streams and memory cap, sharing
@@ -191,42 +111,16 @@ public sealed class Device
     /// to the device; its tensors cannot be used after that. <see cref="Backend"/>, the device's own, lives for the process
     /// and is never disposed.
     /// </remarks>
-    /// <exception cref="NotSupportedException">The device's kind cannot make a separate backend.</exception>
     public Backend CreateSeparateBackend(SeparateBackendOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return _provider is null
-            ? CpuBackend.CreateSeparate(options)
-            : _provider is ISeparableDeviceProvider separable
-                ? separable.CreateSeparate(Ordinal, options)
-                : throw new NotSupportedException($"{_provider.Display} devices cannot be carved into separate backends yet.");
+        return CpuBackend.CreateSeparate(options);
     }
 
     /// <summary>Waits until all queued work on this device has finished.</summary>
     public void Synchronize() => Backend.Synchronize();
 
     /// <inheritdoc />
-    public override string ToString() =>
-        _text ??= _provider is null ? "cpu" : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_provider.Name}:{Ordinal}");   // made once: telemetry events name it each time
+    public override string ToString() => "cpu";
 
-    // The listed device ranked highest by its backend (CUDA before Vulkan), else the CPU.
-    private static Device Best(IReadOnlyList<IDeviceProvider> providers)
-    {
-        Device best = Cpu;
-        int bestRank = 0;
-        foreach (var provider in providers)
-        {
-            for (int i = 0; i < provider.Count; i++)
-            {
-                if (provider.Listed(i) && provider.DefaultRank(i) is int rank && rank > bestRank)
-                {
-                    (best, bestRank) = (Get(provider.Name, i), rank);
-                }
-            }
-        }
-
-        return best;
-    }
-
-    private sealed record BestDevice(IReadOnlyList<IDeviceProvider> Providers, Device Device);
 }

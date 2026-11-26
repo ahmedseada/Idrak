@@ -298,7 +298,7 @@ public sealed class ProfileReport
     public void Write(TextWriter output, string? format = null)
     {
         ArgumentNullException.ThrowIfNull(output);
-        ProfileWriters.Get(format ?? Options.Format).Write(this, output);
+        ProfileWriters.Named(format ?? Options.Format).Write(this, output);
     }
 
     /// <summary>Writes the report with <see cref="ProfileOptions.Format"/> to <see cref="ProfileOptions.Output"/> (appended), or to the console.</summary>
@@ -435,7 +435,7 @@ public static class Profiler
         ArgumentNullException.ThrowIfNull(workload);
         options ??= new ProfileOptions();
         ArgumentOutOfRangeException.ThrowIfLessThan(options.WarmRuns, 1, nameof(options));
-        var named = options.Probes is { } names ? names.Select(ProfileProbes.Get).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Get)];
+        var named = options.Probes is { } names ? names.Select(ProfileProbes.Named).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Named)];
         var probes = named.Where(p => p.Supports(device)).ToList();
         var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
         var runs = new List<ProfileRun>();
@@ -516,11 +516,11 @@ public static class Profiler
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(device);
         options ??= new ProfileOptions();
-        var named = options.Probes is { } names ? names.Select(ProfileProbes.Get).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Get).Where(p => p.Watched)];
+        var named = options.Probes is { } names ? names.Select(ProfileProbes.Named).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Named).Where(p => p.Watched)];
         var probes = named.Where(p => p.Supports(device)).ToList();
         var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
         var notes = new List<string>();
-        if (options.Probes is null && ProfileProbes.Names.Where(n => !ProfileProbes.Get(n).Watched).ToList() is { Count: > 0 } left)
+        if (options.Probes is null && ProfileProbes.Names.Where(n => !ProfileProbes.Named(n).Watched).ToList() is { Count: > 0 } left)
         {
             notes.Add($"not measured in a watched run (they would change it): {string.Join(", ", left)}; name them in IDRAK_PROFILE_PROBES to add them");
         }
@@ -689,93 +689,42 @@ public sealed class ProfileSession : IDisposable
 /// telemetry's operation and layer events ("operation time", ms; "operation calls"; "operation shapes"; "layer calls"),
 /// with the tables "operation timings" and "layer timings", slowest first. Nothing is subscribed outside its run.</item>
 /// </list>
-/// Register another with <see cref="Register"/>; one under a library name shadows the library's, which
-/// <see cref="Unregister"/> brings back. The registry has no guard: a probe holds what it measures through a run, so it
-/// cannot be swapped half-way.
+/// The profiler holds the probes directly, in a fixed list, and picks them by their own names (<see cref="Named"/>).
 /// </summary>
 public static class ProfileProbes
 {
-    private static readonly SlotTable<string, IProfileProbe> Table = BuiltIn();
+    // The probes, each under its own name: a fixed list, built once. The bandwidth first: its one measurement (before the
+    // first run) is done before the other probes start theirs.
+    private static readonly IProfileProbe[] Probes =
+    [
+        new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
+        new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
+    ];
 
-    static ProfileProbes() => LibraryDefaults.Ensure(typeof(ProfileProbes));   // the packages' probes ("network", "cluster")
+    /// <summary>The probes' names, in order.</summary>
+    public static IReadOnlyCollection<string> Names { get; } = [.. Probes.Select(p => p.Name)];
 
-    private static SlotTable<string, IProfileProbe> BuiltIn()
+    /// <summary>The probe named <paramref name="name"/> (any case).</summary>
+    /// <exception cref="NotSupportedException">No probe has that name: the message names the probes.</exception>
+    public static IProfileProbe Named(string name)
     {
-        var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
-            unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
-        // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
-        foreach (var probe in new IProfileProbe[]
-                 {
-                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
-                     new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
-                 })
+        ArgumentNullException.ThrowIfNull(name);
+        foreach (var probe in Probes)
         {
-            table.RegisterDefault(probe.Name, probe);
-        }
-
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="probe"/> under its <see cref="IProfileProbe.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IProfileProbe probe)
-    {
-        ArgumentNullException.ThrowIfNull(probe);
-        ArgumentException.ThrowIfNullOrWhiteSpace(probe.Name);
-        Table.Register(probe.Name, probe, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's probe <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The probe registered as <paramref name="name"/>, or null.</summary>
-    public static IProfileProbe? Find(string name) => Table.Find(name);
-
-    /// <summary>The probe registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IProfileProbe Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(ProfileProbes), name, Table.Keys,
-            $"Profile probe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with ProfileProbes.Register.");
-
-    /// <summary>The library's probe <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IProfileProbe? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the probe <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered probe as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
-
-    private sealed class BandwidthProbe : IProfileProbe
-    {
-        public string Name => "bandwidth";
-
-        public string Summary => "the device's memory bandwidth as copies through it measure it, once per device before its first run: the ceiling of a rate of bytes read";
-
-        public bool Intrusive => false;
-
-        public bool Watched => false;                                           // its copies would run inside a watched command
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            double rate = Bandwidth(run.Device.Backend);
-            return () =>
+            if (probe.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
             {
-                if (rate > 0)
-                {
-                    run.Record("device bandwidth", rate, "GB/s");
-                }
-            };
+                return probe;
+            }
         }
+
+        throw new NotSupportedException($"No profile probe '{name}' (probes: {string.Join(", ", Names)}).");
     }
+
+    /// <summary>Each probe as "name: summary", one per line.</summary>
+    public static string Describe() => string.Join("\n", Probes.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
 
     // The bandwidth measured on each device, kept with its backend.
-    private static readonly ConditionalWeakTable<Backend, StrongBox<double>> Bandwidths = [];
+    internal static readonly ConditionalWeakTable<Backend, StrongBox<double>> Bandwidths = [];
 
     /// <summary>
     /// GB/s that <see cref="Backend.Copy"/> moves on <paramref name="backend"/> (bytes read and written), measured once per
@@ -797,7 +746,7 @@ public static class ProfileProbes
         }
     }
 
-    private static double MeasureBandwidth(Backend backend)
+    internal static double MeasureBandwidth(Backend backend)
     {
         long free = backend.AvailableMemory() ?? GC.GetGCMemoryInfo().TotalAvailableMemoryBytes;
         long limit = Math.Min(free / 8, (long)int.MaxValue * sizeof(float));
@@ -839,596 +788,621 @@ public static class ProfileProbes
         return rate;
     }
 
-    // The kernel choices measured during a run (TuningCompleted, at TelemetryLevel.Devices): count, candidates and time by
-    // device and operation. Not intrusive: the event is published once per shape class, when the device has measured.
-    private sealed class TuningProbe : IProfileProbe
-    {
-        public string Name => "tuning";
-
-        public string Summary => "the kernel choices the devices measured in the run (shape classes met for the first time): count and time by operation and device";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var hook = new TuningSums();
-            var subscription = Telemetry.Subscribe(hook);
-            return () =>
-            {
-                subscription.Dispose();
-                lock (hook)
-                {
-                    var rows = hook.Sums.OrderByDescending(t => t.Value.Ms).ThenBy(t => t.Key.Operation, StringComparer.Ordinal).ToList();
-                    run.Record("tunings", rows.Sum(t => t.Value.Count));
-                    run.Record("tuning time", hook.OuterMs, "ms");
-                    run.Record("tuned operations", rows.Count);
-                    if (rows.Count > 0)
-                    {
-                        run.Add(new ProfileTable("tuning", ["device", "operation", "tunings", "nested", "candidates", "ms", "share"],
-                            [.. rows.Select(t => (IReadOnlyList<string>)[t.Key.Device, t.Key.Operation, Text(t.Value.Count), Text(t.Value.Nested), Text(t.Value.Candidates),
-                                Text(t.Value.Ms), Text(hook.OuterMs > 0 ? 100 * t.Value.Ms / hook.OuterMs : 0) + "%"])]));
-                    }
-                }
-            };
-        }
-
-        private sealed class TuningSums : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Devices;
-
-            public Dictionary<(string Device, string Operation), (long Count, long Nested, long Candidates, double Ms)> Sums { get; } = [];
-
-            // The time of the measurements not inside another's (a nested one's time lies within its outer one's).
-            public double OuterMs { get; private set; }
-
-            public void OnTuning(in TuningCompleted e)
-            {
-                lock (this)
-                {
-                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Sums, (e.Device, e.Operation), out _);
-                    double ms = e.Duration.TotalMilliseconds;
-                    sum = (sum.Count + 1, sum.Nested + (e.Nested ? 1 : 0), sum.Candidates + e.Candidates, sum.Ms + ms);
-                    OuterMs += e.Nested ? 0 : ms;
-                }
-            }
-        }
-    }
-
-    // The host fallbacks of a run: the run's device's counts by operation (Kernels.HostCallsByOperation, counted while the
-    // probe listens at TelemetryLevel.Devices) and the first fallback of an operation on any other device (HostFallback).
-    // Not intrusive: a fallback is counted where it happens, nothing is traced.
-    private sealed class FallbacksProbe : IProfileProbe
-    {
-        public string Name => "fallbacks";
-
-        public string Summary => "the operations run through the host fallback (operands copied to the CPU and back): calls by operation";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var backend = run.Device.Backend;
-            var hook = new FirstFallbacks();
-            var subscription = Telemetry.Subscribe(hook);                      // counting by operation starts with it
-            long calls = Operations.Kernels.HostCalls(backend);
-            var before = Operations.Kernels.HostCallsByOperation(backend);
-            return () =>
-            {
-                long total = Operations.Kernels.HostCalls(backend) - calls;
-                var after = Operations.Kernels.HostCallsByOperation(backend);
-                subscription.Dispose();
-                // Why: the device's kernels unavailable as a whole (IKernelAvailability), else no kernel of its own for it.
-                string own = total > 0 && (backend as IKernelAvailability)?.KernelsUnavailable() is { } off ? $"kernels unavailable: {off}" : "no kernel of its own";
-                var rows = after.Select(c => (Device: backend.Kind, Operation: c.Key, Calls: c.Value - before.GetValueOrDefault(c.Key)))
-                    .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ThenBy(c => c.Operation, StringComparer.Ordinal)
-                    .Select(c => (c.Device, c.Operation, Calls: Text(c.Calls), Why: own)).ToList();
-                lock (hook)
-                {
-                    // Another device's first fallback of an operation: its count is that device's, not watched here.
-                    rows.AddRange(hook.Seen.Where(f => f.Device != backend.Kind)
-                        .Select(f => (f.Device, f.Operation, Calls: "first", Why: f.Why is { } why ? $"kernels unavailable: {why}" : "no kernel of its own")));
-                }
-
-                run.Record("fallback calls", total, "calls");
-                run.Record("fallback operations", rows.Count);
-                if (rows.Count > 0)
-                {
-                    run.Add(new ProfileTable("host fallbacks", ["device", "operation", "calls", "why"], [.. rows.Select(r => (IReadOnlyList<string>)[r.Device, r.Operation, r.Calls, r.Why])]));
-                }
-            };
-        }
-
-        private sealed class FirstFallbacks : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Devices;
-
-            public List<(string Device, string Operation, string? Why)> Seen { get; } = [];
-
-            public void OnHostFallback(in HostFallback e)
-            {
-                lock (this)
-                {
-                    Seen.Add((e.Device, e.Operation, e.KernelsUnavailable));
-                }
-            }
-        }
-    }
-
-    // The graph recordings that failed in a run (GraphRecordingFailed, at TelemetryLevel.Devices): count by device, work and
-    // reason. Not intrusive: the event is published where a recording fails, nothing is traced.
-    private sealed class GraphsProbe : IProfileProbe
-    {
-        public string Name => "graphs";
-
-        public string Summary => "the graph recordings that failed (the work ran as ordinary steps instead): count by device, work and reason";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var hook = new FailedRecordings();
-            var subscription = Telemetry.Subscribe(hook);
-            return () =>
-            {
-                subscription.Dispose();
-                lock (hook)
-                {
-                    var rows = hook.Counts.OrderByDescending(f => f.Value).ThenBy(f => f.Key.Reason, StringComparer.Ordinal).ToList();
-                    run.Record("graph recordings failed", rows.Sum(f => f.Value));
-                    if (rows.Count > 0)
-                    {
-                        run.Add(new ProfileTable("graph recordings failed", ["device", "work", "times", "reason"],
-                            [.. rows.Select(f => (IReadOnlyList<string>)[f.Key.Device, f.Key.Work, Text(f.Value), f.Key.Reason])]));
-                    }
-                }
-            };
-        }
-
-        private sealed class FailedRecordings : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Devices;
-
-            public Dictionary<(string Device, string Work, string Reason), long> Counts { get; } = [];
-
-            public void OnGraphRecordingFailed(in GraphRecordingFailed e)
-            {
-                lock (this)
-                {
-                    Counts[(e.Device, e.Work, e.Reason)] = Counts.GetValueOrDefault((e.Device, e.Work, e.Reason)) + 1;
-                }
-            }
-        }
-    }
-
-    // The stages of reading an answer (InferenceStage) at TelemetryLevel.Stages, which waits for nothing (unlike the
-    // Inference level, whose Predict events wait for the device): each stage's events, counts, rows, pieces, time and bytes.
-    private sealed class InferenceProbe : IProfileProbe
-    {
-        // Each stage's name in values and tables ("decode chunk"), made once.
-        private static readonly string[] StageNames = [.. Enum.GetValues<InferenceStageKind>().Select(k =>
-            string.Concat(k.ToString().Select((c, i) => char.IsUpper(c) && i > 0 ? " " + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString())))];
-
-        public string Name => "inference";
-
-        public string Summary => "the stages of reading an answer without waiting for the device: the prompt's passes and their pieces, decoding chunks, "
-                                 + "encoders, caches and graphs: events, tokens, time and rates";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        private static string StageName(InferenceStageKind stage) => (int)stage < StageNames.Length ? StageNames[(int)stage] : stage.ToString();
-
-        public Action Begin(ProfileRun run)
-        {
-            var hook = new StageSums();
-            var subscription = Telemetry.Subscribe(hook);
-            return () =>
-            {
-                subscription.Dispose();
-                lock (hook)
-                {
-                    double total = hook.Sums.Values.Sum(v => v.Ms);
-                    foreach (var (stage, sum) in hook.Sums)
-                    {
-                        string name = StageName(stage);
-                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} time"), sum.Ms, "ms");
-                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} events"), sum.Events);
-                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} count"), sum.Count);
-                    }
-
-                    if (hook.Sums.TryGetValue(InferenceStageKind.Prefill, out var prefill))
-                    {
-                        run.Record("prefill pieces", prefill.Pieces);
-                        run.Record("prompt rate", prefill.Ms > 0 ? prefill.Count / (prefill.Ms / 1000) : 0, "tok/s");
-                    }
-
-                    if (hook.Sums.TryGetValue(InferenceStageKind.DecodeChunk, out var decode))
-                    {
-                        run.Record("decode rate", decode.Ms > 0 ? decode.Count / (decode.Ms / 1000) : 0, "tok/s");
-                    }
-
-                    if (hook.Sums.Count > 0)
-                    {
-                        run.Add(new ProfileTable("inference stages", ["stage", "events", "count", "rows", "pieces", "piece size", "ms", "MB", "share"],
-                            [.. hook.Sums.OrderByDescending(s => s.Value.Ms).Select(s => (IReadOnlyList<string>)[StageName(s.Key), Text(s.Value.Events), Text(s.Value.Count),
-                                Text(s.Value.Rows), Text(s.Value.Pieces), s.Value.PieceSize > 0 ? Text(s.Value.PieceSize) : "", Text(s.Value.Ms),
-                                s.Value.Bytes > 0 ? Text(s.Value.Bytes / 1048576.0) : "", Text(total > 0 ? 100 * s.Value.Ms / total : 0) + "%"])]));
-                    }
-                }
-            };
-        }
-
-        private sealed class StageSums : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Stages;
-
-            // Per stage: events, what they count, the most rows read together, the pieces, the largest piece, ms, bytes.
-            public SortedDictionary<InferenceStageKind, (long Events, long Count, int Rows, long Pieces, int PieceSize, double Ms, long Bytes)> Sums { get; } = [];
-
-            public void OnInferenceStage(in InferenceStage e)
-            {
-                lock (this)
-                {
-                    var s = Sums.GetValueOrDefault(e.Stage);
-                    Sums[e.Stage] = (s.Events + 1, s.Count + e.Count, Math.Max(s.Rows, e.Rows), s.Pieces + e.Pieces, Math.Max(s.PieceSize, e.PieceSize),
-                        s.Ms + e.Duration.TotalMilliseconds, s.Bytes + e.Bytes);
-                }
-            }
-        }
-    }
-
-    // The stages of reading an answer (InferenceStage events) in a run: each stage's time, count and bytes summed, and the
-    // device's peak above the run's start when the encoder ends (its activations and output). Intrusive: listening at the
-    // Inference level makes Module.Predict wait for the device.
-    private sealed class StagesProbe : IProfileProbe
-    {
-        public string Name => "stages";
-
-        public string Summary => "the stages of reading an answer (image decode and transforms, encoder, cache allocations, prefill, decoding chunks, graph "
-                                 + "captures): time, counts and MB each, and the device's peak above the run's start when the encoder ends";
-
-        public bool Intrusive => true;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var backend = run.Device.Backend;
-
-            // Blocks of tensors already unreachable go back first: freed by the finalizer during the run, they would lower
-            // what is in use below the start and the encoder's peak above it with it.
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            backend.ResetPeakMemoryUsage();
-            var hook = new StageSums(backend, backend.GetMemoryUsage().InUse);
-            var subscription = Telemetry.Subscribe(hook);
-            return () =>
-            {
-                subscription.Dispose();
-                lock (hook)
-                {
-                    foreach (var (stage, (ms, count, bytes)) in hook.Sums)
-                    {
-                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} time"), ms, "ms");
-                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} count"), count);
-                        if (bytes > 0)
-                        {
-                            run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} size"), bytes / 1048576.0, "MB");
-                        }
-                    }
-
-                    if (hook.EncoderPeak is { } peak)
-                    {
-                        run.Record("encoder peak above start", peak / 1048576.0, "MB");
-                    }
-                }
-            };
-        }
-
-        private sealed class StageSums(Backend backend, long startInUse) : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Inference;
-
-            public SortedDictionary<InferenceStageKind, (double Ms, long Count, long Bytes)> Sums { get; } = [];
-
-            public long? EncoderPeak { get; private set; }
-
-            public void OnInferenceStage(in InferenceStage e)
-            {
-                lock (this)
-                {
-                    var (ms, count, bytes) = Sums.GetValueOrDefault(e.Stage);
-                    Sums[e.Stage] = (ms + e.Duration.TotalMilliseconds, count + e.Count, bytes + e.Bytes);
-                    if (e.Stage == InferenceStageKind.Encoder)
-                    {
-                        EncoderPeak = Math.Max(EncoderPeak ?? 0, backend.GetMemoryUsage().Peak - startInUse);
-                    }
-                }
-            }
-        }
-    }
-
-    // Time per operation (by name, direction and output shape) and per layer (by type and depth), from the telemetry's
-    // operation and layer events, the device waited for before each measurement so the times are execution times.
-    // Intrusive: that waiting changes the run's time. A key is stored once per new operation and shape (no string per call).
-    private sealed class TimingsProbe : IProfileProbe
-    {
-        public string Name => "timings";
-
-        public string Summary => "the time of every operation by name and output shape, and of every layer by type and depth, the device waited for at each";
-
-        public bool Intrusive => true;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            bool synchronize = Telemetry.SynchronizeForTiming;
-            Telemetry.SynchronizeForTiming = true;
-            var hook = new TimingSums();
-            var subscription = Telemetry.Subscribe(hook);
-            return () =>
-            {
-                subscription.Dispose();
-                Telemetry.SynchronizeForTiming = synchronize;
-                lock (hook)
-                {
-                    var operations = hook.Operations.OrderByDescending(o => o.Value.Ms).ThenBy(o => o.Key.Operation, StringComparer.Ordinal).ToList();
-                    var layers = hook.Layers.OrderByDescending(l => l.Value.Ms).ThenBy(l => l.Key.Type, StringComparer.Ordinal).ThenBy(l => l.Key.Depth).ToList();
-                    double total = operations.Sum(o => o.Value.Ms);
-                    run.Record("operation time", total, "ms");
-                    run.Record("operation calls", operations.Sum(o => o.Value.Calls), "calls");
-                    run.Record("operation shapes", operations.Count);
-                    run.Record("layer calls", layers.Sum(l => l.Value.Calls), "calls");
-                    run.Add(new ProfileTable("operation timings", ["operation", "shape", "calls", "ms", "share"],
-                        [.. operations.Select(o => (IReadOnlyList<string>)[o.Key.Backward ? o.Key.Operation + " (backward)" : o.Key.Operation, Tensor.FormatShape(o.Key.Shape),
-                            Text(o.Value.Calls), Text(o.Value.Ms), Text(total > 0 ? 100 * o.Value.Ms / total : 0) + "%"])]));
-                    run.Add(new ProfileTable("layer timings", ["layer", "depth", "calls", "ms"],
-                        [.. layers.Select(l => (IReadOnlyList<string>)[l.Key.Type, Text(l.Key.Depth), Text(l.Value.Calls), Text(l.Value.Ms)])]));
-                }
-            };
-        }
-
-        // An operation by name, direction and output shape (the shape compared by its values).
-        private readonly record struct OperationKey(string Operation, bool Backward, int[] Shape);
-
-        private sealed class OperationKeys : IEqualityComparer<OperationKey>
-        {
-            public bool Equals(OperationKey x, OperationKey y) =>
-                x.Backward == y.Backward && string.Equals(x.Operation, y.Operation, StringComparison.Ordinal) && x.Shape.AsSpan().SequenceEqual(y.Shape);
-
-            public int GetHashCode(OperationKey key)
-            {
-                var hash = new HashCode();
-                hash.Add(key.Operation, StringComparer.Ordinal);
-                hash.Add(key.Backward);
-                foreach (int d in key.Shape)
-                {
-                    hash.Add(d);
-                }
-
-                return hash.ToHashCode();
-            }
-        }
-
-        private sealed class TimingSums : ITelemetryHook
-        {
-            public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Layers;
-
-            public Dictionary<OperationKey, (long Calls, double Ms)> Operations { get; } = new(new OperationKeys());
-
-            public Dictionary<(string Type, int Depth), (long Calls, double Ms)> Layers { get; } = [];
-
-            public void OnOperation(in OperationCompleted e)
-            {
-                lock (this)
-                {
-                    var key = new OperationKey(e.Operation, e.Backward, e.Shape);
-                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrNullRef(Operations, key);
-                    if (Unsafe.IsNullRef(ref sum))
-                    {
-                        // The first call of a shape keeps its own copy: the key must not change with a reused array.
-                        Operations.Add(key with { Shape = [.. e.Shape] }, (1, e.Duration.TotalMilliseconds));
-                        return;
-                    }
-
-                    sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
-                }
-            }
-
-            public void OnLayerForward(in LayerForward e)
-            {
-                lock (this)
-                {
-                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Layers, (e.LayerType, e.Depth), out _);
-                    sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
-                }
-            }
-        }
-    }
-
-    private sealed class CpuProbe : IProfileProbe
-    {
-        public string Name => "cpu";
-
-        public string Summary => "the process's processor time and the cores it kept busy";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var process = Process.GetCurrentProcess();
-            var before = process.TotalProcessorTime;
-            long start = Stopwatch.GetTimestamp();
-            return () =>
-            {
-                double wall = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                process.Refresh();
-                double cpu = (process.TotalProcessorTime - before).TotalMilliseconds;
-                run.Record("cpu", cpu, "ms");
-                run.Record("cores busy", wall > 0 ? cpu / wall : 0, "cores");
-                process.Dispose();
-            };
-        }
-    }
-
-    private sealed class HeapProbe : IProfileProbe
-    {
-        public string Name => "heap";
-
-        public string Summary => "the managed heap: bytes allocated, collections of each generation, time paused";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            int gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2);
-            var paused = GC.GetTotalPauseDuration();
-            long allocated = GC.GetTotalAllocatedBytes(precise: true);
-            return () =>
-            {
-                run.Record("allocated", (GC.GetTotalAllocatedBytes(precise: true) - allocated) / 1048576.0, "MB");
-                run.Record("gc0", GC.CollectionCount(0) - gen0);
-                run.Record("gc1", GC.CollectionCount(1) - gen1);
-                run.Record("gc2", GC.CollectionCount(2) - gen2);
-                run.Record("gc pause", (GC.GetTotalPauseDuration() - paused).TotalMilliseconds, "ms");
-            };
-        }
-    }
-
-    private sealed class JitProbe : IProfileProbe
-    {
-        public string Name => "jit";
-
-        public string Summary => "the methods the .NET JIT compiled on every thread: time compiling, methods, IL";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var time = System.Runtime.JitInfo.GetCompilationTime(currentThread: false);
-            long methods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false);
-            long il = System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false);
-            return () =>
-            {
-                run.Record("jit time", (System.Runtime.JitInfo.GetCompilationTime(currentThread: false) - time).TotalMilliseconds, "ms");
-                run.Record("jit methods", System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false) - methods);
-                run.Record("jit IL", (System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false) - il) / 1024.0, "KB");
-            };
-        }
-    }
-
-    private sealed class MemoryProbe : IProfileProbe
-    {
-        public string Name => "memory";
-
-        public string Summary => "the device's memory in use, cached and at its peak, and the process's working set and peak";
-
-        public bool Intrusive => false;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            run.Device.Backend.ResetPeakMemoryUsage();
-            return () =>
-            {
-                var usage = run.Device.Backend.GetMemoryUsage();
-                run.Record("device in use", usage.InUse / 1048576.0, "MB");
-                run.Record("device cached", usage.Cached / 1048576.0, "MB");
-                run.Record("device peak", usage.Peak / 1048576.0, "MB");
-                run.Record("device largest block", usage.Largest / 1048576.0, "MB");
-                if (run.Device.Backend.FreeMemory() is { } free && run.Device.Backend.Hardware.MemoryBytes is { } total)
-                {
-                    // What the library does not hold: the driver's context, its loaded kernels, other programs.
-                    run.Record("device free", free / 1048576.0, "MB");
-                    run.Record("device other", Math.Max(0, total - free - usage.InUse - usage.Cached) / 1048576.0, "MB");
-                }
-
-                using var process = Process.GetCurrentProcess();
-                run.Record("process", process.WorkingSet64 / 1048576.0, "MB");
-                run.Record("process peak", process.PeakWorkingSet64 / 1048576.0, "MB");
-            };
-        }
-    }
-
-    private sealed class OperationsProbe : IProfileProbe
-    {
-        public string Name => "operations";
-
-        public string Summary => "every operation called on the device and every host fallback, by operation";
-
-        public bool Intrusive => true;
-
-        public bool Supports(Device device) => true;
-
-        public Action Begin(ProfileRun run)
-        {
-            var trace = Operations.Kernels.Trace(run.Device.Backend);
-            return () =>
-            {
-                trace.Dispose();
-                var calls = Operations.Ops.All.Concat(Operations.PluginOperations.All).Select(op => (op.Name, Calls: trace.Calls(op)))
-                    .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ToList();
-                var fallbacks = trace.HostCallsByOperation.OrderByDescending(f => f.Value).ToList();
-                run.Record("operations", calls.Sum(c => c.Calls), "calls");
-                run.Record("operation kinds", calls.Count);
-                run.Record("host fallbacks", trace.HostCalls, "calls");
-                run.Add(new ProfileTable("operations", ["operation", "calls"], [.. calls.Select(c => (IReadOnlyList<string>)[c.Name, Text(c.Calls)])]));
-                if (fallbacks.Count > 0)
-                {
-                    run.Add(new ProfileTable("host fallbacks", ["operation", "calls"], [.. fallbacks.Select(f => (IReadOnlyList<string>)[f.Key, Text(f.Value)])]));
-                }
-            };
-        }
-    }
-
-    private sealed class KernelsProbe : IProfileProbe
-    {
-        public string Name => "kernels";
-
-        public string Summary => "each kernel's launches, time and matrix-product rate, recorded graphs run step by step (devices that time their kernels, such as CUDA)";
-
-        public bool Intrusive => true;
-
-        public bool Supports(Device device) => device.Backend is IKernelProfiler;
-
-        public Action Begin(ProfileRun run)
-        {
-            var profiler = (IKernelProfiler)run.Device.Backend;                   // Supports said it times its kernels
-            var direct = ComputeGraph.RunStepsDirectly();                         // a graph's kernels are timed one by one too
-            run.Device.Synchronize();
-            profiler.StartProfile();
-            return () =>
-            {
-                run.Device.Synchronize();
-                direct.Dispose();
-                var kernels = profiler.StopProfile()
-                    .Select(e => (e.Key, e.Value.Calls, Ms: e.Value.Ticks * 1000.0 / Stopwatch.Frequency, e.Value.Flops))
-                    .OrderByDescending(k => k.Ms).ToList();
-                double total = kernels.Sum(k => k.Ms), productMs = kernels.Where(k => k.Flops > 0).Sum(k => k.Ms), flops = kernels.Sum(k => k.Flops);
-                run.Record("kernel time", total, "ms");
-                run.Record("launches", kernels.Sum(k => k.Calls));
-                run.Record("matrix TFLOPS", productMs > 0 ? flops / (productMs * 1e9) : 0, "TFLOPS");
-                run.Add(new ProfileTable("kernels", ["kernel", "calls", "ms", "share", "TFLOPS"],
-                    [.. kernels.Select(k => (IReadOnlyList<string>)[k.Key, Text(k.Calls), Text(k.Ms), Text(total > 0 ? 100 * k.Ms / total : 0) + "%", k.Flops > 0 && k.Ms > 0 ? Text(k.Flops / (k.Ms * 1e9)) : ""])]));
-            };
-        }
-    }
-
     // A number as the tables show it, the same on every machine.
     internal static string Text(double value) => value.ToString(Math.Abs(value) >= 100 ? "0" : "0.###", CultureInfo.InvariantCulture);
+}
+
+internal sealed class BandwidthProbe : IProfileProbe
+{
+    public string Name => "bandwidth";
+
+    public string Summary => "the device's memory bandwidth as copies through it measure it, once per device before its first run: the ceiling of a rate of bytes read";
+
+    public bool Intrusive => false;
+
+    public bool Watched => false;                                           // its copies would run inside a watched command
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        double rate = ProfileProbes.Bandwidth(run.Device.Backend);
+        return () =>
+        {
+            if (rate > 0)
+            {
+                run.Record("device bandwidth", rate, "GB/s");
+            }
+        };
+    }
+}
+
+// The kernel choices measured during a run (TuningCompleted, at TelemetryLevel.Devices): count, candidates and time by
+// device and operation. Not intrusive: the event is published once per shape class, when the device has measured.
+internal sealed class TuningProbe : IProfileProbe
+{
+    public string Name => "tuning";
+
+    public string Summary => "the kernel choices the devices measured in the run (shape classes met for the first time): count and time by operation and device";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var hook = new TuningSums();
+        var subscription = Telemetry.Subscribe(hook);
+        return () =>
+        {
+            subscription.Dispose();
+            lock (hook)
+            {
+                var rows = hook.Sums.OrderByDescending(t => t.Value.Ms).ThenBy(t => t.Key.Operation, StringComparer.Ordinal).ToList();
+                run.Record("tunings", rows.Sum(t => t.Value.Count));
+                run.Record("tuning time", hook.OuterMs, "ms");
+                run.Record("tuned operations", rows.Count);
+                if (rows.Count > 0)
+                {
+                    run.Add(new ProfileTable("tuning", ["device", "operation", "tunings", "nested", "candidates", "ms", "share"],
+                        [.. rows.Select(t => (IReadOnlyList<string>)[t.Key.Device, t.Key.Operation, ProfileProbes.Text(t.Value.Count), ProfileProbes.Text(t.Value.Nested), ProfileProbes.Text(t.Value.Candidates),
+                            ProfileProbes.Text(t.Value.Ms), ProfileProbes.Text(hook.OuterMs > 0 ? 100 * t.Value.Ms / hook.OuterMs : 0) + "%"])]));
+                }
+            }
+        };
+    }
+
+    private sealed class TuningSums : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public Dictionary<(string Device, string Operation), (long Count, long Nested, long Candidates, double Ms)> Sums { get; } = [];
+
+        // The time of the measurements not inside another's (a nested one's time lies within its outer one's).
+        public double OuterMs { get; private set; }
+
+        public void OnTuning(in TuningCompleted e)
+        {
+            lock (this)
+            {
+                ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Sums, (e.Device, e.Operation), out _);
+                double ms = e.Duration.TotalMilliseconds;
+                sum = (sum.Count + 1, sum.Nested + (e.Nested ? 1 : 0), sum.Candidates + e.Candidates, sum.Ms + ms);
+                OuterMs += e.Nested ? 0 : ms;
+            }
+        }
+    }
+}
+
+// The host fallbacks of a run: the run's device's counts by operation (Kernels.HostCallsByOperation, counted while the
+// probe listens at TelemetryLevel.Devices) and the first fallback of an operation on any other device (HostFallback).
+// Not intrusive: a fallback is counted where it happens, nothing is traced.
+internal sealed class FallbacksProbe : IProfileProbe
+{
+    public string Name => "fallbacks";
+
+    public string Summary => "the operations run through the host fallback (operands copied to the CPU and back): calls by operation";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var backend = run.Device.Backend;
+        var hook = new FirstFallbacks();
+        var subscription = Telemetry.Subscribe(hook);                      // counting by operation starts with it
+        long calls = Operations.Kernels.HostCalls(backend);
+        var before = Operations.Kernels.HostCallsByOperation(backend);
+        return () =>
+        {
+            long total = Operations.Kernels.HostCalls(backend) - calls;
+            var after = Operations.Kernels.HostCallsByOperation(backend);
+            subscription.Dispose();
+            // Why: the device's kernels unavailable as a whole (IKernelAvailability), else no kernel of its own for it.
+            string own = total > 0 && (backend as IKernelAvailability)?.KernelsUnavailable() is { } off ? $"kernels unavailable: {off}" : "no kernel of its own";
+            var rows = after.Select(c => (Device: backend.Kind, Operation: c.Key, Calls: c.Value - before.GetValueOrDefault(c.Key)))
+                .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ThenBy(c => c.Operation, StringComparer.Ordinal)
+                .Select(c => (c.Device, c.Operation, Calls: ProfileProbes.Text(c.Calls), Why: own)).ToList();
+            lock (hook)
+            {
+                // Another device's first fallback of an operation: its count is that device's, not watched here.
+                rows.AddRange(hook.Seen.Where(f => f.Device != backend.Kind)
+                    .Select(f => (f.Device, f.Operation, Calls: "first", Why: f.Why is { } why ? $"kernels unavailable: {why}" : "no kernel of its own")));
+            }
+
+            run.Record("fallback calls", total, "calls");
+            run.Record("fallback operations", rows.Count);
+            if (rows.Count > 0)
+            {
+                run.Add(new ProfileTable("host fallbacks", ["device", "operation", "calls", "why"], [.. rows.Select(r => (IReadOnlyList<string>)[r.Device, r.Operation, r.Calls, r.Why])]));
+            }
+        };
+    }
+
+    private sealed class FirstFallbacks : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public List<(string Device, string Operation, string? Why)> Seen { get; } = [];
+
+        public void OnHostFallback(in HostFallback e)
+        {
+            lock (this)
+            {
+                Seen.Add((e.Device, e.Operation, e.KernelsUnavailable));
+            }
+        }
+    }
+}
+
+// The graph recordings that failed in a run (GraphRecordingFailed, at TelemetryLevel.Devices): count by device, work and
+// reason. Not intrusive: the event is published where a recording fails, nothing is traced.
+internal sealed class GraphsProbe : IProfileProbe
+{
+    public string Name => "graphs";
+
+    public string Summary => "the graph recordings that failed (the work ran as ordinary steps instead): count by device, work and reason";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var hook = new FailedRecordings();
+        var subscription = Telemetry.Subscribe(hook);
+        return () =>
+        {
+            subscription.Dispose();
+            lock (hook)
+            {
+                var rows = hook.Counts.OrderByDescending(f => f.Value).ThenBy(f => f.Key.Reason, StringComparer.Ordinal).ToList();
+                run.Record("graph recordings failed", rows.Sum(f => f.Value));
+                if (rows.Count > 0)
+                {
+                    run.Add(new ProfileTable("graph recordings failed", ["device", "work", "times", "reason"],
+                        [.. rows.Select(f => (IReadOnlyList<string>)[f.Key.Device, f.Key.Work, ProfileProbes.Text(f.Value), f.Key.Reason])]));
+                }
+            }
+        };
+    }
+
+    private sealed class FailedRecordings : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public Dictionary<(string Device, string Work, string Reason), long> Counts { get; } = [];
+
+        public void OnGraphRecordingFailed(in GraphRecordingFailed e)
+        {
+            lock (this)
+            {
+                Counts[(e.Device, e.Work, e.Reason)] = Counts.GetValueOrDefault((e.Device, e.Work, e.Reason)) + 1;
+            }
+        }
+    }
+}
+
+// The stages of reading an answer (InferenceStage) at TelemetryLevel.Stages, which waits for nothing (unlike the
+// Inference level, whose Predict events wait for the device): each stage's events, counts, rows, pieces, time and bytes.
+internal sealed class InferenceProbe : IProfileProbe
+{
+    // Each stage's name in values and tables ("decode chunk"), made once.
+    private static readonly string[] StageNames = [.. Enum.GetValues<InferenceStageKind>().Select(k =>
+        string.Concat(k.ToString().Select((c, i) => char.IsUpper(c) && i > 0 ? " " + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString())))];
+
+    public string Name => "inference";
+
+    public string Summary => "the stages of reading an answer without waiting for the device: the prompt's passes and their pieces, decoding chunks, "
+                             + "encoders, caches and graphs: events, tokens, time and rates";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    private static string StageName(InferenceStageKind stage) => (int)stage < StageNames.Length ? StageNames[(int)stage] : stage.ToString();
+
+    public Action Begin(ProfileRun run)
+    {
+        var hook = new StageSums();
+        var subscription = Telemetry.Subscribe(hook);
+        return () =>
+        {
+            subscription.Dispose();
+            lock (hook)
+            {
+                double total = hook.Sums.Values.Sum(v => v.Ms);
+                foreach (var (stage, sum) in hook.Sums)
+                {
+                    string name = StageName(stage);
+                    run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} time"), sum.Ms, "ms");
+                    run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} events"), sum.Events);
+                    run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} count"), sum.Count);
+                }
+
+                if (hook.Sums.TryGetValue(InferenceStageKind.Prefill, out var prefill))
+                {
+                    run.Record("prefill pieces", prefill.Pieces);
+                    run.Record("prompt rate", prefill.Ms > 0 ? prefill.Count / (prefill.Ms / 1000) : 0, "tok/s");
+                }
+
+                if (hook.Sums.TryGetValue(InferenceStageKind.DecodeChunk, out var decode))
+                {
+                    run.Record("decode rate", decode.Ms > 0 ? decode.Count / (decode.Ms / 1000) : 0, "tok/s");
+                }
+
+                if (hook.Sums.Count > 0)
+                {
+                    run.Add(new ProfileTable("inference stages", ["stage", "events", "count", "rows", "pieces", "piece size", "ms", "MB", "share"],
+                        [.. hook.Sums.OrderByDescending(s => s.Value.Ms).Select(s => (IReadOnlyList<string>)[StageName(s.Key), ProfileProbes.Text(s.Value.Events), ProfileProbes.Text(s.Value.Count),
+                            ProfileProbes.Text(s.Value.Rows), ProfileProbes.Text(s.Value.Pieces), s.Value.PieceSize > 0 ? ProfileProbes.Text(s.Value.PieceSize) : "", ProfileProbes.Text(s.Value.Ms),
+                            s.Value.Bytes > 0 ? ProfileProbes.Text(s.Value.Bytes / 1048576.0) : "", ProfileProbes.Text(total > 0 ? 100 * s.Value.Ms / total : 0) + "%"])]));
+                }
+            }
+        };
+    }
+
+    private sealed class StageSums : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Stages;
+
+        // Per stage: events, what they count, the most rows read together, the pieces, the largest piece, ms, bytes.
+        public SortedDictionary<InferenceStageKind, (long Events, long Count, int Rows, long Pieces, int PieceSize, double Ms, long Bytes)> Sums { get; } = [];
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            lock (this)
+            {
+                var s = Sums.GetValueOrDefault(e.Stage);
+                Sums[e.Stage] = (s.Events + 1, s.Count + e.Count, Math.Max(s.Rows, e.Rows), s.Pieces + e.Pieces, Math.Max(s.PieceSize, e.PieceSize),
+                    s.Ms + e.Duration.TotalMilliseconds, s.Bytes + e.Bytes);
+            }
+        }
+    }
+}
+
+// The stages of reading an answer (InferenceStage events) in a run: each stage's time, count and bytes summed, and the
+// device's peak above the run's start when the encoder ends (its activations and output). Intrusive: listening at the
+// Inference level makes Module.Predict wait for the device.
+internal sealed class StagesProbe : IProfileProbe
+{
+    public string Name => "stages";
+
+    public string Summary => "the stages of reading an answer (image decode and transforms, encoder, cache allocations, prefill, decoding chunks, graph "
+                             + "captures): time, counts and MB each, and the device's peak above the run's start when the encoder ends";
+
+    public bool Intrusive => true;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var backend = run.Device.Backend;
+
+        // Blocks of tensors already unreachable go back first: freed by the finalizer during the run, they would lower
+        // what is in use below the start and the encoder's peak above it with it.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        backend.ResetPeakMemoryUsage();
+        var hook = new StageSums(backend, backend.GetMemoryUsage().InUse);
+        var subscription = Telemetry.Subscribe(hook);
+        return () =>
+        {
+            subscription.Dispose();
+            lock (hook)
+            {
+                foreach (var (stage, (ms, count, bytes)) in hook.Sums)
+                {
+                    run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} time"), ms, "ms");
+                    run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} count"), count);
+                    if (bytes > 0)
+                    {
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{stage} size"), bytes / 1048576.0, "MB");
+                    }
+                }
+
+                if (hook.EncoderPeak is { } peak)
+                {
+                    run.Record("encoder peak above start", peak / 1048576.0, "MB");
+                }
+            }
+        };
+    }
+
+    private sealed class StageSums(Backend backend, long startInUse) : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Inference;
+
+        public SortedDictionary<InferenceStageKind, (double Ms, long Count, long Bytes)> Sums { get; } = [];
+
+        public long? EncoderPeak { get; private set; }
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            lock (this)
+            {
+                var (ms, count, bytes) = Sums.GetValueOrDefault(e.Stage);
+                Sums[e.Stage] = (ms + e.Duration.TotalMilliseconds, count + e.Count, bytes + e.Bytes);
+                if (e.Stage == InferenceStageKind.Encoder)
+                {
+                    EncoderPeak = Math.Max(EncoderPeak ?? 0, backend.GetMemoryUsage().Peak - startInUse);
+                }
+            }
+        }
+    }
+}
+
+// Time per operation (by name, direction and output shape) and per layer (by type and depth), from the telemetry's
+// operation and layer events, the device waited for before each measurement so the times are execution times.
+// Intrusive: that waiting changes the run's time. A key is stored once per new operation and shape (no string per call).
+internal sealed class TimingsProbe : IProfileProbe
+{
+    public string Name => "timings";
+
+    public string Summary => "the time of every operation by name and output shape, and of every layer by type and depth, the device waited for at each";
+
+    public bool Intrusive => true;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        bool synchronize = Telemetry.SynchronizeForTiming;
+        Telemetry.SynchronizeForTiming = true;
+        var hook = new TimingSums();
+        var subscription = Telemetry.Subscribe(hook);
+        return () =>
+        {
+            subscription.Dispose();
+            Telemetry.SynchronizeForTiming = synchronize;
+            lock (hook)
+            {
+                var operations = hook.Operations.OrderByDescending(o => o.Value.Ms).ThenBy(o => o.Key.Operation, StringComparer.Ordinal).ToList();
+                var layers = hook.Layers.OrderByDescending(l => l.Value.Ms).ThenBy(l => l.Key.Type, StringComparer.Ordinal).ThenBy(l => l.Key.Depth).ToList();
+                double total = operations.Sum(o => o.Value.Ms);
+                run.Record("operation time", total, "ms");
+                run.Record("operation calls", operations.Sum(o => o.Value.Calls), "calls");
+                run.Record("operation shapes", operations.Count);
+                run.Record("layer calls", layers.Sum(l => l.Value.Calls), "calls");
+                run.Add(new ProfileTable("operation timings", ["operation", "shape", "calls", "ms", "share"],
+                    [.. operations.Select(o => (IReadOnlyList<string>)[o.Key.Backward ? o.Key.Operation + " (backward)" : o.Key.Operation, Tensor.FormatShape(o.Key.Shape),
+                        ProfileProbes.Text(o.Value.Calls), ProfileProbes.Text(o.Value.Ms), ProfileProbes.Text(total > 0 ? 100 * o.Value.Ms / total : 0) + "%"])]));
+                run.Add(new ProfileTable("layer timings", ["layer", "depth", "calls", "ms"],
+                    [.. layers.Select(l => (IReadOnlyList<string>)[l.Key.Type, ProfileProbes.Text(l.Key.Depth), ProfileProbes.Text(l.Value.Calls), ProfileProbes.Text(l.Value.Ms)])]));
+            }
+        };
+    }
+
+    // An operation by name, direction and output shape (the shape compared by its values).
+    private readonly record struct OperationKey(string Operation, bool Backward, int[] Shape);
+
+    private sealed class OperationKeys : IEqualityComparer<OperationKey>
+    {
+        public bool Equals(OperationKey x, OperationKey y) =>
+            x.Backward == y.Backward && string.Equals(x.Operation, y.Operation, StringComparison.Ordinal) && x.Shape.AsSpan().SequenceEqual(y.Shape);
+
+        public int GetHashCode(OperationKey key)
+        {
+            var hash = new HashCode();
+            hash.Add(key.Operation, StringComparer.Ordinal);
+            hash.Add(key.Backward);
+            foreach (int d in key.Shape)
+            {
+                hash.Add(d);
+            }
+
+            return hash.ToHashCode();
+        }
+    }
+
+    private sealed class TimingSums : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Operations | TelemetryLevel.Layers;
+
+        public Dictionary<OperationKey, (long Calls, double Ms)> Operations { get; } = new(new OperationKeys());
+
+        public Dictionary<(string Type, int Depth), (long Calls, double Ms)> Layers { get; } = [];
+
+        public void OnOperation(in OperationCompleted e)
+        {
+            lock (this)
+            {
+                var key = new OperationKey(e.Operation, e.Backward, e.Shape);
+                ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrNullRef(Operations, key);
+                if (Unsafe.IsNullRef(ref sum))
+                {
+                    // The first call of a shape keeps its own copy: the key must not change with a reused array.
+                    Operations.Add(key with { Shape = [.. e.Shape] }, (1, e.Duration.TotalMilliseconds));
+                    return;
+                }
+
+                sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
+            }
+        }
+
+        public void OnLayerForward(in LayerForward e)
+        {
+            lock (this)
+            {
+                ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Layers, (e.LayerType, e.Depth), out _);
+                sum = (sum.Calls + 1, sum.Ms + e.Duration.TotalMilliseconds);
+            }
+        }
+    }
+}
+
+internal sealed class CpuProbe : IProfileProbe
+{
+    public string Name => "cpu";
+
+    public string Summary => "the process's processor time and the cores it kept busy";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var process = Process.GetCurrentProcess();
+        var before = process.TotalProcessorTime;
+        long start = Stopwatch.GetTimestamp();
+        return () =>
+        {
+            double wall = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            process.Refresh();
+            double cpu = (process.TotalProcessorTime - before).TotalMilliseconds;
+            run.Record("cpu", cpu, "ms");
+            run.Record("cores busy", wall > 0 ? cpu / wall : 0, "cores");
+            process.Dispose();
+        };
+    }
+}
+
+internal sealed class HeapProbe : IProfileProbe
+{
+    public string Name => "heap";
+
+    public string Summary => "the managed heap: bytes allocated, collections of each generation, time paused";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        int gen0 = GC.CollectionCount(0), gen1 = GC.CollectionCount(1), gen2 = GC.CollectionCount(2);
+        var paused = GC.GetTotalPauseDuration();
+        long allocated = GC.GetTotalAllocatedBytes(precise: true);
+        return () =>
+        {
+            run.Record("allocated", (GC.GetTotalAllocatedBytes(precise: true) - allocated) / 1048576.0, "MB");
+            run.Record("gc0", GC.CollectionCount(0) - gen0);
+            run.Record("gc1", GC.CollectionCount(1) - gen1);
+            run.Record("gc2", GC.CollectionCount(2) - gen2);
+            run.Record("gc pause", (GC.GetTotalPauseDuration() - paused).TotalMilliseconds, "ms");
+        };
+    }
+}
+
+internal sealed class JitProbe : IProfileProbe
+{
+    public string Name => "jit";
+
+    public string Summary => "the methods the .NET JIT compiled on every thread: time compiling, methods, IL";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var time = System.Runtime.JitInfo.GetCompilationTime(currentThread: false);
+        long methods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false);
+        long il = System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false);
+        return () =>
+        {
+            run.Record("jit time", (System.Runtime.JitInfo.GetCompilationTime(currentThread: false) - time).TotalMilliseconds, "ms");
+            run.Record("jit methods", System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false) - methods);
+            run.Record("jit IL", (System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false) - il) / 1024.0, "KB");
+        };
+    }
+}
+
+internal sealed class MemoryProbe : IProfileProbe
+{
+    public string Name => "memory";
+
+    public string Summary => "the device's memory in use, cached and at its peak, and the process's working set and peak";
+
+    public bool Intrusive => false;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        run.Device.Backend.ResetPeakMemoryUsage();
+        return () =>
+        {
+            var usage = run.Device.Backend.GetMemoryUsage();
+            run.Record("device in use", usage.InUse / 1048576.0, "MB");
+            run.Record("device cached", usage.Cached / 1048576.0, "MB");
+            run.Record("device peak", usage.Peak / 1048576.0, "MB");
+            run.Record("device largest block", usage.Largest / 1048576.0, "MB");
+            if (run.Device.Backend.FreeMemory() is { } free && run.Device.Backend.Hardware.MemoryBytes is { } total)
+            {
+                // What the library does not hold: the driver's context, its loaded kernels, other programs.
+                run.Record("device free", free / 1048576.0, "MB");
+                run.Record("device other", Math.Max(0, total - free - usage.InUse - usage.Cached) / 1048576.0, "MB");
+            }
+
+            using var process = Process.GetCurrentProcess();
+            run.Record("process", process.WorkingSet64 / 1048576.0, "MB");
+            run.Record("process peak", process.PeakWorkingSet64 / 1048576.0, "MB");
+        };
+    }
+}
+
+internal sealed class OperationsProbe : IProfileProbe
+{
+    public string Name => "operations";
+
+    public string Summary => "every operation called on the device and every host fallback, by operation";
+
+    public bool Intrusive => true;
+
+    public bool Supports(Device device) => true;
+
+    public Action Begin(ProfileRun run)
+    {
+        var trace = Operations.Kernels.Trace(run.Device.Backend);
+        return () =>
+        {
+            trace.Dispose();
+            var calls = Operations.Ops.All.Select(op => (op.Name, Calls: trace.Calls(op)))
+                .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ToList();
+            var fallbacks = trace.HostCallsByOperation.OrderByDescending(f => f.Value).ToList();
+            run.Record("operations", calls.Sum(c => c.Calls), "calls");
+            run.Record("operation kinds", calls.Count);
+            run.Record("host fallbacks", trace.HostCalls, "calls");
+            run.Add(new ProfileTable("operations", ["operation", "calls"], [.. calls.Select(c => (IReadOnlyList<string>)[c.Name, ProfileProbes.Text(c.Calls)])]));
+            if (fallbacks.Count > 0)
+            {
+                run.Add(new ProfileTable("host fallbacks", ["operation", "calls"], [.. fallbacks.Select(f => (IReadOnlyList<string>)[f.Key, ProfileProbes.Text(f.Value)])]));
+            }
+        };
+    }
+}
+
+internal sealed class KernelsProbe : IProfileProbe
+{
+    public string Name => "kernels";
+
+    public string Summary => "each kernel's launches, time and matrix-product rate, recorded graphs run step by step (devices that time their kernels, such as CUDA)";
+
+    public bool Intrusive => true;
+
+    public bool Supports(Device device) => device.Backend is IKernelProfiler;
+
+    public Action Begin(ProfileRun run)
+    {
+        var profiler = (IKernelProfiler)run.Device.Backend;                   // Supports said it times its kernels
+        var direct = ComputeGraph.RunStepsDirectly();                         // a graph's kernels are timed one by one too
+        run.Device.Synchronize();
+        profiler.StartProfile();
+        return () =>
+        {
+            run.Device.Synchronize();
+            direct.Dispose();
+            var kernels = profiler.StopProfile()
+                .Select(e => (e.Key, e.Value.Calls, Ms: e.Value.Ticks * 1000.0 / Stopwatch.Frequency, e.Value.Flops))
+                .OrderByDescending(k => k.Ms).ToList();
+            double total = kernels.Sum(k => k.Ms), productMs = kernels.Where(k => k.Flops > 0).Sum(k => k.Ms), flops = kernels.Sum(k => k.Flops);
+            run.Record("kernel time", total, "ms");
+            run.Record("launches", kernels.Sum(k => k.Calls));
+            run.Record("matrix TFLOPS", productMs > 0 ? flops / (productMs * 1e9) : 0, "TFLOPS");
+            run.Add(new ProfileTable("kernels", ["kernel", "calls", "ms", "share", "TFLOPS"],
+                [.. kernels.Select(k => (IReadOnlyList<string>)[k.Key, ProfileProbes.Text(k.Calls), ProfileProbes.Text(k.Ms), ProfileProbes.Text(total > 0 ? 100 * k.Ms / total : 0) + "%", k.Flops > 0 && k.Ms > 0 ? ProfileProbes.Text(k.Flops / (k.Ms * 1e9)) : ""])]));
+        };
+    }
 }

@@ -557,7 +557,7 @@ internal sealed class ClusterSimCommand : Command
         ProfileOptions profileOptions;
         try
         {
-            var probes = ProfileProbes.Names.Where(n => ProfileProbes.Find(n) is { Intrusive: false } || n == "kernels").ToList();
+            var probes = ProfileProbes.Names.Where(n => ProfileProbes.Named(n) is { Intrusive: false } || n == "kernels").ToList();
             profileOptions = ProfileOptions.FromEnvironment(new ProfileOptions { WarmRuns = 1, Probes = probes });
         }
         catch (ArgumentException e)

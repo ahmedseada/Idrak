@@ -30,13 +30,6 @@ public interface IPretrainedVision
     IReadOnlyCollection<string> StoredTensors { get; }
 
     /// <summary>
-    /// The keys of the <see cref="VisionOptions"/> this family's encoder takes (at creation,
-    /// <see cref="VisionEncoderOptions.VisionOptions"/>, and per request), made once (an <see cref="OptionKeys"/>). Callers
-    /// check options against them early (<see cref="VisionOptions.ThrowIfUnknown"/>); the encoder checks the values.
-    /// </summary>
-    IReadOnlySet<string> VisionOptionKeys { get; }
-
-    /// <summary>
     /// Builds the family's vision encoder (with its own preprocessing) from the checkpoint: decoded images in, each
     /// image's features out (<see cref="IVisionEncoder"/>). Dispose it when done.
     /// </summary>
@@ -71,9 +64,6 @@ public abstract class PretrainedVision : IPretrainedVision
     /// <inheritdoc />
     public abstract IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null);
 
-    /// <summary>The keys of the <see cref="VisionOptions"/> this family's encoder takes; none unless the family says.</summary>
-    public virtual IReadOnlySet<string> VisionOptionKeys => OptionKeys.None;
-
     /// <inheritdoc />
     public virtual string Describe() => $"{Family}, {PromptFormat.Name}, image tokens attend: {Attention.Name}";
 
@@ -91,7 +81,7 @@ public sealed record VisionEncoderOptions
     public bool Grayscale { get; init; }
 
     /// <summary>
-    /// The family's own options for every image the encoder reads (its keys, <see cref="IPretrainedVision.VisionOptionKeys"/>),
+    /// The family's own options for every image the encoder reads (its keys, <c>VisionOptionKeys</c>),
     /// over the family's defaults from the checkpoint's files; a request's options go over these per key. Null: none.
     /// </summary>
     /// <remarks>The family refuses a key it does not take, naming those it does, when it builds the encoder.</remarks>

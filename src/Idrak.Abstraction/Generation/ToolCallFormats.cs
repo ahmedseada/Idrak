@@ -73,11 +73,11 @@ public sealed record ToolCallProbe(string? Source, string? Call)
 }
 
 /// <summary>
-/// A tool-call format chat output is parsed in, registered by its <see cref="IKind.Name"/> in <see cref="ToolCallFormats"/>:
+/// A tool-call format chat output is parsed in, registered by its <c>Name</c> in <see cref="ToolCallFormats"/>:
 /// <see cref="Detect"/> says from a chat template (its source and a rendered probe call) whether the model writes calls
-/// this way, and <see cref="IKind{TRequest, T}.Create"/> makes one reply's parser.
+/// this way, and <c>Create</c> makes one reply's parser.
 /// </summary>
-public interface IToolCallFormat : IKind<ToolCallContext, IToolCallParser>
+public interface IToolCallFormat
 {
     /// <summary>Whether the template <paramref name="probe"/> shows writes its calls in this format.</summary>
     bool Detect(ToolCallProbe probe);
@@ -85,16 +85,12 @@ public interface IToolCallFormat : IKind<ToolCallContext, IToolCallParser>
 
 /// <summary>
 /// The tool-call formats chat output is parsed in, by name (<see cref="IToolCallFormat"/>). A chat template names its
-/// format (<see cref="IChatTemplate.ToolCallFormatName"/>); a model's own Jinja template is detected, asking the most
-/// recently registered format first and "json" last. Registered:
-/// <list type="bullet">
-/// <item>"json": JSON calls in the template's <see cref="ToolCallFormat"/> (tags, a bare answer, a list); asked last, it takes any template.</item>
-/// <item>"pythonic": a Python list of calls, <c>[get_weather(city="Paris"), now()]</c>.</item>
-/// </list>
-/// A family's own format is its plug-in's (Idrak.Text.Plugins registers "qwen3-coder", "mistral", "harmony" and
-/// "deepseek", each with its family, on <see cref="MarkedToolCallParser"/> and <see cref="ToolCallText"/>). Register
-/// another with <see cref="Register"/>; registering a built-in name overrides the built-in, which stays behind it until
-/// the app unregisters it.
+/// format (<c>ToolCallFormatName</c>); a model's own Jinja template is detected, asking the most
+/// recently registered format first and "json" last. Registered: <list type="bullet"> <item>"json": JSON calls in the
+/// template's <see cref="ToolCallFormat"/> (tags, a bare answer, a list); asked last, it takes any template.</item>
+/// <item>"pythonic": a Python list of calls, <c>[get_weather(city="Paris"), now()]</c>.</item> </list> A family's own
+/// format is its plug-in's (Idrak.Text.Plugins registers "qwen3-coder", "mistral", "harmony" and "deepseek", each with
+/// its family, on <see cref="MarkedToolCallParser"/> and <see cref="ToolCallText"/>).
 /// </summary>
 public static class ToolCallFormats
 {
@@ -103,115 +99,22 @@ public static class ToolCallFormats
 
     /// <summary>A Python list of calls.</summary>
     public const string Pythonic = "pythonic";
+}
 
-    // In the order they are asked: the most recently registered first, "json" (which takes any template) last.
-    private static readonly KindTable<IToolCallFormat> Table = BuiltIn();
+internal sealed class JsonFormat : IToolCallFormat
+{
+    public string Name => ToolCallFormats.Json;
 
-    private static KindTable<IToolCallFormat> BuiltIn()
-    {
-        var table = new KindTable<IToolCallFormat>(nameof(ToolCallFormats), "Tool-call format", "add it with ToolCallFormats.Register", Guard, StringComparer.Ordinal,
-            newestFirst: true);
-        table.RegisterDefault(new JsonFormat());   // each goes first: the last registered is asked first
-        table.RegisterDefault(new PythonicFormat());
-        return table;
-    }
+    public bool Detect(ToolCallProbe probe) => true;
 
-    // Detection is one call; a parser holds one reply's state, so it falls back when it is made.
-    private static IToolCallFormat Guard(Slot slot, IToolCallFormat app, IToolCallFormat library) => new GuardedFormat(slot, app, library);
+    public IToolCallParser Create(ToolCallContext context) => new JsonToolCallParser(context);
+}
 
-    /// <summary>
-    /// Registers <paramref name="format"/> under its <see cref="IKind.Name"/>. Under a registered name it takes that
-    /// format's place (a built-in stays behind it, see <see cref="SetPolicy"/>); a new name is asked before every format
-    /// registered so far. Names are matched exactly.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IToolCallFormat format) => Table.Register(format, System.Reflection.Assembly.GetCallingAssembly());
+internal sealed class PythonicFormat : IToolCallFormat
+{
+    public string Name => ToolCallFormats.Pythonic;
 
-    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
+    public bool Detect(ToolCallProbe probe) => probe.Call.AsSpan().Contains(ToolCallProbe.FunctionName + "(" + ToolCallProbe.ArgumentName + "=", StringComparison.Ordinal);
 
-    /// <summary>The registered format names, in the order they are asked.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IToolCallFormat? Default(string name) => Table.Default(name);
-
-    /// <summary>
-    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller;
-    /// <see cref="SlotPolicy.FallBack"/> retries on the library's): detection falls back per call, a parser when it is made.
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>The format registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IToolCallFormat Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(ToolCallFormats), name.ToString(), Table.Names,
-            $"No tool-call format '{name}' is registered ({string.Join(", ", Table.Names)}); add it with ToolCallFormats.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
-
-    /// <summary>One reply's parser in the format registered as <paramref name="name"/>.</summary>
-    public static IToolCallParser Create(ReadOnlySpan<char> name, ToolCallContext context)
-    {
-        ArgumentNullException.ThrowIfNull(context);
-        return Get(name).Create(context);
-    }
-
-    /// <summary>
-    /// The name of the first registered format whose detector accepts <paramref name="probe"/> (the most recently
-    /// registered first); "json" when none does.
-    /// </summary>
-    public static string Detect(ToolCallProbe probe)
-    {
-        ArgumentNullException.ThrowIfNull(probe);
-        foreach (var format in Table.Kinds)
-        {
-            if (format.Detect(probe))
-            {
-                return format.Name;
-            }
-        }
-
-        return Json;
-    }
-
-    private sealed class JsonFormat : IToolCallFormat
-    {
-        public string Name => Json;
-
-        public string Summary => "JSON calls in the template's tool-call shape (tags, a bare answer, a list); takes any template";
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public bool Detect(ToolCallProbe probe) => true;
-
-        public IToolCallParser Create(ToolCallContext context) => new JsonToolCallParser(context);
-    }
-
-    private sealed class PythonicFormat : IToolCallFormat
-    {
-        public string Name => Pythonic;
-
-        public string Summary => "a Python list of calls: [get_weather(city=\"Paris\"), now()]";
-
-        public IReadOnlySet<string> Keys => OptionKeys.None;
-
-        public bool Detect(ToolCallProbe probe) => probe.Call.AsSpan().Contains(ToolCallProbe.FunctionName + "(" + ToolCallProbe.ArgumentName + "=", StringComparison.Ordinal);
-
-        public IToolCallParser Create(ToolCallContext context) => new PythonicToolCallParser(context);
-    }
-
-    private sealed class GuardedFormat(Slot slot, IToolCallFormat app, IToolCallFormat library) : IToolCallFormat
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public bool Detect(ToolCallProbe probe) => slot.Call(() => app.Detect(probe), () => library.Detect(probe), Comparisons.Exact);
-
-        public IToolCallParser Create(ToolCallContext context) => slot.Call(() => app.Create(context), () => library.Create(context));
-    }
+    public IToolCallParser Create(ToolCallContext context) => new PythonicToolCallParser(context);
 }

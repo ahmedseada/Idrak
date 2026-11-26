@@ -13,9 +13,9 @@ public enum KeyValueFormat
     Float32,
 
     /// <summary>
-    /// A format of one's own (an <see cref="IKeyValueLayout"/> registered with <see cref="KeyValueLayouts.Register"/>): what
-    /// <see cref="KeyValueCache.Format"/> and <see cref="DecodingContext.Format"/> report for it. Not a format to choose;
-    /// pass the layout itself.
+    /// A format of one's own (an <see cref="IKeyValueLayout"/> registered with <c>Register</c>):
+    /// what <see cref="KeyValueCache.Format"/> and <see cref="DecodingContext.Format"/> report for it. Not a format to
+    /// choose; pass the layout itself.
     /// </summary>
     Custom,
 }
@@ -58,7 +58,7 @@ public sealed class KeyValueCache : IDisposable
         int width = layout.RowWidth(headDim);
         if (width <= 0)
         {
-            throw new InvalidOperationException($"The key/value format '{layout.Name}' gave a row width of {width} for {headDim} values per head.");
+            throw new InvalidOperationException($"The key/value format gave a row width of {width} for {headDim} values per head.");
         }
 
         Keys = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
@@ -368,11 +368,12 @@ public sealed partial class DecodingContext : IDisposable
     {
     }
 
-    /// <summary>Creates an empty context whose caches are stored by <paramref name="layout"/> (a built-in or one's own format).</summary>
+    /// <summary>Creates an empty context whose caches are stored by <paramref name="layout"/> (a built-in or one's own
+    /// format).</summary>
     /// <param name="device">Where caches and counters live (the model's device).</param>
     /// <param name="batch">Sequences decoded together.</param>
     /// <param name="capacity">Maximum positions (the model's context length).</param>
-    /// <param name="layout">How the attention layers' keys and values are cached (e.g. <see cref="KeyValueLayouts.Get"/>).</param>
+    /// <param name="layout">How the attention layers' keys and values are cached (e.g. <c>Get</c>).</param>
     public DecodingContext(Device device, int batch, int capacity, IKeyValueLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
@@ -1172,7 +1173,7 @@ public sealed partial class DecodingContext : IDisposable
     {
         if (!_recordableLayout)
         {
-            throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (IRecordableLayout); run its steps as they are.");
+            throw new InvalidOperationException("The key/value cache format is not recordable (IRecordableLayout); run its steps as they are.");
         }
 
         if (!Recordable)

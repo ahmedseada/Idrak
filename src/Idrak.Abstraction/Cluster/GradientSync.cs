@@ -29,7 +29,7 @@ public readonly record struct GradientSyncResult(double Tokens, double Loss);
 /// </summary>
 public interface IGradientSync : IDisposable
 {
-    /// <summary>The synchronisation's name in <see cref="GradientSyncs"/> ("all-reduce").</summary>
+    /// <summary></summary>
     string Name { get; }
 
     /// <summary>The collectives it reduces over (this rank's).</summary>
@@ -188,7 +188,7 @@ public interface IShardedGradientSync : IGradientSync
     void End();
 }
 
-/// <summary>One kind of gradient synchronisation, registered by name in <see cref="GradientSyncs"/>.</summary>
+/// <summary></summary>
 public interface IGradientSyncProvider
 {
     /// <summary>The name ("all-reduce").</summary>
@@ -222,68 +222,6 @@ public interface IHostGradients
 
     /// <summary>The parameters' values changed on their device (rank 0's were sent to this rank): the host copies are read again.</summary>
     void ReloadParameters();
-}
-
-/// <summary>
-/// The gradient synchronisations, by name (plan 23). Idrak.Network registers "all-reduce" (the gradients summed every step,
-/// a bucket at a time while the backward pass continues) and "local-sgd" (each rank steps on its own gradients and the
-/// weights are averaged every <see cref="ClusterOptions.LocalSgdEvery"/> steps); none is built into Idrak.Abstraction.
-/// <see cref="ClusterOptions.GradientSyncName"/> names the one a run uses.
-/// </summary>
-public static class GradientSyncs
-{
-    private static readonly SlotTable<string, IGradientSyncProvider> Table = new(nameof(GradientSyncs), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a synchronisation holds its rank's place in the group's message order, so another cannot take over a step");
-
-    static GradientSyncs() => LibraryDefaults.Ensure(typeof(GradientSyncs));
-
-    /// <summary>The registered synchronisations, in registration order.</summary>
-    public static IReadOnlyList<IGradientSyncProvider> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="provider"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IGradientSyncProvider provider)
-    {
-        ArgumentNullException.ThrowIfNull(provider);
-        ArgumentException.ThrowIfNullOrWhiteSpace(provider.Name);
-        Table.Register(provider.Name, provider, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's synchronisation of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The synchronisation of that name, or null.</summary>
-    public static IGradientSyncProvider? Find(string name) => Table.Find(name);
-
-    /// <summary>The synchronisation of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name (Idrak.Network registers "all-reduce": ship it with the app).</exception>
-    public static IGradientSyncProvider Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(GradientSyncs), name, Table.Keys,
-            $"Gradient synchronisation '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with GradientSyncs.Register, or reference Idrak.Network.");
-
-    /// <summary>The library's synchronisation of that name, or null.</summary>
-    public static IGradientSyncProvider? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the synchronisation of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each synchronisation as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
-
-    /// <summary>
-    /// The synchronisation <paramref name="options"/> names (<see cref="ClusterOptions.GradientSyncName"/>) of
-    /// <paramref name="optimizer"/>'s parameters over <paramref name="collectives"/>.
-    /// </summary>
-    public static IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(collectives);
-        ArgumentNullException.ThrowIfNull(optimizer);
-        options ??= ClusterOptions.FromEnvironment();
-        return Get(options.GradientSyncName).Create(collectives, optimizer, options);
-    }
 }
 
 /// <summary>

@@ -122,145 +122,30 @@ public sealed class AugmentationOptions
 }
 
 /// <summary>
-/// A kind of augmentation, registered by its <see cref="IKind.Name"/> in <see cref="Augmentations"/>: the augmentation for
+/// A kind of augmentation, registered by its <c>Name</c> in <see cref="Augmentations"/>: the augmentation
+/// for
 /// its options.
 /// </summary>
-public interface IAugmentationKind : IKind
+public interface IAugmentationKind
 {
     /// <summary>The augmentation for <paramref name="options"/>, refusing those it does not take (see <see cref="AugmentationOptions.Allow"/>).</summary>
     IAugmentation Create(AugmentationOptions options);
 }
 
 /// <summary>
-/// Creates an augmentation from its options (refusing those it does not take, see <see cref="AugmentationOptions.Allow"/>):
-/// a kind as a function (see <see cref="Augmentations.Register(string, AugmentationFactory)"/>, which makes it an
-/// <see cref="IAugmentationKind"/>).
+/// Creates an augmentation from its options (refusing those it does not take, see <see cref="AugmentationOptions.Allow"/>): a kind as a function.
 /// </summary>
 public delegate IAugmentation AugmentationFactory(AugmentationOptions options);
 
 /// <summary>
 /// The augmentations of detection and segmentation samples, by name (ignoring case), each a factory taking its options.
-/// The library's (registered by the assemblies that hold them, as library defaults): <c>flip</c> and <c>shift</c> (core's
-/// <c>RandomFlip</c> and <c>RandomShift</c>), and from Idrak.Vision <c>resized-crop</c>, <c>rotation</c>, <c>affine</c>,
-/// <c>color-jitter</c>, <c>cutout</c>, <c>mosaic</c>, <c>mixup</c> and <c>resize</c>. Register another
-/// (<see cref="IAugmentationKind"/>) with <see cref="Register(IAugmentationKind)"/>; one of a library name shadows the
-/// library's, which <see cref="Unregister"/> brings back.
-/// A pipeline is written <c>flip, rotation(degrees=10), resized-crop(width=320, height=320, scale=0.5:1)</c>
-/// (<see cref="Parse"/>).
+/// The library's (registered by the assemblies that hold them, as library defaults): <c>flip</c> and <c>shift</c>
+/// (core's <c>RandomFlip</c> and <c>RandomShift</c>), and from Idrak.Vision <c>resized-crop</c>, <c>rotation</c>,
+/// <c>affine</c>, <c>color-jitter</c>, <c>cutout</c>, <c>mosaic</c>, <c>mixup</c> and <c>resize</c>. A pipeline is
+/// written <c>flip, rotation(degrees=10), resized-crop(width=320, height=320, scale=0.5:1)</c> (<c>Parse</c>).
 /// </summary>
 public static class Augmentations
 {
-    private static readonly KindTable<IAugmentationKind> Table =
-        new(nameof(Augmentations), "Augmentation", "add one with Augmentations.Register", Guard, StringComparer.OrdinalIgnoreCase);
-
-    static Augmentations() => LibraryDefaults.Ensure(typeof(Augmentations));
-
-    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAugmentationKind kind)
-    {
-        ArgumentNullException.ThrowIfNull(kind);
-        ThrowIfBadName(kind.Name);
-        Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Registers the augmentation <paramref name="name"/> made by <paramref name="create"/> (an <see cref="IAugmentationKind"/>; see <see cref="Register(IAugmentationKind)"/>).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, AugmentationFactory create)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(create);
-        ThrowIfBadName(name);
-        Table.Slots.Register(name, new FunctionKind(name, create), System.Reflection.Assembly.GetCallingAssembly(), create);
-    }
-
-    private static void ThrowIfBadName(string name)
-    {
-        if (name.AsSpan().IndexOfAny(NameBreaks) >= 0)
-        {
-            throw new ArgumentException($"An augmentation's name has no ',', '(', ')' or '=' ('{name}').", nameof(name));
-        }
-    }
-
-    // What a pipeline's text uses between and around names.
-    private static readonly System.Buffers.SearchValues<char> NameBreaks = System.Buffers.SearchValues.Create(",()=");
-
-    /// <summary>Removes the app's augmentation <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The kind registered as <paramref name="name"/>.</summary>
-    /// <exception cref="ArgumentException">None is: the message names the registered ones.</exception>
-    public static IAugmentationKind Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new ArgumentException($"Unknown augmentation '{name}' (registered: {string.Join(", ", Names)}); add one with Augmentations.Register.");
-
-    /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IAugmentationKind? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the augmentation <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's augmentation <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> retries on the library's with the same random state), or whether it only runs beside
-    /// the library's (<see cref="SlotPolicy.Shadow"/>: the library's answers, the boxes and labels are compared).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>The augmentation <paramref name="name"/> with <paramref name="options"/> (as text, by name).</summary>
-    public static IAugmentation Create(string name, IEnumerable<KeyValuePair<string, string>>? options = null) =>
-        Get(name).Create(new AugmentationOptions(name, options));
-
-    /// <summary>
-    /// The augmentations of a pipeline written as text: comma-separated items, each <c>name</c> or
-    /// <c>name(key=value, ...)</c>. Null, empty or "none" give none.
-    /// </summary>
-    /// <exception cref="ArgumentException">An unknown augmentation or option, or an item of another shape.</exception>
-    public static IReadOnlyList<IAugmentation> Parse(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text) || text.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
-        {
-            return [];
-        }
-
-        var result = new List<IAugmentation>();
-        foreach (string item in SplitTop(text))
-        {
-            int open = item.IndexOf('(', StringComparison.Ordinal);
-            string name = (open < 0 ? item : item[..open]).Trim();
-            var options = new List<KeyValuePair<string, string>>();
-            if (open >= 0)
-            {
-                if (!item.EndsWith(')'))
-                {
-                    throw new ArgumentException($"An augmentation is NAME or NAME(key=value, ...), not '{item}'.");
-                }
-
-                foreach (string option in SplitTop(item[(open + 1)..^1]))
-                {
-                    int equals = option.IndexOf('=', StringComparison.Ordinal);
-                    if (equals <= 0)
-                    {
-                        throw new ArgumentException($"The option '{option}' of {name} is not key=value.");
-                    }
-
-                    options.Add(KeyValuePair.Create(option[..equals].Trim(), option[(equals + 1)..].Trim()));
-                }
-            }
-
-            if (name.Length == 0)
-            {
-                throw new ArgumentException($"An augmentation is NAME or NAME(key=value, ...), not '{item}'.");
-            }
-
-            result.Add(Create(name, options));
-        }
-
-        return result;
-    }
-
     /// <summary>The sample after every augmentation of <paramref name="pipeline"/>, in order.</summary>
     public static AnnotatedImage Apply(IReadOnlyList<IAugmentation> pipeline, AnnotatedImage sample, AugmentationContext context)
     {
@@ -273,101 +158,5 @@ public static class Augmentations
         }
 
         return sample;
-    }
-
-    // Comma-separated items, commas inside parentheses kept.
-    private static List<string> SplitTop(string text)
-    {
-        var items = new List<string>();
-        var current = new StringBuilder();
-        int depth = 0;
-        foreach (char ch in text)
-        {
-            depth += ch == '(' ? 1 : ch == ')' ? -1 : 0;
-            if (depth < 0)
-            {
-                throw new ArgumentException($"Unbalanced parentheses in '{text}'.");
-            }
-
-            if (ch == ',' && depth == 0)
-            {
-                items.Add(current.ToString().Trim());
-                current.Clear();
-            }
-            else
-            {
-                current.Append(ch);
-            }
-        }
-
-        if (depth != 0)
-        {
-            throw new ArgumentException($"Unbalanced parentheses in '{text}'.");
-        }
-
-        items.Add(current.ToString().Trim());
-        return [.. items.Where(i => i.Length > 0)];
-    }
-
-    // An app's factory under its policy: an app augmentation that cannot be created is a failure like any other (the
-    // library's is created instead under FallBack and Shadow).
-    private static IAugmentationKind Guard(Slot slot, IAugmentationKind app, IAugmentationKind library) => new GuardedKind(slot, app, library);
-
-    // A kind from a function.
-    private sealed class FunctionKind(string name, AugmentationFactory create) : IAugmentationKind
-    {
-        public string Name => name;
-
-        public string Summary => name;
-
-        public IAugmentation Create(AugmentationOptions options) => create(options);
-    }
-
-    private sealed class GuardedKind(Slot slot, IAugmentationKind app, IAugmentationKind library) : IAugmentationKind
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IAugmentation Create(AugmentationOptions options)
-        {
-            IAugmentation mine;
-            try
-            {
-                mine = app.Create(options);
-            }
-            catch (Exception e) when (e is not OperationCanceledException)
-            {
-                if (slot.Failed(e) || slot.Policy == SlotPolicy.Shadow)
-                {
-                    return library.Create(options);
-                }
-
-                throw;
-            }
-
-            return new Guarded(slot, mine, options, library);
-        }
-    }
-
-    // An app's augmentation under its policy: both sides get a random state from the same seed, so a fall-back or a shadow
-    // comparison sees the draws the app saw.
-    private sealed class Guarded(Slot slot, IAugmentation app, AugmentationOptions options, IAugmentationKind library) : IAugmentation
-    {
-        private IAugmentation? _library;
-
-        public string Name => app.Name;
-
-        public AnnotatedImage Apply(AnnotatedImage sample, AugmentationContext context)
-        {
-            int seed = context.Random.Next();
-            return slot.Call(() => app.Apply(sample, context.WithSeed(seed)), () => (_library ??= library.Create(options)).Apply(sample, context.WithSeed(seed)), Compare);
-        }
-
-        private static string? Compare(AnnotatedImage expected, AnnotatedImage actual) =>
-            Comparisons.Exact((expected.Width, expected.Height, expected.Count), (actual.Width, actual.Height, actual.Count))
-            ?? Comparisons.Difference(expected.Labels, actual.Labels)
-            ?? Comparisons.Difference([.. expected.Boxes.SelectMany(b => new[] { b.X, b.Y, b.Width, b.Height })],
-                [.. actual.Boxes.SelectMany(b => new[] { b.X, b.Y, b.Width, b.Height })], 1e-3f);
     }
 }

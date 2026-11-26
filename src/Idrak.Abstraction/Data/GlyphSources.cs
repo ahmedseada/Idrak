@@ -154,17 +154,18 @@ public sealed record GlyphSourceRequest(ImageData Image, string? Text, GlyphSour
 
 /// <summary>
 /// The stage from an image to labelled glyphs: it finds each written character's ink in the image (a sheet's cells, the
-/// ink pieces of a table's cells, the letters of a word) and labels it with the character it is, in its joining form, from
-/// the image's known text or the source's own list; it gives the ink as coverage with its box, the region it was cut from,
-/// its baseline and size (<see cref="LabelledGlyph"/>), and reports each character it was asked for and gave no glyph
-/// for (<see cref="GlyphLeftOut"/>). Every glyph is labelled once and lies inside its region. Its settings (ink level,
-/// specks, the character list) are read once (<see cref="Read"/>). The same image, text and settings give the same glyphs,
-/// from any thread. Register one with <see cref="GlyphSources.Register"/>.
+/// ink pieces of a table's cells, the letters of a word) and labels it with the character it is, in its joining form,
+/// from the image's known text or the source's own list; it gives the ink as coverage with its box, the region it was
+/// cut from, its baseline and size (<see cref="LabelledGlyph"/>), and reports each character it was asked for and gave
+/// no glyph for (<see cref="GlyphLeftOut"/>). Every glyph is labelled once and lies inside its region. Its settings
+/// (ink level, specks, the character list) are read once (<see cref="Read"/>). The same image, text and settings give
+/// the same glyphs, from any thread. Register one with <c>Register</c>.
 /// </summary>
-public interface IGlyphSource : IConfigurableKind
+public interface IGlyphSource
 {
-    /// <summary>The source's settings from <paramref name="options"/> (its own keys, <see cref="IConfigurableKind.Keys"/>; defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad value.</exception>
+    /// <summary>The source's settings from <paramref name="options"/> (its own keys, <c>Keys</c>; defaults for those not given).</summary>
+    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad
+    /// value.</exception>
     GlyphSourceSettings Read(IReadOnlyDictionary<string, string> options);
 
     /// <summary>The glyphs found in <paramref name="request"/>'s image, and the characters it was asked for and left out.</summary>
@@ -172,102 +173,8 @@ public interface IGlyphSource : IConfigurableKind
 }
 
 /// <summary>
-/// The glyph sources, by name (ignoring case). None is built in yet; a package registers its own with
-/// <see cref="Register"/>, and one registered under a library name shadows the library's, which <see cref="Unregister"/>
-/// brings back, guarded by its <see cref="SetPolicy">policy</see>.
+/// The glyph sources, by name (ignoring case).
 /// </summary>
 public static class GlyphSources
 {
-    private static readonly KindTable<IGlyphSource> Table = new(nameof(GlyphSources), "Glyph source", "add it with GlyphSources.Register, or reference a package that registers it",
-        (slot, app, library) => new GuardedSource(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static GlyphSources() => LibraryDefaults.Ensure(typeof(GlyphSources));
-
-    /// <summary>Registers <paramref name="source"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IGlyphSource source) => Table.Register(source, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's source <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The source registered as <paramref name="name"/>, or null.</summary>
-    public static IGlyphSource? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The source registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones and what to do.</exception>
-    public static IGlyphSource Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's source <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IGlyphSource? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> reads the image with the library's; <see cref="SlotPolicy.Shadow"/> lets the
-    /// library's read it and compares the app's glyphs (their labels, forms and boxes) on a sample of images).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered source as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The keys of every registered source, each once, in registration order.</summary>
-    public static IReadOnlyList<string> AllKeys() => [.. Table.Kinds.SelectMany(s => s.Keys).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    // The app's settings and the library's, read from the same options (the library's null when it refuses them).
-    private sealed class GuardedSettings(GlyphSourceSettings app, GlyphSourceSettings? library, IReadOnlyDictionary<string, string> options) : GlyphSourceSettings(options)
-    {
-        public GlyphSourceSettings App => app;
-
-        public GlyphSourceSettings? Library => library;
-    }
-
-    // An app's source over the library's: a failed read is made by the library's, or both are compared on a sample.
-    private sealed class GuardedSource(Slot slot, IGlyphSource app, IGlyphSource library) : IGlyphSource
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public GlyphSourceSettings Read(IReadOnlyDictionary<string, string> options)
-        {
-            var own = app.Read(options);
-            GlyphSourceSettings? theirs;
-            try
-            {
-                theirs = library.Read(PageOptions.Only(options, library.Keys));
-            }
-            catch (ArgumentException)
-            {
-                theirs = null;
-            }
-
-            return new GuardedSettings(own, theirs, options);
-        }
-
-        public FoundGlyphs Find(GlyphSourceRequest request)
-        {
-            ArgumentNullException.ThrowIfNull(request);
-            var (own, theirs) = request.Settings is GuardedSettings g ? (g.App, g.Library) : (request.Settings, request.Settings);
-            var mine = request with { Settings = own };
-            if (theirs is null)
-            {
-                return app.Find(mine);
-            }
-
-            var forLibrary = request with { Settings = theirs };
-            return slot.Call(() => app.Find(mine), () => library.Find(forLibrary), (a, b) => Comparisons.Exact(Labels(a), Labels(b)));
-        }
-
-        // The glyphs as their labels, forms and boxes, then the characters left out.
-        private static string Labels(FoundGlyphs found) =>
-            string.Join("; ", found.Glyphs.Select(g => $"{g.Text}/{g.Form} {g.Box}")) + " | " + string.Join("; ", found.LeftOut.Select(l => $"{l.Text}/{l.Form}"));
-    }
 }

@@ -82,12 +82,10 @@ public static class PreferenceInfoKeys
 /// <summary>
 /// What turns played episodes into preferences (<see cref="PreferenceChoice"/>) for a preference loss (DPO, ORPO, SimPO):
 /// the best and the worst answer of a group to one prompt ("group"), or an answer a user rejected against the text the
-/// episode records as kept ("verdict"); registered in <see cref="PreferencePairSources"/> under its <see cref="IKind.Name"/>.
-/// Its options are declared once (<see cref="IOptionSchema.Options"/>; <see cref="IConfigurableKind.Keys"/> are theirs).
-/// <see cref="Choose{TObservation, TAction}"/> is deterministic (the same episodes give the same choices, in the same
+/// episode records as kept ("verdict"). Its options are its constructor's. <see cref="Choose{TObservation, TAction}"/> is deterministic (the same episodes give the same choices, in the same
 /// order) and thread-safe: it keeps no state between calls.
 /// </summary>
-public interface IPreferencePairSource : IConfigurableKind, IOptionSchema
+public interface IPreferencePairSource
 {
     /// <summary>Whether its pairs come from groups of episodes that played the same situation (a trainer then plays groups of more than one).</summary>
     bool NeedsGroups { get; }
@@ -95,19 +93,13 @@ public interface IPreferencePairSource : IConfigurableKind, IOptionSchema
     /// <summary>Adds the preferences of <paramref name="episodes"/> to <paramref name="into"/> (what it held stays); returns how many it added.</summary>
     /// <param name="episodes">The episodes, in the order a <see cref="PreferenceAnswer.Episode"/> counts them (a batch's <see cref="RolloutBatch{TObservation, TAction}.Trajectories"/>).</param>
     /// <param name="into">Receives the choices; a caller reuses it from round to round (cleared), so the memory stays flat.</param>
-    /// <param name="options">The source's options by key, values as text; null for its defaults.</param>
-    /// <exception cref="ArgumentException">An option the source does not take (the message names it and the keys) or a bad value.</exception>
     /// <exception cref="InvalidOperationException">An episode's info the source reads holds what it cannot use (a kept step past the episode's steps).</exception>
-    int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into, IReadOnlyDictionary<string, string>? options = null);
+    int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into);
 }
 
-/// <summary>
-/// The preference-pair sources by name (ignoring case): "group" and "verdict" are the library's (<see cref="Group"/>,
-/// <see cref="Verdict"/>); an app or a plug-in registers its own with <see cref="Register"/>, and one under a library name
-/// shadows the library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
-/// A name nobody registered fails "not registered". Idrak.Abstraction holds the contract and its built-ins (they read
-/// only <see cref="Trajectory{TObservation, TAction}"/>), so any package's policy uses them; the pairs' token sequences
-/// are the policy's (Idrak.Text's language-model policy encodes them).
+/// <summary>A name nobody registered fails "not registered". Idrak.Abstraction holds the contract and its built-ins
+/// (they read only <see cref="Trajectory{TObservation, TAction}"/>), so any package's policy uses them; the pairs'
+/// token sequences are the policy's (Idrak.Text's language-model policy encodes them).
 /// </summary>
 public static class PreferencePairSources
 {
@@ -116,278 +108,148 @@ public static class PreferencePairSources
 
     /// <summary>An episode's answer the user rejected against the text it records as kept: "verdict".</summary>
     public const string Verdict = "verdict";
+}
 
-    private static readonly KindTable<IPreferencePairSource> Table = BuiltIn();
+// "group": in each group of two or more episodes, the one of the highest return chosen over the one of the lowest (the
+// first in list order on a tie), when the best beats the worst by more than the margin. One pass over the episodes'
+// groups, sorted once in a rented buffer (group, then list position): groups in number order, nothing else allocated.
+// margin: the least return the best of a group must beat its worst by (more than it: 0 pairs any difference, never a tie).
+internal sealed class GroupSource(float margin = 0f) : IPreferencePairSource
+{
 
-    private static KindTable<IPreferencePairSource> BuiltIn()
+    public string Name => PreferencePairSources.Group;
+
+    public bool NeedsGroups => true;
+
+    public int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into)
     {
-        var table = new KindTable<IPreferencePairSource>(nameof(PreferencePairSources), "Preference-pair source", "add it with PreferencePairSources.Register",
-            (slot, app, library) => new GuardedSource(slot, app, library), StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(new GroupSource());
-        table.RegisterDefault(new VerdictSource());
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="source"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPreferencePairSource source) => Table.Register(source, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's source <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The source registered as <paramref name="name"/>, or null.</summary>
-    public static IPreferencePairSource? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The source registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
-    public static IPreferencePairSource Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's source <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IPreferencePairSource? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's source <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> chooses with the library's; <see cref="SlotPolicy.Shadow"/> lets the library's
-    /// choose and compares the app's choices on a sample of calls).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered source as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    // "group": in each group of two or more episodes, the one of the highest return chosen over the one of the lowest (the
-    // first in list order on a tie), when the best beats the worst by more than the margin. One pass over the episodes'
-    // groups, sorted once in a rented buffer (group, then list position): groups in number order, nothing else allocated.
-    private sealed class GroupSource : IPreferencePairSource
-    {
-        private static readonly OptionSpec<float> MarginOption = OptionSpec.Number("margin", 0f, 0f, takes: "a number of at least 0",
-            summary: "the least return the best of a group must beat its worst by (more than it: 0 pairs any difference, never a tie)");
-
-        public string Name => Group;
-
-        public string Summary => "the best and the worst answer of each group to one prompt, by return (a margin to beat)";
-
-        public OptionSchema Options { get; } = new("pair source group", MarginOption);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public bool NeedsGroups => true;
-
-        public int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into,
-            IReadOnlyDictionary<string, string>? options = null)
+        ArgumentNullException.ThrowIfNull(episodes);
+        ArgumentNullException.ThrowIfNull(into);
+        int count = episodes.Count, added = 0;
+        if (count < 2)
         {
-            ArgumentNullException.ThrowIfNull(episodes);
-            ArgumentNullException.ThrowIfNull(into);
-            float margin = Options.Parse(options).Get(MarginOption);
-            int count = episodes.Count, added = 0;
-            if (count < 2)
-            {
-                return 0;
-            }
-
-            long[] keys = ArrayPool<long>.Shared.Rent(count);
-            float[] returns = ArrayPool<float>.Shared.Rent(count);
-            try
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    var episode = episodes[i] ?? throw new ArgumentException($"Episode {i} is null.", nameof(episodes));
-                    keys[i] = ((long)episode.Group << 32) | (uint)i;          // the group, then the list position
-                    returns[i] = episode.Return;
-                }
-
-                Array.Sort(keys, 0, count);
-                for (int start = 0; start < count;)
-                {
-                    int group = (int)(keys[start] >> 32), end = start + 1;
-                    while (end < count && (int)(keys[end] >> 32) == group)
-                    {
-                        end++;
-                    }
-
-                    if (end - start >= 2)
-                    {
-                        int best = (int)(uint)keys[start], worst = best;
-                        for (int k = start + 1; k < end; k++)
-                        {
-                            int at = (int)(uint)keys[k];
-                            if (returns[at] > returns[best])
-                            {
-                                best = at;
-                            }
-
-                            if (returns[at] < returns[worst])
-                            {
-                                worst = at;
-                            }
-                        }
-
-                        float gap = returns[best] - returns[worst];
-                        if (gap > margin)
-                        {
-                            into.Add(new PreferenceChoice(PreferenceAnswer.Sampled(best), PreferenceAnswer.Sampled(worst), gap, group));
-                            added++;
-                        }
-                    }
-
-                    start = end;
-                }
-            }
-            finally
-            {
-                ArrayPool<long>.Shared.Return(keys);
-                ArrayPool<float>.Shared.Return(returns);
-            }
-
-            return added;
+            return 0;
         }
-    }
 
-    // "verdict": each episode whose info holds a kept text (PreferenceInfoKeys.Kept) and a verdict among the option's (none
-    // set counts as rejected) gives the kept text chosen over the answer it sampled at the kept step, in list order.
-    private sealed class VerdictSource : IPreferencePairSource
-    {
-        private const string DefaultVerdicts = PreferenceInfoKeys.Rejected + "," + PreferenceInfoKeys.Edited + "," + PreferenceInfoKeys.Undone;
-
-        private static readonly OptionSpec<string?> VerdictsOption = OptionSpec.Text("verdicts", DefaultVerdicts, "verdicts separated by commas",
-            "the verdicts (PreferenceInfoKeys.Verdict) whose kept text is preferred to the answer; an episode without a verdict counts as rejected");
-
-        private Parsed _parsed = new(DefaultVerdicts, Split(DefaultVerdicts));   // swapped whole: a reader on another thread sees one or the other
-
-        public string Name => Verdict;
-
-        public string Summary => "an episode's answer the user rejected, edited or undid, against the text it records as kept (PreferenceInfoKeys)";
-
-        public OptionSchema Options { get; } = new("pair source verdict", VerdictsOption);
-
-        public IReadOnlySet<string> Keys => Options.Keys;
-
-        public bool NeedsGroups => false;
-
-        public int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into,
-            IReadOnlyDictionary<string, string>? options = null)
+        long[] keys = ArrayPool<long>.Shared.Rent(count);
+        float[] returns = ArrayPool<float>.Shared.Rent(count);
+        try
         {
-            ArgumentNullException.ThrowIfNull(episodes);
-            ArgumentNullException.ThrowIfNull(into);
-            string[] verdicts = Verdicts(Options.Parse(options).Get(VerdictsOption) ?? DefaultVerdicts);
-            int added = 0;
-            for (int i = 0; i < episodes.Count; i++)
+            for (int i = 0; i < count; i++)
             {
                 var episode = episodes[i] ?? throw new ArgumentException($"Episode {i} is null.", nameof(episodes));
-                if (episode.Info is not { } info || !info.TryGet(PreferenceInfoKeys.Kept, out string kept))
-                {
-                    continue;
-                }
-
-                string verdict = info.GetOrDefault(PreferenceInfoKeys.Verdict, PreferenceInfoKeys.Rejected);
-                if (!Contains(verdicts, verdict))
-                {
-                    continue;
-                }
-
-                int step = info.GetOrDefault(PreferenceInfoKeys.KeptStep, episode.Steps - 1);
-                if ((uint)step >= (uint)episode.Steps)
-                {
-                    throw new InvalidOperationException(string.Create(CultureInfo.InvariantCulture,
-                        $"Episode {i} keeps a text at step {step} ({PreferenceInfoKeys.KeptStep.Name}) of its {episode.Steps}: a kept step is one of the episode's."));
-                }
-
-                into.Add(new PreferenceChoice(PreferenceAnswer.Kept(i, step, kept), PreferenceAnswer.Sampled(i, step), float.NaN, episode.Group));
-                added++;
+                keys[i] = ((long)episode.Group << 32) | (uint)i;          // the group, then the list position
+                returns[i] = episode.Return;
             }
 
-            return added;
-        }
-
-        // The verdicts of the option's text, split once per text (the last kept: a run asks with the same options each round).
-        private string[] Verdicts(string text)
-        {
-            var parsed = _parsed;
-            if (string.Equals(parsed.Text, text, StringComparison.Ordinal))
+            Array.Sort(keys, 0, count);
+            for (int start = 0; start < count;)
             {
-                return parsed.Verdicts;
-            }
-
-            var verdicts = Split(text);
-            _parsed = new Parsed(text, verdicts);
-            return verdicts;
-        }
-
-        private sealed record Parsed(string Text, string[] Verdicts);
-
-        private static string[] Split(string text) => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        private static bool Contains(string[] verdicts, string verdict)
-        {
-            foreach (string known in verdicts)
-            {
-                if (string.Equals(known, verdict, StringComparison.OrdinalIgnoreCase))
+                int group = (int)(keys[start] >> 32), end = start + 1;
+                while (end < count && (int)(keys[end] >> 32) == group)
                 {
-                    return true;
+                    end++;
                 }
+
+                if (end - start >= 2)
+                {
+                    int best = (int)(uint)keys[start], worst = best;
+                    for (int k = start + 1; k < end; k++)
+                    {
+                        int at = (int)(uint)keys[k];
+                        if (returns[at] > returns[best])
+                        {
+                            best = at;
+                        }
+
+                        if (returns[at] < returns[worst])
+                        {
+                            worst = at;
+                        }
+                    }
+
+                    float gap = returns[best] - returns[worst];
+                    if (gap > margin)
+                    {
+                        into.Add(new PreferenceChoice(PreferenceAnswer.Sampled(best), PreferenceAnswer.Sampled(worst), gap, group));
+                        added++;
+                    }
+                }
+
+                start = end;
+            }
+        }
+        finally
+        {
+            ArrayPool<long>.Shared.Return(keys);
+            ArrayPool<float>.Shared.Return(returns);
+        }
+
+        return added;
+    }
+}
+
+// "verdict": each episode whose info holds a kept text (PreferenceInfoKeys.Kept) and a verdict among the option's (none
+// set counts as rejected) gives the kept text chosen over the answer it sampled at the kept step, in list order.
+// verdicts: the verdicts (PreferenceInfoKeys.Verdict), separated by commas, whose kept text is preferred to the answer; an
+// episode without a verdict counts as rejected.
+internal sealed class VerdictSource(string verdicts = VerdictSource.DefaultVerdicts) : IPreferencePairSource
+{
+    private const string DefaultVerdicts = PreferenceInfoKeys.Rejected + "," + PreferenceInfoKeys.Edited + "," + PreferenceInfoKeys.Undone;
+
+    private readonly string[] _verdicts = Split(verdicts);
+
+    public string Name => PreferencePairSources.Verdict;
+
+    public bool NeedsGroups => false;
+
+    public int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into)
+    {
+        ArgumentNullException.ThrowIfNull(episodes);
+        ArgumentNullException.ThrowIfNull(into);
+        string[] verdicts = _verdicts;
+        int added = 0;
+        for (int i = 0; i < episodes.Count; i++)
+        {
+            var episode = episodes[i] ?? throw new ArgumentException($"Episode {i} is null.", nameof(episodes));
+            if (episode.Info is not { } info || !info.TryGet(PreferenceInfoKeys.Kept, out string kept))
+            {
+                continue;
             }
 
-            return false;
+            string verdict = info.GetOrDefault(PreferenceInfoKeys.Verdict, PreferenceInfoKeys.Rejected);
+            if (!Contains(verdicts, verdict))
+            {
+                continue;
+            }
+
+            int step = info.GetOrDefault(PreferenceInfoKeys.KeptStep, episode.Steps - 1);
+            if ((uint)step >= (uint)episode.Steps)
+            {
+                throw new InvalidOperationException(string.Create(CultureInfo.InvariantCulture,
+                    $"Episode {i} keeps a text at step {step} ({PreferenceInfoKeys.KeptStep.Name}) of its {episode.Steps}: a kept step is one of the episode's."));
+            }
+
+            into.Add(new PreferenceChoice(PreferenceAnswer.Kept(i, step, kept), PreferenceAnswer.Sampled(i, step), float.NaN, episode.Group));
+            added++;
         }
+
+        return added;
     }
 
-    // An app's source over the library's: a call that fails falls back to the library's (its own additions taken back
-    // first), or the library's chooses and the app's choices are compared on a sample of calls.
-    private sealed class GuardedSource(Slot slot, IPreferencePairSource app, IPreferencePairSource library) : IPreferencePairSource
+    private static string[] Split(string text) => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static bool Contains(string[] verdicts, string verdict)
     {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public OptionSchema Options => app.Options;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public bool NeedsGroups => app.NeedsGroups || library.NeedsGroups;
-
-        public int Choose<TObservation, TAction>(IReadOnlyList<Trajectory<TObservation, TAction>> episodes, List<PreferenceChoice> into,
-            IReadOnlyDictionary<string, string>? options = null)
+        foreach (string known in verdicts)
         {
-            ArgumentNullException.ThrowIfNull(into);
-            int before = into.Count;
-            if (slot.Policy == SlotPolicy.Shadow)
+            if (string.Equals(known, verdict, StringComparison.OrdinalIgnoreCase))
             {
-                var run = slot.Shadow();
-                int added = library.Choose(episodes, into, options);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        var other = new List<PreferenceChoice>(added);
-                        app.Choose(episodes, other, options);
-                        run.Done(Comparisons.Sequences(into.GetRange(before, added), other));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return added;
-            }
-
-            try
-            {
-                return app.Choose(episodes, into, options);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                into.RemoveRange(before, into.Count - before);
-                return library.Choose(episodes, into, options);
+                return true;
             }
         }
+
+        return false;
     }
 }
 

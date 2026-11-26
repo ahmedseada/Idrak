@@ -167,18 +167,19 @@ public class OutlineTracerSettings
 }
 
 /// <summary>
-/// The stage from a glyph's ink to its outline: coverage (<see cref="GlyphCoverage"/>) in, a <see cref="GlyphOutline"/> in
-/// font units (y up) out, which a face made from glyphs holds and a font writer writes. The outline has one winding: no
-/// point lies inside two contours that turn the same way, the outer contours turn one way and their holes the other, so
-/// the nonzero and even-odd rules fill it alike; holes are kept. Filled again with the same placement, it covers the
+/// The stage from a glyph's ink to its outline: coverage (<see cref="GlyphCoverage"/>) in, a <see cref="GlyphOutline"/>
+/// in font units (y up) out, which a face made from glyphs holds and a font writer writes. The outline has one winding:
+/// no point lies inside two contours that turn the same way, the outer contours turn one way and their holes the other,
+/// so the nonzero and even-odd rules fill it alike; holes are kept. Filled again with the same placement, it covers the
 /// coverage's ink to within <see cref="Tolerance"/>. Its settings (thresholds, smoothing, corner angle, simplification)
-/// are read once (<see cref="Read"/>) and declare that tolerance. The same coverage, placement and settings give the same
-/// outline, from any thread. Register one with <see cref="OutlineTracers.Register"/>.
+/// are read once (<see cref="Read"/>) and declare that tolerance. The same coverage, placement and settings give the
+/// same outline, from any thread. Register one with <c>Register</c>.
 /// </summary>
-public interface IOutlineTracer : IConfigurableKind
+public interface IOutlineTracer
 {
-    /// <summary>The tracer's settings from <paramref name="options"/> (its own keys, <see cref="IConfigurableKind.Keys"/>; defaults for those not given).</summary>
-    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad value.</exception>
+    /// <summary>The tracer's settings from <paramref name="options"/> (its own keys, <c>Keys</c>; defaults for those not given).</summary>
+    /// <exception cref="ArgumentException">A key it does not take (the message names its keys), or a bad
+    /// value.</exception>
     OutlineTracerSettings Read(IReadOnlyDictionary<string, string> options);
 
     /// <summary>
@@ -198,116 +199,10 @@ public interface IOutlineTracer : IConfigurableKind
 /// <summary>
 /// The outline tracers, by name (ignoring case). Built in (Idrak.Imaging): "contour" (<see cref="Contour"/>: the ink's
 /// edge at a level, Otsu's unless set, traced in one pass, simplified into lines and quadratic curves with its corners
-/// kept). A package registers its own with <see cref="Register"/>, and one registered under a library name shadows the
-/// library's, which <see cref="Unregister"/> brings back, guarded by its <see cref="SetPolicy">policy</see>.
+/// kept).
 /// </summary>
 public static class OutlineTracers
 {
     /// <summary>The library's tracer (Idrak.Imaging): the ink's edge at a level, simplified into lines and quadratic curves, its corners kept.</summary>
     public const string Contour = "contour";
-
-    private static readonly KindTable<IOutlineTracer> Table = new(nameof(OutlineTracers), "Outline tracer",
-        "add it with OutlineTracers.Register, or reference a package that registers it (Idrak.Imaging registers contour)",
-        (slot, app, library) => new GuardedTracer(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static OutlineTracers() => LibraryDefaults.Ensure(typeof(OutlineTracers));
-
-    /// <summary>Registers <paramref name="tracer"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IOutlineTracer tracer) => Table.Register(tracer, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's tracer <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The tracer registered as <paramref name="name"/>, or null.</summary>
-    public static IOutlineTracer? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The tracer registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones and what to do.</exception>
-    public static IOutlineTracer Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's tracer <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IOutlineTracer? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the tracer <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's tracer <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> traces with the library's; <see cref="SlotPolicy.Shadow"/> lets the library's trace
-    /// and compares the app's outline with it on a sample of glyphs, within both tolerances).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered tracer as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The keys of every registered tracer, each once, in registration order.</summary>
-    public static IReadOnlyList<string> AllKeys() => [.. Table.Kinds.SelectMany(t => t.Keys).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    // The app's settings and the library's, read from the same options (the library's null when it refuses them).
-    private sealed class GuardedSettings(OutlineTracerSettings app, OutlineTracerSettings? library, IReadOnlyDictionary<string, string> options) : OutlineTracerSettings(options)
-    {
-        public OutlineTracerSettings App => app;
-
-        public OutlineTracerSettings? Library => library;
-    }
-
-    // An app's tracer over the library's: a failed trace is made by the library's, or both are compared on a sample.
-    private sealed class GuardedTracer(Slot slot, IOutlineTracer app, IOutlineTracer library) : IOutlineTracer
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlySet<string> Keys => app.Keys;
-
-        public OutlineTracerSettings Read(IReadOnlyDictionary<string, string> options)
-        {
-            var own = app.Read(options);
-            OutlineTracerSettings? theirs;
-            try
-            {
-                theirs = library.Read(PageOptions.Only(options, library.Keys));
-            }
-            catch (ArgumentException)
-            {
-                theirs = null;
-            }
-
-            return new GuardedSettings(own, theirs, options);
-        }
-
-        public float Tolerance(OutlineTracerSettings settings) => app.Tolerance(settings is GuardedSettings g ? g.App : settings);
-
-        public GlyphOutline Trace(GlyphCoverage coverage, OutlinePlacement placement, OutlineTracerSettings settings)
-        {
-            var (own, theirs) = settings is GuardedSettings g ? (g.App, g.Library) : (settings, settings);
-            if (theirs is null)
-            {
-                return app.Trace(coverage, placement, own);
-            }
-
-            // Within what either promises, in font units (and a pixel for the rounding of both).
-            float units = (app.Tolerance(own) + library.Tolerance(theirs) + 1f) / (placement.Scale > 0f ? placement.Scale : 1f);
-            return slot.Call(() => app.Trace(coverage, placement, own), () => library.Trace(coverage, placement, theirs), (a, b) => Agree(a, b, units));
-        }
-
-        // How the app's outline differs from the library's: one empty and the other not, or their boxes apart by more than the tolerance.
-        private static string? Agree(GlyphOutline library, GlyphOutline app, float tolerance)
-        {
-            if (library.IsEmpty || app.IsEmpty)
-            {
-                return library.IsEmpty == app.IsEmpty ? null : library.IsEmpty ? "the library's outline is empty, the override's is not" : "the override's outline is empty, the library's is not";
-            }
-
-            var (a, b) = (library.Bounds(), app.Bounds());
-            return MathF.Abs(a.MinX - b.MinX) <= tolerance && MathF.Abs(a.MinY - b.MinY) <= tolerance && MathF.Abs(a.MaxX - b.MaxX) <= tolerance && MathF.Abs(a.MaxY - b.MaxY) <= tolerance
-                ? null
-                : string.Create(CultureInfo.InvariantCulture, $"the override's outline spans {b}, the library's {a} (within {tolerance} font units)");
-        }
-    }
 }

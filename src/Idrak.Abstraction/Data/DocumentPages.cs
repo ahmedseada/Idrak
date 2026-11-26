@@ -563,35 +563,6 @@ public sealed class DocumentImage
     /// <summary>The stored bytes, read now.</summary>
     public ReadOnlyMemory<byte> Bytes() => _bytes();
 
-    /// <summary>The pixels: decoded by the format, or by the image codec its encoding names.</summary>
-    /// <exception cref="NotSupportedException">No registered image codec reads the encoding (the message names it).</exception>
-    /// <exception cref="InvalidDataException">The stored bytes are damaged.</exception>
-    public ImageData Decode()
-    {
-        if (_decode is not null)
-        {
-            return _decode();
-        }
-
-        if (string.Equals(Encoding, Raw, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException($"A {Raw} image is decoded by its document's format, and this one gives no decoder.");
-        }
-
-        IImageCodec codec;
-        try
-        {
-            codec = ImageCodecs.Get(Encoding);
-        }
-        catch (NotRegisteredException e)
-        {
-            throw new NotRegisteredException(e.Registry, e.Name, e.Registered,
-                $"No image codec reads the encoding '{Encoding}' of this document's image (registered: {string.Join(", ", e.Registered)}); register one with ImageCodecs.Register.");
-        }
-
-        return codec.Decode(_bytes().Span);
-    }
-
     /// <summary>
     /// The image's mask (a stencil, a soft mask or a colour key) as grey at its own size (spread over the image's place
     /// when the sizes differ): how much of the image shows at each pixel, 255 fully and 0 not at all (a soft mask's levels;

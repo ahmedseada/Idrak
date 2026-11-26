@@ -7,12 +7,10 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// A bias an attention layer adds to its scores by the positions of the query and the key (after the score scale, before
-/// the softmax): [heads, queries, keys]. One provider serves one layer, or every layer that shares it (a bias the first
-/// layer owns and the others read). Idrak's attention layers take one through their <c>PositionBias</c> setting
-/// (<c>MultiHeadAttention</c>, <c>CausalSelfAttention</c>); the kinds are registered by name in
-/// <see cref="AttentionPositionBiases"/>. <see cref="AttentionPositionBias"/> is a base that computes a bias once per shape
-/// and keeps it while nothing is trained.
+/// A bias an attention layer adds to its scores by the positions of the query and the key (after the score scale,
+/// before the softmax): [heads, queries, keys]. One provider serves one layer, or every layer that shares it (a bias
+/// the first layer owns and the others read). <see cref="AttentionPositionBias"/> is a base that computes a bias once
+/// per shape and keeps it while nothing is trained.
 /// </summary>
 public interface IAttentionPositionBias
 {
@@ -271,7 +269,7 @@ public sealed class RelativePositionBias : DistancePositionBias
 {
     private Tensor _table;
 
-    /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "relative".</summary>
+    /// <summary></summary>
     public const string KindName = "relative";
 
     /// <summary>A bias of random values (uniform in ±0.02) drawn from <paramref name="random"/>.</summary>
@@ -339,7 +337,7 @@ public sealed class BucketedPositionBias : DistancePositionBias
 {
     private Tensor _table;
 
-    /// <summary>Its name in <see cref="AttentionPositionBiases"/>: "bucketed".</summary>
+    /// <summary></summary>
     public const string KindName = "bucketed";
 
     private readonly int[] _buckets;                                    // the bucket of key - query = d at [d + MaxDistance], |d| at most MaxDistance
@@ -442,164 +440,3 @@ public sealed class BucketedPositionBias : DistancePositionBias
     public override string ToString() => $"BucketedPositionBias({Heads} heads, {Buckets} buckets, max distance {MaxDistance}{(Bidirectional ? "" : ", one-way")})";
 }
 
-/// <summary>What <see cref="AttentionPositionBiases.Create"/> gives a kind to make a position bias from.</summary>
-/// <param name="Heads">The attention layer's query heads.</param>
-/// <param name="Settings">The kind's own settings (for "relative": <c>max_distance</c>, <c>bidirectional</c>; for "bucketed" also <c>num_buckets</c>).</param>
-/// <param name="Device">Where its parameters live (the default device when null).</param>
-/// <param name="Seed">The seed of random initial values.</param>
-/// <param name="Weights">
-/// Reads the kind's trained tensors by their names in the kind (for "relative" and "bucketed": "table", [buckets, heads]) and shapes, or
-/// null for random values; it returns null for a tensor it does not hold.
-/// </param>
-public sealed record PositionBiasRequest(int Heads, JsonObject Settings, Device? Device = null, int Seed = 0,
-    Func<string, IReadOnlyList<int>, float[]?>? Weights = null);
-
-/// <summary>
-/// A kind of attention position bias, registered by its <see cref="IKind.Name"/> in <see cref="AttentionPositionBiases"/>:
-/// the settings it reads (<see cref="IConfigurableKind.Keys"/>), the trained tensors it reads by name
-/// (<see cref="Weights"/>, through <see cref="PositionBiasRequest.Weights"/>), and the bias it makes for a request.
-/// </summary>
-public interface IPositionBiasKind : IKind<PositionBiasRequest, IAttentionPositionBias>
-{
-    /// <summary>The names of the trained tensors it reads ("table" for the library's kinds), in the kind's own naming.</summary>
-    IReadOnlyList<string> Weights { get; }
-}
-
-/// <summary>
-/// The kinds of attention position bias, by name (<see cref="IPositionBiasKind"/>). The library registers "relative"
-/// (<see cref="RelativePositionBias"/>: settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default
-/// true) and "bucketed" (<see cref="BucketedPositionBias"/>: settings <c>num_buckets</c>, default 32,
-/// <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true); a family that needs another registers its
-/// own from its plug-in. A kind is made once per model and its tensors trained with it, so an app's kind and the
-/// library's are never mixed in one model: the registry has no fallback.
-/// </summary>
-public static class AttentionPositionBiases
-{
-    private static readonly KindTable<IPositionBiasKind> Registry = BuiltIn();
-
-    private static KindTable<IPositionBiasKind> BuiltIn()
-    {
-        var table = new KindTable<IPositionBiasKind>(nameof(AttentionPositionBiases), "Attention position bias",
-            "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does)",
-            comparer: StringComparer.Ordinal,
-            unguarded: "a bias is made once per model and its tensors trained with it, so an app's kind and the library's cannot be mixed in one model");
-        table.RegisterDefault(new BuiltInKind(RelativePositionBias.KindName, "a learned bias per head for each distance up to max_distance (max_distance, bidirectional)",
-            new OptionKeys("max_distance", "bidirectional"), Relative));
-        table.RegisterDefault(new BuiltInKind(BucketedPositionBias.KindName, "T5's learned bias per head for each bucket of distances (num_buckets, max_distance, bidirectional)",
-            new OptionKeys("num_buckets", "max_distance", "bidirectional"), Bucketed));
-        return table;
-    }
-
-    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPositionBiasKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered kinds.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Names;
-
-    /// <summary>The kind <paramref name="name"/>.</summary>
-    /// <exception cref="NotRegisteredException">None is registered under that name; the message lists the registered ones.</exception>
-    public static IPositionBiasKind Get(ReadOnlySpan<char> name) => Registry.Get(name);
-
-    /// <summary>A bias of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
-    /// <exception cref="NotSupportedException">The kind is not registered.</exception>
-    /// <exception cref="ArgumentException">A setting is invalid; the message names it.</exception>
-    public static IAttentionPositionBias Create(ReadOnlySpan<char> name, PositionBiasRequest request)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-        var kind = Get(name);
-        var bias = kind.Create(request);
-        return bias.Heads == request.Heads ? bias
-            : throw new InvalidOperationException($"Attention position bias '{kind.Name}' made a bias of {bias.Heads} heads; {request.Heads} were asked for.");
-    }
-
-    /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IPositionBiasKind? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the kind <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    // A library kind: its settings' keys and its one trained tensor, "table".
-    private sealed class BuiltInKind(string name, string summary, OptionKeys keys, Func<PositionBiasRequest, IAttentionPositionBias> create) : IPositionBiasKind
-    {
-        private static readonly string[] Table = ["table"];
-
-        public string Name => name;
-
-        public string Summary => summary;
-
-        public IReadOnlySet<string> Keys => keys;
-
-        public IReadOnlyList<string> Weights => Table;
-
-        public IAttentionPositionBias Create(PositionBiasRequest request) => create(request);
-    }
-
-    // "relative": max_distance (a positive whole number, default 128) and bidirectional (default true).
-    private static RelativePositionBias Relative(PositionBiasRequest request)
-    {
-        var settings = request.Settings ?? [];
-        int distance = 128;
-        if (settings["max_distance"] is { } node)
-        {
-            distance = node.GetValueKind() == System.Text.Json.JsonValueKind.Number && node.AsValue().TryGetValue(out int whole) && whole > 0 ? whole
-                : throw new ArgumentException($"The position bias setting max_distance is a positive whole number; got {node.ToJsonString()}.", nameof(request));
-        }
-
-        bool bidirectional = true;
-        if (settings["bidirectional"] is { } flag)
-        {
-            bidirectional = flag.GetValueKind() is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False ? flag.GetValue<bool>()
-                : throw new ArgumentException($"The position bias setting bidirectional is true or false; got {flag.ToJsonString()}.", nameof(request));
-        }
-
-        var bias = new RelativePositionBias(request.Heads, distance, bidirectional, request.Device, new Random(request.Seed));
-        if (request.Weights?.Invoke("table", [bias.Buckets, request.Heads]) is { } table)
-        {
-            if (table.Length != bias.Table.Size)
-            {
-                bias.Dispose();
-                throw new InvalidDataException($"The position bias's table has {table.Length} values; [{bias.Buckets}, {request.Heads}] is {bias.Table.Size}.");
-            }
-
-            bias.Table.CopyFrom(table);
-        }
-
-        return bias;
-    }
-
-    // "bucketed": num_buckets (default 32), max_distance (default 128), both positive whole numbers, and bidirectional
-    // (default true); the counts that do not fit together are refused by the bias, naming the setting.
-    private static BucketedPositionBias Bucketed(PositionBiasRequest request)
-    {
-        var settings = request.Settings ?? [];
-        int buckets = Whole(settings, "num_buckets", 32), distance = Whole(settings, "max_distance", 128);
-        bool bidirectional = true;
-        if (settings["bidirectional"] is { } flag)
-        {
-            bidirectional = flag.GetValueKind() is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False ? flag.GetValue<bool>()
-                : throw new ArgumentException($"The position bias setting bidirectional is true or false; got {flag.ToJsonString()}.", nameof(request));
-        }
-
-        var bias = new BucketedPositionBias(request.Heads, buckets, distance, bidirectional, request.Device, new Random(request.Seed));
-        if (request.Weights?.Invoke("table", [bias.Buckets, request.Heads]) is { } table)
-        {
-            if (table.Length != bias.Table.Size)
-            {
-                bias.Dispose();
-                throw new InvalidDataException($"The position bias's table has {table.Length} values; [{bias.Buckets}, {request.Heads}] is {bias.Table.Size}.");
-            }
-
-            bias.Table.CopyFrom(table);
-        }
-
-        return bias;
-    }
-
-    private static int Whole(JsonObject settings, string name, int fallback) => settings[name] is not { } node ? fallback
-        : node.GetValueKind() == System.Text.Json.JsonValueKind.Number && node.AsValue().TryGetValue(out int whole) && whole > 0 ? whole
-        : throw new ArgumentException($"The position bias setting {name} is a positive whole number; got {node.ToJsonString()}.", nameof(settings));
-}

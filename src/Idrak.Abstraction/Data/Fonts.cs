@@ -130,7 +130,7 @@ public interface IFontFace
     ReadOnlyMemory<byte> Table(string tag);
 }
 
-/// <summary>Reads one kind of font file into its faces; register it with <see cref="FontFormats.Register"/>.</summary>
+/// <summary>Reads one kind of font file into its faces; register it with <c>Register</c>.</summary>
 public interface IFontFormat
 {
     /// <summary>The format's name, e.g. "opentype" (names ignore case).</summary>
@@ -154,171 +154,12 @@ public interface IFontFormat
 /// <summary>
 /// The font file formats, by name (ignoring case). Built in (Idrak.Imaging): "opentype" (.ttf, .otf, .ttc: TrueType and
 /// CFF outlines, single fonts and collections), and "cff" and "type1" (bare CFF and Type 1 programs, as documents embed
-/// them: read by their first bytes, no file extension). Register another with <see cref="Register"/>.
+/// them: read by their first bytes, no file extension).
 /// </summary>
 public static class FontFormats
 {
     /// <summary>The bytes of a file's start that <see cref="IFontFormat.Accepts"/> receives.</summary>
     public const int HeaderBytes = 16;
-
-    private static readonly SlotTable<string, IFontFormat> Registry =
-        new(nameof(FontFormats), (slot, app, library) => new GuardedFormat(slot, app, library), StringComparer.OrdinalIgnoreCase, newestFirst: true);
-
-    static FontFormats() => LibraryDefaults.Ensure(typeof(FontFormats));
-
-    /// <summary>Registers <paramref name="format"/> (one of a registered name takes its place; the library's stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IFontFormat format)
-    {
-        ArgumentNullException.ThrowIfNull(format);
-        ArgumentException.ThrowIfNullOrWhiteSpace(format.Name);
-        Registry.Register(format.Name, format, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's format <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered format names, the first asked first.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The extensions of the registered formats (with the dot, lower case).</summary>
-    public static IReadOnlyCollection<string> Extensions => [.. Registry.Values.SelectMany(f => f.Extensions).Select(e => e.ToLowerInvariant()).Distinct()];
-
-    /// <summary>The format registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IFontFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(FontFormats), name, Names,
-            $"No font format '{name}' is registered ({string.Join(", ", Names)}); add it with FontFormats.Register.");
-
-    /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IFontFormat? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>What happens when the app's format <paramref name="name"/> fails.</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>
-    /// The faces of a font file, read by the format that accepts its first bytes, then mapped: by the map beside the file
-    /// (FONT.map.json, <see cref="FontMaps.Sidecars"/>), else by the first registered map that fits a face
-    /// (<see cref="FontMaps.Apply(IFontFace)"/>: a legacy font becomes usable directly); a face no map fits is the face read.
-    /// A face a map made is converted once into a complete font and kept (<see cref="FontCache"/>), and that font is the
-    /// face given back, now and on every later read.
-    /// </summary>
-    /// <exception cref="InvalidDataException">No registered format reads the file, it is damaged, or the map beside it is not valid.</exception>
-    public static IReadOnlyList<IFontFace> Read(string path)
-    {
-        byte[] file = File.ReadAllBytes(path);
-        string name = Path.GetFileNameWithoutExtension(path);
-        var read = ReadFaces(file, name);
-        return FontCache.Through(file, name, read, FontMaps.ForFile(path, read));
-    }
-
-    /// <summary>
-    /// The faces of a font file held in memory (kept by the faces, not copied), each mapped by the first registered map
-    /// that fits it (<see cref="FontMaps.Apply(IFontFace)"/>); a face no map fits is the face read. A face a map made is
-    /// converted once into a complete font and kept (<see cref="FontCache"/>), and that font is the face given back.
-    /// </summary>
-    /// <exception cref="InvalidDataException">No registered format reads the bytes, or they are damaged.</exception>
-    public static IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name = "font")
-    {
-        var read = ReadFaces(file, name);
-        return FontCache.Through(file, name, read, FontMaps.Apply(read));
-    }
-
-    // The faces as the first format that accepts the file reads them, no map applied.
-    internal static IReadOnlyList<IFontFace> ReadFaces(ReadOnlyMemory<byte> file, string name)
-    {
-        var header = file.Span[..Math.Min(file.Length, HeaderBytes)];
-        foreach (var format in Registry.Values)
-        {
-            if (format.Accepts(header))
-            {
-                try
-                {
-                    return format.Read(file, name);
-                }
-                catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or ArgumentException or EndOfStreamException)
-                {
-                    throw new InvalidDataException($"{name}: a damaged {format.Name} file ({e.Message}).", e);
-                }
-            }
-        }
-
-        throw new InvalidDataException($"{name}: not a font of the registered formats ({string.Join(", ", Names)}); register one with FontFormats.Register.");
-    }
-
-    /// <summary>The faces of every font file under <paramref name="folder"/> (and its subfolders) whose extension a format lists, in path order.</summary>
-    public static IReadOnlyList<IFontFace> ReadFolder(string folder)
-    {
-        var extensions = Extensions;
-        var faces = new List<IFontFace>();
-        foreach (string path in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
-        {
-            if (extensions.Contains(Path.GetExtension(path).ToLowerInvariant()))
-            {
-                faces.AddRange(Read(path));
-            }
-        }
-
-        return faces;
-    }
-
-    // An app's format over a built-in: each read falls back on its own, or is compared with the built-in's.
-    private sealed class GuardedFormat(Slot slot, IFontFormat app, IFontFormat library) : IFontFormat
-    {
-        public string Name => app.Name;
-
-        public IReadOnlyCollection<string> Extensions => app.Extensions;
-
-        public bool Accepts(ReadOnlySpan<byte> header)
-        {
-            try
-            {
-                return app.Accepts(header);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Accepts(header);
-            }
-        }
-
-        public IReadOnlyList<IFontFace> Read(ReadOnlyMemory<byte> file, string name)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                var answer = library.Read(file, name);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        var other = app.Read(file, name);
-                        run.Done(Comparisons.Exact(Shape(answer), Shape(other)));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Read(file, name);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Read(file, name);
-            }
-        }
-
-        private static string Shape(IReadOnlyList<IFontFace> faces) => string.Join("; ", faces.Select(f => $"{f.Family} {f.Style} {f.GlyphCount} {f.Metrics}"));
-    }
 }
 
 /// <summary>How a rasterizer finds an outline's inside (<see cref="IOutlineRasterizer.Fill(GlyphOutline, float, float, float, Span{float}, int, int, OutlineFill)"/>).</summary>
@@ -342,8 +183,7 @@ public enum OutlineFill : byte
 }
 
 /// <summary>
-/// Fills outlines into coverage: how much of each pixel the shape covers, 0 to 1. Register one with
-/// <see cref="OutlineRasterizers.Register"/>.
+/// Fills outlines into coverage: how much of each pixel the shape covers, 0 to 1. Register one with <c>Register</c>.
 /// </summary>
 public interface IOutlineRasterizer
 {
@@ -402,103 +242,4 @@ public static class OutlineRasterizers
 {
     /// <summary>The library's rasterizer.</summary>
     public const string Coverage = "coverage";
-
-    private static readonly SlotTable<string, IOutlineRasterizer> Registry =
-        new(nameof(OutlineRasterizers), (slot, app, library) => new GuardedRasterizer(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static OutlineRasterizers() => LibraryDefaults.Ensure(typeof(OutlineRasterizers));
-
-    /// <summary>Registers <paramref name="rasterizer"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IOutlineRasterizer rasterizer)
-    {
-        ArgumentNullException.ThrowIfNull(rasterizer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(rasterizer.Name);
-        Registry.Register(rasterizer.Name, rasterizer, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's rasterizer of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The rasterizer of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IOutlineRasterizer Get(string name = Coverage) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(OutlineRasterizers), name, Names,
-            $"No outline rasterizer '{name}' is registered ({string.Join(", ", Names)}); add it with OutlineRasterizers.Register.");
-
-    /// <summary>The library's rasterizer of that name, or null.</summary>
-    public static IOutlineRasterizer? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the rasterizer of that name.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>What happens when the app's rasterizer of that name fails.</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
-    // An app's rasterizer over the library's: a failed fill is redone by the library's (on a copy, so a half fill is not kept).
-    private sealed class GuardedRasterizer(Slot slot, IOutlineRasterizer app, IOutlineRasterizer library) : IOutlineRasterizer
-    {
-        public string Name => app.Name;
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
-            Fill(outline, scale, x, y, coverage, width, height, OutlineFill.Glyph);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
-            Guarded(outline, scale, x, y, coverage, width, height, rule, null);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness) =>
-            Guarded(outline, scale, x, y, coverage, width, height, rule, flatness);
-
-        // The fill by the rule, with the flatness when one was asked for (each rasterizer called the way it was).
-        private void Guarded(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float? flatness)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                float[]? before = run is null ? null : coverage.ToArray();
-                Call(library, outline, scale, x, y, coverage, width, height, rule, flatness);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        Call(app, outline, scale, x, y, before, width, height, rule, flatness);
-                        run.Done(Comparisons.Difference(coverage.ToArray(), before!, 1e-3f));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return;
-            }
-
-            float[]? copy = slot.Policy == SlotPolicy.FallBack ? coverage.ToArray() : null;   // only a fallback needs the coverage before
-            try
-            {
-                Call(app, outline, scale, x, y, coverage, width, height, rule, flatness);
-            }
-            catch (Exception e) when (slot.Failed(e))                       // true only under FallBack, which made the copy
-            {
-                copy?.CopyTo(coverage);
-                Call(library, outline, scale, x, y, coverage, width, height, rule, flatness);
-            }
-        }
-
-        private static void Call(IOutlineRasterizer rasterizer, GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float? flatness)
-        {
-            if (flatness is { } f)
-            {
-                rasterizer.Fill(outline, scale, x, y, coverage, width, height, rule, f);
-            }
-            else
-            {
-                rasterizer.Fill(outline, scale, x, y, coverage, width, height, rule);
-            }
-        }
-    }
 }

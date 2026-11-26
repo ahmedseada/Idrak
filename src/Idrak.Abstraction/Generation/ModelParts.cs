@@ -44,10 +44,7 @@ public sealed record ModelPartOptions
 
 /// <summary>
 /// A part of a model stored beside its text decoder in the same folder and checkpoint, the decoder's own architecture
-/// knowing nothing of it: an audio encoder and its projector (Idrak.Audio's "audio" part, over its audio families). The
-/// package that brings the part registers it in <see cref="ModelParts"/>; core's model loading then counts its tensors
-/// as used, saving carries them (with any trained ones), a model made from a spec gets the part from its description,
-/// and training opens it as a trainable soft-part source (<see cref="ITrainableSoftParts"/>).
+/// knowing nothing of it: an audio encoder and its projector (Idrak.Audio's "audio" part, over its audio families).
 /// </summary>
 public interface IModelPart
 {
@@ -70,62 +67,3 @@ public interface IModelPart
     ITrainableSoftParts Open(ModelPartCheckpoint checkpoint, ModelPartOptions options);
 }
 
-/// <summary>
-/// The model parts, by kind. The library itself registers none in this package: Idrak.Audio registers "audio" when the
-/// application ships it (a library default, through the packages' registrations). A checkpoint holding a part whose kind
-/// is not registered loads as its decoder alone, its tensors counted unused. Register another with <see cref="Register"/>.
-/// </summary>
-public static class ModelParts
-{
-    private static readonly SlotTable<string, IModelPart> Table = new(nameof(ModelParts), comparer: StringComparer.Ordinal,
-        unguarded: "a part's tensors, files and source must agree with one another, so two registrations cannot stand in for each other");
-
-    static ModelParts() => LibraryDefaults.Ensure(typeof(ModelParts));   // the packages' parts (Idrak.Audio's "audio"), on first use
-
-    /// <summary>Registers <paramref name="part"/> under its <see cref="IModelPart.Kind"/>; under a library kind it takes that part's place until <see cref="Unregister"/>.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IModelPart part)
-    {
-        ArgumentNullException.ThrowIfNull(part);
-        ArgumentException.ThrowIfNullOrEmpty(part.Kind);
-        Table.Register(part.Kind, part, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's part <paramref name="kind"/> (a library kind gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string kind) => Table.Unregister(kind);
-
-    /// <summary>The registered kinds.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The part registered as <paramref name="kind"/>, or null.</summary>
-    public static IModelPart? Find(string kind) => Table.Find(kind);
-
-    /// <summary>The part registered as <paramref name="kind"/>.</summary>
-    /// <exception cref="NotSupportedException">None is; the message names those that are and <see cref="Register"/>.</exception>
-    public static IModelPart Get(string kind) => Table.Find(kind)
-        ?? throw new NotRegisteredException(nameof(ModelParts), kind, Table.Keys,
-            $"Model part '{kind}' is not registered ({(Table.Keys.Count == 0 ? "none is" : string.Join(", ", Table.Keys))}); "
-            + "ship the package that brings it (Idrak.Audio for \"audio\") or add it with ModelParts.Register.");
-
-    /// <summary>The library's part <paramref name="kind"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IModelPart? Default(string kind) => Table.Default(kind);
-
-    /// <summary>Who registered the part <paramref name="kind"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string kind) => Table.Origin(kind);
-
-    /// <summary>The registered parts a config.json holds, in registration order.</summary>
-    public static IReadOnlyList<IModelPart> In(JsonObject config)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        var found = new List<IModelPart>();
-        foreach (string kind in Table.Keys)
-        {
-            if (Table.Find(kind) is { } part && part.In(config))
-            {
-                found.Add(part);
-            }
-        }
-
-        return found;
-    }
-}

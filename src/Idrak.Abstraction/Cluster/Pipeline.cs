@@ -465,8 +465,8 @@ public readonly record struct PipelineWork(PipelineWorkKind Kind, int MicroBatch
 
 /// <summary>
 /// The order in which a pipeline stage runs its micro-batches' forward and backward passes in a training step (plan 23,
-/// phase C7): every stage of a pipeline runs the same schedule, so the order is fixed by the stage, the stage count and the
-/// micro-batches alone, and the messages between stages always meet. Registered by name in <see cref="PipelineSchedules"/>.
+/// phase C7): every stage of a pipeline runs the same schedule, so the order is fixed by the stage, the stage count and
+/// the micro-batches alone, and the messages between stages always meet.
 /// </summary>
 public interface IPipelineSchedule
 {
@@ -490,54 +490,6 @@ public interface IPipelineSchedule
     /// <paramref name="stages"/> with <paramref name="microBatches"/>.
     /// </summary>
     int InFlight(int stage, int stages, int microBatches);
-}
-
-/// <summary>
-/// The pipeline schedules, by name (plan 23, phase C7). Idrak.Network registers "gpipe" (every micro-batch's forward, then
-/// every backward in reverse); none is built into Idrak.Abstraction. <see cref="ClusterOptions.Schedule"/> names the one a run uses.
-/// </summary>
-public static class PipelineSchedules
-{
-    private static readonly SlotTable<string, IPipelineSchedule> Table = new(nameof(PipelineSchedules), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "every stage of a pipeline must run the same schedule, or their messages never meet; another cannot take over a step");
-
-    static PipelineSchedules() => LibraryDefaults.Ensure(typeof(PipelineSchedules));
-
-    /// <summary>The registered schedules, in registration order.</summary>
-    public static IReadOnlyList<IPipelineSchedule> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="schedule"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IPipelineSchedule schedule)
-    {
-        ArgumentNullException.ThrowIfNull(schedule);
-        ArgumentException.ThrowIfNullOrWhiteSpace(schedule.Name);
-        Table.Register(schedule.Name, schedule, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's schedule of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The schedule of that name, or null.</summary>
-    public static IPipelineSchedule? Find(string name) => Table.Find(name);
-
-    /// <summary>The schedule of that name.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name (Idrak.Network registers "gpipe": ship it with the app).</exception>
-    public static IPipelineSchedule Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(PipelineSchedules), name, Table.Keys,
-            $"Pipeline schedule '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with PipelineSchedules.Register, or reference Idrak.Network (IDRAK_CLUSTER_SCHEDULE).");
-
-    /// <summary>The library's schedule of that name, or null.</summary>
-    public static IPipelineSchedule? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the schedule of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each schedule as "name: summary", one a line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
 }
 
 /// <summary>

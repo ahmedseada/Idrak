@@ -21,28 +21,26 @@ public enum DocumentTextDirection : byte
 }
 
 /// <summary>
-/// Arranges a page's text runs into lines and text, from their places on the page and the reading order the options name;
-/// register one with <see cref="DocumentTextLayouts.Register"/>. Formats call the layout <see cref="DocumentOptions.Layout"/>
-/// names (<see cref="DocumentTextLayouts.Arrange"/>). Safe to use from several threads at once.
+/// Arranges a page's text runs into lines and text, from their places on the page and the reading order the options
+/// name; register one with <c>Register</c>. Formats call the layout <see cref="DocumentOptions.Layout"/> names (<c>Arrange</c>). Safe to use from several threads
+/// at once.
 /// </summary>
-public interface IDocumentTextLayout : IKind
+public interface IDocumentTextLayout
 {
     /// <summary>
     /// The lines and text of a page of <paramref name="width"/> x <paramref name="height"/> points holding
     /// <paramref name="runs"/> (in content order).
     /// </summary>
-    /// <exception cref="NotRegisteredException">The reading order the options name is not registered.</exception>
+    /// <exception cref="Exception">The reading order the options name is not registered.</exception>
     DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options);
 }
 
 /// <summary>
 /// The document text layouts, by name (ignoring case). The library's, in Idrak.Abstraction: <see cref="Lines"/> (runs
 /// grouped into lines by baseline and size, each line's direction from its first strong character by Unicode's rule
-/// through the reading order, runs ordered by their places in that direction, words split where a gap passes a share of the
-/// font size, then the reading order for logical order), <see cref="Content"/> (the runs in content order, joined, no
-/// layout) and <see cref="Tagged"/> (the order a tagged document's author gave). A layout of one's own (columns, a table's
-/// cells) registers with <see cref="Register"/>; one under a
-/// library name takes its place, which stays behind it (see <see cref="SetPolicy"/>).
+/// through the reading order, runs ordered by their places in that direction, words split where a gap passes a share of
+/// the font size, then the reading order for logical order), <see cref="Content"/> (the runs in content order, joined,
+/// no layout) and <see cref="Tagged"/> (the order a tagged document's author gave).
 /// </summary>
 public static class DocumentTextLayouts
 {
@@ -58,84 +56,6 @@ public static class DocumentTextLayouts
     /// after them, artifacts left out; a page with no tagged run is laid out by <see cref="Lines"/>.
     /// </summary>
     public const string Tagged = "tagged";
-
-    private static readonly KindTable<IDocumentTextLayout> Table = new(nameof(DocumentTextLayouts), "Document text layout",
-        $"add it with DocumentTextLayouts.Register (DocumentOptions.Layout and {DocumentOptions.LayoutVariable} name the layout)",
-        (slot, app, library) => new GuardedLayout(slot, app, library), StringComparer.OrdinalIgnoreCase);
-
-    static DocumentTextLayouts()
-    {
-        Table.RegisterDefault(new LinesLayout());
-        Table.RegisterDefault(new ContentLayout());
-        Table.RegisterDefault(new TaggedLayout());
-        LibraryDefaults.Ensure(typeof(DocumentTextLayouts));
-    }
-
-    /// <summary>Registers <paramref name="layout"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IDocumentTextLayout layout) => Table.Register(layout, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's layout <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The layout registered as <paramref name="name"/>, or null.</summary>
-    public static IDocumentTextLayout? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The layout registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
-    public static IDocumentTextLayout Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's layout <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IDocumentTextLayout? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's layout <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/> arranges with the library's), or whether it only runs beside the library's
-    /// (<see cref="SlotPolicy.Shadow"/>: the library's text is used, the two are compared).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered layout as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    /// <summary>The lines and text of a page's runs, by the layout <paramref name="options"/> names.</summary>
-    /// <exception cref="NotRegisteredException">The layout or the reading order it needs is not registered.</exception>
-    public static DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(runs);
-        ArgumentNullException.ThrowIfNull(options);
-        return Get(options.Layout).Arrange(runs, width, height, options);
-    }
-
-    /// <summary>The reading order <paramref name="options"/> names; refused naming the option when it is not registered.</summary>
-    /// <exception cref="NotRegisteredException">It is not registered.</exception>
-    public static IReadingOrder ReadingOrderFor(DocumentOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        return ReadingOrders.Find(options.ReadingOrder)
-            ?? throw new NotRegisteredException(nameof(ReadingOrders), options.ReadingOrder, ReadingOrders.Names,
-                $"A document's text is put in logical order by the reading order '{options.ReadingOrder}' (DocumentOptions.ReadingOrder, {DocumentOptions.ReadingOrderVariable}), "
-                + $"which is not registered (registered: {(ReadingOrders.Names.Count == 0 ? "none" : string.Join(", ", ReadingOrders.Names))}); the library's (bidi, runs) come with "
-                + "Idrak.Imaging, or add one with ReadingOrders.Register.");
-    }
-
-    // An app's layout over the library's: each call falls back on its own, or is compared with the library's text.
-    private sealed class GuardedLayout(Slot slot, IDocumentTextLayout app, IDocumentTextLayout library) : IDocumentTextLayout
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public DocumentText Arrange(IReadOnlyList<DocumentTextRun> runs, float width, float height, DocumentOptions options) =>
-            slot.Call(() => app.Arrange(runs, width, height, options), () => library.Arrange(runs, width, height, options),
-                (a, b) => Comparisons.Difference(a.Text, b.Text) ?? Comparisons.Exact(a.Lines.Count, b.Lines.Count));
-    }
 }
 
 // "lines": runs grouped into lines by baseline and size; each line's direction from its first strong character (the
@@ -145,7 +65,7 @@ public static class DocumentTextLayouts
 // are lines of their own, in content order, after the placed ones. It allocates what it gives back (the lines, each
 // line's runs and text, the page's text) and the strings the reading order is asked about; its working space (the runs'
 // sort keys, the lines' starts, the text being built) comes from the shared array pools.
-internal sealed class LinesLayout : IDocumentTextLayout
+internal sealed class LinesLayout(IReadingOrder order) : IDocumentTextLayout
 {
     public string Name => DocumentTextLayouts.Lines;
 
@@ -160,7 +80,6 @@ internal sealed class LinesLayout : IDocumentTextLayout
             return DocumentText.Empty;
         }
 
-        var order = DocumentTextLayouts.ReadingOrderFor(options);
         int count = runs.Count;
         var keys = ArrayPool<RunKey>.Shared.Rent(count);
         var starts = ArrayPool<int>.Shared.Rent(count + 1);

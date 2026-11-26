@@ -148,70 +148,10 @@ public sealed record LinkProfile : ILinkProfile
 /// <summary>
 /// The link profiles, by name (plan 23). Idrak.Cluster registers the built-ins; a name may end in a rate that sets the
 /// bandwidth of the profile before it (<c>direct-link-10g</c>: "direct-link" at 10 Gb/s; <c>wifi-300m</c>: 300 Mb/s),
-/// in bits a second as links are sold, powers of 1,000. A calibration (<c>idrak cluster calibrate</c>, kept by
-/// <see cref="ClusterCache"/>) takes the library's profile's place in <see cref="Resolve"/>; an app's registration stays
-/// above both.
+/// in bits a second as links are sold, powers of 1,000.
 /// </summary>
 public static class LinkProfiles
 {
-    private static readonly SlotTable<string, ILinkProfile> Table = new(nameof(LinkProfiles), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a profile is data with no call to fall back from: an app's or a calibrated profile takes the built-in's place, which stays behind it");
-
-    static LinkProfiles() => LibraryDefaults.Ensure(typeof(LinkProfiles));
-
-    /// <summary>The registered profiles, in registration order.</summary>
-    public static IReadOnlyList<ILinkProfile> All => Table.Values;
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>Registers <paramref name="profile"/> under its name (over the library's of that name, which stays behind it).</summary>
-    /// <exception cref="ArgumentException">A figure out of range (<see cref="LinkProfile.Validate"/>).</exception>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ILinkProfile profile)
-    {
-        LinkProfile.Validate(profile);
-        Table.Register(profile.Name, profile, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's profile of that name (the library's, if any, answers again).</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The profile registered under exactly that name, or null.</summary>
-    public static ILinkProfile? Find(string name) => Table.Find(name);
-
-    /// <summary>
-    /// The profile <paramref name="name"/> names: the one registered under it, or one registered under the part before a
-    /// rate suffix, with that rate (<c>direct-link-10g</c>).
-    /// </summary>
-    /// <exception cref="NotSupportedException">Neither is registered.</exception>
-    public static ILinkProfile Resolve(string name)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        if (Table.Find(name) is { } exact)
-        {
-            // A calibrated profile of that name takes the library's place; an app's registration stays above both.
-            return !ReferenceEquals(Table.Default(name), exact) ? exact
-                : ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(exact) : exact;
-        }
-
-        int dash = name.LastIndexOf('-');
-        if (dash > 0 && TryParseRate(name.AsSpan(dash + 1), out double bytesPerSecond) && Table.Find(name.AsSpan(0, dash)) is { } named)
-        {
-            var rated = named.With(bandwidthBytesPerSecond: bytesPerSecond, name: name);
-            return ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(rated) : rated;
-        }
-
-        throw new NotRegisteredException(nameof(LinkProfiles), name, Table.Keys,
-            $"Link profile '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); a registered name may end in a rate (\"-10g\", \"-300m\"), or add one with LinkProfiles.Register.");
-    }
-
-    /// <summary>The library's profile of that name, or null.</summary>
-    public static ILinkProfile? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the profile of that name.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
     /// <summary>
     /// Reads a link rate in bits a second: a number then <c>g</c> (gigabits) or <c>m</c> (megabits), powers of 1,000
     /// ("10g", "2.5g", "300m"), as bytes a second.

@@ -46,11 +46,9 @@ public interface ISoftPartSource
 }
 
 /// <summary>
-/// A soft-part source whose layers can be trained (an audio encoder and its projector, made from scratch): training reads
-/// its features with gradients (<see cref="EncodeTraining"/>) and trains the parts it offers (<see cref="TrainableParts"/>,
-/// the names a pretraining stage's <c>Trained</c> list gives, "audio-encoder" and "audio-projector" for the audio part).
-/// The model-part registry (<see cref="ModelParts"/>) opens one beside a loaded model; the training step lays its
-/// features out where the soft tokens are, as it does images' features. Dispose it when done.
+/// A soft-part source whose layers can be trained (an audio encoder and its projector, made from scratch): training
+/// reads its features with gradients (<see cref="EncodeTraining"/>) and trains the parts it offers (<see cref="TrainableParts"/>, the names a pretraining stage's <c>Trained</c> list gives, "audio-encoder" and
+/// "audio-projector" for the audio part). Dispose it when done.
 /// </summary>
 public interface ITrainableSoftParts : ISoftPartSource, IDisposable
 {

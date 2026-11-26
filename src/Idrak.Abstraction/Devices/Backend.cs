@@ -333,18 +333,22 @@ public abstract class Storage
 
 /// <summary>
 /// A device: its memory, copies and synchronization, what its kernels can do, and a kernel for each operation of the
-/// device contract (plan 9). Every operation is a virtual method <c>NameKernel</c> whose default body is a composition of
+/// device contract (plan 9). Every operation is a virtual method <c>NameKernel</c> whose default body is a composition
+/// of
 /// other operations, or "no such kernel" (it returns false and the caller takes another path, or it throws); a device
 /// overrides the ones it runs itself.
 /// Callers run an operation through <c>Name(...)</c> (<see cref="Fill"/>, <see cref="Softmax"/>, ...), which runs the
 /// kernel registered for the device's <see cref="Kind"/> in <see cref="Kernels"/> where there is one, else
-/// <c>NameKernel</c>. What every device provides is <see cref="IDeviceBackend"/>; the optional capabilities are interfaces
+/// <c>NameKernel</c>. What every device provides is <see cref="IDeviceBackend"/>; the optional capabilities are
+/// interfaces
 /// of their own (<see cref="IGraphCaptureBackend"/>, <see cref="IRecurrentKernels"/>, …),
-/// read once when the backend starts: the operations they hold reach the device's kernels through them. A device comes with an <see cref="IDeviceProvider"/>, which starts it.
+/// read once when the backend starts: the operations they hold reach the device's kernels through them. A device comes
+/// with an <c>IDeviceProvider</c>, which starts it.
 /// </summary>
 /// <remarks>
 /// Every operation works on contiguous row-major float32 buffers. Methods named "...Backward", <see cref="Axpy"/>,
-/// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/> accumulate into their output (+=) so
+/// <see cref="MulAdd"/>, <see cref="SumRows"/> and <see cref="AddBroadcastScalar"/> accumulate into their output (+=)
+/// so
 /// gradients from several paths add up.
 /// </remarks>
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]   // OwnKernels reads the method each kernel's delegate binds
@@ -437,9 +441,8 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     private readonly MoveGate? _moves;
 
     /// <summary>
-    /// Starts a device: reads which capability interfaces it implements, guards its moves when it offloads (every
-    /// operation then runs as one, <see cref="EnterOperation"/>), and asks <see cref="Kernels"/> to tell it when the
-    /// kernels registered for it change.
+    /// Starts a device: reads which capability interfaces it implements, and guards its moves when it offloads (every
+    /// operation then runs as one, <see cref="EnterOperation"/>).
     /// </summary>
     protected Backend()
     {
@@ -455,8 +458,6 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
         {
             _moves = new MoveGate();
         }
-
-        Operations.Kernels.Track(this);
     }
 
     /// <summary>The kind of device this drives ("cpu", "cuda", "vulkan", …): the kernels registered for it run here.</summary>
@@ -469,7 +470,6 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
     internal void KernelsChanged()
     {
         Volatile.Write(ref _kernels, IsDisposed ? s_disposedKernels : Operations.Kernels.Unresolved());
-        PluginKernelsChanged();
     }
 
     /// <summary>The trace counting this device's calls, or null; setting it makes every call resolve its kernel again.</summary>
@@ -1494,9 +1494,6 @@ public abstract partial class Backend : IDeviceBackend, IDisposable
 
     /// <summary>y[i] = gelu(x[i] + bias[i % cols]).</summary>
     public virtual void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols) => throw NoKernel(nameof(BiasGelu));
-
-    // Int8 KV cache: each cached row (one head, one position) is dim bytes packed four per element, words = ceil(dim / 4)
-    // elements, with one scale per row in scales[head, position].
 
     /// <summary>y = x · inv per row, inv[r] = 1 / sqrt(mean(x[r]²) + eps) (stored for the backward pass).</summary>
     public virtual void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps) => throw NoKernel(nameof(RmsNorm));

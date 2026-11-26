@@ -165,13 +165,15 @@ public sealed record ClusterOptions
     /// <summary>Where rank 0 listens (<c>IDRAK_COORDINATOR</c>, "host:port"), or null: the file's first node's address.</summary>
     public string? Coordinator { get; init; }
 
-    /// <summary>The transport, a <see cref="Transports"/> name, or "auto" for the selector's choice per pair (<c>IDRAK_CLUSTER_TRANSPORT</c>).</summary>
+    /// <summary>The transport, a <c>Transports</c> name, or "auto" for the selector's choice per pair
+    /// (<c>IDRAK_CLUSTER_TRANSPORT</c>).</summary>
     public string Transport { get; init; } = "auto";
 
-    /// <summary>The <see cref="TransportSelectors"/> name (<c>IDRAK_CLUSTER_SELECTOR</c>).</summary>
+    /// <summary></summary>
     public string Selector { get; init; } = "fastest";
 
-    /// <summary>The <see cref="Collectives"/> name, or null: "hierarchical" when the topology has more than one node, else "ring" (<c>IDRAK_CLUSTER_COLLECTIVE</c>).</summary>
+    /// <summary>The <c>Collectives</c> name, or null: "hierarchical" when the topology has more than one node, else
+    /// "ring" (<c>IDRAK_CLUSTER_COLLECTIVE</c>).</summary>
     public string? Collective { get; init; }
 
     /// <summary>The shared secret of the handshake (<c>IDRAK_CLUSTER_KEY</c>), or null: nothing listens beyond this machine without one.</summary>
@@ -185,13 +187,6 @@ public sealed record ClusterOptions
 
     /// <summary>Connection attempts at the rendezvous (<c>IDRAK_CLUSTER_RETRIES</c>).</summary>
     public int Retries { get; init; } = 3;
-
-    /// <summary>
-    /// How the ranks agree on a stop one of them asks for (Plan 27, R7: Ctrl+C, a timeout, a stop request), a
-    /// <see cref="StopAgreements"/> name ("all-reduce", "shared", or a plug-in's), or "auto": "shared" for an in-process
-    /// simulated cluster's ranks, else "all-reduce" (<c>IDRAK_CLUSTER_STOP</c>).
-    /// </summary>
-    public string StopAgreement { get; init; } = StopAgreements.Automatic;
 
     /// <summary>
     /// The step boundaries between the stop agreement's own one-value all-reduces when no collective of the step carried the
@@ -291,11 +286,11 @@ public sealed record ClusterOptions
     public long? GatherBytes { get; init; }
 
     /// <summary>
-    /// Whether every rank runs rank 0's measured kernel choices (a kernel's variant, its splits, the workgroup width, the
-    /// attention path: <see cref="Devices.MeasuredChoiceProviders"/>) instead of measuring its own, so a seeded run on N ranks
-    /// runs the kernels one process runs. Rank 0 still measures (or reads its cache); a rank on another device or driver than
-    /// rank 0's keeps its own and says so (<see cref="Diagnostics.MeasuredChoicesShared"/>). Speed is unchanged; 0 lets each
-    /// rank measure its own (<c>IDRAK_CLUSTER_SHARE_TUNING</c>: 1 or 0).
+    /// Whether every rank runs rank 0's measured kernel choices (a kernel's variant, its splits, the workgroup width,
+    /// the attention path: <c>MeasuredChoiceProviders</c>) instead of measuring its own, so a seeded run
+    /// on N ranks runs the kernels one process runs. Rank 0 still measures (or reads its cache); a rank on another
+    /// device or driver than rank 0's keeps its own and says so (<see cref="Diagnostics.MeasuredChoicesShared"/>).
+    /// Speed is unchanged; 0 lets each rank measure its own (<c>IDRAK_CLUSTER_SHARE_TUNING</c>: 1 or 0).
     /// </summary>
     public bool ShareTuning { get; init; } = true;
 
@@ -318,8 +313,7 @@ public sealed record ClusterOptions
 
     /// <summary>
     /// How a gradient bucket is compressed on its way: a <c>GradientCompressions</c> name of Idrak.Network ("none",
-    /// "bf16", "top-k", "int8", "fp8", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, "bf16" on a
-    /// bfloat16 <see cref="Wire"/>, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
+    /// "top-k", or a plug-in's), or null: "top-k" when <see cref="TopK"/> is set, else "none" (<c>IDRAK_CLUSTER_COMPRESSION</c>).
     /// </summary>
     public string? Compression { get; init; }
 
@@ -331,11 +325,8 @@ public sealed record ClusterOptions
     /// </summary>
     public TimeSpan? MessageCost { get; init; }
 
-    /// <summary>The compression a run uses: <see cref="Compression"/>, or the one <see cref="TopK"/> and <see cref="Wire"/> imply.</summary>
-    public string CompressionName => Compression ?? (TopK > 0 ? "top-k" : Wire == WireType.BFloat16 ? "bf16" : "none");
-
-    /// <summary>How gradients travel (<c>IDRAK_CLUSTER_WIRE</c>: f32 or bf16).</summary>
-    public WireType Wire { get; init; } = WireType.Float32;
+    /// <summary>The compression a run uses: <see cref="Compression"/>, or the one <see cref="TopK"/> implies.</summary>
+    public string CompressionName => Compression ?? (TopK > 0 ? "top-k" : "none");
 
     /// <summary>The share of gradient values sent (largest first), from 0 to 1; 0 sends them all (<c>IDRAK_CLUSTER_TOPK</c>).</summary>
     public double TopK { get; init; }
@@ -371,10 +362,7 @@ public sealed record ClusterOptions
     /// </summary>
     public double RebalanceTolerance { get; init; } = 0.1;
 
-    /// <summary>
-    /// How gradients are kept in step across the ranks: a <see cref="GradientSyncs"/> name ("all-reduce", "local-sgd", or a
-    /// plug-in's), or null: "local-sgd" when <see cref="LocalSgdEvery"/> is set, else "all-reduce" (<c>IDRAK_CLUSTER_GRADIENT_SYNC</c>).
-    /// </summary>
+    /// <summary></summary>
     public string? GradientSync { get; init; }
 
     /// <summary>
@@ -403,7 +391,7 @@ public sealed record ClusterOptions
     /// <summary>A pipeline's micro-batches in flight, or null: the gradient accumulation (<c>IDRAK_CLUSTER_MICROBATCHES</c>).</summary>
     public int? MicroBatches { get; init; }
 
-    /// <summary>A pipeline's schedule, a <see cref="PipelineSchedules"/> name (<c>IDRAK_CLUSTER_SCHEDULE</c>: gpipe).</summary>
+    /// <summary></summary>
     public string Schedule { get; init; } = "gpipe";
 
     /// <summary>
@@ -445,26 +433,14 @@ public sealed record ClusterOptions
     public double SuggestShare { get; init; } = 0.2;
 
     /// <summary>
-    /// The largest relative error of bfloat16 gradients the advisor accepts (a sample slice reduced over both wires, the
-    /// largest difference over the slice's largest value), or null for bfloat16's own rounding step, 2^-7 (the owner's
-    /// choice: Idrak's bf16 ring rounds both the contributions it sends and the reduced sum, so a slice loses up to about two
-    /// half-steps; the measured 1.47e-3, 2.17e-3 and 4.58e-3 are accepted) (<c>IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE</c>).
-    /// </summary>
-    public double? SuggestBFloat16Tolerance { get; init; }
-
-    /// <summary>
     /// Whether a run's gradient synchronisation measures its first warm steps for the "cluster" setting advisor (plan 23,
     /// decision 4): null while someone listens at <see cref="Diagnostics.TelemetryLevel.Suggestions"/>, true always, false never
-    /// (<c>IDRAK_CLUSTER_SUGGEST</c>: 1 or 0). The measurement adds two small collectives once (a sample slice reduced over
-    /// both wires); nothing a run computes changes.
+    /// (<c>IDRAK_CLUSTER_SUGGEST</c>: 1 or 0); nothing a run computes changes.
     /// </summary>
     public bool? Suggest { get; init; }
 
     /// <summary>The warm steps (the first, cold step aside) the advisor measures before it suggests (<c>IDRAK_CLUSTER_SUGGEST_STEPS</c>).</summary>
     public int SuggestSteps { get; init; } = 3;
-
-    /// <summary>The gradient values of the sample slice the advisor reduces over a float32 and a bfloat16 wire (<c>IDRAK_CLUSTER_SUGGEST_SLICE</c>).</summary>
-    public int SuggestSliceValues { get; init; } = 65536;
 
     /// <summary>The calibrated link profiles' file, or null for the tuning cache's (<c>IDRAK_CLUSTER_PROFILES_FILE</c>).</summary>
     public string? ProfilesFile { get; init; }
@@ -531,7 +507,7 @@ public sealed record ClusterOptions
     [
         "IDRAK_CLUSTER_TOPOLOGY", "IDRAK_CLUSTER_NODE", "IDRAK_RANK", "IDRAK_WORLD_SIZE", "IDRAK_COORDINATOR", "IDRAK_CLUSTER_TRANSPORT",
         "IDRAK_CLUSTER_SELECTOR", "IDRAK_CLUSTER_COLLECTIVE", "IDRAK_CLUSTER_KEY", "IDRAK_CLUSTER_PORT", "IDRAK_CLUSTER_TIMEOUT",
-        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_STOP", "IDRAK_CLUSTER_STOP_EVERY", "IDRAK_CLUSTER_STOP_WAIT", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_CHUNK_PROBE", "IDRAK_CLUSTER_TUNING_FILE", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
+        "IDRAK_CLUSTER_RETRIES", "IDRAK_CLUSTER_STOP_EVERY", "IDRAK_CLUSTER_STOP_WAIT", "IDRAK_CLUSTER_CHUNK_BYTES", "IDRAK_CLUSTER_CHUNK_PROBE", "IDRAK_CLUSTER_TUNING_FILE", "IDRAK_CLUSTER_IN_FLIGHT", "IDRAK_CLUSTER_RECEIVE_BYTES", "IDRAK_CLUSTER_SOCKET_BUFFER",
         "IDRAK_CLUSTER_BUCKET_BYTES", "IDRAK_CLUSTER_OVERLAP", "IDRAK_CLUSTER_COMPRESSION", "IDRAK_CLUSTER_MESSAGE_COST", "IDRAK_CLUSTER_WIRE", "IDRAK_CLUSTER_TOPK", "IDRAK_CLUSTER_ERROR_FEEDBACK", "IDRAK_CLUSTER_LOCAL_SGD",
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
@@ -575,7 +551,6 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_PORT") is { } port) o = o with { ListenPort = Whole("IDRAK_CLUSTER_PORT", port, 0, 65535) };
         if (Read(variable, "IDRAK_CLUSTER_TIMEOUT") is { } timeout) o = o with { Timeout = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_TIMEOUT", timeout, "a number of seconds above 0", v => v > 0)) };
         if (Read(variable, "IDRAK_CLUSTER_RETRIES") is { } retries) o = o with { Retries = Whole("IDRAK_CLUSTER_RETRIES", retries, 1) };
-        if (Read(variable, "IDRAK_CLUSTER_STOP") is { } stop) o = o with { StopAgreement = stop };
         if (Read(variable, "IDRAK_CLUSTER_STOP_EVERY") is { } stopEvery) o = o with { StopEvery = Whole("IDRAK_CLUSTER_STOP_EVERY", stopEvery, 1) };
         if (Read(variable, "IDRAK_CLUSTER_STOP_WAIT") is { } stopWait) o = o with { StopWait = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_STOP_WAIT", stopWait, "a number of seconds, 0 or more", v => v >= 0)) };
         if (Read(variable, "IDRAK_CLUSTER_CHUNK_BYTES") is { } chunk) o = o with { ChunkBytes = Size("IDRAK_CLUSTER_CHUNK_BYTES", chunk) };
@@ -588,18 +563,6 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_OVERLAP") is { } overlap) o = o with { Overlap = Flag("IDRAK_CLUSTER_OVERLAP", overlap) };
         if (Read(variable, "IDRAK_CLUSTER_COMPRESSION") is { } compression) o = o with { Compression = compression };
         if (Read(variable, "IDRAK_CLUSTER_MESSAGE_COST") is { } messageCost) o = o with { MessageCost = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_MESSAGE_COST", messageCost, "a number of seconds, 0 or more", v => v >= 0)) };
-        if (Read(variable, "IDRAK_CLUSTER_WIRE") is { } wire)
-        {
-            o = o with
-            {
-                Wire = wire.ToLowerInvariant() switch
-                {
-                    "f32" or "float32" => WireType.Float32,
-                    "bf16" or "bfloat16" => WireType.BFloat16,
-                    _ => throw Bad("IDRAK_CLUSTER_WIRE", wire, "f32 or bf16"),
-                },
-            };
-        }
 
         if (Read(variable, "IDRAK_CLUSTER_TOPK") is { } topK) o = o with { TopK = Number("IDRAK_CLUSTER_TOPK", topK, "a share from 0 to 1", v => v is >= 0 and <= 1) };
         if (Read(variable, "IDRAK_CLUSTER_ERROR_FEEDBACK") is { } feedback) o = o with { ErrorFeedback = Flag("IDRAK_CLUSTER_ERROR_FEEDBACK", feedback) };
@@ -650,10 +613,8 @@ public sealed record ClusterOptions
         }
 
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SHARE") is { } share) o = o with { SuggestShare = Number("IDRAK_CLUSTER_SUGGEST_SHARE", share, "a share from 0 to 1", v => v is >= 0 and <= 1) };
-        if (Read(variable, "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE") is { } tolerance) o = o with { SuggestBFloat16Tolerance = Number("IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE", tolerance, "a number above 0", v => v > 0) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST") is { } suggest) o = o with { Suggest = Flag("IDRAK_CLUSTER_SUGGEST", suggest) };
         if (Read(variable, "IDRAK_CLUSTER_SUGGEST_STEPS") is { } suggestSteps) o = o with { SuggestSteps = Whole("IDRAK_CLUSTER_SUGGEST_STEPS", suggestSteps, 1) };
-        if (Read(variable, "IDRAK_CLUSTER_SUGGEST_SLICE") is { } slice) o = o with { SuggestSliceValues = Whole("IDRAK_CLUSTER_SUGGEST_SLICE", slice, 1) };
         if (Read(variable, "IDRAK_CLUSTER_PROFILES_FILE") is { } profiles) o = o with { ProfilesFile = profiles };
         if (Read(variable, "IDRAK_CLUSTER_DEVICE") is { } device) o = o with { Device = device };
         if (Read(variable, "IDRAK_CLUSTER_RUN") is { } run) o = o with { RunId = run };

@@ -4,7 +4,7 @@
 
 namespace Idrak.Abstraction.Generation;
 
-/// <summary>The library's CTC decoders, registered in <see cref="CtcDecoders"/> as "greedy" and "beam".</summary>
+/// <summary></summary>
 internal static class CtcDecoding
 {
     /// <summary>Best path: the most likely class at each step (the first on a tie), repeats collapsed and blanks dropped.</summary>

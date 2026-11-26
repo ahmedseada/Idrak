@@ -54,7 +54,7 @@ public interface IHostValueCollectives
     bool Simulated => false;
 
     /// <summary>Reduces <paramref name="values"/> across the ranks in place, as <see cref="ICollectives.AllReduce"/> does.</summary>
-    bool TryAllReduce(Span<float> values, ReduceOp op, WireType wire);
+    bool TryAllReduce(Span<float> values, ReduceOp op);
 
     /// <summary><paramref name="all"/> holds this rank's <paramref name="count"/> values at Rank · count; every rank's afterwards, in rank order.</summary>
     bool TryAllGather(Span<float> all, int count);
@@ -78,7 +78,7 @@ public interface IShardedHostValueCollectives : IHostValueCollectives
     /// rank's piece are left in an unspecified state. Each sum is made in an order fixed by the algorithm and the sizes, as
     /// <see cref="ICollectives.ReduceScatter"/>'s.
     /// </summary>
-    bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire);
+    bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op);
 
     /// <summary>
     /// <paramref name="values"/> holds this rank's piece (pieces of <paramref name="counts"/> values, one per rank in rank

@@ -83,16 +83,12 @@ public sealed record CommandLimits
     public string? Purpose { get; init; }
 }
 
-/// <summary>
-/// Where an outside command runs, and under which limits (<see cref="CommandLimits"/>: time, output, memory, processes,
-/// CPUs, network, the programs allowed), registered in <see cref="CommandSandboxes"/> under <see cref="Name"/>: any
-/// package that runs a command a model asked for (the coding tools, a coding environment's builds and tests) runs it
-/// through one. A sandbox that cannot enforce a limit it is asked for refuses the command, naming one that can; it never
+/// <summary>A sandbox that cannot enforce a limit it is asked for refuses the command, naming one that can; it never
 /// runs it under weaker limits. Thread-safe: many commands run at once.
 /// </summary>
 public interface ICommandSandbox
 {
-    /// <summary>The sandbox's name in <see cref="CommandSandboxes"/> ("process", "container").</summary>
+    /// <summary></summary>
     string Name { get; }
 
     /// <summary>One line for help and listings.</summary>
@@ -123,7 +119,7 @@ public interface ICommandSandbox
     /// </summary>
     string? CheckStart(CommandLimits limits) =>
         $"The {Name} sandbox cannot start a command interactively (its standard input, output and error as streams); "
-        + $"the {CommandSandboxes.Process} sandbox (Idrak.Text) can.";
+        + "the process sandbox (Idrak.Text) can.";
 
     /// <summary>
     /// Starts <paramref name="command"/> (the program, then its arguments, as separate words: no shell) in
@@ -210,66 +206,3 @@ public sealed record CommandStart
     }
 }
 
-/// <summary>
-/// The command sandboxes by name (ignoring case). Idrak.Text registers <see cref="Process"/> (a plain process with the
-/// programs allowed, a time limit, an output cap and a memory limit; no isolation of the network; it also starts a command
-/// interactively, <see cref="ICommandSandbox.StartAsync"/>), and the coding
-/// plug-in of Idrak.Reinforcement.Plugins <see cref="Container"/> (Docker or Podman: the network off, memory, CPU and
-/// process limits). A sandbox that is not registered is refused with "not registered"; nothing falls back to another.
-/// Register another with <see cref="Register"/>; one under a library name takes the library's place, which
-/// <see cref="Unregister"/> brings back.
-/// </summary>
-public static class CommandSandboxes
-{
-    /// <summary>The plain-process sandbox (Idrak.Text): the default.</summary>
-    public const string Process = "process";
-
-    /// <summary>The container sandbox (Docker or Podman; the coding plug-in of Idrak.Reinforcement.Plugins).</summary>
-    public const string Container = "container";
-
-    /// <summary>The variable that names the sandbox commands run in when an option does not: "IDRAK_SANDBOX".</summary>
-    public const string EnvironmentVariable = "IDRAK_SANDBOX";
-
-    private static readonly SlotTable<string, ICommandSandbox> Table = new(nameof(CommandSandboxes), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "a sandbox is a safety boundary: falling back to another when one fails would run a model's command under other limits than the ones asked for");
-
-    static CommandSandboxes() => LibraryDefaults.Ensure(typeof(CommandSandboxes));
-
-    /// <summary>The sandbox named by <see cref="EnvironmentVariable"/>, or <see cref="Process"/> when it is not set.</summary>
-    public static string DefaultName => System.Environment.GetEnvironmentVariable(EnvironmentVariable) is { } name && name.Trim().Length > 0 ? name.Trim() : Process;
-
-    /// <summary>Registers <paramref name="sandbox"/> under its <see cref="ICommandSandbox.Name"/> (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ICommandSandbox sandbox)
-    {
-        ArgumentNullException.ThrowIfNull(sandbox);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sandbox.Name);
-        Table.Register(sandbox.Name, sandbox, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's sandbox <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The sandbox registered as <paramref name="name"/>, or null.</summary>
-    public static ICommandSandbox? Find(string name) => Table.Find(name);
-
-    /// <summary>The sandbox registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones and where the others come from.</exception>
-    public static ICommandSandbox Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(CommandSandboxes), name, Table.Keys,
-            $"Command sandbox '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-            + $"add it with CommandSandboxes.Register; '{Process}' comes with Idrak.Text, '{Container}' with Idrak.Reinforcement.Plugins "
-            + "(ReinforcementPlugins.RegisterAll()).");
-
-    /// <summary>The library's sandbox <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ICommandSandbox? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the sandbox <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>Each registered sandbox as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
-}

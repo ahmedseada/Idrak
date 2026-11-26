@@ -100,9 +100,6 @@ public sealed record DocumentOptions
     /// <summary>The variable that names the layout (<see cref="Layout"/>): "IDRAK_DOCUMENT_LAYOUT".</summary>
     public const string LayoutVariable = "IDRAK_DOCUMENT_LAYOUT";
 
-    /// <summary>The variable that names the reading order (<see cref="ReadingOrder"/>): "IDRAK_DOCUMENT_READING_ORDER".</summary>
-    public const string ReadingOrderVariable = "IDRAK_DOCUMENT_READING_ORDER";
-
     /// <summary>The variable that sets <see cref="MaxStreamBytes"/> (bytes, or with k, m or g): "IDRAK_DOCUMENT_MAX_STREAM_BYTES".</summary>
     public const string MaxStreamBytesVariable = "IDRAK_DOCUMENT_MAX_STREAM_BYTES";
 
@@ -135,9 +132,6 @@ public sealed record DocumentOptions
 
     /// <summary>The layout that arranges a page's runs into lines and text: a <see cref="DocumentTextLayouts"/> name ("lines" unless <see cref="LayoutVariable"/> names another).</summary>
     public string Layout { get; init; } = DocumentSettings.Text(LayoutVariable) ?? DocumentTextLayouts.Lines;
-
-    /// <summary>The order that puts a line's text in logical order: a <see cref="ReadingOrders"/> name ("bidi" unless <see cref="ReadingOrderVariable"/> names another).</summary>
-    public string ReadingOrder { get; init; } = DocumentSettings.Text(ReadingOrderVariable) ?? ReadingOrders.Bidi;
 
     /// <summary>Whether invisible text (a scan's text layer) is read, marked <see cref="DocumentTextRun.Hidden"/> (true); false leaves it out.</summary>
     public bool IncludeHidden { get; init; } = true;
@@ -224,7 +218,7 @@ public sealed record DocumentOptions
     // The password is never printed.
     private bool PrintMembers(StringBuilder builder)
     {
-        builder.Append("Password = ").Append(Password is null ? "none" : "(set)").Append(", Layout = ").Append(Layout).Append(", ReadingOrder = ").Append(ReadingOrder)
+        builder.Append("Password = ").Append(Password is null ? "none" : "(set)").Append(", Layout = ").Append(Layout)
             .Append(", IncludeHidden = ").Append(IncludeHidden).Append(", Direction = ").Append(Direction).Append(", WordGap = ").Append(WordGap.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Append(", LineTolerance = ").Append(LineTolerance.ToString(System.Globalization.CultureInfo.InvariantCulture))
             .Append(", MaxDepth = ").Append(MaxDepth).Append(", MaxStreamBytes = ").Append(_maxStreamBytes > 0 ? _maxStreamBytes.ToString(System.Globalization.CultureInfo.InvariantCulture) : "measured")
@@ -263,9 +257,10 @@ public interface IDocument : IDisposable
 
     /// <summary>
     /// Page <paramref name="index"/> drawn to pixels: read with the parts drawing needs and drawn by
-    /// <see cref="DocumentPageDrawers"/> (<see cref="DocumentPageDrawers.DrawPage"/> does it for a format).
+    /// <see cref="DocumentPageDrawers"/> (<c>DrawPage</c> does it for a format).
     /// </summary>
-    /// <exception cref="NotSupportedException">The format's pages cannot be drawn (the message says why), or no drawer is registered.</exception>
+    /// <exception cref="NotSupportedException">The format's pages cannot be drawn (the message says why), or no drawer
+    /// is registered.</exception>
     DocumentDrawing DrawPage(int index, DocumentDrawOptions options);
 
     /// <summary>The form's fields (empty for a document without a form, or a format that reads none).</summary>
@@ -292,8 +287,8 @@ public interface IDocument : IDisposable
 }
 
 /// <summary>
-/// Reads one document format; register it with <see cref="DocumentFormats.Register"/>. A format decides from a file's first
-/// bytes whether the file is in its format, so the extension only decides which files a folder picks up.
+/// Reads one document format; register it with <c>Register</c>. A format decides from a file's
+/// first bytes whether the file is in its format, so the extension only decides which files a folder picks up.
 /// </summary>
 public interface IDocumentFormat
 {
@@ -327,438 +322,12 @@ public interface IDocumentFormat
 
 /// <summary>
 /// The document formats, by name (ignoring case), the most recently registered asked first. A format is chosen by a
-/// file's first bytes. None is built in yet; a plug-in registers its own (an Office plug-in is to come) with
-/// <see cref="Register"/>, and one registered under a library name takes its place, which stays behind it as its fallback
-/// or its comparison (<see cref="SetPolicy"/>).
+/// file's first bytes.
 /// </summary>
 public static class DocumentFormats
 {
     /// <summary>The bytes of a file's start that <see cref="IDocumentFormat.Accepts"/> receives.</summary>
     public const int HeaderBytes = 4096;
-
-    private static readonly SlotTable<string, IDocumentFormat> Registry =
-        new(nameof(DocumentFormats), (slot, app, library) => new GuardedFormat(slot, app, library), StringComparer.OrdinalIgnoreCase, newestFirst: true);
-
-    static DocumentFormats() => LibraryDefaults.Ensure(typeof(DocumentFormats));
-
-    /// <summary>
-    /// Registers <paramref name="format"/>: one of a registered name takes its place (the library's stays behind it, see
-    /// <see cref="SetPolicy"/>), a new one is asked first.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IDocumentFormat format)
-    {
-        ArgumentNullException.ThrowIfNull(format);
-        ArgumentException.ThrowIfNullOrWhiteSpace(format.Name);
-        Registry.Register(format.Name, format, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's format <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Registry.Unregister(name);
-
-    /// <summary>The registered format names, the first asked first.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
-
-    /// <summary>The extensions of the registered formats (with the dot, lower case).</summary>
-    public static IReadOnlyCollection<string> Extensions => [.. Registry.Values.SelectMany(f => f.Extensions).Select(e => e.ToLowerInvariant()).Distinct()];
-
-    /// <summary>The media types of the registered formats.</summary>
-    public static IReadOnlyCollection<string> MediaTypes => [.. Registry.Values.SelectMany(f => f.MediaTypes).Distinct(StringComparer.OrdinalIgnoreCase)];
-
-    /// <summary>The format registered as <paramref name="name"/>, or null.</summary>
-    public static IDocumentFormat? Find(ReadOnlySpan<char> name) => Registry.Find(name);
-
-    /// <summary>The format registered as <paramref name="name"/> (any case).</summary>
-    /// <exception cref="NotRegisteredException">None is: the message names the registered formats and what to do.</exception>
-    public static IDocumentFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(DocumentFormats), name, Registry.Keys,
-            $"No document format '{name}' is registered (registered: {Listed()}); add it with DocumentFormats.Register, or reference a package that registers it (Office documents: a plug-in to come).");
-
-    /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IDocumentFormat? Default(string name) => Registry.Default(name);
-
-    /// <summary>Who registered the format <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Registry.Origin(name);
-
-    /// <summary>
-    /// What happens when the app's format <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
-    /// <see cref="SlotPolicy.FallBack"/>: the library's format opens the file and answers that call), or whether it only
-    /// runs beside the library's (<see cref="SlotPolicy.Shadow"/>: the library's document answers, each page's runs, text
-    /// and images compared on a sample of calls).
-    /// </summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Whether a registered format lists the extension of <paramref name="path"/>.</summary>
-    public static bool CanOpen(string path)
-    {
-        string extension = Path.GetExtension(path);
-        return extension.Length > 0 && Registry.Values.Any(f => f.Extensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
-    }
-
-    /// <summary>The first format that accepts a file starting with <paramref name="header"/>, or null when none does.</summary>
-    public static IDocumentFormat? Detect(ReadOnlySpan<byte> header)
-    {
-        header = header[..Math.Min(header.Length, HeaderBytes)];
-        foreach (var format in Registry.Values)
-        {
-            if (format.Accepts(header))
-            {
-                return format;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>Opens the document file <paramref name="path"/> with the format its first bytes name; the file is closed with the document.</summary>
-    /// <exception cref="InvalidDataException">No registered format reads the file, or it is damaged.</exception>
-    public static IDocument Open(string path, DocumentOptions? options = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(path);
-        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
-        try
-        {
-            return new OwningDocument(Open(stream, path, options), stream);
-        }
-        catch
-        {
-            stream.Dispose();
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Opens the document <paramref name="stream"/> holds (seekable, the file from its start) with the format its first
-    /// bytes name. The stream stays the caller's, to dispose after the document.
-    /// </summary>
-    /// <param name="stream">The file.</param>
-    /// <param name="name">A name for messages (the file's).</param>
-    /// <param name="options">How to open it; null for the defaults.</param>
-    /// <exception cref="ArgumentException">The stream cannot seek (copy it into memory or a file first).</exception>
-    /// <exception cref="InvalidDataException">No registered format reads the file, or it is damaged.</exception>
-    public static IDocument Open(Stream stream, string name, DocumentOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(name);
-        if (!stream.CanSeek || !stream.CanRead)
-        {
-            throw new ArgumentException($"{name}: a document is opened from a stream that reads and seeks; copy it into memory or a file first.", nameof(stream));
-        }
-
-        options ??= new DocumentOptions();
-        byte[] head = ArrayPool<byte>.Shared.Rent(HeaderBytes);
-        IDocumentFormat? format;
-        try
-        {
-            stream.Position = 0;
-            int length = stream.ReadAtLeast(head.AsSpan(0, HeaderBytes), HeaderBytes, throwOnEndOfStream: false);
-            format = Detect(head.AsSpan(0, length));
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(head);
-        }
-
-        if (format is null)
-        {
-            throw new InvalidDataException($"{name}: not a document of the registered formats ({Listed()}); register one with DocumentFormats.Register.");
-        }
-
-        stream.Position = 0;
-        return OpenWith(format, stream, name, options);
-    }
-
-    /// <summary>Opens a document held in memory (kept by the document, not copied when it is an array's) with the format its first bytes name.</summary>
-    /// <exception cref="InvalidDataException">No registered format reads the bytes, or they are damaged.</exception>
-    public static IDocument Open(ReadOnlyMemory<byte> file, string name, DocumentOptions? options = null)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        var stream = MemoryMarshal.TryGetArray(file, out var segment)
-            ? new MemoryStream(segment.Array!, segment.Offset, segment.Count, writable: false, publiclyVisible: true)
-            : new MemoryStream(file.ToArray(), writable: false);
-        return Open(stream, name, options);
-    }
-
-    // Opens with one format, its errors worded with the file's name.
-    private static IDocument OpenWith(IDocumentFormat format, Stream stream, string name, DocumentOptions options)
-    {
-        try
-        {
-            return format.Open(stream, name, options);
-        }
-        catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or EndOfStreamException
-                                      || (e is ArgumentException && e is not ArgumentNullException))
-        {
-            throw new InvalidDataException($"{name}: a damaged {format.Name} document ({e.Message}).", e);
-        }
-        catch (InvalidDataException e) when (!e.Message.StartsWith(name, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException($"{name}: {e.Message}", e);
-        }
-    }
-
-    /// <summary>
-    /// The document a format opened, behind the registry's own wrapper of a file it opened (<see cref="Open(string, DocumentOptions?)"/>):
-    /// what a writer of the same format edits or copies pages from (<see cref="IDocumentWriter.Edit"/>,
-    /// <see cref="IDocumentBuilder.CopyPage"/>), since it reads its own documents' objects. Any other document is given
-    /// back as it is (the wrapper still owns the file: dispose it, not what this gives).
-    /// </summary>
-    public static IDocument Unwrap(IDocument document)
-    {
-        ArgumentNullException.ThrowIfNull(document);
-        while (document is OwningDocument owning)
-        {
-            document = owning.Inner;
-        }
-
-        return document;
-    }
-
-    private static string Listed() => Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys);
-
-    // A document the registry opened from a file it owns: the file is closed after the document.
-    private sealed class OwningDocument(IDocument inner, Stream stream) : IDocument
-    {
-        public IDocument Inner => inner;
-
-        public string Format => inner.Format;
-
-        public DocumentInfo Info => inner.Info;
-
-        public int PageCount => inner.PageCount;
-
-        public IReadOnlyList<DocumentAttachment> Attachments => inner.Attachments;
-
-        public IReadOnlyList<DocumentField> Fields => inner.Fields;
-
-        public IReadOnlyList<DocumentOutline> Outline => inner.Outline;
-
-        public IReadOnlyList<DocumentSignature> Signatures => inner.Signatures;
-
-        public IReadOnlyList<DocumentDestination> Destinations => inner.Destinations;
-
-        public DocumentFormTemplate? FormTemplate => inner.FormTemplate;
-
-        public DocumentPage ReadPage(int index, DocumentParts parts) => inner.ReadPage(index, parts);
-
-        public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) => inner.DrawPage(index, options);
-
-        public string? PageLabel(int index) => inner.PageLabel(index);
-
-        public void Dispose()
-        {
-            try
-            {
-                inner.Dispose();
-            }
-            finally
-            {
-                stream.Dispose();
-            }
-        }
-    }
-
-    // An app's format over a library one. Each document the guard opens reads the caller's stream through a view of its
-    // own (its own position, reads under one lock), so the app's document and the library's, opened when a call falls back
-    // or is compared, never move each other's place in it.
-    private sealed class GuardedFormat(Slot slot, IDocumentFormat app, IDocumentFormat library) : IDocumentFormat
-    {
-        public string Name => app.Name;
-
-        public IReadOnlyCollection<string> Extensions => app.Extensions;
-
-        public IReadOnlyCollection<string> MediaTypes => app.MediaTypes;
-
-        public bool Accepts(ReadOnlySpan<byte> header)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                var run = slot.Shadow();
-                bool answer = library.Accepts(header);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        run.Done(Comparisons.Exact(answer, app.Accepts(header)));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Accepts(header);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Accepts(header);
-            }
-        }
-
-        public IDocument Open(Stream stream, string name, DocumentOptions options)
-        {
-            var gate = new Lock();
-            IDocument OpenApp() => app.Open(new StreamView(stream, gate), name, options);
-            IDocument OpenLibrary() => library.Open(new StreamView(stream, gate), name, options);
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                return new GuardedDocument(slot, null, OpenApp, OpenLibrary(), OpenLibrary);
-            }
-
-            try
-            {
-                return new GuardedDocument(slot, OpenApp(), OpenApp, null, OpenLibrary);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return new GuardedDocument(slot, null, OpenApp, OpenLibrary(), OpenLibrary);
-            }
-        }
-    }
-
-    // A document opened by the guard: every call goes to the slot (Slot.Call), the app's document and the library's each
-    // opened on first need and disposed with this one.
-    private sealed class GuardedDocument(Slot slot, IDocument? app, Func<IDocument> openApp, IDocument? library, Func<IDocument> openLibrary) : IDocument
-    {
-        private readonly Lock _gate = new();
-        private IDocument? _app = app, _library = library;
-        private bool _disposed;
-
-        private IDocument App => Opened(ref _app, openApp);
-
-        private IDocument Library => Opened(ref _library, openLibrary);
-
-        public string Format => slot.Call(() => App.Format, () => Library.Format, (a, b) => Comparisons.Exact(a, b));
-
-        public DocumentInfo Info => slot.Call(() => App.Info, () => Library.Info, (a, b) => Comparisons.Exact(a.Title, b.Title) ?? Comparisons.Exact(a.Version, b.Version));
-
-        public int PageCount => slot.Call(() => App.PageCount, () => Library.PageCount, (a, b) => Comparisons.Exact(a, b));
-
-        public IReadOnlyList<DocumentAttachment> Attachments =>
-            slot.Call(() => App.Attachments, () => Library.Attachments, (a, b) => Comparisons.Sequences(a.Select(x => x.Name).ToArray(), b.Select(x => x.Name).ToArray()));
-
-        public IReadOnlyList<DocumentField> Fields =>
-            slot.Call(() => App.Fields, () => Library.Fields, (a, b) => Comparisons.Sequences(a.Select(x => $"{x.Name}={x.Value}").ToArray(), b.Select(x => $"{x.Name}={x.Value}").ToArray()));
-
-        public IReadOnlyList<DocumentOutline> Outline =>
-            slot.Call(() => App.Outline, () => Library.Outline, (a, b) => Comparisons.Sequences(a.Select(x => x.Title).ToArray(), b.Select(x => x.Title).ToArray()));
-
-        public IReadOnlyList<DocumentSignature> Signatures =>
-            slot.Call(() => App.Signatures, () => Library.Signatures, (a, b) => Comparisons.Sequences(a.Select(x => x.Field).ToArray(), b.Select(x => x.Field).ToArray()));
-
-        public IReadOnlyList<DocumentDestination> Destinations =>
-            slot.Call(() => App.Destinations, () => Library.Destinations, (a, b) => Comparisons.Sequences(a.Select(x => $"{x.Name}={x.Page}").ToArray(), b.Select(x => $"{x.Name}={x.Page}").ToArray()));
-
-        public DocumentFormTemplate? FormTemplate =>
-            slot.Call(() => App.FormTemplate, () => Library.FormTemplate, (a, b) => Comparisons.Sequences(
-                (a?.Fields ?? []).Select(x => $"{x.Path}={x.Value}").ToArray(), (b?.Fields ?? []).Select(x => $"{x.Path}={x.Value}").ToArray()));
-
-        public DocumentPage ReadPage(int index, DocumentParts parts) => slot.Call(() => App.ReadPage(index, parts), () => Library.ReadPage(index, parts), (a, b) => ComparePages(a, b));
-
-        public DocumentDrawing DrawPage(int index, DocumentDrawOptions options) =>
-            slot.Call(() => App.DrawPage(index, options), () => Library.DrawPage(index, options), (a, b) => DocumentPageDrawers.CompareDrawings(a, b));
-
-        public string? PageLabel(int index) => slot.Call(() => App.PageLabel(index), () => Library.PageLabel(index), (a, b) => Comparisons.Exact(a, b));
-
-        public void Dispose()
-        {
-            IDocument? a, l;
-            lock (_gate)
-            {
-                (a, l, _app, _library, _disposed) = (_app, _library, null, null, true);
-            }
-
-            try
-            {
-                a?.Dispose();
-            }
-            finally
-            {
-                l?.Dispose();
-            }
-        }
-
-        private IDocument Opened(ref IDocument? document, Func<IDocument> open)
-        {
-            lock (_gate)
-            {
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                return document ??= open();
-            }
-        }
-
-        // The library's page against the app's: the runs' text and boxes, the text, the images.
-        private static string? ComparePages(DocumentPage expected, DocumentPage actual) =>
-            Comparisons.Exact((expected.Index, expected.Width, expected.Height), (actual.Index, actual.Width, actual.Height))
-            ?? Comparisons.Sequences(expected.Runs.Select(r => (r.Text, r.Box)).ToArray(), actual.Runs.Select(r => (r.Text, r.Box)).ToArray())
-            ?? Comparisons.Difference(expected.Text, actual.Text)
-            ?? Comparisons.Sequences(expected.Images.Select(i => (i.Encoding, i.PixelWidth, i.PixelHeight, i.Box)).ToArray(),
-                actual.Images.Select(i => (i.Encoding, i.PixelWidth, i.PixelHeight, i.Box)).ToArray());
-    }
-
-    // A view of a seekable stream with its own position: reads go through one lock, each moving the shared stream to the
-    // view's place first.
-    private sealed class StreamView(Stream inner, Lock gate) : Stream
-    {
-        private long _position;
-
-        public override bool CanRead => true;
-
-        public override bool CanSeek => true;
-
-        public override bool CanWrite => false;
-
-        public override long Length
-        {
-            get
-            {
-                lock (gate)
-                {
-                    return inner.Length;
-                }
-            }
-        }
-
-        public override long Position
-        {
-            get => _position;
-            set => _position = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
-        }
-
-        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
-
-        public override int Read(Span<byte> buffer)
-        {
-            lock (gate)
-            {
-                inner.Position = _position;
-                int read = inner.Read(buffer);
-                _position += read;
-                return read;
-            }
-        }
-
-        public override long Seek(long offset, SeekOrigin origin) => Position = origin switch
-        {
-            SeekOrigin.Begin => offset,
-            SeekOrigin.Current => _position + offset,
-            _ => Length + offset,
-        };
-
-        public override void Flush()
-        {
-        }
-
-        public override void SetLength(long value) => throw new NotSupportedException("A document's stream is read, not written.");
-
-        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException("A document's stream is read, not written.");
-    }
 }
 
 // The document settings' environment variables, read the same way everywhere: text trimmed (empty is unset), numbers

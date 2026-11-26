@@ -53,14 +53,6 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessage> Messages, IReadOnlyL
     public VisionOptions? VisionOptions { get; init; }
 
     /// <summary>
-    /// The image transforms for this request's images, run on each decoded image before the model's own preprocessing
-    /// (<see cref="ImageTransformPipeline"/>: <c>grayscale,max_width=1024,contrast=1.5</c>, in that order); null: the
-    /// model's default (none unless whoever made it set one); an empty pipeline: none. Family-neutral: an app passes what
-    /// a fine-tune's card asks for. A text-only model ignores them.
-    /// </summary>
-    public ImageTransformPipeline? ImageTransforms { get; init; }
-
-    /// <summary>
     /// Encode the rendered prompt with the tokenizer's special tokens added (<see cref="ChatTemplate.AddedPrefix"/>), as
     /// transformers does when a pipeline renders the template to text and then calls the processor or tokenizer on it
     /// without <c>add_special_tokens=False</c> (Gemma's prompt then starts with two &lt;bos&gt;). Off by default: the

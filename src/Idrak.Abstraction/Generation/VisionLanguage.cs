@@ -363,84 +363,28 @@ public static class ImageAttentionRules
     /// row's image, and lies within the window. Gemma 3's mask (transformers' <c>token_type_ids</c>) and IdrakVision's.
     /// </summary>
     public const string ImageBlocks = "image-blocks";
+}
 
-    private static readonly SlotTable<string, IImageAttentionRule> Table = BuiltIn();
+internal sealed class CausalRule : IImageAttentionRule
+{
+    public string Name => ImageAttentionRules.Causal;
 
-    private static SlotTable<string, IImageAttentionRule> BuiltIn()
-    {
-        var table = new SlotTable<string, IImageAttentionRule>(nameof(ImageAttentionRules), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(Causal, new CausalRule());
-        table.RegisterDefault(ImageBlocks, new ImageBlocksRule());
-        return table;
-    }
+    public bool Causal => true;
 
-    // Each Spans is one call: an app's rule falls back (or is shadowed) per call. Causal is read when the rule is chosen.
-    private static IImageAttentionRule Guard(Slot slot, IImageAttentionRule app, IImageAttentionRule library) => new GuardedRule(slot, app, library);
+    public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.Causal(rows, window);
 
-    /// <summary>Registers <paramref name="rule"/> under its <see cref="IImageAttentionRule.Name"/>; under a library name it takes that rule's place.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IImageAttentionRule rule)
-    {
-        ArgumentNullException.ThrowIfNull(rule);
-        ArgumentException.ThrowIfNullOrEmpty(rule.Name);
-        Table.Register(rule.Name, rule, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public override string ToString() => "causal image tokens";
+}
 
-    /// <summary>Removes the app's rule <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
+internal sealed class ImageBlocksRule : IImageAttentionRule
+{
+    public string Name => ImageAttentionRules.ImageBlocks;
 
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public bool Causal => false;
 
-    /// <summary>The rule <paramref name="name"/>, or null when none is registered.</summary>
-    public static IImageAttentionRule? Find(string name) => Table.Find(name);
+    public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
 
-    /// <summary>The rule <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name; the message names <see cref="Register"/>.</exception>
-    public static IImageAttentionRule Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(ImageAttentionRules), name, Table.Keys,
-            $"No image attention rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImageAttentionRules.Register.");
-
-    /// <summary>The library's rule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IImageAttentionRule? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the rule <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's rule <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set).</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    private sealed class CausalRule : IImageAttentionRule
-    {
-        public string Name => ImageAttentionRules.Causal;
-
-        public bool Causal => true;
-
-        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.Causal(rows, window);
-
-        public override string ToString() => "causal image tokens";
-    }
-
-    private sealed class ImageBlocksRule : IImageAttentionRule
-    {
-        public string Name => ImageAttentionRules.ImageBlocks;
-
-        public bool Causal => false;
-
-        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) => KeySpans.ImageBlocks(rows, blocks, window);
-
-        public override string ToString() => "image blocks seen whole";
-    }
-
-    private sealed class GuardedRule(Slot slot, IImageAttentionRule app, IImageAttentionRule library) : IImageAttentionRule
-    {
-        public string Name => app.Name;
-
-        public bool Causal => app.Causal;
-
-        public KeySpans Spans(int rows, IReadOnlyList<(int Start, int Length)> blocks, int window) =>
-            slot.Call(() => app.Spans(rows, blocks, window), () => library.Spans(rows, blocks, window), (a, b) => a.Starts.SequenceEqual(b.Starts) && a.Ends.SequenceEqual(b.Ends) ? null : "different key ranges");
-    }
+    public override string ToString() => "image blocks seen whole";
 }
 
 /// <summary>
@@ -485,98 +429,29 @@ public static class ImagePositionRules
     /// took. The rotary position after a sequence is one past its largest position.
     /// </summary>
     public const string Grid = "grid";
+}
 
-    private static readonly SlotTable<string, IImagePositionRule> Table = BuiltIn();
+internal sealed class GridRule : IImagePositionRule
+{
+    public string Name => ImagePositionRules.Grid;
 
-    private static SlotTable<string, IImagePositionRule> BuiltIn()
+    public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
     {
-        var table = new SlotTable<string, IImagePositionRule>(nameof(ImagePositionRules), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(Grid, new GridRule());
-        return table;
-    }
-
-    private static IImagePositionRule Guard(Slot slot, IImagePositionRule app, IImagePositionRule library) => new GuardedRule(slot, app, library);
-
-    /// <summary>Registers <paramref name="rule"/> under its <see cref="IImagePositionRule.Name"/>; under a library name it takes that rule's place.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IImagePositionRule rule)
-    {
-        ArgumentNullException.ThrowIfNull(rule);
-        ArgumentException.ThrowIfNullOrEmpty(rule.Name);
-        Table.Register(rule.Name, rule, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's rule <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
-
-    /// <summary>The rule <paramref name="name"/>, or null when none is registered.</summary>
-    public static IImagePositionRule? Find(string name) => Table.Find(name);
-
-    /// <summary>The rule <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name; the message names <see cref="Register"/>.</exception>
-    public static IImagePositionRule Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(ImagePositionRules), name, Table.Keys,
-            $"No image position rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImagePositionRules.Register.");
-
-    /// <summary>The library's rule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static IImagePositionRule? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the rule <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's rule <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set).</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    private sealed class GridRule : IImagePositionRule
-    {
-        public string Name => Grid;
-
-        public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
+        if (positions.Length < axes * count)
         {
-            if (positions.Length < axes * count)
+            throw new ArgumentException($"The positions hold {positions.Length} values; {axes} axes x {count} tokens need {axes * count}.", nameof(positions));
+        }
+
+        int next = start, i = 0;
+        foreach (var image in images)
+        {
+            if (image.Offset < i || image.Offset + image.Length > count || image.Relative.Length != axes * image.Length)
             {
-                throw new ArgumentException($"The positions hold {positions.Length} values; {axes} axes x {count} tokens need {axes * count}.", nameof(positions));
+                throw new ArgumentException($"An image of {image.Length} tokens at {image.Offset} (with {image.Relative.Length} axis positions) does not fit "
+                    + $"{count} tokens after the previous image, {axes} axes each.", nameof(images));
             }
 
-            int next = start, i = 0;
-            foreach (var image in images)
-            {
-                if (image.Offset < i || image.Offset + image.Length > count || image.Relative.Length != axes * image.Length)
-                {
-                    throw new ArgumentException($"An image of {image.Length} tokens at {image.Offset} (with {image.Relative.Length} axis positions) does not fit "
-                        + $"{count} tokens after the previous image, {axes} axes each.", nameof(images));
-                }
-
-                for (; i < image.Offset; i++, next++)
-                {
-                    for (int a = 0; a < axes; a++)
-                    {
-                        positions[a * count + i] = next;
-                    }
-                }
-
-                // The image's tokens from here on, each axis by its own position; the text after it starts one past the
-                // largest position any of its tokens took.
-                var relative = image.Relative.Span;
-                float largest = 0;
-                for (int a = 0; a < axes; a++)
-                {
-                    for (int j = 0; j < image.Length; j++)
-                    {
-                        float p = relative[a * image.Length + j];
-                        positions[a * count + i + j] = next + p;
-                        largest = Math.Max(largest, p);
-                    }
-                }
-
-                i += image.Length;
-                next += (int)largest + 1;
-            }
-
-            for (; i < count; i++, next++)
+            for (; i < image.Offset; i++, next++)
             {
                 for (int a = 0; a < axes; a++)
                 {
@@ -584,29 +459,34 @@ public static class ImagePositionRules
                 }
             }
 
-            return next;
-        }
-
-        public override string ToString() => "grid positions (M-RoPE)";
-    }
-
-    private sealed class GuardedRule(Slot slot, IImagePositionRule app, IImagePositionRule library) : IImagePositionRule
-    {
-        public string Name => app.Name;
-
-        public int Place(int start, int count, IReadOnlyList<ImageRun> images, int axes, Span<float> positions)
-        {
-            // Each rule writes its own copy (the slot may run both, and compare them); the answer's is kept.
-            (int Next, float[] Values) Run(IImagePositionRule rule)
+            // The image's tokens from here on, each axis by its own position; the text after it starts one past the
+            // largest position any of its tokens took.
+            var relative = image.Relative.Span;
+            float largest = 0;
+            for (int a = 0; a < axes; a++)
             {
-                var values = new float[axes * count];
-                return (rule.Place(start, count, images, axes, values), values);
+                for (int j = 0; j < image.Length; j++)
+                {
+                    float p = relative[a * image.Length + j];
+                    positions[a * count + i + j] = next + p;
+                    largest = Math.Max(largest, p);
+                }
             }
 
-            var answer = slot.Call(() => Run(app), () => Run(library),
-                (a, b) => a.Next == b.Next && a.Values.AsSpan().SequenceEqual(b.Values) ? null : "different positions");
-            answer.Values.CopyTo(positions);
-            return answer.Next;
+            i += image.Length;
+            next += (int)largest + 1;
         }
+
+        for (; i < count; i++, next++)
+        {
+            for (int a = 0; a < axes; a++)
+            {
+                positions[a * count + i] = next;
+            }
+        }
+
+        return next;
     }
+
+    public override string ToString() => "grid positions (M-RoPE)";
 }

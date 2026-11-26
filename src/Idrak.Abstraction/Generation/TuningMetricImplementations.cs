@@ -14,9 +14,8 @@ namespace Idrak.Abstraction.Generation;
 // The library's error rates ("cer", "wer"): both texts NFC-normalized (optionally without nonspacing marks, optionally
 // lower-cased invariantly), then the edit distance over Unicode scalar values or over white-space-separated words, over
 // the reference's length.
-internal sealed class ErrorRateMetric(bool words) : ITuningMetric
+internal sealed class ErrorRateMetric(bool words, bool stripDiacritics = false, bool ignoreCase = false) : ITuningMetric
 {
-    private const string StripDiacritics = "strip_diacritics", IgnoreCase = "ignore_case";
 
     public string Name => words ? TuningMetrics.WordErrorRate : TuningMetrics.CharacterErrorRate;
 
@@ -26,24 +25,11 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
 
     public bool LowerIsBetter => true;
 
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(StripDiacritics, IgnoreCase);
-
-    public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null)
+    public TuningScore Score(string answer, string reference)
     {
         ArgumentNullException.ThrowIfNull(answer);
         ArgumentNullException.ThrowIfNull(reference);
-        bool strip = false, fold = false;
-        foreach (var (key, value) in options ?? new Dictionary<string, string>())
-        {
-            switch (key)
-            {
-                case StripDiacritics: strip = Flag(key, value); break;
-                case IgnoreCase: fold = Flag(key, value); break;
-                default: throw new ArgumentException($"The tuning metric {Name} does not take the option '{key}'; it takes: {string.Join(", ", Keys)}.");
-            }
-        }
-
-        string a = Prepare(answer, strip, fold), r = Prepare(reference, strip, fold);
+        string a = Prepare(answer, stripDiacritics, ignoreCase), r = Prepare(reference, stripDiacritics, ignoreCase);
         if (words)
         {
             var ids = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -56,13 +42,6 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
     }
 
     public override string ToString() => Name;
-
-    private static bool Flag(string key, string value) => value.Trim().ToLowerInvariant() switch
-    {
-        "true" or "1" or "yes" or "on" => true,
-        "false" or "0" or "no" or "off" => false,
-        _ => throw new ArgumentException($"The tuning metric option {key} is true or false, not '{value}'."),
-    };
 
     // NFC; without nonspacing marks (decomposed first, so precomposed accents go too) when asked; invariant lower case when asked.
     private static string Prepare(string text, bool strip, bool fold)
@@ -145,16 +124,10 @@ internal sealed partial class AnswerMatchMetric(string name) : ITuningMetric
 
     public bool LowerIsBetter => false;
 
-    public IReadOnlySet<string> Keys => OptionKeys.None;
-
-    public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null)
+    public TuningScore Score(string answer, string reference)
     {
         ArgumentNullException.ThrowIfNull(answer);
         ArgumentNullException.ThrowIfNull(reference);
-        if (options is { Count: > 0 })
-        {
-            throw new ArgumentException($"The tuning metric {Name} takes no options; it was given '{string.Join("', '", options.Keys)}'.");
-        }
 
         double value = name switch
         {

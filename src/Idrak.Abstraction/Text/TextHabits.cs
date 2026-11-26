@@ -10,10 +10,9 @@ namespace Idrak.Abstraction.Text;
 
 /// <summary>
 /// Habits of a hand writing text (a hamza left off, a final letter written as a similar one): a text varied as a person
-/// writes it, for pages drawn from text (the label then says what is drawn, or keeps the source's spelling). Registered
-/// in <see cref="TextHabits"/> under its <see cref="IKind.Name"/>; thread-safe (the randomness is the caller's).
+/// writes it, for pages drawn from text (the label then says what is drawn, or keeps the source's spelling).
 /// </summary>
-public interface ITextHabits : IKind
+public interface ITextHabits
 {
     /// <summary>The habits' names, each with its own chance (0 to 1).</summary>
     IReadOnlyDictionary<string, double> Chances { get; }
@@ -25,95 +24,6 @@ public interface ITextHabits : IKind
     /// the same result, and a text no habit holds for draws nothing.
     /// </summary>
     string Apply(string text, Random random, Func<string, double?>? chance = null);
-}
-
-/// <summary>
-/// The text habits, by name (ignoring case). The library's engine is <see cref="RuleTextHabits"/> (rules as data: what is
-/// written for what, where in a word, at what chance); rule sets ship as data with a language's package (Idrak.Text:
-/// "arabic-handwriting"). Register another with <see cref="Register"/>; one under a library name shadows the library's,
-/// guarded by its <see cref="SetPolicy">policy</see>.
-/// </summary>
-public static class TextHabits
-{
-    private static readonly KindTable<ITextHabits> Table = new(nameof(TextHabits), "Text habits",
-        "add it with TextHabits.Register (RuleTextHabits.Read reads a rules file), or reference Idrak.Text", (slot, app, library) => new GuardedHabits(slot, app, library),
-        StringComparer.OrdinalIgnoreCase);
-
-    static TextHabits() => LibraryDefaults.Ensure(typeof(TextHabits));
-
-    /// <summary>Registers <paramref name="habits"/> under its name (over the library's of that name, which stays behind it).</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ITextHabits habits) => Table.Register(habits, System.Reflection.Assembly.GetCallingAssembly());
-
-    /// <summary>Removes the app's habits <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string name) => Table.Unregister(name);
-
-    /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Names;
-
-    /// <summary>The habits registered as <paramref name="name"/>, or null.</summary>
-    public static ITextHabits? Find(ReadOnlySpan<char> name) => Table.Find(name);
-
-    /// <summary>The habits registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static ITextHabits Get(ReadOnlySpan<char> name) => Table.Get(name);
-
-    /// <summary>The library's habits <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static ITextHabits? Default(string name) => Table.Default(name);
-
-    /// <summary>Who registered the habits <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string name) => Table.Origin(name);
-
-    /// <summary>What happens when the app's habits <paramref name="name"/> fail.</summary>
-    public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
-
-    /// <summary>Each registered set as "name: summary", one per line.</summary>
-    public static string Describe() => Table.Describe();
-
-    // An app's habits over the library's: a failed call is answered by the library's (from the same generator state), or
-    // both are compared on a sample.
-    private sealed class GuardedHabits(Slot slot, ITextHabits app, ITextHabits library) : ITextHabits
-    {
-        public string Name => app.Name;
-
-        public string Summary => app.Summary;
-
-        public IReadOnlyDictionary<string, double> Chances => app.Chances;
-
-        public string Apply(string text, Random random, Func<string, double?>? chance = null)
-        {
-            if (slot.Policy == SlotPolicy.Shadow)
-            {
-                // Both from generators of one seed drawn from the caller's (a compared call draws one number more).
-                var run = slot.Shadow();
-                int seed = random.Next();
-                var answer = library.Apply(text, new Random(seed), chance);
-                if (run is not null)
-                {
-                    run.Answered();
-                    try
-                    {
-                        run.Done(Comparisons.Exact(answer, app.Apply(text, new Random(seed), chance)));
-                    }
-                    catch (Exception e) when (e is not OperationCanceledException)
-                    {
-                        run.Failed(e);
-                    }
-                }
-
-                return answer;
-            }
-
-            try
-            {
-                return app.Apply(text, random, chance);
-            }
-            catch (Exception e) when (slot.Failed(e))
-            {
-                return library.Apply(text, random, chance);
-            }
-        }
-    }
 }
 
 /// <summary>Where in a word a habit holds: at its start, inside it, at its end, or as the whole word.</summary>
