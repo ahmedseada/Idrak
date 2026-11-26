@@ -21,8 +21,8 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // measured once on the real operands (Chosen).
 internal sealed partial class CpuBackend
 {
-    // A stored weight's words, k and the bytes of a row.
-    private sealed record StoredLane(float[] Words, int Length, int K, long RowBytes);
+    // A stored weight's words, k, the bytes of a row and where the rows' read part starts in each (bytes).
+    private sealed record StoredLane(float[] Words, int Length, int K, long RowBytes, int Offset = 0);
 
     // The bytes of a row of k values of a description (whole groups of blocks).
     private static long RowBytesOf(TypeDescription d, int k) => (long)k / d.UnitValues * d.UnitBytes;
@@ -39,12 +39,71 @@ internal sealed partial class CpuBackend
         }
 
         var lane = new StoredLane(D(weight), weight.Length, k, RowBytesOf(description, k));
-        if (!DescribedProduct(description, lane, D(x), D(y), m, n, k))
+        if (!DescribedProduct(description, lane, D(x), D(y), m, n, k) && !RowScaleProduct(description, weight, D(x), D(y), m, n, k))
         {
             return false;
         }
 
         s_describedMultiplied = true;
+        return true;
+    }
+
+    // The codes' description of a row-scaled description, made once a description (so the plan and the measured choices
+    // made for it are kept with it).
+    private static readonly ConditionalWeakTable<TypeDescription, TypeDescription> RowCodes = new();
+
+    // The codes alone of a description whose row of k values is one block under one scale covering it (its codes one plane
+    // of whole bytes within the block, no minimum, sum or codebook), or null where it is not one.
+    private static TypeDescription? RowCodesOf(TypeDescription d, int k)
+    {
+        if (d is not { Values: var values, Group: 1, Mins: null or [], Sums: null or [], Scales: [{ Pieces: null } scale], Planes: [{ Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] }
+            || values != k || scale.Values != values || scale.Type.Width != 1 || d.Code.Width != 1 || plane.Bits % 8 != 0
+            || (long)plane.Offset + (long)k * (plane.Bits / 8) > d.Bytes)
+        {
+            return null;
+        }
+
+        var codes = RowCodes.GetValue(d, static r => new TypeDescription(1, r.Planes[0].Bits / 8, r.Code, [r.Planes[0] with { Offset = 0 }], r.CodeOffset));
+        return codes.Valid ? codes : null;
+    }
+
+    /// <summary>
+    /// How the described lane multiplies rows of <paramref name="k"/> values of <paramref name="description"/>: its arithmetic
+    /// ("integer", "float32", "float64"), that over the codes alone with each row's scale after ("... over the codes, the row's
+    /// scale after"), or null where it does not (the default product serves). For tests.
+    /// </summary>
+    internal static string? DescribedRoute(TypeDescription description, int k) =>
+        DescribedArithmetic(description, k) ?? (RowCodesOf(description, k) is { } codes && DescribedArithmetic(codes, k) is { } a ? a + " over the codes, the row's scale after" : null);
+
+    // A row a block whose one scale covers it (its codes one plane of whole bytes, no minimum, no sum, no codebook): the
+    // scale factors out of the row's sum, y[i, j] = scale_j · Σ x[i, p] · code[j, p]. Where the lane has no plan for the
+    // description itself (16-bit codes under a scale), it takes the plan of the codes alone (the same code, no scale) over
+    // each row's codes where they lie, then multiplies each output by its row's scale read through its number type.
+    private static bool RowScaleProduct(TypeDescription d, Storage weight, float[] x, float[] y, int m, int n, int k)
+    {
+        if (RowCodesOf(d, k) is not { } codes)
+        {
+            return false;
+        }
+
+        var scale = d.Scales![0];
+        long rowBytes = d.Bytes;
+        var lane = new StoredLane(D(weight), weight.Length, k, rowBytes, d.Planes[0].Offset);
+        if (!DescribedProduct(codes, lane, x, y, m, n, k))
+        {
+            return false;
+        }
+
+        var stored = System.Runtime.InteropServices.MemoryMarshal.AsBytes(D(weight).AsSpan());
+        for (int j = 0; j < n; j++)
+        {
+            float factor = (float)scale.Value(stored.Slice((int)(j * rowBytes), (int)rowBytes), 0);
+            for (int i = 0; i < m; i++)
+            {
+                y[(long)i * n + j] *= factor;
+            }
+        }
+
         return true;
     }
 
@@ -2163,7 +2222,7 @@ internal sealed partial class CpuBackend
                 }
 
                 var kernels = format.Kernels(part.LaneId, k, new LanePointers(xv, xc, xs), scratch, scratchBytes);
-                RowGroups(ref kernels, (byte*)words, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
+                RowGroups(ref kernels, (byte*)words + lane.Offset, rowBytes, k, format.Span(k), format.GroupBytes, part.Y, part.N, j0, j1, i0, i1);
             }
         }
         finally
@@ -4785,7 +4844,8 @@ internal sealed partial class CpuBackend
 
         private bool Heavy => plan.Bytes >= 4 * plan.Values;
 
-        private long RowBytes => (long)k / plan.Values * plan.Bytes;
+        // A row's bytes: its whole groups of blocks (a group's shared levels with them), as RowBytesOf counts them.
+        private long RowBytes => RowBytesOf(plan.D, k);
 
         public int GroupBytes => plan.Mode switch
         {
@@ -4885,7 +4945,9 @@ internal sealed partial class CpuBackend
             lanes = input.Scales;
             groups = plan.Groups(k);
             full = k / plan.Period;
-            tailBytes = (int)((long)k / plan.Values * plan.Bytes - (long)full * plan.PeriodBytes);
+            // The bytes past the whole periods: whole groups of blocks with their shared levels (a block's bytes alone would
+            // leave out a group's levels stored after its blocks, so the last period's scales read as zeros).
+            tailBytes = (int)(RowBytesOf(plan.D, k) - (long)full * plan.PeriodBytes);
             rowSteps = groups * plan.GroupStepBytes;
             chunks = (k + plan.C - 1) / plan.C;
             // x's row: the integer layout's whole groups, or (float32 codes) the spans' order in whole groups.

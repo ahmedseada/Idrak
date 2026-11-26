@@ -11,7 +11,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] LaneBitsGroup =
     [
-        ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
+        ("lane bits: the CPU's described lane over stored weights (q4_k, q4_0, mxfp4, q6_k, bfloat16, float64, int2 and int64 from their types' descriptions; the types made of a description alone, int8 groups under a shared float32 level among them; 1, 3, 4, 5, 9 and 70 rows of fixed operands) gives commit 3f1c53e2's recorded bits (the shared levels' recorded since) by every instruction set that runs here, and the new design's operations (element-wise, rows, products, attention, sums) give one hash each by every width (512, 256, 128 bits, one float): the same list on any CPU", LaneBits),
     ];
 
     private static float[] LaneBitsValues(Random random, long count) => [.. Enumerable.Range(0, (int)count).Select(_ => random.NextSingle() * 2 - 1)];
@@ -48,6 +48,15 @@ internal abstract partial class Tests
             ("16-bit integers plus 0.5", new TypeDescription(1, 2, NumberType.Integer(16, true), [new CodePlane(0, 16, 1)], 0.5), 100),
             ("16-bit integers", new TypeDescription(1, 2, NumberType.Integer(16, true), [new CodePlane(0, 16, 1)]), 100),
             ("32-bit integers", new TypeDescription(1, 4, NumberType.Integer(32, true), [new CodePlane(0, 32, 1)]), 100),
+
+            // A float32 level shared over a group of one-value blocks, after the group's codes, rows ending inside a period
+            // (its tail's levels read as stored).
+            ("int8 groups of 128, a float32 scale after them",
+                new TypeDescription(1, 1, NumberType.Integer(8, true), [new CodePlane(0, 8, 1)], Scales: [new BlockScale(NumberType.Floating(8, 23), 128, 128)], Group: 128,
+                    GroupBytes: 132), 384),
+            ("int8 groups of 96, a float32 scale after them",
+                new TypeDescription(1, 1, NumberType.Integer(8, true), [new CodePlane(0, 8, 1)], Scales: [new BlockScale(NumberType.Floating(8, 23), 96, 96)], Group: 96,
+                    GroupBytes: 100), 480),
         };
 
         return made;
@@ -293,6 +302,10 @@ internal abstract partial class Tests
         ["3-bit codes in two planes, offset -4, an E8M0 scale a 32 values stored"] = "29A6BA49DF85CA69",
         ["32-bit integers described"] = "98069D2D957CA29D",
         ["32-bit integers stored"] = "63B5B7D922004311",
+        ["int8 groups of 128, a float32 scale after them described"] = "D8D3076262B3A5FC",
+        ["int8 groups of 128, a float32 scale after them stored"] = "3E92BA4EA2B77000",
+        ["int8 groups of 96, a float32 scale after them described"] = "AEE27C1297DC1117",
+        ["int8 groups of 96, a float32 scale after them stored"] = "0DEF560A171440DC",
         ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values described"] = "BE2AA77B3342A1D3",
         ["a table of 16 fractions, two a byte, a bfloat16 scale a 64 values stored"] = "592ACEBFC8208E4C",
         ["bfloat16 described"] = "BC5B9EE8B5F7CE6C",

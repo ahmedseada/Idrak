@@ -569,13 +569,10 @@ internal abstract partial class Tests
             }
 
             Check(error < (bytes == 1 ? 1e-4 : 1e-8) * energy, $"{row}: relative error {error / energy}");
-            if (bytes != 1)
-            {
-                // int16 codes under a scale: the CPU's described lane does not read them yet (the CPU operations' piece).
-                Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {row}: {stored.Length} bytes for {n} rows, relative error {error / energy:0.0e+0}"));
-                continue;
-            }
 
+            // int8 rows by the described lane's plan of the row; int16 rows by its plan of the codes alone, each row's scale
+            // after (the scale covers the row, so it factors out of the row's sum).
+            Check(CpuBackend.DescribedRoute(row.Description, k) is not null, $"{row}: the CPU's described lane reads it");
             var xs = Enumerable.Range(0, m * k).Select(_ => (float)(random.NextDouble() * 2 - 1)).ToArray();
             using var weight = Tensor.Stored(row, stored, [n, k], device);
             using var x = Tensor.From(xs, [m, k], device);

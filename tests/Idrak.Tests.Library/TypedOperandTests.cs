@@ -15,7 +15,83 @@ internal abstract partial class Tests
         ("typed operands: values float32 cannot hold (float64, int64, int32, uint32, uint64) are computed in float64 by unary, binary, affine, the sums and the product, never narrowed (the float64 result rounded once); an operation without a float64 lane refuses them, naming itself", WideInputsInFloat64),
         ("typed operands: the 16-bit floats' native lane (bfloat16, float16 by their bits) reads every one of the 65,536 codes as the type's own read does, bit for bit, and Gather gives the same rows by either read", NativeKindLaneReads),
         ("typed operands: proof 4: no operation makes a wider copy of an operand: once warm, the managed bytes Unary, Sum, Softmax, Gather, MatMul and StoredMatMul allocate on an input of each built-in type stay below a quarter of the input's values as float32", NoWiderCopies),
+        ("typed operands: the described lane multiplies codes under a level shared over a group of one-value blocks (int8 in groups of 32, 64, 96, 128 and 2048, a float32 scale after them; int8 and int16 rows under a float32 scale first) as their values read: within the int8 activations' rounding", SharedLevelProducts),
     ];
+
+    // int8 codes in groups of `group` one-value blocks, a float32 scale over the group after its codes (a shared level).
+    private static TypeDescription GroupedInt8(int group) => new(1, 1, NumberType.Integer(8, signed: true), [new CodePlane(0, 8, 1)],
+        Scales: [new BlockScale(NumberType.Floating(8, 23), group, group)], Group: group, GroupBytes: group + 4);
+
+    private sealed class DescribedOnly(TypeDescription description, string name) : IElementType
+    {
+        public TypeDescription Description { get; } = description;
+
+        public string Name { get; } = name;
+    }
+
+    internal static void SharedLevelProducts(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        var random = new Random(21);
+        var cases = new List<(IElementType Type, int K)>();
+        foreach (int group in new[] { 32, 64, 96, 128, 2048 })
+        {
+            var grouped = new DescribedOnly(GroupedInt8(group), $"int8 groups of {group}, a float32 scale after them");
+            cases.Add((grouped, group == 2048 ? 2048 : 384));
+            cases.Add((grouped, group == 2048 ? 4096 : 768));
+        }
+
+        cases.Add((Idrak.Abstraction.Types.I8.Type.ForRow(96), 96));
+        cases.Add((Idrak.Abstraction.Types.I16.Type.ForRow(96), 96));
+        cases.Add((Idrak.Abstraction.Types.I16.Type.ForRow(2048), 2048));
+        var wrong = new List<string>();
+        foreach (var (type, k) in cases)
+        {
+            const int M = 3, N = 7;
+            var w = new float[N * k];
+            for (int i = 0; i < w.Length; i++)
+            {
+                w[i] = (float)(Math.Pow(10, random.NextDouble() * 2 - 1) * (random.NextDouble() * 2 - 1));
+            }
+
+            using var scope = new TensorScope();
+            var weight = Tensor.Stored(type, w, [N, k], Device.Cpu);
+            var values = weight.ToArray();
+            var xs = RandomArray(random, M * k);
+            var x = Tensor.From(xs, [M, k], Device.Cpu);
+            var y = Tensor.Zeros([M, N], Device.Cpu);
+            Device.Cpu.Backend.StoredMatMul(x.Storage, weight.Storage, y.Storage, M, N, k);
+            var product = y.ToArray();
+            double worst = 0;
+            for (int i = 0; i < M; i++)
+            {
+                for (int j = 0; j < N; j++)
+                {
+                    double reference = 0, magnitude = 0;
+                    for (int p = 0; p < k; p++)
+                    {
+                        reference += (double)xs[i * k + p] * values[j * k + p];
+                        magnitude += Math.Abs((double)xs[i * k + p] * values[j * k + p]);
+                    }
+
+                    worst = Math.Max(worst, Math.Abs(product[i * N + j] - reference) / magnitude);
+                }
+            }
+
+            string? route = CpuBackend.DescribedRoute(type.Description, k);
+            Console.WriteLine($"  {type.Name}, rows of {k}: {route ?? "the default product"}, worst error {worst:0.0e+0} of the magnitudes");
+            if (!(worst < 5e-3) || route is null)
+            {
+                wrong.Add($"{type.Name} ({route ?? "not read by the described lane"}): worst error {worst}");
+            }
+        }
+
+        Check(wrong.Count == 0, string.Join("; ", wrong));
+    }
 
     // The built-in types the encoder writes whose values float32 holds (the float32 path), and those it does not (float64).
     private static IEnumerable<IElementType> TypedWritable(bool wide) =>
