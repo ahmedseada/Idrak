@@ -35,10 +35,10 @@ internal sealed class TrainCommand : Command
 
         Options:
               --data FILE        a CSV with a header (numbers; a class column may hold names), a folder with a folder of
-                                 images per class (PNG, BMP, PGM, PPM, JPEG, or a --plugin's codec; fitted to the image
+                                 images per class (PNG, BMP, PGM, PPM, JPEG; fitted to the image
                                  input), a folder of images/ and masks/ (segmentation; a mask's grey level is the class,
                                  names in classes.txt), or an annotated dataset (COCO, YOLO, Pascal VOC, ...)
-              --data-format F    auto (default), folder, masks, or an AnnotationFormats name (coco, yolo, voc, ...)
+              --data-format F    auto (default), folder, masks, or an annotation format's name (coco, yolo, voc, ...)
               --eval PATH        image models: evaluation data, read as --data (instead of holding out --validation)
           -t, --target COL       the target column (repeatable; default: the last column)
               --ignore A,B       columns that are not features (an id, ...)
@@ -46,14 +46,14 @@ internal sealed class TrainCommand : Command
                                  (default: from the network's output: [classes] classifies, [classes, h, w] segments,
                                  --decoder detects; a line recognizer's model says so, a builder network ending in
                                  [steps, classes] needs --task line-recognition)
-              --augment P        image models: an augmentation pipeline (Augmentations), as text, run off the training
+              --augment P        image models: an augmentation pipeline, as text, run off the training
                                  thread: "flip, rotation(degrees=10), resized-crop(width=64, height=64, scale=0.5:1)"
-              --loss NAME        image models: a VisionLosses name (focal, dice, giou, ...); default cross-entropy for
+              --loss NAME        image models: a vision loss (focal, dice, giou, ...); default cross-entropy for
                                  classes and pixels, giou for a detector's boxes
-              --matcher NAME     detection: a BoxMatchers name (iou-threshold, the default, or hungarian)
+              --matcher NAME     detection: a box matcher (iou-threshold, the default, or hungarian)
               --metric NAME      image models: scored on the evaluation data at the end: accuracy (classification), or a
-                                 VisionMetrics name (miou for segmentation, coco, voc or voc07 for detection; the defaults)
-              --decoder NAME     detection: the decoder (DetectionDecoders) whose head trains the network;
+                                 vision metric (miou for segmentation, coco, voc or voc07 for detection; the defaults)
+              --decoder NAME     detection: the decoder whose head trains the network;
                                  default the model's
               --direction D      line recognition, a builder network: ltr (default) or rtl (lines flipped first)
               --reading-order R  line recognition, a builder network: the ReadingOrders name that turns a transcription to
@@ -236,7 +236,7 @@ internal sealed class TrainCommand : Command
 
         return options || builder.CurrentShape.Count == 3
                || Directory.Exists(Path.Combine(data, "images")) && Directory.Exists(Path.Combine(data, "masks"))
-               || (File.Exists(data) || Directory.Exists(data)) && AnnotationFormats.Find(data) is not null;
+               || (File.Exists(data) || Directory.Exists(data)) && NotOnTheNewDesign.Yet<bool>($"Picking the annotation format of {data}");
     }
 
     private static string NewRunFolder(CommandContext context, string name)
@@ -597,7 +597,7 @@ internal sealed class PredictCommand : Command
         Arguments:
           MODEL   a model package (.ikm) written by idrak train or Predictor.Save; or an image model read through its
                   family: a folder (config.json with safetensors, or one .onnx file), a .safetensors or an .onnx file.
-                  The family (ImageModelFamilies) and its decoder (DetectionDecoders) come from a plug-in: -P PLUGIN.dll
+                  Picking the family and its decoder by their names is not on the new design yet.
           IMAGE   images, folders of images (searched with their subfolders) or patterns such as photos/*.png
 
         Options:

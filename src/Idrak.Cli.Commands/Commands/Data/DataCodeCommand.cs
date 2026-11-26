@@ -12,7 +12,7 @@ namespace Idrak.Cli.Commands.Data;
 
 /// <summary>
 /// <c>idrak data code REPO -o OUT</c> (plan 36, G1): a repository or project turned into pretraining rows and proven task
-/// folders (<see cref="CodeExtractor"/>) by the registered task families, with a manifest of what was kept and rejected. No
+/// folders (<see cref="CodeExtractor"/>) by the task families, with a manifest of what was kept and rejected. No
 /// model is used. Every <see cref="CodeExtractorOptions"/> setting is a flag over its <c>IDRAK_CODE_*</c> variable.
 /// </summary>
 internal sealed class DataCodeCommand : Command
@@ -26,14 +26,14 @@ internal sealed class DataCodeCommand : Command
 
         Walks REPO (a repository or a project folder) once and runs the task families on it: each writes rows (pretraining
         text) and drafts (coding tasks: a workspace, a check, a solution). A draft becomes a task folder only when the
-        verifier proves it: its check fails on the workspace and passes with the solution. With no verifier (none
-        registered, or --verifier none) the drafts are written under drafts/, marked unproven. OUT gets rows/, tasks/,
+        verifier proves it: its check fails on the workspace and passes with the solution. With no verifier (--verifier
+        none) the drafts are written under drafts/, marked unproven. OUT gets rows/, tasks/,
         drafts/, rejected/ (each rejected draft's proof) and manifest.json (the families, the counts asked, kept and
         rejected with the reasons, the time). Each option is over its IDRAK_CODE_* variable.
 
         Options:
           -o, --out DIR             the output folder (under test-output, for example)
-              --families A,B        the task families to run, by name, or all (IDRAK_CODE_FAMILIES; all registered)
+              --families A,B        the task families to run, by name, or all (IDRAK_CODE_FAMILIES; all)
               --skip A,B            folders never read, by name (IDRAK_CODE_SKIPPED_FOLDERS; .git, .vs, .idea, the coding
                                     languages' build folders and the folders the repository's .gitignore names)
               --max-file-bytes N    the largest file read (IDRAK_CODE_MAX_FILE_BYTES; 1048576)
@@ -46,8 +46,7 @@ internal sealed class DataCodeCommand : Command
               --max-time SECONDS    the longest the run takes before it writes what it has; 0 for none (IDRAK_CODE_MAX_TIME)
               --formats A,B         the row formats (IDRAK_CODE_FORMATS; JsonLines, the one Idrak.Data writes)
               --concurrency N       drafts proven at once; 0 for the CPU threads (IDRAK_CODE_CONCURRENCY)
-              --verifier NAME       the verifier that proves drafts, or none (IDRAK_CODE_VERIFIER; the first registered)
-              --list                the registered task families and verifiers (nothing is run)
+              --verifier NAME       the verifier that proves drafts, or none (IDRAK_CODE_VERIFIER)
 
         The split settings are recorded in the manifest; the group splits and the leakage check come with plan 36's G2.
 
@@ -63,29 +62,10 @@ internal sealed class DataCodeCommand : Command
         "--formats", "--concurrency", "--verifier",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--list"];
-
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
     public override int Run(CommandContext context)
     {
-        if (context.Flag("--list"))
-        {
-            context.Write("task families:");
-            foreach (string line in TaskFamilies.Describe().Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                context.Write("  " + line);
-            }
-
-            context.Write(TaskVerifiers.Names.Count == 0 ? "verifiers: none registered (drafts are written unproven)" : "verifiers:");
-            foreach (string line in TaskVerifiers.Describe().Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                context.Write("  " + line);
-            }
-
-            return ExitCodes.Ok;
-        }
-
         if (context.Positional is not [var repository])
         {
             throw new UsageException("Give one repository or project folder: idrak data code REPO -o OUT.");

@@ -57,28 +57,9 @@ public static class MauiProgram
                 options.SuggestedModels = ["Qwen/Qwen3-0.6B", "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf", "Qwen/Qwen2-VL-2B-Instruct"];
             });
 
-        // The model families the app shows are registered here, each plug-in by its own Register call (the library
-        // registers none: a model of another family is refused as not registered). The espeak-ng phonemizer is never
-        // registered (it runs a program, which an app cannot).
-        // The Chat lab's text families: Qwen (Qwen2, Qwen3 and their mixtures of experts), Llama, Gemma and Mistral.
-        QwenPlugin.Register();
-        LlamaPlugin.Register();
-        GemmaPlugin.Register();
-        MistralPlugin.Register();
-        // The Transcribe lab: Whisper reads the speech models, and RNNoise is a live cleaning step for its pipeline
-        // setting (rnnoise model=PATH, its model file kept on the phone).
-        WhisperPlugin.Register();
-        RnNoisePlugin.Register();
-        // The Speak lab's synthesis families: VITS (the MMS-TTS checkpoints, with uroman's Arabic romanizer) by its family
-        // alone, without the espeak-ng phonemizer VitsPlugin.Register would bring (a program the app cannot run: a
-        // checkpoint that reads phonemes is listed with that reason); IdrakAudio (the library's own speech models).
-        VitsPlugin.RegisterFamily();
-        IdrakAudioPlugin.Register();
-        // The OCR lab's vision-language families (Idrak.Vision.Plugins), each with its text decoder: Gemma 3 vision,
-        // Qwen2-VL and Qwen2.5-VL, and LLaVA.
-        Gemma3VisionPlugin.Register();
-        QwenVisionPlugin.Register();
-        LlavaPlugin.Register();
+        // The model families the app shows (the Chat lab's Qwen, Llama, Gemma and Mistral, the Transcribe lab's Whisper and
+        // RNNoise, the Speak lab's VITS and IdrakAudio, the OCR lab's Gemma 3 vision, Qwen2-VL and LLaVA) were registered
+        // here, each plug-in by its own Register call: picking a family by its name is not on the new design yet.
 
         builder.Services.AddSingleton(new OcrLabOptions());
 

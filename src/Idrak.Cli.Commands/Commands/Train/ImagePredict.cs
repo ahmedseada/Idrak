@@ -169,12 +169,12 @@ internal static class ImagePredict
     /// <summary>The task's name in output: classification, detection, segmentation, features or line-recognition.</summary>
     public static string Task(ImageTask task) => ImageModelPredictors.TaskName(task);
 
-    // A line recognizer: each file one line, read with a CTC decoder (--decoder; picking it by its name is not on the new
-    // design yet). The lines' sizes come from their headers, widest first, so a batch pads little; each batch is decoded
-    // and prepared when it runs.
+    // A line recognizer: each file one line, read with a CTC decoder (--decoder, the reader's default unless given). The
+    // lines' sizes come from their headers, widest first, so a batch pads little; each batch is decoded and prepared when
+    // it runs.
     private static int ReadLines(CommandContext context, string modelPath, ImageModel model, IReadOnlyList<string> files, IReadOnlyList<string> inputs)
     {
-        string decoder = NotOnTheNewDesign.Yet<string>($"Picking the CTC decoder '{context.Option("--decoder") ?? "greedy"}' by its name");
+        string? named = context.Option("--decoder");
         int? ceiling = context.Option("--batch") is null ? null : context.IntOption("--batch", 1);
         if (ceiling is <= 0)
         {
@@ -182,7 +182,8 @@ internal static class ImagePredict
         }
 
         var device = context.Device;
-        var reader = model.LineReader(decoder, device: device);
+        var reader = named is null ? model.LineReader(device: device) : model.LineReader(named, device: device);
+        string decoder = reader.Decoder;
         var lines = reader.Settings;
         var widths = new int[files.Count];
         for (int i = 0; i < files.Count; i++)

@@ -32,25 +32,25 @@ internal sealed record ImageRunOptions
     /// <summary>classification, segmentation or detection; null: from the model.</summary>
     public string? Task { get; init; }
 
-    /// <summary>auto, folder (class folders), masks (images/ and masks/), or an AnnotationFormats name.</summary>
+    /// <summary>auto, folder (class folders), masks (images/ and masks/), or an annotation format's name.</summary>
     public string DataFormat { get; init; } = "auto";
 
     /// <summary>The augmentation pipeline (Augmentations' text), or null.</summary>
     public string? Augment { get; init; }
 
-    /// <summary>A VisionLosses name (or cross-entropy), or null for the task's default.</summary>
+    /// <summary>A vision loss's name (or cross-entropy), or null for the task's default.</summary>
     public string? Loss { get; init; }
 
-    /// <summary>A BoxMatchers name, or null for iou-threshold.</summary>
+    /// <summary>A box matcher's name, or null for iou-threshold.</summary>
     public string? Matcher { get; init; }
 
-    /// <summary>A VisionMetrics name (or accuracy), or null for the task's default.</summary>
+    /// <summary>A vision metric's name (or accuracy), or null for the task's default.</summary>
     public string? Metric { get; init; }
 
     /// <summary>The evaluation data (read as the training data), or null to hold out --validation of it.</summary>
     public string? Eval { get; init; }
 
-    /// <summary>The decoder of a detector (DetectionDecoders, with its head); null: the model's.</summary>
+    /// <summary>The decoder of a detector (with its head); null: the model's.</summary>
     public string? Decoder { get; init; }
 
     /// <summary>A builder line recognizer's lines: ltr or rtl (flipped before the network); null: ltr.</summary>
@@ -104,11 +104,11 @@ internal sealed record ImageRunOptions
 /// <summary>
 /// An image training run of <c>idrak train</c>: a builder network or an image model read through its family
 /// (fine-tuned), on class folders (classification), image and mask folders or an annotated dataset (segmentation) or an
-/// annotated dataset read by an <see cref="AnnotationFormats">annotation format</see> (detection). Samples are read,
-/// augmented (<see cref="Augmentations"/>) and stretched to the network's input off the training thread
-/// (<see cref="AugmentedImageLoader"/>); the loss is the task's (or a <see cref="VisionLosses"/> entry), a detector's
-/// candidates come from its decoder's head (<see cref="IDetectionHeadKind"/>) and are matched by a
-/// <see cref="BoxMatchers">matcher</see>; the evaluation data is scored by a <see cref="VisionMetrics">metric</see>. A
+/// annotated dataset read by an <see cref="IAnnotationFormat">annotation format</see> (detection). Samples are read,
+/// augmented (<see cref="IAugmentation"/>) and stretched to the network's input off the training thread
+/// (<see cref="AugmentedImageLoader"/>); the loss is the task's (or a <see cref="IVisionLoss">vision loss</see>), a
+/// detector's candidates come from its decoder's head (<see cref="DetectionHead"/>) and are matched by a
+/// <see cref="IBoxMatcher">matcher</see>; the evaluation data is scored by a <see cref="IVisionMetric">metric</see>. A
 /// batch the device has no room for is split into micro-batches whose gradients add up (halved again as needed). The run
 /// folder holds run.json, the checkpoints and log.jsonl as for any run; a builder network becomes a package (.ikm), a
 /// fine-tuned model its weights (.ikw, read by <c>idrak predict --weights</c>).
@@ -275,22 +275,22 @@ internal static class ImageTraining
             throw new UsageException($"--augment {combining.Name} combines several images' objects; a classifier keeps one class per image.");
         }
 
-        var lossName = CheckName(options.Loss, "--loss", task == ImageTask.Detection ? VisionLosses.Names : [CrossEntropy, .. VisionLosses.Names]);
-        var matcherName = CheckName(options.Matcher, "--matcher", BoxMatchers.Names);
+        var lossName = options.Loss;
+        var matcherName = options.Matcher;
         if (matcherName is not null && task != ImageTask.Detection)
         {
             throw new UsageException("--matcher is for detectors (it assigns candidates to true boxes).");
         }
 
-        string metricName = CheckName(options.Metric, "--metric", task == ImageTask.Classification ? [Accuracy] : VisionMetrics.Names)
+        string metricName = (task == ImageTask.Classification ? CheckName(options.Metric, "--metric", [Accuracy]) : options.Metric)
                             ?? (task switch { ImageTask.Classification => Accuracy, ImageTask.Segmentation => "miou", _ => "coco" });
         var (scale, shift) = Normalization(family?.Preprocessor, channels);
         string? decoderName = task != ImageTask.Detection ? null
-            : options.Decoder ?? family?.Decoder ?? throw new UsageException("Give --decoder NAME: the detector's decoder (registered in DetectionDecoders, with its head).");
+            : options.Decoder ?? family?.Decoder ?? throw new UsageException("Give --decoder NAME: the detector's decoder (with its head).");
         var decoderSettings = family?.DecoderSettings ?? [];
         var decoderContext = new DetectionDecoderRequest(height, width, labels, decoderSettings);
-        DetectionHead? head = decoderName is null ? null : DetectionDecoders.CreateHead(decoderName, decoderContext);
-        DetectionDecoder? decoder = decoderName is null ? null : DetectionDecoders.Create(decoderName, decoderContext);
+        DetectionHead? head = decoderName is null ? null : NotOnTheNewDesign.Yet<DetectionHead>($"Picking the head of the detection decoder '{decoderName}' by its name");
+        DetectionDecoder? decoder = decoderName is null ? null : NotOnTheNewDesign.Yet<DetectionDecoder>($"Picking the detection decoder '{decoderName}' by its name");
         var objective = new DetectionObjectiveOptions { Matcher = matcherName ?? BoxMatchers.Threshold, BoxLoss = lossName ?? "giou", Scale = Math.Max(height, width) };
 
         Tensor Loss(Tensor x, DetectionBatch batch, int start, int count, int[] classes)
@@ -308,7 +308,8 @@ internal static class ImageTraining
                     }
 
                     var target = Tensor.From(onehot, [count, labels.Count], device);
-                    return lossName is null or CrossEntropy ? Losses.CrossEntropy(logits, target) : VisionLosses.Compute(lossName, logits, target);
+                    return lossName is null or CrossEntropy ? Losses.CrossEntropy(logits, target)
+                        : NotOnTheNewDesign.Yet<IVisionLoss>($"Picking the vision loss '{lossName}' by its name").Compute(logits, target, new VisionLossOptions());
                 }
 
                 case ImageTask.Segmentation:
@@ -322,8 +323,9 @@ internal static class ImageTraining
                     }
 
                     var onehot = Tensor.OneHot(target, labels.Count).Permute(0, 3, 1, 2);
-                    var predicted = VisionLosses.Get(lossName).Target == VisionLossTarget.Masks ? logits.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2) : logits;
-                    return VisionLosses.Compute(lossName, predicted, onehot);
+                    var loss = NotOnTheNewDesign.Yet<IVisionLoss>($"Picking the vision loss '{lossName}' by its name");
+                    var predicted = loss.Target == VisionLossTarget.Masks ? logits.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2) : logits;
+                    return loss.Compute(predicted, onehot, new VisionLossOptions());
                 }
 
                 default:
@@ -607,7 +609,7 @@ internal static class ImageTraining
         {
             network.Eval();
             var metricOptions = new VisionMetricOptions { Classes = labels.Count, ClassNames = labels };
-            IVisionMetric? metric = task == ImageTask.Classification ? null : VisionMetrics.Create(metricName, metricOptions);
+            IVisionMetric? metric = task == ImageTask.Classification ? null : NotOnTheNewDesign.Yet<IVisionMetric>($"Picking the vision metric '{metricName}' by its name");
             int right = 0, count = 0;
             using (Autograd.NoGrad())
             {
@@ -706,14 +708,13 @@ internal static class ImageTraining
         string layout;
         try
         {
-            var reader = format == "auto" ? AnnotationFormats.Find(path) ?? throw new NotSupportedException($"no registered annotation format reads it ({string.Join(", ", AnnotationFormats.Names)})")
-                : AnnotationFormats.Get(format);
+            var reader = NotOnTheNewDesign.Yet<IAnnotationFormat>(format == "auto" ? $"Picking the annotation format of {path}" : $"Picking the annotation format '{format}' by its name");
             layout = reader.Name;
             dataset = reader.Read(path);
         }
         catch (NotSupportedException e)
         {
-            throw new UsageException($"{option} {path}: {e.Message}; --data-format takes auto, folder, masks or an annotation format ({string.Join(", ", AnnotationFormats.Names)}).");
+            throw new UsageException($"{option} {path}: {e.Message}; --data-format takes auto, folder, masks or an annotation format.");
         }
 
         bool segment = task == ImageTask.Segmentation;
@@ -875,7 +876,7 @@ internal static class ImageTraining
         set.Classes = labels;
     }
 
-    // A registry name given on the command line, checked against the names there are (case as registered).
+    // A name given on the command line, checked against the names there are (case as they are).
     private static string? CheckName(string? name, string option, IEnumerable<string> names)
     {
         if (name is null)

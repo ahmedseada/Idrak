@@ -305,7 +305,7 @@ internal sealed class DataProfile
         else if (File.Exists(full))
         {
             data = DatasetRows.FromFile(full, CodeFolders.Read);
-            format = DataFileFormats.Find(full)?.Name.ToLowerInvariant() ?? System.IO.Path.GetExtension(full).TrimStart('.');
+            format = System.IO.Path.GetExtension(full).TrimStart('.');      // naming its format by a lookup is not on the new design yet
         }
         else
         {

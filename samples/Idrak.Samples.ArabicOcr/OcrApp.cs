@@ -68,11 +68,6 @@ internal static class OcrApp
             return args.Length == 0 ? 2 : 0;
         }
 
-        // The app brings the families it uses: the registries know nothing of them otherwise (the vision-language reader's
-        // Gemma 3, and the CRNN line recognizer of Idrak.Vision.Plugins).
-        Gemma3VisionPlugin.Register();
-        CrnnPlugin.Register();
-
         string command = args[0];
         var rest = args.Skip(1).ToArray();
         try

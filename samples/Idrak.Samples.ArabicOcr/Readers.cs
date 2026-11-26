@@ -60,7 +60,7 @@ internal static class Readers
 
 /// <summary>
 /// The line reader: the page cut into lines (the library's <see cref="TextLineSegmenters"/>), each line read by the trained recognizer and
-/// decoded by a <see cref="CtcDecoders"/> decoder; the page's text is its lines, top to bottom, one per line.
+/// decoded by a CTC decoder (--decoder, greedy unless given); the page's text is its lines, top to bottom, one per line.
 /// </summary>
 internal sealed class LinesReader : IPageReader
 {
@@ -80,12 +80,7 @@ internal sealed class LinesReader : IPageReader
         }
 
         _recognizer = CrnnRecognizer.Load(folder, context.Device, OcrText.Normalize);
-        _decoder = args.Option("--decoder") ?? CtcDecoders.Greedy;
-        if (!CtcDecoders.Names.Contains(_decoder))
-        {
-            throw new UsageException($"--decoder: no CTC decoder '{_decoder}' (registered: {string.Join(", ", CtcDecoders.Names)}).");
-        }
-
+        _decoder = args.Option("--decoder") ?? "greedy";
         _options = new CtcDecodeOptions { BeamWidth = args.Integer("--beam-width", 10, 1) };
         _singleLine = args.Flag("--single-line");
         _segmentation = new LineSegmentationOptions { MaxSkew = args.Number("--max-skew", 3, 0) };

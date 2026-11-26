@@ -22,7 +22,7 @@ namespace Idrak.Samples.ArabicOcr;
 /// <param name="System">The data's system message, or null.</param>
 internal sealed record Page(string Name, string Source, ChatImage Image, string? Truth = null, string? Prompt = null, string? System = null)
 {
-    /// <summary>The pixels: the registered codecs, then the EXIF orientation (as the vision-language reader sees them).</summary>
+    /// <summary>The pixels, decoded, then the EXIF orientation (as the vision-language reader sees them).</summary>
     public ImageData Decode() => ChatImageDecoder.Decode(Image);
 }
 
@@ -40,7 +40,7 @@ internal static class Pages
     public static IEnumerable<string> ImageFiles(string path, bool recursive = false) =>
         Directory.Exists(path)
             ? Directory.EnumerateFiles(path, "*", recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
-                .Where(ImageCodecs.CanDecode).Order(StringComparer.Ordinal)
+                .Where(file => throw new NotSupportedException($"Picking the image codec of {file} is not on the new design yet.")).Order(StringComparer.Ordinal)
             : File.Exists(path) ? [path] : throw new UsageException($"Not found: {path}");
 
     /// <summary>Every page of the inputs, in order (data records lazily, one at a time).</summary>

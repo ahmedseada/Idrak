@@ -35,7 +35,7 @@ internal static class RowFiles
     }
 
     /// <summary>The format's name for messages: csv, tsv, jsonl, json, parquet or the extension.</summary>
-    public static string FormatName(string path) => DataFiles.FormatOf(path) switch
+    public static string FormatName(string path) => NotOnTheNewDesign.Yet<DataFormat?>($"Picking the data file format of {path} by its extension") switch
     {
         DataFormat.JsonLines => "jsonl",
         DataFormat.Json => "json",

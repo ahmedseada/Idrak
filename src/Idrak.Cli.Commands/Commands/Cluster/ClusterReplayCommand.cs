@@ -94,7 +94,7 @@ internal sealed class ClusterReplayCommand : Command
         IReadOnlyList<Fault> schedule;
         try
         {
-            schedule = ClusterReplay.Schedule(topology, failures, seed, step);
+            schedule = NotOnTheNewDesign.Yet<IReadOnlyList<Fault>>($"Picking the failure model '{failures}' (seed {seed}, through step {step}) by its name");
         }
         catch (NotSupportedException e)
         {

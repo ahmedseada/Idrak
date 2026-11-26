@@ -44,8 +44,8 @@ internal static class EvalCommand
         string? truth = a.Option("--truth"), images = a.Option("--images");
         Dictionary<string, Page>? truthPages = truth is not null && File.Exists(truth) && Pages.IsDataFile(truth) ? Pages.ByImage(truth, images) : null;
         using var reader = Readers.Create(a.Required("--reader", "lines or vlm"), context);
-        var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
-        var wer = TuningMetrics.Get(TuningMetrics.WordErrorRate);
+        var cer = TrainCommand.Metric(TuningMetrics.CharacterErrorRate);
+        var wer = TrainCommand.Metric(TuningMetrics.WordErrorRate);
         var alphabet = (reader as LinesReader)?.Alphabet.ToHashSet(StringComparer.Ordinal);
         var unknown = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var rows = new JsonArray();
@@ -89,8 +89,8 @@ internal static class EvalCommand
         {
             string answer = OcrText.Normalize(OcrText.AnswerText(reading.Text, mode));
             string reference = OcrText.Normalize(OcrText.AnswerText(expected, mode));
-            var c = cer.Score(answer, reference);
-            var w = wer.Score(answer, reference);
+            var c = cer(answer, reference);
+            var w = wer(answer, reference);
             totalCer += c;
             totalWer += w;
             if (alphabet is not null)

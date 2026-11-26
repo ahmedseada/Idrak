@@ -36,8 +36,8 @@ internal static class TrainCommand
           --eval DIR           held-out lines: CER and WER every epoch; the best epoch is kept (else the lowest loss)
           -o, --out MODEL      the model folder (default: recognizer): recognizer.ikm + recognizer.json
           --epochs N           (30)        --batch N   lines per step (16)      --lr X   (0.001)      --seed N (1)
-          --schedule NAME      the learning rate over the run's steps (the library's LearningRateSchedules): cosine
-                               (default), linear, constant, wsd    --warmup F  warm-up share of the steps (0.03)
+          --schedule NAME      the learning rate over the run's steps: cosine (default), linear, constant, wsd (picking
+                               one by its name is not on the new design yet)    --warmup F  warm-up share of the steps (0.03)
                                --min-lr X  the rate at the end (0)
           --height N           line height, a multiple of 4 (48)    --channels A,B,C  (32,64,128)
           --hidden N           LSTM size each way (128)              --layers N        (2)
@@ -70,10 +70,9 @@ internal static class TrainCommand
         float learningRate = (float)a.Number("--lr", 0.001, 1e-7);
         string scheduleName = (a.Option("--schedule") ?? "cosine").ToLowerInvariant();
         float warmup = (float)a.Number("--warmup", 0.03, 0), minLearningRate = (float)a.Number("--min-lr", 0, 0);
-        if (LearningRateSchedules.Find(scheduleName) is null || warmup >= 1)
+        if (warmup >= 1)
         {
-            throw new UsageException($"--schedule {scheduleName}, --warmup {warmup.ToString(CultureInfo.InvariantCulture)}: use one of "
-                                     + $"{string.Join(", ", LearningRateSchedules.Names)} and a warm-up share under 1.");
+            throw new UsageException($"--warmup {warmup.ToString(CultureInfo.InvariantCulture)}: a warm-up share under 1.");
         }
         bool drafts = a.Flag("--include-drafts");
         string direction = a.Option("--direction") ?? "rtl";
@@ -141,7 +140,7 @@ internal static class TrainCommand
         int decoded = 0;
         Parallel.For(0, evalLines.Length, ComputeResources.ParallelOptions, i =>
         {
-            evalLines[i] = ImageCodecs.Decode(evaluation[i].Image);
+            evalLines[i] = Decode(evaluation[i].Image);
             evalProgress(Interlocked.Increment(ref decoded), evalLines.Length);
         });
         live.Erase();
@@ -188,8 +187,8 @@ internal static class TrainCommand
 
         using var optimizer = new AdamW(recognizer.Network.Parameters(), learningRate, weightDecay: 1e-4f);
         var measured = new MeasuredLineBatches(context.Device);
-        var cer = TuningMetrics.Get(TuningMetrics.CharacterErrorRate);
-        var wer = TuningMetrics.Get(TuningMetrics.WordErrorRate);
+        var cer = Metric(TuningMetrics.CharacterErrorRate);
+        var wer = Metric(TuningMetrics.WordErrorRate);
         int micro = batchSize, bestEpoch = 0;
         double best = double.PositiveInfinity, bestLoss = double.PositiveInfinity, bestCer = double.NaN, bestWer = double.NaN;
         var epochSeconds = new List<double>();
@@ -204,7 +203,7 @@ internal static class TrainCommand
         TimeSpan profileData = default, profileCompute = default;
         // The learning rate follows the schedule over every step of the run (warm-up, then the decay), stepped after each
         // optimizer step.
-        var schedule = LearningRateSchedules.Factory(scheduleName, new LearningRateScheduleSettings(warmup, minLearningRate))(optimizer, Math.Max(1, epochs * stepsPerEpoch));
+        var schedule = Schedule(scheduleName);
         Telemetry.TrainingStarted(new TrainingStarted("ArabicOcr line recognizer", "AdamW", context.Device, epochs, train.Count, evaluation.Count, batchSize,
             stepsPerEpoch, recognizer.Network.ParameterCount, learningRate, Environment.ProcessorCount));
         for (int epoch = 1; epoch <= epochs; epoch++)
@@ -323,10 +322,10 @@ internal static class TrainCommand
                 live.Detail = null;
                 live.NextStage($"epoch {epoch}/{epochs}: reading the {evaluation.Count:N0} held-out lines for CER and WER", null, ProgressUnit.Elapsed, keepLine: false);
                 live.Show();
-                var readings = recognizer.Read(evalLines, CtcDecoders.Greedy, new CtcDecodeOptions(), measured);
+                var readings = recognizer.Read(evalLines, "greedy", new CtcDecodeOptions(), measured);
                 var pairs = readings.Zip(evaluation).Select(p => (p.First.Text, p.Second.Text)).ToArray();
-                epochCer = TuningScore.Sum(pairs.Select(p => cer.Score(p.Item1, p.Item2))).Value;
-                epochWer = TuningScore.Sum(pairs.Select(p => wer.Score(p.Item1, p.Item2))).Value;
+                epochCer = TuningScore.Sum(pairs.Select(p => cer(p.Item1, p.Item2))).Value;
+                epochWer = TuningScore.Sum(pairs.Select(p => wer(p.Item1, p.Item2))).Value;
             }
 
             double monitored = epochCer ?? trainLoss;                                     // CER on the held-out lines, ties broken by the loss
@@ -389,6 +388,17 @@ internal static class TrainCommand
 
     private static double Round(double value) => Math.Round(value, 5);
 
+    // A learning-rate schedule by its name, and a metric by its name: picking either by its name is not on the new design yet.
+    private static ILearningRateScheduler Schedule(string name) =>
+        throw new NotSupportedException($"Picking the learning-rate schedule '{name}' by its name is not on the new design yet.");
+
+    /// <summary>The scorer of the metric <paramref name="name"/>: picking a metric by its name is not on the new design yet.</summary>
+    internal static Func<string, string, TuningScore> Metric(string name) =>
+        (_, _) => throw new NotSupportedException($"Picking the metric '{name}' by its name is not on the new design yet.");
+
+    // An image file's pixels: picking its codec is not on the new design yet.
+    private static ImageData Decode(string path) => throw new NotSupportedException($"Picking the image codec of {path} is not on the new design yet.");
+
     // CTC needs a step per label and one more between two equal labels.
     private static int MinimumSteps(int[] labels)
     {
@@ -420,7 +430,7 @@ internal static class TrainCommand
         int done = 0;
         Parallel.For(0, samples.Count, ComputeResources.ParallelOptions, i =>
         {
-            var prepared = recognizer.Prepare(ImageCodecs.Decode(samples[i].Image));
+            var prepared = recognizer.Prepare(Decode(samples[i].Image));
             var bytes = new byte[prepared.Pixels.Length];
             for (int k = 0; k < bytes.Length; k++)
             {
