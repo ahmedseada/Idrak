@@ -29,7 +29,6 @@ internal abstract partial class Tests
         Alpha = (float)tuning["settings"]!["lora"]!["alpha"]!,
         Targets = ["q", "k", "v", "o"],
         Optimizer = ps => new Idrak.Abstraction.Training.Sgd(ps, (float)tuning["settings"]!["optimizer"]!["learning_rate"]!),
-        Scheduler = LearningRateSchedules.Factory(LearningRateSchedules.Constant, new LearningRateScheduleSettings(0f)),
         MaxGradientNorm = 0f,
         Epochs = epochs,
         BatchTokens = 4096,
@@ -190,7 +189,7 @@ internal abstract partial class Tests
             using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
             var record = tuning["records"]![2]!;
             int[] ids = JsonInts(record["input_ids"]);
-            var features = record["images"]!.AsArray().Select(f => encoder.Encode([ImageCodecs.Decode(TestData($"vlm/{(string)f!}"))])[0].Features).ToList();
+            var features = record["images"]!.AsArray().Select(f => encoder.Encode([NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{(string)f!}")}")])[0].Features).ToList();
             var adapters = model.Network.Descendants().OfType<Linear>().Select(l => l.Lora).OfType<LoraAdapter>().ToList();
             float[][] Gradients(bool checkpointed)
             {
@@ -268,30 +267,6 @@ internal abstract partial class Tests
             train = TuningSequences(model, tuning, vision);
             Check(Failure<ArgumentException>(() => TuningVision.Create(model, TuningImages.Parse(null, ["no_such_option=1"]))).Message.Contains("no_such_option", StringComparison.Ordinal),
                 "an unknown vision option is refused");
-        }
-
-        // The family unregistered after loading: the tuner says so with the registry's message, before any step (no adapter is added).
-        UnregisterGemma3Vision();
-        try
-        {
-            var options = new FineTuningOptions { Rank = 2, Alpha = 4, Targets = ["q"], Epochs = 1 };
-            foreach (var (how, action) in new (string, Action)[]
-                     {
-                         ("TuningVision.Create", () => TuningVision.Create(model).Dispose()),
-                         ("FineTuner.Train", () => FineTuner.Train(model, train, null, options)),
-                         ("FineTuner.Evaluate", () => FineTuner.Evaluate(model, train)),
-                     })
-            {
-                string message = Failure<NotSupportedException>(action).Message;
-                Check(message.Contains($"Vision family '{Gemma3VisionFamily.Architecture}' is not registered", StringComparison.Ordinal)
-                      && message.Contains("VisionFamilies.Register", StringComparison.Ordinal), $"{how}: {message}");
-            }
-
-            Check(!model.Network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null), "nothing ran before the refusal");
-        }
-        finally
-        {
-            RegisterGemma3Vision();
         }
 
         // A text model given sequences with images, and a text-only encoder given a transcript with images.

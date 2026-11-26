@@ -34,15 +34,6 @@ internal abstract partial class Tests
 
     internal static (PretrainedModel Model, JsonNode Tuning) LoadTuningModel(string family, Device device)
     {
-        if (family == "gemma3")
-        {
-            RegisterGemma3Vision();
-        }
-        else
-        {
-            Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
-        }
-
         var tuning = JsonNode.Parse(File.ReadAllText(TuningData($"{family}/tuning.json")))!;
         string folder = ((string)tuning["settings"]!["model"]!)["../".Length..];
         return (PretrainedModel.Load(TestData(folder), new PretrainedOptions { Device = device }), tuning);
@@ -97,7 +88,7 @@ internal abstract partial class Tests
                 var (start, end) = spans[0];
 
                 // The image markers (all in the prompt) expanded by the family's format, each image as its encoder's blocks.
-                var layouts = record["images"]!.AsArray().Select(f => images.Blocks(ImageCodecs.Decode(TestData($"vlm/{(string)f!}")))).ToList();
+                var layouts = record["images"]!.AsArray().Select(f => images.Blocks(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{(string)f!}")}"))).ToList();
                 string prompt = vision.PromptFormat.Expand(text[..start], layouts, tokenizer);
                 Check(prompt + text[start..] == (string)record["expanded"]!, $"{what}: expanded\n{prompt + text[start..]}\nexpected\n{record["expanded"]}");
 
@@ -211,7 +202,7 @@ internal abstract partial class Tests
         var features = new Dictionary<string, Tensor>();
         foreach (string file in files)
         {
-            var image = ImageCodecs.Decode(TestData($"vlm/{file}"));
+            var image = NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{file}")}");
             Tensor frozen;
             using (Autograd.NoGrad())
             {
@@ -239,7 +230,7 @@ internal abstract partial class Tests
                 var stages = (IVisionEncoderStages)encoder;
                 stepFeatures = files.ToDictionary(f => f, f =>
                 {
-                    var tower = stages.Tower(stages.PixelValues(ImageCodecs.Decode(TestData($"vlm/{f}"))));
+                    var tower = stages.Tower(stages.PixelValues(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{f}")}")));
                     return projector.Forward(tower);                                     // gradients reach the projector (the tower is frozen)
                 });
             }

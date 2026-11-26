@@ -293,7 +293,7 @@ internal abstract partial class Tests
             Check(TuningImages.Read(folder)!.IsEmpty && TuningImages.Read(folder)!.Equals(TuningImages.None), "nothing round-trips as nothing");
             Check(!images.Equals(images with { Grayscale = false }) && !images.Equals(images with { VisionOptions = VisionOptions.Empty }), "equality sees every field");
 
-            var image = ImageCodecs.Decode(TestData("vlm/image.png"));
+            var image = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png")));
             var applied = images.Apply(image);
             var piped = images.Pipeline.Apply(image);
             Check(applied.Channels == piped.Channels && applied.Pixels.AsSpan().SequenceEqual(piped.Pixels), "Apply runs the pipeline, grayscale first");
@@ -552,7 +552,6 @@ internal abstract partial class Tests
 
     internal static void VisionTuningPartGemma3(Device device)
     {
-        RegisterGemma3Vision();
         using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3"), new PretrainedOptions { Device = device });
         var vision = model.Vision!;
         Check(VisionTuningParts.Offered(vision).SequenceEqual(["projector", "tower"]), $"offered: {string.Join(", ", VisionTuningParts.Offered(vision))}");
@@ -563,7 +562,7 @@ internal abstract partial class Tests
 
         using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device });
         var stages = (IVisionEncoderStages)encoder;
-        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png")));
         Check(encoder is ITrainableVisionEncoder trainable && ReferenceEquals(trainable.Vision, vision) && ReferenceEquals(VisionTuningParts.Trainable(vision, encoder), encoder),
             "the encoder carries the training members (ITrainableVisionEncoder), its vision part the one that built it");
         CheckTrainableProjector(tuning, encoder, stages, image, device, "tiny Gemma 3");
@@ -589,7 +588,6 @@ internal abstract partial class Tests
 
         // Refusals: another family's encoder, a part not offered.
         Check(Failure<NotSupportedException>(() => tuning.Parameters(encoder, "decoder")).Message.Contains("it offers: projector, tower", StringComparison.Ordinal), "a part not offered");
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var llava = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var otherEncoder = llava.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device });
         Check(Failure<ArgumentException>(() => tuning.Features(otherEncoder, frozen)).Message.Contains("LlavaImageEncoder is not an encoder of this Gemma3ForConditionalGeneration vision part", StringComparison.Ordinal), "another family's encoder");
@@ -597,8 +595,7 @@ internal abstract partial class Tests
 
     internal static void VisionTuningPartLlava(Device device)
     {
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
-        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png")));
         foreach (string folder in new[] { "tiny-llava", "tiny-llava-full" })
         {
             using var model = PretrainedModel.Load(LlavaData(folder), new PretrainedOptions { Device = device });
@@ -688,7 +685,7 @@ internal abstract partial class Tests
 
         public override IImagePromptFormat PromptFormat => throw new NotSupportedException();
 
-        public override IImageAttentionRule Attention => ImageAttentionRules.Get(ImageAttentionRules.Causal);
+        public override IImageAttentionRule Attention => new CausalRule();
 
         public override IReadOnlyCollection<string> StoredTensors => [];
 

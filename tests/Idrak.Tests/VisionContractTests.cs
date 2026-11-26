@@ -25,9 +25,8 @@ internal abstract partial class DesktopTests : Tests
 
     private static void LlavaMatchesReference(Device device)
     {
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var manifest = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(LlavaData("manifest.json")))!;
-        var image = ImageCodecs.Decode(TestData("vlm/image.png"));
+        var image = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png")));
         using var noGrad = Autograd.NoGrad();
         foreach (var (folder, tag) in new[] { ("tiny-llava", ""), ("tiny-llava-full", "-full") })
         {
@@ -117,7 +116,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void LlavaChat(Device device)
     {
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         var facts = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(LlavaData("manifest.json")))!["facts"]!["tiny-llava"]!;
         int[] newTokens = [.. facts["new_tokens"]!.AsArray().Select(n => (int)n!)];
         using var model = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
@@ -190,9 +188,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void VisionEncoderConformance(Device device)
     {
-        RegisterGemma3Vision();
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
-        var samples = new[] { ImageCodecs.Decode(TestData("vlm/image.png")), ImageCodecs.Decode(TestData("vlm/image-gray.jpg")) };
+        var samples = new[] { new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png"))), new JpegCodec().Decode(File.ReadAllBytes(TestData("vlm/image-gray.jpg"))) };
         foreach (string folder in new[] { "vlm/tiny-gemma3", "vlm-llava/tiny-llava", "vlm-llava/tiny-llava-full" })
         {
             using var model = PretrainedModel.Load(TestData(folder), new PretrainedOptions { Device = device });
@@ -206,9 +202,6 @@ internal abstract partial class DesktopTests : Tests
 
     private static void VisionContractRules(Device device)
     {
-        Gemma3VisionNotRegistered(device);
-        Check(VisionFamilies.Names.Count == 0 || VisionFamilies.Names.All(n => VisionFamilies.Default(n) is null), "no vision family is a library default");
-
         // An image token format expands each marker by its own image's count, with or without begin and end tokens.
         var tokenizer = BpeTokenizer.Load(LlavaData("tiny-llava"));
         int image = tokenizer.Encode("<image>").Last();
@@ -244,7 +237,6 @@ internal abstract partial class DesktopTests : Tests
         Check(Fails(() => _ = new ImageTokenLayout(6) { Grid = [2, 2] }), "a grid that does not hold the tokens is refused");
 
         // The M-RoPE slot: position ids reach the decoder; a decoder without rotary sections (LLaVA's) refuses them.
-        Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var model = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var features = new ImageFeatures(Tensor.From(new float[16 * 32], [16, 32], device), new ImageTokenLayout(16) { Grid = [4, 4] },
             Tensor.From(new float[3 * 16], [3, 16], device));
@@ -254,7 +246,7 @@ internal abstract partial class DesktopTests : Tests
         using var input = Ids(prompt, device);
         try
         {
-            model.Network.Forward(input, placed, ImageAttentionRules.Get(ImageAttentionRules.Causal)).Dispose();
+            model.Network.Forward(input, placed, new CausalRule()).Dispose();
             Check(false, "M-RoPE position ids are refused");
         }
         catch (NotSupportedException e)
@@ -262,7 +254,6 @@ internal abstract partial class DesktopTests : Tests
             Check(e.Message.Contains("M-RoPE", StringComparison.Ordinal), e.Message);
         }
 
-        RegisterGemma3Vision();
     }
 
     // Views of an image joined as "whole … parts …".

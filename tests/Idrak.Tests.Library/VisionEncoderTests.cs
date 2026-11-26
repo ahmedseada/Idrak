@@ -21,7 +21,6 @@ internal abstract partial class Tests
 
     internal static void SiglipMatchesReference(Device device)
     {
-        RegisterGemma3Vision();
         float[] pixels = ReadNpyFloat32(TestData("vlm/reference/pixel_values-png.npy"));
         float[] embeddings = ReadNpyFloat32(TestData("vlm/reference/vision_embeddings.npy"));
         float[] hidden = ReadNpyFloat32(TestData("vlm/reference/vision_last_hidden_state.npy"));
@@ -62,7 +61,6 @@ internal abstract partial class Tests
 
     internal static void SiglipEndToEnd(Device device)
     {
-        RegisterGemma3Vision();
         float[] features = ReadNpyFloat32(TestData("vlm/reference/image_features.npy"));
         string path = TestData("vlm/image.png");
         using var model = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });

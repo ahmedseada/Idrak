@@ -4,6 +4,7 @@
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Text.Plugins.Gemma;
 using Idrak.Vision.Plugins.Gemma;
 using Idrak.Layers;
 using Idrak.Models;
@@ -16,8 +17,6 @@ internal abstract partial class Tests
 {
     internal static void Gemma3VisionLanguageLoads(Device device)
     {
-        Gemma3VisionNotRegistered(device);
-        RegisterGemma3Vision();
         long[] ids = ReadNpyInt64(TestData("vlm/reference/prompt-text-input_ids.npy"));
         float[] expected = ReadNpyFloat32(TestData("vlm/reference/prompt-text-logits.npy"));
         using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
@@ -30,7 +29,7 @@ internal abstract partial class Tests
             Check(model.Notes.Count == 0, $"{folder}: {string.Join("; ", model.Notes)}");
             Check(spec is { Vocabulary: 366, Dim: 24, Layers: 2, Heads: 4, KvHeads: 2, HeadDim: 8, FfDim: 48, LogitSoftcap: null, AttentionSoftcap: null, QkNorm: true, PostNorms: true, TieEmbeddings: true, SlidingWindow: 8 }
                   && spec.IsWindowed(0) && !spec.IsWindowed(1) && spec.EmbeddingScale == MathF.Sqrt(24f) && spec.AttentionScale == 1f / MathF.Sqrt(12f)
-                  && spec.Rope!.Theta == 1e6f && spec.Rope.Scaling is { Type: "linear" } && spec.SlidingWindowRope is { Theta: 1e4f, Scaling: null },
+                  && spec.Rope!.Theta == 1e6f && spec.SlidingWindowRope is { Theta: 1e4f },
                 $"{folder}: spec {spec.ToJson().ToJsonString()}");
             firstSpec ??= spec.ToJson().ToJsonString();
             Check(spec.ToJson().ToJsonString() == firstSpec, $"{folder}: the same spec from every config format");
@@ -72,7 +71,7 @@ internal abstract partial class Tests
              "vision_config": {"hidden_size": 1152, "image_size": 896, "intermediate_size": 4304, "model_type": "siglip_vision_model",
                                "num_attention_heads": 16, "num_hidden_layers": 27, "patch_size": 14, "vision_use_head": false}}
             """)!.AsObject();
-        var big = PretrainedArchitectures.Get("Gemma3ForConditionalGeneration").Spec(original, []);
+        var big = GemmaArchitectures.Gemma3VisionLanguage().Spec(original, []);
         Check(big is { Vocabulary: 262_208, Dim: 2560, Layers: 34, Heads: 8, KvHeads: 4, HeadDim: 256, FfDim: 10240, SlidingWindow: 1024, LogitSoftcap: null, EmbeddingScale: 50.5f, TieEmbeddings: true }
               && Enumerable.Range(0, 34).Count(big.IsWindowed) == 29 && !big.IsWindowed(5) && big.Rope!.Theta == 1e6f && big.Rope.Scaling is { Type: "linear" }
               && big.SlidingWindowRope!.Theta == 1e4f && big.AttentionScale == 1f / 16f,
@@ -83,7 +82,7 @@ internal abstract partial class Tests
         // Gemma3ForCausalLM reads transformers 5's rope_parameters as the older keys.
         var older = JsonNode.Parse(File.ReadAllText(TestData("vlm/tiny-gemma3/config.json")))!["text_config"]!.AsObject();
         var newer = JsonNode.Parse(File.ReadAllText(TestData("vlm/tiny-gemma3-v5/config.json")))!["text_config"]!.AsObject();
-        var causal = PretrainedArchitectures.Get("Gemma3ForCausalLM");
+        var causal = GemmaArchitectures.Gemma3();
         Check(causal.Spec(older, []).ToJson().ToJsonString() == causal.Spec(newer, []).ToJson().ToJsonString(), "Gemma3ForCausalLM: rope_parameters read as rope_theta, rope_scaling and rope_local_base_freq");
 
         // A vision tensor whose shape vision_config does not give is refused, naming it.

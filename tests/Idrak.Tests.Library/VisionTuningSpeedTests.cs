@@ -32,7 +32,7 @@ internal abstract partial class Tests
     // The fixture's records of a family: their ids and each image's features from the encoder.
     internal static List<(int[] Ids, List<Tensor> Features)> TuningRecordFeatures(JsonNode tuning, IVisionEncoder encoder) =>
         [.. tuning["records"]!.AsArray().Select(r => (JsonInts(r!["input_ids"]),
-            r["images"]!.AsArray().Select(f => encoder.Encode([ImageCodecs.Decode(TestData($"vlm/{(string)f!}"))])[0].Features).ToList()))];
+            r["images"]!.AsArray().Select(f => encoder.Encode([NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{(string)f!}")}")])[0].Features).ToList()))];
 
     // The decoder module by module from an image scope, decoder blocks checkpointed or not.
     internal static Tensor ScopedPass(PretrainedModel model, Tensor tokens, ImagePrefillScope scope, bool checkpointed)
@@ -479,7 +479,7 @@ internal abstract partial class Tests
         var record = tuning["records"]![2]!;
         int[] ids = JsonInts(record["input_ids"]);
         var stages = (IVisionEncoderStages)encoder;
-        var pixels = record["images"]!.AsArray().Select(f => stages.PixelValues(ImageCodecs.Decode(TestData($"vlm/{(string)f!}")))).ToList();
+        var pixels = record["images"]!.AsArray().Select(f => stages.PixelValues(NotOnTheNewDesign.Yet<ImageData>($"Picking the image codec of {TestData($"vlm/{(string)f!}")}"))).ToList();
         using var joined = Tensor.Concat([.. pixels.Select(p => Tensor.From(p.ToArray(), p.Shape.ToArray(), device))], 0);
         var parameters = part.Parameters(encoder, VisionTuningParts.Tower);
         foreach (var p in encoder.Parameters())
@@ -641,7 +641,7 @@ internal abstract partial class Tests
     internal static void VisionTuningBatchedImages(Device device)
     {
         const int Count = 12, Repeats = 20;
-        var baseImage = ImageCodecs.Decode(TestData("vlm/image.png"));
+        var baseImage = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm/image.png")));
         var random = new Random(5);
         var images = Enumerable.Range(0, Count).Select(_ => new ImageData([.. baseImage.Pixels.Select(v => v * (0.8f + 0.4f * (float)random.NextDouble()))],
             baseImage.Channels, baseImage.Height, baseImage.Width)).ToList();
