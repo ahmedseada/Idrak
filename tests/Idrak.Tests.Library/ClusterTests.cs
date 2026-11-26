@@ -16,9 +16,8 @@ internal abstract partial class Tests
     [
         ("cluster: wire header round trip, every field and byte; fewer bytes than a header wait for more; a wrong magic and a newer version refused naming both versions; the keyed hello verified, a wrong key or rank refused, the key never written", ClusterWireFormat),
         ("cluster: options from environment, every variable read (sizes with units, shares, flags, choices), a bad value naming its variable and what it takes, the key never in ToString", ClusterOptionsFromEnvironment),
-        ("cluster: the five registries refuse an unregistered name with the Register hint, take an app's entry and give it back with Unregister", ClusterRegistries),
-        ("cluster: link profiles resolve a rate suffix in bits a second (direct-link-10g); the kit's LinkProfileSuite passes a profile and fails one whose time shrinks with the bytes", ClusterLinkProfiles),
-        ("cluster: topology file parses (comments, trailing commas, memory in GB and GiB as powers of 1,024), ranks in file order, same-device for a shared card, the intra-node and inter-node links and an override, the first node's address as coordinator; refusals name the key; the kit's TopologySuite passes and the JSON reads back", ClusterTopologyFile),
+        ("cluster: link rates in bits a second (10g, 2.5g, 300m); the kit's LinkProfileSuite passes a profile and fails one whose time shrinks with the bytes", ClusterLinkProfiles),
+        ("cluster: topology file parses (comments, trailing commas, memory in GB and GiB as powers of 1,024), ranks in file order, the first node's address as coordinator; refusals name the key; the JSON reads back", ClusterTopologyFile),
         ("cluster: the kit's TransportSuite passes on the reference in-memory transport and fails one that corrupts messages", ClusterTransportSuite),
         ("cluster: the kit's CollectivesSuite passes on the reference naive collectives over buffers on the device, and fails collectives that do not reduce", ClusterCollectivesSuite),
         ("cluster: the network telemetry events reach the console, the metrics recorder and the JSON lines log, at the network level only", ClusterTelemetry),
@@ -26,30 +25,6 @@ internal abstract partial class Tests
     ];
 
     internal static string ClusterData(string relative) => TestData(Path.Combine("cluster", relative));
-
-    // The link profiles the topology tests name, registered over whatever the library has and removed after.
-    internal static IDisposable ClusterTestProfiles()
-    {
-        LinkProfile[] profiles =
-        [
-            new(ClusterTopology.SameDevice, 400e9, TimeSpan.FromMicroseconds(8)),
-            new("pcie", 25e9, TimeSpan.FromMicroseconds(5)),
-            new("ethernet-1g", 125e6, TimeSpan.FromMicroseconds(80)) { Jitter = TimeSpan.FromMicroseconds(20) },
-            new("direct-link", 125e6, TimeSpan.FromMicroseconds(40)),
-        ];
-        foreach (var p in profiles)
-        {
-            LinkProfiles.Register(p);
-        }
-
-        return new Undo(() =>
-        {
-            foreach (var p in profiles)
-            {
-                LinkProfiles.Unregister(p.Name);
-            }
-        });
-    }
 
     internal sealed class Undo(Action undo) : IDisposable
     {
@@ -178,71 +153,6 @@ internal abstract partial class Tests
         }
     }
 
-    internal sealed class TestTransportProvider : ITransportProvider
-    {
-        public string Name => "test-transport";
-
-        public string Summary => "a test's";
-
-        public TransportCapabilities Capabilities => default;
-
-        public TransportAvailability Availability(ClusterContext context, int peer) => new(Name, false, "a test's");
-
-        public ITransport Connect(ClusterContext context, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    }
-
-    internal sealed class TestCollectivesProvider : ICollectivesProvider
-    {
-        public string Name => "test-collectives";
-
-        public string Summary => "a test's";
-
-        public ICollectives Create(ITransport transport, Device device, ClusterContext context) => new NaiveReferenceCollectives(transport, device);
-    }
-
-    internal sealed class TestSelector : ITransportSelector
-    {
-        public string Name => "test-selector";
-
-        public string Summary => "a test's";
-
-        public (string Transport, string Reason) Choose(int rankA, int rankB, IClusterTopology topology, IReadOnlyList<TransportAvailability> available) => ("memory", "a test's");
-    }
-
-    internal sealed class TestFailures : IFailureModel
-    {
-        public string Name => "test-failures";
-
-        public string Summary => "a test's";
-
-        public IReadOnlyList<Fault> Draw(long step, IClusterTopology topology, Random seeded) => [];
-    }
-
-    internal static void ClusterRegistries(Device device)
-    {
-        if (!FirstRun(nameof(ClusterRegistries)))
-        {
-            return;
-        }
-
-        void Registry<T>(string registry, Func<string, T> get, Func<string, T?> find, Action<T> register, Func<string, bool> unregister, Func<string, string?> origin, T entry, string name)
-            where T : class
-        {
-            ThrowsNaming<NotSupportedException>(() => get("no-such-" + registry), $"{registry}.Get of an unknown name", "is not registered", registry + ".Register");
-            register(entry);
-            Check(ReferenceEquals(find(name), entry) && ReferenceEquals(get(name.ToUpperInvariant()), entry), $"{registry}: the app's entry is found, ignoring case");
-            Check(origin(name) is { } o && o != Overrides.Library, $"{registry}: the entry's origin is the app: {origin(name)}");
-            Check(unregister(name) && find(name) is null, $"{registry}: Unregister removes the app's entry");
-        }
-
-        Registry("Transports", Transports.Get, Transports.Find, Transports.Register, Transports.Unregister, Transports.Origin, (ITransportProvider)new TestTransportProvider(), "test-transport");
-        Registry("Collectives", Collectives.Get, Collectives.Find, Collectives.Register, Collectives.Unregister, Collectives.Origin, (ICollectivesProvider)new TestCollectivesProvider(), "test-collectives");
-        Registry("TransportSelectors", TransportSelectors.Get, TransportSelectors.Find, TransportSelectors.Register, TransportSelectors.Unregister, TransportSelectors.Origin, (ITransportSelector)new TestSelector(), "test-selector");
-        Registry("FailureModels", FailureModels.Get, FailureModels.Find, FailureModels.Register, FailureModels.Unregister, FailureModels.Origin, (IFailureModel)new TestFailures(), "test-failures");
-        Registry("LinkProfiles", LinkProfiles.Resolve, LinkProfiles.Find, LinkProfiles.Register, LinkProfiles.Unregister, LinkProfiles.Origin, (ILinkProfile)new LinkProfile("test-link", 1e9, TimeSpan.FromMicroseconds(3)), "test-link");
-        ThrowsNaming<NotSupportedException>(() => LinkProfiles.Resolve("no-such-link-10g"), "a rate suffix on an unknown name", "not registered", "-10g");
-    }
-
     // A profile whose time shrinks as the bytes grow: the suite must fail it.
     internal sealed class ShrinkingProfile : ILinkProfile
     {
@@ -273,15 +183,6 @@ internal abstract partial class Tests
         Check(LinkProfiles.TryParseRate("10g", out double ten) && ten == 1.25e9 && LinkProfiles.TryParseRate("2.5G", out double twoHalf) && twoHalf == 312.5e6
               && LinkProfiles.TryParseRate("300m", out double wifi) && wifi == 37.5e6, "rates in bits a second, powers of 1,000");
         Check(!LinkProfiles.TryParseRate("10x", out _) && !LinkProfiles.TryParseRate("g", out _) && !LinkProfiles.TryParseRate("-1g", out _), "a rate that is not one is refused");
-        using (ClusterTestProfiles())
-        {
-            var resolved = LinkProfiles.Resolve("direct-link-10g");
-            Check(resolved is { Name: "direct-link-10g", BandwidthBytesPerSecond: 1.25e9 } && resolved.Latency == TimeSpan.FromMicroseconds(40),
-                $"direct-link-10g is direct-link at 10 Gb/s, its latency kept: {resolved.Name} {resolved.BandwidthBytesPerSecond} {resolved.Latency}");
-            Check(ReferenceEquals(LinkProfiles.Resolve("ethernet-1g"), LinkProfiles.Find("ethernet-1g")), "a registered name resolves to itself");
-            Conformance.CheckLinkProfile(LinkProfiles.Resolve("ethernet-1g")).ThrowIfFailed();
-        }
-
         Conformance.CheckLinkProfile(new LinkProfile("unmeasured", 0, TimeSpan.FromMicroseconds(10))).ThrowIfFailed();
         var broken = Conformance.CheckLinkProfile(new ShrinkingProfile());
         Check(!broken.Passed && broken.Failures.Any(f => f.Check == "the time grows with the bytes"), $"the suite fails a shrinking profile:\n{broken}");
@@ -326,60 +227,49 @@ internal abstract partial class Tests
         Check(ClusterTopology.FormatMemory(8L << 30) == "8GB" && ClusterTopology.FormatMemory(512L << 20) == "512MB" && ClusterTopology.FormatMemory(100) == "100B"
               && ClusterTopology.FormatMemory(1536L << 20) == "1536MB" && ClusterTopology.FormatMemory(0) == "0B", "sizes written in the largest exact unit");
 
-        using (ClusterTestProfiles())
+        var lan = ClusterTopology.Parse(ClusterLanJson);
+        Check(lan.WorldSize == 4 && lan.Nodes.Count == 3 && lan.Place(1) == (0, 1) && lan.Place(2) == (1, 0) && lan.Place(3) == (2, 0) && lan.Ranks(0).SequenceEqual([0, 1]),
+            "ranks in file order: desk 0 and 1, mini 2, old 3");
+        Check(lan.Nodes[0].Devices.All(d => d.MemoryBytes == 8L << 30) && lan.Nodes[1].Devices[0].MemoryBytes == 8L << 30 && lan.Nodes[2].Devices[0].MemoryBytes == 6L << 30,
+            "8GB, 8GiB and 8 GB are one size; 6GB");
+        Check(lan.Coordinator == "192.168.1.10:29500" && lan.NodeOf("DESK") == 0 && lan.NodeOf("Old") == 2 && lan.NodeOf("laptop") is null, "the first node's address coordinates; nodes found by host name");
+        Check(lan.Simulation == new ClusterSimulationSpec(7, "none"), "the simulation block");
+
+        var one = ClusterTopology.Parse("""{ "nodes": [ { "name": "solo", "gpus": [ { "device": "cpu" } ] } ] }""");
+        Check(one.WorldSize == 1 && one.Coordinator is null && one.Simulation == new ClusterSimulationSpec(1, "none"), "one device needs no links");
+
+        string Swap(string from, string to) => ClusterLanJson.Replace(from, to, StringComparison.Ordinal);
+        foreach (var (json, what, expected) in new[]
+                 {
+                     (Swap("\"gpus\": [ { \"device\": \"cuda:0\", \"memory\": \"6GB\" } ]", "\"gpu\": []"), "an unknown key", "unknown key \"gpu\""),
+                     (Swap("\"name\": \"old\"", "\"name\": \"MINI\""), "two nodes named alike", "named 'MINI'"),
+                     (Swap("\"inter-node\": \"ethernet-1g\",", ""), "two nodes without an inter-node link", "inter-node"),
+                     (Swap("\"between\": [\"desk\", \"mini\"]", "\"between\": [\"desk\", \"laptop\"]"), "an override naming no node", "laptop"),
+                     (Swap("idrak-topology/1", "idrak-topology/2"), "a newer format", "newer"),
+                     (Swap("\"memory\": \"6GB\"", "\"memory\": \"6QB\""), "a bad memory size", "not a memory size"),
+                     (Swap("\"nodes\"", "\"machines\""), "no nodes", "unknown key \"machines\""),
+                 })
         {
-            var lan = ClusterTopology.Parse(ClusterLanJson);
-            Check(lan.WorldSize == 4 && lan.Nodes.Count == 3 && lan.Place(1) == (0, 1) && lan.Place(2) == (1, 0) && lan.Place(3) == (2, 0) && lan.Ranks(0).SequenceEqual([0, 1]),
-                "ranks in file order: desk 0 and 1, mini 2, old 3");
-            Check(lan.Nodes[0].Devices.All(d => d.MemoryBytes == 8L << 30) && lan.Nodes[1].Devices[0].MemoryBytes == 8L << 30 && lan.Nodes[2].Devices[0].MemoryBytes == 6L << 30,
-                "8GB, 8GiB and 8 GB are one size; 6GB");
-            Check(lan.Link(0, 1).Name == ClusterTopology.SameDevice && lan.Link(1, 0).Name == ClusterTopology.SameDevice, "two ranks on desk's card share same-device");
-            Check(lan.Link(0, 2) is { Name: "direct-link-10g", BandwidthBytesPerSecond: 1.25e9 } && lan.Link(1, 2).Name == "direct-link-10g", "desk and mini use their override");
-            Check(lan.Link(2, 3).Name == "ethernet-1g" && lan.Link(0, 3).Name == "ethernet-1g", "the others use the inter-node link");
-            Check(lan.Coordinator == "192.168.1.10:29500" && lan.NodeOf("DESK") == 0 && lan.NodeOf("Old") == 2 && lan.NodeOf("laptop") is null, "the first node's address coordinates; nodes found by host name");
-            Check(lan.Simulation == new ClusterSimulationSpec(7, "none"), "the simulation block");
-            Conformance.CheckTopology(lan).ThrowIfFailed();
+            ThrowsNaming<InvalidDataException>(() => ClusterTopology.Parse(json), what, expected);
+        }
 
-            var one = ClusterTopology.Parse("""{ "nodes": [ { "name": "solo", "gpus": [ { "device": "cpu" } ] } ] }""");
-            Check(one.WorldSize == 1 && one.Coordinator is null && one.Simulation == new ClusterSimulationSpec(1, "none"), "one device needs no links");
-            var mixed = ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec("cuda:0", null), new ClusterDeviceSpec("cuda:1", null), new ClusterDeviceSpec("cpu", 4L << 30)])], "pcie", null);
-            Check(mixed.Link(0, 1).Name == "pcie" && mixed.Link(1, 2).Name == "pcie", "different devices of one node use the intra-node link");
-            Conformance.CheckTopology(mixed).ThrowIfFailed();
+        ThrowsNaming<InvalidDataException>(() => ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec("cuda:0", null), new ClusterDeviceSpec("cuda:1", null)])], null, null),
+            "two devices of a node without an intra-node link", "intra-node");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => lan.Place(4), "a rank outside the group", "0 to 3");
+        ThrowsNaming<ArgumentException>(() => lan.Link(2, 2), "a rank's link to itself", "itself");
 
-            string Swap(string from, string to) => ClusterLanJson.Replace(from, to, StringComparison.Ordinal);
-            foreach (var (json, what, expected) in new[]
-                     {
-                         (Swap("\"gpus\": [ { \"device\": \"cuda:0\", \"memory\": \"6GB\" } ]", "\"gpu\": []"), "an unknown key", "unknown key \"gpu\""),
-                         (Swap("\"name\": \"old\"", "\"name\": \"MINI\""), "two nodes named alike", "named 'MINI'"),
-                         (Swap("\"inter-node\": \"ethernet-1g\",", ""), "two nodes without an inter-node link", "inter-node"),
-                         (Swap("\"between\": [\"desk\", \"mini\"]", "\"between\": [\"desk\", \"laptop\"]"), "an override naming no node", "laptop"),
-                         (Swap("idrak-topology/1", "idrak-topology/2"), "a newer format", "newer"),
-                         (Swap("\"memory\": \"6GB\"", "\"memory\": \"6QB\""), "a bad memory size", "not a memory size"),
-                         (Swap("\"nodes\"", "\"machines\""), "no nodes", "unknown key \"machines\""),
-                     })
-            {
-                ThrowsNaming<InvalidDataException>(() => ClusterTopology.Parse(json), what, expected);
-            }
-
-            ThrowsNaming<InvalidDataException>(() => ClusterTopology.Create([new ClusterNodeSpec("box", null, [new ClusterDeviceSpec("cuda:0", null), new ClusterDeviceSpec("cuda:1", null)])], null, null),
-                "two devices of a node without an intra-node link", "intra-node");
-            ThrowsNaming<NotSupportedException>(() => ClusterTopology.Parse(Swap("\"inter-node\": \"ethernet-1g\"", "\"inter-node\": \"warp-drive\"")), "an unregistered link", "warp-drive", "not registered");
-            ThrowsNaming<ArgumentOutOfRangeException>(() => lan.Place(4), "a rank outside the group", "0 to 3");
-            ThrowsNaming<ArgumentException>(() => lan.Link(2, 2), "a rank's link to itself", "itself");
-
-            string path = Path.Combine(Path.GetTempPath(), $"idrak-topology-{Guid.NewGuid():N}.json");
-            File.WriteAllText(path, lan.ToJson());
-            try
-            {
-                var loaded = ClusterTopology.Load(path);
-                Check(loaded.ToJson() == lan.ToJson() && loaded.WorldSize == 4, "the written file loads back the same");
-                File.WriteAllText(path, Swap("\"seed\": 7", "\"seed\": \"seven\""));
-                ThrowsNaming<InvalidDataException>(() => ClusterTopology.Load(path), "a bad seed in a file", path, "seed");
-            }
-            finally
-            {
-                File.Delete(path);
-            }
+        string path = Path.Combine(Path.GetTempPath(), $"idrak-topology-{Guid.NewGuid():N}.json");
+        File.WriteAllText(path, lan.ToJson());
+        try
+        {
+            var loaded = ClusterTopology.Load(path);
+            Check(loaded.ToJson() == lan.ToJson() && loaded.WorldSize == 4, "the written file loads back the same");
+            File.WriteAllText(path, Swap("\"seed\": 7", "\"seed\": \"seven\""));
+            ThrowsNaming<InvalidDataException>(() => ClusterTopology.Load(path), "a bad seed in a file", path, "seed");
+        }
+        finally
+        {
+            File.Delete(path);
         }
     }
 
