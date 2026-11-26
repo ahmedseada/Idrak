@@ -11,7 +11,7 @@ using Idrak.Training.Abstractions;
 
 // Plan 33, C3: training and serving contracts as interfaces. An optimizer's saved state its own interface (no exception
 // caught to learn an optimizer keeps none), Adam's fused path held by a sealed update instead of a type comparison,
-// schedulers that set their first rate themselves, schedule kinds that make the scheduler, the trainer's loss, metrics
+// schedulers that set their first rate themselves, the trainer's loss, metrics
 // and shardable batch sources, the engine's model kinds and the module's tensors.
 internal abstract partial class Tests
 {
@@ -19,7 +19,7 @@ internal abstract partial class Tests
     [
         ("training contracts: an optimizer that keeps state is an IStatefulOptimizer (SGD, Adam, AdamW, grouped, host) and one that keeps none is not, RequireState naming it; a state entry's parameter is read from its name as a span (\"m.1\", a group's \"group1.velocity.0\", a host optimizer's \"1.m.0\"), allocating nothing", OptimizerStateContract),
         ("training contracts: Adam's fused clipping and update holds for a subclass (Step is sealed: its update is Adam's), its values Adam's and AdamW's bit for bit", AdamFusedForSubclass),
-        ("training contracts: a scheduler sets the first rate when made, with nothing for a derived class to call (ILearningRateScheduler); a schedule kind makes one from a request over the optimizer it is given (ILearningRateSchedule.Create) and refuses a bad setting before (Check)", SchedulerContract),
+        ("training contracts: a scheduler sets the first rate when made, with nothing for a derived class to call (ILearningRateScheduler)", SchedulerContract),
         ("training contracts: the trainer's loss and metrics are ILoss and IMetric, and one's own give the losses and metrics the function forms give, bit for bit; a DataLoader is an IShardableBatchSource (seeded unless it shuffles without a seed; steps shared over a sample source, not over a stream; each rank's share of an epoch by position)", TrainerContracts),
         ("training contracts: the engine hosts any IEngineModel (one written without the EngineModel base) and disposes it; a module is an ITensorOwner whose MoveTo moves what Parameters and Buffers list", EngineAndTensorOwner),
     ];
@@ -40,7 +40,7 @@ internal abstract partial class Tests
         using var grouped = new GroupedOptimizer(new Adam([a], 0.01f), new Sgd([b], 0.1f));
         using var host = new HostOptimizer([a, b], ps => new AdamW(ps, 0.01f));
         using var plain = new PlainStep([a, b]);
-        Check(new IOptimizer[] { adam, adamW, sgd, eightBit, grouped, host }.All(o => o is IStatefulOptimizer) && (IOptimizer)plain is not IStatefulOptimizer,
+        Check(new IOptimizer[] { adam, adamW, sgd, grouped, host }.All(o => o is IStatefulOptimizer) && (IOptimizer)plain is not IStatefulOptimizer,
             "the library's optimizers keep a saved state; one that keeps none does not say it does");
         var refused = Failure<NotSupportedException>(() => plain.RequireState());
         Check(refused.Message.Contains(nameof(PlainStep), StringComparison.Ordinal) && refused.Message.Contains(nameof(IStatefulOptimizer), StringComparison.Ordinal),
@@ -129,13 +129,6 @@ internal abstract partial class Tests
         halving.Step();
         halving.Step();
         Check(optimizer.LearningRate == 0.75f, $"and steps from it: {optimizer.LearningRate}");
-
-        optimizer.LearningRate = 2f;
-        var linear = LearningRateSchedules.Get(LearningRateSchedules.Linear).Create(new LearningRateScheduleRequest(optimizer, 10, new LearningRateScheduleSettings(0.2f)));
-        Check(ReferenceEquals(linear.Optimizer, optimizer) && linear.BaseLearningRate == 2f && optimizer.LearningRate == 2f / 3,
-            $"a kind makes the scheduler of the request's optimizer, from its rate: {optimizer.LearningRate}");
-        var refused = Failure<ArgumentOutOfRangeException>(() => LearningRateSchedules.Get(LearningRateSchedules.WarmupStableDecay).Check(new LearningRateScheduleSettings(DecayFraction: -0.5f)));
-        Check(refused.Message.Contains("[0, 1]", StringComparison.Ordinal), "wsd refuses a decay share below 0 before a run");
     }
 
     internal static void TrainerContracts(Device device)

@@ -13,23 +13,16 @@ using Idrak.Onnx;
 using Idrak.Vision;
 using Idrak.Vision.Abstractions;
 
-// Plan 13, step 6: image model families as plug-ins. The library registers no family and no decoder for an architecture;
-// these tests register small families of their own (the outside plug-in tests register two checked against PyTorch).
+// Plan 13, step 6: image model families as plug-ins. What runs without a family or a decoder picked by name: an ONNX file
+// naming no architecture refused, the segmenter and the predictors' checks, the conformance kit's family suite.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ImageFamilyGroup =
     [
-        ("image families: a config without an architecture, a folder without config.json and an ONNX file naming none are refused", ImageFamiliesRefuse),
-        ("image families: an ONNX file finds its family by its \"architecture\" and \"config\" metadata (or the options), its network imported once and owned by the model", ImageFamiliesLoadOnnx),
-        ("image families: the generic \"boxes-scores\" decoder reads rows and columns, xyxy, xywh, cxcywh, normalized and logits", ImageFamiliesDecoders),
-        ("image families: ModelDetector with a family's preprocessing maps boxes back through the resize and the center crop, per image size in one call, and takes a decoder by name; ModelSegmenter with a preprocessor (a crop refused); predictors refuse the wrong task", ImageFamiliesPredictors),
+        ("image families: an ONNX file naming no architecture is refused", ImageFamiliesRefuse),
+        ("image families: ModelSegmenter with a preprocessor (a crop refused); predictors refuse the wrong task", ImageFamiliesPredictors),
         ("conformance kit: the image model family suite passes a consistent family and fails one whose outputs change between loads, one whose images leak into each other in a batch, and one that loads an invalid checkpoint", ImageFamilySuiteCatches),
     ];
-
-    internal const string TestFamily = "IdrakTestImageNet", OnnxFamily = "IdrakTestOnnxNet";
-
-    // Values that bfloat16 holds exactly (multiples of 1/64 within ±1), so a bfloat16 checkpoint stores them as written.
-    internal static float[] Sixty4ths(Random random, int count) => [.. Enumerable.Range(0, count).Select(_ => random.Next(-64, 65) / 64f)];
 
     internal static void ExpectRefusal<TException>(Action action, string text, string what) where TException : Exception
     {
@@ -58,171 +51,17 @@ internal abstract partial class Tests
         string folder = TempFolder("image-refuse");
         try
         {
-            File.WriteAllText(Path.Combine(folder, "config.json"), """{"model_type": "mystery"}""");
-            ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder), "names no architecture", "a config without an architecture");
-            File.Delete(Path.Combine(folder, "config.json"));
-            ExpectRefusal<InvalidDataException>(() => ImageModels.Load(folder), "has no config.json", "a folder without config.json");
-
             using (var net = new Sequential(new Flatten(), new Linear(12, 2, device: Device.Cpu, random: new Random(1))))
             {
                 OnnxExport.For(net).Input(3, 2, 2).Save(Path.Combine(folder, "plain.onnx"));
             }
 
             ExpectRefusal<InvalidDataException>(() => ImageModels.Load(Path.Combine(folder, "plain.onnx")), "names no architecture", "an ONNX file naming none");
-            ExpectRefusal<NotSupportedException>(() => ImageModels.Load(folder, new ImageModelOptions { Architecture = "NobodysOnnx" }), "'NobodysOnnx' is not registered",
-                "a folder holding one .onnx file is read as it");
         }
         finally
         {
             Directory.Delete(folder, recursive: true);
         }
-    }
-
-    // A small convolutional classifier's tensors (PyTorch's names and layouts) and the same network built by hand.
-    internal static (List<(string Name, int[] Shape, float[] Values)> Tensors, Sequential Network) SmallClassifier(Device device)
-    {
-        var random = new Random(11);
-        float[] conv = Sixty4ths(random, 4 * 3 * 3 * 3), convBias = Sixty4ths(random, 4), gamma = Sixty4ths(random, 4), beta = Sixty4ths(random, 4),
-            mean = Sixty4ths(random, 4), variance = [.. Sixty4ths(random, 4).Select(v => 0.5f + MathF.Abs(v))], fc = Sixty4ths(random, 2 * 4), fcBias = Sixty4ths(random, 2);
-        var tensors = new List<(string, int[], float[])>
-        {
-            ("conv.weight", [4, 3, 3, 3], conv), ("conv.bias", [4], convBias),
-            ("bn.weight", [4], gamma), ("bn.bias", [4], beta), ("bn.running_mean", [4], mean), ("bn.running_var", [4], variance),
-            ("fc.weight", [2, 4], fc), ("fc.bias", [2], fcBias),
-        };
-        var norm = new BatchNorm(4, device: device);
-        norm.Gamma.Load(gamma);
-        norm.Beta.Load(beta);
-        norm.RunningMean.Load(mean);
-        norm.RunningVariance.Load(variance);
-        var transposed = new float[8];
-        for (int o = 0; o < 2; o++)
-        {
-            for (int i = 0; i < 4; i++)
-            {
-                transposed[i * 2 + o] = fc[o * 4 + i];
-            }
-        }
-
-        var network = new Sequential(
-            Conv2d.FromWeights(Tensor.From(conv, [4, 3, 3, 3], device), Tensor.From(convBias, [4], device), 3, 1, 1), norm, new ReLU(), new GlobalAveragePool2d(),
-            Linear.FromWeights(Tensor.From(transposed, [4, 2], device), Tensor.From(fcBias, [2], device)));
-        return (tensors, network);
-    }
-
-    // The test's family: conv → batch norm → ReLU → global average pooling → fc, read with StoredWeights.
-    internal sealed class SmallFamily(string name, Func<ImageModel, ImageModel>? change = null) : IImageModelFamily
-    {
-        public string Name => name;
-
-        public ImageModel Read(ImageCheckpoint checkpoint)
-        {
-            var tensors = checkpoint.RequireTensors();
-            var network = new Sequential(
-                StoredWeights.Conv2d(tensors, "conv", padding: (1, 1), device: checkpoint.Device), StoredWeights.BatchNorm(tensors, "bn", device: checkpoint.Device),
-                new ReLU(), new GlobalAveragePool2d(), StoredWeights.Linear(tensors, "fc", checkpoint.Options.Weights, checkpoint.Device));
-            checkpoint.Notes.Add("read by the test's family");
-            var model = new ImageModel
-            {
-                Architecture = checkpoint.Architecture,
-                Task = ImageTask.Classification,
-                Network = network,
-                Preprocessor = checkpoint.Preprocessor(),
-                Labels = checkpoint.Labels(),
-                Notes = ["a note of the family's own"],
-            };
-            return change is null ? model : change(model);
-        }
-    }
-
-    // An ONNX family: the network imported as it is, labels from the config the file carries.
-    internal sealed class OnnxTestFamily : IImageModelFamily
-    {
-        public int Reads { get; private set; }
-
-        public string Name => OnnxFamily;
-
-        public ImageModel Read(ImageCheckpoint checkpoint)
-        {
-            Reads++;
-            var first = checkpoint.RequireOnnx();
-            Check(ReferenceEquals(first, checkpoint.RequireOnnx()), "the ONNX network is imported once");
-            return new ImageModel
-            {
-                Architecture = checkpoint.Architecture,
-                Task = ImageTask.Features,
-                Network = first.Model,
-                Preprocessor = checkpoint.Preprocessor(new ImagePreprocessor { Height = 8, Width = 8, Normalize = false }),
-                Labels = checkpoint.Labels(),
-            };
-        }
-    }
-
-    internal static void ImageFamiliesLoadOnnx(Device device)
-    {
-        string folder = TempFolder("image-onnx");
-        var (_, network) = SmallClassifier(Device.Cpu);
-        var family = new OnnxTestFamily();
-        try
-        {
-            string file = Path.Combine(folder, "net.onnx");
-            OnnxExport.For(network).Input(3, 8, 8).Metadata("architecture", OnnxFamily).Metadata("config", """{"id2label": {"0": "cat", "1": "dog"}}""").Save(file);
-            var x = Tensor.From(RandomArray(new Random(4), 3 * 3 * 8 * 8), [3, 3, 8, 8], Device.Cpu);
-            var expected = network.Predict(x).ToArray();
-            using (var model = ImageModels.Load(file, new ImageModelOptions { Device = device }))
-            {
-                Check(model.Task == ImageTask.Features && model.Labels!.SequenceEqual(["cat", "dog"]) && model.InputShape!.SequenceEqual([3, 8, 8]), "the description from the metadata");
-                Check(model.Notes.Count == 0 || model.Notes.All(n => n.Length > 0), "the importer's notes carried");
-                AssertClose(expected, model.Network.Predict(x.To(device)).ToArray(), 1e-5f, "the imported network");
-                using var outputs = model.Outputs().Build();
-                Check(outputs.Predict([new ImageData(new float[3 * 16 * 16], 3, 16, 16)])[0].Length == 2, "the outputs predictor");
-            }
-
-            // A config.json beside the file takes precedence over the metadata; the folder alone finds its one .onnx file.
-            File.WriteAllText(Path.Combine(folder, "config.json"), $$$"""{"architectures": ["{{{OnnxFamily}}}"], "id2label": {"0": "left", "1": "right"}}""");
-            using (var model = ImageModels.Load(folder, new ImageModelOptions { Device = device }))
-            {
-                Check(model.Labels!.SequenceEqual(["left", "right"]), "config.json beside the file");
-            }
-
-            Check(family.Reads == 2, $"read {family.Reads} times");
-        }
-        finally
-        {
-            network.Dispose();
-            Directory.Delete(folder, recursive: true);
-        }
-    }
-
-    internal static void ImageFamiliesDecoders(Device device)
-    {
-        static DetectionDecoder Create(string name, DetectionDecoderRequest context) =>
-            NotOnTheNewDesign.Yet<DetectionDecoder>($"Picking the detection decoder '{name}' by its name");
-        static IReadOnlyList<Detection> Decode(string name, DetectionDecoderRequest context, float[] outputs, params int[] shape) =>
-            [.. Create(name, context)(outputs, shape)];
-
-        float[] rows = [10, 20, 30, 40, 0.1f, 0.7f, 0, 0, 5, 5, 0.9f, 0.2f];
-        var plain = new DetectionDecoderRequest(0, 0, null, []);
-        var found = Decode(DetectionDecoders.BoxesScores, plain, rows, 2, 6);
-        Check(found.Count == 2 && found[0] == new Detection(new BoundingBox(10, 20, 20, 20), 1, 0.7f) && found[1] == new Detection(new BoundingBox(0, 0, 5, 5), 0, 0.9f),
-            $"rows, xyxy: {string.Join(", ", found)}");
-        float[] columns = new float[12];
-        for (int r = 0; r < 2; r++)
-        {
-            for (int j = 0; j < 6; j++)
-            {
-                columns[j * 2 + r] = rows[r * 6 + j];
-            }
-        }
-
-        Check(Decode(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["layout"] = "columns" } }, columns, 6, 2).SequenceEqual(found), "columns");
-        var xywh = Decode(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "xywh" } }, rows, 2, 6);
-        Check(xywh[0].Box == new BoundingBox(10, 20, 30, 40), "xywh");
-        var centre = Decode(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(100, 200, ["only"],
-            new JsonObject { ["box"] = "cxcywh", ["normalized"] = true, ["scores"] = "logits" }), [0.5f, 0.5f, 0.1f, 0.2f, 2f], 1, 5);
-        Check(centre.Single().Box == new BoundingBox(90, 40, 20, 20) && MathF.Abs(centre[0].Score - 1f / (1f + MathF.Exp(-2f))) < 1e-6f, $"cxcywh, normalized, logits: {centre[0]}");
-        ExpectRefusal<ArgumentException>(() => Decode(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(0, 0, ["a", "b", "c"], []), rows, 2, 6), "for 3 classes", "classes disagree");
-        ExpectRefusal<NotSupportedException>(() => Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "polar" } }), "box 'polar'", "a box layout");
     }
 
     // A network that answers every image with the same values (a [N, ...] tensor of them).
@@ -234,21 +73,11 @@ internal abstract partial class Tests
 
     internal static void ImageFamiliesPredictors(Device device)
     {
-        // One box (0, 0)-(32, 32) in the network's 32 x 32 input, score 0.9.
+        // A network whose one box is (0, 0)-(32, 32) in its 32 x 32 input, score 0.9.
         using var boxes = new ConstantOutputs([0, 0, 32, 32, 0.9f], [1, 5]);
         var crop = new ImagePreprocessor { ShortestEdge = 40, CenterCrop = true, CropHeight = 32, CropWidth = 32, Normalize = false };
-        var detector = new ModelDetector(boxes, crop, DetectionDecoders.BoxesScores, options: new DetectorOptions { MinScore = 0.5f, Classes = ["thing"] }, device: device);
-        ImageData Blank(int width, int height) => new(new float[3 * width * height], 3, height, width);
-        // 160 x 80 → 80 x 40 (shortest edge 40) → crop from (24, 4): the box is (24, 4, 32, 32) there, (48, 8, 64, 64) in the image.
-        // 80 x 160 → 40 x 80 → crop from (4, 24): (8, 48, 64, 64).
-        var found = detector.Detect([Blank(160, 80), Blank(80, 160), Blank(160, 80)]);
-        Check(found.All(f => f.Count == 1 && f[0].Label == "thing"), "one labelled detection per image");
-        Check(found[0][0].Box == new BoundingBox(48, 8, 64, 64) && found[2][0].Box == found[0][0].Box, $"wide image: {found[0][0].Box}");
-        Check(found[1][0].Box == new BoundingBox(8, 48, 64, 64), $"tall image: {found[1][0].Box}");
         var resize = new ImagePreprocessor { Height = 32, Width = 32, Normalize = false };
-        Check(new ModelDetector(boxes, resize, DetectionDecoders.BoxesScores, device: device).Detect(Blank(64, 48)).Single().Box == new BoundingBox(0, 0, 64, 48), "a resize alone");
-        Check(new ModelDetector(boxes, 3, 32, 32, DetectionDecoders.BoxesScores, device: device).Detect(Blank(96, 96)).Single().Box == new BoundingBox(0, 0, 96, 96), "by name, without a preprocessor");
-        ExpectRefusal<NotSupportedException>(() => _ = new ModelDetector(boxes, resize, "nobodys-decoder"), "'nobodys-decoder' is not registered", "an unknown decoder name");
+        ImageData Blank(int width, int height) => new(new float[3 * width * height], 3, height, width);
 
         // A segmenter: class 1 on the left half of a 4 x 4 map, resized back to the image.
         var logits = new float[2 * 16];

@@ -12,60 +12,70 @@ using Idrak.Imaging;
 
 // The CPU side of reading a page (plan 17, lane C): a scan-sized page (1,654 x 2,339, an A4 page at 200 dpi, made here from
 // a seeded generator: a light background with grain and dark strokes) through every stage a read runs: the JPEG and PNG
-// decoders, the size from the header, the model card's pipeline and each transform on its own, the preprocessor's resize
-// to the encoder's 896 x 896, and the PNG of the page as the model sees it (an image stage times its own work: 8-bit images
-// make their floats only when read, after the timing). Each stage: the first call (cold) apart from
-// the median of five (warm), the bytes allocated on every thread, and the SHA-256 of its output (an optimization must
-// leave it as it is: rule 71).
+// codecs, the size from the header, the model card's steps (grey, at most 1,024 wide, contrast 1.5) and each of Pillow's
+// operations on its own (PillowImageOps), the preprocessor's resize to the encoder's 896 x 896, and the PNG of the page as
+// the model sees it (an image stage times its own work: 8-bit images make their floats only when read, after the timing).
+// Each stage: the first call (cold) apart from the median of five (warm), the bytes allocated on every thread, and the
+// SHA-256 of its output (an optimization must leave it as it is: rule 71).
 internal abstract partial class Tests
 {
     internal static int BenchImage()
     {
         const int Width = 1654, Height = 2339;
+        var jpegCodec = new JpegCodec();
+        var pngCodec = new PngCodec();
+        var pngEncoder = new PngEncoder();
         var page = ScanPage(Width, Height, new Random(17));
         byte[] jpeg = JpegEncoder.Encode(page, quality: 90);
-        var grey = ImageTransformPipeline.Parse("grayscale").Apply(page);
-        byte[] png = ImageEncoders.Get("png").Encode(grey);
-        var card = ImageTransformPipeline.Parse("grayscale,max_width=1024,contrast=1.5");
-        var seen = card.Apply(ChatImageDecoder.Decode(jpeg));
+        var grey = ChatImageDecoder.Grayscale(page);
+        byte[] png = pngEncoder.Encode(grey);
+        static ImageData Card(ImageData image) => PillowImageOps.Contrast(PillowImageOps.ScaleDown(ChatImageDecoder.Grayscale(image), 1024, 0), 1.5);
+        var seen = Card(jpegCodec.Decode(jpeg));
         var preprocessor = ImagePreprocessor.Parse("""
             {"do_resize": true, "size": {"height": 896, "width": 896}, "resample": 2, "do_rescale": true, "rescale_factor": 0.00392156862745098,
              "do_normalize": true, "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]}
             """);
-        var decoded = ChatImageDecoder.Decode(jpeg);
+        var decoded = jpegCodec.Decode(jpeg);
         Console.WriteLine($"Image pipeline on the CPU ({Environment.ProcessorCount} threads): a {Width} x {Height} colour page, JPEG {jpeg.Length / 1024} KiB "
-                          + $"(quality 90, 4:2:0), grey PNG {png.Length / 1024} KiB; after the card's pipeline {seen.Width} x {seen.Height}");
+                          + $"(quality 90, 4:2:0), grey PNG {png.Length / 1024} KiB; after the card's steps {seen.Width} x {seen.Height}");
         Console.WriteLine($"{"stage",-44} {"cold ms",9} {"warm ms",9} {"MB warm",9}  output SHA-256");
 
-        Stage("jpeg decode (colour page)", () => ChatImageDecoder.Decode(jpeg));
-        Stage("png decode (grey page)", () => ChatImageDecoder.Decode(png));
+        Stage("jpeg decode (colour page)", () => jpegCodec.Decode(jpeg));
+        Stage("png decode (grey page)", () => pngCodec.Decode(png));
         foreach (var (filter, name) in new[] { ((byte)2, "Up"), ((byte)4, "Paeth") })
         {
             byte[] filtered = FilteredPng(grey, filter);
-            Stage($"png decode (grey page, {name} rows)", () => ChatImageDecoder.Decode(filtered));
+            Stage($"png decode (grey page, {name} rows)", () => pngCodec.Decode(filtered));
         }
 
-        Stage("size from the header (jpeg)", () => ChatImageDecoder.Size(jpeg) is var (w, h) ? $"{w} x {h}" : "none");
-        Stage("card: grayscale,max_width=1024,contrast=1.5", () => card.Apply(decoded));
-        foreach (string step in new[] { "grayscale", "max_width=1024", "contrast=1.5", "brightness=1.1", "sharpness=1.5", "autocontrast=1" })
-        {
-            var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (colour page)", () => pipeline.Apply(decoded));
-        }
+        Stage("size from the header (jpeg)", () => jpegCodec.ReadInfo(jpeg) is { } info ? $"{info.Width} x {info.Height}" : "none");
+        Stage("card: grayscale,max_width=1024,contrast=1.5", () => Card(decoded));
+        Stage("grayscale (colour page)", () => ChatImageDecoder.Grayscale(decoded));
+        Stage("max_width=1024 (colour page)", () => PillowImageOps.ScaleDown(decoded, 1024, 0));
+        Stage("contrast=1.5 (colour page)", () => PillowImageOps.Contrast(decoded, 1.5));
+        Stage("brightness=1.1 (colour page)", () => PillowImageOps.Brightness(decoded, 1.1));
+        Stage("sharpness=1.5 (colour page)", () => PillowImageOps.Sharpness(decoded, 1.5));
+        Stage("autocontrast=1 (colour page)", () => PillowImageOps.Autocontrast(decoded, 1, 1));
 
-        foreach (string step in new[] { "equalize", "gamma=0.8", "blur=0.5", "unsharp=2,percent=150,threshold=3", "median=3", "min_filter=3", "max_filter=3",
-                     "binarize", "invert", "pad=32,fill=255", "scale=1.5", "jpeg=95" })
-        {
-            var pipeline = ImageTransformPipeline.Parse(step);
-            Stage($"{step} (grey 1024)", () => pipeline.Apply(seen));
-        }
+        Stage("equalize (grey 1024)", () => PillowImageOps.Equalize(seen));
+        Stage("gamma=0.8 (grey 1024)", () => PillowImageOps.Gamma(seen, 0.8));
+        Stage("blur=0.5 (grey 1024)", () => PillowImageOps.GaussianBlur(seen, 0.5));
+        Stage("unsharp=2,percent=150,threshold=3 (grey 1024)", () => PillowImageOps.UnsharpMask(seen, 2, 150, 3));
+        Stage("median=3 (grey 1024)", () => PillowImageOps.Median(seen, 3));
+        Stage("min_filter=3 (grey 1024)", () => PillowImageOps.MinFilter(seen, 3));
+        Stage("max_filter=3 (grey 1024)", () => PillowImageOps.MaxFilter(seen, 3));
+        Stage("binarize (grey 1024)", () => PillowImageOps.Binarize(seen));
+        Stage("invert (grey 1024)", () => PillowImageOps.Invert(seen));
+        Stage("pad=32,fill=255 (grey 1024)", () => PillowImageOps.Pad(seen, 32, 255));
+        Stage("scale=1.5 (grey 1024)", () => PillowImageOps.Scale(seen, 1.5));
+        Stage("jpeg=95 (grey 1024)", () => PillowImageOps.JpegRoundTrip(seen, 95));
 
         Stage("jpeg encode (grey 1024, quality 95, optimized)", () => JpegEncoder.Encode(seen, quality: 95, optimize: true));
         byte[] seenJpeg = JpegEncoder.Encode(seen, quality: 95, optimize: true);
-        Stage("jpeg decode (grey 1024, quality 95)", () => ChatImageDecoder.Decode(seenJpeg));
+        Stage("jpeg decode (grey 1024, quality 95)", () => jpegCodec.Decode(seenJpeg));
         Stage("preprocess to 896 (grey 1024 page)", () => preprocessor.Pixels(seen));
         Stage("preprocess to 896 (colour page)", () => preprocessor.Pixels(decoded));
-        Stage("png encode (the page as the model sees it)", () => ImageEncoders.Get("png").Encode(seen));
+        Stage("png encode (the page as the model sees it)", () => pngEncoder.Encode(seen));
         return 0;
     }
 
