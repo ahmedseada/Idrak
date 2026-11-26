@@ -24,7 +24,7 @@ public static class PluginTests
         ("outside plug-in: softplus through Autograd.Function matches finite differences", SoftplusStep),
         ("outside plug-in: a sample source computed when read trains a classifier, to the weights of its in-memory copy", DataPluginTests.SourceTrains),
         ("outside plug-in: a batch source making tensors itself trains a linear model through Trainer.Fit", DataPluginTests.BatchSourceTrains),
-        ("outside plug-in: a message part kind of its own (audio) registers in ChatParts, passes the testing kit, round-trips through the chat JSON and is refused by a text-only model", ChatPartPluginTests.AudioKind),
+        ("outside plug-in: a message part of a kind of its own (audio) is refused by a text-only model and answered by one that takes the kind", ChatPartPluginTests.AudioKind),
     ];
 
     /// <summary>softplus(x) = log(1 + e^x), with its derivative sigmoid(x) as the backward step.</summary>
