@@ -165,36 +165,4 @@ public static class SimulatedDevices
             }
         }
     }
-
-    // The "sim" kind in DeviceProviders: one device per carving, never listed or chosen by default.
-    internal sealed class Provider : IDeviceProvider
-    {
-        public string Name => SimulatedDevices.Kind;
-
-        public string Summary => "devices carved out of a physical one, each with its own memory pool and cap (a simulated cluster)";
-
-        public string Display => "Simulated";
-
-        public DeviceType Type => DeviceType.Other;
-
-        public DeviceType TypeOf(int ordinal) => (uint)ordinal < (uint)Count ? Get(ordinal).Physical.Type : Type;
-
-        public int Count => SimulatedDevices.Count;
-
-        public string? UnavailableReason => "no device has been carved yet (SimulatedDevices.Carve, or a simulated cluster run)";
-
-        public Backend Create(int ordinal) => Get(ordinal).Start();
-
-        public bool IsStarted(int ordinal) => (uint)ordinal < (uint)Count && Get(ordinal).Backend is not null;
-
-        public bool Listed(int ordinal) => false;
-
-        public string? Note(int ordinal) => $"carved: {Get(ordinal).Name}";
-
-        public Guid? DeviceUuid(int ordinal)
-        {
-            var physical = Get(ordinal).Physical;
-            return physical.Type == DeviceType.Cpu ? null : DeviceProviders.Find(physical.Kind)?.DeviceUuid(physical.Ordinal);
-        }
-    }
 }

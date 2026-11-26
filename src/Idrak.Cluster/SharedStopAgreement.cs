@@ -3,7 +3,7 @@
 
 namespace Idrak.Cluster;
 
-/// <summary>The "shared" stop agreement (Plan 27, R7), registered in <see cref="StopAgreements"/>.</summary>
+/// <summary>The "shared" stop agreement (Plan 27, R7).</summary>
 internal sealed class SharedStopAgreementProvider : IStopAgreementProvider
 {
     public string Name => "shared";

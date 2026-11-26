@@ -341,7 +341,7 @@ public sealed class ClusterRunControl
 }
 
 /// <summary>
-/// The "in-process" run steering (Plan 27, R11), registered in <see cref="RunSteerings"/>: a simulated run's rank steered
+/// The "in-process" run steering (Plan 27, R11): a simulated run's rank steered
 /// through the run's <see cref="ClusterRunControl"/> (the dashboard's in-process control) at its trainer's boundaries.
 /// </summary>
 internal sealed class InProcessSteeringProvider : IRunSteeringProvider
@@ -358,7 +358,7 @@ internal sealed class InProcessSteeringProvider : IRunSteeringProvider
 /// One rank of a steered in-process run at its trainer's boundaries (Plan 27, R11): the run control's hold, as its step gate
 /// holds a step (every rank waits at the same boundary while paused, the boundaries counted as the control's steps), and a
 /// stop told on every rank at the boundary after the highest one begun when it was asked. The control's own step gate lets
-/// this rank's gradient steps through meanwhile (<see cref="RunSteerings.Steered"/>), so a stop never cuts an iteration.
+/// this rank's gradient steps through meanwhile (<c>RunSteerings.Steered</c>), so a stop never cuts an iteration.
 /// </summary>
 internal sealed class InProcessSteering(ClusterRunControl control, int rank, Device device) : IRunSteering
 {
@@ -371,7 +371,7 @@ internal sealed class InProcessSteering(ClusterRunControl control, int rank, Dev
 
 /// <summary>
 /// The "live" failure model (plan 23, phase C9): faults asked for while a run goes (the dashboard's "inject at next step",
-/// <see cref="ClusterRunControl.Inject"/>, or <see cref="Queue"/> on the instance <see cref="FailureModels"/> holds), each
+/// <see cref="ClusterRunControl.Inject"/>, or <see cref="Queue"/> on the instance <c>FailureModels</c> holds), each
 /// handed to the next step drawn, and faults scheduled at their own steps (a replay of a steered run). A steered run draws
 /// its own model's faults and this model's beside them, so the two compose; named on its own ("live") a run has the queued
 /// faults alone. Its draws take nothing from the seeded generator, so the run's own model draws what it would unsteered.

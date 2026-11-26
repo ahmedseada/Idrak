@@ -7,7 +7,7 @@ namespace Idrak.Cluster;
 
 /// <summary>
 /// Every rank of a cluster run runs rank 0's measured kernel choices (<see cref="ClusterOptions.ShareTuning"/>), through
-/// the backends' <see cref="IMeasuredChoicesProvider"/>s only, before any rank's work makes or stores a choice of its own:
+/// the backends' <c>IMeasuredChoicesProvider</c>s only (none on the new design yet: nothing is shared), before any rank's work makes or stores a choice of its own:
 /// ranks that each measured their own could pick different algorithms for one shape (results that differ in the last
 /// bits), so a seeded run on N ranks would not run the kernels one process runs. Rank 0 measures (or reads its cache) as
 /// always. In one process (<see cref="InProcessCluster"/>) each rank's backend follows rank 0's live, from before the ranks'
@@ -22,63 +22,14 @@ internal static class ChoiceSharing
     private const int Tag = int.MinValue + 21;
 
     /// <summary>
-    /// In one process, before the ranks' threads start: each rank's backend after rank 0's follows rank 0's (when a provider
-    /// handles both, on the same device and driver); the result is each rank's outcome (null: nothing shared, for rank 0 and
-    /// devices that measure nothing). Disposing it gives each follower its own choices again.
+    /// In one process, before the ranks' threads start: each rank's outcome (null: nothing shared). No backend shares its
+    /// choices on the new design yet (the providers' registry is gone), so nothing is shared.
     /// </summary>
     public static Following Follow(IReadOnlyList<Device> devices, ClusterOptions options)
     {
-        var results = new MeasuredChoicesResult?[devices.Count];
-        var followed = new List<(IMeasuredChoicesProvider Provider, Backend Backend)>();
-        if (!options.ShareTuning || devices.Count < 2 || MeasuredChoiceProviders.All.Count == 0)
-        {
-            return new Following(results, followed);
-        }
-
-        Backend? leader;
-        IMeasuredChoicesProvider? leaderProvider;
-        try
-        {
-            leader = devices[0].Backend;                                   // rank 0's, started first: it measures or reads its cache
-            leaderProvider = MeasuredChoiceProviders.For(leader);
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            return new Following(results, followed);                       // rank 0's own thread meets the error again, naming it
-        }
-
-        for (int r = 1; r < devices.Count; r++)
-        {
-            try
-            {
-                var backend = devices[r].Backend;
-                if (MeasuredChoiceProviders.For(backend) is not { } provider)
-                {
-                    continue;                                              // measures nothing to share
-                }
-
-                if (!ReferenceEquals(provider, leaderProvider))
-                {
-                    results[r] = new MeasuredChoicesResult(false, 0, $"kept its own: rank 0 runs on another kind of device ({devices[0]}: {leader.Name}) than {backend.Name}");
-                }
-                else
-                {
-                    results[r] = provider.Follow(backend, leader);
-                    if (results[r]!.Taken)
-                    {
-                        followed.Add((provider, backend));
-                    }
-                }
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                results[r] = new MeasuredChoicesResult(false, 0, $"kept its own: {e.Message}");   // its own thread meets the error again
-            }
-
-            Report(r, devices[r], results[r]);
-        }
-
-        return new Following(results, followed);
+        ArgumentNullException.ThrowIfNull(devices);
+        ArgumentNullException.ThrowIfNull(options);
+        return new Following(new MeasuredChoicesResult?[devices.Count]);
     }
 
     /// <summary>
@@ -98,13 +49,7 @@ internal static class ChoiceSharing
 
         if (transport.Rank == 0)
         {
-            byte[] payload = [];
-            if (options.ShareTuning && MeasuredChoiceProviders.All.Count > 0)
-            {
-                var backend = device.Backend;
-                payload = MeasuredChoiceProviders.For(backend)?.Export(backend).ToBytes() ?? [];
-            }
-
+            byte[] payload = [];                                        // no backend shares its choices on the new design yet
             BinaryPrimitives.WriteInt32LittleEndian(header, payload.Length);
             for (int r = 1; r < transport.WorldSize; r++)
             {
@@ -143,9 +88,7 @@ internal static class ChoiceSharing
 
         var choices = MeasuredChoices.FromBytes(bytes);
         var mine = device.Backend;
-        var result = MeasuredChoiceProviders.For(mine) is { } provider
-            ? provider.Import(mine, choices)
-            : new MeasuredChoicesResult(false, 0, $"kept its own: rank 0's choices are {choices.Kind} choices ({choices.Device}); {mine.Name} measures none of its own to replace");
+        var result = new MeasuredChoicesResult(false, 0, $"kept its own: rank 0's choices are {choices.Kind} choices ({choices.Device}); {mine.Name} measures none of its own to replace");
         Report(transport.Rank, device, result);
         return result;
     }
@@ -158,20 +101,14 @@ internal static class ChoiceSharing
         }
     }
 
-    /// <summary>The ranks' outcomes in one process; disposing it ends every rank's following.</summary>
-    public sealed class Following(MeasuredChoicesResult?[] results, List<(IMeasuredChoicesProvider Provider, Backend Backend)> followed) : IDisposable
+    /// <summary>The ranks' outcomes in one process.</summary>
+    public sealed class Following(MeasuredChoicesResult?[] results) : IDisposable
     {
         /// <summary>Each rank's outcome (null: nothing shared).</summary>
         public IReadOnlyList<MeasuredChoicesResult?> Results => results;
 
         public void Dispose()
         {
-            foreach (var (provider, backend) in followed)
-            {
-                provider.Leave(backend);
-            }
-
-            followed.Clear();
         }
     }
 }

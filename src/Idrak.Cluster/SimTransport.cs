@@ -12,10 +12,12 @@ namespace Idrak.Cluster;
 /// The "sim" transport (plan 23): ranks that are threads of one process, joined by bounded queues (one per sender,
 /// receiver and tag, holding <see cref="ClusterOptions.InFlight"/> messages, so a rank that races ahead waits as it would
 /// on a socket), every transfer charged on a <see cref="VirtualClock"/> from the topology's link profiles, with the faults
-/// of the run's failure model injected (phase C3). Ranks rendezvous by <see cref="ClusterOptions.Coordinator"/> as a name
+/// of its failure model injected (phase C3; <paramref name="failures"/>, given by whoever makes the provider: the run's
+/// failure model is no longer looked up by name). Ranks rendezvous by <see cref="ClusterOptions.Coordinator"/> as a name
 /// (any text: the in-process cluster gives each run its own), as network ranks do at an address.
 /// </summary>
-internal sealed class SimTransportProvider : ITransportProvider
+/// <param name="failures">The faults the run injects (<see cref="BuiltInFailures.Create"/>, or an app's own model).</param>
+internal sealed class SimTransportProvider(IFailureModel failures) : ITransportProvider
 {
     private static readonly ConcurrentDictionary<string, SimHub> Rendezvous = new(StringComparer.Ordinal);
 
@@ -34,7 +36,7 @@ internal sealed class SimTransportProvider : ITransportProvider
     {
         ArgumentNullException.ThrowIfNull(context);
         string name = context.Options.Coordinator ?? "sim";
-        var hub = Rendezvous.GetOrAdd(name, _ => new SimWorld(context).Root);
+        var hub = Rendezvous.GetOrAdd(name, _ => new SimWorld(context, failures).Root);
         try
         {
             hub.Join(context, cancellationToken);
@@ -59,7 +61,7 @@ internal sealed class SimWorld
     private readonly Dictionary<string, SimHub> _groups = new(StringComparer.Ordinal);
     private volatile Exception? _broken;
 
-    public SimWorld(ClusterContext context)
+    public SimWorld(ClusterContext context, IFailureModel model)
     {
         Topology = context.Topology;
         Options = context.Options;
@@ -73,9 +75,8 @@ internal sealed class SimWorld
             var (node, local) = Topology.Place(r);
             return carveFrom ?? Topology.Nodes[node].Devices[local].Device;
         }).ToArray();
-        var model = FailureModels.Get(Options.Simulation.Failures ?? Topology.Simulation.Failures);
         Log = new EventLogWriter(Seed, World, model.Name, Options.Simulation.LogTransfers, Options.Simulation.EventLog, Options.Simulation.EventLogFlushSteps,
-            (Options.Suggest == true, Options.SuggestSteps, Options.SuggestSliceValues));   // the advisor's setting, which a replay takes (C8c)
+            (Options.Suggest == true, Options.SuggestSteps));   // the advisor's setting, which a replay takes (C8c)
         Control = RunControls.Find(Options.Coordinator);               // a run steered live (phase C9), or none
         Faults = new FaultInjector(model, Topology, Seed, Timeout, Log, Break, Control);
         Clock = new VirtualClock(World, (a, b) => MeasuredLink.Resolve(Topology.Link(a, b), devices[a]), Seed) { Faults = Faults };

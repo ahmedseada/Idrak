@@ -40,7 +40,7 @@ public sealed record LinkCalibrationResult(string Link, double BandwidthBefore, 
 /// to its link through the topology; per link, bandwidth and latency are fitted by least squares over
 /// <c>seconds = latency + bytes / bandwidth</c> with the residual, and a bench's concurrent pairs show whether a machine's
 /// ranks share one network adapter. <see cref="Keep"/> writes the results into the tuning cache
-/// (<see cref="ClusterCache"/>), where <see cref="LinkProfiles.Resolve"/> finds them, and publishes each as
+/// (<see cref="ClusterCache"/>), where <c>LinkProfiles.Resolve</c> finds them, and publishes each as
 /// <see cref="ProfileCalibrated"/>.
 /// </summary>
 public static class LinkCalibration
@@ -200,9 +200,10 @@ public static class LinkCalibration
     }
 
     /// <summary>
-    /// Fits every link of <paramref name="samples"/> with at least two transfers (and moved bytes), against the profile
-    /// <see cref="LinkProfiles.Resolve"/> gives it now; a link of <paramref name="adapters"/> that shares one keeps the
-    /// adapter's rate. Nothing is kept: <see cref="Keep"/> does that.
+    /// Fits every link of <paramref name="samples"/> with at least two transfers (and moved bytes); a link of
+    /// <paramref name="adapters"/> that shares one keeps the adapter's rate. The profile a link had before is no longer
+    /// looked up by name (not on the new design yet), so its figures before read 0. Nothing is kept: <see cref="Keep"/>
+    /// does that.
     /// </summary>
     public static IReadOnlyList<LinkCalibrationResult> Calibrate(IEnumerable<CalibrationSample> samples, string source, IEnumerable<AdapterShare>? adapters = null)
     {
@@ -219,19 +220,8 @@ public static class LinkCalibration
             }
 
             var (bandwidth, latency, residual) = Fit(points);
-            ILinkProfile? before;
-            try
-            {
-                before = LinkProfiles.Resolve(link.Key);
-            }
-            catch (NotSupportedException)
-            {
-                before = null;
-            }
-
-            var fitted = new CalibratedLink(link.Key, bandwidth, latency, before?.Jitter ?? TimeSpan.Zero, residual, points.Count,
-                shared.GetValueOrDefault(link.Key), now, source);
-            results.Add(new LinkCalibrationResult(link.Key, before?.BandwidthBytesPerSecond ?? 0, before?.Latency ?? TimeSpan.Zero, fitted));
+            var fitted = new CalibratedLink(link.Key, bandwidth, latency, TimeSpan.Zero, residual, points.Count, shared.GetValueOrDefault(link.Key), now, source);
+            results.Add(new LinkCalibrationResult(link.Key, 0, TimeSpan.Zero, fitted));
         }
 
         return results;

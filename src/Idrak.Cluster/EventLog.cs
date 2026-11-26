@@ -29,7 +29,8 @@ public sealed class EventLog
     /// </summary>
     public const int Version = 2;
 
-    // The advisor's setting in the header: on (a byte), its warm steps and its slice's values (two Int32s).
+    // The advisor's setting in the header: on (a byte), its warm steps, and the slice's values its bfloat16 measurement
+    // took (two Int32s; the measurement is gone, so the slice is written as 0 and skipped when read).
     internal const int AdviceBytes = 9;
 
     internal static ReadOnlySpan<byte> Magic => "IDRKLOG\0"u8;
@@ -40,10 +41,10 @@ public sealed class EventLog
 
     private readonly Dictionary<(int Rank, long Step), double> _clocks;
 
-    private EventLog(byte[] bytes, int seed, int worldSize, string failures, (bool On, int Steps, int Slice) advice, IReadOnlyList<Fault> faults, IReadOnlyList<Fault> live,
+    private EventLog(byte[] bytes, int seed, int worldSize, string failures, (bool On, int Steps) advice, IReadOnlyList<Fault> faults, IReadOnlyList<Fault> live,
         IReadOnlyList<ClockRecord> clocks, IReadOnlyList<RankStateChanged> states, IReadOnlyList<TransferRecord> transfers, IReadOnlyList<double?> ends)
     {
-        (Suggest, SuggestSteps, SuggestSliceValues) = advice;
+        (Suggest, SuggestSteps) = advice;
         LiveFaults = live;
         Bytes = bytes;
         Seed = seed;
@@ -78,14 +79,11 @@ public sealed class EventLog
     /// <summary>The warm steps the advisor measured (<see cref="ClusterOptions.SuggestSteps"/>).</summary>
     public int SuggestSteps { get; }
 
-    /// <summary>The values of the advisor's slice (<see cref="ClusterOptions.SuggestSliceValues"/>).</summary>
-    public int SuggestSliceValues { get; }
-
     /// <summary><paramref name="options"/> with the advisor's setting this log's run had, so a rerun charges the clock alike.</summary>
     public ClusterOptions AdviceOf(ClusterOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return options with { Suggest = Suggest, SuggestSteps = SuggestSteps, SuggestSliceValues = SuggestSliceValues };
+        return options with { Suggest = Suggest, SuggestSteps = SuggestSteps };
     }
 
     /// <summary>The faults drawn, in step order (the live ones among them).</summary>
@@ -231,23 +229,24 @@ public sealed class EventLog
     }
 
     // The advisor's setting after the failure model's name (version 2), or a run before the advisor (version 1): off.
-    private static (bool On, int Steps, int Slice) ReadAdvice(ref Reader r, int version)
+    private static (bool On, int Steps) ReadAdvice(ref Reader r, int version)
     {
         if (version < 2)
         {
-            var defaults = new ClusterOptions();
-            return (false, defaults.SuggestSteps, defaults.SuggestSliceValues);
+            return (false, new ClusterOptions().SuggestSteps);
         }
 
         bool on = r.Byte() != 0;
-        return (on, r.Int32(), r.Int32());
+        int steps = r.Int32();
+        _ = r.Int32();                                                 // the slice of the bfloat16 measurement, gone
+        return (on, steps);
     }
 
-    internal static void WriteAdvice(Span<byte> field, (bool On, int Steps, int Slice) advice)
+    internal static void WriteAdvice(Span<byte> field, (bool On, int Steps) advice)
     {
         field[0] = advice.On ? (byte)1 : (byte)0;
         BinaryPrimitives.WriteInt32LittleEndian(field[1..], advice.Steps);
-        BinaryPrimitives.WriteInt32LittleEndian(field[5..], advice.Slice);
+        BinaryPrimitives.WriteInt32LittleEndian(field[5..], 0);
     }
 
     internal const byte RecordClock = 1, RecordState = 2, RecordTransfer = 3, RecordEnd = 4;
@@ -383,9 +382,9 @@ internal sealed class EventLogWriter : IDisposable
     private readonly int _flushSteps;
     private FileStream? _journal;
 
-    private readonly (bool On, int Steps, int Slice) _advice;
+    private readonly (bool On, int Steps) _advice;
 
-    public EventLogWriter(int seed, int worldSize, string failures, bool transfers, string? path = null, int flushSteps = 0, (bool On, int Steps, int Slice) advice = default)
+    public EventLogWriter(int seed, int worldSize, string failures, bool transfers, string? path = null, int flushSteps = 0, (bool On, int Steps) advice = default)
     {
         _advice = advice;
         _seed = seed;

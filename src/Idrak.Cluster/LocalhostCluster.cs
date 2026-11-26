@@ -122,7 +122,6 @@ public static class LocalhostCluster
     /// <param name="node">The node whose ranks to start, or null for every rank.</param>
     /// <param name="lines">Told each line a rank writes (from the processes' reading threads).</param>
     /// <param name="cancellationToken">Ends every rank.</param>
-    /// <exception cref="NotSupportedException">No transport can join a pair (the plan is made before anything starts).</exception>
     public static LocalhostRunResult Run(string topologyPath, ClusterOptions? options, LocalhostLaunch launch, string? node = null, Action<LocalhostLine>? lines = null,
         CancellationToken cancellationToken = default)
     {
@@ -139,13 +138,8 @@ public static class LocalhostCluster
         string coordinator = simulate ? string.Create(CultureInfo.InvariantCulture, $"127.0.0.1:{FreePort()}") : options.Coordinator ?? topology.Coordinator
             ?? throw new InvalidOperationException($"The ranks of a real cluster meet at a coordinator: give the first node of {path} an address (host:port) or set IDRAK_COORDINATOR.");
         string run = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
-        var planned = options with { Coordinator = coordinator, RunId = run, Simulation = options.Simulation with { Mode = SimulationMode.Localhost } };
-        var plan = TransportPlan.Make(topology, planned);
-        if (plan.Used.Any(t => Transports.Get(t).Capabilities.CrossMachine) && coordinator.EndsWith(":0", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException($"The coordinator {coordinator} has no port: give the first node's address a port (host:port) so every machine meets rank 0 there.");
-        }
-
+        // The check that a coordinator crossing machines has a port read the plan's transports by name: gone with them (each
+        // rank's process stops at Join, not on the new design yet).
         var results = new (int? Code, Queue<string> Output, Queue<string> Errors)[topology.WorldSize];
         for (int r = 0; r < results.Length; r++)
         {
@@ -366,6 +360,7 @@ public static class LocalhostCluster
     /// </summary>
     /// <param name="options">The options, or null for the environment's.</param>
     /// <exception cref="InvalidOperationException">No topology, no rank, or a rank, world size or node that contradicts the file (the message names both).</exception>
+    /// <exception cref="NotSupportedException">Always after those checks for now: the transports and collectives are picked by name, not on the new design yet.</exception>
     public static LocalhostRank Join(ClusterOptions? options = null)
     {
         options ??= ClusterOptions.FromEnvironment();
@@ -379,6 +374,7 @@ public static class LocalhostCluster
     /// a node of its own); <paramref name="source"/> names it in messages.
     /// </summary>
     /// <exception cref="InvalidOperationException">No rank, or a rank, world size or node that contradicts the topology (the message names both).</exception>
+    /// <exception cref="NotSupportedException">Always after those checks for now: the transports and collectives are picked by name, not on the new design yet.</exception>
     public static LocalhostRank Join(ClusterTopology topology, ClusterOptions options, string? source = null)
     {
         ArgumentNullException.ThrowIfNull(topology);
@@ -407,51 +403,9 @@ public static class LocalhostCluster
             WatchParent(parent, rank);
         }
 
-        var (node, local) = topology.Place(rank);
-        var spec = topology.Nodes[node].Devices[local];
-        var physical = Device.Parse(options.Device ?? options.Simulation.CarveFrom ?? spec.Device);
-        var device = spec.MemoryBytes is { } cap ? SimulatedDevices.Carve(physical, cap, rank) : physical;
-        var context = new ClusterContext(topology, rank, options);
-        var plan = TransportPlan.Make(topology, options);
-        var transport = plan.Connect(context);
-        try
-        {
-            if (options.Simulation.Throttle && OnThisMachine(options.Coordinator ?? topology.Coordinator))
-            {
-                transport = ThrottledTransport.Wrap(transport, context);
-            }
-
-            // Each rank's memory, measured on its device and reported to every rank as the ranks join (plan 37, N2); a device
-            // that cannot say reports none, so no peer waits for it (its own work meets the error again).
-            long? measured;
-            try
-            {
-                measured = ClusterMemory.Measure(device);
-            }
-            catch (Exception e) when (e is not OutOfMemoryException)
-            {
-                measured = null;
-            }
-
-            context = context with { RankMemory = ClusterMemory.Exchange(transport, measured) };
-            var collectives = Collectives.Get(options.CollectiveFor(topology)).Create(transport, device, context);
-            try
-            {
-                // Every rank runs rank 0's measured kernel choices, taken before this rank's work makes one (ShareTuning).
-                var shared = ChoiceSharing.Exchange(transport, device, options);
-                return new LocalhostRank(new ClusterRank(rank, device, transport, collectives, context) { SharedChoices = shared }, plan);
-            }
-            catch
-            {
-                collectives.Dispose();
-                throw;
-            }
-        }
-        catch
-        {
-            transport.Dispose();
-            throw;
-        }
+        // Each pair's transport was chosen by name (TransportPlan.Make, the transport selectors) and the collectives were
+        // looked up by name (Collectives.Get): not on the new design yet.
+        throw new NotSupportedException($"Rank {rank} of {path} joins over a transport and collectives picked by name: not on the new design yet.");
     }
 
     /// <summary>

@@ -72,25 +72,6 @@ public sealed record MachineFacts(string HostName, string? Address, string? Adap
             }
         }
 
-        // A device a backend does not list because another backend drives its card (vulkan:0 beside cuda:0) is still a
-        // device a rank can name: it is listed with its twin's memory (the same UUID), without starting a backend for it.
-        foreach (var provider in DeviceProviders.All.Where(p => p.Name != SimulatedDevices.Kind))
-        {
-            for (int i = 0; i < provider.Count; i++)
-            {
-                if (provider.Listed(i) || provider.TypeOf(i) == DeviceType.Cpu)
-                {
-                    continue;
-                }
-
-                var uuid = provider.DeviceUuid(i);
-                var twin = uuid is null ? null : Device.Available.FirstOrDefault(d => d.Type != DeviceType.Cpu && DeviceProviders.Find(d.Kind)?.DeviceUuid(d.Ordinal) == uuid);
-                var listed = twin is null ? null : devices.FirstOrDefault(d => d.Device == twin.ToString());
-                devices.Add(new MachineDevice($"{provider.Name}:{i}", provider.TypeOf(i), listed?.MemoryBytes,
-                    twin is null ? $"{provider.Display} device {i}" : $"{twin.Name} (the card {twin} drives)", listed?.Device));
-            }
-        }
-
         return new MachineFacts(Environment.MachineName, address, adapter, speed, devices);
     }
 }
@@ -263,7 +244,7 @@ public sealed class TopologyBuilder
         w.Append("  },\n");
         w.Append("  \"simulation\": {\n");
         w.Append($"    \"seed\": {topology.Simulation.Seed.ToString(CultureInfo.InvariantCulture)},   // fixes jitter and faults: a simulated run replays bit for bit\n");
-        w.Append($"    \"failures\": {Q(topology.Simulation.Failures)}   // {string.Join(" | ", FailureModels.Names)}\n");
+        w.Append($"    \"failures\": {Q(topology.Simulation.Failures)}   // the failure model's name\n");
         w.Append("  }\n");
         w.Append($"  // {topology.WorldSize} ranks in this order. The world size is never typed again: idrak cluster start finds this machine's node by\n");
         w.Append("  // its host name and starts its ranks; IDRAK_RANK and IDRAK_WORLD_SIZE are read only without a file.\n");
@@ -411,7 +392,7 @@ public sealed class TopologyBuilder
                 return new(key, "Seed for simulated runs?", "Fixes jitter and faults, so a simulated run replays bit for bit.", "1", null);
             case "failures":
                 return new(key, "Failure model for simulated runs?",
-                    $"Models: {string.Join(", ", FailureModels.Names)}. Overridable per run.", "none", "none for a first run");
+                    "The failure model's name. Overridable per run.", "none", "none for a first run");
         }
 
         int node = int.Parse(parts[1], CultureInfo.InvariantCulture);
@@ -463,15 +444,14 @@ public sealed class TopologyBuilder
                     return value.Length == 0 || (value.LastIndexOf(':') is var colon and > 0 && int.TryParse(value.AsSpan(colon + 1), NumberStyles.None, CultureInfo.InvariantCulture, out int port) && port is >= 1 and <= 65535)
                         ? null : "host:port (port 1 to 65535), or empty";
                 case "intra-node" or "inter-node":
-                    LinkProfiles.Resolve(value);
-                    return null;
+                    return null;                                       // a profile's name: no longer looked up (not on the new design yet)
                 case "overrides":
-                    _ = Overrides(value).Select(o => (Node(o.A), Node(o.B), LinkProfiles.Resolve(o.Link))).ToList();
+                    _ = Overrides(value).Select(o => (Node(o.A), Node(o.B))).ToList();
                     return null;
                 case "seed":
                     return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _) ? null : "a whole number";
                 case "failures":
-                    return FailureModels.Find(value) is null ? $"not a failure model ({string.Join(", ", FailureModels.Names)})" : null;
+                    return null;                                       // a model's name: no longer looked up (not on the new design yet)
             }
 
             if (parts[2] == "name")
@@ -595,13 +575,8 @@ public sealed class TopologyBuilder
         return name;
     }
 
-    private static string Profiles(params string[] names) => string.Join(" · ", names.Select(n =>
-    {
-        var profile = LinkProfiles.Find(n);
-        return profile is null ? n
-            : profile.BandwidthBytesPerSecond > 0 ? string.Create(CultureInfo.InvariantCulture, $"{n} {profile.BandwidthBytesPerSecond / 1e6:0.#} MB/s")
-            : profile is IDeviceMeasuredLink ? $"{n} measured here" : $"{n} (give a rate)";
-    }));
+    // The profiles' names (their rates were looked up by name, which is not on the new design yet).
+    private static string Profiles(params string[] names) => string.Join(" · ", names);
 
     // A JSON string, non-ASCII names kept readable.
     private static string Q(string text) => "\"" + JsonEncodedText.Encode(text, System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value + "\"";

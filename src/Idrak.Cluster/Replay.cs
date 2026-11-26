@@ -12,16 +12,16 @@ namespace Idrak.Cluster;
 public static class ClusterReplay
 {
     /// <summary>
-    /// The faults the failure model <paramref name="failures"/> (a <see cref="FailureModels"/> name) draws on
-    /// <paramref name="topology"/> from <paramref name="seed"/> for steps 0 to <paramref name="throughStep"/>, without
-    /// running anything: the schedule a run of the seed injects.
+    /// The faults the failure model <paramref name="failures"/> (a model's name) draws on <paramref name="topology"/> from
+    /// <paramref name="seed"/> for steps 0 to <paramref name="throughStep"/>, without running anything: the schedule a run
+    /// of the seed injects. The model was looked up by its name, which is not on the new design yet.
     /// </summary>
-    /// <exception cref="NotSupportedException">The model is not registered.</exception>
+    /// <exception cref="NotSupportedException">Always for now: a failure model by name is not on the new design yet.</exception>
     public static IReadOnlyList<Fault> Schedule(IClusterTopology topology, string failures, int seed, long throughStep)
     {
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentOutOfRangeException.ThrowIfNegative(throughStep);
-        return FaultInjector.Schedule(FailureModels.Get(failures), topology, seed, throughStep);
+        throw new NotSupportedException($"The failure model '{failures}' (seed {seed}): a failure model by name is not on the new design yet.");
     }
 
     /// <summary>

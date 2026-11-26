@@ -7,8 +7,7 @@ namespace Idrak.Cluster;
 
 /// <summary>
 /// The figures the built-in failure models draw with (plan 23, phase C3). Each has an environment variable, read when a
-/// built-in model first draws; an app gives its own with <see cref="BuiltInFailures.Create"/> and
-/// <see cref="FailureModels.Register"/>. Durations are simulated time, from the start of the step a fault is drawn at.
+/// built-in model first draws; an app gives its own with <see cref="BuiltInFailures.Create"/>. Durations are simulated time, from the start of the step a fault is drawn at.
 /// </summary>
 public sealed record FailureSettings
 {
@@ -77,7 +76,7 @@ public sealed record FailureSettings
 }
 
 /// <summary>
-/// The built-in failure models (plan 23, phase C3), registered in <see cref="FailureModels"/> by Idrak.Cluster: "none";
+/// The built-in failure models (plan 23, phase C3), made by name here (<see cref="Create"/>): "none";
 /// one model per kind of fault ("slow-worker", "dropped-worker", "link-loss", "partition", "late-join"), each drawing at
 /// most one fault a step with <see cref="FailureSettings.Rate"/>; and "mixed", which draws any kind a run survives (a slow
 /// worker, a lossy link, a late join). A late join concerns the start of a run, so it is drawn at step 0 only. Every draw

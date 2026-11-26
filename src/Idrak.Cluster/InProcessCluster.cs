@@ -86,8 +86,7 @@ public static class InProcessCluster
 {
     /// <summary>Runs <paramref name="work"/> on every rank of <paramref name="topology"/> and waits for them all.</summary>
     /// <exception cref="NotSupportedException">
-    /// The collective algorithm, the transport or the failure model is not registered, or faults are asked of a transport
-    /// that is not "sim". A plan that joins pairs over several transports runs them routed per pair (phase C5).
+    /// Always for now: the run picks its transport and collectives by name, which is not on the new design yet.
     /// </exception>
     public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work) => Run(topology, options, work, null);
 
@@ -96,7 +95,7 @@ public static class InProcessCluster
     /// 23, phase C9): paused and resumed at step boundaries, stopped after a step, faults injected live. Steering needs the
     /// "sim" transport (its steps are where the ranks wait and its faults are the ones injected).
     /// </summary>
-    /// <exception cref="NotSupportedException">A control given while the plan joins the ranks by another transport, or as above.</exception>
+    /// <exception cref="NotSupportedException">As above.</exception>
     public static ClusterRunResult Run(IClusterTopology topology, ClusterOptions? options, Action<ClusterRank> work, ClusterRunControl? control)
     {
         ArgumentNullException.ThrowIfNull(topology);
@@ -128,57 +127,12 @@ public static class InProcessCluster
         }
     }
 
-    private static ClusterRunResult Start(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, bool steered = false)
-    {
-        var plan = TransportPlan.Make(topology, options);
-        // One transport for every pair, or (phase C5) several routed per pair, each carrier connected once.
-        string? transportName = plan.Single ?? (plan.Used.Count == 0
-            ? (string.Equals(options.Transport, "auto", StringComparison.OrdinalIgnoreCase) ? "sim" : options.Transport)
-            : null);
-        var transports = transportName is null ? null : Transports.Get(transportName);
-        string failures = options.Simulation.Failures ?? topology.Simulation.Failures;
-        if (steered && !string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException($"A run steered live (paused, stopped, faults injected) needs the sim transport; this run uses '{transportName ?? string.Join("+", plan.Used)}': "
-                                            + "set IDRAK_CLUSTER_TRANSPORT=auto (or sim).");
-        }
-
-        if (!string.Equals(transportName, "sim", StringComparison.OrdinalIgnoreCase) && !string.Equals(failures, "none", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new NotSupportedException($"Faults ('{failures}') are injected by the sim transport; this run uses '{transportName ?? string.Join("+", plan.Used)}': set IDRAK_CLUSTER_FAILURES=none, or let the selector choose sim.");
-        }
-
-        var collectives = Collectives.Get(options.CollectiveFor(topology));
-        int world = topology.WorldSize;
-        var devices = new Device[world];
-        for (int r = 0; r < world; r++)
-        {
-            var (node, local) = topology.Place(r);
-            var spec = topology.Nodes[node].Devices[local];
-            devices[r] = SimulatedDevices.Carve(Device.Parse(options.Simulation.CarveFrom ?? spec.Device), spec.MemoryBytes, r);
-        }
-
-        // The run's carved devices are given back when it ends (SimulationOptions.ReleaseDevices): their backends disposed,
-        // their memory returned to the physical device, after the ranks stop following rank 0's choices.
-        ChoiceSharing.Following? shared = null;
-        try
-        {
-            // Every rank runs rank 0's measured kernel choices, followed before any rank's thread makes one (ShareTuning).
-            shared = ChoiceSharing.Follow(devices, options);
-
-            // Each rank's memory, measured on its carved device as the ranks join (plan 37, N2): every rank's context holds them all.
-            var memory = Measure(devices);
-            return RunRanks(topology, options, work, plan, transports, collectives, devices, shared, memory);
-        }
-        finally
-        {
-            shared?.Dispose();
-            if (options.Simulation.ReleaseDevices)
-            {
-                ReleaseDevices(devices);
-            }
-        }
-    }
+    // The plan chose each pair's transport by name (TransportPlan.Make, the transport selectors, Transports.Get) and the
+    // collectives were looked up by name (Collectives.Get): not on the new design yet, so a run stops here, before any device
+    // is carved. RunRanks below runs the ranks once a transport and collectives are given.
+    private static ClusterRunResult Start(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, bool steered = false) =>
+        throw new NotSupportedException($"An in-process cluster run ({topology.WorldSize} ranks{(steered ? ", steered" : "")}, transport '{options.Transport}') "
+                                        + "picks its transport and collectives by name: not on the new design yet.");
 
     // Each device's free memory now (ClusterMemory.Measure); null for one that cannot say (its rank's thread meets the error again).
     private static long?[] Measure(Device[] devices)
@@ -221,7 +175,7 @@ public static class InProcessCluster
         }
     }
 
-    private static ClusterRunResult RunRanks(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, TransportPlan plan, ITransportProvider? transports,
+    private static ClusterRunResult RunRanks(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, ITransportProvider transports,
                                         ICollectivesProvider collectives, Device[] devices, ChoiceSharing.Following shared, long?[] memory)
     {
         int world = devices.Length;
@@ -241,7 +195,7 @@ public static class InProcessCluster
                 ClusterRank? me = null;
                 try
                 {
-                    transport = transports is not null ? transports.Connect(context) : plan.Connect(context);
+                    transport = transports.Connect(context);
                     SimStepper? stepper = null;
                     if (transport is SimTransport sim)
                     {
@@ -408,9 +362,8 @@ internal sealed class SimStepper : ICollectives, IStepGroup, IShardedHostValueCo
             throw new ArgumentOutOfRangeException(nameof(step), step, $"rank {Real} began step {Step}; steps go forward");
         }
 
-        // A steered run waits here while paused, and stops here (phase C9), unless its trainer holds and stops it at its own
-        // boundaries (Plan 27, R11: an iteration of a reinforcement run, RunSteerings).
-        if (_world.Control is { } control && !RunSteerings.Steered(this))
+        // A steered run waits here while paused, and stops here (phase C9).
+        if (_world.Control is { } control)
         {
             control.Gate(Real, step, Device);
         }
