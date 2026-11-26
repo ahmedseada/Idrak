@@ -176,8 +176,13 @@ public static class TextLayout
     public static float Measure(string text, TextStyle style) => Layout(text, style).Lines.Sum(l => l.Width);
 
     // The text shapers were registered by script (TextShapers) and a run shaped by its script's: not on the new design yet.
+    // The default, the general shaper every script without one of its own took (TextShapers.AnyScript), is reached
+    // directly; a run of a script that had its own (the joining scripts' arabic shaper) stops.
+    private static readonly OpenTypeShaper General = new();
+
     private static ShapedGlyph[] ShapeRun(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features) =>
-        throw new NotSupportedException($"Shaping a run of {font.Family} through the text shapers by script is not on the new design yet.");
+        !ArabicShaper.Scripts.Contains(run.Script, StringComparer.OrdinalIgnoreCase) ? General.Shape(font, text, run, features)
+        : throw new NotSupportedException($"Shaping a run of {font.Family} in the script {run.Script} through the text shapers by script is not on the new design yet.");
 
     // The shaped runs of [start, end) of a paragraph with its levels, in text order, each with the font that shapes it and
     // the paragraph's seed.
@@ -405,8 +410,13 @@ public static class TextLayout
 /// <summary>Draws laid-out text as ink coverage (0 none, 1 full) with an outline rasterizer.</summary>
 public static class TextRenderer
 {
-    // The rasterizers were registered (OutlineRasterizers) and picked by name: not on the new design yet.
-    private static IOutlineRasterizer RasterizerNamed(string name) => throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
+    // The rasterizers were registered (OutlineRasterizers) and picked by name: not on the new design yet. The default,
+    // "coverage", is reached directly; another name stops.
+    private static readonly CoverageRasterizer Coverage = new();
+
+    private static IOutlineRasterizer RasterizerNamed(string name) =>
+        name.Equals(OutlineRasterizers.Coverage, StringComparison.OrdinalIgnoreCase) ? Coverage
+        : throw new NotSupportedException($"The outline rasterizer '{name}' by name is not on the new design yet.");
 
     /// <summary>
     /// Adds the glyphs of <paramref name="block"/>, its top-left corner at (<paramref name="x"/>, <paramref name="y"/>), to

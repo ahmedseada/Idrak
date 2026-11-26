@@ -470,7 +470,7 @@ internal sealed class LetterLayout : IPageLayout
             {
                 X = signedX, Y = signatureTop, Width = signedWidth, Height = signedHeight, RightToLeft = rtl, TextSize = bodySize, LineHeight = bodySize * 1.2f, StrokeWidth = signedStroke,
             };
-            var (drawn, _) = ShapesLayout.Plan(Sample(profile, Mix(signing, 2)), box, Mix(signing, 3));
+            var (drawn, _) = ShapesLayout.Plan(Sample(profile, Mix(signing, 2)), box, Mix(signing, 3), Scribble);
             var lettering = new ShapeLettering(Lettering(bodySize), name, rtl);
             record?.Shapes(drawn, signedStroke, lettering, blueSignature);
             var ink = ShapeDrawing.Draw(canvas, blueSignature ? canvas.Blue : canvas.Ink, drawn, ornaments.SignaturePen, ornaments.SignaturePenSettings, Mix(signing, 4), signedStroke,
@@ -539,9 +539,15 @@ internal sealed class LetterLayout : IPageLayout
     private static string Named(string profile) => profile == "custom" ? "written" : profile;
 
     // A shape profile's steps for a seed: the profiles were registered (ShapeProfiles) and sampled by name, which is not on the
-    // new design yet.
+    // new design yet. The default signature, "scribble" (one step, drawn with the scribble shape: Scribble), is reached
+    // directly; any other profile (every emblem and stamp: no one of them is the default) stops.
+    private static readonly IReadOnlyList<ShapeStep> ScribbleSteps = [new ShapeStep(Ornaments.Signature)];
+
+    private static readonly ScribbleShape Scribble = new();
+
     private static IReadOnlyList<ShapeStep> Sample(string profile, int seed) =>
-        throw new NotSupportedException($"The shape profile '{profile}' by name is not on the new design yet.");
+        profile.Equals(Ornaments.Signature, StringComparison.OrdinalIgnoreCase) ? ScribbleSteps
+        : throw new NotSupportedException($"The shape profile '{profile}' by name is not on the new design yet.");
 
     private static float Between(Random random, (float Min, float Max) range) => range.Min + (float)random.NextDouble() * (range.Max - range.Min);
 
@@ -593,13 +599,26 @@ internal sealed class LetterOrnaments
 
     public required float Signature { get; init; }
 
-    // The shape profiles between '|', each checked by name in their registry (ShapeProfiles): not on the new design yet.
-    private static IReadOnlyList<string> Choices(string list) =>
-        throw new NotSupportedException($"The shape profiles '{list}' by name are not on the new design yet.");
+    // The signature's default pen, the ballpoint, reached directly with its own keys of the page's options.
+    private static readonly BallpointPen Ballpoint = new();
+
+    // The shape profiles between '|' (a name given twice is drawn twice as often). Each was checked by name in their
+    // registry (ShapeProfiles), which is not on the new design yet: a profile is looked up when the letter draws it
+    // (LetterLayout's Sample: the default signature reached directly, any other stopping there).
+    private static IReadOnlyList<string> Choices(string list)
+    {
+        var items = list.Split('|', StringSplitOptions.TrimEntries);
+        if (items.Any(i => i.Length == 0))
+        {
+            throw new ArgumentException($"Shape profiles are names between '|', none empty, not '{list}'.", nameof(list));
+        }
+
+        return items;
+    }
 
     /// <summary>The settings <paramref name="options"/> give, the defaults for those not given.</summary>
     /// <exception cref="ArgumentException">A bad value; the message names the setting.</exception>
-    /// <exception cref="NotSupportedException">A shape profile or a pen that is not registered.</exception>
+    /// <exception cref="NotSupportedException">A pen other than the defaults (ideal; the signature's ballpoint): a pen by name is not on the new design yet.</exception>
     public static LetterOrnaments Read(IReadOnlyDictionary<string, string> options)
     {
         string? Given(string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
@@ -607,8 +626,10 @@ internal sealed class LetterOrnaments
 
         var (emblemPen, emblemSettings) = Pen("emblem-pen", Pens.Ideal);
         var (stampPen, stampSettings) = Pen("stamp-pen", Pens.Ideal);
-        string signaturePenName = Given("signature-pen") ?? "ballpoint";
-        var (signaturePen, signatureSettings) = Pen("signature-pen", "ballpoint");
+        string signaturePenName = Given("signature-pen") ?? Ballpoint.Name;
+        var (signaturePen, signatureSettings) = signaturePenName.Equals(Ballpoint.Name, StringComparison.OrdinalIgnoreCase)
+            ? (Ballpoint, Ballpoint.Read(PageOptions.Only(options, BallpointPen.OwnKeys)))
+            : ShapesLayout.PenFor(options, signaturePenName);
         return new LetterOrnaments
         {
             Emblems = Choices(Given("emblem-shapes") ?? Ornaments.Emblems),

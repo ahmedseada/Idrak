@@ -187,10 +187,22 @@ internal sealed class GlyphPainter
 
     /// <summary>The pose a page's options choose (<c>pose</c>, "none" by default) with its own keys, read once.</summary>
     /// <exception cref="ArgumentException">A bad pose setting.</exception>
-    /// <exception cref="NotSupportedException">Always for now: the poses were registered (GlyphPoses) and picked by name,
-    /// each read with its own keys of the options, which is not on the new design yet.</exception>
-    public static GlyphPainter Read(IReadOnlyDictionary<string, string> options, int seed) =>
-        throw new NotSupportedException($"The glyph pose '{(options.TryGetValue("pose", out var name) && name.Length > 0 ? name : GlyphPoses.None)}' by name is not on the new design yet.");
+    /// <exception cref="NotSupportedException">A pose other than "none": the poses were registered (GlyphPoses) and picked
+    /// by name, each read with its own keys of the options, which is not on the new design yet.</exception>
+    public static GlyphPainter Read(IReadOnlyDictionary<string, string> options, int seed)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var pose = PoseNamed(options.TryGetValue("pose", out var name) && name.Length > 0 ? name : GlyphPoses.None);
+        return new GlyphPainter(pose, GlyphPoses.None, pose.Read(PageOptions.None), seed);   // "none" takes no keys
+    }
+
+    // The default pose, "none" (every glyph as set), reached directly; another by name stops.
+    private static readonly NonePose None = new();
+
+    /// <summary>The pose <paramref name="name"/> names: the default, "none", reached directly.</summary>
+    /// <exception cref="NotSupportedException">Another name: a pose by name is not on the new design yet.</exception>
+    internal static IGlyphPose PoseNamed(string name) =>
+        name.Equals(GlyphPoses.None, StringComparison.OrdinalIgnoreCase) ? None : throw new NotSupportedException($"The glyph pose '{name}' by name is not on the new design yet.");
 
     /// <summary>The most a posed glyph's ink moves, in pixels, for text of <paramref name="size"/> whose outlines reach <paramref name="reach"/> pixels from their origins (0 for none).</summary>
     public float Reach(float size, float reach) => IsIdentity ? 0 : Bounds.Reach(size, reach);

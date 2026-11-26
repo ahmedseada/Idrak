@@ -13,7 +13,12 @@ namespace Idrak.Imaging;
 /// </summary>
 internal sealed class SequenceBinding : ITextBinding
 {
-    private static readonly string Own = string.Join(", ", "take", "blank", "blank-at");
+    private static readonly string[] Keys = ["take", "blank", "blank-at"];
+
+    private static readonly string Own = string.Join(", ", Keys);
+
+    /// <summary>Its keys, the page's options it reads (<see cref="PageOptions.Only"/> takes them out of a page's), as the default binding is read.</summary>
+    internal static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
 
     public string Name => TextBindings.Sequence;
 

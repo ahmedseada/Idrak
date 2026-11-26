@@ -220,21 +220,47 @@ internal sealed class ShapesLayout : IPageLayout
     private static string? Option(IReadOnlyDictionary<string, string> options, string key) => options.TryGetValue(key, out var value) && value.Length > 0 ? value : null;
 
     // The shape profiles, pens, text bindings and shapes were registered (ShapeProfiles, Pens, TextBindings, Shapes) and
-    // picked by name, each read with its own keys of the page's options: not on the new design yet.
+    // picked by name, each read with its own keys of the page's options: not on the new design yet. The layout's defaults
+    // are reached directly: the profile "grid" (grid=auto x auto, a grid fitted to the text) and its shape, the "ideal"
+    // pen and the "sequence" binding (with its own keys of the page's options). Any other name, or a profile written as
+    // text, stops.
+    private const string GridProfile = "grid";
+
+    private static readonly IReadOnlyList<ShapeStep> GridSteps = [new ShapeStep(GridProfile, "auto x auto")];
+
+    private static readonly GridShape Grid = new();
+
+    private static readonly IdealPen Ideal = new();
+
+    private static readonly SequenceBinding Sequence = new();
+
     private static (string Name, IReadOnlyList<ShapeStep> Steps) ProfileSteps(string nameOrText, int seed) =>
-        throw new NotSupportedException($"The shape profile '{nameOrText}' by name or text is not on the new design yet.");
+        nameOrText.Trim().Equals(GridProfile, StringComparison.OrdinalIgnoreCase) ? (GridProfile, GridSteps)
+        : throw new NotSupportedException($"The shape profile '{nameOrText}' by name or text is not on the new design yet.");
 
+    /// <summary>The pen <paramref name="name"/> names with its own keys of <paramref name="options"/>: the default, "ideal" (it takes none), reached directly.</summary>
+    /// <exception cref="NotSupportedException">Another name: a pen by name is not on the new design yet.</exception>
     internal static (IPen Pen, PenSettings Settings) PenFor(IReadOnlyDictionary<string, string> options, string name) =>
-        throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
+        name.Equals(Pens.Ideal, StringComparison.OrdinalIgnoreCase) ? (Ideal, Ideal.Read(PageOptions.None))
+        : throw new NotSupportedException($"The pen '{name}' by name is not on the new design yet.");
 
-    private static (ITextBinding Binding, TextBindingSettings Settings) BindingFor(IReadOnlyDictionary<string, string> options, string name) =>
-        throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
+    /// <summary>The text binding <paramref name="name"/> names with its own keys of <paramref name="options"/>: the default, "sequence", reached directly.</summary>
+    /// <exception cref="ArgumentException">A bad value of one of its keys.</exception>
+    /// <exception cref="NotSupportedException">Another name: a text binding by name is not on the new design yet.</exception>
+    internal static (ITextBinding Binding, TextBindingSettings Settings) BindingFor(IReadOnlyDictionary<string, string> options, string name) =>
+        name.Equals(TextBindings.Sequence, StringComparison.OrdinalIgnoreCase) ? (Sequence, Sequence.Read(PageOptions.Only(options, SequenceBinding.OwnKeys)))
+        : throw new NotSupportedException($"The text binding '{name}' by name is not on the new design yet.");
 
-    internal static IShape ShapeNamed(string name) => throw new NotSupportedException($"The shape '{name}' by name is not on the new design yet.");
+    // A step's shape: the default profile's, "grid", reached directly; another by name stops.
+    internal static IShape ShapeNamed(string name) =>
+        name.Equals(GridProfile, StringComparison.OrdinalIgnoreCase) ? Grid : throw new NotSupportedException($"The shape '{name}' by name is not on the new design yet.");
 
     // Every step's plan in order: in the page, or once inside each region the step before ended with (in=last); a step
-    // whose plans make regions there takes those regions' place, one that makes none leaves them.
-    internal static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(IReadOnlyList<ShapeStep> steps, ShapeContext area, int shapeSeed)
+    // whose plans make regions there takes those regions' place, one that makes none leaves them. `drawnBy`, when given,
+    // is the shape every step is drawn with (a default profile's one shape, which its caller reaches directly); otherwise
+    // each step's shape is the one its name names.
+    internal static (List<(ShapeStep Step, ShapePlan Plan)> Drawn, List<ShapeRegion> Regions) Plan(IReadOnlyList<ShapeStep> steps, ShapeContext area, int shapeSeed,
+        IShape? drawnBy = null)
     {
         var drawn = new List<(ShapeStep, ShapePlan)>();
         var regions = new List<ShapeRegion?>();
@@ -243,7 +269,7 @@ internal sealed class ShapesLayout : IPageLayout
         for (int s = 0; s < steps.Count; s++)
         {
             var step = steps[s];
-            var shape = ShapeNamed(step.Name);
+            var shape = drawnBy ?? ShapeNamed(step.Name);
             var next = new List<int>();
             if (step.InLast())
             {

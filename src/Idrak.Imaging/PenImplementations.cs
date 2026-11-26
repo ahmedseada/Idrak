@@ -389,7 +389,12 @@ internal sealed class IdealPen : IPen
 /// </summary>
 internal sealed class BallpointPen : IPen
 {
-    private static readonly string Own = string.Join(", ", "pen-wobble", "pen-jitter", "pen-pressure", "pen-overshoot", "pen-tilt");
+    private static readonly string[] Keys = ["pen-wobble", "pen-jitter", "pen-pressure", "pen-overshoot", "pen-tilt"];
+
+    private static readonly string Own = string.Join(", ", Keys);
+
+    /// <summary>Its keys, the page's options it reads (<see cref="PageOptions.Only"/> takes them out of a page's), as a letter's default signature pen is read.</summary>
+    internal static readonly IReadOnlySet<string> OwnKeys = new HashSet<string>(Keys, StringComparer.OrdinalIgnoreCase);
 
     private static readonly Settings Defaults = new(PageOptions.None, (0.15f, 0.5f), (0.03f, 0.1f), (0.1f, 0.3f), (0f, 1.5f), (0f, 1f));
 
