@@ -2,13 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Testing;
 using Idrak.Inference;
 using Idrak.Models.Abstractions;
 using Idrak.Vision;
 using Idrak.Vision.Abstractions;
-using Idrak.Vision.Plugins;
 using Idrak.Vision.Plugins.Crnn;
 using Idrak.Vision.Plugins.Gemma;
 using Idrak.Vision.Plugins.IdrakVision;
@@ -22,94 +20,22 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] VisionPluginGroup =
     [
-        ("plugins: vision: QwenVisionPlugin (\"qwen-vl\"), LlavaPlugin (\"llava\"), IdrakVisionPlugin (\"idrak-vision\") and CrnnPlugin (\"crnn\") are VisionPlugins.All, in that order before Gemma3VisionPlugin (plugins: gemma), each in its family's namespace; Register twice registers their architectures once, from Idrak.Vision.Plugins; Unregister leaves VisionFamilies, PretrainedArchitectures and ImageModelFamilies as found", VisionPluginRegistration),
-        ("plugins: crnn: a recognizer saved by CrnnRecognizer loads through ImageModels as CrnnForLineRecognition and reads lines as the recognizer does (texts, labels, scores), passes the image model family suite (a line at a time: its backward LSTM reads a batch's padding); a folder of the earlier package layout loads with the same readings; a missing or misshapen tensor and bad settings are refused naming them; unregistered, the folder is refused naming Idrak.Vision.Plugins", CrnnFamilyRoundTrip),
+        ("plugins: crnn: a recognizer saved by CrnnRecognizer loads through ImageModels as CrnnForLineRecognition and reads lines as the recognizer does (texts, labels, scores), passes the image model family suite (a line at a time: its backward LSTM reads a batch's padding); a folder of the earlier package layout loads with the same readings; a missing or misshapen tensor and bad settings are refused naming them", CrnnFamilyRoundTrip),
     ];
-
-    internal static readonly (IIdrakPlugin Plugin, string Name, string Namespace)[] VisionFamilyPlugins =
-    [
-        (QwenVisionPlugin.Plugin, "qwen-vl", "Idrak.Vision.Plugins.Qwen"),
-        (LlavaPlugin.Plugin, "llava", "Idrak.Vision.Plugins.Llava"),
-        (IdrakVisionPlugin.Plugin, "idrak-vision", "Idrak.Vision.Plugins.IdrakVision"),
-        (CrnnPlugin.Plugin, "crnn", "Idrak.Vision.Plugins.Crnn"),
-    ];
-
-    internal static void VisionPluginRegistration(Device device)
-    {
-        _ = device;
-        Check(VisionPlugins.All.SequenceEqual([.. VisionFamilyPlugins.Select(p => p.Plugin), Gemma3VisionPlugin.Plugin]),
-            $"VisionPlugins.All lists the four, in order, then Gemma 3 vision ({string.Join(", ", VisionPlugins.All.Select(p => p.Name))})");
-        foreach (var (plugin, name, ns) in VisionFamilyPlugins)
-        {
-            Check(plugin.Name == name && plugin.GetType().Namespace == ns, $"{name}: named so, in {ns} ({plugin.Name}, {plugin.GetType().Namespace})");
-        }
-
-        string[] vision = [QwenVisionFamily.Qwen25VlArchitecture, QwenVisionFamily.Qwen2VlArchitecture, LlavaPlugin.Architecture, IdrakVisionFamily.Architecture];
-        string[] image = [CrnnPlugin.Architecture];
-        var was = VisionFamilyPlugins.Select(p => p.Plugin.IsRegistered).ToArray();
-        static List<string> Sorted(IEnumerable<string> names) => [.. names.Order(StringComparer.Ordinal)];
-        try
-        {
-            foreach (var (plugin, _, _) in Enumerable.Reverse(VisionFamilyPlugins))
-            {
-                plugin.Unregister();
-            }
-
-            Check(vision.All(a => VisionFamilies.Find(a) is null && !PretrainedArchitectures.Names.Contains(a)) && ImageModelFamilies.Find(CrnnPlugin.Architecture) is null,
-                "unregistered: none of their architectures is registered");
-            var (visionFound, textFound, imageFound) = (Sorted(VisionFamilies.Names), Sorted(PretrainedArchitectures.Names), Sorted(ImageModelFamilies.Names));
-            for (int twice = 0; twice < 2; twice++)
-            {
-                QwenVisionPlugin.Register();
-                LlavaPlugin.Register();
-                IdrakVisionPlugin.Register();
-                CrnnPlugin.Register();
-            }
-
-            Check(VisionFamilyPlugins.All(p => p.Plugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find(p.Name), p.Plugin)), "registered and recorded by name");
-            Check(Sorted(VisionFamilies.Names).SequenceEqual(Sorted(visionFound.Concat(vision))) && Sorted(PretrainedArchitectures.Names).SequenceEqual(Sorted(textFound.Concat(vision)))
-                && Sorted(ImageModelFamilies.Names).SequenceEqual(Sorted(imageFound.Concat(image))), "Register twice registers each architecture once");
-            Check(vision.All(a => VisionFamilies.Origin(a) == VisionPlugins.Package.Name && PretrainedArchitectures.Origin(a) == VisionPlugins.Package.Name)
-                && ImageModelFamilies.Origin(CrnnPlugin.Architecture) == VisionPlugins.Package.Name, "every architecture is Idrak.Vision.Plugins'");
-            foreach (var (plugin, _, _) in VisionFamilyPlugins)
-            {
-                plugin.Unregister();
-            }
-
-            Check(Sorted(VisionFamilies.Names).SequenceEqual(visionFound) && Sorted(PretrainedArchitectures.Names).SequenceEqual(textFound) && Sorted(ImageModelFamilies.Names).SequenceEqual(imageFound),
-                "Unregister leaves the registries as found");
-        }
-        finally
-        {
-            for (int i = 0; i < was.Length; i++)
-            {
-                if (was[i])
-                {
-                    VisionFamilyPlugins[i].Plugin.Register();
-                }
-                else
-                {
-                    VisionFamilyPlugins[i].Plugin.Unregister();
-                }
-            }
-        }
-    }
 
     internal static void CrnnFamilyRoundTrip(Device device)
     {
-        bool wasRegistered = CrnnPlugin.IsRegistered;
         string folder = TempFolder("crnn-family");
         var settings = new CrnnSettings { Alphabet = ["a", "b", "c"], Height = 8, RightToLeft = false, Channels = [4, 4, 4], Hidden = 4, Layers = 1 };
         ImageData[] lines = [LineImage("abc"), LineImage("cab a"), LineImage("b", 16), LineImage("ca")];
         var options = new CtcDecodeOptions();
         try
         {
-            CrnnPlugin.Register();
             string saved = Path.Combine(folder, "saved");
             IReadOnlyList<RecognizedLine> expected;
             using (var made = CrnnRecognizer.Create(settings, device, seed: 5))
             {
-                expected = made.Read(lines, CtcDecoders.Greedy, options, new MeasuredLineBatches(device, ceiling: 1));
+                expected = made.Read(lines, "greedy", options, new MeasuredLineBatches(device, ceiling: 1));
                 made.Save(saved, new JsonObject { ["note"] = "the training's record" });
 
                 // The earlier layout: the network's description and weights in a package, the settings beside it.
@@ -119,7 +45,7 @@ internal abstract partial class Tests
                     .Architecture(ModelPackage.DefaultModelName, CrnnRecognizer.Describe(settings, device, 5).ToJson()).Weights(made.Network).Save();
                 File.WriteAllText(Path.Combine(legacy, CrnnRecognizer.LegacySettingsFile), settings.ToJson().ToJsonString());
                 using var old = CrnnRecognizer.Load(legacy, device);
-                CheckSameReadings(expected, old.Read(lines, CtcDecoders.Greedy, options, new MeasuredLineBatches(device, ceiling: 1)), "the earlier layout");
+                CheckSameReadings(expected, old.Read(lines, "greedy", options, new MeasuredLineBatches(device, ceiling: 1)), "the earlier layout");
             }
 
             var config = JsonNode.Parse(File.ReadAllText(Path.Combine(saved, CrnnRecognizer.ConfigFile)))!.AsObject();
@@ -127,7 +53,7 @@ internal abstract partial class Tests
                   && CrnnRecognizer.IsRecognizerFolder(saved), $"config.json: {config}");
             using (var loaded = CrnnRecognizer.Load(saved, device))
             {
-                CheckSameReadings(expected, loaded.Read(lines, CtcDecoders.Greedy, options, new MeasuredLineBatches(device, ceiling: 1)), "loaded through the family");
+                CheckSameReadings(expected, loaded.Read(lines, "greedy", options, new MeasuredLineBatches(device, ceiling: 1)), "loaded through the family");
                 Check(loaded.Encode("ab c").Labels.SequenceEqual([1, 2, 3]) && loaded.Text([3, 2, 1]) == "cba", "labels after the blank, text left to right");
             }
 
@@ -163,21 +89,9 @@ internal abstract partial class Tests
             ThrowsNaming<InvalidDataException>(() => CrnnRecognizer.Load(Edited("wider", j => j["hidden"] = 6), device).Dispose(), "another hidden size", "layers.", "the settings' network holds");
             ThrowsNaming<InvalidDataException>(() => CrnnRecognizer.Load(Edited("height", j => j["height"] = 10), device).Dispose(), "a height of 10", "multiple of 4");
             ThrowsNaming<FileNotFoundException>(() => CrnnRecognizer.Load(Path.Combine(folder, "nothing"), device).Dispose(), "an empty folder", "is not a line recognizer folder");
-
-            CrnnPlugin.Unregister();
-            ThrowsNaming<NotSupportedException>(() => ImageModels.Load(saved).Dispose(), "the family unregistered", CrnnPlugin.Architecture, "not registered", VisionPlugins.Package.Name);
         }
         finally
         {
-            if (wasRegistered)
-            {
-                CrnnPlugin.Register();
-            }
-            else
-            {
-                CrnnPlugin.Unregister();
-            }
-
             Directory.Delete(folder, recursive: true);
         }
     }
