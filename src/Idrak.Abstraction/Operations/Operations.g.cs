@@ -2170,18 +2170,4 @@ public static partial class Ops
         StoredMatMulGatedPair,
         StoredMatMulAddRmsNorm,
     ];
-
-    /// <summary>The operation named <paramref name="name"/> (as <see cref="Operation.Name"/>, any case), or null.</summary>
-    public static Operation? Find(string name)
-    {
-        foreach (var operation in All)
-        {
-            if (operation.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-            {
-                return operation;
-            }
-        }
-
-        return null;
-    }
 }

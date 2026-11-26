@@ -184,7 +184,7 @@ internal abstract partial class DesktopTests : Tests
             Directory.Delete(folder, recursive: true);
         }
 
-        Check(Idrak.Cli.Shared.EnvironmentVariables.Find(ServeOptions.RefuseProxiedImageUrlsVariable) is { } variable && variable.Commands.Contains("serve"),
+        Check(Idrak.Cli.Shared.EnvironmentVariables.All.FirstOrDefault(v => v.Name == ServeOptions.RefuseProxiedImageUrlsVariable) is { } variable && variable.Commands.Contains("serve"),
             $"{ServeOptions.RefuseProxiedImageUrlsVariable} is in the tool's table");
     }
 }

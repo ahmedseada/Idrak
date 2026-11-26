@@ -338,10 +338,17 @@ public sealed record DecoderSpec
         return r;
     }
 
-    // A scaling written by its method's own name, read back by walking the methods' own names (RopeScalings.Read).
+    // A scaling written by its method's own name, read back here, where the spec's text comes in: the methods walked, each
+    // one's own names compared.
     private static RopeSettings RopeFromJson(JsonObject r, IReadOnlyList<IRopeScalingMethod> scalings)
     {
-        var scaling = r["scaling"] is JsonObject s ? new RopeScaling(RopeScalings.Named((string?)s["type"] ?? "", scalings), s["parameters"] as JsonObject) : null;
+        RopeScaling? scaling = null;
+        if (r["scaling"] is JsonObject s)
+        {
+            string type = (string?)s["type"] ?? "";
+            var method = scalings.FirstOrDefault(m => m.Names.Contains(type, StringComparer.OrdinalIgnoreCase)) ?? throw RopeScalings.Unstated(type, scalings);
+            scaling = new RopeScaling(method, s["parameters"] as JsonObject);
+        }
 
         return new RopeSettings((float)r["theta"]!, (int?)r["rotaryDim"], (bool)r["interleaved"]!)
         {

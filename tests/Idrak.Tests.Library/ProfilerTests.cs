@@ -37,7 +37,7 @@ internal abstract partial class Tests
         var report = watch.End();
         Check(ReferenceEquals(report, other) && watch.Ended && report.Watched && report.Runs is [{ Kind: ProfileRunKind.Once, Index: 0 }],
             $"one run, ended once: {string.Join(", ", report.Runs.Select(r => r.Kind))}");
-        Check(report.Probes.All(p => ProfileProbes.Named(p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
+        Check(report.Probes.All(p => ProfileProbes.All.Single(q => q.Name == p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
               && report.Probes.Contains("tuning") && report.Probes.Contains("fallbacks") && report.Probes.Contains("graphs") && report.Probes.Contains("inference"),
             $"the watched probes: {string.Join(", ", report.Probes)}");
         Check(report.Notes.Any(n => n.Contains("operations", StringComparison.Ordinal) && n.Contains("IDRAK_PROFILE_PROBES", StringComparison.Ordinal)),
@@ -94,7 +94,7 @@ internal abstract partial class Tests
     internal static void ProfilerRuns(Device device)
     {
         var report = Profiler.Run("product", device, ProfiledProduct, new ProfileOptions { WarmRuns = 3 });
-        int intrusive = report.Probes.Count(p => ProfileProbes.Named(p).Intrusive);
+        int intrusive = report.Probes.Count(p => ProfileProbes.All.Single(q => q.Name == p).Intrusive);
         Check(report.Runs.Count == 1 + 3 + intrusive && report.Runs[0].Kind == ProfileRunKind.Cold && report.Runs.Skip(1).Take(3).All(r => r.Kind == ProfileRunKind.Warm)
               && report.Runs.Skip(4).All(r => r.Kind == ProfileRunKind.Probe && r.Probe is not null),
             $"a cold run, 3 warm and one for each intrusive probe: {string.Join(", ", report.Runs.Select(r => $"{r.Kind}{r.Probe}"))}");

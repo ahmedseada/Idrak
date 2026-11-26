@@ -98,8 +98,8 @@ public interface IWeightPlacement
 /// and staged per pass: <see cref="ComputeResources.OffloadToHostMemory"/>) and <see cref="AutoPlacement"/>
 /// (<see cref="Auto"/>: the device when the model fits, else split or stream, whichever the bus and the CPU measured at
 /// load make faster), each its own class stating its name, in one fixed list (<see cref="All"/>). A person's or a
-/// variable's text (IDRAK_WEIGHT_PLACEMENT) is matched against their names where it comes in (<see cref="Named"/>); with
-/// none, the default (<see cref="Default"/>) is reached directly.
+/// variable's text (<see cref="PlacementVariable"/>) is matched against their names where it comes in (the load reading
+/// the variable walks the list, each placement's own name compared); with none, auto is reached directly.
 /// </summary>
 public static class WeightPlacements
 {
@@ -120,32 +120,6 @@ public static class WeightPlacements
 
     /// <summary>The library's placements, one immutable list in source: device, split, stream, auto.</summary>
     public static IReadOnlyList<IWeightPlacement> All { get; } = Array.AsReadOnly<IWeightPlacement>([new DevicePlacement(), new SplitPlacement(), new StreamPlacement(), new AutoPlacement()]);
-
-    /// <summary>
-    /// The placement a load takes when none is handed over: the one of <see cref="All"/> that IDRAK_WEIGHT_PLACEMENT names,
-    /// else <see cref="AutoPlacement"/>, reached directly.
-    /// </summary>
-    public static IWeightPlacement Default => Environment.GetEnvironmentVariable(PlacementVariable) is { Length: > 0 } name ? Named(name, PlacementVariable) : All[3];
-
-    /// <summary>
-    /// The placement of <paramref name="placements"/> (<see cref="All"/> when null) whose own name is <paramref name="name"/>
-    /// (ignoring case and spaces around it): the list walked where a person's or a variable's text comes in.
-    /// </summary>
-    /// <exception cref="ArgumentException">No placement has the name (the message names <paramref name="where"/> and theirs).</exception>
-    public static IWeightPlacement Named(string name, string where, IReadOnlyList<IWeightPlacement>? placements = null)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        placements ??= All;
-        foreach (var placement in placements)
-        {
-            if (placement.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return placement;
-            }
-        }
-
-        throw new ArgumentException($"{where} {name}: no weight placement has that name ({string.Join(", ", placements.Select(p => p.Name))}).", nameof(name));
-    }
 
 
     /// <summary>The variable giving the layers on the device (a count, or "auto" to size them): "IDRAK_DEVICE_LAYERS".</summary>

@@ -227,7 +227,7 @@ public sealed record PretrainedOptions
     /// <summary>
     /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1): the placement
     /// itself, handed over (one of <see cref="WeightPlacements.All"/>: device, split, stream, auto; or one of one's own); null
-    /// takes <see cref="WeightPlacements.Default"/> (IDRAK_WEIGHT_PLACEMENT's, else auto). The free memory is
+    /// takes the one IDRAK_WEIGHT_PLACEMENT names (<see cref="WeightPlacements.PlacementVariable"/>), else auto. The free memory is
     /// <see cref="AutoWeightsBudget"/> when given, else what the device reports. <see cref="PretrainedModel.Placement"/> says
     /// what was chosen.
     /// </summary>
@@ -242,7 +242,7 @@ public sealed record PretrainedOptions
     /// <summary>
     /// Where a mixture-of-experts model's experts live (<see cref="ExpertPlacements"/>, plan 37 R1): the placement itself,
     /// handed over (one of <see cref="ExpertPlacements.All"/>: resident, offload, auto; or one of one's own); null takes
-    /// <see cref="ExpertPlacements.Default"/> (IDRAK_MOE_EXPERTS's, else auto). On the CPU every expert stays resident. With
+    /// the one IDRAK_MOE_EXPERTS names (<see cref="ExpertPlacements.PlacementVariable"/>), else auto. On the CPU every expert stays resident. With
     /// <see cref="LazyLayers"/>, each expert is read the first time the router picks it.
     /// <see cref="PretrainedModel.ExpertPlacement"/> says what was chosen.
     /// </summary>
@@ -383,27 +383,10 @@ public sealed class PretrainedModel : IDisposable
     /// </summary>
     public IPretrainedVision? Vision { get; }
 
-    /// <summary>
-    /// The family of <paramref name="families"/> that states <paramref name="name"/> (the name a checkpoint calls itself by)
-    /// among its own names: the list walked in order, each family's names compared, where the checkpoint comes in.
-    /// </summary>
-    private static IPretrainedArchitecture FamilyNamed(IFamilyProvider? families, string name)
-    {
-        foreach (var family in families?.Families ?? [])
-        {
-            foreach (string own in family.Names)
-            {
-                if (string.Equals(own, name, StringComparison.Ordinal))
-                {
-                    return family;
-                }
-            }
-        }
-
-        throw new NotSupportedException(families is null
-            ? $"The checkpoint is a '{name}'; no family was handed over to read it (give PretrainedOptions.Family, or PretrainedOptions.Families to match its name against)."
-            : $"The checkpoint is a '{name}'; none of the families handed over states that name ({string.Join(", ", families.Families.SelectMany(f => f.Names))}).");
-    }
+    // The refusal where none of `families` states `name` (the name a checkpoint calls itself by), naming the names they state.
+    private static NotSupportedException Unstated(IFamilyProvider? families, string name) => new(families is null
+        ? $"The checkpoint is a '{name}'; no family was handed over to read it (give PretrainedOptions.Family, or PretrainedOptions.Families to match its name against)."
+        : $"The checkpoint is a '{name}'; none of the families handed over states that name ({string.Join(", ", families.Families.SelectMany(f => f.Names))}).");
 
     /// <summary>
     /// The library's checkpoint format that opens <paramref name="path"/>, each asked in turn (its own test of the path):
@@ -444,10 +427,15 @@ public sealed class PretrainedModel : IDisposable
         var config = JsonNode.Parse(File.ReadAllText(Path.Combine(folder, "config.json")))!.AsObject();
         string name = options.Architecture ?? (string?)config["architectures"]?[0]
             ?? throw new InvalidDataException("config.json names no architecture; pass PretrainedOptions.Architecture.");
-        var architecture = options.Family ?? FamilyNamed(options.Families, name);
+        // The family stating the checkpoint's name: the families handed over walked here, where the name comes in, each
+        // family's own names compared.
+        var architecture = options.Family ?? options.Families?.Families.FirstOrDefault(f => f.Names.Contains(name, StringComparer.Ordinal)) ?? throw Unstated(options.Families, name);
         // A vision-language checkpoint (one with a vision_config) is read by its own vision family, the one of the families
-        // handed over that states the same name.
-        var visionFamily = config["vision_config"] is JsonObject ? EncoderCheckpoints.Named(options.Families?.VisionFamilies ?? [], f => f.Names, name, "vision") : null;
+        // handed over that states the same name (walked the same way).
+        var visionFamilies = options.Families?.VisionFamilies ?? [];
+        var visionFamily = config["vision_config"] is JsonObject
+            ? visionFamilies.FirstOrDefault(f => f.Names.Contains(name, StringComparer.Ordinal)) ?? throw EncoderCheckpoints.Unstated(visionFamilies, f => f.Names, name, "vision")
+            : null;
 
         using var reader = format.Open(folder);
         if (architecture is ICheckpointFittedArchitecture fitted)
@@ -459,9 +447,23 @@ public sealed class PretrainedModel : IDisposable
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
 
-        // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit.
+        // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit:
+        // the one handed over, else the one IDRAK_WEIGHT_PLACEMENT names (the library's placements walked here, where the
+        // variable's text comes in, each placement's own name compared), else auto.
         var placementTarget = options.Device ?? Idrak.Abstraction.Device.Default;
-        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? options.WeightPlacement ?? WeightPlacements.Default : null;
+        IWeightPlacement? placement = null;
+        if (!options.Deferred && placementTarget.Type != DeviceType.Cpu)
+        {
+            placement = options.WeightPlacement;
+            if (placement is null && Environment.GetEnvironmentVariable(WeightPlacements.PlacementVariable) is { Length: > 0 } placementName)
+            {
+                placement = WeightPlacements.All.FirstOrDefault(p => p.Name.Equals(placementName.Trim(), StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException($"{WeightPlacements.PlacementVariable} {placementName}: no weight placement has that name ({string.Join(", ", WeightPlacements.All.Select(p => p.Name))}).");
+            }
+
+            placement ??= new WeightPlacements.AutoPlacement();
+        }
+
         bool mayLeaveDevice = placement is not null and not WeightPlacements.DevicePlacement;
 
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
@@ -473,7 +475,16 @@ public sealed class PretrainedModel : IDisposable
         {
             expertRequest = AutoWeights.ExpertRequest(spec, loadContext, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceExpertBytes ?? ExpertPlacements.DefaultCacheBytes, options.ColdExpertsOnCpu ?? ExpertPlacements.DefaultColdOnCpu, options.AutoWeightsHeadroom);
-            expertPlan = (options.ExpertPlacement ?? ExpertPlacements.Default).Place(expertRequest);
+            // The one handed over, else the one IDRAK_MOE_EXPERTS names (the library's placements walked here, where the
+            // variable's text comes in, each placement's own name compared), else auto.
+            var expertPlacement = options.ExpertPlacement;
+            if (expertPlacement is null && Environment.GetEnvironmentVariable(ExpertPlacements.PlacementVariable) is { Length: > 0 } expertsName)
+            {
+                expertPlacement = ExpertPlacements.All.FirstOrDefault(p => p.Name.Equals(expertsName.Trim(), StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException($"{ExpertPlacements.PlacementVariable} {expertsName}: no expert placement has that name ({string.Join(", ", ExpertPlacements.All.Select(p => p.Name))}).");
+            }
+
+            expertPlan = (expertPlacement ?? new ExpertPlacements.AutoPlacement()).Place(expertRequest);
             if (expertPlan.Offload && placementTarget.Type == DeviceType.Cpu)
             {
                 expertPlan = expertPlan with { Offload = false, DeviceExperts = spec.Experts, Reason = $"every expert on {placementTarget} (the CPU's memory is the system's)" };
@@ -669,7 +680,8 @@ public sealed class PretrainedModel : IDisposable
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(files);
         options ??= new CreateOptions();
-        var family = FamilyNamed(options.Families, architecture);
+        // The families handed over walked where the architecture's name comes in, each family's own names compared.
+        var family = options.Families?.Families.FirstOrDefault(f => f.Names.Contains(architecture, StringComparer.Ordinal)) ?? throw Unstated(options.Families, architecture);
         var write = family is IConfigWritingArchitecture writing ? writing : throw new NotSupportedException(
             $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can.");
         var tokenizer = files.Tokenizer;
@@ -709,7 +721,9 @@ public sealed class PretrainedModel : IDisposable
         CreatedVision? vision = null;
         if (options.Vision is { } description)
         {
-            var visionFamily = EncoderCheckpoints.Named(options.Families?.VisionFamilies ?? [], f => f.Names, architecture, "vision");
+            var visionFamilies = options.Families?.VisionFamilies ?? [];
+            var visionFamily = visionFamilies.FirstOrDefault(f => f.Names.Contains(architecture, StringComparer.Ordinal))
+                ?? throw EncoderCheckpoints.Unstated(visionFamilies, f => f.Names, architecture, "vision");
             vision = visionFamily.Create(description, spec.Dim, tokenizer, options.Seed);
             foreach (var (key, value) in vision.Config)
             {
@@ -738,7 +752,8 @@ public sealed class PretrainedModel : IDisposable
             decoderFolder = format.Prepare(decoderFolder);
             var decoderConfig = JsonNode.Parse(File.ReadAllText(Path.Combine(decoderFolder, "config.json")))!.AsObject();
             string decoderArchitecture = (string?)decoderConfig["architectures"]?[0] ?? throw new InvalidDataException($"{decoderFolder}/config.json names no architecture.");
-            var decoderFamily = FamilyNamed(options.Families, decoderArchitecture);
+            var decoderFamily = options.Families?.Families.FirstOrDefault(f => f.Names.Contains(decoderArchitecture, StringComparer.Ordinal))
+                ?? throw Unstated(options.Families, decoderArchitecture);
             var decoderSpec = decoderFamily.Spec(decoderConfig, []);
             var mine = (spec with { MaxPositions = 0, Dropout = 0 }).ToJson();
             var theirs = (decoderSpec with { MaxPositions = 0, Dropout = 0 }).ToJson();

@@ -63,7 +63,8 @@ public static class GgufModel
         using var file = GgufFile.Open(path);
         var notes = new List<string>();
         string arch = file.Get("general.architecture", "");
-        var architecture = ArchitectureNamed(families, arch) ?? throw new NotSupportedException(families is null
+        // The GGUF mappings handed over walked here, where the file's general.architecture comes in, each one's own names compared.
+        var architecture = families?.GgufArchitectures.FirstOrDefault(a => a.Names.Contains(arch, StringComparer.Ordinal)) ?? throw new NotSupportedException(families is null
             ? $"{path} is a '{arch}' file; no GGUF families were handed over to read it (give the families, such as Idrak.Text.Plugins' BuiltInFamilies.All)."
             : $"{path} is a '{arch}' file; none of the GGUF families handed over states that name ({string.Join(", ", families.GgufArchitectures.SelectMany(a => a.Names))}).");
 
@@ -98,34 +99,6 @@ public static class GgufModel
         (JsonNode.Parse(File.ReadAllText(Path.Combine(folder, Marker)))?["notes"] as JsonArray ?? []).Select(n => (string?)n ?? "");
 
     internal static ITensorStore OpenTensors(string folder, IFamilyProvider? families) => new GgufTensors(GgufFile.Open(SourceOf(folder)), families);
-
-    // The GGUF mapping of `families` that states the file's general.architecture among its own names, or null.
-    private static IGgufArchitecture? ArchitectureNamed(IFamilyProvider? families, string arch)
-    {
-        foreach (var architecture in families?.GgufArchitectures ?? [])
-        {
-            if (architecture.Names.Contains(arch, StringComparer.Ordinal))
-            {
-                return architecture;
-            }
-        }
-
-        return null;
-    }
-
-    // The family of `families` that states the Hugging Face name among its own names, or null.
-    private static IPretrainedArchitecture? FamilyNamed(IFamilyProvider? families, string name)
-    {
-        foreach (var family in families?.Families ?? [])
-        {
-            if (family.Names.Contains(name, StringComparer.Ordinal))
-            {
-                return family;
-            }
-        }
-
-        return null;
-    }
 
     // The Hugging Face architecture of a file: the family's, or its one with experts when the file has experts.
     private static string HuggingFaceOf(GgufFile file, string arch, IGgufArchitecture architecture) =>
@@ -330,12 +303,16 @@ public static class GgufModel
         {
             _file = file;
             _arch = file.Get("general.architecture", "");
-            var architecture = ArchitectureNamed(families, _arch);
+            // The GGUF mapping stating the file's general.architecture, and the Hugging Face family stating the mapping's name:
+            // the lists handed over walked here, where the file's names come in, each one's own names compared.
+            string arch = _arch;
+            var architecture = families?.GgufArchitectures.FirstOrDefault(a => a.Names.Contains(arch, StringComparer.Ordinal));
             _interleavedQueryKeys = architecture is { InterleavedQueryKeys: true };
             _heads = file.Get($"{_arch}.attention.head_count", 0);
             _kvHeads = file.Get($"{_arch}.attention.head_count_kv", _heads);
             // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
-            var family = architecture is null ? null : FamilyNamed(families, HuggingFaceOf(file, _arch, architecture));
+            string? huggingFace = architecture is null ? null : HuggingFaceOf(file, _arch, architecture);
+            var family = huggingFace is null ? null : families?.Families.FirstOrDefault(f => f.Names.Contains(huggingFace, StringComparer.Ordinal));
             foreach (var (name, info) in file.Tensors)
             {
                 if ((architecture is null ? GgufArchitecture.CommonTensorName(name) : architecture.TensorName(name)) is { } hf)

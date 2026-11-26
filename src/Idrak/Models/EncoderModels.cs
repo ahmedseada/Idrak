@@ -366,27 +366,13 @@ internal static class EncoderCheckpoints
     }
 
     /// <summary>
-    /// The family of <paramref name="families"/> that states <paramref name="name"/> (the name a checkpoint calls itself by)
-    /// among its own names (<paramref name="names"/>): the list walked in order where the checkpoint comes in.
+    /// The refusal where none of <paramref name="families"/> states <paramref name="name"/> (the name a checkpoint calls
+    /// itself by) among its own names (<paramref name="names"/>), naming those the list holds; each loader walks the list
+    /// itself where the checkpoint comes in.
     /// </summary>
-    /// <exception cref="NotSupportedException">None states it (the message names those the list holds).</exception>
-    public static T Named<T>(IReadOnlyList<T> families, Func<T, IReadOnlyList<string>> names, string name, string kind) where T : class
-    {
-        foreach (var family in families)
-        {
-            foreach (string own in names(family))
-            {
-                if (string.Equals(own, name, StringComparison.Ordinal))
-                {
-                    return family;
-                }
-            }
-        }
-
-        throw new NotSupportedException(families.Count == 0
-            ? $"The checkpoint is a '{name}'; no {kind} family was handed over to read it (give the options' Families: Idrak.Text.Plugins' BuiltInFamilies.All, or a package's own list)."
-            : $"The checkpoint is a '{name}'; none of the {kind} families handed over states that name ({string.Join(", ", families.SelectMany(names))}).");
-    }
+    public static NotSupportedException Unstated<T>(IReadOnlyList<T> families, Func<T, IReadOnlyList<string>> names, string name, string kind) => new(families.Count == 0
+        ? $"The checkpoint is a '{name}'; no {kind} family was handed over to read it (give the options' Families: Idrak.Text.Plugins' BuiltInFamilies.All, or a package's own list)."
+        : $"The checkpoint is a '{name}'; none of the {kind} families handed over states that name ({string.Join(", ", families.SelectMany(names))}).");
 }
 
 /// <summary>
@@ -441,8 +427,13 @@ public sealed class PretrainedEncoderModel : IDisposable
     {
         options ??= new PretrainedEncoderOptions();
         var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture, options.Families);
-        var family = EncoderCheckpoints.Named(options.Families?.EncoderFamilies ?? [], f => f.Names, name, "encoder");
-        var pooler = SequencePoolers.Named(options.Pooler ?? family.Pooler(config));             // by its own name, once
+        // The encoder family stating the checkpoint's name, and the pooler the options or the family name: each list walked
+        // here, where the name comes in, each item's own name compared (the pooler found once and kept).
+        var families = options.Families?.EncoderFamilies ?? [];
+        var family = families.FirstOrDefault(f => f.Names.Contains(name, StringComparer.Ordinal)) ?? throw EncoderCheckpoints.Unstated(families, f => f.Names, name, "encoder");
+        string poolerName = options.Pooler ?? family.Pooler(config);
+        var pooler = SequencePoolers.All.FirstOrDefault(p => string.Equals(p.Name, poolerName, StringComparison.Ordinal))
+            ?? throw new NotSupportedException($"No pooler handed over is named '{poolerName}' ({string.Join(", ", SequencePoolers.All.Select(p => p.Name))}).");
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISequenceEncoder encoder;
@@ -545,7 +536,9 @@ public sealed class PretrainedSeq2SeqModel : IDisposable
     {
         options ??= new PretrainedEncoderOptions();
         var (prepared, config, name, format) = EncoderCheckpoints.Read(folder, options.Architecture, options.Families);
-        var family = EncoderCheckpoints.Named(options.Families?.Seq2SeqFamilies ?? [], f => f.Names, name, "encoder-decoder");
+        // The encoder-decoder family stating the checkpoint's name: the list walked here, where the name comes in.
+        var families = options.Families?.Seq2SeqFamilies ?? [];
+        var family = families.FirstOrDefault(f => f.Names.Contains(name, StringComparer.Ordinal)) ?? throw EncoderCheckpoints.Unstated(families, f => f.Names, name, "encoder-decoder");
         var notes = new List<string>();
         notes.AddRange(format.Notes(prepared));
         ISeq2SeqModel model;

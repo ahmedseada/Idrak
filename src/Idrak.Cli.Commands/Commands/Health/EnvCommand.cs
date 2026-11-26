@@ -45,7 +45,8 @@ internal sealed class EnvCommand : Command
 
     public override int Run(CommandContext context)
     {
-        var unknown = context.Positional.Where(n => EnvironmentVariables.Find(n) is null).ToList();
+        // The names given matched here, where they come in: the variables walked, each one's own name compared.
+        var unknown = context.Positional.Where(n => !EnvironmentVariables.All.Any(v => v.Name == n)).ToList();
         if (unknown.Count > 0)
         {
             throw new UsageException($"Not a variable Idrak reads: {string.Join(", ", unknown)} (idrak help env lists them).");

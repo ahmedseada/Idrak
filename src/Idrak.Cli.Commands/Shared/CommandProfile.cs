@@ -67,7 +67,10 @@ internal sealed partial class CommandProfile
         try
         {
             options = ProfileOptions.FromEnvironment();
-            _ = ProfileWriters.Named(options.Format);                             // a writer that is not there fails now, not after the command
+            if (!ProfileWriters.All.Any(w => w.Name.Equals(options.Format, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw ProfileWriters.Unnamed(options.Format);                     // a writer that is not there fails now, not after the command
+            }
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException)
         {

@@ -61,7 +61,9 @@ internal abstract class EnvSaveCommand : Command
     // The variable a name stands for, or a usage error naming the problem.
     protected static EnvironmentVariables.Variable Saveable(string name)
     {
-        var variable = EnvironmentVariables.Find(name.Trim().ToUpperInvariant()) ?? EnvironmentVariables.Find(name.Trim())
+        // The variables walked here, where the name comes in, each one's own name compared (in capitals first, then as given).
+        string given = name.Trim(), upper = given.ToUpperInvariant();
+        var variable = EnvironmentVariables.All.FirstOrDefault(v => v.Name == upper) ?? EnvironmentVariables.All.FirstOrDefault(v => v.Name == given)
             ?? throw new UsageException($"Not a variable Idrak reads: {name} (idrak help env lists them).");
         return SavedEnvironment.WhyNot(variable) is { } why ? throw new UsageException(why + ".") : variable;
     }
@@ -189,7 +191,8 @@ internal sealed class EnvSetCommand : EnvSaveCommand
         context.Write("");
         for (int i = 0; i < Common.Length; i++)
         {
-            var variable = EnvironmentVariables.Find(Common[i])!;
+            string common = Common[i];
+            var variable = EnvironmentVariables.All.First(v => v.Name == common);
             context.Write($"  {i + 1,2}  {variable.Name,-22} {Now(variable, saved),-16} {Cut(variable.Meaning, 70)}");
         }
 
@@ -226,14 +229,17 @@ internal sealed class EnvSetCommand : EnvSaveCommand
             {
                 if (number >= 1 && number <= Common.Length)
                 {
-                    return EnvironmentVariables.Find(Common[number - 1]);
+                    string common = Common[number - 1];
+                    return EnvironmentVariables.All.FirstOrDefault(v => v.Name == common);
                 }
 
                 context.Write($"Pick 1 to {Common.Length}, or type a name.");
                 continue;
             }
 
-            if ((EnvironmentVariables.Find(answer.ToUpperInvariant()) ?? EnvironmentVariables.Find(answer)) is { } exact)
+            // The variables walked here, where the answer comes in, each one's own name compared (in capitals first, then as given).
+            string upper = answer.ToUpperInvariant();
+            if ((EnvironmentVariables.All.FirstOrDefault(v => v.Name == upper) ?? EnvironmentVariables.All.FirstOrDefault(v => v.Name == answer)) is { } exact)
             {
                 if (SavedEnvironment.WhyNot(exact) is { } why)
                 {
@@ -389,7 +395,9 @@ internal sealed class EnvUnsetCommand : EnvSaveCommand
         var removed = new JsonArray();
         foreach (string name in context.Positional)
         {
-            var variable = EnvironmentVariables.Find(name.ToUpperInvariant()) ?? EnvironmentVariables.Find(name)
+            // The variables walked here, where the name comes in, each one's own name compared (in capitals first, then as given).
+            string upper = name.ToUpperInvariant();
+            var variable = EnvironmentVariables.All.FirstOrDefault(v => v.Name == upper) ?? EnvironmentVariables.All.FirstOrDefault(v => v.Name == name)
                 ?? throw new UsageException($"Not a variable Idrak reads: {name} (idrak help env lists them).");
             bool had = saved.Remove(variable.Name);
             context.Write(had ? $"Removed {variable.Name} ({Where(context)})" : $"{variable.Name} was not saved");

@@ -167,14 +167,20 @@ internal static class ModelChoices
     // The expert placement a person's text names: the library's list walked, each placement's own name compared.
     private static Idrak.Models.Abstractions.IExpertPlacement? MoeExpertsOf(string? name)
     {
-        try
+        if (name is null)
         {
-            return name is null ? null : Idrak.Models.Abstractions.ExpertPlacements.Named(name, MoeExpertsOption);
+            return null;
         }
-        catch (ArgumentException ex)
+
+        foreach (var placement in Idrak.Models.Abstractions.ExpertPlacements.All)
         {
-            throw new UsageException(ex.Message);
+            if (string.Equals(placement.Name, name.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return placement;
+            }
         }
+
+        throw new UsageException($"{MoeExpertsOption} {name}: no expert placement has that name ({string.Join(", ", Idrak.Models.Abstractions.ExpertPlacements.All.Select(p => p.Name))}).");
     }
 
     /// <summary>The image preparation an adapter folder was tuned with (<see cref="TuningImages.FileName"/>), or null when it has none.</summary>

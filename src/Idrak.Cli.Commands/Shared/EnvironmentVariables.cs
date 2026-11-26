@@ -563,9 +563,6 @@ internal static class EnvironmentVariables
         new("DOTNET_EventPipeOutputStreaming", Child, "1", "Set for the run idrak trace --stacks traces: the trace written as it comes, so a run stopped early keeps it", ["trace"]),
     ];
 
-    /// <summary>The variable named <paramref name="name"/>, or null.</summary>
-    public static Variable? Find(string name) => All.FirstOrDefault(v => v.Name == name);
-
     /// <summary>What a listing shows for the variable's value: null when not set, "set" for a secret.</summary>
     public static string? Value(Variable variable) => Environment.GetEnvironmentVariable(variable.Name) is { Length: > 0 } value ? variable.Secret ? "set" : value : null;
 
@@ -578,7 +575,8 @@ internal static class EnvironmentVariables
     /// </summary>
     public static string HelpSection(string command, params string[] extra)
     {
-        var variables = For(command).Concat(extra.Select(Find).OfType<Variable>()).DistinctBy(v => v.Name).ToList();
+        // The extra names matched where they come in: the list walked for each, each variable's own name compared.
+        var variables = For(command).Concat(extra.Select(n => All.FirstOrDefault(v => v.Name == n)).OfType<Variable>()).DistinctBy(v => v.Name).ToList();
         var text = new StringBuilder("\n").Append(Messages.T("Environment (idrak help env for all):")).Append('\n');
         if (variables.Count > 8)
         {

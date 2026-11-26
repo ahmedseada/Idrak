@@ -184,7 +184,7 @@ internal abstract partial class DesktopTests : Tests
         string help = ServeCli("serve", "--help").Output;
         Check(help.Contains("7317", StringComparison.Ordinal) && help.Contains("-p 11434", StringComparison.Ordinal) && help.Contains(ServeOptions.PortVariable, StringComparison.Ordinal)
               && help.Contains("serve.port", StringComparison.Ordinal), $"serve's help names the default, the variable, the config key and -p 11434: {help}");
-        Check(Idrak.Cli.Shared.EnvironmentVariables.Find(ServeOptions.PortVariable) is { Group: "The tool" } variable && variable.Default.Contains("7317", StringComparison.Ordinal)
+        Check(Idrak.Cli.Shared.EnvironmentVariables.All.FirstOrDefault(v => v.Name == ServeOptions.PortVariable) is { Group: "The tool" } variable && variable.Default.Contains("7317", StringComparison.Ordinal)
               && variable.Commands.Contains("serve") && variable.Commands.Contains("ping"), "IDRAK_PORT in the environment table, with its default");
         foreach (string name in new[] { "ui", "api", "ping", "server ps", "server stop" })
         {

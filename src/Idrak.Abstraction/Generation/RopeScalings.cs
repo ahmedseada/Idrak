@@ -242,34 +242,23 @@ public static class RopeScalings
             return null;
         }
 
+        // The methods walked here, where the configuration's name comes in, each one's own names compared.
+        var method = methods.FirstOrDefault(m => m.Names.Contains(type, StringComparer.OrdinalIgnoreCase)) ?? throw Unstated(type, methods);
         var parameters = (JsonObject)ropeScaling.DeepClone();
         parameters.Remove("type");
         parameters.Remove("rope_type");
         parameters["max_position_embeddings"] ??= maxPositions;
-        return new RopeScaling(Named(type, methods), parameters);
+        return new RopeScaling(method, parameters);
     }
 
     /// <summary>
-    /// The method of <paramref name="methods"/> that states <paramref name="name"/> (a configuration's or a saved spec's
-    /// text) among its own names, ignoring case: the list walked in turn where the text comes in.
+    /// The refusal of a RoPE scaling name (a configuration's or a saved spec's text) that none of <paramref name="methods"/>
+    /// states among its own names, naming the names they state; each reader walks the methods itself where the text comes in.
     /// </summary>
-    /// <exception cref="NotSupportedException">No method states the name.</exception>
-    public static IRopeScalingMethod Named(string name, IReadOnlyList<IRopeScalingMethod> methods)
+    public static NotSupportedException Unstated(string name, IReadOnlyList<IRopeScalingMethod> methods)
     {
-        ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(methods);
-        foreach (var method in methods)
-        {
-            foreach (string own in method.Names)
-            {
-                if (own.Equals(name, StringComparison.OrdinalIgnoreCase))
-                {
-                    return method;
-                }
-            }
-        }
-
-        throw new NotSupportedException($"The RoPE scaling '{name}' is none of the methods handed over ({string.Join(", ", methods.SelectMany(m => m.Names))}); "
+        return new($"The RoPE scaling '{name}' is none of the methods handed over ({string.Join(", ", methods.SelectMany(m => m.Names))}); "
             + "a family whose models scale their own way hands over its method (Idrak.Text.Plugins' Llama gives \"llama3\"), or remove rope_scaling to use the model within its original context.");
     }
 

@@ -99,13 +99,13 @@ internal abstract partial class Tests
         Check(none is { Offload: true, DeviceExperts: 1 }, $"no room: still one a layer ({none})");
         Check(new ExpertPlacements.ResidentPlacement().Place(Request(1 * Mb)) is { Offload: false, DeviceExperts: 8 }, "resident keeps every expert on the device");
 
-        // Each placement states its own name; a person's text is matched against them where it comes in, and with none the
-        // default (auto, or IDRAK_MOE_EXPERTS's) is reached directly.
+        // Each placement states its own name, no two alike; a person's text is matched against them where it comes in (the
+        // command line's --moe-experts, the load reading IDRAK_MOE_EXPERTS), the list walked there ("weight placement" checks
+        // the command line's).
         Check(ExpertPlacements.All.Select(p => p.Name).SequenceEqual([ExpertPlacements.Resident, ExpertPlacements.Offload, ExpertPlacements.Auto])
-              && ExpertPlacements.Named(" Offload ", "--moe-experts") is ExpertPlacements.OffloadPlacement
-              && (Environment.GetEnvironmentVariable(ExpertPlacements.PlacementVariable) is { Length: > 0 } || ExpertPlacements.Default is ExpertPlacements.AutoPlacement),
-            "the placements by their own names, auto by default");
-        ThrowsNaming<ArgumentException>(() => ExpertPlacements.Named("gpu", "--moe-experts"), "an expert placement no placement names", "resident, offload, auto");
+              && ExpertPlacements.All.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == ExpertPlacements.All.Count
+              && ExpertPlacements.All[1] is ExpertPlacements.OffloadPlacement && ExpertPlacements.All[2] is ExpertPlacements.AutoPlacement,
+            "the placements state their own names");
         Check(ExpertPlacements.ParseCacheMegabytes("64", "x") == 64 * Mb && ExpertPlacements.ParseCacheMegabytes(" ", "x") is null
               && !ExpertPlacements.ParseCold(null, "x") && !ExpertPlacements.ParseCold("copy", "x") && ExpertPlacements.ParseCold("CPU", "x"), "the settings' values");
         foreach (var (bad, parse) in new (string, Action)[] { ("-3", () => ExpertPlacements.ParseCacheMegabytes("-3", "IDRAK_MOE_DEVICE_EXPERTS_MB")), ("gpu", () => ExpertPlacements.ParseCold("gpu", "IDRAK_MOE_COLD")) })

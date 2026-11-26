@@ -1435,7 +1435,9 @@ internal sealed class TuneTool(ToolConsole console)
             DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
             // Training moves no expert between memories: every expert stays resident (plan 37, R1).
             ExpertPlacement = training ? new Idrak.Models.Abstractions.ExpertPlacements.ResidentPlacement()
-                : moeExperts is null ? null : Idrak.Models.Abstractions.ExpertPlacements.Named(moeExperts, "--moe-experts"),     // by its own name
+                : moeExperts?.Trim() is not { } experts ? null                       // the library's list walked here, each placement's own name compared
+                : Idrak.Models.Abstractions.ExpertPlacements.All.FirstOrDefault(p => p.Name.Equals(experts, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException($"--moe-experts {moeExperts}: no expert placement has that name ({string.Join(", ", Idrak.Models.Abstractions.ExpertPlacements.All.Select(p => p.Name))})."),
             Families = Idrak.Vision.Plugins.BuiltInVisionFamilies.All,
             ChatTemplateReader = Idrak.Text.JinjaChatTemplate.Reader,
         });

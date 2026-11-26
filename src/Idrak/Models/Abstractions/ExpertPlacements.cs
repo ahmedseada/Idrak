@@ -84,8 +84,9 @@ public interface IExpertPlacement
 /// - <see cref="AutoPlacement"/> (<see cref="Auto"/>): resident when the model fits the measured free device memory, else
 ///   offload.
 /// Each is its own class stating its name, in one fixed list (<see cref="All"/>); a person's or a variable's text
-/// (IDRAK_MOE_EXPERTS) is matched against their names where it comes in (<see cref="Named"/>), and with none the default
-/// (<see cref="Default"/>) is reached directly.
+/// (<c>--moe-experts</c>, <see cref="PlacementVariable"/>) is matched against their names where it comes in (the command
+/// line and the load reading the variable each walk the list, each placement's own name compared), and with none auto is
+/// reached directly.
 /// </summary>
 public static class ExpertPlacements
 {
@@ -100,29 +101,6 @@ public static class ExpertPlacements
 
     /// <summary>The library's placements, one immutable list in source: resident, offload, auto.</summary>
     public static IReadOnlyList<IExpertPlacement> All { get; } = Array.AsReadOnly<IExpertPlacement>([new ResidentPlacement(), new OffloadPlacement(), new AutoPlacement()]);
-
-    /// <summary>The placement a load takes when none is handed over: the one of <see cref="All"/> IDRAK_MOE_EXPERTS names, else <see cref="AutoPlacement"/>, reached directly.</summary>
-    public static IExpertPlacement Default => Environment.GetEnvironmentVariable(PlacementVariable) is { Length: > 0 } name ? Named(name, PlacementVariable) : All[2];
-
-    /// <summary>
-    /// The placement of <paramref name="placements"/> (<see cref="All"/> when null) whose own name is <paramref name="name"/>
-    /// (ignoring case and spaces around it): the list walked where a person's or a variable's text comes in.
-    /// </summary>
-    /// <exception cref="ArgumentException">No placement has the name (the message names <paramref name="where"/> and theirs).</exception>
-    public static IExpertPlacement Named(string name, string where, IReadOnlyList<IExpertPlacement>? placements = null)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        placements ??= All;
-        foreach (var placement in placements)
-        {
-            if (placement.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return placement;
-            }
-        }
-
-        throw new ArgumentException($"{where} {name}: no expert placement has that name ({string.Join(", ", placements.Select(p => p.Name))}).", nameof(name));
-    }
 
     /// <summary>Resident when the model fits the device's free memory, else offload.</summary>
     public const string Auto = "auto";

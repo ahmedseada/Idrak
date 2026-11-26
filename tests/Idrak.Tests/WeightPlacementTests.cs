@@ -88,24 +88,37 @@ internal abstract partial class DesktopTests : Tests
         Check(WeightPlacements.ParseDeviceLayers("12", "x") == 12 && WeightPlacements.ParseDeviceLayers("auto", "x") is null && WeightPlacements.ParseDeviceLayers(null, "x") is null && bad,
             "device layers: a count, auto or nothing; anything else names where it came from");
 
-        // Each placement states its own name; a person's or a variable's text is matched against them where it comes in, and
-        // with none the default (auto, or IDRAK_WEIGHT_PLACEMENT's) is reached directly.
+        // Each placement states its own name, no two alike; a person's or a variable's text is matched against them where it
+        // comes in (the load reading IDRAK_WEIGHT_PLACEMENT, on a device other than the CPU), the list walked there.
         Check(WeightPlacements.All.Select(p => p.Name).SequenceEqual([WeightPlacements.AllOnDevice, WeightPlacements.Split, WeightPlacements.Stream, WeightPlacements.Auto])
-              && WeightPlacements.Named("SPLIT", "x") is WeightPlacements.SplitPlacement && WeightPlacements.Named("stream ", "x") is WeightPlacements.StreamPlacement
-              && (Environment.GetEnvironmentVariable(WeightPlacements.PlacementVariable) is { Length: > 0 } || WeightPlacements.Default is WeightPlacements.AutoPlacement),
-            "the placements by their own names, auto by default");
+              && WeightPlacements.All.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == WeightPlacements.All.Count
+              && WeightPlacements.All[1] is WeightPlacements.SplitPlacement && WeightPlacements.All[3] is WeightPlacements.AutoPlacement,
+            "the placements state their own names");
+
+        // The command line's --moe-experts: the expert placements walked where the text comes in, each one's own name
+        // compared (any case, spaces around it), a name none states refused naming the option and theirs.
+        var run = Idrak.Cli.CommandTable.All.First(c => c.Name == "run");
+        string config = Path.Combine(TempFolder(), "config.json");
+        IExpertPlacement? Chosen(string experts)
+        {
+            var options = new Dictionary<string, List<string>> { ["--config"] = [config], ["--moe-experts"] = [experts] };
+            using var context = new Idrak.Cli.CommandContext(run, [], options, [], new StringWriter(), new StringWriter());
+            return Idrak.Cli.Shared.ModelChoices.Choose(context, "model").MoeExperts;
+        }
+
         string unnamed = "";
         try
         {
-            WeightPlacements.Named("half", WeightPlacements.PlacementVariable);
+            Chosen("gpu");
         }
-        catch (ArgumentException e)
+        catch (Idrak.Cli.UsageException e)
         {
             unnamed = e.Message;
         }
 
-        Check(unnamed.Contains(WeightPlacements.PlacementVariable, StringComparison.Ordinal) && unnamed.Contains("device, split, stream, auto", StringComparison.Ordinal),
-            $"a name no placement states refused naming where it came from and theirs: {unnamed}");
+        Check(Chosen(" Offload ") is ExpertPlacements.OffloadPlacement && Chosen("RESIDENT") is ExpertPlacements.ResidentPlacement
+              && unnamed.Contains("--moe-experts gpu", StringComparison.Ordinal) && unnamed.Contains("resident, offload, auto", StringComparison.Ordinal),
+            $"--moe-experts by the placements' own names; a name none states refused naming the option and theirs: {unnamed}");
     }
 
     private static void LayersFollowMemory(Device device)

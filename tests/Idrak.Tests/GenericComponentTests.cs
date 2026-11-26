@@ -55,7 +55,7 @@ internal abstract partial class DesktopTests : Tests
 
     private static void GenericTimingsProbe(Device device)
     {
-        var probe = ProfileProbes.Named("timings");
+        var probe = ProfileProbes.All.Single(p => p.Name == "timings");
         Check(probe.Intrusive && probe.Supports(device) && ProfileProbes.Describe().Contains("timings", StringComparison.Ordinal),
             "the timings probe is the library's, intrusive, on every device");
         bool synchronize = Telemetry.SynchronizeForTiming;

@@ -293,20 +293,6 @@ def generate():
     for _, op, *_rest in named:
         o.append(f"        {op},")
     o.append("    ];")
-    o.append("")
-    o.append("    /// <summary>The operation named <paramref name=\"name\"/> (as <see cref=\"Operation.Name\"/>, any case), or null.</summary>")
-    o.append("    public static Operation? Find(string name)")
-    o.append("    {")
-    o.append("        foreach (var operation in All)")
-    o.append("        {")
-    o.append("            if (operation.Name.Equals(name, StringComparison.OrdinalIgnoreCase))")
-    o.append("            {")
-    o.append("                return operation;")
-    o.append("            }")
-    o.append("        }")
-    o.append("")
-    o.append("        return null;")
-    o.append("    }")
     o.append("}")
 
     d = [HEADER, "using System.Runtime.CompilerServices;", "using Idrak.Abstraction.Operations;", "", "namespace Idrak.Abstraction.Devices;", ""]

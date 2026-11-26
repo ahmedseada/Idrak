@@ -153,20 +153,6 @@ public static class ProgressReporters
     /// <summary>The reporters' names, in order.</summary>
     public static IReadOnlyCollection<string> Names { get; } = [.. Reporters.Select(r => r.Name)];
 
-    // The reporter named `name` (any case), or null.
-    private static Reporter? Named(ReadOnlySpan<char> name)
-    {
-        foreach (var reporter in Reporters)
-        {
-            if (name.Equals(reporter.Name, StringComparison.OrdinalIgnoreCase))
-            {
-                return reporter;
-            }
-        }
-
-        return null;
-    }
-
     // A reporter of the list: its name, a line for listings, and how it is made for one piece of work.
     private sealed class Reporter(string name, string summary, Func<ProgressRequest, IProgressReporter> create)
     {
@@ -193,8 +179,9 @@ public static class ProgressReporters
             return null;
         }
 
+        // The reporters walked here, where the variable's text comes in, each one's own name compared (any case).
         string name = value.Trim();
-        return Named(name) is not null ? name
+        return Reporters.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ? name
             : throw new ArgumentException($"{EnvironmentVariable}={value} is not a progress reporter (reporters: {string.Join(", ", Names)}).");
     }
 
@@ -231,8 +218,10 @@ public static class ProgressReporters
     public static IProgressReporter Start(string label, long? total = null, ProgressUnit unit = ProgressUnit.Items, ProgressOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(label);
+        // The reporter the options or the variable name: the reporters walked here, each one's own name compared (any case).
         string name = Choose(options);
-        var reporter = Named(name) ?? throw new NotSupportedException($"No progress reporter '{name}' (reporters: {string.Join(", ", Names)}).");
+        var reporter = Reporters.FirstOrDefault(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            ?? throw new NotSupportedException($"No progress reporter '{name}' (reporters: {string.Join(", ", Names)}).");
         return reporter.Create(new ProgressRequest(label, total, unit, options?.Output ?? Console.Error, options?.Interval));
     }
 

@@ -298,7 +298,10 @@ public sealed class ProfileReport
     public void Write(TextWriter output, string? format = null)
     {
         ArgumentNullException.ThrowIfNull(output);
-        ProfileWriters.Named(format ?? Options.Format).Write(this, output);
+        // The writer the text names (the options' or the caller's): the writers walked here, each one's own name compared.
+        string name = format ?? Options.Format;
+        var writer = ProfileWriters.All.FirstOrDefault(w => w.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? throw ProfileWriters.Unnamed(name);
+        writer.Write(this, output);
     }
 
     /// <summary>Writes the report with <see cref="ProfileOptions.Format"/> to <see cref="ProfileOptions.Output"/> (appended), or to the console.</summary>
@@ -434,7 +437,11 @@ public static class Profiler
         ArgumentNullException.ThrowIfNull(workload);
         options ??= new ProfileOptions();
         ArgumentOutOfRangeException.ThrowIfLessThan(options.WarmRuns, 1, nameof(options));
-        var named = options.Probes is { } names ? names.Select(ProfileProbes.Named).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Named)];
+        // The probes the options name, matched here, where their text comes in (the list walked for each name, each probe's
+        // own name compared); none named: every probe.
+        List<IProfileProbe> named = options.Probes is { } names
+            ? [.. names.Select(n => ProfileProbes.All.FirstOrDefault(p => p.Name.Equals(n, StringComparison.OrdinalIgnoreCase)) ?? throw ProfileProbes.Unnamed(n))]
+            : [.. ProfileProbes.All];
         var probes = named.Where(p => p.Supports(device)).ToList();
         var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
         var runs = new List<ProfileRun>();
@@ -515,11 +522,15 @@ public static class Profiler
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentNullException.ThrowIfNull(device);
         options ??= new ProfileOptions();
-        var named = options.Probes is { } names ? names.Select(ProfileProbes.Named).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Named).Where(p => p.Watched)];
+        // The probes the options name, matched here, where their text comes in (the list walked for each name, each probe's
+        // own name compared); none named: every probe a watched run takes.
+        List<IProfileProbe> named = options.Probes is { } names
+            ? [.. names.Select(n => ProfileProbes.All.FirstOrDefault(p => p.Name.Equals(n, StringComparison.OrdinalIgnoreCase)) ?? throw ProfileProbes.Unnamed(n))]
+            : [.. ProfileProbes.All.Where(p => p.Watched)];
         var probes = named.Where(p => p.Supports(device)).ToList();
         var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
         var notes = new List<string>();
-        if (options.Probes is null && ProfileProbes.Names.Where(n => !ProfileProbes.Named(n).Watched).ToList() is { Count: > 0 } left)
+        if (options.Probes is null && ProfileProbes.All.Where(p => !p.Watched).Select(p => p.Name).ToList() is { Count: > 0 } left)
         {
             notes.Add($"not measured in a watched run (they would change it): {string.Join(", ", left)}; name them in IDRAK_PROFILE_PROBES to add them");
         }
@@ -688,39 +699,29 @@ public sealed class ProfileSession : IDisposable
 /// telemetry's operation and layer events ("operation time", ms; "operation calls"; "operation shapes"; "layer calls"),
 /// with the tables "operation timings" and "layer timings", slowest first. Nothing is subscribed outside its run.</item>
 /// </list>
-/// The profiler holds the probes directly, in a fixed list, and picks them by their own names (<see cref="Named"/>).
+/// The probes are one fixed list (<see cref="All"/>); the profiler matches the names its options give where they come in,
+/// walking the list and comparing each probe's own name.
 /// </summary>
 public static class ProfileProbes
 {
-    // The probes, each under its own name: a fixed list, built once. The bandwidth first: its one measurement (before the
-    // first run) is done before the other probes start theirs.
-    private static readonly IProfileProbe[] Probes =
+    /// <summary>
+    /// The probes, each stating its own name: one immutable list in source. The bandwidth first: its one measurement
+    /// (before the first run) is done before the other probes start theirs.
+    /// </summary>
+    public static IReadOnlyList<IProfileProbe> All { get; } = Array.AsReadOnly<IProfileProbe>(
     [
         new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
         new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
-    ];
+    ]);
 
     /// <summary>The probes' names, in order.</summary>
-    public static IReadOnlyCollection<string> Names { get; } = [.. Probes.Select(p => p.Name)];
+    public static IReadOnlyCollection<string> Names { get; } = [.. All.Select(p => p.Name)];
 
-    /// <summary>The probe named <paramref name="name"/> (any case).</summary>
-    /// <exception cref="NotSupportedException">No probe has that name: the message names the probes.</exception>
-    public static IProfileProbe Named(string name)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        foreach (var probe in Probes)
-        {
-            if (probe.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-            {
-                return probe;
-            }
-        }
-
-        throw new NotSupportedException($"No profile probe '{name}' (probes: {string.Join(", ", Names)}).");
-    }
+    /// <summary>The refusal of a probe name (a person's text) that no probe of <see cref="All"/> has, naming the probes.</summary>
+    public static NotSupportedException Unnamed(string name) => new($"No profile probe '{name}' (probes: {string.Join(", ", Names)}).");
 
     /// <summary>Each probe as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Probes.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
+    public static string Describe() => string.Join("\n", All.Select(p => $"{p.Name}{(p.Intrusive ? " (a run of its own)" : "")}: {p.Summary}"));
 
     // The bandwidth measured on each device, kept with its backend.
     internal static readonly ConditionalWeakTable<Backend, StrongBox<double>> Bandwidths = [];

@@ -20,8 +20,9 @@ namespace Idrak.Abstraction.Diagnostics;
 /// <item>"json" (<see cref="Json"/>): the whole report as one JSON object on one line (so a file of several reports is
 /// JSON Lines): the options, the notes, every run's values and tables, and the summary.</item>
 /// </list>
-/// Numbers are written the same on every machine (the invariant culture). The profiler holds the writers directly, in a
-/// fixed list, and picks one by its own name (<see cref="Named"/>).
+/// Numbers are written the same on every machine (the invariant culture). The writers are one fixed list
+/// (<see cref="All"/>); a person's text naming one is matched where it comes in (the report's writing walks the list, each
+/// writer's own name compared).
 /// </summary>
 public static class ProfileWriters
 {
@@ -37,30 +38,17 @@ public static class ProfileWriters
     /// <summary>The JSON writer's name: "json".</summary>
     public const string Json = "json";
 
-    // The writers, each under its own name: a fixed list, built once.
-    private static readonly IProfileWriter[] Writers = [new TableWriter(markdown: false), new TableWriter(markdown: true), new CsvWriter(), new JsonWriter()];
+    /// <summary>The writers, each stating its own name: one immutable list in source (table, markdown, csv, json).</summary>
+    public static IReadOnlyList<IProfileWriter> All { get; } = Array.AsReadOnly<IProfileWriter>([new TableWriter(markdown: false), new TableWriter(markdown: true), new CsvWriter(), new JsonWriter()]);
 
     /// <summary>The writers' names, in order.</summary>
-    public static IReadOnlyCollection<string> Names { get; } = [.. Writers.Select(w => w.Name)];
+    public static IReadOnlyCollection<string> Names { get; } = [.. All.Select(w => w.Name)];
 
-    /// <summary>The writer named <paramref name="name"/> (any case).</summary>
-    /// <exception cref="NotSupportedException">No writer has that name: the message names the writers.</exception>
-    public static IProfileWriter Named(string name)
-    {
-        ArgumentNullException.ThrowIfNull(name);
-        foreach (var writer in Writers)
-        {
-            if (writer.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
-            {
-                return writer;
-            }
-        }
-
-        throw new NotSupportedException($"No profile writer '{name}' (writers: {string.Join(", ", Names)}).");
-    }
+    /// <summary>The refusal of a writer name (a person's text) that no writer of <see cref="All"/> has, naming the writers.</summary>
+    public static NotSupportedException Unnamed(string name) => new($"No profile writer '{name}' (writers: {string.Join(", ", Names)}).");
 
     /// <summary>Each writer as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Writers.Select(w => $"{w.Name}: {w.Summary}"));
+    public static string Describe() => string.Join("\n", All.Select(w => $"{w.Name}: {w.Summary}"));
 
     internal static string Number(double? value) => value is { } v ? ProfileProbes.Text(v) : "";
 

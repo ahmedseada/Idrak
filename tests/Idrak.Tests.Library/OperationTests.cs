@@ -83,7 +83,10 @@ internal abstract partial class Tests
 
         var minimal = MinimalBackend.Instance;
         Check(Kernels.Chain(minimal).All(c => c.Source == c.Operation.Fallback), "a device with memory and copies only takes each operation's fallback");
-        Check(Ops.Find("softmax") == Ops.Softmax && Ops.Find("MaxPoolBackward2") == Ops.MaxPoolBackward2 && Ops.Find("nothing") is null, "Ops.Find");
+        Check(Ops.All.Select(o => o.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() == Ops.All.Count
+              && Ops.All.Single(o => o.Name.Equals("softmax", StringComparison.OrdinalIgnoreCase)) == Ops.Softmax
+              && Ops.All.Single(o => o.Name.Equals("MaxPoolBackward2", StringComparison.OrdinalIgnoreCase)) == Ops.MaxPoolBackward2,
+            "each operation states its own name, no two alike (a text matched by walking Ops.All where it comes in)");
     }
 
     internal static void NormStatsPrecision(Device device)
