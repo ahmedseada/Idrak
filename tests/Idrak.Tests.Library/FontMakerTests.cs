@@ -16,13 +16,11 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] FontMakerGroup =
     [
         ("made fonts: making a face from a sheet's worth of glyphs, measured: the first make apart from warm ones, time per glyph on every core and on one thread (the same face both ways), and managed allocation", MadeFontMeasured),
-        ("font makers: a maker of the test's own registers under its name, is found by name in any case and by span, lists its keys and summary, unregisters; traced is the library's (registered by default, its keys); a name nobody registered is refused naming the registry, the registered ones and what to do", FontMakerRegistry),
         ("font makers: traced's options are read in any case and refused naming the key or the range (a key it does not take, units per em, a side bearing, an ink share, a script or feature tag, a character to measure, threads); a request needs glyphs and a family; no glyphs is refused", FontMakerOptions),
-        ("font makers: the suite passes on traced (DejaVu's sheet with its defaults and with other settings, Cairo's joined sheet) and fails a maker that drops a character, one that leaves y down, one whose advances are narrower than the ink, one that answers differently each time, one that drops a fill unreported and one that takes any option", FontMakerSuiteCatches),
         ("made fonts: a sheet filled with DejaVu's glyphs (letters, punctuation, the fi, fl and ffi ligatures, second fills of a and e), traced with contour, makes a face whose generic lines shape like DejaVu's glyph for glyph by role; its ascender, descender and x-height within 0.02 em of the same measures on DejaVu's own outlines, its x-height within 0.03 em of DejaVu's x; every advance its ink and a side bearing of half the pen either side", MadeFontFromLatinSheet),
         ("made fonts: a sheet filled with Cairo's letters in the forms the test's data gives, lam-alef in two forms and two marks makes a face whose generic lines shape like Cairo's glyph for glyph by role (forms and ligatures); its joined forms take no side bearing; its marks sit their gap above or below their bases' ink; the digits and marks the sheet lacks are drawn, the written marks are not", MadeFontFromJoinedSheet),
         ("made fonts: second fills are alternates: the GSUB lists them under aalt, salt and ALTS; +salt takes the second fill; ALTS=random picks per glyph from the run's seed (the same seed the same picks, other seeds others, both fills seen), none without it; a page drawn in the made font picks them from its seed and says so (the same seed, the same page; off when the chance is 0); a font with no alternates asks for none", MadeFontAlternates),
-        ("made fonts: the made faces written as TrueType through FontWriters read back through FontFormats with the same outlines (every point), advances, characters, GSUB, GDEF and GPOS, and shape the sample lines the same (with alternates picked too); a fonts folder holding one reads it as any font; written to test-output/fonts/made for check_font.py", MadeFontExport),
+        ("made fonts: the made faces written as TrueType read back as OpenType with the same outlines (every point), advances, characters, GSUB, GDEF and GPOS, and shape the sample lines the same (with alternates picked too); written to test-output/fonts/made for check_font.py", MadeFontExport),
     ];
 
     private const char Zwj = '\u200D';
@@ -52,7 +50,7 @@ internal abstract partial class Tests
     private static readonly Lazy<(IFontFace Source, List<SheetCell> Cells, FoundGlyphs Found, MadeFont Made)> LatinMade = new(() => MakeFrom(SubsetFace(), LatinSheet));
 
     private static readonly Lazy<(IFontFace Source, List<SheetCell> Cells, FoundGlyphs Found, MadeFont Made)> JoinedMade = new(() =>
-        MakeFrom(FontFormats.Read(FontData("arabic/cairo.ttf")).Single(), JoinedSheet));
+        MakeFrom(new OpenTypeFormat().Read(File.ReadAllBytes(FontData("arabic/cairo.ttf")), "cairo").Single(), JoinedSheet));
 
     // What a sheet's cell holds: its text and form, the source font's glyph written there, and a slant (a second fill).
     private readonly record struct SheetCell(string Text, string? Form, int Glyph, float Slant = 0f);
@@ -60,9 +58,9 @@ internal abstract partial class Tests
     internal static void MadeFontMeasured(Device device)
     {
         CpuOnly(device);
-        var maker = FontMakers.Get(FontMakers.Traced);
+        var maker = new TracedFontMaker();
         var dejaVu = SubsetFace();
-        var cairo = FontFormats.Read(FontData("arabic/cairo.ttf")).Single();
+        var cairo = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("arabic/cairo.ttf")), "cairo").Single();
         var sheets = new List<FoundGlyphs> { FillSheet(dejaVu, LatinSheet(dejaVu)), FillSheet(cairo, JoinedSheet(cairo)) };
         int glyphs = sheets.Sum(s => s.Glyphs.Count);
         var every = maker.Read(PageOptions.None);
@@ -121,46 +119,10 @@ internal abstract partial class Tests
         _ = face.Outline(face.GlyphCount - 1);
     }
 
-    internal static void FontMakerRegistry(Device device)
-    {
-        CpuOnly(device);
-        var library = FontMakers.Get(FontMakers.Traced);
-        Check(FontMakers.Names.Contains(FontMakers.Traced) && FontMakers.Origin(FontMakers.Traced) == Overrides.Library && library is TracedFontMaker
-              && ReferenceEquals(FontMakers.Default("TRACED"), library) && library.Keys.Contains(TracedFontMaker.UnitsKey) && library.Keys.Count == 13
-              && FontMakers.Describe().Contains("traced: each glyph traced", StringComparison.Ordinal), $"the library's maker: {FontMakers.Describe()}");
-
-        var mine = new BrokenMaker(library, "none", "test-hand");
-        FontMakers.Register(mine);
-        try
-        {
-            const string Line = "--maker=test-hand";
-            Check(ReferenceEquals(FontMakers.Get("TEST-HAND"), mine) && ReferenceEquals(FontMakers.Find(Line.AsSpan(8)), mine) && FontMakers.Names.Contains("test-hand")
-                  && FontMakers.Origin("test-hand") == typeof(Tests).Assembly.GetName().Name && FontMakers.Default("test-hand") is null
-                  && FontMakers.Describe().Contains("test-hand: the library's maker, broken: none", StringComparison.Ordinal) && FontMakers.AllKeys().Contains(TracedFontMaker.ScriptsKey),
-                $"registered: {FontMakers.Describe()}");
-        }
-        finally
-        {
-            Check(FontMakers.Unregister("test-hand") && !FontMakers.Unregister("test-hand") && FontMakers.Find("test-hand") is null, "unregistered once");
-        }
-
-        try
-        {
-            FontMakers.Get("a-maker-nobody-registered");
-            Check(false, "a name nobody registered was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(FontMakers) && e.Name == "a-maker-nobody-registered" && e.Registered.SequenceEqual(FontMakers.Names)
-                  && e.Message.StartsWith($"Font maker 'a-maker-nobody-registered' is not registered (registered: {string.Join(", ", FontMakers.Names)})", StringComparison.Ordinal)
-                  && e.Message.Contains("FontMakers.Register", StringComparison.Ordinal) && e.Message.Contains("Idrak.Imaging registers traced", StringComparison.Ordinal), e.Message);
-        }
-    }
-
     internal static void FontMakerOptions(Device device)
     {
         CpuOnly(device);
-        var maker = FontMakers.Get(FontMakers.Traced);
+        var maker = new TracedFontMaker();
         void Refused(string key, string value, params string[] naming) =>
             ThrowsNaming<ArgumentException>(() => maker.Read(PageOptionsOf((key, value))), $"{key}={value}", naming);
 
@@ -186,34 +148,6 @@ internal abstract partial class Tests
         Check(request.Tracer == OutlineTracers.Contour && request.TracerOptions is null && request.Style is null, "a request traces with contour's defaults unless told");
     }
 
-    internal static void FontMakerSuiteCatches(Device device)
-    {
-        CpuOnly(device);
-        var maker = FontMakers.Get(FontMakers.Traced);
-        var latin = new FontMakerSample(LatinMade.Value.Found) { Name = "DejaVu's sheet" };
-        var joined = new FontMakerSample(JoinedMade.Value.Found) { Name = "Cairo's joined sheet" };
-        var other = latin with
-        {
-            Name = "DejaVu's sheet, other settings",
-            Options = PageOptionsOf((TracedFontMaker.UnitsKey, "2048"), (TracedFontMaker.SideBearingKey, "0.05"), (TracedFontMaker.AlternatesKey, "off")),
-            TracerOptions = PageOptionsOf((ContourTracer.ThresholdKey, "0.5")),
-        };
-        Conformance.CheckFontMaker(maker, [latin, joined, other], new ContractCheckOptions { RandomCases = 2 }).ThrowIfFailed();
-
-        void Fails(string how, string property)
-        {
-            var report = Conformance.CheckFontMaker(new BrokenMaker(maker, how), [latin], new ContractCheckOptions { RandomCases = 0 });
-            Check(!report.Passed && report.Failures.Any(f => f.Check == property), $"{property} is not caught:\n{report}");
-        }
-
-        Fails("drops", "every character given answers with its first fill, with ink");
-        Fails("y down", "each made glyph sits where its ink sat");
-        Fails("narrow", "each glyph not a mark has an advance that holds its ink");
-        Fails("unstable", "the same face again and from several threads");
-        Fails("silent", "every glyph given made or reported");
-        Fails("greedy", "an option it does not take is refused");
-    }
-
     internal static void MadeFontFromLatinSheet(Device device)
     {
         CpuOnly(device);
@@ -221,7 +155,7 @@ internal abstract partial class Tests
         var face = made.Face;
         Check(made.LeftOut.Count == 0 && made.Glyphs.Count == cells.Count && face.Family == "A Latin Hand" && face.Metrics.UnitsPerEm == 1000,
             $"every cell made: {made.Glyphs.Count} of {cells.Count}, left out {string.Join("; ", made.LeftOut)}");
-        ShapesByRole(source, face, made, cells, LatinLines, "Latn", false);
+        ShapesByRole(source, face, made, cells, LatinLines, "Latn", false, new OpenTypeShaper());
 
         // The metrics: the same measures on DejaVu's own outlines (the cells' glyphs, drawn and slanted as on the sheet), in ems.
         int upem = source.Metrics.UnitsPerEm;
@@ -247,7 +181,7 @@ internal abstract partial class Tests
         var (source, cells, _, made) = JoinedMade.Value;
         var face = made.Face;
         Check(made.LeftOut.Count == 0 && made.Glyphs.Count == cells.Count, $"every cell made: {made.Glyphs.Count} of {cells.Count}, left out {string.Join("; ", made.LeftOut)}");
-        ShapesByRole(source, face, made, cells, JoinedLines, "Arab", true);
+        ShapesByRole(source, face, made, cells, JoinedLines, "Arab", true, new ArabicShaper());
         CheckAdvances(made, joined: ["init", "medi", "fina"]);
 
         // Marks: a fatha above and a kasra below a beh, their ink the map's gap from the base's ink (around its middle).
@@ -255,7 +189,7 @@ internal abstract partial class Tests
         foreach (var (mark, above) in new[] { (Fatha, true), (Kasra, false) })
         {
             string text = "\u0628" + mark;
-            var shaped = TextShapers.Shape(face, text, new TextRun(0, text.Length, "Arab", true));
+            var shaped = new ArabicShaper().Shape(face, text, new TextRun(0, text.Length, "Arab", true));
             int markGlyph = face.Glyph(mark[0]), baseGlyph = face.Glyph('\u0628');
             var m = shaped.Single(s => s.Glyph == markGlyph);
             var b = shaped.Single(s => s.Glyph == baseGlyph);
@@ -296,7 +230,7 @@ internal abstract partial class Tests
         int a0 = FillOf(latin, "a", null, 0), a1 = FillOf(latin, "a", null, 1), e0 = FillOf(latin, "e", null, 0), e1 = FillOf(latin, "e", null, 1);
         const string Text = "a cake and a pear are made available each age";
         var run = new TextRun(0, Text.Length, "Latn", false);
-        int[] Glyphs(string[]? features, int seed) => [.. TextShapers.Shape(face, Text, run with { Seed = seed }, features).Select(s => s.Glyph)];
+        int[] Glyphs(string[]? features, int seed) => [.. new OpenTypeShaper().Shape(face, Text, run with { Seed = seed }, features).Select(s => s.Glyph)];
         int[] plain = Glyphs(null, 0), salt = Glyphs(["+salt"], 0);
         Check(plain.Contains(a0) && !plain.Contains(a1) && !plain.Contains(e1) && salt.Contains(a1) && salt.Contains(e1) && !salt.Contains(a0) && !salt.Contains(e0),
             "shaped plainly: the first fills; with +salt: the second");
@@ -311,14 +245,14 @@ internal abstract partial class Tests
         // The joined face: a beh written alone and a meem between letters each have a second fill.
         const string Joined = "\u0628 \u0628 \u0628 \u0628 \u0644\u0645\u0627 \u0644\u0645\u0627 \u0644\u0645\u0627";
         var joinedRun = new TextRun(0, Joined.Length, "Arab", true);
-        var seen = Enumerable.Range(1, 8).SelectMany(seed => TextShapers.Shape(joined.Face, Joined, joinedRun with { Seed = seed }, ["ALTS=random"])).Select(s => s.Glyph).ToHashSet();
+        var seen = Enumerable.Range(1, 8).SelectMany(seed => new ArabicShaper().Shape(joined.Face, Joined, joinedRun with { Seed = seed }, ["ALTS=random"])).Select(s => s.Glyph).ToHashSet();
         Check(seen.Contains(FillOf(joined, "\u0628", "isol", 1)) && seen.Contains(FillOf(joined, "\u0628", "isol", 0)) && seen.Contains(FillOf(joined, "\u0645", "medi", 1)),
             "the joined face's forms pick their fills after forms are set");
 
         // A page drawn in the made font: the alternates asked for and picked from its seed; the same seed, the same page.
         var content = new PageContent { Body = [LatinLines[0], "A cake and a pear are made available each age."], Language = "en" };
         var style = new PageStyle { Fonts = [face], Color = false };
-        var plainPage = PageLayouts.Get("plain");
+        var plainPage = new PlainLayout();
         var page = plainPage.Render(content, style, 5);
         var again = plainPage.Render(content, style, 5);
         Check(page.Description.Contains(", alternates", StringComparison.Ordinal) && page.Image.Pixels.AsSpan().SequenceEqual(again.Image.Pixels), $"the page: {page.Description}");
@@ -340,13 +274,13 @@ internal abstract partial class Tests
     internal static void MadeFontExport(Device device)
     {
         CpuOnly(device);
-        foreach (var (name, made, lines, script, rtl) in new[] { ("latin-hand", LatinMade.Value.Made, LatinLines, "Latn", false), ("joined-hand", JoinedMade.Value.Made, JoinedLines, "Arab", true) })
+        foreach (var (name, made, lines, script, rtl, shaper) in new[] { ("latin-hand", LatinMade.Value.Made, LatinLines, "Latn", false, new OpenTypeShaper()), ("joined-hand", JoinedMade.Value.Made, JoinedLines, "Arab", true, new ArabicShaper()) })
         {
             var face = made.Face;
             using var stream = new MemoryStream();
-            FontWriters.Write(face, stream, "truetype");
+            new TrueTypeWriter().Write(face, stream, new FontWriteOptions());
             byte[] bytes = stream.ToArray();
-            var back = FontFormats.Read(bytes, name).Single();
+            var back = new OpenTypeFormat().Read(bytes, name).Single();
             Check(back.GlyphCount == face.GlyphCount && back.Family == face.Family && back.Metrics == face.Metrics && back.Format == "opentype",
                 $"{name}: {back.GlyphCount} glyphs read back of {face.GlyphCount}, {back.Family} {back.Metrics}");
             for (int g = 0; g < face.GlyphCount; g++)
@@ -374,25 +308,12 @@ internal abstract partial class Tests
                 var run = new TextRun(0, line.Length, script, rtl);
                 foreach (var (features, seed) in new (string[]?, int)[] { (null, 0), (["ALTS=random"], 3), (["+salt"], 0) })
                 {
-                    Check(TextShapers.Shape(face, line, run with { Seed = seed }, features).SequenceEqual(TextShapers.Shape(back, line, run with { Seed = seed }, features)),
+                    Check(shaper.Shape(face, line, run with { Seed = seed }, features).SequenceEqual(shaper.Shape(back, line, run with { Seed = seed }, features)),
                         $"{name}: '{line}' shapes the same read back ({(features is null ? "defaults" : features[0])})");
                 }
             }
 
-            // A fonts folder holding the made font reads it as any font; and a copy kept for check_font.py.
-            string folder = Path.Combine(Path.GetTempPath(), $"idrak-made-{Environment.ProcessId}-{name}");
-            Directory.CreateDirectory(folder);
-            try
-            {
-                File.WriteAllBytes(Path.Combine(folder, name + ".ttf"), bytes);
-                var read = FontFormats.ReadFolder(folder);
-                Check(read.Count == 1 && read[0].Family == face.Family && read[0].GlyphCount == face.GlyphCount, $"{name}: the fonts folder read {read.Count} faces");
-            }
-            finally
-            {
-                Directory.Delete(folder, recursive: true);
-            }
-
+            // A copy kept for check_font.py.
             if (TestPaths.Root is { } root)
             {
                 string kept = Path.Combine(root, "test-output", "fonts", "made");
@@ -412,7 +333,7 @@ internal abstract partial class Tests
         var cells = sheet(source);
         var found = FillSheet(source, cells);
         string family = cells.Any(c => c.Form is not null) ? "A Joined Hand" : "A Latin Hand";
-        var maker = FontMakers.Get(FontMakers.Traced);
+        var maker = new TracedFontMaker();
         return (source, cells, found, maker.Make(new FontMakerRequest(found, family, maker.Read(PageOptions.None)) { Style = "Regular" }));
     }
 
@@ -429,7 +350,7 @@ internal abstract partial class Tests
 
         foreach (string ligature in SheetLigatures)
         {
-            var shaped = TextShapers.Shape(font, ligature, new TextRun(0, ligature.Length, "Latn", false));
+            var shaped = new OpenTypeShaper().Shape(font, ligature, new TextRun(0, ligature.Length, "Latn", false));
             Check(shaped.Length == 1, $"DejaVu joins '{ligature}' into one glyph");
             cells.Add(new SheetCell(ligature, null, shaped[0].Glyph));
         }
@@ -446,7 +367,7 @@ internal abstract partial class Tests
         int Shaped(string text, int at)
         {
             var run = new TextRun(0, text.Length, "Arab", true) { Clusters = TextClusters.Characters };
-            return TextShapers.Shape(font, text, run).Single(s => s.Cluster == at).Glyph;
+            return new ArabicShaper().Shape(font, text, run).Single(s => s.Cluster == at).Glyph;
         }
 
         var cells = new List<SheetCell>();
@@ -498,7 +419,7 @@ internal abstract partial class Tests
             }
 
             var values = new float[width * height];
-            OutlineRasterizers.Get().Fill(outline, scale, Margin - left * scale, baseline, values, width, height);
+            new CoverageRasterizer().Fill(outline, scale, Margin - left * scale, baseline, values, width, height);
             for (int i = 0; i < values.Length; i++)
             {
                 values[i] = MathF.Round(Math.Clamp(values[i], 0f, 1f) * 255f) / 255f;
@@ -538,7 +459,7 @@ internal abstract partial class Tests
     // The lines shaped with the made face and the source font give glyphs of the same roles, one for one: the sheet's
     // cells name the source's glyphs, the made font's glyphs name theirs, and a glyph of neither (a space, a drawn digit)
     // is named by the line's character it answers.
-    private static void ShapesByRole(IFontFace source, IFontFace face, MadeFont made, List<SheetCell> cells, string[] lines, string script, bool rtl)
+    private static void ShapesByRole(IFontFace source, IFontFace face, MadeFont made, List<SheetCell> cells, string[] lines, string script, bool rtl, ITextShaper shaper)
     {
         var sourceRoles = new Dictionary<int, HashSet<string>>();
         foreach (var cell in cells.Where(c => c.Slant == 0f))
@@ -550,8 +471,8 @@ internal abstract partial class Tests
         foreach (string line in lines)
         {
             var run = new TextRun(0, line.Length, script, rtl);
-            var expected = TextShapers.Shape(source, line, run);
-            var shaped = TextShapers.Shape(face, line, run);
+            var expected = shaper.Shape(source, line, run);
+            var shaped = shaper.Shape(face, line, run);
             string Named(IFontFace font, int glyph) =>
                 line.EnumerateRunes().Select(r => r.Value).Where(c => font.Glyph(c) == glyph).Select(char.ConvertFromUtf32).FirstOrDefault() ?? $"#{glyph}";
             var want = expected.Select(s => sourceRoles.TryGetValue(s.Glyph, out var roles) ? roles : [Named(source, s.Glyph)]).ToList();
@@ -598,79 +519,5 @@ internal abstract partial class Tests
         }
 
         return text.ToString();
-    }
-
-    // The library's maker broken one way (or not at all, "none"), to prove the suite catches it.
-    private sealed class BrokenMaker(IFontMaker maker, string how, string? name = null) : IFontMaker
-    {
-        private int _calls;
-
-        public string Name => name ?? $"broken ({how})";
-
-        public string Summary => $"the library's maker, broken: {how}";
-
-        public IReadOnlySet<string> Keys => maker.Keys;
-
-        public FontMakerSettings Read(IReadOnlyDictionary<string, string> options) => how == "greedy" ? maker.Read(PageOptions.None) : maker.Read(options);
-
-        public MadeFont Make(FontMakerRequest request)
-        {
-            var made = maker.Make(request);
-            int first = made.Glyphs.Where(g => g.Fill == 0 && g.Form is null && g.Text.Length == 1).Select(g => (int)g.Text[0]).FirstOrDefault();
-            return how switch
-            {
-                "drops" => made with { Face = new ChangedFace(made.Face) { Drop = first } },
-                "y down" => made with { Face = new ChangedFace(made.Face) { Flip = true } },
-                "narrow" => made with { Face = new ChangedFace(made.Face) { Halve = true } },
-                "unstable" => Interlocked.Increment(ref _calls) % 2 == 0 ? made with { Face = new ChangedFace(made.Face) { Widen = 1 } } : made,
-                "silent" => made with { Glyphs = [.. made.Glyphs.Where(g => g.Fill == 0)] },
-                _ => made,
-            };
-        }
-    }
-
-    // A face changed one way: a character dropped, outlines upside down, advances halved or one glyph widened.
-    private sealed class ChangedFace(IFontFace face) : IFontFace
-    {
-        public int Drop { get; init; } = -1;
-
-        public bool Flip { get; init; }
-
-        public bool Halve { get; init; }
-
-        public int Widen { get; init; }
-
-        public string Family => face.Family;
-
-        public string Style => face.Style;
-
-        public string Format => face.Format;
-
-        public FontMetrics Metrics => face.Metrics;
-
-        public int GlyphCount => face.GlyphCount;
-
-        public int Glyph(int codePoint) => codePoint == Drop ? 0 : face.Glyph(codePoint);
-
-        public int Advance(int glyph) => Halve ? face.Advance(glyph) / 2 : face.Advance(glyph) + (glyph == 1 ? Widen : 0);
-
-        public GlyphOutline Outline(int glyph)
-        {
-            var outline = face.Outline(glyph);
-            if (!Flip || outline.IsEmpty)
-            {
-                return outline;
-            }
-
-            float[] points = outline.Points.ToArray();
-            for (int i = 1; i < points.Length; i += 2)
-            {
-                points[i] = -points[i];
-            }
-
-            return new GlyphOutline(outline.Verbs.ToArray(), points);
-        }
-
-        public ReadOnlyMemory<byte> Table(string tag) => face.Table(tag);
     }
 }

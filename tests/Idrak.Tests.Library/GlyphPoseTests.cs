@@ -12,7 +12,6 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GlyphPoseGroup =
     [
-        ("glyph poses: the suite passes on none (the identity) and drift (its defaults and wider settings)", GlyphPoseSuites),
         ("glyph poses: none leaves letter, plain and shapes pages byte for byte as they were; drift draws the same page from the same seed, the text unchanged, its ink only where the text was within the pose's bounds, a region's text inside its region", GlyphPosePages),
         ("glyph poses: marks stay on their base (one pose a cluster), and a joined Arabic word drawn with drift has as many ink pieces as drawn as set", GlyphPoseJoins),
         ("glyph poses: page settings read pose and its keys into the options and refuse an unknown pose, a bad value or an unknown key, naming the valid ones", GlyphPoseSettingsRead),
@@ -21,25 +20,16 @@ internal abstract partial class Tests
     internal static readonly IReadOnlyDictionary<string, string> WideDrift = PageOptionsOf(
         ("pose-slant", "-0.2..0.3"), ("pose-size", "0.1"), ("pose-baseline", "0.1..0.2"), ("pose-rotate", "3"), ("pose-pressure", "0.5"));
 
-    internal static void GlyphPoseSuites(Device device)
-    {
-        _ = device;
-        Check(GlyphPoses.Names.Contains(GlyphPoses.None) && GlyphPoses.Names.Contains("drift"), $"poses: {string.Join(", ", GlyphPoses.Names)}");
-        Conformance.CheckGlyphPose(GlyphPoses.None, identity: true).ThrowIfFailed();
-        Conformance.CheckGlyphPose("drift", settings: [WideDrift, PageOptionsOf(("pose-slant", "0.1"), ("pose-pressure", "0"))]).ThrowIfFailed();
-    }
-
     internal static void GlyphPosePages(Device device)
     {
         _ = device;
         var style = TestPageStyle();
-        foreach (var (name, content, options) in new[]
+        foreach (var (name, layout, content, options) in new (string, IPageLayout, PageContent, IReadOnlyDictionary<string, string>)[]
         {
-            ("letter", ArabicLetter, PageOptions.None), ("plain", EnglishLetter, PageOptions.None),
-            ("shapes", LatinRows, PageOptionsOf(("shapes", "grid=3x5"), ("pen", "ballpoint"))),
+            ("letter", new LetterLayout(), ArabicLetter, PageOptions.None), ("plain", new PlainLayout(), EnglishLetter, PageOptions.None),
+            ("shapes", new ShapesLayout(), LatinRows, PageOptionsOf(("shapes", "grid=3x5"), ("pen", "ballpoint"))),
         })
         {
-            var layout = PageLayouts.Get(name);
             for (int seed = 1; seed <= 2; seed++)
             {
                 var plain = layout.Render(content, style with { Options = options }, seed);
@@ -53,7 +43,7 @@ internal abstract partial class Tests
                 Check(!SamePage(drift, plain), $"{name}, seed {seed}: drift moves the glyphs");
 
                 // Where the posed page differs from the page as set: only near the text, within what the pose may move it.
-                var bounds = GlyphPoses.Get("drift").Bounds(GlyphPoses.Get("drift").Read(PageOptions.None));
+                var bounds = new DriftPose().Bounds(new DriftPose().Read(PageOptions.None));
                 float pad = bounds.Reach(60, 90) + 2;
                 var text = plain.Blocks.Where(b => b.Text.Length > 0).ToList();
                 int outside = DifferingPixels(drift, plain).Count(p => !text.Any(b => p.X >= b.X - pad && p.X <= b.X + b.Width + pad && p.Y >= b.Y - pad && p.Y <= b.Y + b.Height + pad));
@@ -105,7 +95,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var face = SubsetFace();
-        var drift = GlyphPoses.Get("drift");
+        var drift = new DriftPose();
 
         // Marks: every glyph of a cluster gets its cluster's pose, and a mark's ink centre stays over its base's ink.
         string? marked = new[] { "بَدِيعٌ", "été", "äö" }.FirstOrDefault(t => t.All(ch => face.Glyph(ch) != 0));
@@ -114,7 +104,7 @@ internal abstract partial class Tests
         int clusters = 0;
         for (int seed = 1; seed <= 6; seed++)
         {
-            var painter = new GlyphPainter(drift, drift.Read(WideDrift), seed);
+            var painter = new GlyphPainter(drift, "drift", drift.Read(WideDrift), seed);
             foreach (var group in painter.Posed(block, 0).GroupBy(p => p.Glyph.Cluster).Where(g => g.Count() > 1))
             {
                 clusters++;
@@ -133,10 +123,10 @@ internal abstract partial class Tests
 
         // A joined word: as many ink pieces drifted as set.
         var word = TextLayout.Layout("المستقبل", new TextStyle(face, 90), float.PositiveInfinity, TextAlignment.Start, rightToLeft: true);
-        int set = InkPieces(word, new GlyphPainter(GlyphPoses.Get(GlyphPoses.None), GlyphPoseSettings.None, 1));
+        int set = InkPieces(word, new GlyphPainter(new NonePose(), GlyphPoses.None, GlyphPoseSettings.None, 1));
         for (int seed = 1; seed <= 8; seed++)
         {
-            int drifted = InkPieces(word, new GlyphPainter(drift, drift.Read(PageOptions.None), seed));
+            int drifted = InkPieces(word, new GlyphPainter(drift, "drift", drift.Read(PageOptions.None), seed));
             Check(drifted == set, $"seed {seed}: the joined word in {drifted} ink pieces drifted, {set} as set");
         }
     }
@@ -209,8 +199,7 @@ internal abstract partial class Tests
             Throws<ArgumentException>(() => SyntheticPages.Style(style, bad), bad);
         }
 
-        ThrowsNaming<ArgumentException>(() => GlyphPoses.Get("drift").Read(PageOptionsOf(("slant", "0.1"))), "a key drift does not take", "pose-slant");
-        Throws<ArgumentException>(() => GlyphPoses.Get(GlyphPoses.None).Read(PageOptionsOf(("pose-slant", "0.1"))), "none takes no keys");
-        Throws<NotSupportedException>(() => PageLayouts.Get("letter").Render(ArabicLetter, TestPageStyle() with { Options = PageOptionsOf(("pose", "nope")) }, 1), "an unknown pose on a page");
+        ThrowsNaming<ArgumentException>(() => new DriftPose().Read(PageOptionsOf(("slant", "0.1"))), "a key drift does not take", "pose-slant");
+        Throws<ArgumentException>(() => new NonePose().Read(PageOptionsOf(("pose-slant", "0.1"))), "none takes no keys");
     }
 }

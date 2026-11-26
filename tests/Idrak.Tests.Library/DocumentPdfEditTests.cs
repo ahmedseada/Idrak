@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Data.Pdf;
+using Idrak.Imaging;
 
 // Plan 28, phase D11: editing in place and saving (incremental updates, a clean rewrite, page operations, merging and
 // splitting, content over a page, saving encrypted), checked on the D11 samples tools/documents/make_fixtures.py writes
@@ -43,7 +44,7 @@ internal abstract partial class Tests
     private static byte[] PdfEditSave(IDocument source, Action<IDocumentEditor> edits, DocumentSaveMode mode, DocumentWriteOptions? options = null)
     {
         using var destination = new MemoryStream();
-        using (var editor = DocumentWriters.Get("pdf").Edit(source, destination, options ?? PdfWriteDefaults))
+        using (var editor = new PdfWriter().Edit(source, destination, options ?? PdfWriteDefaults))
         {
             edits(editor);
             editor.Save(mode);
@@ -299,7 +300,7 @@ internal abstract partial class Tests
 
         using (var destination = new MemoryStream())
         {
-            using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
             {
                 foreach (var page in result)
                 {
@@ -368,7 +369,7 @@ internal abstract partial class Tests
             var texts = expected["text"]!.AsArray().Select(t => (string)t!).ToList();
             var rotations = expected["rotations"]!.AsArray().Select(r => (int)r!).ToList();
             using var destination = new MemoryStream();
-            using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
             {
                 foreach (int page in pages)
                 {
@@ -394,7 +395,7 @@ internal abstract partial class Tests
         // Duplicates: merge-b copied from two copies of its file holds its image and its font program once.
         using var copy = PdfEditOpen(b, "merge-b, a second copy");
         using var twice = new MemoryStream();
-        using (var builder = DocumentWriters.Create(twice, "pdf", PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(twice, PdfWriteDefaults))
         {
             builder.CopyPage(mergeB, 0);
             builder.CopyPage(copy, 1);
@@ -596,7 +597,7 @@ internal abstract partial class Tests
         foreach (var (label, options) in new[] { ("modern", PdfWriteDefaults), ("classic", PdfWriteDefaults with { Version = "1.4" }), ("unpacked", PdfWriteDefaults with { ObjectStreams = false }) })
         {
             using var destination = new MemoryStream();
-            using (var builder = DocumentWriters.Create(destination, "pdf", options))
+            using (var builder = new PdfWriter().Create(destination, options))
             {
                 builder.Encrypt(encryption);
                 builder.Info = new DocumentInfo { Title = Secret, Author = "The office team" };
@@ -815,7 +816,7 @@ internal abstract partial class Tests
         var sample = PdfEditSample("merge-a");
         byte[] bytes = File.ReadAllBytes(sample.Path);
         using var source = PdfEditOpen(bytes, "merge-a");
-        using (var editor = DocumentWriters.Get("pdf").Edit(source, new MemoryStream(), PdfWriteDefaults))
+        using (var editor = new PdfWriter().Edit(source, new MemoryStream(), PdfWriteDefaults))
         {
             Check(ReferenceEquals(editor.Source, source) && editor.PageCount == 2, "the editor's source and pages");
             ExpectRefusal<ArgumentException>(() => editor.SetField("status", "Approved"), "no form field 'status'", "a field the document does not have");
@@ -839,24 +840,15 @@ internal abstract partial class Tests
 
         using (var other = new PdfWrittenDocument(PdfEditOpen(bytes, "another reader's")))
         {
-            ExpectRefusal<NotSupportedException>(() => DocumentWriters.Get("pdf").Edit(other, new MemoryStream(), PdfWriteDefaults), "another reader opened", "a document another reader opened");
+            ExpectRefusal<NotSupportedException>(() => new PdfWriter().Edit(other, new MemoryStream(), PdfWriteDefaults), "another reader opened", "a document another reader opened");
         }
 
-        using (var builder = DocumentWriters.Create(new MemoryStream(), "pdf", PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(new MemoryStream(), PdfWriteDefaults))
         {
             builder.AddPage(100, 100);
             ExpectRefusal<InvalidOperationException>(() => builder.Encrypt(new DocumentEncryption()), "before the first page", "encrypted after the first page");
             ExpectRefusal<ArgumentOutOfRangeException>(() => builder.CopyPage(source, 2), "", "a page copied that is not there");
             builder.Finish();
-        }
-
-        // A document opened by its path: the registry's wrapper looked through.
-        using (var byPath = DocumentFormats.Open(sample.Path))
-        {
-            Check(DocumentFormats.Unwrap(byPath) is PdfDocument && !ReferenceEquals(DocumentFormats.Unwrap(byPath), byPath) && ReferenceEquals(DocumentFormats.Unwrap(source), source), "Unwrap looks through the registry's wrapper");
-            byte[] edited = PdfEditSave(byPath, e => e.RotatePage(0, 180), DocumentSaveMode.Incremental);
-            using var read = PdfEditOpen(edited, "edited by its path");
-            Check(read.ReadPage(0, DocumentParts.None).Rotation == 180, "a document opened by its path edited");
         }
     }
 
@@ -877,7 +869,7 @@ internal abstract partial class Tests
             // Without the large set (make_fixtures.py --large): a file of 1,500 pages of text and a small image each.
             var face = SubsetFace();
             using var destination = new MemoryStream();
-            using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
             {
                 var image = PdfLineArt(3, 60, 40);
                 for (int i = 0; i < 1500; i++)
@@ -928,7 +920,7 @@ internal abstract partial class Tests
         long Update(DocumentSaveMode mode)
         {
             using var counter = new PdfByteCounter();
-            using (var editor = DocumentWriters.Get("pdf").Edit(source, counter, PdfWriteDefaults))
+            using (var editor = new PdfWriter().Edit(source, counter, PdfWriteDefaults))
             {
                 editor.SetInfo(new DocumentInfo { Title = "A one-field change" });
                 editor.Save(mode);
@@ -941,7 +933,7 @@ internal abstract partial class Tests
         long Merge(PdfDocument first, PdfDocument second)
         {
             using var counter = new PdfByteCounter();
-            using (var builder = DocumentWriters.Create(counter, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(counter, PdfWriteDefaults))
             {
                 foreach (var document in new[] { first, second })
                 {

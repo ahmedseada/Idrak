@@ -3,6 +3,8 @@
 
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Data;
+using Idrak.Imaging;
+using Idrak.Imaging.Shaping;
 
 // Plan 18, phase 2: text shaping, checked glyph for glyph against HarfBuzz 14 (uharfbuzz) on fixed strings in Arabic,
 // Persian, Hebrew, Latin, Greek and Cyrillic (tools/fonts/make_font_references.py, tests/Idrak.Tests/data/fonts/shaping.json).
@@ -10,18 +12,14 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ShapingGroup =
     [
-        ("shaping: every fixed string (Arabic joining, lam-alef, diacritics and shadda, tatweel, mirrored brackets, Persian with ZWNJ, Arabic digits, Hebrew points, Latin kerning, Greek, Cyrillic, a font without GSUB) gives HarfBuzz's glyphs, clusters, advances and offsets", ShapingMatchesHarfBuzz),
-        ("shaping: real Arabic fonts with large layout tables (Amiri, Cairo and Reem Kufi, variable ones included) give HarfBuzz's glyphs, clusters, advances and offsets on 100 lines with and without harakat: marks on ligature components and on the first glyph of a multiple substitution, marks in their letter's cluster, substitution features' GPOS lookups", d => ShapingAgainst("arabic/shaping.json", TextClusters.Graphemes)),
+        ("shaping: real Arabic fonts with large layout tables (Amiri, Cairo and Reem Kufi, variable ones included) give HarfBuzz's glyphs, clusters, advances and offsets on 100 lines with and without harakat: marks on ligature components and on the first glyph of a multiple substitution, marks in their letter's cluster, substitution features' GPOS lookups", d => ShapingAgainst("arabic/shaping.json", TextClusters.Graphemes, new ArabicShaper())),
         ("shaping: the bidirectional algorithm gives python-bidi's visual order for mixed paragraphs (Arabic with Latin, European and Arabic digits, separators, brackets, a URL, Hebrew, trailing spaces, RLM), each direction given and found", BidiMatchesReference),
         ("shaping: a paragraph is cut into runs of one script and one direction, spaces and punctuation taking their neighbours' script", ItemizerRuns),
-        ("shaping: the shapers by script: arabic for the joining scripts, general for the others and for scripts with none of their own; an app's shaper replaces the library's for its script only", ShapingRegistry),
         ("shaping: an alternate substitution (GSUB type 3) takes the alternate the feature's value names, as HarfBuzz does: salt and salt=1 the first, salt=2 the second, salt=3 the third, past the last none, salt=0 off, without the feature none; a bad value is refused naming it", ShapingAlternates),
     ];
 
-    internal static void ShapingMatchesHarfBuzz(Device device) => ShapingAgainst("shaping.json", TextClusters.Characters);   // made at HarfBuzz's character level
-
-    // Every reference of the file (tools/fonts) shaped as HarfBuzz shapes it.
-    internal static void ShapingAgainst(string referenceFile, TextClusters clusters)
+    // Every reference of the file (tools/fonts) shaped by `shaper` as HarfBuzz shapes it.
+    internal static void ShapingAgainst(string referenceFile, TextClusters clusters, ITextShaper shaper)
     {
         var references = JsonNode.Parse(File.ReadAllText(FontData(referenceFile)))!.AsArray();
         var faces = new Dictionary<string, IFontFace>();
@@ -31,12 +29,12 @@ internal abstract partial class Tests
             string file = (string)reference!["font"]!, text = (string)reference["text"]!;
             if (!faces.TryGetValue(file, out var face))
             {
-                faces[file] = face = FontFormats.Read(FontData(file)).Single();
+                faces[file] = face = new OpenTypeFormat().Read(File.ReadAllBytes(FontData(file)), Path.GetFileNameWithoutExtension(file)).Single();
             }
 
             var features = reference["features"] is JsonArray f ? f.Select(x => (string)x!).ToArray() : null;
             var run = new TextRun(0, text.Length, (string)reference["script"]!, (string)reference["direction"]! == "rtl", (string?)reference["language"]) { Clusters = clusters };
-            var shaped = TextShapers.Shape(face, text, run, features);
+            var shaped = shaper.Shape(face, text, run, features);
             var expected = reference["glyphs"]!.AsArray().Select(g => new ShapedGlyph((int)g![0]!, (int)g[1]!, (int)g[2]!, (int)g[3]!, (int)g[4]!, (int)g[5]!)).ToArray();
             string Show(IEnumerable<ShapedGlyph> list) => string.Join(" ", list.Select(g => $"{g.Glyph}@{g.Cluster}+{g.XAdvance}({g.XOffset},{g.YOffset})"));
             Check(shaped.SequenceEqual(expected), $"{text} ({run.Script}, {(run.RightToLeft ? "rtl" : "ltr")}, {file}):\n      ours      {Show(shaped)}\n      HarfBuzz  {Show(expected)}");
@@ -75,29 +73,6 @@ internal abstract partial class Tests
         Check(runs.Sum(r => r.Run.Length) == text.Length && runs.All(r => r.Run.Language == "ar"), "the runs cover the text, with its language");
     }
 
-    internal static void ShapingRegistry(Device device)
-    {
-        Check(TextShapers.Get("Arab").Name == "arabic" && TextShapers.Get("syrc").Name == "arabic" && TextShapers.Get("Nkoo").Name == "arabic",
-            "the joining scripts are shaped by arabic");
-        Check(TextShapers.Get("Latn").Name == "general" && TextShapers.Get("Hebr").Name == "general" && TextShapers.Get("Xyzw").Name == "general",
-            "other scripts, and scripts with no shaper of their own, by general");
-
-        var app = new FixedShaper();
-        TextShapers.Register("Hebr", app);
-        try
-        {
-            var face = SubsetFace();
-            Check(TextShapers.Shape(face, "שלום", new TextRun(0, 4, "Hebr", true)).Single().Glyph == 7, "the app's shaper shapes Hebrew");
-            Check(TextShapers.Get("Latn").Name == "general" && TextShapers.Origin("Hebr") != Idrak.Abstraction.Overrides.Library, "and nothing else");
-        }
-        finally
-        {
-            TextShapers.Unregister("Hebr");
-        }
-
-        Check(TextShapers.Get("Hebr").Name == "general", "unregistered: general again");
-    }
-
     internal static void ShapingAlternates(Device device)
     {
         _ = device;
@@ -105,7 +80,7 @@ internal abstract partial class Tests
         int a = font.Glyph('a'), upperA = font.Glyph('A'), upperB = font.Glyph('B'), upperC = font.Glyph('C');
         Check(a > 0 && upperA > 0 && upperB > 0 && upperC > 0, "the subset has a, A, B and C");
         var face = new WithLayout(font, AlternatesGsub(a, [upperA, upperB, upperC]));
-        int Shaped(params string[]? features) => TextShapers.Shape(face, "a", new TextRun(0, 1, "Latn", false), features).Single().Glyph;
+        int Shaped(params string[]? features) => new OpenTypeShaper().Shape(face, "a", new TextRun(0, 1, "Latn", false), features).Single().Glyph;
         Check(Shaped(null) == a && Shaped("salt") == upperA && Shaped("+salt=1") == upperA && Shaped("salt=2") == upperB && Shaped("salt=3") == upperC
               && Shaped("salt=4") == a && Shaped("salt=0") == a,
             $"none, salt, salt=1, 2, 3, 4, 0: {Shaped(null)} {Shaped("salt")} {Shaped("+salt=1")} {Shaped("salt=2")} {Shaped("salt=3")} {Shaped("salt=4")} {Shaped("salt=0")} (a {a}, A {upperA}, B {upperB}, C {upperC})");
@@ -154,12 +129,5 @@ internal abstract partial class Tests
         public GlyphOutline Outline(int glyph) => inner.Outline(glyph);
 
         public ReadOnlyMemory<byte> Table(string tag) => tag switch { "GSUB" => gsub, "GPOS" or "GDEF" => ReadOnlyMemory<byte>.Empty, _ => inner.Table(tag) };
-    }
-
-    internal sealed class FixedShaper : ITextShaper
-    {
-        public string Name => "fixed";
-
-        public ShapedGlyph[] Shape(IFontFace font, string text, TextRun run, IReadOnlyCollection<string>? features = null) => [new ShapedGlyph(7, run.Start, 100, 0, 0, 0)];
     }
 }

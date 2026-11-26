@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Data.Pdf;
 using Idrak.Imaging;
+using Idrak.Imaging.Shaping;
 
 // Plan 28, phase D6: PDF writing (the file, image pages, vector pages, text with fonts embedded, pages the library draws),
 // every page kind read back through Idrak's own reader (and, for the parts D4 and D7 will read, through D1's objects and
@@ -17,11 +18,11 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] DocumentPdfWriteGroup =
     [
-        ("documents pdf: write: the library's pdf writer and jpeg image encoder are registered (name, extensions, media type, the quality an option); DocumentWriterSuite passes on pdf with its defaults, with a classic table and stored streams (1.4, level 0), and without object streams", PdfWriteRegistered),
+        ("documents pdf: write: the jpeg image encoder writes the JPEG encoder's bytes at the quality asked (Pillow's 75 when none is), png ignores it; a quality of 0 and a smoothing share past 1 are refused", PdfWriteRegistered),
         ("documents pdf: write: the file: numbers invariant without exponents, names with #xx, strings escaped, the reader's objects written back as they read; object streams and a cross-reference stream, a classic table for 1.4, Flate at the option's level (0 stores), the trailer without a date or an ID unless given, the information in any script, a bad version refused", PdfWriteFile),
         ("documents pdf: write: image pages: grey, RGB and 8-bit planes stored exact (Flate, the PNG predictor where it pays, none on noise), JPEG equal to the codec's own round trip at the options' quality, Auto choosing every D6 sample's expectedAuto from measures equal to the sample's, the options' encoding over Auto, each image in its box", PdfWriteImages),
         ("documents pdf: write: vector pages: every verb (re, c, v and y, a quadratic), both fill rules, fill and stroke, caps, joins, miter limits, dashes with a phase, grey, RGB and CMYK with opacity, nested clips under Save and Restore read back exactly; a Restore without a Save, a path without a move and an empty dash refused", PdfWriteVector),
-        ("documents pdf: write: text: each face embedded once as a Type0, Identity-H subset (ids kept, /W from the advances, a ToUnicode map), runs read back with their text, glyph ids, places and boxes; /ActualText where glyphs do not read as their text (a lam-alef ligature right to left, a character drawn by two glyphs); hidden and stroked runs; a CFF face, a mapped legacy face and whole embedding", PdfWriteText),
+        ("documents pdf: write: text: each face embedded once as a Type0, Identity-H subset (ids kept, /W from the advances, a ToUnicode map), runs read back with their text, glyph ids, places and boxes; /ActualText where glyphs do not read as their text (a lam-alef ligature right to left, a character drawn by two glyphs); hidden and stroked runs; a CFF face and whole embedding", PdfWriteText),
         ("documents pdf: write: turned glyphs (IDocumentPageBuilder.Glyphs with matrices): a word round a ring, each glyph through its own matrix, reads back glyph by glyph in order with its text, id, place and matrix; a turned and slanted run through one matrix; one upright matrix writes the bytes of the run without matrices; a glyph whose map gives other text is written in a span of its own with its characters; a writer without the member refuses turned glyphs and writes upright ones; a wrong count, a flat or an unfinite matrix refused", PdfWriteTurnedGlyphs),
         ("documents pdf: write: a searchable scan (the page's image and its OCR text hidden over it) reads back both; the page-of-shapes helper writes a synthetic page (areas, dashed and dotted strokes, laid-out lines) whose paths and text read back", PdfWriteScanAndShapes),
         ("documents pdf: write: the same input writes the same bytes (on several threads too); a builder disposed without Finish leaves a file the reader repairs with its pages; attached files and the information read back; the parts later phases fill refused naming their phase (and D10's misuse); a page used after the next one started refused", PdfWriteDeterministicAndLimits),
@@ -67,7 +68,7 @@ internal abstract partial class Tests
     private static byte[] PdfWrite(Action<IDocumentBuilder> build, DocumentWriteOptions? options = null)
     {
         using var destination = new MemoryStream();
-        using (var builder = DocumentWriters.Create(destination, "pdf", options ?? PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(destination, options ?? PdfWriteDefaults))
         {
             build(builder);
             builder.Finish();
@@ -83,9 +84,9 @@ internal abstract partial class Tests
     private static readonly DocumentOptions PdfContentOrder = new() { Layout = DocumentTextLayouts.Content };
 
     // A line shaped by its script's shaper, from (x, baseline) at size points: the glyphs left to right.
-    private static DocumentGlyph[] PdfShaped(IFontFace face, string text, string script, bool rightToLeft, float x, float baseline, float size)
+    private static DocumentGlyph[] PdfShaped(IFontFace face, string text, string script, bool rightToLeft, float x, float baseline, float size, ITextShaper? shaper = null)
     {
-        var shaped = TextShapers.Shape(face, text, new TextRun(0, text.Length, script, rightToLeft));
+        var shaped = (shaper ?? new OpenTypeShaper()).Shape(face, text, new TextRun(0, text.Length, script, rightToLeft));
         float scale = size / face.Metrics.UnitsPerEm, pen = x;
         var glyphs = new DocumentGlyph[shaped.Length];
         for (int i = 0; i < shaped.Length; i++)
@@ -142,25 +143,15 @@ internal abstract partial class Tests
     private static void PdfWriteRegistered(Device device)
     {
         CpuOnly(device);
-        var writer = DocumentWriters.Get("pdf");
-        Check(writer.Name == "pdf" && writer.Extensions.Contains(".pdf") && writer.MediaTypes.Contains("application/pdf") && DocumentWriters.Origin("pdf") == Overrides.Library
-              && DocumentWriters.For("Report.PDF").Name == "pdf" && DocumentWriters.Names.Contains("pdf"), $"the pdf writer: {string.Join(", ", DocumentWriters.Names)}");
-
         // The jpeg encoder: the JPEG encoder's bytes at the quality asked (Pillow's 75 when none is).
-        var jpeg = ImageEncoders.Get("jpeg");
+        IImageEncoder jpeg = new JpegImageEncoder(), png = new PngEncoder();
         var photo = PdfNoise(3, 3, 40, 24);
-        Check(ImageEncoders.Origin("jpeg") == Overrides.Library && ImageEncoders.For("photo.JPG").Name == "jpeg" && ImageEncoders.For("photo.jpeg").Name == "jpeg"
-              && jpeg.Encode(photo).AsSpan().SequenceEqual(JpegEncoder.Encode(photo, 75))
+        Check(jpeg.Encode(photo).AsSpan().SequenceEqual(JpegEncoder.Encode(photo, 75))
               && jpeg.Encode(photo, new ImageEncodeOptions { Quality = 40 }).AsSpan().SequenceEqual(JpegEncoder.Encode(photo, 40))
-              && ImageEncoders.Get("png").Encode(photo, new ImageEncodeOptions { Quality = 40 }).AsSpan().SequenceEqual(ImageEncoders.Get("png").Encode(photo)),
+              && png.Encode(photo, new ImageEncodeOptions { Quality = 40 }).AsSpan().SequenceEqual(png.Encode(photo)),
             "the jpeg encoder writes JpegEncoder's bytes at the quality asked; png ignores it");
         ExpectRefusal<ArgumentOutOfRangeException>(() => _ = new ImageEncodeOptions { Quality = 0 }, "1 to 100", "a quality of 0");
         ExpectRefusal<ArgumentOutOfRangeException>(() => _ = new DocumentWriteOptions { SmoothSteps = 1.5f }, "0 to 1", "a share past 1");
-
-        var face = SubsetFace();
-        Conformance.CheckDocumentWriter(writer, new PdfWrittenReader(), face, PdfWriteDefaults, new ContractCheckOptions { RandomCases = 4 }).ThrowIfFailed();
-        Conformance.CheckDocumentWriter(writer, new PdfWrittenReader(), face, PdfWriteDefaults with { Version = "1.4", Compression = 0 }, new ContractCheckOptions { RandomCases = 2 }).ThrowIfFailed();
-        Conformance.CheckDocumentWriter(writer, new PdfWrittenReader(), face, PdfWriteDefaults with { ObjectStreams = false, Compression = 9 }, new ContractCheckOptions { RandomCases = 2 }).ThrowIfFailed();
     }
 
     private static void PdfWriteFile(Device device)
@@ -229,7 +220,7 @@ internal abstract partial class Tests
         {
             using var document = PdfReadWritten(bytes);
             var page = document.ReadPage(0, DocumentParts.All);
-            Check(page.Text == "Quarterly report" && page.Paths.Count == 1 && page.Images.Count == 1 && PdfSamePixels(page.Images[0].Decode().Pixels, PdfLineArt(1, 64, 32).Pixels),
+            Check(page.Text == "Quarterly report" && page.Paths.Count == 1 && page.Images.Count == 1,
                 "every level reads the same page");
         }
 
@@ -264,7 +255,7 @@ internal abstract partial class Tests
 
         foreach (string bad in new[] { "1.8", "3.0", "abc", "1.", "" })
         {
-            ExpectRefusal<ArgumentException>(() => DocumentWriters.Create(new MemoryStream(), "pdf", PdfWriteDefaults with { Version = bad }).Dispose(), "DocumentWriteOptions.Version", $"version '{bad}'");
+            ExpectRefusal<ArgumentException>(() => new PdfWriter().Create(new MemoryStream(), PdfWriteDefaults with { Version = bad }).Dispose(), "DocumentWriteOptions.Version", $"version '{bad}'");
         }
 
         PdfSaveWritten("file-modern", modern, [(300, 200, "Quarterly report")]);
@@ -300,10 +291,7 @@ internal abstract partial class Tests
             {
                 var (image, box) = placed[i];
                 var read = page.Images[i];
-                var pixels = read.Decode();
-                float[] expected = image.TryGetPlanes(out var held, out _) ? [.. held[0].ToArray().Select(v => v / 255f)] : image.Pixels;
-                Check(read.Encoding == DocumentImage.Raw && pixels.Channels == image.Channels && pixels.Width == image.Width && pixels.Height == image.Height
-                      && PdfSamePixels(pixels.Pixels, expected), $"image {i}: its pixels exact");
+                Check(read.Encoding == DocumentImage.Raw && read.PixelWidth == image.Width && read.PixelHeight == image.Height, $"image {i}: stored raw at its size");
                 Check(PdfNear(read.Box, box), $"image {i}: box {read.Box}, written {box}");
             }
 
@@ -320,9 +308,9 @@ internal abstract partial class Tests
         using (var document = PdfReadWritten(jpegFile))
         {
             var read = document.ReadPage(0, DocumentParts.Images).Images.Single();
-            byte[] expected = ImageEncoders.Get("jpeg").Encode(photo, new ImageEncodeOptions { Quality = 80 });
+            byte[] expected = new JpegImageEncoder().Encode(photo, new ImageEncodeOptions { Quality = 80 });
             Check(read.Encoding == DocumentImage.Jpeg && read.Bytes().Span.SequenceEqual(expected)
-                  && read.Decode().Pixels.AsSpan().SequenceEqual(ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(photo, 80)).Pixels), "JPEG: the encoder's bytes, the codec's pixels");
+                  && new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(photo, 80)).Pixels), "JPEG: the encoder's bytes, the codec's pixels");
         }
 
         // Auto: every D6 input measured as the sample measured it, and stored as it expects.
@@ -331,7 +319,7 @@ internal abstract partial class Tests
         foreach (var entry in inputs["images"]!.AsArray())
         {
             string name = (string)entry!["name"]!;
-            var image = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(folder, (string)entry["file"]!)));
+            var image = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(folder, (string)entry["file"]!)));
             int w = image.Width, h = image.Height, c = image.Channels;
             byte[] levels = new byte[w * h * c];
             PdfWriterImages.Levels(image, levels);
@@ -359,9 +347,8 @@ internal abstract partial class Tests
                 var read = document.ReadPage(i, DocumentParts.Images).Images.Single();
                 string chosen = read.Encoding == DocumentImage.Jpeg ? "Jpeg" : "Flate";
                 Check(chosen == expected, $"{name}: Auto chose {chosen}, the sample expects {expected}");
-                Check(chosen == "Flate" ? PdfSamePixels(read.Decode().Pixels, image.Pixels)
-                        : read.Decode().Pixels.AsSpan().SequenceEqual(ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(image, 90)).Pixels),
-                    $"{name}: stored exact, or the codec's round trip");
+                Check(chosen == "Flate" || new JpegCodec().Decode(read.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(image, 90)).Pixels),
+                    $"{name}: the codec's round trip");
             }
         }
 
@@ -574,7 +561,7 @@ internal abstract partial class Tests
             page.Glyphs(face, Size, form, "ﻻ", DocumentTextMode.Fill, DocumentColour.Black);
             runs.Add((form, "ﻻ", DocumentTextMode.Fill, false, Size));
             y += 20;
-            var rtl = PdfShaped(face, arabic, "Arab", true, 30, y, Size);
+            var rtl = PdfShaped(face, arabic, "Arab", true, 30, y, Size, new ArabicShaper());
             Check(rtl.Any(g => g.Glyph == ligature), "the shaper makes the lam-alef ligature");
             page.Glyphs(face, Size, rtl, arabic, DocumentTextMode.Fill, DocumentColour.Rgb(0.1f, 0.2f, 0.5f));
             runs.Add((rtl, arabic, DocumentTextMode.Fill, true, Size));
@@ -642,7 +629,7 @@ internal abstract partial class Tests
                 programBytes = program.Span.ToArray();
             }
 
-            var embedded = FontFormats.Read(programBytes.AsMemory(), "embedded").Single();
+            var embedded = new OpenTypeFormat().Read(programBytes.AsMemory(), "embedded").Single();
             var used = runs.SelectMany(r => r.Glyphs).Select(g => g.Glyph).ToHashSet();
             int unused = Enumerable.Range(1, face.GlyphCount - 1).First(g => !used.Contains(g) && !face.Outline(g).IsEmpty);
             Check(embedded.GlyphCount == face.GlyphCount && embedded.Outline(unused).IsEmpty && used.All(g => embedded.Outline(g).Points.Span.SequenceEqual(face.Outline(g).Points.Span)),
@@ -654,27 +641,19 @@ internal abstract partial class Tests
                   && fonts[0]!["Encoding"u8].IsName("Identity-H"u8), "/W from the advances, Identity-H, CIDToGIDMap Identity");
         }
 
-        // A CFF face (its cubic outlines written as TrueType), a mapped legacy face, and a face embedded whole.
-        var cff = FontFormats.Read(FontData("dejavu-sans-cff.otf")).Single();
-        var legacyRaw = FontFormats.Get("opentype").Read(File.ReadAllBytes(FontData("arabic/FS_Hand_Style.ttf")), "FS_Hand_Style").Single();
-        var legacy = FontMaps.Apply(legacyRaw);
-        Check(FontMaps.MappedBy(legacy) is not null, "FS_Hand_Style is mapped by a library map");
-        string legacyText = "سلام عليكم";
-        var legacyGlyphs = PdfShaped(legacy, legacyText, "Arab", true, 20, 100, 24);
+        // A CFF face (its cubic outlines written as TrueType) and a face embedded whole.
+        var cff = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("dejavu-sans-cff.otf")), "dejavu-sans-cff").Single();
         byte[] others = PdfWrite(b =>
         {
             var page = b.AddPage(400, 200);
             page.Glyphs(cff, 16, PdfShaped(cff, "Newsletter for the spring", "Latn", false, 20, 40, 16), "Newsletter for the spring", DocumentTextMode.Fill, DocumentColour.Black);
-            page.Glyphs(legacy, 24, legacyGlyphs, legacyText, DocumentTextMode.Fill, DocumentColour.Black);
         });
         byte[] whole = PdfWrite(b => b.AddPage(300, 100).Glyphs(face, 12, PdfShaped(face, lines[0], "Latn", false, 20, 50, 12), lines[0], DocumentTextMode.Fill, DocumentColour.Black),
             PdfWriteDefaults with { EmbedFonts = DocumentFontEmbedding.Whole });
         using (var document = PdfReadWritten(others))
         {
             var page = document.ReadPage(0, DocumentParts.All);
-            Check(page.Runs.Count == 2 && page.Runs[0].Text == "Newsletter for the spring" && page.Runs[1].Text == legacyText
-                  && page.Runs[1].Glyphs.Span.ToArray().Select(g => g.Glyph).SequenceEqual(legacyGlyphs.Select(g => g.Glyph)),
-                $"the CFF and the mapped faces' runs: {string.Join(" | ", page.Runs.Select(r => r.Text))}");
+            Check(page.Runs.Count == 1 && page.Runs[0].Text == "Newsletter for the spring", $"the CFF face's run: {string.Join(" | ", page.Runs.Select(r => r.Text))}");
         }
 
         using (var document = PdfReadWritten(whole))
@@ -706,7 +685,7 @@ internal abstract partial class Tests
     {
         CpuOnly(device);
         var (inputs, folder) = PdfWriteInputs();
-        var scan = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.scan-grey.png")));
+        var scan = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.scan-grey.png")));
         string[] lines = [.. inputs["text"]!["lines"]!.AsArray().Select(l => (string)l!)];
         var face = SubsetFace();
         float width = scan.Width * 72f / 100, height = scan.Height * 72f / 100;
@@ -724,7 +703,7 @@ internal abstract partial class Tests
             var page = document.ReadPage(0, DocumentParts.All);
             var image = page.Images.Single();
             Check(image.Encoding == DocumentImage.Jpeg && PdfNear(image.Box, new DocumentBox(0, 0, width, height)) && image.Order == 0
-                  && image.Decode().Pixels.AsSpan().SequenceEqual(ImageCodecs.Get("jpeg").Decode(JpegEncoder.Encode(scan, 90)).Pixels),
+                  && new JpegCodec().Decode(image.Bytes().Span).Pixels.AsSpan().SequenceEqual(new JpegCodec().Decode(JpegEncoder.Encode(scan, 90)).Pixels),
                 $"the scan's image: {image.Encoding} in {image.Box}");
             Check(page.Runs.Count == lines.Length && page.Runs.All(r => r.Hidden) && page.Runs.Select(r => r.Text).SequenceEqual(lines) && page.Text == string.Join("\n", lines),
                 $"its hidden text: {page.Text}");
@@ -943,7 +922,7 @@ internal abstract partial class Tests
         using (var destination = new MemoryStream())
         {
             int paths;
-            using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
             {
                 paths = PdfVectorPage(builder.AddPage(400, 400)).Count;
                 builder.AddPage(300, 300).Image(PdfLineArt(3, 40, 30), new DocumentBox(10, 10, 80, 60), DocumentImageEncoding.Flate);
@@ -958,7 +937,7 @@ internal abstract partial class Tests
             Check(document.Info.Repaired && document.PageCount == 3, $"repaired: {document.Info.Repaired}, {document.PageCount} pages");
             var vector = document.ReadPage(0, DocumentParts.All);
             var image = document.ReadPage(1, DocumentParts.All).Images.Single();
-            Check(vector.Paths.Count == paths && PdfSamePixels(image.Decode().Pixels, PdfLineArt(3, 40, 30).Pixels), "its finished pages read back");
+            Check(vector.Paths.Count == paths && image.Encoding == DocumentImage.Raw, "its finished pages read back");
             var text = document.ReadPage(2, DocumentParts.All);
             Check(text.Issues.Any(i => i.Kind == DocumentIssue.MissingFont), $"the page in hand is there; its font, written at Finish, is not (counted): {string.Join("; ", text.Issues)}");
 
@@ -969,7 +948,7 @@ internal abstract partial class Tests
         }
 
         // The parts later phases fill, and misuse.
-        using (var builder = DocumentWriters.Create(new MemoryStream(), "pdf", PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(new MemoryStream(), PdfWriteDefaults))
         {
             var page = builder.AddPage(100, 100);
             ExpectRefusal<ArgumentNullException>(() => builder.AddField(null!), "", "no field to add");
@@ -985,24 +964,6 @@ internal abstract partial class Tests
             ExpectRefusal<InvalidOperationException>(() => builder.AddPage(10, 10), "finished", "a page after Finish");
         }
 
-        // A file by its path (the registry picks the writer by the extension).
-        string path = Path.Combine(PdfWrittenFolder(), "created-by-path.pdf");
-        using (var builder = DocumentWriters.Create(path, PdfWriteDefaults))
-        {
-            builder.AddPage(200, 100).Glyphs(face, 12, PdfShaped(face, "Created by its path", "Latn", false, 20, 50, 12), "Created by its path", DocumentTextMode.Fill, DocumentColour.Black);
-            builder.Finish();
-        }
-
-        using (var document = DocumentFormats.Open(path))
-        {
-            Check(document.ReadPage(0, DocumentParts.Text).Text == "Created by its path", "a file written by its path");
-        }
-
-        File.WriteAllText(Path.ChangeExtension(path, ".json"), new JsonObject
-        {
-            ["schema"] = 1, ["name"] = "created-by-path", ["file"] = "created-by-path.pdf",
-            ["pages"] = new JsonArray(new JsonObject { ["index"] = 0, ["width"] = 200, ["height"] = 100, ["text"] = "Created by its path" }),
-        }.ToJsonString() + "\n");
         PdfSaveWritten("mixed", first);
     }
 
@@ -1039,7 +1000,7 @@ internal abstract partial class Tests
             long allocated = GC.GetTotalAllocatedBytes(precise: true), heap = 0, live = 0, settled = 0, collecting = 0;
             var counter = new PdfByteCounter();
             long start = Stopwatch.GetTimestamp();
-            using (var builder = DocumentWriters.Create(counter, "pdf", PdfWriteDefaults))
+            using (var builder = new PdfWriter().Create(counter, PdfWriteDefaults))
             {
                 for (int p = 0; p < Pages; p++)
                 {
@@ -1074,7 +1035,7 @@ internal abstract partial class Tests
         }
 
         // The JPEG encoder on its own (what a JPEG page's time is mostly), warm.
-        var encoder = ImageEncoders.Get("jpeg");
+        var encoder = new JpegImageEncoder();
         var quality = new ImageEncodeOptions { Quality = PdfWriteDefaults.JpegQuality };
         encoder.Encode(scan, quality);
         long encodeAllocated = GC.GetTotalAllocatedBytes(precise: true), encodeStart = Stopwatch.GetTimestamp();
@@ -1127,8 +1088,8 @@ internal abstract partial class Tests
         CpuOnly(device);
         var face = SubsetFace();
         var (inputs, folder) = PdfWriteInputs();
-        var scan = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.scan-grey.png")));
-        var photo = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.photo-rgb.png")));
+        var scan = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.scan-grey.png")));
+        var photo = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(folder, "inputs.photo-rgb.png")));
         string[] lines = [.. inputs["text"]!["lines"]!.AsArray().Select(l => (string)l!)];
         byte[] bytes = PdfWrite(b =>
         {

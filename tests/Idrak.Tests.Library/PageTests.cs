@@ -16,7 +16,6 @@ internal abstract partial class Tests
         ("pages: characters the style's font lacks are set in the first fallback that has them", TextLayoutFallback),
         ("pages: letter and plain draw every part (header, subject, body, signature, footer) inside the page without overlap, inked, in reading order, the start side following the text's direction", PagesDrawParts),
         ("pages: the same seed draws the same page, other seeds other choices; a grey style draws one plane; a long body makes a taller page with the footer still on it", PagesBySeed),
-        ("pages: the layouts by name; an unknown name and a style with no font are refused; an app's layout replaces the library's of its name only", PageRegistry),
     ];
 
     // A company's letter to a client about a delivery schedule: Arabic with Latin digits, a date, a long wrapping
@@ -106,7 +105,7 @@ internal abstract partial class Tests
 
     internal static void TextLayoutFallback(Device device)
     {
-        var small = FontFormats.Read(FontData("features.ttf")).Single();
+        var small = new OpenTypeFormat().Read(File.ReadAllBytes(FontData("features.ttf")), "features").Single();
         var full = SubsetFace();
         Check(small.Glyph('Ω') == 0 && full.Glyph('Ω') != 0, "the fixture: features.ttf has no Greek");
         var line = TextLayout.Layout("abc Ωμέγα", new TextStyle(small, 24) { Fallbacks = [full] }).Lines.Single();
@@ -124,13 +123,13 @@ internal abstract partial class Tests
         string[] textKinds = ["header", "title", "subject", "body", "signature", "footer"];
         var watch = Stopwatch.StartNew();
         int pages = 0;
-        foreach (string name in new[] { "letter", "plain" })
+        foreach (var (name, layout) in new (string, IPageLayout)[] { ("letter", new LetterLayout()), ("plain", new PlainLayout()) })
         {
             foreach (var (content, rtl) in new[] { (ArabicLetter, true), (EnglishLetter, false) })
             {
                 for (int seed = 1; seed <= 4; seed++)
                 {
-                    var page = PageLayouts.Get(name).Render(content, style, seed);
+                    var page = layout.Render(content, style, seed);
                     pages++;
                     string where = $"{name}, {(rtl ? "Arabic" : "English")}, seed {seed} ({page.Description})";
                     var image = page.Image;
@@ -171,7 +170,7 @@ internal abstract partial class Tests
     internal static void PagesBySeed(Device device)
     {
         var style = TestPageStyle();
-        var letter = PageLayouts.Get("letter");
+        var letter = new LetterLayout();
         var first = letter.Render(ArabicLetter, style, 7);
         var again = letter.Render(ArabicLetter, style, 7);
         Check(first.Description == again.Description && Planes(first.Image).Zip(Planes(again.Image)).All(p => p.First.SequenceEqual(p.Second)), "seed 7 twice: the same page");
@@ -189,44 +188,14 @@ internal abstract partial class Tests
         Check(new[] { "rule", "emblem", "stamp", "scribble" }.All(k => ornate.Blocks.Any(b => b.Kind == k)), $"each when its chance is 1, a signature drawn over the name ({ornate.Description})");
 
         var longBody = ArabicLetter with { Body = [.. Enumerable.Repeat(ArabicLetter.Body[0], 30)] };
-        foreach (string name in new[] { "letter", "plain" })
+        foreach (var (name, layout) in new (string, IPageLayout)[] { ("letter", new LetterLayout()), ("plain", new PlainLayout()) })
         {
-            var tall = PageLayouts.Get(name).Render(longBody, style, 2);
+            var tall = layout.Render(longBody, style, 2);
             var footer = tall.Blocks.Single(b => b.Kind == "footer");
             var lastBody = tall.Blocks.Last(b => b.Kind == "body");
             Check(tall.Image.Height > style.Height && footer.Y + footer.Height <= tall.Image.Height && footer.Y > lastBody.Y + lastBody.Height,
                 $"{name}: a long body, a page {tall.Image.Height}px tall with the footer under the body");
         }
-    }
-
-    internal static void PageRegistry(Device device)
-    {
-        Check(PageLayouts.Names.Contains("letter") && PageLayouts.Names.Contains("plain"), $"names {string.Join(", ", PageLayouts.Names)}");
-        Throws<NotSupportedException>(() => PageLayouts.Get("nope"), "an unknown layout");
-        Throws<ArgumentException>(() => PageLayouts.Get("letter").Render(ArabicLetter, new PageStyle { Fonts = [] }, 1), "a style with no font");
-
-        PageLayouts.Register(new BlankLayout());
-        try
-        {
-            Check(PageLayouts.Get("plain").Render(ArabicLetter, TestPageStyle(), 1).Description == "blank", "the app's plain draws");
-            Check(PageLayouts.Get("letter").Name == "letter" && PageLayouts.Default("plain") is { } library && library.Name == "plain", "the letter, and the library's plain behind the app's, stay");
-        }
-        finally
-        {
-            PageLayouts.Unregister("plain");
-        }
-
-        Check(PageLayouts.Get("plain").Render(ArabicLetter, TestPageStyle(), 1).Description.StartsWith("plain:", StringComparison.Ordinal), "unregistered: the library's plain again");
-    }
-
-    internal sealed class BlankLayout : IPageLayout
-    {
-        public string Name => "plain";
-
-        public string Summary => "blank";
-
-        public RenderedPage Render(PageContent content, PageStyle style, int seed) =>
-            new(new ImageData(new float[style.Width * style.Height], 1, style.Height, style.Width), content.ReadingOrder(), [], "blank");
     }
 
     internal static byte[][] Planes(ImageData image)

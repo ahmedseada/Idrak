@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Data.Pdf;
+using Idrak.Imaging;
 
 // Plan 28, phase D9: forms. Fields read (every kind, inherited values, widgets, XFA data), filled (SetField: incremental
 // and rewrite), added (the builder's and the editor's AddField), flattened (Flatten), each widget's appearance made, read
@@ -249,7 +250,7 @@ internal abstract partial class Tests
 
     // A page drawn with its widgets (or not) at `dpi`, the standard fonts from the test's folder.
     private static ImageData PdfFormsDraw(IDocument document, int page, double dpi, bool annotations = true) =>
-        document.DrawPage(page, new DocumentDrawOptions
+        PdfDrawn(document, page, new DocumentDrawOptions
         {
             Dpi = (float)dpi, Fonts = PdfDrawFonts(),
             Parts = DocumentParts.Text | DocumentParts.Images | DocumentParts.Paths | (annotations ? DocumentParts.Annotations : DocumentParts.None),
@@ -264,7 +265,7 @@ internal abstract partial class Tests
         int fields = 0, widgets = 0;
         foreach (var sample in samples)
         {
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
             var expected = sample.Expected["fields"]!.AsArray();
             var read = document.Fields;
             var xfa = sample.Expected["form"]?["xfa"] as JsonObject;
@@ -348,11 +349,11 @@ internal abstract partial class Tests
         var fields = filled.Expected["fields"]!.AsArray();
         byte[] source = File.ReadAllBytes(empty.Path);
         double dpi = (double?)filled.Expected["reference"]?["dpi"] ?? 100;
-        var reference = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(filled.Path)!, "forms-filled.p1.png")));
+        var reference = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(filled.Path)!, "forms-filled.p1.png")));
         // The filled form against pdfium's drawing of the same values with appearances pdfium makes itself: this sample's
         // producer draws each text box's background inside its /Tx section and states no /MK colours, so a new appearance
         // (pdfium's, or any writer's by 12.7.4.3) shows the box without it, as forms-need-appearances does.
-        var made = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(filled.Path)!, "forms-need-appearances.p1.png")));
+        var made = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(filled.Path)!, "forms-need-appearances.p1.png")));
         var failures = new List<string>();
 
         // The library's drawing of forms-filled with its widgets against pdfium's: what the filled forms are held to.
@@ -399,7 +400,7 @@ internal abstract partial class Tests
 
         // Values a field does not take.
         using (var document = PdfEditOpen(source, "forms-empty"))
-        using (var editor = DocumentWriters.Get("pdf").Edit(document, new MemoryStream(), PdfWriteDefaults))
+        using (var editor = new PdfWriter().Edit(document, new MemoryStream(), PdfWriteDefaults))
         {
             ExpectRefusal<ArgumentException>(() => editor.SetField("postcode", "AB12345"), "at most 6", "a comb's seventh character");
             ExpectRefusal<ArgumentException>(() => editor.SetField("newsletter", "Maybe"), "'Yes'", "a check box's state it lacks");
@@ -466,7 +467,7 @@ internal abstract partial class Tests
 
         // No font shows the text: refused naming the options.
         using (var plain = PdfEditOpen(source, "forms-empty"))
-        using (var editor = DocumentWriters.Get("pdf").Edit(plain, new MemoryStream(), PdfWriteDefaults with { Forms = new DocumentFormOptions { Fonts = null } }))
+        using (var editor = new PdfWriter().Edit(plain, new MemoryStream(), PdfWriteDefaults with { Forms = new DocumentFormOptions { Fonts = null } }))
         {
             ExpectRefusal<InvalidOperationException>(() => editor.SetField("name", Arabic), "DocumentWriteOptions.Forms.Faces", "a text no font shows");
         }
@@ -613,7 +614,7 @@ internal abstract partial class Tests
         }
 
         // A page never added: refused at Finish.
-        using (var builder = DocumentWriters.Create(new MemoryStream(), "pdf", options))
+        using (var builder = new PdfWriter().Create(new MemoryStream(), options))
         {
             builder.AddPage(200, 200);
             builder.AddField(new DocumentField("later", DocumentFieldKind.Text) { Value = "x", Widgets = [W(3, 10, 10, 50, 20)] });
@@ -660,7 +661,7 @@ internal abstract partial class Tests
         var filled = PdfEditSample("forms-filled");
         var twin = PdfEditSample("forms-flattened");
         double dpi = (double?)filled.Expected["reference"]?["dpi"] ?? 100;
-        var pdfiumTwin = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(twin.Path)!, "forms-flattened.p1.png")));
+        var pdfiumTwin = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(twin.Path)!, "forms-flattened.p1.png")));
         using var twinDocument = PdfEditOpen(File.ReadAllBytes(twin.Path), "forms-flattened");
         Check(twinDocument.Fields.Count == 0, "the flattened twin has no fields");
         var twinDrawn = PdfFormsDraw(twinDocument, 0, dpi, annotations: false);
@@ -741,7 +742,7 @@ internal abstract partial class Tests
 
     // A drawing saved beside a written form (NAME.idrak.p1.png), for a reference renderer's drawing of the same file.
     private static void PdfFormsSaveDrawing(string name, ImageData image) =>
-        File.WriteAllBytes(Path.Combine(PdfFormsFolder(), name + ".idrak.p1.png"), ImageEncoders.Get("png").Encode(image));
+        File.WriteAllBytes(Path.Combine(PdfFormsFolder(), name + ".idrak.p1.png"), new PngEncoder().Encode(image));
 
     // The share of a box's pixels (two pixels in from its edges) off by more than 32 levels between two drawings after a
     // 3 x 3 mean, the second read turned a half within the box when `flip`.
@@ -796,7 +797,7 @@ internal abstract partial class Tests
         var sample = PdfEditSample("forms-styled");
         var fields = sample.Expected["fields"]!.AsArray();
         double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
-        var reference = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-styled.p1.png")));
+        var reference = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-styled.p1.png")));
         byte[] source = File.ReadAllBytes(sample.Path);
         var failures = new List<string>();
         byte[]? filled = null;
@@ -949,7 +950,7 @@ internal abstract partial class Tests
         }
 
         // Runs refused as they should be.
-        using (var editor = DocumentWriters.Get("pdf").Edit(document, new MemoryStream(), PdfWriteDefaults))
+        using (var editor = new PdfWriter().Edit(document, new MemoryStream(), PdfWriteDefaults))
         {
             ExpectRefusal<ArgumentException>(() => editor.SetRichText("note", [new DocumentFieldRun("x") { Size = 0 }]), "above 0", "a run of size 0");
             ExpectRefusal<ArgumentException>(() => editor.SetRichText("nothing", [new DocumentFieldRun("x")]), "no form field", "a field the form lacks");
@@ -1034,7 +1035,7 @@ internal abstract partial class Tests
         var sample = PdfEditSample("forms-faces");
         byte[] source = File.ReadAllBytes(sample.Path);
         double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
-        var reference = ImageCodecs.Get("png").Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-faces.p1.png")));
+        var reference = new PngCodec().Decode(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(sample.Path)!, "forms-faces.p1.png")));
         var options = PdfWriteDefaults with { Forms = new DocumentFormOptions { Faces = [SubsetFace()] } };
         const string Greeting = "Добрый день";
         using var document = PdfEditOpen(source, "forms-faces");
@@ -1087,7 +1088,7 @@ internal abstract partial class Tests
         int compared = 0, templates = 0;
         foreach (var sample in PdfSamples().Where(s => s.Phases.Contains("D9") && s.Readable))
         {
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
             var expected = sample.Expected["form"]?["xfa"]?["template"] as JsonObject;
             var template = document.FormTemplate;
             if (expected is null)
@@ -1190,7 +1191,7 @@ internal abstract partial class Tests
         {
             using var document = PdfEditOpen(bytes, "forms-filled");
             using var destination = new MemoryStream();
-            using var editor = DocumentWriters.Get("pdf").Edit(document, destination, PdfWriteDefaults);
+            using var editor = new PdfWriter().Edit(document, destination, PdfWriteDefaults);
             editor.SetField("name", "Robin Ellis");
             editor.Save(DocumentSaveMode.Incremental);
         }
@@ -1199,7 +1200,7 @@ internal abstract partial class Tests
         {
             using var document = PdfEditOpen(bytes, "forms-filled");
             using var destination = new MemoryStream();
-            using var editor = DocumentWriters.Get("pdf").Edit(document, destination, PdfWriteDefaults);
+            using var editor = new PdfWriter().Edit(document, destination, PdfWriteDefaults);
             editor.Flatten();
             editor.Save(DocumentSaveMode.Incremental);
         }

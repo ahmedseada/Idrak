@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using Idrak.Data.Pdf;
 using Idrak.Imaging;
 
 // Plan 28, D13's finding on the drawer's clips (clip memory, 2026-11-19): a band works a clip's coverage once, over the
@@ -59,11 +60,11 @@ internal abstract partial class Tests
         }
         else
         {
-            using var document = DocumentFormats.Open(deep);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(deep)), deep, new DocumentOptions());
             var page = document.ReadPage(3, DocumentPageDrawers.PartsFor(options));
             Check(page.Clips.Count >= 1000, $"deep-forms page 4: {page.Clips.Count} clips, the generator draws its form 1,000 times");
             long start = Stopwatch.GetTimestamp();
-            var cold = DocumentPageDrawers.Draw(page, options);
+            var cold = new CoverageDocumentDrawer().Draw(page, options);
             double coldMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             long pixels = (long)cold.Image.Width * cold.Image.Height * cold.Image.Channels;
             var (drawn, warmMs) = ClipDrawAllocated(page, options);
@@ -138,7 +139,7 @@ internal abstract partial class Tests
                 }
             }
         });
-        using var document = DocumentFormats.Open(written.AsMemory(), "clip-memory.pdf");
+        using var document = new PdfFormat().Open(new MemoryStream(written), "clip-memory.pdf", new DocumentOptions());
         return document.ReadPage(0, DocumentPageDrawers.PartsFor(options));
     }
 
@@ -192,14 +193,14 @@ internal abstract partial class Tests
     // A warm draw of `page` through the drawers' table: the bytes allocated on every thread and the median time of three.
     private static (long Bytes, double Milliseconds) ClipDrawAllocated(DocumentPage page, DocumentDrawOptions options)
     {
-        GC.KeepAlive(DocumentPageDrawers.Draw(page, options));
+        GC.KeepAlive(new CoverageDocumentDrawer().Draw(page, options));
         var times = new List<double>();
         long bytes = long.MaxValue;
         for (int run = 0; run < 3; run++)
         {
             long before = GC.GetTotalAllocatedBytes(precise: true);
             long start = Stopwatch.GetTimestamp();
-            var drawing = DocumentPageDrawers.Draw(page, options);
+            var drawing = new CoverageDocumentDrawer().Draw(page, options);
             times.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
             bytes = Math.Min(bytes, GC.GetTotalAllocatedBytes(precise: true) - before);
             GC.KeepAlive(drawing);
@@ -361,70 +362,60 @@ internal abstract partial class Tests
         return null;
     }
 
-    // Crafted pages drawn through the library's rasterizer (each clip over its own box) and through an app's rasterizer
-    // that forwards every fill to the library's (each clip over the whole band, as the drawer always did), each with the
+    // Crafted pages drawn through the library's rasterizer (each clip over its own box), each with the
     // default bands, one-row bands, seven-row bands and one band: the same bytes and the same issues every time, and the
     // drawing of the same page lifted (each text clip whose runs were not read gone from under its parts and clips, which
     // are made under the clip it was made under; each part under a text clip with no glyphs under a clip off the page):
     // what those clips mean. At 150 dpi and at 2 pixels a point in grey.
     private static void PdfDrawClipPages()
     {
-        const string forward = "test-clips-band-wide";
         var face = SubsetFace();
         var failures = new List<string>();
-        OutlineRasterizers.Register(new ClipsForwardRasterizer(forward));
-        try
+        foreach (var (name, page, lifted) in new (string, DocumentPage, DocumentPage)[]
+                 {
+                     ("the crafted page", ClipCraftedPage(), ClipCraftedPage(lifted: true)),
+                     ("the text clips' page", ClipTextPage(face), ClipTextPage(face, lifted: true)),
+                 })
         {
-            foreach (var (name, page, lifted) in new (string, DocumentPage, DocumentPage)[]
+            foreach (var (resolution, at) in new (string, DocumentDrawOptions)[]
                      {
-                         ("the crafted page", ClipCraftedPage(), ClipCraftedPage(lifted: true)),
-                         ("the text clips' page", ClipTextPage(face), ClipTextPage(face, lifted: true)),
+                         ("150 dpi", new DocumentDrawOptions { Dpi = 150, Fonts = null }),
+                         ("2 pixels a point, grey", new DocumentDrawOptions { PixelsPerPoint = 2f, Colour = DocumentDrawColour.Grey, Fonts = null }),
                      })
             {
-                foreach (var (resolution, at) in new (string, DocumentDrawOptions)[]
+                var expected = new CoverageDocumentDrawer().Draw(lifted, at);
+                byte[] want = PdfInterleaved(expected.Image);
+                string wantIssues = ClipIssues(expected);
+                int inked = want.Count(v => v < 250), drawings = 0, worst = 0;
+                if (inked == 0 || inked == want.Length)
+                {
+                    failures.Add($"{name} lifted at {resolution}: {inked} of {want.Length} values inked");
+                }
+
+                foreach (var (bands, options) in new (string, DocumentDrawOptions)[]
                          {
-                             ("150 dpi", new DocumentDrawOptions { Dpi = 150, Fonts = null }),
-                             ("2 pixels a point, grey", new DocumentDrawOptions { PixelsPerPoint = 2f, Colour = DocumentDrawColour.Grey, Fonts = null }),
+                             ("default bands", at),
+                             ("one-row bands", at with { BandPixels = 1, MinBandRows = 1 }),
+                             ("seven-row bands", at with { BandPixels = 1, MinBandRows = 7, MaxBandRows = 7 }),
+                             ("one band", at with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }),
                          })
                 {
-                    var expected = DocumentPageDrawers.Draw(lifted, at);
-                    byte[] want = PdfInterleaved(expected.Image);
-                    string wantIssues = ClipIssues(expected);
-                    int inked = want.Count(v => v < 250), drawings = 0, worst = 0;
-                    if (inked == 0 || inked == want.Length)
+                    foreach (var (through, drawn) in new (string, DocumentDrawOptions)[] { ("the library's rasterizer", options) })
                     {
-                        failures.Add($"{name} lifted at {resolution}: {inked} of {want.Length} values inked");
-                    }
-
-                    foreach (var (bands, options) in new (string, DocumentDrawOptions)[]
-                             {
-                                 ("default bands", at),
-                                 ("one-row bands", at with { BandPixels = 1, MinBandRows = 1 }),
-                                 ("seven-row bands", at with { BandPixels = 1, MinBandRows = 7, MaxBandRows = 7 }),
-                                 ("one band", at with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }),
-                             })
-                    {
-                        foreach (var (through, drawn) in new (string, DocumentDrawOptions)[] { ("the library's rasterizer", options), ("an app's rasterizer", options with { Rasterizer = forward }) })
+                        var drawing = new CoverageDocumentDrawer().Draw(page, drawn);
+                        int differ = ClipValuesDiffer(PdfInterleaved(drawing.Image), want);
+                        string issues = ClipIssues(drawing);
+                        drawings++;
+                        worst = Math.Max(worst, differ);
+                        if (differ != 0 || issues != wantIssues)
                         {
-                            var drawing = DocumentPageDrawers.Draw(page, drawn);
-                            int differ = ClipValuesDiffer(PdfInterleaved(drawing.Image), want);
-                            string issues = ClipIssues(drawing);
-                            drawings++;
-                            worst = Math.Max(worst, differ);
-                            if (differ != 0 || issues != wantIssues)
-                            {
-                                failures.Add($"{name} at {resolution}, {bands}, through {through}: {differ} values differ from the lifted page's drawing, issues '{issues}' against '{wantIssues}'");
-                            }
+                            failures.Add($"{name} at {resolution}, {bands}, through {through}: {differ} values differ from the lifted page's drawing, issues '{issues}' against '{wantIssues}'");
                         }
                     }
-
-                    Console.WriteLine($"    {name} at {resolution}: {drawings} drawings (default, one-row and seven-row bands and one band, through the library's rasterizer and an app's), at most {worst} values differing from the lifted page's; {inked} of {want.Length} values inked");
                 }
+
+                Console.WriteLine($"    {name} at {resolution}: {drawings} drawings (default, one-row and seven-row bands and one band, through the library's rasterizer), at most {worst} values differing from the lifted page's; {inked} of {want.Length} values inked");
             }
-        }
-        finally
-        {
-            OutlineRasterizers.Unregister(forward);
         }
 
         Check(failures.Count == 0, $"a crafted page's drawing depends on its bands or its rasterizer, or is not what its clips mean:\n      {string.Join("\n      ", failures)}");
@@ -439,9 +430,9 @@ internal abstract partial class Tests
         CpuOnly(device);
         var options = new DocumentDrawOptions { Dpi = 150, Fonts = null };
         var page = ClipCraftedPage();
-        byte[] standard = PdfInterleaved(DocumentPageDrawers.Draw(page, options).Image);
-        byte[] oneBand = PdfInterleaved(DocumentPageDrawers.Draw(page, options with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }).Image);
-        byte[] lifted = PdfInterleaved(DocumentPageDrawers.Draw(ClipCraftedPage(lifted: true), options).Image);
+        byte[] standard = PdfInterleaved(new CoverageDocumentDrawer().Draw(page, options).Image);
+        byte[] oneBand = PdfInterleaved(new CoverageDocumentDrawer().Draw(page, options with { BandPixels = 1 << 26, MaxBandRows = 1 << 16 }).Image);
+        byte[] lifted = PdfInterleaved(new CoverageDocumentDrawer().Draw(ClipCraftedPage(lifted: true), options).Image);
         int bands = ClipValuesDiffer(standard, oneBand), meaning = ClipValuesDiffer(standard, lifted);
         Console.WriteLine($"    the crafted page at 150 dpi: the default bands and one band differ at {bands} of {standard.Length} values (3,150 before the fix); the page and the page with the text clip's parts and clip under its rectangle at {meaning}");
         Check(bands == 0 && meaning == 0,
@@ -691,22 +682,5 @@ internal abstract partial class Tests
         Fill(150f, 175f, 145f, 42f, -1, blue, softMask: 0);
 
         return new DocumentPage(0, 300f, 220f) { Paths = paths, Clips = clips, Runs = runs, SoftMasks = [mask] };
-    }
-
-    // An app's rasterizer that hands every fill to the library's: the drawer fills each clip over the whole band for it.
-    private sealed class ClipsForwardRasterizer(string name) : IOutlineRasterizer
-    {
-        private readonly CoverageRasterizer _library = new();
-
-        public string Name => name;
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height) =>
-            _library.Fill(outline, scale, x, y, coverage, width, height);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule) =>
-            _library.Fill(outline, scale, x, y, coverage, width, height, rule);
-
-        public void Fill(GlyphOutline outline, float scale, float x, float y, Span<float> coverage, int width, int height, OutlineFill rule, float flatness) =>
-            _library.Fill(outline, scale, x, y, coverage, width, height, rule, flatness);
     }
 }

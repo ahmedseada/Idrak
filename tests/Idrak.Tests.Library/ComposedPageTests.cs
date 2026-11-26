@@ -12,7 +12,6 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ComposedPageGroup =
     [
-        ("composed pages: the suites pass on the text step, on shapes holding paragraphs and on stacked, split and paragraph profiles", ComposedSuites),
         ("composed pages: a stacked page draws its parts top to bottom without overlap, all its ink inside its parts; its text is the intro, the rows and the closing line in order; left to right and right to left", ComposedStacked),
         ("composed pages: paragraphs inside a box and inside a circle stay inside the edge, the text exactly what was drawn; what does not fit at the least size is left out", ComposedInsideShapes),
         ("composed pages: a ring or an ellipse stacked down the page is the least that holds its paragraphs at the body's size (a pixel less does not), its text centred in it and inside its edge, the same page from the same seed; valign=top and bottom move the text up and down a ring of a given size, which keeps its size; left to right and right to left", ComposedRoundFit),
@@ -33,26 +32,10 @@ internal abstract partial class Tests
 
     internal const string Stacked = "text,lines=2,flow=down,grid=auto x 5,flow=down,text,lines=1,flow=down";
 
-    internal static void ComposedSuites(Device device)
-    {
-        _ = device;
-        Check(Shapes.Names.Contains("text") && new[] { "text-grid-text", "framed", "circled" }.All(ShapeProfiles.Names.Contains), "the text step and the composed profiles are registered");
-        Conformance.CheckShape("text", steps: [ShapeStepOf("text", null), ShapeStepOf("text", null, ("pad", "0.5"), ("lines", "2"))]).ThrowIfFailed();
-        Conformance.CheckShape("box", steps: [ShapeStepOf("box", null, ("holds", "paragraphs"))]).ThrowIfFailed();
-        Conformance.CheckShape("circle", steps: [ShapeStepOf("circle", null, ("holds", "paragraphs"), ("pad", "0.3"))]).ThrowIfFailed();
-        Conformance.CheckShape("grid", steps: [ShapeStepOf("grid", "2x3", ("holds", "paragraphs"))]).ThrowIfFailed();
-        var style = TestPageStyle();
-        foreach (string shapes in new[] { "text-grid-text", "framed", "circled", Stacked, "text,lines=1,flow=down,ellipse,holds=paragraphs,size=0.8:1,flow=down,gap=1" })
-        {
-            Conformance.CheckPageLayout("shapes", style with { Options = PageOptionsOf(("shapes", shapes), ("pen", "ballpoint"), ("pose", "drift")) },
-                [IntroRows, ArabicIntroRows, Newsletter]).ThrowIfFailed();
-        }
-    }
-
     internal static void ComposedStacked(Device device)
     {
         _ = device;
-        var layout = PageLayouts.Get("shapes");
+        var layout = new ShapesLayout();
         foreach (var (content, rtl) in new[] { (IntroRows, false), (ArabicIntroRows, true) })
         {
             string where = rtl ? "right to left" : "left to right";
@@ -93,7 +76,7 @@ internal abstract partial class Tests
     internal static void ComposedInsideShapes(Device device)
     {
         _ = device;
-        var layout = PageLayouts.Get("shapes");
+        var layout = new ShapesLayout();
         var empty = new PageContent { Body = [], Language = "en", RightToLeft = false };
         foreach (string shapes in new[] { "box,holds=paragraphs,size=0.8:0.5,at=0.1:0.1", "circle,holds=paragraphs,size=0.8:0.6,at=0.1:0.1" })
         {
@@ -121,7 +104,7 @@ internal abstract partial class Tests
     internal static void ComposedSplits(Device device)
     {
         _ = device;
-        var layout = PageLayouts.Get("shapes");
+        var layout = new ShapesLayout();
         var six = new PageContent { Body = ["one", "two", "three", "four", "five", "six"], Language = "en" };
         var split = layout.Render(six, TestPageStyle() with { Options = PageOptionsOf(("shapes", "text,lines=1,flow=down,text,lines=rest,flow=down,text,lines=2,flow=down")) }, 1);
         var parts = split.Blocks.Where(b => b.Kind == "region").Select(b => b.Text).ToList();
@@ -152,9 +135,9 @@ internal abstract partial class Tests
     internal static void ComposedRoundFit(Device device)
     {
         _ = device;
-        var layout = PageLayouts.Get("shapes");
+        var layout = new ShapesLayout();
         var face = SubsetFace();
-        var still = new GlyphPainter(GlyphPoses.Get(GlyphPoses.None), GlyphPoseSettings.None, 1);
+        var still = new GlyphPainter(new NonePose(), GlyphPoses.None, GlyphPoseSettings.None, 1);
         var arabic = new PageContent
         {
             Body = ["نشرة الحي لشهر مارس.", "يبدأ موسم الزراعة يوم 4 أبريل، فأحضروا القفازات وصديقا.", "صناديق السماد الجديدة بجوار البوابة الشمالية."],

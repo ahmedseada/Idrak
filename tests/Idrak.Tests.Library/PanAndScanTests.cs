@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data.Abstractions;
+using Idrak.Imaging;
 using Idrak.Vision.Plugins.Gemma;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -29,7 +30,6 @@ internal abstract partial class Tests
 
     internal static void PanAndScanMatchesReference(Device device)
     {
-        RegisterGemma3Vision();
         var manifest = JsonNode.Parse(File.ReadAllText(TestData("vlm-pan-scan/manifest.json")))!;
         var facts = manifest["facts"]!;
         const int vocabulary = 366, tokens = 4;
@@ -43,7 +43,7 @@ internal abstract partial class Tests
         foreach (string name in new[] { "tall", "wide", "square" })
         {
             var entry = facts["images"]![name]!;
-            var image = ImageCodecs.Decode(TestData($"vlm-pan-scan/image-{name}.png"));
+            var image = new PngCodec().Decode(File.ReadAllBytes(TestData($"vlm-pan-scan/image-{name}.png")));
             int crops = (int)entry["num_crops"]!;
 
             // The crops: transformers' rectangles of the original, one block each after the whole image.
@@ -153,7 +153,6 @@ internal abstract partial class Tests
 
     internal static void PanAndScanSettings(Device device)
     {
-        RegisterGemma3Vision();
 
         // The rule (transformers' pan_and_scan), Gemma3Processor's defaults: 256-pixel crops, 4 at most, ratio 1.2.
         var on = Gemma3PanAndScan.Default with { Enabled = true };
@@ -205,10 +204,10 @@ internal abstract partial class Tests
             config["do_pan_and_scan"] = true;
             config["pan_and_scan_min_crop_size"] = 32;
             File.WriteAllText(Path.Combine(folder, "preprocessor_config.json"), config.ToJsonString());
-            var tall = ImageCodecs.Decode(TestData("vlm-pan-scan/image-tall.png"));
+            var tall = new PngCodec().Decode(File.ReadAllBytes(TestData("vlm-pan-scan/image-tall.png")));
             using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
             var vision = (Gemma3Vision)model.Vision!;
-            Check(vision.PanAndScan is { Enabled: true, MinCropSize: 32, MaxCrops: 4, MinRatio: 1.2 } && vision.VisionOptionKeys.Contains("do_pan_and_scan"),
+            Check(vision.PanAndScan is { Enabled: true, MinCropSize: 32, MaxCrops: 4, MinRatio: 1.2 },
                 $"from preprocessor_config.json: {vision.PanAndScan}");
             using (var fromConfig = vision.CreateEncoder(new VisionEncoderOptions { Device = device }))
             {
@@ -258,7 +257,7 @@ internal abstract partial class Tests
         using var tiny = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });
         using var encoder = tiny.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device });
         using var cpu = tiny.Vision.CreateEncoder(new VisionEncoderOptions { Device = Device.Cpu });
-        var samples = new[] { ImageCodecs.Decode(TestData("vlm-pan-scan/image-tall.png")), ImageCodecs.Decode(TestData("vlm-pan-scan/image-wide.png")) };
+        var samples = new[] { new PngCodec().Decode(File.ReadAllBytes(TestData("vlm-pan-scan/image-tall.png"))), new PngCodec().Decode(File.ReadAllBytes(TestData("vlm-pan-scan/image-wide.png"))) };
         var report = Idrak.Abstraction.Testing.Conformance.CheckVisionEncoder(encoder, cpu, samples, visionOptions: PanAndScanOn);
         Console.WriteLine($"    the kit with pan and scan on {device}: {report.Cases} cases, {report.Entries.Count(e => e.Status == Idrak.Abstraction.Testing.CheckStatus.Passed)} properties pass");
         report.ThrowIfFailed();

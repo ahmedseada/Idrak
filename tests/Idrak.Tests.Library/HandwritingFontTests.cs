@@ -6,9 +6,10 @@ using System.Collections.Concurrent;
 using System.Text;
 using Idrak.Abstraction.Testing;
 using Idrak.Imaging;
+using Idrak.Imaging.Shaping;
 using Idrak.PluginTests;
 
-// Plan 38, phase F0: the handwriting contracts (outline tracers and glyph sources, their registries, values and suites),
+// Plan 38, phase F0: the handwriting contracts (outline tracers' and glyph sources' values, the glyph source suite),
 // checked on the outside toys (tests/Idrak.PluginTests) and on broken ones of the test's own; and the face made from
 // glyphs (MadeFontFace), read back, shaped and read from several threads. Its export to .ttf waits for plan 28's
 // TrueType writer (F3 tests it).
@@ -16,19 +17,15 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] OutlineTracerGroup =
     [
-        ("outline tracers: a tracer of the test's own registers under its name, is found by name in any case and by span, lists its keys and summary, unregisters; a name nobody registered is refused naming the registry, the registered ones and what to do", OutlineTracerRegistry),
         ("outline tracers: coverage is checked on the way in (its size, every value from 0 to 1, naming the pixel), finds its ink's box in the same pass and crops a part; a placement maps pixels and font units both ways", GlyphCoverageValues),
-        ("outline tracers: the suite passes on the outside toy tracer (its defaults, another level, DejaVu's glyphs) and fails a tracer that fills holes, one that traces every run twice, one that inks empty coverage, one that leaves y down and one that takes any option", OutlineTracerSuiteCatches),
         ("outline tracers: contour's time and managed allocation per glyph at a sheet cell's size (96 px per em, the first trace apart from warm ones) and its points per outline before and after simplification, measured; a warm trace allocates its outline and little else", ContourTracerMeasured),
-        ("outline tracers: contour is the library's tracer (registered by default, its four keys); its options are read in any case and refused naming the key or the range (a key it does not take, a level neither auto nor from 0.01 to 0.99, a tolerance, corner or smoothing out of range); its promised tolerance is its simplification plus the most its level's edge strays; no placement is refused, no ink is no outline", ContourTracerOptions),
-        ("outline tracers: contour passes the tracer suite with its defaults and three other settings, on the suite's shapes and on glyphs of DejaVu, Amiri, Reem Kufi and Cairo (holes, sharp and smooth turns)", ContourTracerSuite),
+        ("outline tracers: contour's options are read in any case and refused naming the key or the range (a key it does not take, a level neither auto nor from 0.01 to 0.99, a tolerance, corner or smoothing out of range); its promised tolerance is its simplification plus the most its level's edge strays; no placement is refused, no ink is no outline", ContourTracerOptions),
         ("outline tracers: contour's glyphs of the four fonts at 24, 48 and 96 px per em, drawn again: every pixel centre is inside the outline exactly when its coverage reaches the level, with one winding; the coverage differs by at most the promised tolerance along the outline's length; holes kept turning the other way; fewer points than the traced boundary", ContourTracerRoundTrip),
         ("outline tracers: Otsu's threshold, moved to ImageThresholds for every package, gives Foreground.Otsu's results unchanged: bit for bit the method written out as loops, on no values, blank, uniform, 8-bit grey, two-level and noisy values and the vision canvases, and a page's foreground threshold", OtsuMovedUnchanged),
     ];
 
     internal static readonly (string Name, Action<Device> Run)[] GlyphSourceGroup =
     [
-        ("glyph sources: a source of the test's own registers under its name, is found by name in any case and by span, lists its keys and summary, unregisters; a name nobody registered is refused naming the registry, the registered ones and what to do", GlyphSourceRegistry),
         ("glyph sources: a labelled glyph is checked as it is made (its text, a form as data with no spaces, ink its box's size, a finite baseline, a size above 0) and gives a tracer's placement from its baseline and size; a request needs an image and settings", LabelledGlyphValues),
         ("glyph sources: the suite passes on the outside toy source (grey and colour pages, a character with no ink reported) and fails a source that labels a glyph twice, one that puts a glyph outside its region, one that drops a character unreported, one that answers differently each time and one that takes any option", GlyphSourceSuiteCatches),
     ];
@@ -36,44 +33,13 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] MadeFontGroup =
     [
         ("made fonts: a face made from glyphs gives back its characters, outlines (copies of those given), advances, metrics and names; glyphs with no character and characters sharing a glyph; the missing glyph given, or empty at half an em; its one table the name table of the names given, no layout tables", MadeFaceReadsBack),
-        ("made fonts: generic text shaped through TextShapers gives the made glyphs with their advances, a character the face lacks the missing glyph", MadeFaceShapes),
+        ("made fonts: generic text shaped by the OpenType shaper gives the made glyphs with their advances, a character the face lacks the missing glyph", MadeFaceShapes),
         ("made fonts: the face answers the same from several threads at once (characters, advances, outlines, its table, shaping)", MadeFaceThreads),
         ("made fonts: the builder refuses what a font cannot hold, naming it (no family, units per em, the ascender and descender, an advance, a point not finite or too far, a contour without its move, a character twice or not a character, a glyph not added, a name with no text) and stays as it was", MadeFaceRefusals),
         ("made fonts: the outside toy source's glyphs, traced by the outside toy tracer at their baseline and size, make a face whose text shapes to them, each as wide as its ink", MadeFaceFromToys),
     ];
 
     private const string LetterText = "Thank you for your letter of 12 May.";
-
-    internal static void OutlineTracerRegistry(Device device)
-    {
-        CpuOnly(device);
-        var mine = new ToyOutlineTracer("test-runs");
-        OutlineTracers.Register(mine);
-        try
-        {
-            const string Line = "--tracer=test-runs";
-            Check(ReferenceEquals(OutlineTracers.Get("TEST-RUNS"), mine) && ReferenceEquals(OutlineTracers.Find(Line.AsSpan(9)), mine) && OutlineTracers.Names.Contains("test-runs")
-                  && OutlineTracers.Origin("test-runs") == typeof(Tests).Assembly.GetName().Name && OutlineTracers.Default("test-runs") is null
-                  && OutlineTracers.Describe().Contains("test-runs: each row's runs of ink", StringComparison.Ordinal) && OutlineTracers.AllKeys().Contains(ToyOutlineTracer.LevelKey),
-                $"registered: {OutlineTracers.Describe()}");
-        }
-        finally
-        {
-            Check(OutlineTracers.Unregister("test-runs") && !OutlineTracers.Unregister("test-runs") && OutlineTracers.Find("test-runs") is null, "unregistered once");
-        }
-
-        try
-        {
-            OutlineTracers.Get("a-tracer-nobody-registered");
-            Check(false, "a name nobody registered was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(OutlineTracers) && e.Name == "a-tracer-nobody-registered" && e.Registered.SequenceEqual(OutlineTracers.Names)
-                  && e.Message.StartsWith($"Outline tracer 'a-tracer-nobody-registered' is not registered (registered: {(OutlineTracers.Names.Count == 0 ? "none" : string.Join(", ", OutlineTracers.Names))})", StringComparison.Ordinal)
-                  && e.Message.Contains("OutlineTracers.Register", StringComparison.Ordinal) && e.Message.Contains("reference a package", StringComparison.Ordinal), e.Message);
-        }
-    }
 
     internal static void GlyphCoverageValues(Device device)
     {
@@ -106,58 +72,6 @@ internal abstract partial class Tests
             $"pixels to units and back: ({ux}, {uy}), ({px}, {py})");
         Check(!new OutlinePlacement(0f, 0f, 0f).IsValid && !new OutlinePlacement(1f, float.NaN, 0f).IsValid && !new OutlinePlacement(float.PositiveInfinity, 0f, 0f).IsValid,
             "a placement with no scale, or not finite, is not valid");
-    }
-
-    internal static void OutlineTracerSuiteCatches(Device device)
-    {
-        CpuOnly(device);
-        var toy = new ToyOutlineTracer();
-        var face = SubsetFace();
-        var outlines = "aegB8%&".Select(c => face.Outline(face.Glyph(c))).ToList();
-        Conformance.CheckOutlineTracer(toy, outlines, face.Metrics.UnitsPerEm, [PageOptionsOf((ToyOutlineTracer.LevelKey, "0.3"))]).ThrowIfFailed();
-
-        void Fails(IOutlineTracer broken, string property)
-        {
-            var report = Conformance.CheckOutlineTracer(broken);
-            Check(!report.Passed && report.Failures.Any(f => f.Check == property), $"{property} is not caught:\n{report}");
-        }
-
-        Fails(new BrokenTracer(toy, "fills holes"), "holes kept");
-        Fails(new BrokenTracer(toy, "twice"), "one winding");
-        Fails(new BrokenTracer(toy, "inks blank"), "coverage with no ink gives an empty outline");
-        Fails(new BrokenTracer(toy, "y down"), "drawn and traced back within the promised tolerance");
-        Fails(new BrokenTracer(toy, "greedy"), "an option it does not take is refused");
-    }
-
-    internal static void GlyphSourceRegistry(Device device)
-    {
-        CpuOnly(device);
-        var mine = new ToyGlyphSource("test-columns");
-        GlyphSources.Register(mine);
-        try
-        {
-            const string Line = "--source=test-columns";
-            Check(ReferenceEquals(GlyphSources.Get("Test-Columns"), mine) && ReferenceEquals(GlyphSources.Find(Line.AsSpan(9)), mine) && GlyphSources.Names.Contains("test-columns")
-                  && GlyphSources.Origin("test-columns") == typeof(Tests).Assembly.GetName().Name && GlyphSources.Default("test-columns") is null
-                  && GlyphSources.Describe().Contains("test-columns: the ink between blank columns", StringComparison.Ordinal) && GlyphSources.AllKeys().Contains(ToyGlyphSource.LevelKey),
-                $"registered: {GlyphSources.Describe()}");
-        }
-        finally
-        {
-            Check(GlyphSources.Unregister("test-columns") && !GlyphSources.Unregister("test-columns") && GlyphSources.Find("test-columns") is null, "unregistered once");
-        }
-
-        try
-        {
-            GlyphSources.Get("a-source-nobody-registered");
-            Check(false, "a name nobody registered was found");
-        }
-        catch (NotRegisteredException e)
-        {
-            Check(e.Registry == nameof(GlyphSources) && e.Name == "a-source-nobody-registered" && e.Registered.SequenceEqual(GlyphSources.Names)
-                  && e.Message.StartsWith($"Glyph source 'a-source-nobody-registered' is not registered (registered: {(GlyphSources.Names.Count == 0 ? "none" : string.Join(", ", GlyphSources.Names))})", StringComparison.Ordinal)
-                  && e.Message.Contains("GlyphSources.Register", StringComparison.Ordinal) && e.Message.Contains("reference a package", StringComparison.Ordinal), e.Message);
-        }
     }
 
     internal static void LabelledGlyphValues(Device device)
@@ -280,7 +194,7 @@ internal abstract partial class Tests
         var made = LetterFace(leaveOut: 'M');
         foreach (string text in new[] { LetterText, "The report is attached: 12 pages." })
         {
-            var shaped = TextShapers.Shape(made, text, new TextRun(0, text.Length, "Latn", false));
+            var shaped = new OpenTypeShaper().Shape(made, text, new TextRun(0, text.Length, "Latn", false));
             Check(shaped.Length == text.Length, $"{shaped.Length} glyphs for the {text.Length} characters of '{text}'");
             for (int i = 0; i < text.Length; i++)
             {
@@ -315,7 +229,7 @@ internal abstract partial class Tests
             }
 
             answer.Append(Convert.ToBase64String(made.Table("name").Span));
-            foreach (var s in TextShapers.Shape(made, LetterText, new TextRun(0, LetterText.Length, "Latn", false)))
+            foreach (var s in new OpenTypeShaper().Shape(made, LetterText, new TextRun(0, LetterText.Length, "Latn", false)))
             {
                 answer.Append(s);
             }
@@ -390,7 +304,7 @@ internal abstract partial class Tests
 
         var made = builder.Build();
         const string Text = "1074";
-        var shaped = TextShapers.Shape(made, Text, new TextRun(0, Text.Length, "Latn", false));
+        var shaped = new OpenTypeShaper().Shape(made, Text, new TextRun(0, Text.Length, "Latn", false));
         Check(shaped.Select(s => s.Glyph).SequenceEqual([1, 2, 3, 4]), $"shaped: {string.Join(" ", shaped)}");
         for (int i = 0; i < Text.Length; i++)
         {
@@ -416,69 +330,6 @@ internal abstract partial class Tests
         }
 
         return builder.Build();
-    }
-
-    // The outside toy tracer broken one way, to prove the suite catches it.
-    private sealed class BrokenTracer(ToyOutlineTracer toy, string how) : IOutlineTracer
-    {
-        public string Name => $"broken ({how})";
-
-        public string Summary => $"the toy tracer, broken: {how}";
-
-        public IReadOnlySet<string> Keys => toy.Keys;
-
-        public OutlineTracerSettings Read(IReadOnlyDictionary<string, string> options) =>
-            how == "greedy" ? toy.Read(PageOptions.None) : toy.Read(options);
-
-        public float Tolerance(OutlineTracerSettings settings) => toy.Tolerance(settings);
-
-        public GlyphOutline Trace(GlyphCoverage coverage, OutlinePlacement placement, OutlineTracerSettings settings)
-        {
-            switch (how)
-            {
-                case "fills holes":
-                {
-                    // Each row inked from its first ink to its last.
-                    var values = coverage.Values.ToArray();
-                    for (int y = 0; y < coverage.Height; y++)
-                    {
-                        var row = values.AsSpan(y * coverage.Width, coverage.Width);
-                        int first = row.IndexOfAnyExcept(0f), last = row.LastIndexOfAnyExcept(0f);
-                        if (first >= 0)
-                        {
-                            row[first..(last + 1)].Fill(1f);
-                        }
-                    }
-
-                    return toy.Trace(new GlyphCoverage(values, coverage.Width, coverage.Height), placement, settings);
-                }
-
-                case "twice":
-                {
-                    var once = toy.Trace(coverage, placement, settings);
-                    return once.IsEmpty ? once : new GlyphOutline([.. once.Verbs.Span, .. once.Verbs.Span], [.. once.Points.Span, .. once.Points.Span]);
-                }
-
-                case "inks blank":
-                    return coverage.IsBlank
-                        ? new GlyphOutline([OutlineVerb.Move, OutlineVerb.Line, OutlineVerb.Line, OutlineVerb.Close], [0f, 0f, 100f, 0f, 50f, 100f])
-                        : toy.Trace(coverage, placement, settings);
-                case "y down":
-                {
-                    var traced = toy.Trace(coverage, placement, settings);
-                    float[] points = traced.Points.ToArray();
-                    for (int i = 1; i < points.Length; i += 2)
-                    {
-                        points[i] = -points[i];
-                    }
-
-                    return traced.IsEmpty ? traced : new GlyphOutline(traced.Verbs.ToArray(), points);
-                }
-
-                default:
-                    return toy.Trace(coverage, placement, settings);
-            }
-        }
     }
 
     // The outside toy source broken one way, to prove the suite catches it.

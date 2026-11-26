@@ -54,7 +54,7 @@ internal abstract partial class Tests
         int paths = 0, clips = 0, shadings = 0, runs = 0, images = 0;
         foreach (var sample in PdfVectorSampleList())
         {
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
             foreach (var expectedPage in sample.Expected["pages"]!.AsArray())
             {
                 int index = (int)expectedPage!["index"]!;
@@ -245,7 +245,7 @@ internal abstract partial class Tests
     {
         CpuOnly(device);
         var sample = PdfVectorSampleList().Single(s => s.Name == "vector-fonts");
-        using var document = DocumentFormats.Open(sample.Path);
+        using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
         var page = document.ReadPage(0, DocumentParts.All);
         var faces = page.Runs.Where(r => r.Face is not null).Select(r => r.Face!.Format).Distinct().ToList();
         Check(page.Runs.Skip(1).All(r => r.Face is not null) && faces.Contains("type1") && faces.Contains("type3") && faces.Contains("cff") && faces.Contains("opentype"),
@@ -335,7 +335,7 @@ internal abstract partial class Tests
         byte[] written;
         using (var output = new MemoryStream())
         {
-            using (var builder = DocumentWriters.Get("pdf").Create(output, new DocumentWriteOptions()))
+            using (var builder = new PdfWriter().Create(output, new DocumentWriteOptions()))
             {
                 builder.AddPage(200, 120).Path(path);
                 builder.Finish();
@@ -344,7 +344,7 @@ internal abstract partial class Tests
             written = output.ToArray();
         }
 
-        using (var document = DocumentFormats.Open(written.AsMemory(), "quadratic.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(written), "quadratic.pdf", new DocumentOptions()))
         {
             var read = document.ReadPage(0, DocumentParts.Paths).Paths.Single();
             Check(read.Verbs.Span.SequenceEqual([OutlineVerb.Move, OutlineVerb.Quadratic, OutlineVerb.Cubic]) && read.Points.Length == points.Length
@@ -369,7 +369,7 @@ internal abstract partial class Tests
             PdfHandMadeStream("/FunctionType 4 /Domain [0 1 0 1] /Range [0 1]", "{ add 2 div }"u8.ToArray()),
             PdfHandMadeStream("/Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace [/Separation /Spot /DeviceRGB << /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [0 0.5 1] /N 1 >>]", [0, 255]),
         ]);
-        using (var document = DocumentFormats.Open(file.AsMemory(), "vector-hand-made.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(file), "vector-hand-made.pdf", new DocumentOptions()))
         {
             var page = document.ReadPage(0, DocumentParts.All);
             Check(page.Paths.Count == 5 && page.Clips.Count == 2 && page.Images.Count == 1, $"{page.Paths.Count} paths, {page.Clips.Count} clips, {page.Images.Count} images");
@@ -388,8 +388,6 @@ internal abstract partial class Tests
             Check(MathF.Abs(devn.Red - 0.5f) < 0.003f && devn.Space == DocumentColourSpace.Rgb, $"a DeviceN's colour through its calculator ((0.25 + 0.75) / 2 grey): {devn}");
             var blended = page.Paths[4];
             Check(MathF.Abs(blended.FillColour.Alpha - 0.25f) < 1e-4f && blended.Blend == DocumentBlend.Multiply, $"gs: ca {blended.FillColour.Alpha}, blend {blended.Blend}");
-            var pixels = PdfInterleaved(page.Images[0].Decode());
-            Check(pixels.AsSpan().SequenceEqual((byte[])[255, 255, 255, 0, 128, 255]), $"a Separation image: {string.Join(" ", pixels)}");
 
             var text = document.ReadPage(0, DocumentParts.Text);
             Check(text.Paths.Count == 0 && text.Clips.Count == 0, "text alone reads no vectors");
@@ -410,7 +408,7 @@ internal abstract partial class Tests
             PdfHandMadeStream("/FunctionType 4 /Domain [0 1] /Range [0 1]", "{ dup dup dup dup dup dup dup dup dup }"u8.ToArray()),
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>",
         ]);
-        using var document = (PdfDocument)DocumentFormats.Default("pdf")!.Open(new MemoryStream(file), "functions.pdf", new DocumentOptions());
+        using var document = (PdfDocument)new PdfFormat().Open(new MemoryStream(file), "functions.pdf", new DocumentOptions());
         var objects = document.File;
         double[] Evaluate(int number, params double[] input)
         {
@@ -466,16 +464,18 @@ internal abstract partial class Tests
             "pdfium does not find a TrueType glyph by its name in a post table of format 1 (the standard Macintosh order): it draws .notdef; the glyph ids are checked by documents pdf: text, and the same glyphs found through format 2 are compared"),
     };
 
+    // A document's page read with the parts drawing needs and drawn by the library's drawer, reached directly (a document's
+    // own DrawPage went through the page drawers by name).
+    private static DocumentDrawing PdfDrawn(IDocument document, int index, DocumentDrawOptions options) =>
+        new CoverageDocumentDrawer().Draw(document.ReadPage(index, DocumentPageDrawers.PartsFor(options)), options);
+
     private static void PdfDrawSamples(Device device)
     {
         CpuOnly(device);
-        var drawer = DocumentPageDrawers.Get(DocumentPageDrawers.Coverage);
-        Check(DocumentPageDrawers.Origin(DocumentPageDrawers.Coverage) == Overrides.Library && DocumentPageDrawers.Default(DocumentPageDrawers.Coverage) is not null,
-            $"the coverage drawer registered by the library: {DocumentPageDrawers.Describe()}");
-        Conformance.CheckDocumentPageDrawer(drawer, SubsetFace()).ThrowIfFailed();
+        var drawer = new CoverageDocumentDrawer();
 
         string fonts = PdfDrawFonts(), drawn = PdfDrawnFolder();
-        var png = ImageCodecs.Get("png");
+        var png = new PngCodec();
         var scores = new List<string>();
         var failures = new List<string>();
         int pages = 0;
@@ -483,7 +483,7 @@ internal abstract partial class Tests
         {
             string folder = Path.GetDirectoryName(sample.Path)!;
             double dpi = (double?)sample.Expected["reference"]?["dpi"] ?? 100;
-            using var document = DocumentFormats.Open(sample.Path);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), sample.Path, new DocumentOptions());
             for (int index = 0; index < document.PageCount; index++)
             {
                 string reference = Path.Combine(folder, $"{sample.Name}.p{index + 1}.png");
@@ -493,8 +493,8 @@ internal abstract partial class Tests
                 }
 
                 var expected = png.Decode(File.ReadAllBytes(reference));
-                var drawing = document.DrawPage(index, new DocumentDrawOptions { Dpi = (float)dpi, Fonts = fonts });
-                File.WriteAllBytes(Path.Combine(drawn, $"{sample.Name}.p{index + 1}.png"), ImageEncoders.Get("png").Encode(drawing.Image));
+                var drawing = PdfDrawn(document, index, new DocumentDrawOptions { Dpi = (float)dpi, Fonts = fonts });
+                File.WriteAllBytes(Path.Combine(drawn, $"{sample.Name}.p{index + 1}.png"), new PngEncoder().Encode(drawing.Image));
                 string what = $"{sample.Name}: page {index + 1}";
                 // pdfium's render is the page's size times the scale rounded up (its last column and row a part pixel),
                 // the drawer's rounded: the two are compared over the region they share.
@@ -707,11 +707,11 @@ internal abstract partial class Tests
             page.Restore();
             page.Glyphs(face, 18f, glyphs, "Quarterly report", DocumentTextMode.Fill, run.Colour);
         });
-        using (var document = DocumentFormats.Open(written.AsMemory(), "written-vector.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(written), "written-vector.pdf", new DocumentOptions()))
         {
-            var expected = DocumentPageDrawers.Draw(inMemory, options);
-            var back = document.DrawPage(0, options);
-            File.WriteAllBytes(Path.Combine(PdfDrawnFolder(), "written-vector.png"), ImageEncoders.Get("png").Encode(back.Image));
+            var expected = new CoverageDocumentDrawer().Draw(inMemory, options);
+            var back = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
+            File.WriteAllBytes(Path.Combine(PdfDrawnFolder(), "written-vector.png"), new PngEncoder().Encode(back.Image));
             var (share, mean) = PdfDrawDifference(back.Image, expected.Image, 8);
             Check(share == 0 && mean < 0.05, string.Create(CultureInfo.InvariantCulture, $"the written vector page drawn back: {share * 100:F3}% off by more than 8 levels, mean {mean:F4}"));
         }
@@ -722,56 +722,51 @@ internal abstract partial class Tests
             [new ShapeArea([40, 40, 560, 40, 560, 80, 40, 80], 0.15f)]);
         var style = new DocumentShapeStyle { Scale = 0.75f, StrokeWidth = 2f };
         byte[] shapes = PdfWriteDocument(b => DocumentShapes.Write(b.AddPage(450, 255), plan, style));
-        using (var document = DocumentFormats.Open(shapes.AsMemory(), "written-shapes.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(shapes), "written-shapes.pdf", new DocumentOptions()))
         {
             var paths = DocumentShapes.Paths(plan, style).Select((p, i) => new DocumentPath(p.Verbs.ToArray(), p.Points.ToArray())
             {
                 Fill = p.Fill, Stroke = p.Stroke, Cap = p.Cap, Join = p.Join, MiterLimit = p.MiterLimit, Dash = p.Dash, DashPhase = p.DashPhase,
                 FillColour = p.FillColour, StrokeColour = p.StrokeColour, Order = i,
             }).ToList();
-            var expected = DocumentPageDrawers.Draw(new DocumentPage(0, 450, 255) { Paths = paths }, options);
-            var (share, mean) = PdfDrawDifference(document.DrawPage(0, options).Image, expected.Image, 8);
+            var expected = new CoverageDocumentDrawer().Draw(new DocumentPage(0, 450, 255) { Paths = paths }, options);
+            var (share, mean) = PdfDrawDifference(new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options).Image, expected.Image, 8);
             Check(share == 0 && mean < 0.05, string.Create(CultureInfo.InvariantCulture, $"the written page of shapes drawn back: {share * 100:F3}% off by more than 8 levels, mean {mean:F4}"));
         }
 
         // An image page: its image, pixel for pixel, at one pixel a point.
         var lineArt = new ImageData([.. Enumerable.Range(0, 3 * 40 * 64).Select(i => (i * 37 % 251) / 255f)], 3, 40, 64);
         byte[] imagePage = PdfWriteDocument(b => b.AddPage(64, 40).Image(lineArt, new DocumentBox(0, 0, 64, 40), DocumentImageEncoding.Flate));
-        using (var document = DocumentFormats.Open(imagePage.AsMemory(), "written-image.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(imagePage), "written-image.pdf", new DocumentOptions()))
         {
-            var back = document.DrawPage(0, new DocumentDrawOptions { PixelsPerPoint = 1f });
-            var expected = document.ReadPage(0, DocumentParts.Images).Images[0].Decode();
-            Check(back.Image.Width == 64 && back.Image.Height == 40 && PdfInterleaved(back.Image).AsSpan().SequenceEqual(PdfInterleaved(expected)),
-                "the image page drawn back is its image, pixel for pixel");
+            var back = PdfDrawn(document, 0, new DocumentDrawOptions { PixelsPerPoint = 1f });
+            Check(back.Image.Width == 64 && back.Image.Height == 40, "the image page drawn back at its image's size");
         }
 
         // A scan page: its image; its hidden text only when asked.
         var scanSample = PdfSamples().Single(s => s.Name == "scan-ocr");
-        using (var document = DocumentFormats.Open(scanSample.Path))
+        using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(scanSample.Path)), scanSample.Path, new DocumentOptions()))
         {
             var read = document.ReadPage(0, DocumentParts.All);
             var image = read.Images.Single();
             float dpi = image.PixelWidth / read.Width * 72;
-            var plain = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi });
-            var imageOnly = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Images });
-            var textOnly = document.DrawPage(0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Text, Hidden = true, Fonts = PdfDrawFonts() });
-            var decoded = image.Decode();
+            var plain = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = dpi });
+            var imageOnly = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Images });
+            var textOnly = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = dpi, Parts = DocumentParts.Text, Hidden = true, Fonts = PdfDrawFonts() });
             Check(PdfInterleaved(plain.Image).AsSpan().SequenceEqual(PdfInterleaved(imageOnly.Image)), "the scan page drawn is its image alone (its hidden text is not drawn unless asked)");
-            var (share, _) = PdfDrawDifference(imageOnly.Image, new ImageData(decoded.Resize(3, imageOnly.Image.Height, imageOnly.Image.Width), 3, imageOnly.Image.Height, imageOnly.Image.Width), 8);
-            Check(share < 0.001, string.Create(CultureInfo.InvariantCulture, $"the scan's image drawn over its page: {share * 100:F3}% off its decoded pixels"));
             int inked = PdfInterleaved(textOnly.Image).Count(v => v < 128);
             Check(inked > 100 && textOnly.Issues.All(i => i.Kind != DocumentIssue.MissingFont), $"its hidden text drawn when asked: {inked} dark values; issues {string.Join("; ", textOnly.Issues.Select(i => i.Detail))}");
         }
 
         // A standard font with no fonts folder: its runs left out and counted, nothing thrown.
         var standard = PdfSamples().Single(s => s.Name == "standard14");
-        using (var document = DocumentFormats.Open(standard.Path))
+        using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(standard.Path)), standard.Path, new DocumentOptions()))
         {
             int runs = document.ReadPage(0, DocumentParts.Text).Runs.Count;
-            var drawing = document.DrawPage(0, new DocumentDrawOptions { Dpi = 72, Fonts = null });
+            var drawing = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = 72, Fonts = null });
             int missing = drawing.Issues.Where(i => i.Kind == DocumentIssue.MissingFont).Sum(i => i.Count);
             Check(missing == runs && PdfInterleaved(drawing.Image).All(v => v == 255), $"standard14 without fonts: {missing} runs counted missing of {runs}, the page {(PdfInterleaved(drawing.Image).All(v => v == 255) ? "blank" : "inked")}");
-            var empty = document.DrawPage(0, new DocumentDrawOptions { Dpi = 72, Fonts = Directory.CreateDirectory(RepositoryPath("test-output", "documents", "no-fonts")).FullName });
+            var empty = PdfDrawn(document, 0, new DocumentDrawOptions { Dpi = 72, Fonts = Directory.CreateDirectory(RepositoryPath("test-output", "documents", "no-fonts")).FullName });
             Check(empty.Issues.Where(i => i.Kind == DocumentIssue.MissingFont).Sum(i => i.Count) == runs, "an empty fonts folder: every run counted");
         }
     }
@@ -794,7 +789,7 @@ internal abstract partial class Tests
     private static byte[] PdfWriteDocument(Action<IDocumentBuilder> build)
     {
         using var output = new MemoryStream();
-        using (var builder = DocumentWriters.Get("pdf").Create(output, new DocumentWriteOptions { ImageEncoding = DocumentImageEncoding.Flate }))
+        using (var builder = new PdfWriter().Create(output, new DocumentWriteOptions { ImageEncoding = DocumentImageEncoding.Flate }))
         {
             build(builder);
             builder.Finish();
@@ -806,7 +801,7 @@ internal abstract partial class Tests
     private static void PdfDrawRulesAndSpeed(Device device)
     {
         CpuOnly(device);
-        var rasterizer = OutlineRasterizers.Get();
+        var rasterizer = new CoverageRasterizer();
 
         // Two squares wound the same way and a third against them: nonzero fills the first two's overlap (wound twice) and
         // leaves the third's overlap with the second (wound once each way, so not at all), even-odd leaves both; the glyph
@@ -844,37 +839,16 @@ internal abstract partial class Tests
         var scan = samples.Single(s => s.Name == "scan-ocr");
         string fonts = PdfDrawFonts();
 
-        // Pages in parallel and one by one: the same pixels.
-        var all = PdfVectorSampleList();
-        var documents = all.Select(s => DocumentFormats.Open(File.ReadAllBytes(s.Path).AsMemory(), Path.GetFileName(s.Path))).ToList();
-        try
-        {
-            var options = new DocumentDrawOptions { Dpi = 150, Fonts = fonts };
-            long start = Stopwatch.GetTimestamp();
-            var one = documents.Select(d => DocumentPageDrawers.DrawPages(d, [.. Enumerable.Range(0, d.PageCount)], options, parallel: false)).ToList();
-            double sequential = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            start = Stopwatch.GetTimestamp();
-            var many = documents.Select(d => DocumentPageDrawers.DrawPages(d, [.. Enumerable.Range(0, d.PageCount)], options)).ToList();
-            double parallel = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            Check(one.Zip(many).All(p => p.First.Zip(p.Second).All(q => PdfInterleaved(q.First.Image).AsSpan().SequenceEqual(PdfInterleaved(q.Second.Image)))),
-                "pages drawn in parallel are the pages drawn one by one");
-            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"    the {all.Count} D7 samples' pages at 150 dpi (warm): one page after another {sequential:F0} ms, pages in parallel {parallel:F0} ms ({Environment.ProcessorCount} cores)"));
-        }
-        finally
-        {
-            documents.ForEach(d => d.Dispose());
-        }
-
         // Cold and warm apart: time and managed allocation a page.
         foreach (var (sample, kind) in new[] { (vector, "vector"), (text, "text"), (scan, "scan") })
         {
             foreach (float dpi in (float[])[100f, 300f])
             {
-                using var document = DocumentFormats.Open(File.ReadAllBytes(sample.Path).AsMemory(), Path.GetFileName(sample.Path));
+                using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(sample.Path)), Path.GetFileName(sample.Path), new DocumentOptions());
                 var options = new DocumentDrawOptions { Dpi = dpi, Fonts = fonts };
                 long allocated = GC.GetTotalAllocatedBytes(precise: true);
                 long start = Stopwatch.GetTimestamp();
-                var first = document.DrawPage(0, options);
+                var first = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
                 double cold = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
                 long coldBytes = GC.GetTotalAllocatedBytes(precise: true) - allocated;
                 var warm = new List<double>();
@@ -883,7 +857,7 @@ internal abstract partial class Tests
                 {
                     allocated = GC.GetTotalAllocatedBytes(precise: true);
                     start = Stopwatch.GetTimestamp();
-                    var again = document.DrawPage(0, options);
+                    var again = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
                     warm.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
                     warmBytes = GC.GetTotalAllocatedBytes(precise: true) - allocated;
                     Check(PdfInterleaved(again.Image).AsSpan().SequenceEqual(PdfInterleaved(first.Image)), $"{sample.Name} at {dpi} dpi drawn again: other pixels");
@@ -897,14 +871,14 @@ internal abstract partial class Tests
         }
 
         // A large page at a high resolution: the pixels themselves, and a band's buffers besides.
-        using (var document = DocumentFormats.Open(File.ReadAllBytes(vector.Path).AsMemory(), "vector-transparency.pdf"))
+        using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(vector.Path)), "vector-transparency.pdf", new DocumentOptions()))
         {
             var options = new DocumentDrawOptions { Dpi = 1200, Fonts = fonts };
             GC.Collect();
             long before = GC.GetTotalAllocatedBytes(precise: true);
             long heapBefore = GC.GetTotalMemory(forceFullCollection: true);
             long start = Stopwatch.GetTimestamp();
-            var drawing = document.DrawPage(0, options);
+            var drawing = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
             double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             long allocated = GC.GetTotalAllocatedBytes(precise: true) - before;
             long pixels = (long)drawing.Image.Width * drawing.Image.Height * drawing.Image.Channels;

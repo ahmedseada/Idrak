@@ -10,25 +10,24 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
 using Idrak.Data.Pdf;
+using Idrak.Imaging;
 
 // Plan 28, phase D12: signatures read and checked (CMS, the byte range, the chain against the trust the app gives,
 // timestamps, revocation from the file's DSS, changes after signing, the legacy forms) on the D12 samples
 // tools/documents/make_fixtures.py writes into the ignored test-output/documents/samples (with their test PKI: never a real
-// certificate), and signing (PAdES B-B, B-T, B-LT, RSA, RSA-PSS and ECDSA) with the PKI's throwaway keys, a timestamp
-// authority stood in here (an ISignatureService registered under its own scheme). Every file signed here goes to
+// certificate), and signing (PAdES B-B: RSA, RSA-PSS and ECDSA) with the PKI's throwaway keys. Every file signed here goes to
 // test-output/documents/signed (NAME.pdf, and NAME.json with what each signature must check as) for
 // tools/documents/check_signed.py (pyHanko, the reference validator).
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] DocumentPdfSignaturesGroup =
     [
-        ("documents pdf: signatures: timings: every D12 sample's signatures listed and checked (cold, then warm; time and managed allocation a signature) and a page signed at B-B and B-LT (cold, warm)", PdfSignatureTimings),
+        ("documents pdf: signatures: timings: every D12 sample's signatures listed and checked (cold, then warm; time and managed allocation a signature) and a page signed at B-B (cold, warm)", PdfSignatureTimings),
         ("documents pdf: signatures: every D12 sample's signatures read and check as its JSON says (kind, field, signer, times, byte range, coverage; digest, signature, chain against the JSON's trust alone, timestamp, revocation from the DSS, changes after signing and their level) and as pyHanko found them, alike from several threads", PdfSignatureSamples),
         ("documents pdf: signatures: each step says why it failed (a changed byte, an untrusted root, a revoked signer, content changed after certification); nothing trusted that the app did not give; the trust anchor, the time and required revocation as the options say", PdfSignatureReasons),
-        ("documents pdf: signatures: revocation is fetched online only when turned on (the option, or IDRAK_DOCUMENT_SIGNATURE_ONLINE), through SignatureServices (the library's http and https, an app's over them, not registered named)", PdfSignatureOnline),
-        ("documents pdf: signatures: signing as incremental updates: PAdES B-B (RSA, RSA-PSS, ECDSA), B-T and B-LT (RSA, ECDSA) with appearances, an empty field of a form, a second signature keeping the first valid, the builder's Sign at Finish, an encrypted file, after other edits and after a rewrite: each checks valid, the source's bytes its prefix, nothing asked of a service the app did not name", PdfSignatureSigning),
-        ("documents pdf: signatures: misuse refused (no options, no private key, SHA-1, B-T without an authority, B-LT without revocation data, a field that is not a signature field or is signed already, a dotted new name, a page out of range, the builder signing after its first page, an authority not registered or answering for another request)", PdfSignatureRefusals),
-        ("documents pdf: signatures: trust: the policies a path is valid for named (by default and for the options' initial policies and flags), an indirect and a delta list answering, stale data not checked offline, fetched again online and taken with a grace, each list's and response's signature verified once a check", PdfSignatureTrust),
+        ("documents pdf: signatures: signing as incremental updates: PAdES B-B (RSA, RSA-PSS, ECDSA) with appearances, a second signature keeping the first valid, the builder's Sign at Finish, after other edits and after a rewrite: each checks valid, the source's bytes its prefix", PdfSignatureSigning),
+        ("documents pdf: signatures: misuse refused (no options, no private key, SHA-1, B-T without an authority, B-LT without revocation data, a field that is not a signature field or is signed already, a dotted new name, a page out of range, the builder signing after its first page)", PdfSignatureRefusals),
+        ("documents pdf: signatures: trust: the policies a path is valid for named (by default and for the options' initial policies and flags), an indirect and a delta list answering, stale data not checked offline and taken with a grace, each list's and response's signature verified once a check", PdfSignatureTrust),
         ("documents pdf: signatures: known bad: Project Wycheproof's RSA PKCS #1 v1.5 vectors (2048, 3072 and 4096 bits; SHA-1, SHA-256, -384, -512): every valid case verifies and every invalid one fails, through CmsKeys and the legacy form's route; the acceptable ones listed with Idrak's answer", PdfKnownBadPkcs1),
         ("documents pdf: signatures: known bad: Project Wycheproof's RSA-PSS vectors (salt lengths 0 to 64, MGF1 digests, keys certified with their parameters): every valid case verifies, every invalid one fails", PdfKnownBadPss),
         ("documents pdf: signatures: known bad: Project Wycheproof's ECDSA vectors (P-256, P-384, P-521, secp256k1, Brainpool; the DER signature read by Idrak, r and s ranged by the curve's order): every valid case verifies, every invalid one fails; a curve this platform's ECDsa does not take is a named limit", PdfKnownBadEcdsa),
@@ -66,105 +65,6 @@ internal abstract partial class Tests
         string folder = Path.GetDirectoryName(sample.Path)!;
         Check(File.Exists(Path.Combine(folder, "pki.root.cer")) && File.Exists(Path.Combine(folder, "pki.signer.key.pem")), $"the test PKI is beside the D12 samples in {folder}: make the samples again (tools/documents/make_fixtures.py)");
         return new PdfPki(folder);
-    }
-
-    // The timestamp authority stood in here (RFC 3161, in process): its certificate and key from the test PKI, its time
-    // given (five seconds after the signing time, as the samples'), the request's digest and nonce answered; it counts the
-    // requests, and can be told to answer for another request.
-    private sealed class PdfTestTimestamps(PdfPki pki, string name = "idrak-test") : ISignatureService
-    {
-        private readonly X509Certificate2 _key = pki.WithKey("tsa");
-        private readonly CmsCertificate _intermediate = CmsCertificate.Parse(pki.File("pki.intermediate.cer"));
-        private long _serial = 0x7000;
-
-        public string Name => name;
-
-        public string Summary => "a timestamp authority stood in by the tests";
-
-        public int Requests { get; private set; }
-
-        public bool Wrong { get; set; }
-
-        public DateTimeOffset Time { get; set; } = PdfSigningTime.AddSeconds(5);
-
-        public byte[] Send(SignatureServiceRequest request, CancellationToken cancellation = default)
-        {
-            Check(request.Kind == SignatureServiceKind.Timestamp, $"the timestamp stand-in was asked for {request.Kind}");
-            Requests++;
-            var reader = new AsnReader(request.Body, AsnEncodingRules.DER).ReadSequence();
-            reader.ReadInteger();
-            var imprint = reader.ReadSequence();
-            var algorithm = imprint.ReadSequence();
-            string digestOid = algorithm.ReadObjectIdentifier();
-            byte[] hashed = imprint.ReadOctetString();
-            var nonce = reader.ReadInteger();
-            if (Wrong)
-            {
-                hashed[0] ^= 0xFF;
-            }
-
-            var info = new AsnWriter(AsnEncodingRules.DER);
-            using (info.PushSequence())
-            {
-                info.WriteInteger(1);
-                info.WriteObjectIdentifier("2.999.1.2");
-                using (info.PushSequence())
-                {
-                    using (info.PushSequence())
-                    {
-                        info.WriteObjectIdentifier(digestOid);
-                    }
-
-                    info.WriteOctetString(hashed);
-                }
-
-                info.WriteInteger(++_serial);
-                info.WriteGeneralizedTime(Time);
-                info.WriteInteger(nonce);
-            }
-
-            byte[] tstInfo = info.Encode();
-            byte[] token = CmsWriter.Sign(CmsOids.TstInfo, tstInfo, SHA256.HashData(tstInfo), _key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1, [_intermediate]);
-            var response = new AsnWriter(AsnEncodingRules.DER);
-            using (response.PushSequence())
-            {
-                using (response.PushSequence())
-                {
-                    response.WriteInteger(0);
-                }
-
-                response.WriteEncodedValue(token);
-            }
-
-            return response.Encode();
-        }
-    }
-
-    // An "http" service stood in over the library's: it answers the test PKI's addresses (the signer's OCSP responder, the
-    // two lists) from the PKI's files, and counts what it is asked.
-    private sealed class PdfTestNetwork(PdfPki pki, string name = "http") : ISignatureService
-    {
-        public string Name => name;
-
-        public string Summary => "the test PKI's addresses, stood in by the tests";
-
-        public List<string> Asked { get; } = [];
-
-        public byte[] Send(SignatureServiceRequest request, CancellationToken cancellation = default)
-        {
-            lock (Asked)
-            {
-                Asked.Add($"{request.Kind} {request.Address}");
-            }
-
-            return request.Address.AbsolutePath switch
-            {
-                "/root.crl" => pki.File("pki.root.crl"),
-                "/intermediate.crl" => pki.File("pki.intermediate.crl"),
-                _ when request.Kind == SignatureServiceKind.Ocsp => pki.File("pki.signer.ocsp"),
-                _ => throw new IOException($"{request.Address} is not one of the test PKI's addresses."),
-            };
-        }
     }
 
     private static SignatureCheckStep PdfStep(SignatureCheck check, string name) =>
@@ -405,20 +305,6 @@ internal abstract partial class Tests
             $"a grace too short: {PdfStep(shortGrace, SignatureCheck.Revocation).Detail}");
         var graced = First("trust-stale-revocation", pki.Trust() with { RequireRevocation = true, FreshnessGrace = TimeSpan.FromDays(14) });
         Check(graced.Valid && PdfStep(graced, SignatureCheck.Revocation).Detail.StartsWith("good", StringComparison.Ordinal), $"a grace of 14 days: {PdfDescribe(graced)}");
-        var network = new PdfTestNetwork(pki);
-        SignatureServices.Register(network);
-        try
-        {
-            var online = First("trust-stale-revocation", pki.Trust() with { Online = true, RequireRevocation = true });
-            var step = PdfStep(online, SignatureCheck.Revocation);
-            Check(online.Valid && step.Detail.StartsWith("good", StringComparison.Ordinal) && step.Detail.Contains("fetched online", StringComparison.Ordinal)
-                  && network.Asked.Contains("Ocsp http://ocsp.example.com/"), $"stale data fetched again online: {string.Join(", ", network.Asked)}; {step.Detail}");
-        }
-        finally
-        {
-            Check(SignatureServices.Unregister("http") && SignatureServices.Origin("http") == Overrides.Library, "the library's http back");
-        }
-
         // Each list's and response's signature verified once a check: pades-blt's signer response and two lists, asked about
         // five times between the timestamp authority's path and the signer's; the next check verifies them again.
         using var document = PdfEditOpen(File.ReadAllBytes(PdfEditSample("pades-blt").Path), "pades-blt");
@@ -431,56 +317,12 @@ internal abstract partial class Tests
         Check(first.Valid && second.Valid && once == 3 && again == 3, $"the sources' signatures verified {once} times in a check and {again} in the next (3 each expected): {PdfDescribe(first)}");
     }
 
-    private static void PdfSignatureOnline(Device device)
-    {
-        CpuOnly(device);
-        var pki = PdfSignaturePki();
-        Check(SignatureServices.Names.Contains("http") && SignatureServices.Names.Contains("https") && SignatureServices.Origin("https") == Overrides.Library
-              && SignatureServices.Default("http") is { } library && library.Name == "http", $"the library's services: {SignatureServices.Describe()}");
-        ExpectRefusal<NotRegisteredException>(() => SignatureServices.For(new Uri("ftp://lists.example.com/a.crl")), "https", "a scheme no service serves");
-        var network = new PdfTestNetwork(pki);
-        SignatureServices.Register(network);
-        try
-        {
-            Check(SignatureServices.Origin("http") != Overrides.Library && ReferenceEquals(SignatureServices.Get("http"), network), "the app's service over the library's");
-            using var document = PdfEditOpen(File.ReadAllBytes(PdfEditSample("pades-bb").Path), "pades-bb");
-            var signature = document.Signatures[0];
-            var offline = signature.Check(pki.Trust());
-            Check(network.Asked.Count == 0 && PdfStep(offline, SignatureCheck.Revocation).Detail.StartsWith("not checked", StringComparison.Ordinal)
-                  && PdfStep(offline, SignatureCheck.Revocation).Detail.Contains("IDRAK_DOCUMENT_SIGNATURE_ONLINE", StringComparison.Ordinal),
-                $"nothing fetched while fetching is off: {network.Asked.Count} asked; {PdfStep(offline, SignatureCheck.Revocation).Detail}");
-            var online = signature.Check(pki.Trust() with { Online = true });
-            var step = PdfStep(online, SignatureCheck.Revocation);
-            Check(online.Valid && step.Detail.StartsWith("good", StringComparison.Ordinal) && step.Detail.Contains("fetched online", StringComparison.Ordinal)
-                  && network.Asked.Contains("Ocsp http://ocsp.example.com/") && network.Asked.Contains("RevocationList http://pki.example.com/root.crl"),
-                $"fetched online when turned on: {string.Join(", ", network.Asked)}; {step.Detail}");
-        }
-        finally
-        {
-            Check(SignatureServices.Unregister("http") && SignatureServices.Origin("http") == Overrides.Library, "the library's http back");
-        }
-
-        // The variable turns fetching on for both options when they are made.
-        string? before = Environment.GetEnvironmentVariable(SignatureCheckOptions.OnlineVariable);
-        try
-        {
-            Environment.SetEnvironmentVariable(SignatureCheckOptions.OnlineVariable, "on");
-            Check(new SignatureCheckOptions().Online && new SigningOptions(pki.Certificate("signer")).Online, $"{SignatureCheckOptions.OnlineVariable}=on turns fetching on");
-            Environment.SetEnvironmentVariable(SignatureCheckOptions.OnlineVariable, null);
-            Check(!new SignatureCheckOptions().Online && !new SigningOptions(pki.Certificate("signer")).Online, "off unless turned on");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(SignatureCheckOptions.OnlineVariable, before);
-        }
-    }
-
     // A document of two pages of generic text to sign.
     private static byte[] PdfSigningSource()
     {
         var face = SubsetFace();
         using var destination = new MemoryStream();
-        using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
+        using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
         {
             builder.Info = new DocumentInfo { Title = "Quarterly report" };
             foreach (string line in new[] { "Revenue rose by 12 percent.", "Approved by the finance team." })
@@ -550,130 +392,83 @@ internal abstract partial class Tests
         CpuOnly(device);
         var pki = PdfSignaturePki();
         byte[] source = PdfSigningSource();
-        var authority = new PdfTestTimestamps(pki);
-        var network = new PdfTestNetwork(pki);
-        SignatureServices.Register(authority);
-        SignatureServices.Register(network);                                   // counts what is asked of http: nothing, here
-        try
+        var cases = new (string Name, DocumentSignatureLevel Level, string Key, bool Pss, DocumentSignatureKind Kind)[]
         {
-            var cases = new (string Name, DocumentSignatureLevel Level, string Key, bool Pss, DocumentSignatureKind Kind)[]
-            {
-                ("signed-bb-rsa", DocumentSignatureLevel.BaselineB, "signer", false, DocumentSignatureKind.BaselineB),
-                ("signed-bb-rsa-pss", DocumentSignatureLevel.BaselineB, "signer", true, DocumentSignatureKind.BaselineB),
-                ("signed-bb-ecdsa", DocumentSignatureLevel.BaselineB, "signer-ec", false, DocumentSignatureKind.BaselineB),
-                ("signed-bt-rsa", DocumentSignatureLevel.BaselineT, "signer", false, DocumentSignatureKind.BaselineT),
-                ("signed-bt-ecdsa", DocumentSignatureLevel.BaselineT, "signer-ec", false, DocumentSignatureKind.BaselineT),
-                ("signed-blt-rsa", DocumentSignatureLevel.BaselineLt, "signer", false, DocumentSignatureKind.BaselineLt),
-                ("signed-blt-ecdsa", DocumentSignatureLevel.BaselineLt, "signer-ec", false, DocumentSignatureKind.BaselineLt),
-            };
-            byte[]? first = null;
-            foreach (var (name, level, key, pss, kind) in cases)
-            {
-                int stamps = authority.Requests;
-                using var document = PdfEditOpen(source, name);
-                byte[] signed = PdfEditSave(document, e => e.Sign("Signature1", PdfSigningOptions(pki, level, key, pss)), DocumentSaveMode.Incremental);
-                Check(signed.AsSpan(0, source.Length).SequenceEqual(source), $"{name}: the source's bytes are its prefix");
-                var checks = PdfExpectSigned(name, signed, pki);
-                using var read = PdfEditOpen(signed, name);
-                var signature = read.Signatures.Single();
-                Check(signature.Kind == kind && signature.Field == "Signature1" && signature.SignedAt == PdfSigningTime && signature.Reason == "Approved"
-                      && signature.Changes == (level == DocumentSignatureLevel.BaselineLt ? DocumentSignatureChanges.Allowed : DocumentSignatureChanges.None),
-                    $"{name}: {signature.Kind}, {signature.Changes}, signed at {signature.SignedAt}");
-                Check(authority.Requests == stamps + (level == DocumentSignatureLevel.BaselineB ? 0 : 1)
-                      && (level == DocumentSignatureLevel.BaselineB || signature.TimestampedAt == authority.Time), $"{name}: {authority.Requests - stamps} timestamps asked");
-                var check = checks.Single();
-                Check(PdfStep(check, SignatureCheck.Revocation).Detail.StartsWith(level == DocumentSignatureLevel.BaselineLt ? "good" : "not checked", StringComparison.Ordinal)
-                      && PdfStep(check, SignatureCheck.Timestamp).Detail.StartsWith(level == DocumentSignatureLevel.BaselineB ? "none" : "valid", StringComparison.Ordinal),
-                    $"{name}: {PdfDescribe(check)}");
-                if (level == DocumentSignatureLevel.BaselineLt)
-                {
-                    var blt = read.Signatures.Single().Check(pki.Trust() with { RequireRevocation = true });
-                    Check(blt.Valid, $"{name}: revocation from the file alone, required: {PdfDescribe(blt)}");
-                }
-
-                first ??= name == "signed-bb-rsa" ? signed : null;
-                Check(read.PageCount == 2, $"{name}: {read.PageCount} pages");
-            }
-
-            // A second signature (ECDSA, a field of its own on page 2) keeps the first valid: its changes are form filling.
-            using (var once = PdfEditOpen(first!, "signed-bb-rsa"))
-            {
-                byte[] twice = PdfEditSave(once, e => e.Sign("Signature2", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB, "signer-ec") with { Page = 1 }), DocumentSaveMode.Incremental);
-                Check(twice.AsSpan(0, first!.Length).SequenceEqual(first), "a second signature keeps the first's bytes");
-                PdfExpectSigned("signed-twice", twice, pki);
-                using var read = PdfEditOpen(twice, "signed-twice");
-                var firstSignature = read.Signatures[0];
-                var checkFirst = firstSignature.Check(pki.Trust());
-                Check(read.Signatures.Count == 2 && firstSignature.Changes == DocumentSignatureChanges.Allowed && read.Signatures[1].CoversWholeFile
-                      && PdfStep(checkFirst, SignatureCheck.Changes).Detail.Contains("form filling", StringComparison.Ordinal), $"the first signature after the second: {PdfDescribe(checkFirst)}");
-            }
-
-            // An empty signature field of a form (D9's forms-empty), its widget given an appearance; the other fields untouched.
-            var form = PdfEditSample("forms-empty");
-            byte[] formBytes = File.ReadAllBytes(form.Path);
-            using (var empty = PdfEditOpen(formBytes, "forms-empty"))
-            {
-                byte[] signed = PdfEditSave(empty, e => e.Sign("signature", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineT)), DocumentSaveMode.Incremental);
-                PdfExpectSigned("signed-form-field", signed, pki);
-                using var read = PdfEditOpen(signed, "signed-form-field");
-                Check(read.Signatures.Single().Field == "signature" && read.Signatures.Single().CoversWholeFile, "the form's own signature field signed");
-            }
-
-            // The builder signs at Finish: the file written whole, then the signature as an update.
-            using (var destination = new MemoryStream())
-            {
-                var face = SubsetFace();
-                using (var builder = DocumentWriters.Create(destination, "pdf", PdfWriteDefaults))
-                {
-                    builder.Sign("Approval", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB) with { Box = null, AppearanceText = null });
-                    var page = builder.AddPage(300, 200);
-                    page.Glyphs(face, 12, PdfShaped(face, "Signed when finished", "Latn", false, 20, 40, 12), "Signed when finished", DocumentTextMode.Fill, DocumentColour.Black);
-                    builder.Finish();
-                }
-
-                byte[] built = destination.ToArray();
-                PdfExpectSigned("signed-by-builder", built, pki);
-                using var read = PdfEditOpen(built, "signed-by-builder");
-                Check(read.Signatures.Single().Field == "Approval" && read.File.Xref.Sections.Count == 2 && read.ReadPage(0, DocumentParts.Text).Text == "Signed when finished",
-                    $"the builder's signature, as an update ({read.File.Xref.Sections.Count} sections)");
-            }
-
-            // After other edits (the information, a page turned) saved as an update, and after a rewrite: the signature covers all.
-            using (var edited = PdfEditOpen(source, "edited"))
-            {
-                byte[] signed = PdfEditSave(edited, e =>
-                {
-                    e.SetInfo(new DocumentInfo { Title = "Quarterly report, approved" });
-                    e.RotatePage(1, 90);
-                    e.Sign("Signature1", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB));
-                }, DocumentSaveMode.Incremental);
-                Check(signed.AsSpan(0, source.Length).SequenceEqual(source), "edited then signed: the source's bytes its prefix");
-                PdfExpectSigned("signed-after-edits", signed, pki);
-                using var read = PdfEditOpen(signed, "signed-after-edits");
-                Check(read.Info.Title == "Quarterly report, approved" && read.ReadPage(1, DocumentParts.None).Rotation == 90 && read.Signatures.Single().CoversWholeFile, "the edits and the signature");
-                byte[] rewritten = PdfEditSave(read, e => e.Sign("Signature2", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB) with { Page = 1 }), DocumentSaveMode.Rewrite);
-                using var clean = PdfEditOpen(rewritten, "signed-after-rewrite");
-                var signatures = clean.Signatures;
-                var added = signatures.SingleOrDefault(s => s.Field == "Signature2");
-                Check(signatures.Count == 2 && added is not null && added.CoversWholeFile && added.Check(pki.Trust()).Valid,
-                    $"a rewrite then signed: {signatures.Count} signatures, the new one valid");
-            }
-
-            // An encrypted file (D11's AES-256 sample, opened by its owner) signed: its encryption kept, /Contents plain.
-            var encrypted = PdfEditSample("encrypted-aes256");
-            using (var locked = PdfEditOpen(File.ReadAllBytes(encrypted.Path), "encrypted-aes256", PdfEditOwner))
-            {
-                byte[] signed = PdfEditSave(locked, e => e.Sign("Signature1", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineT)), DocumentSaveMode.Incremental);
-                PdfExpectSigned("signed-encrypted", signed, pki, PdfEditUser, "signed-encrypted");
-                ExpectRefusal<InvalidDataException>(() => PdfEditOpen(signed, "signed-encrypted, no password"), "DocumentOptions.Password", "the signed encrypted file without a password");
-            }
-
-            Check(network.Asked.Count == 0, $"nothing asked of a service the app did not name: {string.Join(", ", network.Asked)}");
+            ("signed-bb-rsa", DocumentSignatureLevel.BaselineB, "signer", false, DocumentSignatureKind.BaselineB),
+            ("signed-bb-rsa-pss", DocumentSignatureLevel.BaselineB, "signer", true, DocumentSignatureKind.BaselineB),
+            ("signed-bb-ecdsa", DocumentSignatureLevel.BaselineB, "signer-ec", false, DocumentSignatureKind.BaselineB),
+        };
+        byte[]? first = null;
+        foreach (var (name, level, key, pss, kind) in cases)
+        {
+            using var document = PdfEditOpen(source, name);
+            byte[] signed = PdfEditSave(document, e => e.Sign("Signature1", PdfSigningOptions(pki, level, key, pss)), DocumentSaveMode.Incremental);
+            Check(signed.AsSpan(0, source.Length).SequenceEqual(source), $"{name}: the source's bytes are its prefix");
+            var checks = PdfExpectSigned(name, signed, pki);
+            using var read = PdfEditOpen(signed, name);
+            var signature = read.Signatures.Single();
+            Check(signature.Kind == kind && signature.Field == "Signature1" && signature.SignedAt == PdfSigningTime && signature.Reason == "Approved"
+                  && signature.Changes == (level == DocumentSignatureLevel.BaselineLt ? DocumentSignatureChanges.Allowed : DocumentSignatureChanges.None),
+                $"{name}: {signature.Kind}, {signature.Changes}, signed at {signature.SignedAt}");
+            var check = checks.Single();
+            Check(PdfStep(check, SignatureCheck.Revocation).Detail.StartsWith(level == DocumentSignatureLevel.BaselineLt ? "good" : "not checked", StringComparison.Ordinal)
+                  && PdfStep(check, SignatureCheck.Timestamp).Detail.StartsWith(level == DocumentSignatureLevel.BaselineB ? "none" : "valid", StringComparison.Ordinal),
+                $"{name}: {PdfDescribe(check)}");
+            first ??= name == "signed-bb-rsa" ? signed : null;
+            Check(read.PageCount == 2, $"{name}: {read.PageCount} pages");
         }
-        finally
+
+        // A second signature (ECDSA, a field of its own on page 2) keeps the first valid: its changes are form filling.
+        using (var once = PdfEditOpen(first!, "signed-bb-rsa"))
         {
-            SignatureServices.Unregister(authority.Name);
-            SignatureServices.Unregister(network.Name);
+            byte[] twice = PdfEditSave(once, e => e.Sign("Signature2", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB, "signer-ec") with { Page = 1 }), DocumentSaveMode.Incremental);
+            Check(twice.AsSpan(0, first!.Length).SequenceEqual(first), "a second signature keeps the first's bytes");
+            PdfExpectSigned("signed-twice", twice, pki);
+            using var read = PdfEditOpen(twice, "signed-twice");
+            var firstSignature = read.Signatures[0];
+            var checkFirst = firstSignature.Check(pki.Trust());
+            Check(read.Signatures.Count == 2 && firstSignature.Changes == DocumentSignatureChanges.Allowed && read.Signatures[1].CoversWholeFile
+                  && PdfStep(checkFirst, SignatureCheck.Changes).Detail.Contains("form filling", StringComparison.Ordinal), $"the first signature after the second: {PdfDescribe(checkFirst)}");
+        }
+
+        // The builder signs at Finish: the file written whole, then the signature as an update.
+        using (var destination = new MemoryStream())
+        {
+            var face = SubsetFace();
+            using (var builder = new PdfWriter().Create(destination, PdfWriteDefaults))
+            {
+                builder.Sign("Approval", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB) with { Box = null, AppearanceText = null });
+                var page = builder.AddPage(300, 200);
+                page.Glyphs(face, 12, PdfShaped(face, "Signed when finished", "Latn", false, 20, 40, 12), "Signed when finished", DocumentTextMode.Fill, DocumentColour.Black);
+                builder.Finish();
+            }
+
+            byte[] built = destination.ToArray();
+            PdfExpectSigned("signed-by-builder", built, pki);
+            using var read = PdfEditOpen(built, "signed-by-builder");
+            Check(read.Signatures.Single().Field == "Approval" && read.File.Xref.Sections.Count == 2 && read.ReadPage(0, DocumentParts.Text).Text == "Signed when finished",
+                $"the builder's signature, as an update ({read.File.Xref.Sections.Count} sections)");
+        }
+
+        // After other edits (the information, a page turned) saved as an update, and after a rewrite: the signature covers all.
+        using (var edited = PdfEditOpen(source, "edited"))
+        {
+            byte[] signed = PdfEditSave(edited, e =>
+            {
+                e.SetInfo(new DocumentInfo { Title = "Quarterly report, approved" });
+                e.RotatePage(1, 90);
+                e.Sign("Signature1", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB));
+            }, DocumentSaveMode.Incremental);
+            Check(signed.AsSpan(0, source.Length).SequenceEqual(source), "edited then signed: the source's bytes its prefix");
+            PdfExpectSigned("signed-after-edits", signed, pki);
+            using var read = PdfEditOpen(signed, "signed-after-edits");
+            Check(read.Info.Title == "Quarterly report, approved" && read.ReadPage(1, DocumentParts.None).Rotation == 90 && read.Signatures.Single().CoversWholeFile, "the edits and the signature");
+            byte[] rewritten = PdfEditSave(read, e => e.Sign("Signature2", PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB) with { Page = 1 }), DocumentSaveMode.Rewrite);
+            using var clean = PdfEditOpen(rewritten, "signed-after-rewrite");
+            var signatures = clean.Signatures;
+            var added = signatures.SingleOrDefault(s => s.Field == "Signature2");
+            Check(signatures.Count == 2 && added is not null && added.CoversWholeFile && added.Check(pki.Trust()).Valid,
+                $"a rewrite then signed: {signatures.Count} signatures, the new one valid");
         }
     }
 
@@ -684,7 +479,7 @@ internal abstract partial class Tests
         byte[] source = PdfSigningSource();
         var options = PdfSigningOptions(pki, DocumentSignatureLevel.BaselineB);
         using var document = PdfEditOpen(source, "refusals");
-        using (var editor = DocumentWriters.Get("pdf").Edit(document, new MemoryStream(), PdfWriteDefaults))
+        using (var editor = new PdfWriter().Edit(document, new MemoryStream(), PdfWriteDefaults))
         {
             ExpectRefusal<ArgumentNullException>(() => editor.Sign("Signature1", null!), "options", "no options");
             ExpectRefusal<ArgumentException>(() => editor.Sign("Signature1", new SigningOptions(pki.Certificate("signer"))), "no private key", "a certificate without its key");
@@ -705,21 +500,7 @@ internal abstract partial class Tests
         Refused<InvalidOperationException>(File.ReadAllBytes(PdfEditSample("pades-bb").Path), "Signature1", options, "signed already", "a field signed already");
         Refused<ArgumentException>(source, "approvals.first", options, "without periods", "a dotted new field");
         Refused<ArgumentOutOfRangeException>(source, "Signature1", options with { Page = 5 }, "2 pages", "a page out of range");
-        Refused<NotRegisteredException>(source, "Signature1", options with { Level = DocumentSignatureLevel.BaselineT, TimestampAuthority = new Uri("idrak-none://timestamps.example.com/") },
-            "idrak-none", "an authority whose scheme no service serves");
-        var wrong = new PdfTestTimestamps(pki, "idrak-wrong") { Wrong = true };
-        SignatureServices.Register(wrong);
-        try
-        {
-            Refused<IOException>(source, "Signature1", options with { Level = DocumentSignatureLevel.BaselineT, TimestampAuthority = new Uri("idrak-wrong://timestamps.example.com/") },
-                "another request", "an authority answering for another request");
-        }
-        finally
-        {
-            SignatureServices.Unregister("idrak-wrong");
-        }
-
-        using var builder = DocumentWriters.Create(new MemoryStream(), "pdf", PdfWriteDefaults);
+        using var builder = new PdfWriter().Create(new MemoryStream(), PdfWriteDefaults);
         builder.AddPage(100, 100);
         ExpectRefusal<InvalidOperationException>(() => builder.Sign("Signature1", options), "before the first page", "the builder signing after its first page");
         builder.Finish();
@@ -780,50 +561,41 @@ internal abstract partial class Tests
             $"    checked (every step): cold {coldCheck:F1} ms, warm {warmCheck[2]:F2} ms ({warmCheck[2] * 1000 / n:F0} µs and {warm.Checked / 1024.0 / n:F1} KiB a signature)"));
         Check(cold.Signatures == n && n >= 14, $"{n} signatures timed");
 
-        // Signing a page: B-B, and B-LT (a timestamp from the stand-in authority, the DSS added).
+        // Signing a page at B-B.
         byte[] source = PdfSigningSource();
-        var authority = new PdfTestTimestamps(pki);
-        SignatureServices.Register(authority);
-        try
+        foreach (var level in new[] { DocumentSignatureLevel.BaselineB })
         {
-            foreach (var level in new[] { DocumentSignatureLevel.BaselineB, DocumentSignatureLevel.BaselineLt })
+            var options = PdfSigningOptions(pki, level);
+            long Sign()
             {
-                var options = PdfSigningOptions(pki, level);
-                long Sign()
+                using var document = PdfDocument.Open(new MemoryStream(source, writable: false), "to sign", new DocumentOptions());
+                using var counter = new PdfByteCounter();
+                using (var editor = new PdfWriter().Edit(document, counter, PdfWriteDefaults))
                 {
-                    using var document = PdfDocument.Open(new MemoryStream(source, writable: false), "to sign", new DocumentOptions());
-                    using var counter = new PdfByteCounter();
-                    using (var editor = DocumentWriters.Get("pdf").Edit(document, counter, PdfWriteDefaults))
-                    {
-                        editor.Sign("Signature1", options);
-                        editor.Save(DocumentSaveMode.Incremental);
-                    }
-
-                    return counter.Length;
+                    editor.Sign("Signature1", options);
+                    editor.Save(DocumentSaveMode.Incremental);
                 }
 
-                long start = Stopwatch.GetTimestamp();
-                long written = Sign();
-                double first = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-                var times = new List<double>();
-                long allocated = 0;
-                for (int i = 0; i < 5; i++)
-                {
-                    long before = GC.GetAllocatedBytesForCurrentThread();
-                    start = Stopwatch.GetTimestamp();
-                    Sign();
-                    times.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
-                    allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                }
-
-                times.Sort();
-                Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                    $"    a page signed at {level}: {written - source.Length:N0} bytes added to {source.Length:N0}, cold {first:F1} ms, warm {times[2]:F2} ms, {allocated / 1024.0:F0} KiB allocated"));
+                return counter.Length;
             }
-        }
-        finally
-        {
-            SignatureServices.Unregister(authority.Name);
+
+            long start = Stopwatch.GetTimestamp();
+            long written = Sign();
+            double first = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            var times = new List<double>();
+            long allocated = 0;
+            for (int i = 0; i < 5; i++)
+            {
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                start = Stopwatch.GetTimestamp();
+                Sign();
+                times.Add(Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+                allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            }
+
+            times.Sort();
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"    a page signed at {level}: {written - source.Length:N0} bytes added to {source.Length:N0}, cold {first:F1} ms, warm {times[2]:F2} ms, {allocated / 1024.0:F0} KiB allocated"));
         }
     }
 }

@@ -22,7 +22,7 @@ internal abstract partial class Tests
     internal static void ContourTracerMeasured(Device device)
     {
         CpuOnly(device);
-        var tracer = OutlineTracers.Get(OutlineTracers.Contour);
+        var tracer = new ContourTracer();
         var settings = tracer.Read(PageOptions.None);
         var plain = tracer.Read(PageOptionsOf((ContourTracer.SimplifyKey, "0")));
 
@@ -90,12 +90,7 @@ internal abstract partial class Tests
     internal static void ContourTracerOptions(Device device)
     {
         CpuOnly(device);
-        var tracer = OutlineTracers.Get("CONTOUR");
-        Check(tracer is ContourTracer && OutlineTracers.Default(OutlineTracers.Contour) is ContourTracer && OutlineTracers.Origin(OutlineTracers.Contour) == Overrides.Library
-              && OutlineTracers.Names.Contains(OutlineTracers.Contour) && OutlineTracers.Describe().Contains("contour: the ink's edge at a level", StringComparison.Ordinal)
-              && tracer.Keys.SequenceEqual([ContourTracer.ThresholdKey, ContourTracer.SimplifyKey, ContourTracer.CornerKey, ContourTracer.SmoothingKey]),
-            $"the library's tracer: {OutlineTracers.Describe()}");
-
+        var tracer = new ContourTracer();
         ThrowsNaming<ArgumentException>(() => tracer.Read(PageOptionsOf(("trace-speed", "1"))), "a key it does not take", "'trace-speed'",
             "trace-threshold, trace-simplify, trace-corner, trace-smoothing");
         ThrowsNaming<ArgumentException>(() => tracer.Read(PageOptionsOf((ContourTracer.ThresholdKey, "1.5"))), "a level past 0.99",
@@ -134,27 +129,10 @@ internal abstract partial class Tests
             string.Create(CultureInfo.InvariantCulture, $"one inked pixel at (1, 1), two units a pixel: a contour round it within half a pixel, ({minX}, {minY}) to ({maxX}, {maxY})"));
     }
 
-    internal static void ContourTracerSuite(Device device)
-    {
-        CpuOnly(device);
-        var tracer = OutlineTracers.Get(OutlineTracers.Contour);
-        IReadOnlyList<IReadOnlyDictionary<string, string>> settings =
-        [
-            PageOptionsOf((ContourTracer.ThresholdKey, "0.5"), (ContourTracer.SimplifyKey, "0.25")),
-            PageOptionsOf((ContourTracer.SimplifyKey, "1.5"), (ContourTracer.CornerKey, "45"), (ContourTracer.SmoothingKey, "3")),
-            PageOptionsOf((ContourTracer.ThresholdKey, "0.3"), (ContourTracer.SimplifyKey, "0")),
-        ];
-        foreach (var (font, unitsPerEm, glyphs) in TracerFonts())
-        {
-            var report = Conformance.CheckOutlineTracer(tracer, [.. glyphs.Select(g => g.Outline)], unitsPerEm, settings);
-            Check(report.Passed, $"{font}'s glyphs:\n{report}");
-        }
-    }
-
     internal static void ContourTracerRoundTrip(Device device)
     {
         CpuOnly(device);
-        var tracer = OutlineTracers.Get(OutlineTracers.Contour);
+        var tracer = new ContourTracer();
         var fonts = TracerFonts();
         var plain = tracer.Read(PageOptionsOf((ContourTracer.SimplifyKey, "0")));
         long checkedCentres = 0, skipped = 0;
@@ -359,7 +337,7 @@ internal abstract partial class Tests
         };
         foreach (string file in new[] { "amiri", "reem-kufi", "cairo" })
         {
-            var face = FontFormats.Read(FontData($"arabic/{file}.ttf")).Single();
+            var face = new OpenTypeFormat().Read(File.ReadAllBytes(FontData($"arabic/{file}.ttf")), file).Single();
             fonts.Add((face.Family, face.Metrics.UnitsPerEm, [.. ArabicGlyphs.Select(code => ($"U+{code:X4}", face.Outline(face.Glyph(code))))]));
         }
 
@@ -385,7 +363,7 @@ internal abstract partial class Tests
     private static float[] Filled(GlyphOutline outline, OutlinePlacement at, int width, int height)
     {
         var values = new float[width * height];
-        OutlineRasterizers.Get().Fill(outline, at.Scale, at.X, at.Y, values, width, height);
+        new CoverageRasterizer().Fill(outline, at.Scale, at.X, at.Y, values, width, height);
         for (int i = 0; i < values.Length; i++)
         {
             values[i] = Math.Clamp(values[i], 0f, 1f);

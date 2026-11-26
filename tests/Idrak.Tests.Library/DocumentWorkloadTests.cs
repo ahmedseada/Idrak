@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak.Data.Pdf;
+using Idrak.Imaging;
 
 // Plan 28, phase D13: any workload. The limits (DocumentOptions) measured from the machine's memory and settable, and memory
 // bounded at any size, on the large set tools/documents/make_fixtures.py --large writes beside the samples
@@ -109,12 +110,16 @@ internal abstract partial class Tests
         // A limit set low trips naming its option and its variable: the 3,000-page file has more objects than 1,000.
         string pages = WorkloadLarge("pages-3000.pdf");
         WithEnvironment(new Dictionary<string, string?> { [DocumentOptions.MaxObjectsVariable] = "1000" }, () => ExpectRefusal<InvalidDataException>(
-            () => DocumentFormats.Open(pages).Dispose(), DocumentOptions.MaxObjectsVariable, "the object limit from its variable"));
+            () =>
+            {
+                using var stream = File.OpenRead(pages);
+                new PdfFormat().Open(stream, pages, new DocumentOptions()).Dispose();
+            }, DocumentOptions.MaxObjectsVariable, "the object limit from its variable"));
 
         // The deep forms: 8, 16 and 24 levels within the default nesting; a lower one stops the 24 levels deep page, naming it.
         string deep = WorkloadLarge("deep-forms.pdf");
         var checks = WorkloadChecks("deep-forms.pdf");
-        using (var document = DocumentFormats.Open(deep))
+        using (var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(deep)), deep, new DocumentOptions()))
         {
             foreach (var entry in checks["textPages"]!.AsArray())
             {
@@ -126,7 +131,7 @@ internal abstract partial class Tests
 
         WithEnvironment(new Dictionary<string, string?> { [DocumentOptions.MaxDepthVariable] = "20" }, () =>
         {
-            using var document = DocumentFormats.Open(deep);
+            using var document = new PdfFormat().Open(new MemoryStream(File.ReadAllBytes(deep)), deep, new DocumentOptions());
             Check(document.ReadPage(1, DocumentParts.Text).Text == "Nested 16 forms deep", "16 levels within a nesting limit of 20");
             ExpectRefusal<InvalidDataException>(() => document.ReadPage(2, DocumentParts.Text), "MaxDepth", "24 levels past a nesting limit of 20");
         });
@@ -202,18 +207,13 @@ internal abstract partial class Tests
         {
             pages = source.PageCount;
             using var counter = new PdfByteCounter();
-            using (var builder = DocumentWriters.Create(counter, "pdf", new DocumentWriteOptions()))
+            using (var builder = new PdfWriter().Create(counter, new DocumentWriteOptions()))
             {
                 var glyphs = new DocumentGlyph[256];
                 for (int p = 0; p < pages; p++)
                 {
                     var page = source.ReadPage(p, DocumentParts.Text | DocumentParts.Images);
                     var target = builder.AddPage(page.Width, page.Height);
-                    foreach (var image in page.Images)
-                    {
-                        target.Image(image.Decode(), image.Box, DocumentImageEncoding.Auto);
-                    }
-
                     foreach (var run in page.Runs)
                     {
                         float scale = run.FontSize / face.Metrics.UnitsPerEm, x = run.Box.X, y = run.Baseline ?? run.Box.Bottom;
@@ -261,7 +261,7 @@ internal abstract partial class Tests
             int drawn = 0;
             for (int p = 0; p < source.PageCount; p += 5, drawn++)
             {
-                var drawing = source.DrawPage(p, options);
+                var drawing = new CoverageDocumentDrawer().Draw(source.ReadPage(p, DocumentPageDrawers.PartsFor(options)), options);
                 Check(drawing.Image.Width == 612 && drawing.Image.Height == 792, $"page {p} drawn {drawing.Image.Width} x {drawing.Image.Height}");
                 drawHeap = Math.Max(drawHeap, GC.GetTotalMemory(forceFullCollection: false));
                 if (drawn == 20)
@@ -281,13 +281,14 @@ internal abstract partial class Tests
         string huge = WorkloadLarge("huge-image.pdf");
         var expectedImage = WorkloadChecks("huge-image.pdf")["image"]!;
         long decoded = (long)expectedImage["decodedBytes"]!;
-        using (var document = DocumentFormats.Open(huge))
+        using (var stream = File.OpenRead(huge))
+        using (var document = new PdfFormat().Open(stream, huge, new DocumentOptions()))
         {
             var options = new DocumentDrawOptions { Dpi = 36 };
             GC.Collect();
             GC.WaitForPendingFinalizers();
             long before = GC.GetTotalAllocatedBytes(precise: true), at = Stopwatch.GetTimestamp();
-            var drawing = document.DrawPage(0, options);
+            var drawing = new CoverageDocumentDrawer().Draw(document.ReadPage(0, DocumentPageDrawers.PartsFor(options)), options);
             double ms = Stopwatch.GetElapsedTime(at).TotalMilliseconds;
             long used = GC.GetTotalAllocatedBytes(precise: true) - before;
             long pixels = (long)drawing.Image.Width * drawing.Image.Height * drawing.Image.Channels;
@@ -314,7 +315,8 @@ internal abstract partial class Tests
             InterlockedMax(ref most, now);
             try
             {
-                using var document = DocumentFormats.Open(file);
+                using var stream = File.OpenRead(file);
+                using var document = new PdfFormat().Open(stream, file, new DocumentOptions());
                 return document.ReadPage(0, DocumentParts.Text).Text;
             }
             finally
@@ -393,7 +395,8 @@ internal abstract partial class Tests
             double ms = 0;
             for (int round = 0; round < 2; round++)
             {
-                using var document = DocumentFormats.Open(pagesFile);
+                using var stream = File.OpenRead(pagesFile);
+                using var document = new PdfFormat().Open(stream, pagesFile, new DocumentOptions());
                 long start = Stopwatch.GetTimestamp();
                 if (parallel)
                 {
