@@ -141,7 +141,7 @@ public static class ComputeResources
     /// be inside a phone's app), <c>idrak</c> in the local application data folder, and where that is not absolute either,
     /// <c>idrak</c> in the temporary folder. A relative value is made absolute against the current folder when it is read,
     /// so the result is never relative. A cache's own variable still wins for that cache (<c>IDRAK_VULKAN_TUNING_CACHE</c>,
-    /// <c>IDRAK_TUNING_CACHE</c>, <c>IDRAK_CPU_TUNING_FILE</c>, <c>IDRAK_HIP_KERNEL_CACHE</c>, <c>IDRAK_RNNOISE_MODEL</c>, …).
+    /// <c>IDRAK_TUNING_CACHE</c>, <c>IDRAK_HIP_KERNEL_CACHE</c>, <c>IDRAK_RNNOISE_MODEL</c>, …).
     /// </summary>
     /// <exception cref="ArgumentException">Set to an empty or blank folder.</exception>
     [System.Diagnostics.CodeAnalysis.AllowNull]

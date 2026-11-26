@@ -16,7 +16,7 @@ internal static class CacheLayout
     public static IReadOnlyList<Part> Parts { get; } =
     [
         new("models", "downloaded models", [Path.Combine("downloads", "huggingface", "models"), "models"]),
-        new("tuning", "kernel choices measured on each device", ["tuning", Path.Combine("cpu", "tuning.tsv"), Path.Combine("vulkan", "tuning.tsv")]),
+        new("tuning", "kernel choices measured on each device", ["tuning", Path.Combine("vulkan", "tuning.tsv")]),
         new("kernels", "compiled kernels", [Path.Combine("hip", "kernels"), "kernels"]),
         new("downloads", "other downloads (datasets, files)", ["downloads"]),
     ];

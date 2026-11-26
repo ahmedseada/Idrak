@@ -14,7 +14,7 @@ namespace Idrak.Cli.Commands.Measure;
 /// </summary>
 internal sealed class TuningShowCommand : Command
 {
-    private static readonly string[] Backends = ["cpu", "cuda", "vulkan", "cluster"];
+    private static readonly string[] Backends = ["cuda", "vulkan", "cluster"];
 
     public override string Name => "tuning show";
 
@@ -22,13 +22,13 @@ internal sealed class TuningShowCommand : Command
 
     public override string Usage =>
         "[options]\n\n" +
-        "Reads the tuning caches the backends write as they measure their choices: the CPU's parallel cut-overs\n" +
-        "(cpu/tuning.tsv), the CUDA kernel choices (tuning/cuda/*.txt, one file per GPU and driver) and the Vulkan\n" +
+        "Reads the tuning caches the backends write as they measure their choices: the CUDA kernel choices\n" +
+        "(tuning/cuda/*.txt, one file per GPU and driver) and the Vulkan\n" +
         "runtime and kernel choices (vulkan/tuning.tsv), and a cluster's: the link profiles idrak cluster calibrate fitted\n" +
         "(cluster/link-*.txt) and the chunk and bucket sizes the collectives measured (cluster/tuning.txt), all under the\n" +
         "cache folder unless the variables below move them. Each choice is shown with what it was measured on.\n\n" +
         "Options:\n" +
-        "      --backend NAME  only cpu, cuda, vulkan or cluster\n" +
+        "      --backend NAME  only cuda, vulkan or cluster\n" +
         "      --reset         delete the caches (or the --backend one): choices are measured again on next use\n\n" +
         "Examples:\n" +
         "  idrak tuning show\n" +
@@ -50,7 +50,7 @@ internal sealed class TuningShowCommand : Command
         string? only = context.Option("--backend")?.ToLowerInvariant();
         if (only is not null && !Backends.Contains(only))
         {
-            throw new UsageException($"--backend takes cpu, cuda, vulkan or cluster, not '{only}'.");
+            throw new UsageException($"--backend takes cuda, vulkan or cluster, not '{only}'.");
         }
 
         var caches = Caches(context.CacheFolder).Where(c => only is null || c.Backend == only).ToList();
@@ -122,11 +122,6 @@ internal sealed class TuningShowCommand : Command
         static bool Off(string? setting) => Idrak.Abstraction.Devices.TuningFiles.IsOff(setting);           // as every backend reads it
         string? tuning = Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE");
 
-        string? cpu = Off(tuning) ? null
-            : Environment.GetEnvironmentVariable("IDRAK_CPU_TUNING_FILE") is { } cpuFile ? (cpuFile.Length > 0 ? cpuFile : null)
-            : System.IO.Path.Combine(cacheFolder, "cpu", "tuning.tsv");
-        yield return new Cache("cpu", cpu, cpu is not null && File.Exists(cpu) ? [cpu] : [], ReadCpu);
-
         string? cuda = Off(tuning) ? null
             : tuning is { Length: > 0 } && tuning is not "1" && !string.Equals(tuning, "true", StringComparison.OrdinalIgnoreCase) ? tuning
             : System.IO.Path.Combine(cacheFolder, "tuning", "cuda");
@@ -180,24 +175,6 @@ internal sealed class TuningShowCommand : Command
         foreach (var size in ClusterCache.ParseTuning(text))
         {
             yield return new Entry($"measured {size.Kind} sizes", size.Key, string.Create(inv, $"{size.Value} B ({size.Measured:yyyy-MM-dd}: {size.Detail})"));
-        }
-    }
-
-    // "v2|processor|features|cores|L1 …|…|.NET …|N threads<TAB>elements<TAB>flops": the two parallel cut-overs per machine key.
-    private static IEnumerable<Entry> ReadCpu(string path)
-    {
-        foreach (string line in File.ReadLines(path))
-        {
-            var fields = line.Split('\t');
-            if (fields.Length != 3)
-            {
-                continue;
-            }
-
-            var key = fields[0].Split('|');
-            string device = key.Length > 1 ? string.Join(", ", key.Skip(1).Where(p => p.Length > 0)) : fields[0];
-            yield return new Entry(device, "parallel cut-over, element-wise (elements)", fields[1]);
-            yield return new Entry(device, "parallel cut-over, products (m x n x k)", fields[2]);
         }
     }
 
