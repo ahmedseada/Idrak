@@ -177,42 +177,6 @@ internal static partial class PtxKernels
         block.Values == 32 && (block.CodeBits == 8 || block.CodeBits == 4 && block.NibblesSplit) && block.Scale.Exponent is 5 or 8 && block.Bytes % 2 == 0
         && block.ScaleOffset % 2 == 0 && block.CodeOffset % 2 == 0 && block.CodeTable is null or { Count: 16 };
 
-    /// <summary>
-    /// The tensor rows over a block description's weights as stored, one product and 2-3 sharing their input
-    /// (gemm_tc_nt_{code}_f32, …_multi_f32): the module's kernel names and source.
-    /// </summary>
-    internal static (string[] Names, string Source) TensorRowsBlockModule(TypedDecode d)
-    {
-        var (_, kernels, source) = Module("tensor rows " + d.Code, sb =>
-        {
-            foreach (int tileM in new[] { TensorTile, 64 })
-            {
-                TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code, tileM: tileM);
-                TensorCoreGemm(sb, false, true, 0, blockB: d.Block, blockName: d.Code, multi: true, tileM: tileM);
-            }
-        });
-        return (kernels, source);
-    }
-
-    /// <summary>
-    /// The tensor rows over a super-block or grid description's weights as stored (TensorCoreGemm's decodeB: 8 values at a
-    /// time by the description's decoder as each tile loads), one product and 2-3 sharing their input, 128- and 64-row tiles
-    /// (gemm_tc_nt_{code}[_multi][_m64]_f32), after the description's tables: the module's kernel names and source.
-    /// </summary>
-    internal static (string[] Names, string Source) TensorRowsDecodedModule(string code, string tables, BlockDecode decode)
-    {
-        var (_, kernels, source) = Module("tensor rows " + code, sb =>
-        {
-            sb.Append(tables);
-            foreach (int tileM in new[] { TensorTile, 64 })
-            {
-                TensorCoreGemm(sb, false, true, 0, decodeB: decode, blockName: code, tileM: tileM);
-                TensorCoreGemm(sb, false, true, 0, decodeB: decode, blockName: code, multi: true, tileM: tileM);
-            }
-        });
-        return (kernels, source);
-    }
-
     /// <summary>Every tensor-core kernel.</summary>
     public static string[] TensorCoreNames => [.. TensorCoreModules.SelectMany(m => m.Kernels)];
 
@@ -523,7 +487,6 @@ internal static partial class PtxKernels
                 KSPLIT_DONE:
                 """);
         }
-
 
         // Per-thread load coordinates (row within the tile, first of its two columns) and shared-memory store address.
         // A: %r13 row, %r14 column, %r15 store address; B: %r16, %r17, %r18. Leading dimensions (bytes): %rd9 / %rd10.

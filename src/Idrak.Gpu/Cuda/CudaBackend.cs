@@ -35,7 +35,7 @@ internal sealed class CudaStorage(CudaBackend backend, ulong pointer, int length
 /// and reused, so a training loop stops calling cuMemAlloc after its first iteration), and all
 /// kernels are the PTX from <see cref="PtxKernels"/>, launched on the default stream.
 /// </summary>
-internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFloat8Backend, IMatrixUnitBackend, IMemoryReport
+internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IMatrixUnitBackend, IMemoryReport
 {
     private static readonly Lazy<(int Count, string Reason)> Probe = new(ProbeDriver);
     private static readonly Lazy<CudaBackend>[] Instances = CreateInstances();
@@ -179,14 +179,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
         SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
-        IndexType = ElementType.Int32,                                      // indices, token ids and offsets (plan 37, T1b: the int32 kernels)
-        // Decisions 7 and 8 (plan 37), from the kernels: every kernel reads and writes float32 values (a reduced precision
-        // rounds operands inside the product's tiles, its storage stays float32), and sums in float32: the products,
-        // on tensor cores too (bfloat16 or fp8 operands, float32 accumulators), the reductions, norms and attention (the
-        // CTC loss keeps its rows in float32 and only their running offsets in float64).
-        DefaultValueTypes = [ElementType.Float32],
-        DefaultSumTypes = [ElementType.Float32],
-        ValueTypes = new Dictionary<Operation, IReadOnlyList<ElementType>> { [Ops.ConvertElements] = DeviceConversions.Types },   // its conversion kernels
     };
 
     bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
@@ -331,7 +323,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             _signatures = next.ToFrozenDictionary();
         }
     }
-    private readonly IntPtr _fill, _affine, _axpy, _mulAdd, _add, _sub, _mul, _clipFactor, _packBFloat16;
+    private readonly IntPtr _fill, _affine, _axpy, _mulAdd, _add, _sub, _mul, _clipFactor;
     private readonly IntPtr _sigmoid, _tanh, _relu, _square, _abs;
     private readonly IntPtr _sigmoidBwd, _tanhBwd, _reluBwd, _squareBwd, _absBwd, _dropout;
     private readonly IntPtr _addRowVec, _addScalar, _sumRows, _sum, _sgdMomentum, _adam, _matmul;
@@ -389,12 +381,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         // Kernel shapes from what the device reports (KernelShapes); the main module is generated for them.
         _limits = CudaDeviceLimits.Read(device, (long)memory);
         Capabilities = Capabilities with { SpanAttentionHeadDim = SpanHeadDim(_limits) };   // the span kernels this device holds
-        Capabilities = Capabilities with                                    // the types its kernels compute natively here (plan 37, T2)
-        {
-            NativeTypes = CudaNativeTypes.Of(BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
-            NativeReport = CudaNativeTypes.Report(_computeMajor, _computeMinor, BelowTarget(PtxKernels.TensorCoreTarget) is null, BelowTarget(PtxKernels.Float8Target) is null),
-            StoredFormats = new DescribedStoredFormats(BelowTarget(PtxKernels.TensorCoreTarget) is null),   // the routes' types (ProductRoutes; none under the named route)
-        };
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
         // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.
@@ -425,7 +411,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         _fill = Fn("fill_f32");
         _affine = Fn("affine_f32");
         _clipFactor = Fn("clip_factor_f32");
-        _packBFloat16 = Fn("bf16_pack_f32");
         _axpy = Fn("axpy_f32");
         _mulAdd = Fn("muladd_f32");
         _add = Fn("add_f32");
@@ -1204,9 +1189,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta) => Launch1D(_affine, n, P(x), P(y), F(alpha), F(beta), U(n));
 
-    public override void PackBFloat16Kernel(Storage x, Storage packed, int n) =>
-        Launch1D(_packBFloat16, (n + 1) / 2, P(x), P(packed), U(n), U((n + 1) / 2));
-
     public override void ClipFactorKernel(Storage sumSquares, Storage factor, float maxNorm) => Launch1D(_clipFactor, 1, P(sumSquares), P(factor), F(maxNorm), U(1));
 
     public override void AxpyKernel(Storage x, Storage y, int n, float alpha) => Launch1D(_axpy, n, P(x), P(y), F(alpha), U(n));
@@ -1633,30 +1615,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         return true;
     }
 
-    bool IMatrixUnitBackend.BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
-    {
-        if (m == 0 || n == 0 || k < 16 || u is not null && rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
-            || MixedPrecision.Current == MatMulPrecision.Float8 || TensorCoreKernels() is not { } tensorCore
-            || !tensorCore.TryGetValue("gemm_tc_nt_bf16w_lr_f32", out var function))
-        {
-            return false;
-        }
-
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_nt_bf16w{(u is null ? "" : "_lr")} {m}x{n}x{k}{(u is null ? "" : $"+{rank}")}";
-            _profileFlops = 2.0 * m * n * (k + (u is null ? 0 : rank));
-        }
-
-        void Run(int splits, ulong target) =>
-            LaunchTensor(function, (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile, (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile,
-                PtxKernels.TensorTile, splits, (uint)splits, P(a), P(packed), target, U(m), U(n), U(k), F(beta), 0UL, 0UL, 0UL, 0UL,
-                U(k), U((k + 1) / 2), U(n), 0UL, u is null ? 0UL : P(u), v is null ? 0UL : P(v), U(u is null ? 0 : rank));
-        Run(TensorSplits(m, n, k, beta, P(c), n, 6, Run, u is null ? 0 : rank), P(c));
-        Interlocked.Increment(ref TensorCoreLaunches);
-        return true;
-    }
-
     bool IMatrixUnitBackend.GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
         Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue,
         Storage? aux, long auxOffset)
@@ -1851,65 +1809,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                 sb.Release();
             }
         }
-    }
-
-    int IFloat8Backend.PaddedK(int k) => EightBitReady(fp8: true) ? PtxKernels.EightBitPaddedK(k) : 0;
-
-    bool IFloat8Backend.Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
-    {
-        if (!EightBitReady(fp8: true))
-        {
-            return false;
-        }
-
-        // The columns of w [k][n] become rows of k bytes: exact maxima (not the delayed ones), once.
-        var amax = Allocate(n, zeroed: true);
-        try
-        {
-            Launch(TensorKernel("absmax_cols_e4m3")!.Value, (uint)((n + 255) / 256), (uint)((k + 63) / 64), 1, 256, 1, P(w), P(amax), U(n), U(k), U(n), U(64));
-            QuantizeColumnsWithMaxima(true, P(w), n, values, scales, n, k, PtxKernels.EightBitPaddedK(k), amax, null);
-        }
-        finally
-        {
-            amax.Release();
-        }
-
-        return true;
-    }
-
-    bool IFloat8Backend.Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
-    {
-        if (m == 0 || n == 0 || !EightBitReady(fp8: true))
-        {
-            return false;
-        }
-
-        int kp = PtxKernels.EightBitPaddedK(k);
-        var (x8, sx, owned) = Quantized(true, P(x), k, byRows: true, m, k, kp);
-        try
-        {
-            if (_profile is not null)
-            {
-                _profileLabel = $"gemm8_e4m3_nn_fp8w {m}x{n}x{k}";
-                _profileFlops = 2.0 * m * n * k;
-            }
-
-            t_sharedBytes = PtxKernels.EightBitShared;
-            Launch(TensorKernel(PtxKernels.EightBitKernel(true, GemmEpilogue.None))!.Value, (uint)((n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile),
-                (uint)((m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile), 1, PtxKernels.TensorThreads, 1,
-                P(x8), P(values), P(y), U(m), U(n), U(kp), F(beta), P(sx), P(scales), 0UL, U(kp), U(kp), U(n), 0UL);
-            Interlocked.Increment(ref TensorCoreLaunches);
-        }
-        finally
-        {
-            if (owned)
-            {
-                x8.Release();
-                sx.Release();
-            }
-        }
-
-        return true;
     }
 
     // Quantized operands kept while a ReuseQuantizedOperands scope is open (on the thread that opened it).
@@ -2107,14 +2006,6 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     public override void AdamStepKernel(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps) =>
         Launch1D(_adam, n, P(p), P(g), P(m), P(v), F(lr), F(beta1), F(beta2), F(1f - beta1), F(1f - beta2), F(eps), U(n));
-
-    public override void AdamStep8BitKernel(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps,
-        float gradientScale, float decay)
-    {
-        int blocks = (n + EightBitMoments.BlockSize - 1) / EightBitMoments.BlockSize;
-        LaunchRows(K("adam8_f32"), blocks, P(p), P(g), P(m), P(v), P(absMax), P(map),
-            F(lr), F(beta1), F(beta2), F(1f - beta1), F(1f - beta2), F(eps), U(n), F(gradientScale), F(decay), U(blocks));
-    }
 
     // The device tables of FusedAdamW: chunks (tensor, first element) of 4096 elements, rebuilt when the sizes change; the
     // tensors' pointers and sizes, uploaded again only when a pointer changes; the norm / factor value.

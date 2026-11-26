@@ -132,52 +132,10 @@ internal sealed unsafe partial class CudaBackend
     public override void InvSqrtKernel(Storage x, Storage y, int n, float eps) =>
         Launch1D(K("inv_sqrt_f32"), n, P(x), P(y), F(eps), U(n));
 
-    public override void GatherBFloat16Kernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        int n = count * dim;
-        Launch1D(K("gather_bf16_f32"), n, P(packed), P(indices), P(y), U(dim), U(vocabulary - 1), U((dim + 1) / 2), U(n));
-    }
-
-    public override void GatherBFloat16ColumnsKernel(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
-    {
-        int n = count * dim;
-        Launch1D(K("gather_bf16_cols_f32"), n, P(packed), P(indices), P(y), U(dim), U(vocabulary - 1), U((vocabulary + 1) / 2), U(n));
-    }
-
     public override void GatherKernel(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
         int n = count * dim;
         Launch1D(K("gather_f32"), n, P(table), P(indices), P(y), U(dim), U(vocabulary - 1), U(n));
-    }
-
-    // The conversions on the device (no host round trip, recordable in a graph), as Vulkan's and HIP's: the index ones
-    // between float32 and int32, and float32 to and from bfloat16 and float16, bit for bit the CPU's, NaNs included
-    // (PtxKernels.Conversions.cs); any other pair takes the host fallback (which checks every value).
-    public override void ConvertElementsKernel(Storage source, Storage destination)
-    {
-        var (from, to) = (source.ElementType, destination.ElementType);
-        string? kernel = DeviceConversions.Kernel(from, to);
-        long n = source.ElementCount;
-        if (kernel is null || n != destination.ElementCount || n > int.MaxValue)
-        {
-            base.ConvertElementsKernel(source, destination);
-            return;
-        }
-
-        int count = (int)n;
-        if (count == 0)
-        {
-            return;
-        }
-
-        if (DeviceConversions.Narrows(kernel))
-        {
-            int words = (count + 1) / 2;                                       // a thread per word of two 16-bit values
-            Launch1D(K(kernel), words, P(source), P(destination), U(count), U(words));
-            return;
-        }
-
-        Launch1D(K(kernel), count, P(source), P(destination), U(count));
     }
 
     public override void OneHotKernel(Storage indices, Storage y, int count, int classes)

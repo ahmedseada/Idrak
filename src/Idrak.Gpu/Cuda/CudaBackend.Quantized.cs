@@ -8,31 +8,9 @@ using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
 
-// Int8 weight-only quantization kernels (see PtxKernels.Quantized.cs).
-internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegmentedAttentionBackend, IRowAttentionBackend
+// Inference kernels: norms, rotary embeddings, attention over caches and over spans, gated activations.
+internal sealed unsafe partial class CudaBackend : ISegmentedAttentionBackend, IRowAttentionBackend
 {
-    public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        switch (ProductRoutes.Current)
-        {
-            case ProductRoute.Name:
-                Int8Plain(x, q, scales, y, m, n, k);
-                return;
-            case ProductRoute.Generic:
-                if (!TypedInputsMajor(ElementType.Int8, x, q, scales, y, m, n, k, (n + 3) / 4 * 4))
-                {
-                    Int8Plain(x, q, scales, y, m, n, k);
-                }
-
-                return;
-        }
-
-        if (RoutedNamed(PackedFormat.Int8, x, q, scales, y, m, n, k) || !TypedInputsMajor(ElementType.Int8, x, q, scales, y, m, n, k, (n + 3) / 4 * 4))
-        {
-            Int8Named(x, q, scales, y, m, n, k);
-        }
-    }
-
     // Today's int8 kernel (the named route): the few-row kernels, or the plain kernel for more rows.
     private void Int8Plain(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
@@ -44,28 +22,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
 
         PackedFewRows((int)PackedFormat.Int8 * 4 + GemvPlain, x, q, scales, y, m, n, k, words);
-    }
-
-    public override void BFloat16MatMulKernel(Storage x, Storage packed, Storage y, int m, int n, int k)
-    {
-        switch (ProductRoutes.Current)
-        {
-            case ProductRoute.Name:
-                BFloat16Plain(x, packed, y, m, n, k);
-                return;
-            case ProductRoute.Generic:
-                if (!TypedInputsMajor(ElementType.BFloat16, x, packed, null, y, m, n, k, (n + 1) / 2 * 2))
-                {
-                    BFloat16Plain(x, packed, y, m, n, k);
-                }
-
-                return;
-        }
-
-        if (RoutedNamed(PackedFormat.BFloat16, x, packed, null, y, m, n, k) || !TypedInputsMajor(ElementType.BFloat16, x, packed, null, y, m, n, k, (n + 1) / 2 * 2))
-        {
-            BFloat16Plain(x, packed, y, m, n, k);
-        }
     }
 
     // Today's bfloat16 product (the named route): more rows by the packed product, else expanded and the float32 product;
@@ -95,51 +51,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
 
         PackedFewRows((int)PackedFormat.BFloat16 * 4 + GemvPlain, x, packed, packed, y, m, n, k, words);
-    }
-
-    public override void Int4MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
-    {
-        int words = (n + 7) / 8;
-        if (m > PtxKernels.GemvRows && PackedMatMulLarge(PackedFormat.Int4, x, q, scales, y, m, n, k))
-        {
-            return;
-        }
-
-        if (m > PtxKernels.GemvRows || k == 0)
-        {
-            var w = Allocate(k * n, zeroed: false);
-            try
-            {
-                Int4Dequantize(q, scales, w, k, n);
-                MatMul(x, w, y, m, n, k, false, false, 0f);
-            }
-            finally
-            {
-                w.Release();
-            }
-
-            return;
-        }
-
-        PackedFewRows((int)PackedFormat.Int4 * 4 + GemvPlain, x, q, scales, y, m, n, k, words, align: 64);
-    }
-
-    public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        int words = (n + 7) / 8;
-        Launch1D(K("int4_dequant_f32"), k * words, P(q), P(scales), P(w), U(words), U(n), U(k * words));
-    }
-
-    public override void BFloat16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        int words = (n + 1) / 2;
-        Launch1D(K("bf16_dequant_f32"), k * words, P(packed), P(w), U(words), U(n), U(k * words));
-    }
-
-    public override void Float16DequantizeKernel(Storage packed, Storage w, int k, int n)
-    {
-        int words = (n + 1) / 2;
-        Launch1D(K("f16_dequant_f32"), k * words, P(packed), P(w), U(words), U(n), U(k * words));
     }
 
     /// <summary>Benchmarks only: the k splits of prompt-sized packed products on tensor cores instead of the heuristic's.</summary>
@@ -379,36 +290,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     /// </summary>
     internal static long? PackedPreferredWeights { get; set; }
 
-    // Few int8 rows through the GEMV (its time grows with the rows) or the packed tensor-core product (flat in the rows,
-    // but a mostly empty row tile): where they cross depends on the card (on compute 12.0 cards the product won from 4 rows
-    // through large layers, on 8.6 it lost), so both run once per shape and the faster is kept. Until then, and when
-    // nothing can be measured, the GEMV.
-    bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) =>
-        RoutedNamed(format, x, packed, scales, y, m, n, k) && PrefersPackedNamed(format, x, packed, scales, y, m, n, k);
-
-    private bool PrefersPackedNamed(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
-    {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
-        if (format != PackedFormat.Int8 || m < 2 || n < 64 || k < 32 || !BFloat16Products)
-        {
-            return false;
-        }
-
-        if (PackedPreferredWeights is long threshold)
-        {
-            return m >= 4 && (long)k * n >= threshold;
-        }
-
-        // Once known, read without building the runs' closure.
-        var key = new TuneKey(TuneOp.Int8FewRows, 0, m, n, k);
-        if (!TryTuned(key, [0, 1], 0, out int choice))
-        {
-            choice = MeasureInt8FewRows(key, x, packed, scales, y, m, n, k);
-        }
-
-        return choice == 1;
-    }
-
     private int MeasureInt8FewRows(TuneKey key, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         void Run(int choice)
@@ -458,403 +339,9 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     // MaxSplits.
     private int ForcedSplits(int forced, int k, int tiles) => Math.Clamp(forced, 1, Math.Max(1, Math.Min(k / 32, MaxSplits(tiles))));
 
-    bool IFusedPackedKernels.PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) =>
-        RoutedNamed(format, x, packed, scales, y, m, n, k) && PackedMatMulLargeNamed(format, x, packed, scales, y, m, n, k);
-
-    private bool PackedMatMulLargeNamed(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
-    {
-        // Any row count the caller sends (above the GEMV kernels' limit, or fewer rows when PrefersPackedMatMul): short
-        // prompts fill part of one row tile, which the kernels bound-check, instead of expanding the whole weight to float32
-        // first (that writes and reads four bytes per weight on every card, a pass the packed product never makes).
-        if (m < 1 || n < 64 || k < 8)
-        {
-            return false;
-        }
-
-        // Tensor cores (MixedPrecision.BFloat16): the weights unpacked into the bfloat16 tiles as they are loaded. Another
-        // reduced precision (fp8, float16) has no packed product here: float32 tiles below, counted (ReducedPrecision).
-        int tileRows = PromptTileRows(m);
-        int packedVariant = (int)format * 2 + (tileRows == 64 ? 1 : 0);
-        string packedKernel = PackedTensorKernels[packedVariant];
-        if (BFloat16Products && k >= 32 && TensorKernel(packedKernel) is { } tensor)
-        {
-            int perWord = format.ValuesPerWord();
-            if (_profile is not null)
-            {
-                _profileLabel = $"gemm_tc_nn_{format.KernelName() + "w"}{(tileRows == 64 ? "_m64" : "")} {m}x{n}x{k}";
-                _profileFlops = 2.0 * m * n * k;
-            }
-
-            // Split k when the output tiles leave SMs idle (prompt-sized m): up to two blocks per SM, chunks of 256 k or
-            // more, partial sums added in split order (LaunchTensor).
-            int rowTiles = (m + tileRows - 1) / tileRows, columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-            void Run(int splits) =>
-                LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits, P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                    U(k), U((n + perWord - 1) / perWord), U(n), scales is null ? 0UL : P(scales));
-
-            Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles)
-                : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
-            return true;
-        }
-
-        // Without tensor cores: 128 × 128 tiles when that still gives every SM a block, else 64 × 64, measured per shape.
-        if (k >= 32)
-        {
-            ReducedPrecision.InFloat32(this, Ops.PackedMatMulLarge, (long)m * k + (long)k * n);
-        }
-
-        string formatName = format.KernelName();
-        long tiles128 = (long)((m + 127) / 128) * ((n + 127) / 128);
-        void RunTiles(int tile) =>
-            Launch(K(PackedGemmKernels[(int)format * 2 + (tile == 128 ? 1 : 0)]), (uint)((n + tile - 1) / tile), (uint)((m + tile - 1) / tile), 1, PtxKernels.GemmThreads, 1,
-                P(x), P(packed), P(y), U(m), U(n), U(k), U(0), U(0), F(0f), 0UL, 0UL, 0UL, P(scales ?? packed));
-        RunTiles(Tune(new TuneKey(TuneOp.PackedTile, (int)format, m, n, k), [64, 128], tiles128 >= Math.Max(1, _multiprocessors) ? 128 : 64, RunTiles));
-        return true;
-    }
-
     // [plain or residual] × [128-row tile, 64-row tile] for the epilogue products over bfloat16 weights; GELU apart.
     private static readonly string[] PackedEpilogueKernels = ["gemm_tc_nn_bf16w_f32", "gemm_tc_nn_bf16w_m64_f32", "gemm_tc_nn_bf16w_res_f32", "gemm_tc_nn_bf16w_m64_res_f32"];
     private static readonly string[] PackedGeluKernels = ["gemm_tc_nn_gelu_bf16w_f32", "gemm_tc_nn_gelu_bf16w_m64_f32"];
-
-    // Prompt-sized products over bfloat16 weights with the bias, then GELU or the residual, in the tensor-core product's
-    // epilogue (PtxKernels.TensorCore.cs: p_bias, the residual through p_aux): no pass over the output after the product.
-    // Elsewhere (few rows, other formats, no tensor cores) the composed passes.
-    public override void PackedMatMulEpilogueKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias,
-        Storage? residual, bool gelu)
-    {
-        if (format != PackedFormat.BFloat16 || m <= PtxKernels.GemvRows || n < 64 || k < 32 || !BFloat16Products || !RoutedNamed(format, x, packed, scales, y, m, n, k)
-            || gelu && (bias is null || residual is not null))
-        {
-            base.PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
-            return;
-        }
-
-        int tileRows = PromptTileRows(m), tile = tileRows == 64 ? 1 : 0;
-        string kernel = gelu ? PackedGeluKernels[tile] : PackedEpilogueKernels[(residual is null ? 0 : 2) + tile];
-        if (TensorKernel(kernel) is not { } tensor)
-        {
-            base.PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
-            return;
-        }
-
-        int rowTiles = (m + tileRows - 1) / tileRows, columnTiles = (n + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-        void Run(int splits)
-        {
-            if (_profile is not null)
-            {
-                _profileLabel = $"{kernel[..^4]} {m}x{n}x{k}";
-                _profileFlops = 2.0 * m * n * k;
-            }
-
-            ReadOnlySpan<ulong> args = [P(x), P(packed), P(y), U(m), U(n), U(k), F(0f), 0UL, 0UL,
-                0UL, bias is null ? 0UL : P(bias), U(k), U((n + 1) / 2), U(n), residual is null ? 0UL : P(residual)];
-            if (gelu)
-            {
-                Launch(tensor, (uint)columnTiles, (uint)rowTiles, 1, PtxKernels.TensorThreads, 1, args);
-            }
-            else
-            {
-                LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits, args);
-            }
-        }
-
-        // GELU is not linear: never split over k. The bias (and the residual) are added once, to the splits' ordered sum.
-        int packedVariant = (int)format * 2 + tile + (residual is null ? 0 : 16);
-        Run(gelu ? 1
-            : PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles)
-            : PromptSplitsTuned(new TuneKey(TuneOp.PackedSplits, packedVariant, m, n, k), rowTiles * columnTiles, k, Run));
-    }
-
-    // Prompt-sized products of one input through 2-3 packed layers (queries/keys/values, gate/up) in one tensor-core
-    // launch: the column tiles of every product side by side, so a few rows still fill the GPU (180 rows are 2 row
-    // tiles: q/k/v alone gave 32 tiles, 16 and 16 in separate launches). Widths must be multiples of the 128-column tile,
-    // and the layers must have no bias (the caller adds none).
-    private bool PackedManyLarge(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
-    {
-        if (products.Length is < 2 or > 3 || m < 64 || k < 32 || !BFloat16Products)
-        {
-            return false;
-        }
-
-        int columnTiles = 0;
-        foreach (var product in products)
-        {
-            if (product.Bias is not null || product.Columns % PtxKernels.TensorTile != 0 || product.Columns == 0)
-            {
-                return false;
-            }
-
-            columnTiles += product.Columns / PtxKernels.TensorTile;
-        }
-
-        int tileRows = PromptTileRows(m);
-        string formatName = format.KernelName() + "w";
-        int multiVariant = (int)format * 2 + (tileRows == 64 ? 1 : 0);
-        if (TensorKernel(PackedMultiKernels[multiVariant]) is not { } tensor)
-        {
-            return false;
-        }
-
-        int perWord = format.ValuesPerWord();
-        int rowTiles = (m + tileRows - 1) / tileRows;
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_nn_{formatName}_multi{(tileRows == 64 ? "_m64" : "")} {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}";
-            _profileFlops = 0;
-            foreach (var product in products)
-            {
-                _profileFlops += 2.0 * m * product.Columns * k;
-            }
-        }
-
-        static ulong Scales(Storage? scales) => scales is null ? 0UL : P(scales);
-        var list = products.ToArray();                                     // prompt-sized: one small copy per call
-        void Run(int splits)
-        {
-            var p1 = list[1];
-            var p2 = list.Length == 3 ? list[2] : list[1];
-            int n2 = list.Length == 3 ? list[2].Columns : 0;
-            LaunchTensor(tensor, columnTiles, rowTiles, tileRows, splits, (uint)splits,
-                P(x), P(list[0].Packed), P(list[0].Output), U(m), U(list[0].Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                U(k), U(list[0].Columns / perWord), U(list[0].Columns), Scales(list[0].Scales),
-                P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
-                P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2));
-        }
-
-        var key = new TuneKey(TuneOp.PackedMultiSplits, multiVariant, m, k, list[0].Columns, list[1].Columns, list.Length == 3 ? list[2].Columns : 0);
-        Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
-        return true;
-    }
-
-    bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
-    {
-        if (products.Length is < 1 or > 3 || format is not (PackedFormat.Int4 or PackedFormat.BFloat16) || m < 64 || k < 32 || rank is < 1 or > 32 || !BFloat16Products
-            || !RoutedNamed(format, x, products[0].Packed, products[0].Scales, products[0].Output, m, products[0].Columns, k))
-        {
-            return false;
-        }
-
-        bool multi = products.Length > 1;
-        int columnTiles = 0;
-        foreach (var product in products)
-        {
-            if (product.Columns == 0 || multi && product.Columns % PtxKernels.TensorTile != 0)
-            {
-                return false;
-            }
-
-            columnTiles += (product.Columns + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-        }
-
-        string formatName = format.KernelName() + "w";
-        int lowRankVariant = (format == PackedFormat.Int4 ? 0 : 2) + (multi ? 1 : 0);
-        if (TensorKernel(PackedLowRankKernels[lowRankVariant]) is not { } tensor)
-        {
-            return false;
-        }
-
-        int perWord = format.ValuesPerWord();
-        int rowTiles = (m + PtxKernels.TensorTile - 1) / PtxKernels.TensorTile;
-        if (_profile is not null)
-        {
-            _profileLabel = $"gemm_tc_nn_{formatName}{(multi ? "_multi" : "")}_lr {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}+{rank}";
-            _profileFlops = 0;
-            foreach (var product in products)
-            {
-                _profileFlops += 2.0 * m * product.Columns * (k + rank);
-            }
-        }
-
-        static ulong Scales(Storage? scales) => scales is null ? 0UL : P(scales);
-        var list = products.ToArray();                                     // prompt-sized: one small copy per call
-        void Run(int splits)
-        {
-            var p0 = list[0];
-            if (!multi)
-            {
-                LaunchTensor(tensor, columnTiles, rowTiles, PtxKernels.TensorTile, splits, (uint)splits,
-                    P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                    U(k), U((p0.Columns + perWord - 1) / perWord), U(p0.Columns), Scales(p0.Scales), P(p0.U), P(p0.V), U(rank));
-                return;
-            }
-
-            var p1 = list[1];
-            var p2 = list.Length == 3 ? list[2] : list[1];
-            int n2 = list.Length == 3 ? list[2].Columns : 0;
-            LaunchTensor(tensor, columnTiles, rowTiles, PtxKernels.TensorTile, splits, (uint)splits,
-                P(x), P(p0.Packed), P(p0.Output), U(m), U(p0.Columns), U(k), F(0f), 0UL, 0UL, 0UL, 0UL,
-                U(k), U(p0.Columns / perWord), U(p0.Columns), Scales(p0.Scales),
-                P(p1.Packed), P(p1.Output), Scales(p1.Scales), U(p1.Columns),
-                P(p2.Packed), P(p2.Output), Scales(p2.Scales), U(n2),
-                P(p0.U), P(p0.V), U(rank), P(p1.U), P(p1.V), P(p2.U), P(p2.V));
-        }
-
-        var key = new TuneKey(TuneOp.PackedLowRankSplits, lowRankVariant, m, k, list[0].Columns,
-            list.Length > 1 ? list[1].Columns : 0, list.Length > 2 ? list[2].Columns : 0, rank);
-        Run(PackedSplits is int forced ? ForcedSplits(forced, k, rowTiles * columnTiles) : PromptSplitsTuned(key, rowTiles * columnTiles, k, Run));
-        return true;
-    }
-
-    bool IFusedPackedKernels.PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
-        int m, int n, int k)
-    {
-        if (m > PtxKernels.GemvRows || k == 0 || activation is not (0 or 1) || !RoutedNamed(format, gate, packed, scales, y, m, n, k))
-        {
-            return false;
-        }
-
-        // The activation computed per input value inside the product (fused), or by its own pass first (separate): which
-        // is faster depends on the card and the format (eight int4 columns per word repay the extra work sooner than four
-        // int8 or two bfloat16 ones), so it is measured per shape; both write all of y.
-        // Before measuring: fused for int4, separate for the others. Once known, read without building the runs' closure.
-        var key = new TuneKey(TuneOp.GatedActivation, (int)format * 4 + (activation == 0 ? GemvSilu : GemvGelu), m, n, k);
-        int fallback = format == PackedFormat.Int4 ? 0 : 1;
-        if (!TryTuned(key, [0, 1], fallback, out int separate))
-        {
-            separate = MeasureGated(key, fallback, format, activation, gate, up, packed, scales, y, m, n, k);
-        }
-
-        RunGated(separate, format, activation, gate, up, packed, scales, y, m, n, k);
-        return true;
-    }
-
-    private int MeasureGated(TuneKey key, int fallback, PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales,
-        Storage y, int m, int n, int k) =>
-        Tune(key, [0, 1], fallback, separate => RunGated(separate, format, activation, gate, up, packed, scales, y, m, n, k), cold: true);
-
-    // The gated product with the activation fused into it (separate = 0) or computed by its own pass first.
-    private void RunGated(int separate, PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
-        int m, int n, int k)
-    {
-        int cpw = format.ValuesPerWord();
-        int words = (n + cpw - 1) / cpw, align = format.SplitAlignment();
-        if (separate == 0)
-        {
-            PackedFewRows((int)format * 4 + (activation == 0 ? GemvSilu : GemvGelu), gate, packed, scales ?? packed, y, m, n, k, words, align, up);
-            return;
-        }
-
-        var hidden = Allocate(m * k, zeroed: false);
-        try
-        {
-            GatedActivation(gate, up, hidden, m * k, activation);
-            PackedFewRows((int)format * 4 + GemvPlain, hidden, packed, scales ?? packed, y, m, n, k, words, align);
-        }
-        finally
-        {
-            hidden.Release();
-        }
-    }
-
-    bool IFusedPackedKernels.PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
-    {
-        if (m > PtxKernels.GemvRows || k == 0 || !RoutedNamed(format, x, packed, scales, y, m, n, k))
-        {
-            return false;
-        }
-
-        int cpw = format.ValuesPerWord();
-        PackedFewRows((int)format * 4 + GemvAddNorm, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, format.SplitAlignment(),
-            tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset)]);
-        return true;
-    }
-
-    // The sandwich block's projection, the norm of its output, the residual addition and the next norm in one launch: the
-    // last block of the add-and-normalize kernel also normalizes y first, with the row kernels' own summation order (see
-    // Int8Gemv), so at the same split count the result equals the product followed by rms_norm_affine_f32 and
-    // add_rms_norm_affine_f32 bit for bit. Measured (its split count) as a kernel of its own.
-    public override bool PackedMatMulNormAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
-        Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
-    {
-        if (m > PtxKernels.GemvRows || k == 0 || format is not (PackedFormat.Int8 or PackedFormat.Int4 or PackedFormat.BFloat16)
-            || !RoutedNamed(format, x, packed, scales, y, m, n, k))
-        {
-            return base.PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
-        }
-
-        int cpw = format.ValuesPerWord();
-        PackedFewRows(GemvNormAddNorm + (int)format, x, packed, scales ?? packed, y, m, n, k, (n + cpw - 1) / cpw, format.SplitAlignment(),
-            tail: [P(residual), P(sum), P(gain), P(normalized), F(eps), F(offset), P(yGain), F(yEps), F(yOffset)]);
-        return true;
-    }
-
-    bool IFusedPackedKernels.PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) =>
-        PackedMany(format, x, m, k, products, -1, null);
-
-    bool IFusedPackedKernels.PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) =>
-        products.Length == 2 && products[0].Columns == products[1].Columns && activation is >= 0 and <= 2
-        && PackedMany(format, x, m, k, products, activation, hidden);
-
-    // activation >= 0: the gate/up pair, with hidden = act(gate) · up written by the same launch.
-    private bool PackedMany(PackedFormat format, Storage x, int m, int k,
-        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int activation, Storage? hidden)
-    {
-        foreach (var product in products)
-        {
-            if (!RoutedNamed(format, x, product.Packed, product.Scales, product.Output, m, product.Columns, k))
-            {
-                return false;                                              // each product on its own, by its route
-            }
-        }
-
-        if (m > PtxKernels.GemvRows && hidden is null)
-        {
-            return PackedManyLarge(format, x, m, k, products);
-        }
-
-        if (m > PtxKernels.GemvRows || k == 0 || products.Length is 0 or > 3)
-        {
-            return false;
-        }
-
-        int cpw = format.ValuesPerWord();
-        int multiGemv = (int)format * 2 + (hidden is null ? 0 : 1);
-        string kernel = GemvMultiKernels[multiGemv];
-        int nmax = 0, totalBlocks = 0;
-        foreach (var product in products)
-        {
-            nmax = Math.Max(nmax, product.Columns);
-            totalBlocks += ((product.Columns + cpw - 1) / cpw + 31) / 32;
-        }
-
-        int columnBlocks = ((nmax + cpw - 1) / cpw + 31) / 32;
-        int align = format.SplitAlignment();
-        var counters = SplitCounters(columnBlocks * (products.Length + (hidden is null ? 0 : 1)));
-        var rows = new ManyRows(kernel, x, counters, hidden, m, k, nmax, align, columnBlocks, activation);
-        int wanted;
-        if (GemvSplits is int forced)
-        {
-            wanted = Math.Clamp(forced, 1, Math.Max(1, k / 16));
-        }
-        else
-        {
-            // Measured once per shape (every output, and the activation's, is written again by the run that follows); once
-            // known, read without allocating (no candidate array, no copy of the products, no closure).
-            int biases = 0;
-            for (int j = 0; j < products.Length; j++)
-            {
-                biases |= products[j].Bias is null ? 0 : 1 << j;
-            }
-
-            var name = new TuneKey(TuneOp.GemvMultiSplits, multiGemv, m, k, products[0].Columns, products.Length > 1 ? products[1].Columns : 0,
-                products.Length > 2 ? products[2].Columns : 0, biases);
-            int formula = GemvSplitCount(totalBlocks, k);
-            Span<int> candidates = stackalloc int[SplitCountsLength];
-            candidates = candidates[..GemvSplitCandidates(k, align, candidates)];
-            if (!TryTuned(name, candidates, formula, out wanted))
-            {
-                wanted = MeasureMany(rows, name, candidates.ToArray(), formula, products.ToArray());
-            }
-        }
-
-        RunMany(rows, products, wanted);
-        return true;
-    }
 
     // A multi-output few-row product but for its products and split count (PackedMany).
     private readonly record struct ManyRows(string Kernel, Storage X, Storage Counters, Storage? Hidden, int M, int K, int Nmax, int Align, int ColumnBlocks,
@@ -926,30 +413,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
 
         return current;
-    }
-
-    public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
-    {
-        int words = (n + 3) / 4;
-        Launch1D(K("int8_dequant_f32"), k * words, P(q), P(scales), P(w), U(words), U(n), U(k * words));
-    }
-
-    public override void KeyValueWriteInt8Kernel(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        int n = heads * steps;
-        Launch1D(K("kv_write_int8"), n, P(source), P(cache), P(scales), P(position), U(steps), U(capacity), U(dim), U((dim + 3) / 4), U(n));
-    }
-
-    public override void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
-    {
-        int n = rows * steps * capacity;
-        Launch1D(K("attn_scores_int8"), n, P(q), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim), U((dim + 3) / 4), U(n));
-    }
-
-    public override void AttentionContextInt8Kernel(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
-    {
-        int words = (dim + 3) / 4, n = rows * steps * words;
-        Launch1D(K("attn_context_int8"), n, P(weights), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim), U(words), U(n));
     }
 
     public override void RmsNormKernel(Storage x, Storage y, Storage inv, int rows, int cols, float eps) =>
@@ -1205,12 +668,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
 
     public override void GatedActivationBackwardKernel(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
         Launch1D(K("gated_act_bwd_f32"), n, P(gate), P(up), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n));
-
-    public override void GatedActivationPackedKernel(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags) =>
-        Launch1D(K("gated_act_bf16_f32"), (n + 1) / 2, P(gate), P(up), P(packedGate), P(packedUp), P(y), P(packedY), U(kind), U(flags), U(n), U((n + 1) / 2));
-
-    public override void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags) =>
-        Launch1D(K("gated_act_bwd_bf16_f32"), (n + 1) / 2, P(packedGate), P(packedUp), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n), U((n + 1) / 2));
 
     // Windows and soft-caps run on the float32 kernels (attention_flash_f32 and its backward); the tensor-core ones
     // compute plain causal attention only.
@@ -1521,63 +978,8 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         return true;
     }
 
-    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        int words = (dim + 3) / 4;
-        NotMerged(variant, nameof(AttentionInt8));
-        if (tiled && dim <= PtxKernels.FlashMaxDim)
-        {
-            Launch(K("attention_flash_int8"), (uint)((rowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
-                P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale),
-                P(keyScales), P(valueScales), U(words), U(variant.Window), F(variant.Softcap));
-            return;
-        }
-
-        if (dim > PtxKernels.DecodeMaxDim)
-        {
-            throw new NotSupportedException($"Int8 cache attention supports head sizes up to {PtxKernels.DecodeMaxDim} on CUDA.");
-        }
-
-        DecodeSplit(WindowedTuning(1, variant, capacity),
-            new DecodeAttention(1, q, keys, values, keyScales, valueScales, y, rowsPerHead, steps, capacity, dim, scale, words, variant, heads * rowsPerHead),
-            position);
-    }
-
     public override void SoftmaxCrossEntropyRowsKernel(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale) =>
         LaunchRows(K("softmax_ce_rows_f32"), rows, PtxKernels.SoftmaxCrossEntropyThreads, P(logits), P(targets), P(weights), P(losses), U(vocabulary), F(scale), U(rows));
-
-    public override void AttentionBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead,
-        int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        int words = (dim + 1) / 2;
-        if (tiled && variant.IsPlain && dim <= PtxKernels.FlashMaxDim && FlashTensorCore(dim) is not null && TensorKernel(FlashHalvesName(dim)) is { } halves)
-        {
-            // A prompt on the matrix unit: the cache's halves staged as they are (as the float32 cache's tensor-core pass
-            // rounds its values to them), its output where Merged puts it.
-            Launch(halves, (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
-                [P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), F(scale * Log2E),
-                .. CacheLayout(rowsPerHead, steps, capacity, dim, words, variant.Merged)]);
-            return;
-        }
-
-        NotMerged(variant, nameof(AttentionBFloat16));
-        if (tiled && dim <= PtxKernels.FlashMaxDim)
-        {
-            Launch(K("attention_flash_bf16"), (uint)((rowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)heads, 1, 128, 1,
-                P(q), P(keys), P(values), P(position), P(y), 0UL, U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(words),
-                U(variant.Window), F(variant.Softcap));
-            return;
-        }
-
-        if (dim > PtxKernels.DecodeMaxDim)
-        {
-            throw new NotSupportedException($"bfloat16 cache attention supports head sizes up to {PtxKernels.DecodeMaxDim} on CUDA.");
-        }
-
-        DecodeSplit(WindowedTuning(2, variant, capacity),
-            new DecodeAttention(2, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, words, variant, heads * rowsPerHead), position);
-    }
 
     /// <summary>Tests and benchmarks: the path of rows over a bfloat16 cache (0 the decoding kernel, 1 the tiled one) instead of the measured one.</summary>
     internal static int? RowsBFloat16Path { get; set; }
@@ -1585,28 +987,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     // Steps from which the bfloat16 cache's own attention takes its tiled kernel (KeyValueLayouts: tiled when steps >= 8);
     // rows of different lengths start from the same choice until the two paths are measured.
     private const int TiledSteps = 8;
-
-    // Rows of different lengths over a bfloat16 cache: the decoding kernel with per-row starts (attention_rows_bf16, its
-    // splits measured as a kernel of its own, as attention_rows_f32's), or for several steps a head the tiled kernel with
-    // per-row starts (attention_flash_rows_bf16: each key and value tile read once for 32 query rows), where it takes the
-    // head size. Which of the two serves several steps is measured per shape (RowsPath); the default, also while nothing
-    // can be measured (a graph being recorded), is the bfloat16 cache's own choice: tiled from TiledSteps steps. One step
-    // a row (decoding) always takes the decoding kernel. Both read only the device (the position, the starts), so a
-    // recorded step stays valid as the cache fills.
-    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
-    {
-        if (dim > PtxKernels.DecodeMaxDim)
-        {
-            return false;
-        }
-
-        int tuning = WindowedTuning(7, variant, capacity);
-        var attention = new DecodeAttention(4, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, (dim + 1) / 2, variant,
-            heads * rowsPerHead, starts, headsPerRow);
-        RowsBFloat16(RowsBFloat16Choice(tuning, attention, position), tuning, attention, position);
-        return true;
-    }
 
     // The path of AttentionRowsBFloat16Kernel (0 decoding, 1 tiled): forced, the only one, measured or the default.
     private int RowsBFloat16Choice(int tuning, in DecodeAttention a, Storage position)
@@ -1645,12 +1025,6 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         Launch(K("attention_flash_rows_bf16"), (uint)((a.RowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)(a.Rows / a.RowsPerHead), 1, 128, 1,
             P(a.Q), P(a.Keys), P(a.Values), P(position), P(a.Y), 0UL, U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(a.Words),
             U(a.Variant.Window), F(a.Variant.Softcap), P(a.Starts!), U(a.HeadsPerRow));
-    }
-
-    public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
-    {
-        int words = (dim + 1) / 2, n = heads * steps * words;
-        Launch1D(K("kv_write_bf16"), n, P(source), P(cache), P(position), U(steps), U(capacity), U(dim), U(words), U(n));
     }
 
     public override void AddRmsNormAffineKernel(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset) =>
