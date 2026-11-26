@@ -25,6 +25,11 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
     private readonly CrossAttention[] _crosses;
     private readonly IdrakAudioTranscriber _transcriber;
 
+    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
+    // design yet.
+    private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
+        throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
+
     internal IdrakAudioSeq2SeqModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
         if (tokenizer.VocabularySize > config.Classes)
@@ -50,7 +55,7 @@ public sealed class IdrakAudioSeq2SeqModel : ISequenceSpeechModel
         _body = [.. Decoder.Take(Decoder.Count() - 1)];
         _crosses = [.. Decoder.Descendants().OfType<CrossAttention>()];
         _layout = [.. weights.Entries];
-        Features = AudioFeatureExtractors.Create(config.FeatureExtractor, config.Features);
+        Features = FeaturesNamed(config.FeatureExtractor, config.Features);
         _transcriber = new IdrakAudioTranscriber(config, Features, device, Read, labels => Text(labels));
     }
 

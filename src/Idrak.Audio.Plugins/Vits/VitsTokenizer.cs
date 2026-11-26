@@ -162,6 +162,11 @@ public sealed class VitsTokenizer
         return ids;
     }
 
+    // The phonemizers were registered (TextPhonemizers) and the one named, else the most recently registered, picked: not
+    // on the new design yet.
+    private static ITextPhonemizer PhonemizerNamed(string? name) =>
+        throw new NotSupportedException($"The phonemizer {(name is null ? "registered last" : $"'{name}'")} is not on the new design yet.");
+
     /// <summary>
     /// <paramref name="text"/> as a <see cref="Phonemize"/> checkpoint reads it: lower-cased (transformers' normalisation),
     /// phonemized by <see cref="Phonemizer"/> in <see cref="PhonemeLanguage"/>, white space collapsed.
@@ -170,7 +175,7 @@ public sealed class VitsTokenizer
     public string Phonemes(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        var phonemizer = Phonemizer is { } name ? TextPhonemizers.Get(name) : TextPhonemizers.First();
+        var phonemizer = PhonemizerNamed(Phonemizer);
         return TextPhonemizers.Collapse(phonemizer.Phonemize(Normalize ? text.ToLowerInvariant() : text, PhonemeLanguage));
     }
 
@@ -196,6 +201,11 @@ public sealed class VitsTokenizer
         symbols.RemoveRange(0, start);
     }
 
+    // The romanizers were registered (TextRomanizers) and the one named, else the one that covers the text's script,
+    // picked: not on the new design yet.
+    private static ITextRomanizer? RomanizerFor(string? name, string text) =>
+        throw new NotSupportedException($"The romanizer {(name is null ? "that covers the text's script" : $"'{name}'")} is not on the new design yet.");
+
     /// <summary>
     /// <paramref name="text"/> as an <see cref="IsUroman"/> checkpoint reads it: romanised by <see cref="Romanizer"/> (or
     /// the registered romanizer that covers its script) when it holds non-Latin letters, else as it is.
@@ -209,9 +219,9 @@ public sealed class VitsTokenizer
             return text;
         }
 
-        var romanizer = Romanizer is { } name ? TextRomanizers.Get(name) : TextRomanizers.For(text)
-            ?? throw new NotSupportedException("This checkpoint's tokenizer_config.json sets \"is_uroman\": it expects romanised text, and no registered romanizer covers the "
-                + $"text's script (registered: {string.Join(", ", TextRomanizers.Names)}); add one with TextRomanizers.Register, or give it Latin text.");
+        var romanizer = RomanizerFor(Romanizer, text)
+            ?? throw new NotSupportedException("This checkpoint's tokenizer_config.json sets \"is_uroman\": it expects romanised text, and no romanizer covers the "
+                + "text's script; give it Latin text.");
         return romanizer.Romanize(text);
     }
 

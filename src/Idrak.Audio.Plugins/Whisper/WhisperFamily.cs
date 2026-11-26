@@ -46,7 +46,7 @@ public sealed class WhisperFamily : ISpeechFamily
             throw new InvalidDataException($"preprocessor_config.json gives {featureOptions.Mels} mels, config.json {config.Mels}.");
         }
 
-        var features = AudioFeatureExtractors.Create("log-mel", featureOptions);
+        var features = new LogMelFeatures(featureOptions);
         var device = checkpoint.Options.Device ?? Device.Default;
         var layout = new WhisperLayout();                                     // where each tensor went, for Save
         var encoder = WhisperEncoder.Read(checkpoint.Tensors, config, device, "model.encoder.", layout);

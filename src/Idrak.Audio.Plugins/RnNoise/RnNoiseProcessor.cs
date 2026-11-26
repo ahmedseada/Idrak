@@ -22,10 +22,6 @@ internal sealed class RnNoiseProcessor : ILiveAudioProcessor
 
     public string Label => "RNNoise denoiser";
 
-    public string Summary => "RNNoise's learned denoiser (xiph's recurrent network on 48 kHz frames of 10 ms; another rate is resampled to 48 kHz and back): "
-        + "`mix` of the denoised sound against the original (default 1), `attenuation` the most a band is turned down, dB (default none); "
-        + $"`model=PATH` its model file (default {RnNoisePlugin.ModelVariable}, else rnnoise/rnnoise.rnnn in the cache); the output lags by 959 samples at 48 kHz (about 20 ms)";
-
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("mix", "Mix", AudioProcessorInput.Number)
@@ -45,8 +41,8 @@ internal sealed class RnNoiseProcessor : ILiveAudioProcessor
         },
     ];
 
-    // `model` takes a path, which no parameter kind describes: it is a key, checked here, and named in the summary.
-    public IReadOnlySet<string> Keys => field ??= new OptionKeys([.. Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key), RnNoisePlugin.ModelOption]);
+    // `model` takes a path, which no parameter kind describes: it is a key, checked here.
+    public IReadOnlyCollection<string> Keys => field ??= Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key).Append(RnNoisePlugin.ModelOption).ToArray();
 
     public void Check(AudioProcessorStep step)
     {
@@ -166,8 +162,7 @@ internal sealed class RnNoiseProcessor : ILiveAudioProcessor
 
         public ResampledStage(RnNoiseStream core, int rate, int channels)
         {
-            var resample = AudioProcessors.Default("resample")
-                ?? throw new InvalidOperationException("rnnoise resamples with the library's resample processor, which is not registered.");
+            var resample = new ResampleProcessor();                             // the library's, reached directly
             _core = core;
             (SampleRate, Channels) = (rate, channels);
             _up = resample.Open(new AudioProcessorStep("resample", Rate.ToString(CultureInfo.InvariantCulture)), rate, channels);

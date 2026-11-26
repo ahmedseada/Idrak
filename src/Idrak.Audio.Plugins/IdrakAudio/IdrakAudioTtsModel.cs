@@ -31,6 +31,11 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
     private readonly ConcurrentDictionary<Rune, bool> _readable = new();
     private bool _disposed;
 
+    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
+    // design yet.
+    private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
+        throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
+
     internal IdrakAudioTtsModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
         if (tokenizer.VocabularySize > config.Classes)
@@ -43,7 +48,7 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
         Tokenizer = tokenizer;
         _network = new IdrakAudioTtsNetwork(config, weights);
         _layout = [.. weights.Entries];
-        Features = AudioFeatureExtractors.Create(config.FeatureExtractor, config.Features);
+        Features = FeaturesNamed(config.FeatureExtractor, config.Features);
     }
 
     /// <summary>The settings.</summary>
@@ -272,11 +277,17 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
         return (audio.Samples, modelTime, Stopwatch.GetElapsedTime(vocoderStart));
     }
 
+    // The vocoders were registered (Vocoders) and picked by name, which is not on the new design yet; none named is the
+    // library's Griffin-Lim, reached directly.
+    private static IVocoder VocoderNamed(string? name, AudioFeatureOptions options) => name is null
+        ? new GriffinLimVocoder(options)
+        : throw new NotSupportedException($"The vocoder '{name}' by name is not on the new design yet.");
+
     // The call's vocoder, else the app's (Vocoder), else the config's or the library's default, made for this model's mel
     // layout; one that reads another layout or makes another rate is refused.
     private IVocoder VocoderFor(SpeechSynthesisOptions options)
     {
-        var vocoder = options.Vocoder is null && Vocoder is not null ? Vocoder : Vocoders.Create(options.Vocoder ?? Config.Vocoder, Features.Options);
+        var vocoder = options.Vocoder is null && Vocoder is not null ? Vocoder : VocoderNamed(options.Vocoder ?? Config.Vocoder, Features.Options);
         if (vocoder.Mels != Config.Mels || vocoder.SampleRate != SampleRate)
         {
             throw new NotSupportedException($"The vocoder '{vocoder.Name}' reads {vocoder.Mels} mel bands at {vocoder.SampleRate} Hz; this model makes {Config.Mels} at {SampleRate} Hz. "

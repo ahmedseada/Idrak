@@ -119,6 +119,12 @@ public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
     /// <inheritdoc />
     public string Name => Architecture;
 
+    // The image attention rules were registered (ImageAttentionRules) and picked by name, which is not on the new design yet;
+    // none named is the library's causal rule, reached directly.
+    private static IImageAttentionRule AttentionRuleNamed(string? name) => name is null
+        ? new CausalRule()
+        : throw new NotSupportedException($"The image attention rule '{name}' by name is not on the new design yet.");
+
     /// <inheritdoc />
     public IPretrainedAudio? Read(AudioCheckpoint checkpoint)
     {
@@ -142,7 +148,7 @@ public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
         }
 
         int token = Index(config, "audio_token_index") ?? throw new InvalidDataException("An IdrakAudio audio-language config.json gives \"audio_token_index\".");
-        var attention = ImageAttentionRules.Get((string?)config["audio_attention"] ?? ImageAttentionRules.Causal);
+        var attention = AttentionRuleNamed((string?)config["audio_attention"]);
         return new IdrakAudioLanguagePart(encoder, projector, stored, token, Index(config, "boa_token_index"), Index(config, "eoa_token_index"), attention, checkpoint.Open);
     }
 
@@ -177,7 +183,7 @@ public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
         int token = Token("audio_token", "<audio>")!.Value;
         int? begin = Token("begin_audio", null), end = Token("end_audio", null);
         string attention = (string?)audio["audio_attention"] ?? ImageAttentionRules.Causal;
-        _ = ImageAttentionRules.Get(attention);
+        _ = AttentionRuleNamed((string?)audio["audio_attention"]);
         float scale = (float?)audio["init_scale"] ?? encoder.InitScale;
         var tensors = new List<(string, int[], float[])>();
         var towerWeights = IdrakAudioWeights.Draw(seed, scale, Device.Cpu, TowerPrefix);
@@ -228,6 +234,11 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
     private readonly IReadOnlySet<string> _stored;
     private readonly Func<ITensorStore> _open;
 
+    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
+    // design yet.
+    private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
+        throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
+
     internal IdrakAudioLanguagePart(IdrakAudioConfig encoder, IdrakAudioProjectorConfig projector, IReadOnlySet<string> stored, int token, int? begin, int? end,
         IImageAttentionRule attention, Func<ITensorStore> open)
     {
@@ -236,7 +247,7 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
         _stored = stored;
         _open = open;
         Attention = attention;
-        Features = AudioFeatureExtractors.Create(encoder.FeatureExtractor, encoder.Features);
+        Features = FeaturesNamed(encoder.FeatureExtractor, encoder.Features);
         PromptFormat = new ImageTokenFormat("idrak-audio", token, token, begin, end);
     }
 

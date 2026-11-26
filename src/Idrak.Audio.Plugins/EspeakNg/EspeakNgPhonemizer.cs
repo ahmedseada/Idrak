@@ -59,7 +59,7 @@ public sealed class EspeakNgPhonemizer : ITextPhonemizer
         catch (System.ComponentModel.Win32Exception e)
         {
             throw new NotSupportedException($"This checkpoint reads phonemes, made here by the espeak-ng program, which was not found ('{program}': {e.Message}). "
-                + $"Install espeak-ng and put it on the PATH or set {ExecutableVariable} to its full path, or register another phonemizer with TextPhonemizers.Register.", e);
+                + $"Install espeak-ng and put it on the PATH or set {ExecutableVariable} to its full path.", e);
         }
 
         using (process)

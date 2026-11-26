@@ -11,13 +11,18 @@ namespace Idrak.Audio.Plugins.IdrakAudio;
 
 /// <summary>
 /// An IdrakAudio "ctc" model: the encoder and head (<see cref="IdrakAudioEncoder"/>), its tokenizer and its features, as a
-/// speech recognizer (sound in, text out through the library's <see cref="CtcDecoders"/>: greedy, or "beam" when
+/// speech recognizer (sound in, text out through the library's <c>CtcDecoders</c>: greedy, or "beam" when
 /// <see cref="TranscriptionOptions.Beams"/> is above 1) and as a model <c>SpeechTrainer</c> trains and saves.
 /// </summary>
 public sealed class IdrakAudioCtcModel : ICtcSpeechModel
 {
     private readonly IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> _layout;
     private readonly IdrakAudioTranscriber _transcriber;
+
+    // The feature extractors were registered (AudioFeatureExtractors) and the config's picked by name, which is not on the new
+    // design yet.
+    private static IAudioFeatureExtractor FeaturesNamed(string name, AudioFeatureOptions options) =>
+        throw new NotSupportedException($"The audio feature extractor '{name}' by name is not on the new design yet.");
 
     internal IdrakAudioCtcModel(IdrakAudioConfig config, IdrakAudioWeights weights, IPretrainedTokenizer tokenizer, Device device)
     {
@@ -26,7 +31,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
         Tokenizer = tokenizer;
         Encoder = new IdrakAudioEncoder(config, weights);
         _layout = [.. weights.Entries];
-        Features = AudioFeatureExtractors.Create(config.FeatureExtractor, config.Features);
+        Features = FeaturesNamed(config.FeatureExtractor, config.Features);
         _transcriber = new IdrakAudioTranscriber(config, Features, device, Read, labels => Text(labels));
         if (tokenizer.VocabularySize + 1 != config.Classes)
         {
@@ -135,6 +140,10 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
     public IAsyncEnumerable<TranscriptSegment> TranscribeStream(IAsyncEnumerable<AudioData> chunks, TranscriptionOptions? options = null, CancellationToken cancellationToken = default) =>
         _transcriber.TranscribeStream(chunks, options, cancellationToken);
 
+    // The CTC decoders were registered (CtcDecoders) and picked by name, which is not on the new design yet.
+    private static IReadOnlyList<CtcHypothesis> DecodedBy(string decoder, ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options) =>
+        throw new NotSupportedException($"The CTC decoder '{decoder}' by name is not on the new design yet.");
+
     // One stretch's features read: the encoder, a log-softmax and the CTC decoder (greedy, or "beam" above one beam).
     private (int[] Labels, float Score) Read(Tensor features, TranscriptionOptions options, ref TimeSpan encoder, ref TimeSpan decoder)
     {
@@ -146,7 +155,7 @@ public sealed class IdrakAudioCtcModel : ICtcSpeechModel
         encoder += clock.Elapsed;
         clock.Restart();
         var decodeOptions = new CtcDecodeOptions { Blank = Blank, BeamWidth = Math.Max(1, options.Beams) };
-        var best = CtcDecoders.Decode(read.AsMemory(0, steps * Classes), steps, Classes, options.Beams > 1 ? CtcDecoders.Beam : CtcDecoders.Greedy, decodeOptions)[0];
+        var best = DecodedBy(options.Beams > 1 ? "beam" : "greedy", read.AsMemory(0, steps * Classes), steps, Classes, decodeOptions)[0];
         decoder += clock.Elapsed;
         return (best.Labels, best.LogProbability / Math.Max(1, steps));
     }
