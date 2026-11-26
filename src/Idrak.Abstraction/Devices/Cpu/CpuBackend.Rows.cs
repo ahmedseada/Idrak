@@ -769,6 +769,12 @@ internal sealed unsafe partial class CpuBackend
 
     private static void RowVector(Storage a, Storage v, Storage c, int rows, int cols, bool gelu)
     {
+        if (Wide64(a, v, c))
+        {
+            RowVector64(a, v, c, rows, cols, gelu);
+            return;
+        }
+
         fixed (float* wa = D(a), wv = D(v), pc = V(c))
         {
             string name = gelu ? "BiasGelu" : "AddRowVector";
@@ -815,6 +821,12 @@ internal sealed unsafe partial class CpuBackend
     // sum carried in the thread's working row from one chunk to the next (the same terms in the same order), then added.
     private static void ColumnSumsOf(Storage x, long offset, int ld, Storage y, int rows, int cols, string name)
     {
+        if (Wide(x, y))
+        {
+            ColumnSums64(x, offset, ld, y, rows, cols);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             if (NativeFloats(x))
@@ -878,6 +890,22 @@ internal sealed unsafe partial class CpuBackend
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
+        if (Wide(src, dst))
+        {
+            // Values that need float64 (or a float64 destination): each row read in float64 and written (added) in dst's type.
+            fixed (float* ws = D(src), wd = D(dst))
+            {
+                double* row = DoubleBuffer(0, Math.Max(1, cols));
+                for (int r = 0; r < rows; r++)
+                {
+                    ReadDoubles(src, ws, srcOffset + (long)r * srcStride, cols, row);
+                    WriteDoubles(dst, wd, dstOffset + (long)r * dstStride, cols, row, accumulate);
+                }
+            }
+
+            return;
+        }
+
         fixed (float* ws = D(src), pd = V(dst))
         {
             if (NativeFloats(src))

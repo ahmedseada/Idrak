@@ -231,6 +231,65 @@ internal abstract partial class Tests
         return (Tensor.From([.. c], [c.Count], Device.Cpu), Tensor.From(values, [values.Length], Device.Cpu));
     }
 
+    // A float64 tensor of `values` (any of them past float32's 24 bits) and its values read back as float64.
+    private static Tensor Float64(double[] values, int[] shape, bool requiresGrad = false)
+    {
+        var type = Idrak.Abstraction.Types.F64.Type;
+        var stored = new byte[type.ByteCount(values.Length)];
+        type.Write(values, stored);
+        var t = Tensor.Stored(type, stored, shape, Device.Cpu);
+        t.RequiresGrad = requiresGrad;
+        return t;
+    }
+
+    private static double[] Doubles(Tensor t)
+    {
+        var values = new double[t.Size];
+        t.Type.Read(t.ToBytes(), values);
+        return values;
+    }
+
+    internal static void WideLanesAndGradients(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;
+        }
+
+        double big = Math.Pow(2, 40) + 1, mid = Math.Pow(2, 20) + 1;
+        double[] values = [big, 3, -5, mid, 0.5, -big];
+        using var scope = new TensorScope();
+        void Same(string what, Tensor result, double[] expected) =>
+            Check(result.Type.Description == Idrak.Abstraction.Types.F64.Type.Description && Doubles(result).SequenceEqual(expected),
+                $"float64 {what}: {result.Type.Name} [{string.Join(", ", Doubles(result))}], expected [{string.Join(", ", expected)}]");
+
+        var x = Float64(values, [2, 3]);
+        Same("power", x.Pow(2f), [.. values.Select(v => Idrak.Abstraction.Devices.Cpu.CpuMath.PowDouble(v, 2))]);
+        Same("clamp", x.Clamp(-4f, 1e13f), [.. values.Select(v => Math.Min(Math.Max(v, -4), (double)1e13f))]);
+        Same("leaky ReLU", x.LeakyRelu(0.25f), [.. values.Select(v => v > 0 ? v : 0.25 * v)]);
+        var condition = Tensor.From([1f, 0f, 1f, 0f, 1f, 0f], [2, 3], Device.Cpu);
+        var other = Float64([.. values.Select(v => v + 1)], [2, 3]);
+        Same("where", Tensor.Where(condition, x, other), [.. values.Select((v, i) => i % 2 == 0 ? v : v + 1)]);
+        Same("a transposed copy", x.Transpose(0, 1).Contiguous(), [big, mid, 3, 0.5, -5, -big]);
+        var bias = Float64([1, 2, 3], [3]);
+        Same("a row's bias", x + bias, [.. values.Select((v, i) => v + 1 + i % 3)]);
+
+        // Gradients of float64 tensors are float64: y = Σ (x² + 3x + w·x) has dx = 2x + 3 + w and dw = x.
+        var leaf = Float64(values, [6], requiresGrad: true);
+        var weight = Float64([1, 2, 3, 4, 5, 6], [6], requiresGrad: true);
+        var loss = (leaf.Square() + leaf * 3f + weight * leaf).Sum();
+        loss.Backward();
+        Same("x's gradient", leaf.Grad!, [.. values.Select((v, i) => 2 * v + 3 + (i + 1))]);
+        Same("w's gradient", weight.Grad!, values);
+
+        // The product's gradients: y = Σ a·b, da = Σ_j b[k, j] a row, db = Σ_i a[i, k] a column.
+        var a = Float64([big, 1, 2, mid], [2, 2], requiresGrad: true);
+        var b = Float64([1, 2, 3, 4], [2, 2], requiresGrad: true);
+        a.MatMul(b).Sum().Backward();
+        Same("the product's left gradient", a.Grad!, [3, 7, 3, 7]);
+        Same("the product's right gradient", b.Grad!, [big + 2, big + 2, 1 + mid, 1 + mid]);
+    }
+
     internal static void WideResultsStayWide(Device device)
     {
         if (device.Type != DeviceType.Cpu)

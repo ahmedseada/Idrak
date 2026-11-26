@@ -22,7 +22,7 @@ internal sealed unsafe partial class CpuBackend
             return;
         }
 
-        if (Wide(a, b))
+        if (Wide64(a, b, c))
         {
             Product64(a, b, c, batch, m, n, k, transA, transB, beta);
             return;

@@ -36,7 +36,7 @@ public sealed partial class Tensor
 
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);                       // float64 where x's values need it
         Backend.LeakyRelu(Storage, y.Storage, Size, slope);
         if (WillRecord(this))
         {
@@ -64,7 +64,7 @@ public sealed partial class Tensor
     {
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);                       // float64 where x's values need it
         Backend.Pow(Storage, y.Storage, Size, exponent);
         if (WillRecord(this))
         {
@@ -88,7 +88,7 @@ public sealed partial class Tensor
 
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);                       // float64 where x's values need it
         Backend.Clamp(Storage, y.Storage, Size, min, max);
         if (WillRecord(this))
         {
@@ -133,7 +133,7 @@ public sealed partial class Tensor
         CheckSameShape(condition, a);
         CheckSameShape(a, b);
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(a._shape, a.Device);
+        var y = ResultFor(a._shape, a.Device, a, b);
         a.Backend.Where(condition.Storage, a.Storage, b.Storage, y.Storage, a.Size);
         if (WillRecord(a, b))
         {
@@ -219,7 +219,7 @@ public sealed partial class Tensor
         CheckSameDevice(a, b);
         CheckSameShape(a, b);
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var c = Empty(a._shape, a.Device);
+        var c = ResultFor(a._shape, a.Device, a, b);
         a.Backend.Binary(op, a.Storage, b.Storage, c.Storage, a.Size);
         if (WillRecord(a, b))
         {

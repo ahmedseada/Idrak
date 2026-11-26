@@ -259,7 +259,7 @@ internal sealed unsafe partial class CpuBackend
     // in the whole run).
     public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {
-        if (Wide(x))
+        if (Wide(x, y))
         {
             Elements64("Unary " + op, Map64.Unary, (int)op, x, null, y, n);
             return;
@@ -301,6 +301,13 @@ internal sealed unsafe partial class CpuBackend
 
     public override void UnaryBackwardKernel(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
+        if (Wide64(x, y, dy, dx))
+        {
+            // In float64 (an input or the gradient needing it), written in dx's type: dx += dy · f'(x, y).
+            Elements64("UnaryBackward " + op, Map64.UnaryBack, (int)op, x, y, dx, n, c: dy, d: dx);
+            return;
+        }
+
         fixed (float* wx = D(x), wy = D(y), wdy = D(dy), pdx = V(dx))
         {
             TypedInput tx = new(x, wx, 0, ChunkValues, "UnaryBackward"), ty = new(y, wy, 1, ChunkValues, "UnaryBackward"), tdy = new(dy, wdy, 2, ChunkValues, "UnaryBackward");
@@ -337,7 +344,7 @@ internal sealed unsafe partial class CpuBackend
 
     public override void BinaryKernel(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
-        if (Wide(a, b))
+        if (Wide64(a, b, c))
         {
             Elements64("Binary " + op, Map64.Binary, (int)op, a, b, c, n);
             return;
@@ -405,6 +412,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void PowKernel(Storage x, Storage y, int n, float exponent)
     {
+        if (Wide(x, y))
+        {
+            Elements64("Pow", Map64.Pow, 0, x, null, y, n, exponent);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "Pow");
@@ -434,6 +447,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void PowBackwardKernel(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
+        if (Wide64(x, dy, dx))
+        {
+            Elements64("PowBackward", Map64.PowBack, 0, x, dy, dx, n, exponent, c: dx);
+            return;
+        }
+
         fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
             TypedInput tx = new(x, wx, 0, ChunkValues, "PowBackward"), tdy = new(dy, wdy, 1, ChunkValues, "PowBackward");
@@ -464,6 +483,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClampKernel(Storage x, Storage y, int n, float min, float max)
     {
+        if (Wide(x, y))
+        {
+            Elements64("Clamp", Map64.Clamp, 0, x, null, y, n, min, max);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "Clamp");
@@ -487,6 +512,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void ClampBackwardKernel(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
+        if (Wide64(x, dy, dx))
+        {
+            Elements64("ClampBackward", Map64.ClampBack, 0, x, dy, dx, n, min, max, c: dx);
+            return;
+        }
+
         fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
             TypedInput tx = new(x, wx, 0, ChunkValues, "ClampBackward"), tdy = new(dy, wdy, 1, ChunkValues, "ClampBackward");
@@ -515,6 +546,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LeakyReluKernel(Storage x, Storage y, int n, float slope)
     {
+        if (Wide(x, y))
+        {
+            Elements64("LeakyRelu", Map64.Leaky, 0, x, null, y, n, slope);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "LeakyRelu");
@@ -541,6 +578,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void LeakyReluBackwardKernel(Storage x, Storage dy, Storage dx, int n, float slope)
     {
+        if (Wide64(x, dy, dx))
+        {
+            Elements64("LeakyReluBackward", Map64.LeakyBack, 0, x, dy, dx, n, slope, c: dx);
+            return;
+        }
+
         fixed (float* wx = D(x), wdy = D(dy), pdx = V(dx))
         {
             TypedInput tx = new(x, wx, 0, ChunkValues, "LeakyReluBackward"), tdy = new(dy, wdy, 1, ChunkValues, "LeakyReluBackward");
@@ -568,6 +611,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
     {
+        if (Wide64(condition, a, b, y))
+        {
+            Elements64("Where", Map64.Where, 0, condition, a, y, n, c: b);
+            return;
+        }
+
         fixed (float* wc = D(condition), wa = D(a), wb = D(b), py = V(y))
         {
             TypedInput tc = new(condition, wc, 0, ChunkValues, "Where"), ta = new(a, wa, 1, ChunkValues, "Where"), tb = new(b, wb, 2, ChunkValues, "Where");
@@ -630,7 +679,7 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AffineKernel(Storage x, Storage y, int n, float alpha, float beta)
     {
-        if (Wide(x))
+        if (Wide(x, y))
         {
             Elements64("Affine", Map64.Affine, 0, x, null, y, n, alpha, beta);
             return;
@@ -659,6 +708,13 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AxpyKernel(Storage x, Storage y, int n, float alpha)
     {
+        if (Wide(x, y))
+        {
+            // y (its own values read in float64) += alpha · x, written in y's type.
+            Elements64("Axpy", Map64.Axpy, 0, x, y, y, n, alpha);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "Axpy");
@@ -682,6 +738,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void MulAddKernel(Storage a, Storage b, Storage c, int n)
     {
+        if (Wide64(a, b, c))
+        {
+            Elements64("MulAdd", Map64.MulAdd, 0, a, b, c, n, c: c);
+            return;
+        }
+
         fixed (float* wa = D(a), wb = D(b), pc = V(c))
         {
             TypedInput ta = new(a, wa, 0, ChunkValues, "MulAdd"), tb = new(b, wb, 1, ChunkValues, "MulAdd");
@@ -705,6 +767,18 @@ internal sealed unsafe partial class CpuBackend
 
     public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
     {
+        if (Wide(s, y))
+        {
+            double value;
+            fixed (float* ws = D(s))
+            {
+                ReadDoubles(s, ws, 0, 1, &value);
+            }
+
+            Elements64("AddBroadcastScalar", Map64.AddScalar, 0, y, null, y, n, scale, value);
+            return;
+        }
+
         fixed (float* ws = D(s), py = V(y))
         {
             var ts = new TypedInput(s, ws, 0, 1, "AddBroadcastScalar");
@@ -734,6 +808,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
     {
+        if (Wide(x, y))
+        {
+            Elements64("InvSqrt", Map64.InvSqrt, 0, x, null, y, n, eps);
+            return;
+        }
+
         fixed (float* wx = D(x), py = V(y))
         {
             var tx = new TypedInput(x, wx, 0, ChunkValues, "InvSqrt");

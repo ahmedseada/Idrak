@@ -178,6 +178,50 @@ internal sealed unsafe partial class CpuBackend
         };
     }
 
+    private static double Cos64(double x) => CpuMath.CosDouble(x);
+
+    private static double NegSin64(double x) => -CpuMath.SinDouble(x);
+
+    // s (1 + x (1 - s)), s = sigmoid(x).
+    private static double SiluSlope64(double x)
+    {
+        double s = Sigmoid64(x);
+        return s * Math.FusedMultiplyAdd(x, 1d - s, 1d);
+    }
+
+    // 0.5 (1 + t) + 0.5 x (1 - t²) c (1 + 3 a x²), t = tanh(c (x + a x³)), as the float32 lanes' GeluSlope.
+    private static double GeluSlope64(double x)
+    {
+        double x2 = x * x;
+        double t = CpuMath.TanhDouble(0.7978845608028654 * Math.FusedMultiplyAdd(0.044715 * x2, x, x));
+        double slope = 0.7978845608028654 * Math.FusedMultiplyAdd(3 * 0.044715, x2, 1d);
+        return Math.FusedMultiplyAdd(0.5 * x * Math.FusedMultiplyAdd(-t, t, 1d), slope, 0.5 * (1d + t));
+    }
+
+    // f'(x) of op from x and y = f(x) in float64 (the float32 lanes' formulas).
+    private static TV Slope64<TV, TD>(UnaryOp op, TV x, TV y) where TV : unmanaged where TD : struct, IDoubles<TV>
+    {
+        var zero = TD.All(0d);
+        var one = TD.All(1d);
+        return op switch
+        {
+            UnaryOp.Sigmoid => TD.Mul(y, TD.Sub(one, y)),
+            UnaryOp.Tanh => TD.Fma(TD.Mul(TD.All(-1d), y), y, one),
+            UnaryOp.Relu => TD.Select(TD.Less(zero, x), one, zero),
+            UnaryOp.Square => TD.Add(x, x),
+            UnaryOp.Abs => TD.Select(TD.Less(zero, x), one, TD.Select(TD.Less(x, zero), TD.All(-1d), zero)),
+            UnaryOp.Exp => y,
+            UnaryOp.Log => TD.Div(one, x),
+            UnaryOp.Sqrt => TD.Div(TD.All(0.5), y),
+            UnaryOp.Sin => PerLane<TV, TD>(x, &Cos64),
+            UnaryOp.Cos => PerLane<TV, TD>(x, &NegSin64),
+            UnaryOp.Silu => PerLane<TV, TD>(x, &SiluSlope64),
+            UnaryOp.Gelu => PerLane<TV, TD>(x, &GeluSlope64),
+            UnaryOp.Sign => zero,
+            _ => throw new NotSupportedException($"The CPU's float64 lane has no {op} gradient (its float64 function is not built)."),
+        };
+    }
+
     // c = op(a, b) in float64 (Maximum and Minimum as Math.Max and Math.Min: NaN kept, +0 over -0 for the maximum and -0
     // under +0 for the minimum, as the float32 lanes).
     private static TV Binary64<TV, TD>(BinaryOp op, TV a, TV b) where TV : unmanaged where TD : struct, IDoubles<TV>
@@ -214,10 +258,10 @@ internal sealed unsafe partial class CpuBackend
     [ThreadStatic]
     private static double[]?[]? t_doubles;
 
-    // A pinned float64 buffer of the thread's (slot 0 to 3) holding at least `count` values.
+    // A pinned float64 buffer of the thread's (slot 0 to 7: 3 is ReadDoubles' own) holding at least `count` values.
     private static double* DoubleBuffer(int slot, long count)
     {
-        var buffers = t_doubles ??= new double[4][];
+        var buffers = t_doubles ??= new double[8][];
         var buffer = buffers[slot];
         if (buffer is null || buffer.Length < count)
         {
@@ -286,13 +330,25 @@ internal sealed unsafe partial class CpuBackend
 
     private enum Map64 : byte
     {
-        Unary,
-        Binary,
-        Affine,
+        Unary,                 // y = f(a)
+        Binary,                // y = f(a, b)
+        Affine,                // y = α a + β
+        Axpy,                  // y = α a + b (b the output's own values)
+        MulAdd,                // y = a b + c (c the output's)
+        AddScalar,             // y = α β + a (a the output's)
+        UnaryBack,             // y = c f'(a, b) + d (a the input, b the output, c the gradient, d the input's gradient)
+        Clamp,                 // y = min(max(a, α), β)
+        ClampBack,             // y = b where α ≤ a ≤ β (+ c, the input's gradient)
+        Leaky,                 // y = a where a > 0, else α a
+        LeakyBack,             // y = b or α b by a's sign (+ c)
+        InvSqrt,               // y = 1 / √(a + α)
+        Where,                 // y = c where a ≠ 0... a the condition: y = a == 0 ? c : b
+        Pow,                   // y = a^α (a value at a time, the library's power)
+        PowBack,               // y = b α a^(α-1) + c (a value at a time)
     }
 
-    // An element-wise float64 run over a chunk: y = f(a[, b]).
-    private struct Map64Run(Map64 kind, int op, double* a, double* b, double* y, int count, double alpha, double beta) : ILanesRun
+    // An element-wise float64 run over a chunk: y = f(a[, b, c, d]).
+    private struct Map64Run(Map64 kind, int op, double* a, double* b, double* y, int count, double alpha, double beta, double* c = null, double* d = null) : ILanesRun
     {
         private double* _y = y;
 
@@ -310,6 +366,18 @@ internal sealed unsafe partial class CpuBackend
         private readonly void Steps64<TV, TD>() where TV : unmanaged where TD : struct, IDoubles<TV>
         {
             int i = 0;
+            if (kind is Map64.Pow or Map64.PowBack)
+            {
+                // The library's float64 power, a value at a time (the same at every width).
+                for (; i < count; i++)
+                {
+                    double p = CpuMath.PowDouble(a[i], kind == Map64.Pow ? alpha : alpha - 1);
+                    _y[i] = kind == Map64.Pow ? p : Math.FusedMultiplyAdd(b[i], alpha == 0 ? 0 : alpha * p, c[i]);
+                }
+
+                return;
+            }
+
             for (; TD.Count > 1 && i + TD.Count <= count; i += TD.Count)
             {
                 TD.Store(_y + i, Of<TV, TD>(i));
@@ -325,36 +393,126 @@ internal sealed unsafe partial class CpuBackend
         private readonly TV Of<TV, TD>(int i) where TV : unmanaged where TD : struct, IDoubles<TV>
         {
             var x = TD.Load(a + i);
-            return kind switch
+            var zero = TD.All(0d);
+            switch (kind)
             {
-                Map64.Unary => Unary64<TV, TD>((UnaryOp)op, x),
-                Map64.Binary => Binary64<TV, TD>((BinaryOp)op, x, TD.Load(b + i)),
-                _ => TD.Fma(TD.All(alpha), x, TD.All(beta)),
-            };
+                case Map64.Unary:
+                    return Unary64<TV, TD>((UnaryOp)op, x);
+                case Map64.Binary:
+                    return Binary64<TV, TD>((BinaryOp)op, x, TD.Load(b + i));
+                case Map64.Affine:
+                    return TD.Fma(TD.All(alpha), x, TD.All(beta));
+                case Map64.Axpy:
+                    return TD.Fma(TD.All(alpha), x, TD.Load(b + i));
+                case Map64.MulAdd:
+                    return TD.Fma(x, TD.Load(b + i), TD.Load(c + i));
+                case Map64.AddScalar:
+                    return TD.Fma(TD.All(alpha), TD.All(beta), x);
+                case Map64.UnaryBack:
+                    return TD.Fma(TD.Load(c + i), Slope64<TV, TD>((UnaryOp)op, x, TD.Load(b + i)), TD.Load(d + i));
+                case Map64.Clamp:
+                    return Binary64<TV, TD>(BinaryOp.Minimum, Binary64<TV, TD>(BinaryOp.Maximum, x, TD.All(alpha)), TD.All(beta));
+                case Map64.ClampBack:
+                {
+                    var inside = TD.Select(TD.Less(x, TD.All(alpha)), zero, TD.Select(TD.Less(TD.All(beta), x), zero, TD.Select(TD.Equal(x, x), TD.All(1d), zero)));
+                    return TD.Add(TD.Load(c + i), TD.Select(TD.Equal(inside, zero), zero, TD.Load(b + i)));
+                }
+
+                case Map64.Leaky:
+                    return TD.Select(TD.Less(zero, x), x, TD.Mul(TD.All(alpha), x));
+                case Map64.LeakyBack:
+                {
+                    var g = TD.Load(b + i);
+                    return TD.Add(TD.Load(c + i), TD.Select(TD.Less(zero, x), g, TD.Mul(TD.All(alpha), g)));
+                }
+
+                case Map64.InvSqrt:
+                    return TD.Div(TD.All(1d), TD.Sqrt(TD.Add(x, TD.All(alpha))));
+                default:
+                    return TD.Select(TD.Equal(x, zero), TD.Load(c + i), TD.Load(b + i));     // Where
+            }
         }
 
         public void Redirect(ref Scratch scratch) => _y = (double*)scratch.Take(2L * count);
     }
 
-    // y = f(x[, b]) over [0, n) in float64, a chunk at a time.
-    private static void Elements64(string operation, Map64 kind, int op, Storage x, Storage? b, Storage y, long n, double alpha = 0, double beta = 0)
+    // y = f(x[, b, c, d]) over [0, n) in float64, a chunk at a time (an input that is the output itself read before it is
+    // written), the result written in y's type.
+    private static void Elements64(string operation, Map64 kind, int op, Storage x, Storage? b, Storage y, long n, double alpha = 0, double beta = 0,
+        Storage? c = null, Storage? d = null)
     {
-        fixed (float* wx = D(x), wb = b is null ? null : D(b), wy = D(y))
+        fixed (float* wx = D(x), wb = b is null ? null : D(b), wc = c is null ? null : D(c), wd = d is null ? null : D(d), wy = D(y))
         {
             for (long i = 0; i < n; i += ChunkValues)
             {
                 int count = (int)Math.Min(ChunkValues, n - i);
                 double* pa = DoubleBuffer(0, count), pb = b is null ? null : DoubleBuffer(1, count), py = DoubleBuffer(2, count);
+                double* pc = c is null ? null : DoubleBuffer(4, count), pd = d is null ? null : DoubleBuffer(5, count);
                 ReadDoubles(x, wx, i, count, pa);
                 if (b is not null)
                 {
                     ReadDoubles(b, wb, i, count, pb);
                 }
 
-                var run = new Map64Run(kind, op, pa, pb, py, count, alpha, beta);
+                if (c is not null)
+                {
+                    ReadDoubles(c, wc, i, count, pc);
+                }
+
+                if (d is not null)
+                {
+                    ReadDoubles(d, wd, i, count, pd);
+                }
+
+                var run = new Map64Run(kind, op, pa, pb, py, count, alpha, beta, pc, pd);
                 run.Run(ChosenLanes(operation + " float64", SizeClass(count), 0, ref run));
                 WriteDoubles(y, wy, i, count, py);
             }
+        }
+    }
+
+    // Whether an operation's output (read where it accumulates) or inputs hold values that need float64, or the output is
+    // a float64 storage of its own: then the operation computes in float64 and writes in the output's type.
+    private static bool Wide64(Storage? a, Storage? b = null, Storage? c = null, Storage? d = null) => Wide(a, b) || Wide(c, d);
+
+    // c = a + v a row (gelu: GELU of it) in float64, a row at a time, written in c's type (the float32 lanes' sum and GELU).
+    private static void RowVector64(Storage a, Storage v, Storage c, int rows, int cols, bool gelu)
+    {
+        fixed (float* wa = D(a), wv = D(v), wc = D(c))
+        {
+            double* vector = DoubleBuffer(1, Math.Max(1, cols)), row = DoubleBuffer(0, Math.Max(1, cols));
+            ReadDoubles(v, wv, 0, cols, vector);
+            for (int r = 0; r < rows; r++)
+            {
+                ReadDoubles(a, wa, (long)r * cols, cols, row);
+                for (int j = 0; j < cols; j++)
+                {
+                    double sum = row[j] + vector[j];
+                    row[j] = gelu ? Gelu64(sum) : sum;
+                }
+
+                WriteDoubles(c, wc, (long)r * cols, cols, row);
+            }
+        }
+    }
+
+    // y[j] += Σ_r x[offset + r · ld + j] in float64, each column's rows in order from zero, added to y in its type.
+    private static void ColumnSums64(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        fixed (float* wx = D(x), wy = D(y))
+        {
+            double* sums = DoubleBuffer(1, Math.Max(1, cols)), row = DoubleBuffer(0, Math.Max(1, cols));
+            new Span<double>(sums, cols).Clear();
+            for (int r = 0; r < rows; r++)
+            {
+                ReadDoubles(x, wx, offset + (long)r * ld, cols, row);
+                for (int j = 0; j < cols; j++)
+                {
+                    sums[j] += row[j];
+                }
+            }
+
+            WriteDoubles(y, wy, 0, cols, sums, accumulate: true);
         }
     }
 

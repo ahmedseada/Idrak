@@ -12,8 +12,7 @@ internal sealed unsafe partial class CpuBackend
 {
     public override void PermuteKernel(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
-        var py = V(y);
-        if (!NativeFloats(x))
+        if (!NativeFloats(x) || !NativeFloats(y))
         {
             Span<long> strides = stackalloc long[Math.Max(1, inStrides.Length)];
             for (int d = 0; d < inStrides.Length; d++)
@@ -21,9 +20,17 @@ internal sealed unsafe partial class CpuBackend
                 strides[d] = inStrides[d];
             }
 
-            StridedTyped(x, 0, outShape, strides[..inStrides.Length], py, accumulate, "Permute");
+            if (Wide(x, y))
+            {
+                StridedWide(x, 0, outShape, strides[..inStrides.Length], y, accumulate, "Permute");
+                return;
+            }
+
+            StridedTyped(x, 0, outShape, strides[..inStrides.Length], V(y), accumulate, "Permute");
             return;
         }
+
+        var py = V(y);
 
         var px = D(x);
         int rank = outShape.Length;
@@ -60,6 +67,12 @@ internal sealed unsafe partial class CpuBackend
 
     public override void StridedCopyKernel(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y)
     {
+        if (Wide(x, y))
+        {
+            StridedWide(x, offset, shape, strides, y, accumulate: false, "StridedCopy");
+            return;
+        }
+
         var py = V(y);
         if (!NativeFloats(x))
         {
@@ -116,6 +129,95 @@ internal sealed unsafe partial class CpuBackend
 
                 at -= strides[d] * shape[d];
                 index[d] = 0;
+            }
+        }
+    }
+
+    // A strided view of x whose values need float64 (or into a float64 y) copied (or added) in float64: StridedTyped's walk,
+    // x read a window at a time as float64 (its type's exact read), each value written in y's type (float64's own, or
+    // float32 rounded once).
+    private static void StridedWide(Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y, bool accumulate, string operation)
+    {
+        int rank = shape.Length;
+        long total = 1;
+        foreach (int d in shape)
+        {
+            total *= d;
+        }
+
+        bool doubles = y.Typed && y.Type.Native == NativeKind.Float64;
+        if (y.Typed && !doubles && !NativeFloats(y))
+        {
+            throw new NotSupportedException($"The CPU's float64 {operation} writes float64 or float32 values, not {y.Type.Name}.");
+        }
+
+        if (total == 0)
+        {
+            return;
+        }
+
+        Span<int> order = stackalloc int[Math.Max(1, rank)];
+        Span<long> step = stackalloc long[Math.Max(1, rank)];
+        Span<int> index = stackalloc int[Math.Max(1, rank)];
+        index.Clear();
+        long run = 1;
+        for (int d = rank - 1; d >= 0; d--)
+        {
+            order[d] = d;
+            step[d] = run;
+            run *= shape[d];
+        }
+
+        for (int a = 1; a < rank; a++)
+        {
+            int d = order[a], b = a - 1;
+            for (; b >= 0 && Math.Abs(strides[order[b]]) < Math.Abs(strides[d]); b--)
+            {
+                order[b + 1] = order[b];
+            }
+
+            order[b + 1] = d;
+        }
+
+        long count = x.ElementCount, unit = x.Typed ? Math.Max(1, x.Type.Description.UnitValues) : 1;
+        fixed (float* wx = D(x), wy = D(y))
+        {
+            double* window = DoubleBuffer(0, ChunkValues + unit);
+            long from = 0, to = 0, at = offset, o = 0;
+            for (long t = 0; t < total; t++)
+            {
+                if (at < from || at >= to)
+                {
+                    from = at / unit * unit;
+                    to = Math.Min(count, from + ChunkValues);
+                    ReadDoubles(x, wx, from, (int)(to - from), window);
+                }
+
+                double v = window[at - from];
+                if (doubles)
+                {
+                    double* into = (double*)wy + o;
+                    *into = accumulate ? *into + v : v;
+                }
+                else
+                {
+                    wy[o] = accumulate ? (float)(wy[o] + v) : (float)v;
+                }
+
+                for (int q = rank - 1; q >= 0; q--)
+                {
+                    int d = order[q];
+                    at += strides[d];
+                    o += step[d];
+                    if (++index[d] < shape[d])
+                    {
+                        break;
+                    }
+
+                    at -= strides[d] * shape[d];
+                    o -= step[d] * shape[d];
+                    index[d] = 0;
+                }
             }
         }
     }

@@ -399,7 +399,7 @@ public sealed partial class Tensor
                 inStrides[k] = strides[perm[k]];
             }
 
-            y = Empty(outShape, Device);
+            y = ResultFor(outShape, Device, this);                     // float64 where the values need it
             Backend.Permute(Storage, y.Storage, outShape, inStrides, accumulate: false);
         }
 

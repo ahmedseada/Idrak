@@ -307,7 +307,47 @@ internal sealed partial class CpuBackend : Backend, IMemoryReport
             return;
         }
 
+        if ((x.Typed || y.Typed) && !(NativeFloats(x) && NativeFloats(y)))
+        {
+            CopyValues(x, y, n);
+            return;
+        }
+
         D(x).AsSpan(0, n).CopyTo(D(y));
+    }
+
+    // y's first n values from x's where either is typed: the stored bytes where both hold one description; else x's values
+    // read a chunk at a time in float64 (every type's exact read) and written in y's type (float64's own, float32 rounded
+    // once, any other type through its writer, whole groups of its blocks a chunk).
+    private static unsafe void CopyValues(Storage x, Storage y, long n)
+    {
+        fixed (float* wx = D(x), wy = D(y))
+        {
+            if (x.Typed && y.Typed && x.Type.Description == y.Type.Description)
+            {
+                long bytes = x.Type.ByteCount(n);
+                Buffer.MemoryCopy(wx, wy, bytes, bytes);
+                return;
+            }
+
+            var type = y.Type;
+            bool direct = !y.Typed || type.Native is NativeKind.Float32 or NativeKind.Float64;
+            long unit = direct ? 1 : Math.Max(1, type.Description.UnitValues), piece = Math.Max(unit, ChunkValues / unit * unit);
+            double* values = DoubleBuffer(6, piece);
+            for (long i = 0; i < n; i += piece)
+            {
+                int count = (int)Math.Min(piece, n - i);
+                ReadDoubles(x, wx, i, count, values);
+                if (direct)
+                {
+                    WriteDoubles(y, wy, i, count, values);
+                }
+                else
+                {
+                    type.Write(new ReadOnlySpan<double>(values, count), new Span<byte>((byte*)wy + type.ByteCount(i), (int)type.ByteCount(count)));
+                }
+            }
+        }
     }
 
     public override void Synchronize()

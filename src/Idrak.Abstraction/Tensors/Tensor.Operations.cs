@@ -258,7 +258,7 @@ public sealed partial class Tensor
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int cols = b.Size;
         int rows = cols == 0 ? 0 : a.Size / cols;
-        var c = Empty(a._shape, a.Device);
+        var c = ResultFor(a._shape, a.Device, a, b);
         var (aSource, bSource) = (a.ReadStorage(out var aScratch), b.ReadStorage(out var bScratch));
         try
         {

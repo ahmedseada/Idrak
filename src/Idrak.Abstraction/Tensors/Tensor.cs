@@ -108,7 +108,7 @@ public sealed partial class Tensor : IDisposable
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(_shape, Device);
+        var y = ResultFor(_shape, Device, this);                       // float64 where the values need it
         var layout = _layout;
         Backend.StridedCopy(_storage, layout.Offset, layout.Shape, layout.Strides, y.Storage);
         TensorViews.CountScratch((long)Size * sizeof(float));
@@ -188,7 +188,7 @@ public sealed partial class Tensor : IDisposable
 
             source = _storage;
             var layout = _layout!;
-            own = Backend.Allocate(Size, zeroed: false);
+            own = ViewValues(source);                                // float64 where the values need it, else float32
             Backend.StridedCopy(source, layout.Offset, layout.Shape, layout.Strides, own);
             _versionOffset = source.Version;
             _storage = own;
@@ -257,7 +257,7 @@ public sealed partial class Tensor : IDisposable
                 return _storage;
             }
 
-            scratch = Backend.Allocate(Size, zeroed: false);
+            scratch = ViewValues(_storage);
             Backend.StridedCopy(_storage, layout.Offset, layout.Shape, layout.Strides, scratch);
         }
 
@@ -571,11 +571,12 @@ public sealed partial class Tensor : IDisposable
     public Tensor Clone()
     {
         ThrowIfDisposed();
-        var t = Empty(_shape, Device);
+        // A typed tensor's copy of its own type (its stored bytes); float32's own as before.
+        var t = _storage.Typed ? new Tensor(_shape, Backend.Allocate(_storage.Type, Size, zeroed: false), Device, track: true) : Empty(_shape, Device);
         var storage = ReadStorage(out var scratch);
         try
         {
-            Backend.Copy(storage, t.Storage, t.Storage.Length);            // Size floats
+            Backend.Copy(storage, t.Storage, _storage.Typed ? Size : t.Storage.Length);       // Size values
         }
         finally
         {
@@ -1086,7 +1087,7 @@ public sealed partial class Tensor : IDisposable
     /// </summary>
     public void AddGradient(Tensor gradient, bool adopt)
     {
-        if (adopt && Grad is null && gradient.Size == Size)
+        if (adopt && Grad is null && gradient.Size == Size && GradientTypeOf(gradient.Storage))
         {
             gradient.Storage.AddRef();
             Grad = new Tensor(_shape, gradient.Storage, Device, track: false);
@@ -1095,8 +1096,8 @@ public sealed partial class Tensor : IDisposable
 
         if (Grad is null && gradient.Size == Size)
         {
-            // The first gradient: copied (one pass), not added to a zero-filled buffer (a fill and a read-add-write pass).
-            Grad = Empty(_shape, Device, track: false);
+            // The first gradient: copied (one pass, into the gradient's own type), not added to a zero-filled buffer.
+            Grad = NewGradient(zeroed: false);
             Backend.Copy(gradient.Storage, Grad.Storage, Size);
             return;
         }
@@ -1112,16 +1113,41 @@ public sealed partial class Tensor : IDisposable
     public Storage GradientTarget(out float beta)
     {
         beta = Grad is null ? 0f : 1f;
-        Grad ??= Empty(_shape, Device, zeroed: false, track: false);
+        Grad ??= NewGradient(zeroed: false);
         return Grad.Storage;
     }
 
     /// <summary>The gradient buffer, allocated (zeroed and outside any scope) on first use.</summary>
     public Storage GradStorage()
     {
-        Grad ??= Empty(_shape, Device, zeroed: true, track: false);
+        Grad ??= NewGradient(zeroed: true);
         return Grad.Storage;
     }
+
+    // A block for a view's elements copied from `source`: float64 where the source's values need it (never narrowed),
+    // float32 otherwise.
+    private Storage ViewValues(Storage source) =>
+        source.Typed && Devices.Cpu.CpuBackend.WideValues(source.Type) ? Backend.Allocate(Types.F64.Type, Size, zeroed: false) : Backend.Allocate(Size, zeroed: false);
+
+    // A gradient buffer of this tensor's shape outside any scope, in its values' compute type: float64 where its values
+    // need float64 (a float64 or int64 tensor's gradient is never rounded to float32), float32 otherwise.
+    private Tensor NewGradient(bool zeroed)
+    {
+        if (!(_storage.Typed && Devices.Cpu.CpuBackend.WideValues(_storage.Type)))
+        {
+            return Empty(_shape, Device, zeroed, track: false);
+        }
+
+        var storage = Backend.Allocate(Types.F64.Type, Size, zeroed);
+        return new Tensor(_shape, storage, Device, track: false);
+    }
+
+    // Whether a gradient's storage holds the values this tensor's gradient holds (its type's description), so it may be
+    // taken as the gradient itself.
+    private bool GradientTypeOf(Storage gradient) =>
+        _storage.Typed && Devices.Cpu.CpuBackend.WideValues(_storage.Type)
+            ? gradient.Typed && gradient.Type.Description == Types.F64.Type.Description
+            : Devices.Cpu.CpuBackend.NativeFloats(gradient);
 
     /// <summary>Records how to back-propagate into this freshly computed tensor. Callers check <see cref="WillRecord(Tensor)"/> first.</summary>
     public void Record(string operation, Action<Tensor> backward, params Tensor[] inputs)
