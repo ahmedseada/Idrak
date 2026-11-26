@@ -17,21 +17,21 @@ internal sealed class MappedStorage(CpuBackend backend, FileMapping mapping, int
 
 internal sealed partial class CpuBackend : IMappedStorageBackend
 {
-    public Storage MapStorage(FileMapping mapping, TypeDescription description, long count)
+    public Storage MapStorage(FileMapping mapping, IElementType type, long count)
     {
         ArgumentNullException.ThrowIfNull(mapping);
         try
         {
-            ArgumentNullException.ThrowIfNull(description);
+            ArgumentNullException.ThrowIfNull(type);
             ThrowIfDisposed();
-            long bytes = (count + description.UnitValues - 1) / description.UnitValues * description.UnitBytes, words = (bytes + sizeof(float) - 1) / sizeof(float);
+            long bytes = type.ByteCount(count), words = (bytes + sizeof(float) - 1) / sizeof(float);
             if (bytes != mapping.Length || words > int.MaxValue)
             {
-                throw new ArgumentException($"{count} described values take {bytes} bytes; the mapping {mapping} holds {mapping.Length}.", nameof(mapping));
+                throw new ArgumentException($"{count} values of {type.Name} take {bytes} bytes; the mapping {mapping} holds {mapping.Length}.", nameof(mapping));
             }
 
             var storage = new MappedStorage(this, mapping, (int)words);
-            storage.SetDescription(description, count);
+            storage.SetType(type, count);
             MappedWeights.CountMapped(bytes);
             return storage;
         }

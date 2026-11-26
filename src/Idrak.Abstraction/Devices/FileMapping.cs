@@ -199,12 +199,12 @@ public sealed unsafe class FileMapping : IDisposable
 public interface IMappedStorageBackend
 {
     /// <summary>
-    /// A storage of <paramref name="count"/> values described by <paramref name="description"/> whose bytes are those of
+    /// A storage of <paramref name="count"/> values of <paramref name="type"/> whose bytes are those of
     /// <paramref name="mapping"/> (exactly the bytes of their whole groups of blocks), read in place. The storage takes the
     /// mapping: it is disposed when the storage is released for good, or at once when this throws.
     /// </summary>
     /// <exception cref="ArgumentException">The mapping's bytes are not the values' bytes.</exception>
-    Storage MapStorage(FileMapping mapping, TypeDescription description, long count);
+    Storage MapStorage(FileMapping mapping, IElementType type, long count);
 }
 
 /// <summary>

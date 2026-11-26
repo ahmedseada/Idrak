@@ -498,7 +498,14 @@ public sealed partial class Tensor : IDisposable
         var storage = ReadStorage(out var scratch);
         try
         {
-            Backend.Download(storage, result);
+            if (storage.Typed)
+            {
+                ReadTyped(Backend, storage, result);                       // its values as its type stores them, read through the type
+            }
+            else
+            {
+                Backend.Download(storage, result);
+            }
         }
         finally
         {

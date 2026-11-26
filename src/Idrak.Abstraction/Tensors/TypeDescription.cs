@@ -105,7 +105,26 @@ public readonly record struct FieldPlace(int Byte, int Shift);
 /// <param name="Offset">The byte in the block.</param>
 /// <param name="Shift">The piece's lowest bit in the byte.</param>
 /// <param name="Bits">Bits the piece takes.</param>
-public readonly record struct ScalePiece(int Offset, int Shift, int Bits);
+public readonly record struct ScalePiece(int Offset, int Shift, int Bits)
+{
+    /// <summary>Bits [<paramref name="first"/>, + <paramref name="count"/>) of the bytes from byte <paramref name="at"/>, as pieces a byte each (its low bits first).</summary>
+    /// <param name="at">The first byte.</param>
+    /// <param name="first">The first bit, counted from <paramref name="at"/>'s lowest.</param>
+    /// <param name="count">The bits.</param>
+    public static ScalePiece[] Run(int at, int first, int count)
+    {
+        var pieces = new List<ScalePiece>();
+        while (count > 0)
+        {
+            int shift = first % 8, take = Math.Min(count, 8 - shift);
+            pieces.Add(new ScalePiece(at + first / 8, shift, take));
+            first += take;
+            count -= take;
+        }
+
+        return [.. pieces];
+    }
+}
 
 /// <summary>What a field of bits is as a number (<see cref="NumberType"/>).</summary>
 public enum NumberKind
@@ -439,12 +458,13 @@ public sealed record TypeDescription(int Values, int Bytes, NumberType Code, IRe
 ///    factor's entry, as a sign mask, chosen first from the targets' signs, then again given the entries);
 /// 4. each level's numbers searched again, the finest first: each chunk's least-squares number given the codes, rounded, and
 ///    its neighbours, the codes chosen again for each and the error measured, the best kept.
-/// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added), each
+/// Each number type's numbers are read from the type (a table, an integer, a float of any bits up to 16, a bias added; a per-element code of more bits, up to 64, rounded by arithmetic), each
 /// field written where the description places it (planes of bits or of digits, listed places, pieces, levels shared over a
 /// group of blocks); codes sharing a field (IQ1_S's delta sign, one a sub-block) are chosen together for the field's number
 /// that leaves them the least error. A type of no scale, minimum or factor (a per-element type) is rounded as its number
 /// type defines: to the nearest number, a tie to the even code, a zero's sign kept, a float past its range its infinity,
-/// its NaN or its largest as its specials say. The same bytes on every CPU: scalar arithmetic in a fixed order.
+/// its NaN or its largest as its specials say; a code of ±0 keeps its target's sign inside blocks too, so every code of a
+/// finite number is one some value writes. The same bytes on every CPU: scalar arithmetic in a fixed order.
 /// </summary>
 internal sealed class DescribedEncoder
 {
@@ -473,7 +493,8 @@ internal sealed class DescribedEncoder
     private readonly Book? codeBook;
     private readonly FactorLevel? factor;
     private readonly Level[] scales, mins, free, all;
-    private readonly bool minsAdded, negativeScale, direct;
+    private readonly bool minsAdded, negativeScale, direct, wholeBytes;
+    private readonly WideNumber? wide;
     private readonly int minSign;
     private readonly Fields codes;
     private readonly DigitPlane[] digitPlanes;
@@ -577,6 +598,26 @@ internal sealed class DescribedEncoder
 
         // The codes' numbers: those the planes can hold (a plane of digits holds digits below its radix).
         Func<ulong, bool>? held = digitPlanes.Length == 0 ? null : code => digitPlanes.All(dp => dp.Holds(code));
+
+        // A per-element code wider than 16 bits (no scale, minimum, factor or shared field: binary32, binary64, an integer of
+        // 32 or 64 bits, a float of any bits up to 64): each value rounded by arithmetic (WideNumber), as a table of its
+        // numbers would round it.
+        if (codeWidth == 1 && d.Code.Bits > 16 && (d.Scales?.Count ?? 0) == 0 && (d.Mins?.Count ?? 0) == 0 && sharedMask == 0 && digitPlanes.Length == 0
+            && WideNumber.Of(d.Code) is { } number)
+        {
+            wide = number;
+            direct = true;
+            unit = n;
+            units = 1;
+            scales = mins = free = all = [];
+            wholeBytes = WholeBytes(d);
+            if (!codes.Claim(new bool[8 * size], repeats: true))
+            {
+                throw Unwritten(d, "two of its fields share bits");
+            }
+
+            return;
+        }
         if (codeWidth == 1)
         {
             codeGrid = Grid.Of(d.Code, d.CodeOffset, held) ?? throw Unwritten(d, "its codes' numbers are not a table, an integer or a float of up to 16 bits");
@@ -677,6 +718,7 @@ internal sealed class DescribedEncoder
         // Values of no scale, minimum or factor, each its own code (a per-element type) are rounded as a float format
         // defines (Grid.Round).
         direct = scales.Length == 0 && mins.Length == 0 && factor is null && codeGrid is not null && sharedMask == 0 && digitPlanes.Length == 0;
+        wholeBytes = direct && WholeBytes(d);
 
         // No two fields share a bit (a minimum stored in a scale's bits is that scale's level; codes sharing a field, theirs;
         // a plane of digits takes its bytes whole).
@@ -809,6 +851,23 @@ internal sealed class DescribedEncoder
             throw new ArgumentException($"The type stores whole groups of {n} values; {source.Length} is not.", nameof(source));
         }
 
+        if (wholeBytes)
+        {
+            // One value a block, its code whole bytes of its own: each value's code written little-endian where it lies.
+            for (int i = 0; i < source.Length; i++)
+            {
+                ulong code = Round(source[i]);
+                Put(destination.Slice(i * size, size), code);
+                if (!chosen.IsEmpty)
+                {
+                    double number = d.Code.Value(code);
+                    chosen[i] = (float)(d.CodeOffset == 0 ? number : number + d.CodeOffset);
+                }
+            }
+
+            return;
+        }
+
         var w = Work.For(this);
         for (int g = 0; g < source.Length / n; g++)
         {
@@ -817,7 +876,7 @@ internal sealed class DescribedEncoder
                 // Each value its code, rounded as the code's float format defines (or the nearest number of an integer or a table).
                 for (int v = 0; v < n; v++)
                 {
-                    w.CodeBits[v] = codeGrid!.Round(source[g * n + v]);
+                    w.CodeBits[v] = Round(source[g * n + v]);
                     if (!chosen.IsEmpty)
                     {
                         double number = d.Code.Value(w.CodeBits[v]);
@@ -843,6 +902,59 @@ internal sealed class DescribedEncoder
             }
         }
     }
+
+    /// <summary>Whether float64 values are written from the float64 value itself (a type of no scale, minimum or factor: each value its own code).</summary>
+    public bool EncodesDoubles => direct;
+
+    /// <summary>
+    /// <paramref name="source"/> (float64) stored into <paramref name="destination"/>, each value rounded from the float64
+    /// value itself (<see cref="EncodesDoubles"/> types only); a last group of fewer values filled with zeros.
+    /// </summary>
+    public void Encode(ReadOnlySpan<double> source, Span<byte> destination)
+    {
+        if (!direct)
+        {
+            throw new InvalidOperationException("A type of scales, minimums or factors is written from float32 values.");
+        }
+
+        if (wholeBytes)
+        {
+            for (int i = 0; i < source.Length; i++)
+            {
+                Put(destination.Slice(i * size, size), Round(source[i]));
+            }
+
+            return;
+        }
+
+        var w = Work.For(this);
+        for (int g = 0; g * n < source.Length; g++)
+        {
+            for (int v = 0; v < n; v++)
+            {
+                int i = g * n + v;
+                w.CodeBits[v] = Round(i < source.Length ? source[i] : 0);
+            }
+
+            WriteCodes(w, destination.Slice(g * size, size));
+        }
+    }
+
+    // A per-element value's code: rounded by its number type's table, or by arithmetic for a code wider than 16 bits.
+    private ulong Round(double x) => wide is { } number ? number.Round(d.CodeOffset == 0 ? x : x - d.CodeOffset) : codeGrid!.Round(x);
+
+    // A code's bytes, little-endian.
+    private static void Put(Span<byte> at, ulong code)
+    {
+        for (int b = 0; b < at.Length; b++, code >>= 8)
+        {
+            at[b] = (byte)code;
+        }
+    }
+
+    // One value a block, its code one plane of whole bytes from the block's first (written straight, a value at a time).
+    private static bool WholeBytes(TypeDescription d) => BitConverter.IsLittleEndian && d is { Values: 1, Group: 1 } && d.UnitBytes == d.Bytes
+        && d.Planes is [{ Offset: 0, Group: 1, Stride: 0, Stream: false, Places: null, Radix: 0 } plane] && plane.Bits == 8 * d.Bytes;
 
     private void EncodeGroup(ReadOnlySpan<float> source, Span<byte> group, Work w)
     {
@@ -1807,7 +1919,6 @@ internal sealed class DescribedEncoder
             for (int i = 0; i < y.Length; i++)
             {
                 int r = Nearest((y[i] - c0) * t);
-                r = r == negativeZero ? positiveZero : r;                   // a scaled value's zero: +0 (its sign changes no value)
                 numbers[i] = Floats[r];
                 if (keep)
                 {

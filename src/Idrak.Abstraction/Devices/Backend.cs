@@ -248,28 +248,37 @@ public abstract class Storage
     /// <summary>The number of floats.</summary>
     public int Length { get; }
 
-    // The description of the values its words hold when it was allocated with one (Backend.Allocate(TypeDescription, ...)),
-    // and how many values they are.
-    private TypeDescription? _description;
+    // The type of the values its words hold when it was allocated with one (Backend.Allocate(IElementType, ...)), and how
+    // many values they are.
+    private IElementType? _type;
     private long _elements = -1;
 
     /// <summary>
-    /// How the values its <see cref="Length"/> 4-byte words hold read from their bits, for a storage allocated with a
-    /// description (<see cref="Backend.Allocate(TypeDescription, int, bool)"/>): <see cref="ElementCount"/> values; null for
-    /// a storage of the device's own floats.
+    /// The type of the values its <see cref="Length"/> 4-byte words hold: the type it was allocated with
+    /// (<see cref="Backend.Allocate(IElementType, long, bool)"/>), whose <see cref="ElementCount"/> values the words hold as
+    /// the type stores them; else the device's own float32 (<see cref="Types.F32"/>), one value a word.
     /// </summary>
-    public TypeDescription? Description => _description;
+    public IElementType Type => _type ?? Types.F32.Type;
 
-    /// <summary>The number of values it holds: those of its <see cref="Description"/>, else <see cref="Length"/>.</summary>
+    /// <summary>Whether it was allocated with a type (<see cref="Backend.Allocate(IElementType, long, bool)"/>), its words holding that type's stored bytes; false for the device's own floats.</summary>
+    public bool Typed => _type is not null;
+
+    /// <summary>
+    /// The description of <see cref="Type"/> for a storage allocated with a type (<see cref="Typed"/>), which a device's
+    /// described lane reads; null for a storage of the device's own floats.
+    /// </summary>
+    public TypeDescription? Description => _type?.Description;
+
+    /// <summary>The number of values it holds: those of its <see cref="Type"/> where it was allocated with one, else <see cref="Length"/>.</summary>
     public long ElementCount => _elements >= 0 ? _elements : Length;
 
     /// <summary>The bytes of memory it holds: <see cref="Length"/> 4-byte words.</summary>
     public long ByteLength => (long)Length * sizeof(float);
 
-    // Marks a storage just allocated as holding `count` values of `description` (its words hold them: Backend.Allocate).
-    internal void SetDescription(TypeDescription description, long count)
+    // Marks a storage just allocated as holding `count` values of `type` (its words hold them: Backend.Allocate).
+    internal void SetType(IElementType type, long count)
     {
-        _description = description;
+        _type = type;
         _elements = count;
     }
 

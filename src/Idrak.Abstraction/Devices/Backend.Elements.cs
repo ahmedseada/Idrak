@@ -3,26 +3,31 @@
 
 namespace Idrak.Abstraction.Devices;
 
-// Storages of described values: the words that hold values of a type its description reads (TypeDescription), marked
-// with it, so a device's described lane reads them by the description alone.
+// Storages of typed values: the words that hold values of a type as the type stores them (IElementType), marked with it,
+// so a device reads them through the type (its described lane reads its description).
 public abstract partial class Backend
 {
     /// <summary>
-    /// A storage of <paramref name="count"/> values described by <paramref name="description"/>: the 4-byte words that
-    /// hold its whole groups of blocks (<see cref="TypeDescription.UnitValues"/> values in
-    /// <see cref="TypeDescription.UnitBytes"/> bytes each), zeroed when <paramref name="zeroed"/>, marked with it
-    /// (<see cref="Storage.Description"/>).
+    /// A storage of <paramref name="count"/> values of <paramref name="type"/>: the 4-byte words that hold the
+    /// <see cref="IElementType.ByteCount"/> bytes they take as the type stores them, zeroed when <paramref name="zeroed"/>,
+    /// marked with it (<see cref="Storage.Type"/>).
     /// </summary>
-    /// <exception cref="ArgumentException">The words would pass what one storage holds (2³¹ - 1).</exception>
-    public Storage Allocate(TypeDescription description, int count, bool zeroed)
+    /// <param name="type">The values' type.</param>
+    /// <param name="count">The values.</param>
+    /// <param name="zeroed">Whether its words are cleared.</param>
+    /// <exception cref="ArgumentException">The words would pass what one storage holds (2³¹ - 1), or a tensor's values (2³¹ - 1).</exception>
+    public Storage Allocate(IElementType type, long count, bool zeroed)
     {
-        ArgumentNullException.ThrowIfNull(description);
+        ArgumentNullException.ThrowIfNull(type);
         ArgumentOutOfRangeException.ThrowIfNegative(count);
-        long bytes = (count + (long)description.UnitValues - 1) / description.UnitValues * description.UnitBytes;
-        long words = (bytes + sizeof(float) - 1) / sizeof(float);
-        var storage = Allocate(words <= int.MaxValue ? (int)words : throw new ArgumentException($"{count} described values take {words} words: past what one storage holds."),
-            zeroed);
-        storage.SetDescription(description, count);
+        long words = (type.ByteCount(count) + sizeof(float) - 1) / sizeof(float);
+        if (words > int.MaxValue || count > int.MaxValue)
+        {
+            throw new ArgumentException($"{count} values of {type.Name} take {words} words: past what one storage holds.", nameof(count));
+        }
+
+        var storage = Allocate((int)words, zeroed);
+        storage.SetType(type, count);
         return storage;
     }
 }
